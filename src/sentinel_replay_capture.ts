@@ -5,6 +5,8 @@ import {
   canonicalSentinelUpstreamJson,
   emptySentinelUpstreamTrace,
   parseSentinelUpstreamTrace,
+  SENTINEL_UPSTREAM_MAX_BYTES,
+  SENTINEL_UPSTREAM_MAX_CHUNKS,
   type SentinelUpstreamRecorder,
   type SentinelUpstreamTrace,
 } from "./sentinel_upstream_capture.ts";
@@ -60,7 +62,20 @@ const REPLAY_PLAINTEXT_VERSION = 3;
 /** v2 fingerprint frame namespace; the outer crypto transport stays v1. */
 const FINGERPRINT_NAMESPACE_V2 = "uos-sentinel-replay-v2:fingerprint";
 const CASE_GROUP_NAMESPACE_V1 = "uos-sentinel-replay-v1:case-group";
-const MAX_REPLAY_METADATA_BYTES = 256 * 1_024;
+/**
+ * The private metadata carries the sealed upstream trace as per-chunk base64,
+ * so its bound is derived from the bounded capture rather than fixed: base64
+ * expansion of the full accepted upstream capture, per-chunk base64 padding and
+ * JSON framing, the retained downstream body (carried in both of its metadata
+ * projections), and the remaining bounded metadata. Encode and decode share
+ * this one bound, so a capture the recorder accepted stays exportable.
+ */
+const MAX_REPLAY_UPSTREAM_METADATA_BYTES = Math.ceil(SENTINEL_UPSTREAM_MAX_BYTES / 3) * 4 + SENTINEL_UPSTREAM_MAX_CHUNKS * 8;
+/** Base64 expansion of the retained downstream body carried in both metadata projections. */
+const MAX_REPLAY_DOWNSTREAM_METADATA_BYTES = 2 * Math.ceil(SENTINEL_REPLAY_MAX_DOWNSTREAM_BODY_BYTES / 3) * 4;
+/** Remaining bounded metadata; the entire metadata envelope previously fit in this allowance. */
+const MAX_REPLAY_AUXILIARY_METADATA_BYTES = 256 * 1_024;
+const MAX_REPLAY_METADATA_BYTES = MAX_REPLAY_UPSTREAM_METADATA_BYTES + MAX_REPLAY_DOWNSTREAM_METADATA_BYTES + MAX_REPLAY_AUXILIARY_METADATA_BYTES;
 const MAX_REPLAY_PLAINTEXT_BYTES = SENTINEL_REPLAY_MAX_BODY_BYTES + MAX_REPLAY_METADATA_BYTES + 4;
 const MAX_REPLAY_CIPHERTEXT_BYTES = MAX_REPLAY_PLAINTEXT_BYTES + 1_024 * 1_024 + 16;
 const MAX_REPLAY_CHUNKS = Math.ceil(MAX_REPLAY_CIPHERTEXT_BYTES / SENTINEL_REPLAY_CHUNK_BYTES);
