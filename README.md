@@ -138,6 +138,10 @@ Notes:
   and returns a normal JSON response.
 - Chat completions and responses allow omitting `model`; the gateway falls back to its configured default.
 - Use `reasoning_effort` for chat completions or `reasoning` for responses to control reasoning level.
+- OpenAI models routed through OpenRouter receive web search and page retrieval tools by default on both endpoints.
+  Caller tools are preserved; `tools: []` or `tool_choice: "none"` disables these defaults. Required/forced tool
+  choices, legacy function requests, and batch variants retain their caller-defined tools. See the
+  [web-tool defaults guide](static/docs/llms-agents.md#openai-web-tools-through-openrouter) for details.
 
 Streaming:
 
