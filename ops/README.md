@@ -26,6 +26,30 @@ The verified Bun launcher explicitly loads the repository-root `.env`; automatic
 unit so paid billing reconciliation, capacity sampling, and telemetry pruning run on the VPS. Do not add Deno Deploy
 identity variables to `.env`; they cause the VPS launcher to reject startup.
 
+## Display local Gemini subscription quota
+
+Opt in on the gateway host, from Antigravity CLI running as the same OS user as the gateway. Merge this `statusLine`
+block into `~/.gemini/antigravity-cli/settings.json`. Replace `/path/to/bun` with the absolute path to Bun 1.4.0 and
+`/path/to/gateway` with the absolute gateway checkout path. The `.data` directory must already exist. Keep
+`stack_with_default` enabled to retain the built-in line alongside the silent hook.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/usr/bin/env -i \"/path/to/bun\" --no-env-file --no-install --config=\"/path/to/gateway/ops/runtime-bunfig.toml\" \"/path/to/gateway/scripts/export-antigravity-quota.ts\" \"/path/to/gateway/.data\"",
+    "stack_with_default": true
+  }
+}
+```
+
+Admin → Analytics shows the latest observation saved in `.data/antigravity-quota.json` on that host. Quota changes and
+sign-out are recorded immediately. While equivalent events continue, the hook saves a new observation at most every
+30 seconds. Analytics marks an observation stale after five minutes. Absolute amounts use the CLI's reported value and
+show when its unit is unspecified. Only the local quota, plan tier, observation time and status are saved. To stop
+collecting, disable the custom status line and remove `antigravity-quota.json` and its `.lock` file once the hook has
+stopped. [Google Antigravity CLI status line documentation](https://antigravity.google/docs/cli/statusline)
+
 ## Deploy a change
 
 Required GitHub CI checks must pass first. GitHub no longer deploys to Deno Deploy.
