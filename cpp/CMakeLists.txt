@@ -47,6 +47,16 @@ install(TARGETS uos_cpp_pilot RUNTIME DESTINATION bin)
 enable_testing()
 add_executable(protocol_tests tests/protocol_tests.cpp)
 target_link_libraries(protocol_tests PRIVATE pilot_core)
+option(UOS_ANALYSIS_CONTROLS "Expose analysis-only fixture compilation commands" OFF)
+if(UOS_ANALYSIS_CONTROLS)
+  add_library(analysis_controls OBJECT EXCLUDE_FROM_ALL tests/analysis/raw_defects.cpp tests/analysis/clean_ownership.cpp tests/analysis/clean_cancel.cpp)
+  target_link_libraries(analysis_controls PRIVATE pilot_core)
+  target_include_directories(analysis_controls SYSTEM PRIVATE tests/analysis/fixture_sdk)
+  add_custom_target(cpp-static-analysis
+    COMMAND /usr/bin/python3 "${PROJECT_SOURCE_DIR}/tools/analyze.py" "$ENV{UOS_CPP_TOOLCHAIN_DIR}" pi-release
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/.."
+    VERBATIM)
+endif()
 if(UOS_SANITIZE)
   target_compile_options(protocol_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
   target_link_options(protocol_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
