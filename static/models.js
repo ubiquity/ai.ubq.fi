@@ -1,4 +1,4 @@
-import { toast } from "./toast.js?v=20260903-toast-v1";
+import { toast } from "./toast.js?v=passport-design-20260922";
 
 const summary = document.querySelector("[data-source-summary]");
 const list = document.querySelector("[data-model-list]");
@@ -60,11 +60,23 @@ const positiveTokenCount = (value) =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 
 let catalog = [];
+// The list is empty while the catalog loads, then ready, empty, or error. Typing during the
+// load must not replace the live loading status with a false empty result.
+let catalogReady = false;
 const assignCatalog = (next) => {
   catalog = next;
+  catalogReady = true;
+};
+
+const renderMessage = (message) => {
+  const paragraph = document.createElement("p");
+  paragraph.dataset.empty = "";
+  paragraph.textContent = message;
+  list.replaceChildren(paragraph);
 };
 
 const render = () => {
+  if (!catalogReady) return;
   const query = search.value.trim().toLowerCase();
   const visible = catalog.filter((model) => {
     const reasoning = reasoningFor(model);
@@ -84,6 +96,12 @@ const render = () => {
       contextSearch.includes(query);
   });
   count.textContent = `${visible.length} cataloged model${visible.length === 1 ? "" : "s"}`;
+  if (!visible.length) {
+    list.dataset.state = "empty";
+    renderMessage(query ? `No models match “${search.value.trim()}”.` : "The catalog has no models to show.");
+    return;
+  }
+  list.removeAttribute("data-state");
   list.replaceChildren(...visible.map((model) => {
     const article = document.createElement("article");
     const heading = document.createElement("h2");
@@ -176,9 +194,9 @@ try {
   );
   render();
 } catch (error) {
+  const message = error instanceof Error ? error.message : "Unable to load models.";
   count.textContent = "Catalog unavailable";
-  list.textContent = error instanceof Error ? error.message : "Unable to load models.";
-  toast.error("Catalog unavailable", {
-    description: error instanceof Error ? error.message : "Unable to load models.",
-  });
+  list.dataset.state = "error";
+  list.textContent = message;
+  toast.error("Catalog unavailable", { description: message });
 }

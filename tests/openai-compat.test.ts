@@ -14626,11 +14626,15 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       assert.equal(response.status, 200);
       assert.equal(upstreamCalls.length, 1);
       assert.equal(upstreamCalls[0].url, DEEPSEEK_CHAT_COMPLETIONS_URL);
+      const forwardedSystemContent = (upstreamCalls[0].body.messages as { role: string; content: unknown }[])[0].content;
+      assert.ok(typeof forwardedSystemContent === "string", "the forwarded system content must be a string");
+      assert.ok(forwardedSystemContent.startsWith("Be terse.\n\n"), "the forwarded system content must keep the caller instructions");
+      assert.ok(forwardedSystemContent.length > "Be terse.\n\n".length, "the forwarded system content must append nonempty continuation guidance");
       assert.deepEqual(upstreamCalls[0].body, {
         model: DEEPSEEK_FLASH_MODEL,
         stream: false,
         messages: [
-          { role: "system", content: "Be terse." },
+          { role: "system", content: forwardedSystemContent },
           { role: "user", content: "what time is it?" },
           // The provider requires replayed reasoning on a tool-bearing request, so
           // a historical tool turn without captured reasoning carries an empty string.

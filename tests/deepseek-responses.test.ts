@@ -112,7 +112,11 @@ Deno.test("deepseek responses: flattens namespaced tools and drops what the API 
   assert.equal(body.reasoning_effort, "none");
   assert.deepEqual(body.response_format, { type: "json_object" });
   assert.equal(body.parallel_tool_calls, false);
-  assert.deepEqual(body.messages, [{ role: "user", content: "hi" }]);
+  // A tool-bearing request carries the added continuation guidance, so the
+  // caller's history is compared from after that system message.
+  const [guidance, ...history] = body.messages as Record<string, unknown>[];
+  assert.equal(guidance.role, "system");
+  assert.deepEqual(history, [{ role: "user", content: "hi" }]);
   const tools = body.tools as { function: { name: string } }[];
   assert.deepEqual(
     tools.map((tool) => tool.function.name),
@@ -140,7 +144,9 @@ Deno.test("deepseek responses: replays reasoning on tool turns because the provi
     false
   );
   assert.equal(withoutReasoning.ok, true);
-  assert.deepEqual(withoutReasoning.value.body.messages, [
+  const [guidance, ...history] = withoutReasoning.value.body.messages as Record<string, unknown>[];
+  assert.equal(guidance.role, "system");
+  assert.deepEqual(history, [
     { role: "user", content: "run echo hi" },
     {
       role: "assistant",
@@ -171,7 +177,8 @@ Deno.test("deepseek responses: fills reasoning on every assistant turn after the
     false
   );
   assert.equal(body.ok, true);
-  const messages = body.value.body.messages as Record<string, unknown>[];
+  const [guidance, ...messages] = body.value.body.messages as Record<string, unknown>[];
+  assert.equal(guidance.role, "system");
   assert.deepEqual(messages, [
     { role: "user", content: "list files" },
     { role: "assistant", content: "Let me look.", reasoning_content: "" },
@@ -202,7 +209,13 @@ Deno.test("deepseek responses: an assistant turn before the last user message ke
   );
   assert.equal(body.ok, true);
   const messages = body.value.body.messages as Record<string, unknown>[];
-  assert.equal("reasoning_content" in messages[1], false);
+  assert.equal(messages[0].role, "system");
+  // The guidance system message shifts positions, so the replayed assistant
+  // turn is identified by role rather than by a fixed index.
+  const assistant = messages.find((message) => message.role === "assistant");
+  assert.ok(assistant);
+  assert.equal(assistant.content, "Let me look.");
+  assert.equal("reasoning_content" in assistant, false);
 });
 
 Deno.test("deepseek responses: carries the client's echoed reasoning onto its assistant turn", () => {
@@ -228,8 +241,57 @@ Deno.test("deepseek responses: carries the client's echoed reasoning onto its as
   );
   assert.equal(withReasoning.ok, true);
   const messages = withReasoning.value.body.messages as Record<string, unknown>[];
-  assert.equal(messages[1].reasoning_content, "I should call the shell tool.");
-  assert.deepEqual(messages[1].tool_calls, [{ id: "call_1", type: "function", function: { name: "shell", arguments: '{"cmd":"echo hi"}' } }]);
+  assert.equal(messages[0].role, "system");
+  // The assistant turn is located by role because the added guidance system
+  // message shifted the fixed index this test used to rely on.
+  const assistant = messages.find((message) => message.role === "assistant");
+  assert.ok(assistant);
+  assert.equal(assistant.content, null);
+  assert.equal(assistant.reasoning_content, "I should call the shell tool.");
+  assert.deepEqual(assistant.tool_calls, [{ id: "call_1", type: "function", function: { name: "shell", arguments: '{"cmd":"echo hi"}' } }]);
+});
+
+Deno.test("deepseek responses: continuation guidance never rewrites caller instructions or history", () => {
+  const instructions = "Caller rules.";
+  const guided = toDeepSeekResponsesChatBody(
+    {
+      instructions,
+      input: "hi",
+      tools: [{ type: "function", name: "shell", parameters: { type: "object" } }],
+    },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(guided.ok, true);
+  const [guidance, ...history] = guided.value.body.messages as Record<string, unknown>[];
+  // The guidance extends the caller's own system message instead of replacing it.
+  assert.equal(guidance.role, "system");
+  assert.equal(String(guidance.content).startsWith(`${instructions}\n\n`), true);
+  assert.equal(String(guidance.content).length > instructions.length + 2, true);
+  assert.deepEqual(history, [{ role: "user", content: "hi" }]);
+
+  // A hard no-tools request and a request whose only tool has no executable
+  // mapping keep the caller's instructions and history exactly as sent.
+  const untouched = [
+    toDeepSeekResponsesChatBody(
+      {
+        instructions,
+        input: "hi",
+        tool_choice: "none",
+        tools: [{ type: "function", name: "shell", parameters: { type: "object" } }],
+      },
+      "deepseek-flash",
+      false
+    ),
+    toDeepSeekResponsesChatBody({ instructions, input: "hi", tools: [{ type: "web_search" }] }, "deepseek-flash", false),
+  ];
+  for (const result of untouched) {
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.value.body.messages, [
+      { role: "system", content: instructions },
+      { role: "user", content: "hi" },
+    ]);
+  }
 });
 
 Deno.test("deepseek responses: a reasoning item also rides a plain assistant message", () => {
