@@ -422,6 +422,7 @@ const handleTerminalRoute = async (
     try {
       return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
         route,
+        request: req,
         telemetryResponse: response,
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
         requestStartedAtMs,

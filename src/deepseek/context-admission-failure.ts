@@ -6,7 +6,7 @@ import type { DeepSeekResponsesFailure } from "./responses.ts";
 const localContextFailures = new WeakSet<Response>();
 
 /** Encoding selection only: this metadata grants no authority or validation bypass. */
-const isCodexNativeRequest = (req: Request): boolean => {
+export const isCodexNativeRequest = (req: Request): boolean => {
   const metadata = parseTurnMetadata(req.headers.get("x-codex-turn-metadata"));
   return metadata !== null && ["session_id", "thread_id", "turn_id"].every((key) => typeof metadata[key] === "string" && metadata[key].trim().length > 0);
 };

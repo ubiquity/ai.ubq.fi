@@ -1,6 +1,7 @@
 // Terminal request logging and delivery decoration, split out of src/handler.ts.
 
 import { trackRequestTask } from "#http";
+import { originalNativeHttpFailure } from "../responses-native-headers.ts";
 
 import type { BodyOutcome, DeliveryOutcome, RequestDeliveryInfo, SentinelBackgroundTaskRegistrar } from "./http.ts";
 import { scheduleSentinelBackgroundTask, shouldSignalSentinelProviderDegradation } from "./http.ts";
@@ -40,6 +41,7 @@ const logTerminalRequest = async (
     downstreamDrainedAtMonotonicMs?: number;
     deliveryOutcome: DeliveryOutcome;
     requestId: string;
+    request?: Request;
     admissionStage?: TerminalAdmissionStage;
     recordCacheAnalytics?: typeof recordPromptCacheAnalytics;
     recordTelemetry?: typeof recordPromptCacheTelemetry;
@@ -60,6 +62,7 @@ const logTerminalRequest = async (
 ): Promise<void> => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
   const accountCohortId = getResponseAccountCohortId(input.telemetryResponse ?? input.response);
+  const nativeHttpFailure = originalNativeHttpFailure(input.request);
   const latencyMs = Math.max(0, Math.round(performance.now() - input.startedAtMonotonicMs));
   const downstreamDrainMs =
     telemetry?.stream === true &&
@@ -70,6 +73,7 @@ const logTerminalRequest = async (
       : null;
   const terminal = {
     request_id: input.requestId,
+    ...(nativeHttpFailure ? { native_http_failure: nativeHttpFailure } : {}),
     route: input.route,
     status: input.response.status,
     provider: telemetry?.provider ?? input.response.headers.get("x-uos-upstream") ?? "gateway",
@@ -262,6 +266,7 @@ export const withTerminalRequestLog = (
     telemetryResponse?: Response;
     startedAtMonotonicMs: number;
     requestId: string;
+    request?: Request;
     admissionStage?: TerminalAdmissionStage;
     onTerminal?: (outcome: "completed" | "incomplete", reason?: string) => Promise<void>;
     /**
