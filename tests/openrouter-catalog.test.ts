@@ -414,7 +414,7 @@ test("codex catalog: revalidation reapplies narrower OpenRouter windows to the s
       const first = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
       const firstModel = ((await first.json()) as { models: Record<string, unknown>[] }).models[0];
       assert.deepEqual([firstModel.context_window, firstModel.max_context_window], [1_050_000, 1_050_000]);
-      assert.equal(firstModel.auto_compact_token_limit, 892_500);
+      assert.equal(firstModel.auto_compact_token_limit, 945_000);
       await waitForCatalogLeaseRelease(kvStore, keyToString([...CODEX_CATALOG_LEASE_PREFIX, "0.100.0"]));
       assert.equal(upstreamIfNoneMatch, '"catalog-etag"');
       const loaded = await loadCatalog(kvStub, "0.100.0", AUTH_GENERATION, now);
@@ -433,7 +433,7 @@ test("codex catalog: revalidation reapplies narrower OpenRouter windows to the s
       const second = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
       const secondModel = ((await second.json()) as { models: Record<string, unknown>[] }).models[0];
       assert.deepEqual([secondModel.context_window, secondModel.max_context_window], [872_000, 872_000]);
-      assert.equal(secondModel.auto_compact_token_limit, 741_200);
+      assert.equal(secondModel.auto_compact_token_limit, 784_800);
     } finally {
       Date.now = originalNow;
       globalThis.fetch = originalFetch;
@@ -462,7 +462,7 @@ test("codex catalog: stored widened GPT rows carry the earliest source or policy
       assert.equal(payload.models.length, 2);
       for (const model of payload.models) {
         assert.equal(model.context_window, 1_050_000);
-        assert.equal(model.auto_compact_token_limit, sourceLimit === 200_000 ? sourceLimit : 892_500);
+        assert.equal(model.auto_compact_token_limit, sourceLimit === 200_000 ? sourceLimit : 945_000);
       }
       const loaded = await loadCatalog(kvStub, "0.100.0", AUTH_GENERATION, Date.now());
       assert.ok(loaded);
@@ -505,7 +505,7 @@ test("codex catalog: existing cached widened rows acquire policy limits before c
       const models = (JSON.parse(body) as { models: Record<string, unknown>[] }).models;
       assert.deepEqual(
         models.map((model) => model.auto_compact_token_limit),
-        [892_500, 892_500]
+        [945_000, 945_000]
       );
       const newTag = `"uos-catalog-${createHash("sha256").update(body).digest("hex").slice(0, 32)}"`;
       assert.equal(response.headers.get("ETag"), newTag);
