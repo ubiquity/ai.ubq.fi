@@ -380,7 +380,7 @@ test("admin analytics view places capacity history before current providers", ()
   assert.match(adminHtml, /id="view-tab-analytics"[\s\S]*?>\s*Analytics\s*</);
   assert.doesNotMatch(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
   assert.match(adminHtml, /admin\.css\?v=claude-usage-refresh-20261025/);
-  assert.match(adminHtml, /admin\.js\?v=claude-usage-direct-20261025/);
+  assert.match(adminHtml, /admin\.js\?v=gemini-quota-20261118/);
   assert.match(adminScript, /endpoints\.has\("\/v1\/decisions"\)/);
   assert.match(adminScript, /toLocaleString\(undefined,/);
   assert.match(adminScript, /timeZoneName: "short"/);
