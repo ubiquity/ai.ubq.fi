@@ -25,7 +25,12 @@ export const DEEPSEEK_WATERFALL_DESCRIPTION =
   "Latest DeepSeek Flash waterfall: official DeepSeek, OpenRouter, LithosAI, Surplus, and OpenLux. Each hop uses the provider's latest alias and falls back only on infrastructure or serving failures.";
 export const DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS = 1_048_576;
 export const DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
-export const DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT = 891_289;
+/** DeepSeek needs earlier compaction than the 85% generic default because the
+ * gateway admission estimator can reject its prompt before the raw window ends. */
+export const DEEPSEEK_WATERFALL_AUTO_COMPACT_PERCENT = 75;
+export const DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT = Math.floor(
+  (DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS * DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT * DEEPSEEK_WATERFALL_AUTO_COMPACT_PERCENT) / 10_000
+);
 /** Stable creation instant for catalogue rows (2026-10-06T00:00:00Z). */
 export const DEEPSEEK_WATERFALL_CREATED = 1_791_244_800;
 export const DEEPSEEK_WATERFALL_REASONING_LEVELS = ["low", "high", "max"] as const;

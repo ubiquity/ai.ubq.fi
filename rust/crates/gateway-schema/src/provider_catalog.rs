@@ -18,7 +18,7 @@ pub fn provider_hint(provider: &str, id: &ModelId) -> MetadataHint {
             )
         },
         "ubiquity" => MetadataHint {
-            auto_compact_token_limit_tokens: Some(891_289),
+            auto_compact_token_limit_tokens: Some(747_110),
             effective_context_window_percent: Some(95),
             ..MetadataHint::provider(1_048_576, &["low", "high", "max"], "high")
         },
