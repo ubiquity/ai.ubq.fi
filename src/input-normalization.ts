@@ -18,7 +18,6 @@ import {
 } from "./deepseek/index.ts";
 import { LITHOS_DEFAULT_REASONING_EFFORT, LITHOS_DISPLAY_NAMES, LITHOS_MODEL_IDS, LITHOS_REASONING_LEVELS, readLithosApiKey } from "./provider/lithos.ts";
 import {
-  DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT,
   DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
   DEEPSEEK_WATERFALL_CREATED,
   DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
@@ -32,6 +31,7 @@ import {
 import { openRouterModelEndpointPaths, openRouterModelsSnapshot } from "./models/openrouter-models.ts";
 import { readOpenRouterApiKey } from "./provider/openrouter.ts";
 import { normalizePromptCacheCapabilities } from "./models/codex-models.ts";
+import { deriveAutoCompactTokenLimit } from "./recent-model-context.ts";
 import { codexSnapshotMetadataHint, codexSubscriptionMetadataHint, resolveModelMetadata } from "./models/metadata.ts";
 import { getString, isRecord } from "./utils.ts";
 import type { MessageContentItem, PromptCacheBreakpoint, ResponseInputItem, ResponseMessageItem } from "./types.ts";
@@ -518,7 +518,7 @@ const configuredDeepSeekWaterfallModelCapabilities = (): Record<string, unknown>
       reasoning_effort_wire_map: {},
       context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
       max_context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
-      auto_compact_token_limit_tokens: DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT,
+      auto_compact_token_limit_tokens: deriveAutoCompactTokenLimit(DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS),
       effective_context_window_percent: DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
       // The window and tiers are the intersection measured across the candidate
       // providers; the source labels keep the admin surfaces honest about it.
