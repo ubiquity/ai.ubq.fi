@@ -133,11 +133,12 @@ const prepareResponsesRequest = async (
   req: Request,
   rawRecord: Record<string, unknown>,
   rawBody: ResponsesRequest,
-  usageContext: UsageContext | undefined
+  usageContext: UsageContext | undefined,
+  options?: ResponsesTailOptions
 ): Promise<ResponsesStep<ResponsesHandlerState>> => {
   const settings = resolveResponsesStreamSettings(rawRecord, rawBody);
   if (!settings.ok) return settings;
-  const modelResolution = await resolveResponsesModel(rawRecord, usageContext);
+  const modelResolution = await resolveResponsesModel(rawRecord, usageContext, options);
   if (!modelResolution.ok) return modelResolution;
   const input = normalizeResponsesInput(rawBody.input);
   if (!input.ok) return input;
@@ -299,6 +300,7 @@ const runCodexPrimaryAttempt = async (state: ResponsesHandlerState, options?: Re
       rejectPresemanticFailureTerminal: state.apiKey !== null,
       releaseOnProgress: state.clientWantsStream,
       allowedPaidProviders: options?.allowedPaidProviders ?? null,
+      deepSeekWaterfallPaidHop: options?.deepSeekWaterfallPaidHop ?? null,
     });
     if (result.kind === "ready") {
       completeCodexPrimaryAttempt(state, result.value);
@@ -397,6 +399,7 @@ const runResponsesRecoveryAttempt = async (
       rejectPresemanticFailureTerminal: true,
       releaseOnProgress: state.clientWantsStream,
       allowedPaidProviders: options?.allowedPaidProviders ?? null,
+      deepSeekWaterfallPaidHop: options?.deepSeekWaterfallPaidHop ?? null,
     });
   } catch (error) {
     await releaseResponsesRecoveryProbe(state, recoveryProbe);
@@ -476,7 +479,10 @@ const runRemovedProviderAttempt = async (state: ResponsesHandlerState, apiKey: s
  * absent keeps the routing layer's fixed Surplus -> Metered cost order for
  * every other caller.
  */
-type ResponsesTailOptions = Readonly<{ allowedPaidProviders?: readonly ("metered" | "surplus")[] | null }>;
+type ResponsesTailOptions = Readonly<{
+  allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+  deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
+}>;
 
 const runResponsesFailover = async (state: ResponsesHandlerState, options?: ResponsesTailOptions): Promise<Response | null> => {
   try {
@@ -846,7 +852,7 @@ export const runOrdinaryResponsesTail = async (
   usageContext?: UsageContext,
   options?: ResponsesTailOptions
 ): Promise<Response> => {
-  const prepared = await prepareResponsesRequest(req, rawRecord, rawBody, usageContext);
+  const prepared = await prepareResponsesRequest(req, rawRecord, rawBody, usageContext, options);
   if (!prepared.ok) return prepared.response;
   const failoverResponse = await runResponsesFailover(prepared.value, options);
   if (failoverResponse) return failoverResponse;

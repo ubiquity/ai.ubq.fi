@@ -503,16 +503,18 @@ const handleTerminalRoute = async (
     // (for example a decision state that stays over its cap after every
     // reduction stage, or a decision failure), fall through to the ordinary
     // provider route so the client still receives a compaction instead of a
-    // 502. The normal terminal wrapper keeps cancellation, settlement and
-    // terminal logging ownership exactly as the ordinary route does.
-    if (isJevCompactionRequest(req)) {
-      const response = await executeInference(() => handleJevResponsesCompaction(req.clone(), { signal: callerSignal }));
-      if (response.ok || callerSignal?.aborted) {
-        return await finishTerminalResponse(response, "responses", true, true);
+    // 502. Both attempts share one inference lifetime: settling a failed local
+    // compaction first would release the reservation needed by every fallback
+    // provider before any of them can dispatch.
+    const response = await executeInference(async () => {
+      if (isJevCompactionRequest(req)) {
+        const compaction = await handleJevResponsesCompaction(req.clone(), { signal: callerSignal });
+        if (compaction.ok || callerSignal.aborted) return compaction;
+        await compaction.body?.cancel();
+        console.warn("[ai.ubq.fi] jev_compaction_fallback", JSON.stringify({ status: compaction.status }));
       }
-      console.warn("[ai.ubq.fi] jev_compaction_fallback", JSON.stringify({ status: response.status }));
-    }
-    const response = await executeInference(() => handleResponses(req, usageContext));
+      return await handleResponses(req, usageContext);
+    });
     return await finishTerminalResponse(response, "responses", true, true);
   };
   const runSystemOneRoute = async (): Promise<Response> => {

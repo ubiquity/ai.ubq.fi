@@ -210,6 +210,7 @@ const replenishPaidFallbackCatalogs = async (
     model: string;
     selection: ProviderSelection | null;
     allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+    deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
   }>,
   fallbackSignal: AbortSignal | undefined
 ): Promise<
@@ -249,6 +250,7 @@ const replenishPaidFallbackCatalogs = async (
     model: routingInput.model,
     selection: routingInput.selection,
     allowedPaidProviders: routingInput.allowedPaidProviders ?? null,
+    deepSeekWaterfallPaidHop: routingInput.deepSeekWaterfallPaidHop ?? null,
   });
   if (nextRouting.paidProviders.length) refreshStalePaidCatalogsInBackground(nextMeteredCatalog, nextSurplusCatalog);
   return { meteredCatalog: nextMeteredCatalog, surplusCatalog: nextSurplusCatalog, routing: nextRouting };
@@ -654,6 +656,7 @@ export const fetchResponsesWithPaidFallback = async (
      * and ledger settlement. Null or absent keeps the fixed cost order.
      */
     allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+    deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
   }>
 ): Promise<RoutedResponsesUpstream> => {
   const fallbackSignal = options.fallbackSignal ?? options.signal;
@@ -726,6 +729,7 @@ export const fetchResponsesWithPaidFallback = async (
       model: options.model,
       selection: catalogs.selection,
       allowedPaidProviders: options.allowedPaidProviders ?? null,
+      deepSeekWaterfallPaidHop: options.deepSeekWaterfallPaidHop ?? null,
     },
     fallbackSignal
   );

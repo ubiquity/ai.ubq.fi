@@ -479,6 +479,7 @@ type PrimaryResponsesOptions = Readonly<{
    * caller.
    */
   allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+  deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
 }>;
 
 const isRetryablePrimaryFetchFailure = (error: unknown): error is CodexError =>
@@ -580,6 +581,7 @@ export const fetchAndPreparePrimaryResponses = async (
       signal: deadline.signal,
       fallbackSignal: options.fallbackSignal,
       allowedPaidProviders: options.allowedPaidProviders ?? null,
+      deepSeekWaterfallPaidHop: options.deepSeekWaterfallPaidHop ?? null,
     });
   } catch (error) {
     deadline.clear();

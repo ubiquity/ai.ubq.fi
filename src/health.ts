@@ -14,6 +14,7 @@ import {
   getOpenRouterProviderHealth,
   getSurplusProviderHealth,
   PROVIDER_HEALTH_STALE_AFTER_MS,
+  type ProviderHealthView,
   type ProviderHealthState,
 } from "./provider/health.ts";
 import { decodeBase64ToString } from "./utils.ts";
@@ -188,6 +189,30 @@ const aggregateProviderStates = (states: readonly ProviderHealthState[]): Provid
   return "degraded";
 };
 
+const unknownProviderHealth = (): ProviderHealthView => ({
+  state: "unknown",
+  stale: null,
+  last_event: null,
+  last_status: null,
+  last_observed_at_ms: null,
+  last_provider_request_id: null,
+  last_provider_request_id_at_ms: null,
+  last_success_at_ms: null,
+  last_401_at_ms: null,
+  last_429_at_ms: null,
+  last_error_at_ms: null,
+  last_refresh_at_ms: null,
+  last_refresh_succeeded: null,
+});
+
+const providerHealthOrUnknown = async (health: Promise<ProviderHealthView>): Promise<ProviderHealthView> => {
+  try {
+    return await health;
+  } catch {
+    return unknownProviderHealth();
+  }
+};
+
 const quotaView = (snapshot: MeteredQuotaSnapshot | null) => {
   if (!snapshot) {
     return {
@@ -256,14 +281,14 @@ export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ inclu
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
   const [cerebrasHealth, codexHealth, deepseekHealth, lithosHealth, meteredHealth, openRouterHealth, surplusHealth, meteredQuota] = await Promise.all([
-    getCerebrasProviderHealth(),
-    Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
-    getDeepSeekProviderHealth(),
-    getLithosProviderHealth(),
-    getMeteredProviderHealth(),
-    getOpenRouterProviderHealth(),
-    getSurplusProviderHealth(),
-    getCachedConfiguredMeteredQuotaSnapshot(),
+    providerHealthOrUnknown(getCerebrasProviderHealth()),
+    Promise.all(context.account_ids.map((accountId) => providerHealthOrUnknown(getCodexProviderHealth(accountId)))),
+    providerHealthOrUnknown(getDeepSeekProviderHealth()),
+    providerHealthOrUnknown(getLithosProviderHealth()),
+    providerHealthOrUnknown(getMeteredProviderHealth()),
+    providerHealthOrUnknown(getOpenRouterProviderHealth()),
+    providerHealthOrUnknown(getSurplusProviderHealth()),
+    getCachedConfiguredMeteredQuotaSnapshot().catch(() => null),
   ]);
   const codexAccounts = auth.accounts.map((account, index) => ({
     ...account,

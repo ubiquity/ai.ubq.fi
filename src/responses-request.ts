@@ -6,6 +6,10 @@ import { openaiError } from "./http.ts";
 import { type StreamDeadline } from "./inference-deadline.ts";
 import { readJsonBody } from "./request.ts";
 import { type RemovedProviderCircuitProbe } from "./provider/removed-provider-circuit.ts";
+import { fetchMeteredModels } from "./provider/metered.ts";
+import { loadProviderSelectionCached } from "./provider/selection.ts";
+import { resolvePaidRoutingState } from "./paid-fallback/health.ts";
+import { DEEPSEEK_WATERFALL_PAID_MODEL_ID } from "./deepseek/waterfall.ts";
 import { isGatewayFailoverWarningItem } from "./responses-failover-stream.ts";
 import { getString, isRecord } from "./utils.ts";
 import type { MessageContentItem, ResponseInputItem, ResponsesRequest } from "./types.ts";
@@ -198,7 +202,11 @@ export const resolveResponsesStreamSettings = (
 
 export const resolveResponsesModel = async (
   rawRecord: Record<string, unknown>,
-  usageContext: UsageContext | undefined
+  usageContext: UsageContext | undefined,
+  options?: Readonly<{
+    allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+    deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
+  }>
 ): Promise<ResponsesStep<{ modelRaw: string; model: string; modelMetadata: CodexModelMetadata }>> => {
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
   const rawModelValue = rawRecord.model;
@@ -221,7 +229,24 @@ export const resolveResponsesModel = async (
   // route untouched so existing Responses clients keep working; only the Chat
   // Completions route is redirected to the official provider.
   const modelMetadata = await getCodexModelMetadata(model, "responses");
-  const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
+  // Reuse the paid router's exact verified-hop gate before route availability
+  // rejects OpenLux's incomplete catalog. This internal context neither
+  // changes the public metadata nor authorizes a paid request by itself.
+  const verifiedOpenLuxResponses =
+    options?.deepSeekWaterfallPaidHop === "openlux" &&
+    model === DEEPSEEK_WATERFALL_PAID_MODEL_ID &&
+    resolvePaidRoutingState({
+      meteredCatalog: await fetchMeteredModels({ cachedOnly: true }),
+      surplusCatalog: null,
+      codexModelKnown: false,
+      endpointType: "openai-response",
+      requestUsesTools: false,
+      model,
+      selection: await loadProviderSelectionCached(),
+      allowedPaidProviders: options.allowedPaidProviders,
+      deepSeekWaterfallPaidHop: options.deepSeekWaterfallPaidHop,
+    }).paidProviders.includes("metered");
+  const modelAvailabilityError = verifiedOpenLuxResponses ? null : validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
   if (modelAvailabilityError) return { ok: false, response: modelAvailabilityError };
   const modelCapabilityError = temporaryFreeSurplusCapabilityError(model, rawRecord);
   if (modelCapabilityError) return { ok: false, response: modelCapabilityError };
