@@ -46,10 +46,10 @@ print(json.dumps({"selected":sys.executable,"base":sys._base_executable,"termina
   const facts = roles.map((path, index) => {
     const info = lstatSync(path);
     assert(info.isFile() && !info.isSymbolicLink() && info.uid === 0 && (info.mode & 0o777) === 0o755);
-    inspect(["/usr/bin/codesign", "--verify", "--strict", path]);
-    const identity = inspect(["/usr/bin/codesign", "--display", "--verbose=4", "-r-", path]);
     const expected = index === 0 ? "com.apple.dt.xcode_select.tool-shim-public" : "com.apple.python3";
-    assert(identity.includes('identifier "' + expected + '" and anchor apple'));
+    inspect(["/usr/bin/codesign", "--verify", "--strict", path]);
+    const identity = inspect(["/usr/bin/codesign", "--display", "--verbose=4", path]);
+    assert(identity.split("\n").includes("Identifier=" + expected) && identity.includes("Authority=Apple Root CA"));
     return { path, bytes: info.size, sha256: createHash("sha256").update(readFileSync(path)).digest("hex"), designated_identity: expected };
   });
   assert.equal(realpathSync(inspect(["/usr/bin/xcrun", "--find", "python3"]).trim()), canonical);
