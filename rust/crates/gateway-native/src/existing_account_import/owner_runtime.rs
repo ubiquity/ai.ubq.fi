@@ -27,10 +27,11 @@ use std::{
 const EPOCH: &str = ".uos-owner-runtime";
 const EPOCH_TEMP: &str = ".uos-owner-runtime.next";
 const EPOCH_LIMIT: u64 = 2048;
-const SANDBOX_SHA256S: [&str; 3] = [
+const SANDBOX_SHA256S: [&str; 4] = [
     "e3d7a792c58a5d3783d2f7274c82d70062393830d8cb1ded713ca554a470bd2f",
     "abc5bb136d6b5cce8fa85d789f78e3326c51ca60cae637b2064adfb67a1dcd9a",
     "58839ef01b4eef8aac0d2aa8f9d1c074ae45aafe3533965b030672450064acc8",
+    "449b1b7456d11ca74b653edf1785c7a912393ae7192fb99cca5806943f75d872",
 ];
 pub(super) fn verified_tool(path: &Path, ds: &[&str]) -> Result<PinnedExecutable, GatewayError> {
     ds.iter()
@@ -505,7 +506,6 @@ fn read_epoch(directory: &File) -> Result<Option<Epoch>, GatewayError> {
     }
     serde_json::from_slice(&bytes).map(Some).map_err(|_| fail())
 }
-
 #[cfg(all(test, target_os = "macos"))]
 pub(super) fn fixture_stop(
     runtime: &mut OwnedRuntime,
@@ -513,16 +513,16 @@ pub(super) fn fixture_stop(
 ) -> Result<(), GatewayError> {
     runtime.stop_owned(deadline)
 }
-
 #[cfg(all(test, target_os = "macos"))]
 #[test]
-fn fixture_sandbox_keeps_two_exact_identities_and_full_fixed_executable_verification() {
+fn fixture_sandbox_keeps_four_exact_identities_and_full_fixed_executable_verification() {
     assert_eq!(
         SANDBOX_SHA256S,
         [
             "e3d7a792c58a5d3783d2f7274c82d70062393830d8cb1ded713ca554a470bd2f",
             "abc5bb136d6b5cce8fa85d789f78e3326c51ca60cae637b2064adfb67a1dcd9a",
             "58839ef01b4eef8aac0d2aa8f9d1c074ae45aafe3533965b030672450064acc8",
+            "449b1b7456d11ca74b653edf1785c7a912393ae7192fb99cca5806943f75d872",
         ]
     );
     for approved in SANDBOX_SHA256S {

@@ -16,16 +16,16 @@ use std::{
     time::Duration,
 };
 #[cfg(target_os = "macos")]
-const LS_SHA256S: [&str; 3] = [
+const LS_SHA256S: [&str; 4] = [
     "a1cb6fd856f9414ada4cc9682f137c343261d777b8374df1abac7a931fb66f7a",
     "24752389e1d97c9555dd153b644902fadd460dfbe1a166251876c67bbacb0810",
     "13f44bfe1c4af602da4465c834dbe7b16a5441ccbd843178b36116ee23422bfb",
+    "28b08eec0c290c130540ef76ee304e7560d92b2162e3a64888df5375a898637e",
 ];
 #[cfg(target_os = "macos")]
 const OUTPUT_LIMIT: usize = 1024;
 #[cfg(target_os = "macos")]
 const HEADER_LIMIT: usize = 256;
-
 /// The sole parameterless helper entry. stdin must already be an anchored directory.
 pub fn entry() -> Result<(), GatewayError> {
     if std::env::args_os().len() != 1 {
@@ -57,7 +57,6 @@ pub fn entry() -> Result<(), GatewayError> {
         Err(fail())
     }
 }
-
 pub(super) fn observe(
     directory: &File,
     inspector: &PinnedExecutable,
@@ -226,20 +225,21 @@ pub(super) fn parse(output: &[u8], facts: &Facts) -> Result<(), GatewayError> {
     }
     Ok(())
 }
-
 #[cfg(all(test, target_os = "macos"))]
 mod pin_tests {
     use super::LS_SHA256S;
     #[test]
-    fn only_two_exact_reviewed_readonly_os_tool_digests_are_eligible() {
+    fn only_four_exact_reviewed_readonly_os_tool_digests_are_eligible() {
         let local = "a1cb6fd856f9414ada4cc9682f137c343261d777b8374df1abac7a931fb66f7a";
         let hosted = "24752389e1d97c9555dd153b644902fadd460dfbe1a166251876c67bbacb0810";
         let macos_27 = "13f44bfe1c4af602da4465c834dbe7b16a5441ccbd843178b36116ee23422bfb";
-        assert_eq!(LS_SHA256S, [local, hosted, macos_27]);
+        let macos_26_7_2 = "28b08eec0c290c130540ef76ee304e7560d92b2162e3a64888df5375a898637e";
+        assert_eq!(LS_SHA256S, [local, hosted, macos_27, macos_26_7_2]);
         let accepts = |digest: &str| LS_SHA256S.contains(&digest);
         assert!(accepts(local));
         assert!(accepts(hosted));
         assert!(accepts(macos_27));
+        assert!(accepts(macos_26_7_2));
         let mut one_byte_wrong = hosted.to_owned();
         one_byte_wrong.replace_range(63..64, "1");
         assert!(!accepts(&one_byte_wrong));
