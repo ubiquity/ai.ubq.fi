@@ -58,7 +58,18 @@ namespace uos::authority::native_codex_mutations {
   std::optional<CodexAccountRoutingState> releaseCodexRoutingProbe(const CodexAccountRoutingState& state, const CodexRoutingAccount& account, double updatedAtMs) {
     const CodexRoutingSlot current = slotFor(state, account);
     if (!slotMatchesCodexRoutingAccount(current, account) || !probeLeaseMatchesCodexRoutingAccount(current, account)) return std::nullopt;
-    CodexRoutingSlot next = routingProbeCircuit(account) == "quota" ? releaseQuotaClassProbe(current, quotaClass(account.requestedModel), requestedModelView(account.requestedModel)) : current;
+    CodexRoutingSlot next = current;
+    if (routingProbeCircuit(account) == "quota") {
+      const CodexQuotaClass requested = quotaClass(account.requestedModel);
+      if (next.probe_lease && !current.banked_reset_recovery_probe_pending && requested != "unknown" &&
+          next.probe_lease->quota_class.toOptional() == requested &&
+          quotaBlockKeyForClass(withLegacyQuotaClassMap(current), requested) == "unknown") {
+        // Resolve a formerly slot-wide lease before releasing it. The effective
+        // unknown block is eligible for this alias only when marked as migrated.
+        next.probe_lease->quota_class = CodexQuotaClass("unknown");
+      }
+      next = releaseQuotaClassProbe(next, requested, requestedModelView(account.requestedModel));
+    }
     next.account_id_hash = account.accountIdHash;
     next.upstream_timeout_blocked_until_ms =
       routingProbeCircuit(account) == "upstream_timeout" ? rt::Nullable<double>(nullptr) : current.upstream_timeout_blocked_until_ms;
@@ -74,7 +85,8 @@ namespace uos::authority::native_codex_mutations {
       if (routingProbeCircuit(account) != "quota") return current;
       const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);
       const auto claimed = current.probe_lease->quota_class.toOptional();
-      const auto releasedKey = claimed ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
+      const bool namedClaim = claimed && isCodexCapacityModelScope(*claimed);
+      const auto releasedKey = namedClaim ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
       return withoutQuotaClass(classAwareCurrent, releasedKey);
     }();
     const bool hasOtherQuotaClasses = released.quota_blocks_by_class && released.quota_blocks_by_class->size() > 0;
@@ -134,10 +146,13 @@ namespace uos::authority::native_codex_mutations {
     const double nextGeneration = recoveryLease.generation;
     const CodexRoutingSlot classAwareCurrent = withLegacyQuotaClassMap(current);
     const auto claimed = recoveryLease.quota_class.toOptional();
-    const auto releasedKey = claimed ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
-    const auto* releasedClassBlock = classAwareCurrent.quota_blocks_by_class ? classAwareCurrent.quota_blocks_by_class->get(releasedKey) : nullptr;
-    const auto legacyBlock = !claimed && !releasedClassBlock ? quotaBlockForClass(classAwareCurrent, requestedQuotaClass) : std::nullopt;
-    if (legacyBlock) releasedClassBlock = &*legacyBlock;
+    // A named lease pins its exact window. A class lease can cover a migrated slot-wide block.
+    const bool namedClaim = claimed && isCodexCapacityModelScope(*claimed);
+    const auto releasedKey = namedClaim ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
+    const auto* releasedClassBlock = namedClaim && classAwareCurrent.quota_blocks_by_class
+      ? classAwareCurrent.quota_blocks_by_class->get(releasedKey) : nullptr;
+    const auto classBlock = namedClaim ? std::nullopt : quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
+    if (classBlock) releasedClassBlock = &*classBlock;
     const CodexRoutingSlot released = withoutQuotaClass(classAwareCurrent, releasedKey);
     CodexRoutingSlot recovered = released;
     // The verified reset makes normal routing eligible, but an absolute
