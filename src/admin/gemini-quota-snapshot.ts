@@ -74,7 +74,8 @@ const projectQuota = (plan: unknown, quota: unknown): GeminiQuotaObservation => 
 
 export const projectAntigravityStatusLine = (input: unknown): GeminiQuotaObservation => {
   if (!isObject(input) || input.product !== "antigravity") return { status: "invalid_event" };
-  if (input.agent_state === "authenticating" || !hasSignedInEmail(input.email)) return { status: "signed_out" };
+  // The current event's email establishes sign-in even while the CLI is authenticating.
+  if (!hasSignedInEmail(input.email)) return { status: "signed_out" };
   return projectQuota(input.plan_tier, input.quota ?? {});
 };
 
