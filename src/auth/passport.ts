@@ -1,11 +1,20 @@
 import { getBearerToken, openaiError } from "../http.ts";
 import { base64UrlDecode, base64UrlEncode, isRecord } from "../utils.ts";
+import {
+  createPassportSession,
+  getPassportSession,
+  isPersistentPassportSession,
+  PASSPORT_COOKIE_MAX_AGE_SECONDS,
+  PassportSessionError,
+  revokePassportSession,
+} from "./passport-sessions.ts";
 
 const ISSUER = "https://passport.ubq.fi";
 const ORIGIN = "https://ai.ubq.fi";
 const CALLBACK = `${ORIGIN}/auth/callback`;
 const SESSION_COOKIE = "__Host-uos_ai_passport_session";
 const STATE_COOKIE = "__Host-uos_ai_passport_state";
+const VERIFIER_COOKIE = "__Host-uos_ai_passport_verifier";
 const JWKS_TTL_MS = 300_000;
 const COOKIE_ATTRIBUTES = "; Path=/; HttpOnly; Secure; SameSite=Lax";
 
@@ -33,8 +42,8 @@ export type PassportAuthMethod = Readonly<{
     is_admin: boolean;
     scopes: readonly string[];
     auth: string;
-    exp: number;
-    jti: string;
+    exp: number | null;
+    jti: string | null;
     agent_token_id: string | null;
   }>;
 }>;
@@ -55,21 +64,26 @@ class PassportError extends Error {
 }
 
 const errorResponse = (error: unknown): Response => {
-  const status = error instanceof PassportError ? error.status : 401;
-  return openaiError(
-    status,
-    status === 502 ? "Passport verification is unavailable." : "Unauthorized",
-    status === 502 ? "passport_unavailable" : "invalid_api_key",
-    {
-      headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
-    }
-  );
+  const status = error instanceof PassportError || error instanceof PassportSessionError ? error.status : 401;
+  const unavailable = status === 502 || status === 503;
+  return openaiError(status, unavailable ? "Passport verification is unavailable." : "Unauthorized", unavailable ? "passport_unavailable" : "invalid_api_key", {
+    headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
+  });
 };
 
 const cookie = (req: Request, name: string): string | null => {
   const values = (req.headers.get("cookie") ?? "").split(";").map((part) => part.trim());
   const matches = values.filter((part) => part.startsWith(`${name}=`));
   return matches.length === 1 ? matches[0].slice(name.length + 1) : null;
+};
+
+const sessionCookie = (token: string): string => `${SESSION_COOKIE}=${token}; Max-Age=${PASSPORT_COOKIE_MAX_AGE_SECONDS}${COOKIE_ATTRIBUTES}`;
+
+/** Renew browser storage only after the existing auth-report route succeeds. */
+export const renewPassportSessionCookie = (req: Request, response: Response): Response => {
+  const token = cookie(req, SESSION_COOKIE);
+  if (response.ok && token && isPersistentPassportSession(token)) response.headers.append("Set-Cookie", sessionCookie(token));
+  return response;
 };
 
 // node:http receives Caddy's HTTP request with the original Host. Never derive
@@ -190,6 +204,27 @@ export const authenticatePassportSession = async (req: Request): Promise<Passpor
   if (token === null) return null;
   if (!isPassportRequest(req)) return { ok: false, response: errorResponse(new PassportError()) };
   try {
+    if (isPersistentPassportSession(token)) {
+      const user = await getPassportSession(token);
+      return {
+        ok: true,
+        token: null,
+        method: {
+          kind: "passport_session",
+          principal: `passport-user:${user.subject}`,
+          user: {
+            sub: user.subject,
+            handle: user.handle,
+            is_admin: user.isAdmin,
+            scopes: user.scopes,
+            auth: "sso",
+            exp: null,
+            jti: null,
+            agent_token_id: null,
+          },
+        },
+      };
+    }
     const claims = await verifyToken(token);
     return {
       ok: true,
@@ -210,7 +245,10 @@ export const authenticatePassportSession = async (req: Request): Promise<Passpor
       },
     };
   } catch (error) {
-    return { ok: false, response: errorResponse(error) };
+    const response = errorResponse(error);
+    if (isPersistentPassportSession(token) && response.status === 401)
+      response.headers.append("Set-Cookie", `${SESSION_COOKIE}=; Max-Age=0${COOKIE_ATTRIBUTES}`);
+    return { ok: false, response };
   }
 };
 
@@ -250,16 +288,20 @@ const redirect = (location: string, cookies: readonly string[]): Response => {
 };
 
 const clearStateCookie = (): string => `${STATE_COOKIE}=; Max-Age=0${COOKIE_ATTRIBUTES}`;
+const clearVerifierCookie = (): string => `${VERIFIER_COOKIE}=; Max-Age=0${COOKIE_ATTRIBUTES}`;
 
 const callback = async (req: Request): Promise<Response> => {
   try {
     const params = new URL(req.url).searchParams;
     const state = params.get("state");
     const code = params.get("code");
+    const codeVerifier = cookie(req, VERIFIER_COOKIE);
     if (
       !state ||
       !/^[A-Za-z0-9_-]{43}\.(?:admin|chat)$/.test(state) ||
       state !== cookie(req, STATE_COOKIE) ||
+      !codeVerifier ||
+      !/^[A-Za-z0-9_-]{43}$/.test(codeVerifier) ||
       !boundedString(code, 500) ||
       params.getAll("state").length !== 1 ||
       params.getAll("code").length !== 1
@@ -268,7 +310,7 @@ const callback = async (req: Request): Promise<Response> => {
     const response = await fetch(`${ISSUER}/api/auth/sso/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ code, clientId: "ai", audience: "ai", origin: ORIGIN, redirectUri: CALLBACK }),
+      body: JSON.stringify({ code, clientId: "ai", audience: "ai", origin: ORIGIN, redirectUri: CALLBACK, codeVerifier, appSession: true }),
       redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
@@ -276,14 +318,12 @@ const callback = async (req: Request): Promise<Response> => {
     if (!isRecord(body) || typeof body.accessToken !== "string") throw new PassportError();
     const claims = await verifyToken(body.accessToken);
     if (claims.agentTokenId !== undefined && claims.agentTokenId !== null) throw new PassportError();
-    const maxAge = claims.exp - Math.floor(Date.now() / 1000);
-    return redirect(state.endsWith(".admin") ? "/admin" : "/chat", [
-      `${SESSION_COOKIE}=${body.accessToken}; Max-Age=${maxAge}${COOKIE_ATTRIBUTES}`,
-      clearStateCookie(),
-    ]);
+    const token = await createPassportSession(body.appSession, claims.sub, cookie(req, SESSION_COOKIE) ?? undefined);
+    return redirect(state.endsWith(".admin") ? "/admin" : "/chat", [sessionCookie(token), clearStateCookie(), clearVerifierCookie()]);
   } catch (error) {
     const response = errorResponse(error);
     response.headers.append("Set-Cookie", clearStateCookie());
+    response.headers.append("Set-Cookie", clearVerifierCookie());
     return response;
   }
 };
@@ -299,12 +339,31 @@ export const handlePassportRoute = async (req: Request, path: string): Promise<R
     const site = req.headers.get("sec-fetch-site");
     if ((origin !== null && origin !== ORIGIN) || (site !== null && site !== "same-origin" && site !== "none"))
       return openaiError(403, "Forbidden", "forbidden");
-    return new Response(null, { status: 204, headers: { "Set-Cookie": `${SESSION_COOKIE}=; Max-Age=0${COOKIE_ATTRIBUTES}`, "Cache-Control": "no-store" } });
+    try {
+      const upstream = await revokePassportSession(cookie(req, SESSION_COOKIE) ?? "");
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Set-Cookie": `${SESSION_COOKIE}=; Max-Age=0${COOKIE_ATTRIBUTES}`,
+          "Cache-Control": "no-store",
+          "X-UOS-Passport-Upstream-Revoke": upstream,
+        },
+      });
+    } catch (error) {
+      return errorResponse(error);
+    }
   }
   const target = new URL(req.url).searchParams.get("return_to") === "/admin" ? "admin" : "chat";
   const state = `${base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)))}.${target}`;
+  const verifier = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+  const challenge = base64UrlEncode(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
   const authorize = new URL(`${ISSUER}/authorize`);
   for (const [name, value] of Object.entries({ client_id: "ai", audience: "ai", origin: ORIGIN, redirect_uri: CALLBACK, state }))
     authorize.searchParams.set(name, value);
-  return redirect(authorize.toString(), [`${STATE_COOKIE}=${state}; Max-Age=600${COOKIE_ATTRIBUTES}`]);
+  authorize.searchParams.set("code_challenge", challenge);
+  authorize.searchParams.set("code_challenge_method", "S256");
+  return redirect(authorize.toString(), [
+    `${STATE_COOKIE}=${state}; Max-Age=600${COOKIE_ATTRIBUTES}`,
+    `${VERIFIER_COOKIE}=${verifier}; Max-Age=600${COOKIE_ATTRIBUTES}`,
+  ]);
 };

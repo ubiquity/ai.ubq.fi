@@ -292,6 +292,8 @@ let currentKeyView = "active";
 let currentAdminView = "loading";
 let pendingAdminView = null;
 let adminAccessState = { checked: false, isAdmin: false, isSuperAdmin: false };
+let passportSessionActive = false;
+let adminAuthRetryTimer = 0;
 let relaySessionActive = false;
 let localDevelopmentAutoAuth = false;
 let adminPrefetchRunId = 0;
@@ -8410,7 +8412,20 @@ const computeExpiresAtMs = (preset) => {
   }
 };
 
+const markAdminAuthUnavailable = () => {
+  setAuthBadge("unknown", "Connection unavailable. Retrying...");
+  if (!adminAccessState.checked) setPasskeyStatus("unknown", "Checking saved sign-in. Retrying...");
+  if (!document.hidden && !adminAuthRetryTimer) {
+    adminAuthRetryTimer = globalThis.setTimeout(() => {
+      adminAuthRetryTimer = 0;
+      void testAdminToken();
+    }, 5000);
+  }
+};
+
 const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
+  globalThis.clearTimeout(adminAuthRetryTimer);
+  adminAuthRetryTimer = 0;
   const token = getAdminToken();
   setAuthBadge("unknown", "Checking...");
   try {
@@ -8436,13 +8451,23 @@ const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
     }
     const { res, data } = authResult;
     if (!res.ok) {
+      if (res.status !== 401 && res.status !== 403) {
+        markAdminAuthUnavailable();
+        return false;
+      }
+      passportSessionActive = false;
       clearAdminSnapshotScope();
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
       setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
       setSignedInState(false);
       return false;
     }
-    if (!data?.auth?.is_admin) {
+    if (typeof data?.auth?.is_admin !== "boolean") {
+      markAdminAuthUnavailable();
+      return false;
+    }
+    if (!data.auth.is_admin) {
+      passportSessionActive = false;
       clearAdminSnapshotScope();
       setAuthBadge("bad", "Not admin");
       setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
@@ -8450,6 +8475,7 @@ const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
       return false;
     }
     const kind = data?.auth?.method?.kind;
+    passportSessionActive = kind === "passport_session";
     const isSuperAdmin = data?.auth?.is_super_admin === true;
     setAuthBadge("ok", kind ? `OK (${formatAuthMethodLabel(kind)})` : "OK");
     setAdminSnapshotScopeFromAuth(data.auth);
@@ -8462,10 +8488,7 @@ const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
     });
     return true;
   } catch {
-    clearAdminSnapshotScope();
-    setAuthBadge("bad", "Offline");
-    setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
-    setSignedInState(false);
+    markAdminAuthUnavailable();
     return false;
   }
 };
@@ -11050,6 +11073,7 @@ const refreshAnalyticsView = () => {
 };
 
 bindForegroundRefresh(() => {
+  if (!getAdminToken()) void testAdminToken();
   if (!adminAccessState.isAdmin || !hasAdminCredential()) return;
   if (currentAdminView === "analytics") {
     // Resume refreshes the quota panels immediately instead of waiting for
@@ -11209,14 +11233,18 @@ signOutBtn.addEventListener("click", async () => {
       token: isRemoteRelayOrigin() && relaySessionActive ? "" : token,
       baseUrl: resolveBaseUrl(),
       corsOrigin: isRemoteRelayOrigin() ? globalThis.location.origin : "",
+      passportSession: passportSessionActive,
     });
-  } finally {
+    passportSessionActive = false;
     relaySessionActive = false;
     tokenInput.value = "";
     rememberTokenInput.checked = false;
     setAuthBadge("bad", "Missing token");
     setSignedInState(false);
     tokenInput.dispatchEvent(new Event("input", { bubbles: true }));
+  } catch (error) {
+    setAuthBadge("bad", error?.message ?? "Sign-out is unavailable. Try again.");
+  } finally {
     signOutBtn.disabled = false;
   }
 });
