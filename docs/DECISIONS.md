@@ -66,6 +66,227 @@ mapping on the assumption that it leaks across routes; it does not.
 Residual gap: Surplus and OpenLux were not probed, so their truncation-stop behaviour remains unverified. Codex's
 handling of the terminal is proven; which upstreams ever emit it is not.
 
+## Deployment status of the terminal-truthfulness work - 2026-09-21
+
+The measurement-artifact correction above retracts the premise that motivated this work. It therefore matters which
+parts are actually running, and whether any deployed behaviour change was justified by the retracted claim.
+
+**None of it is deployed.** The two running releases predate every commit in the program:
+
+| Deployment                   | Release      | Terminal-truthfulness commits |
+| ---------------------------- | ------------ | ----------------------------- |
+| VPS (production)             | `922c33392d` | none                          |
+| Mac local (`localhost:7999`) | `4176e992f5` | none                          |
+| `development`                | `884051eba9` | all eight                     |
+
+So no production inference behaviour changed, and no retraction is needed on a live system. The work is merged to
+`development` and stops there.
+
+**Only one of the three changes depends on the retracted premise, and partially.**
+
+- **G5 (report the effective output allowance)** - independent. It is telemetry only, changes no generation behaviour,
+  and was justified by the provider's tier-dependent default (8,192 at `none`), measured directly.
+- **G1 (`length` to `response.incomplete`)** - independent. It was reproduced end to end: an upstream
+  `finish_reason: "length"` reached the client as a clean `response.completed` with `incomplete_details: null` while the
+  gateway's own telemetry recorded `output_tokens: 8192`. That demonstration does not involve narration at all.
+- **G3 (fail closed on a degenerate completion)** - **partially dependent.** Its stated trigger is a stream about to
+  complete "with no tool call, no non-empty assistant text and no refusal". The no-tool-call clause was written for the
+  narration symptom that has now been retracted. The reasoning-only clause stands on its own: a completion whose only
+  output is reasoning hands the client nothing, which the Cerebras route already failed closed for independently of any
+  narration claim.
+
+Reason for recording this: the correction above removes the motivation for one clause of one change, and a future reader
+deciding whether to deploy needs to know that the other two changes and most of the third rest on reproductions that
+survived the retraction.
+
+Reversal risk: deploying on the belief that the narration symptom is real, or reverting the whole program because its
+original motivation was retracted. The first is unfounded; the second discards two independently reproduced fixes.
+
+Next action if the program is to be deployed: re-derive G3's trigger from the surviving evidence alone - keep the
+reasoning-only and empty-output clauses, and justify or drop the no-tool-call clause on its own merits rather than on
+the retracted frequency claim.
+
+## CORRECTION: the narration symptom was itself a measurement artifact - 2026-09-21
+
+The entry below and the terminal-truthfulness handoff both rest on an observed condition: a long-running agent
+"frequently believes its turn completed mid-task", quantified as 154 of 292 turns in one session and 24 of 67 in
+another. **That condition is not reproducible from the recorded sessions.** It appears to be an artifact of how the
+original count was taken, and the entries that depend on it should not be cited as evidence that the behaviour is
+common.
+
+**The numbers do not reconcile.** For the two sessions the handoff names, counting every plausible unit:
+
+| Session                | `task_started` | `task_complete` | assistant text messages | matching a forward-looking phrase |
+| ---------------------- | -------------: | --------------: | ----------------------: | --------------------------------: |
+| `sentinel`             |            423 |             414 |                   1,053 |                               805 |
+| `oracle-free-arch-vps` |            145 |             143 |                     497 |                               269 |
+
+The handoff reports 292 turns / 154 narrated for `sentinel` and 67 / 24 for `oracle`. **No column matches either
+figure**, so the original measurement cannot be reconstructed from the sessions it cites.
+
+**The forward-looking-phrase test does not identify premature endings.** Inspecting the messages it matches shows they
+are ordinary mid-task narration that is _followed by a tool call_ — "Let me load the required harness policy and verify
+key facts in parallel", "Let me answer the ai.ubq.fi question definitively". The phrase appears in 76% of all assistant
+messages (805 of 1,053), which is why the test is unusable as a discriminator: it fires on normal working text, not on a
+malfunction.
+
+**What the turns actually look like.** Reading turns to their end shows the model doing hundreds of tool calls and then
+closing with a substantive summary. The 4211- and 6380-character closers on `task_complete` are honest completions of
+long investigation work, not a model believing it finished early. Turns cluster at a median of 7 response items, with
+only 3 of 13 in one sampled window exceeding 10 items.
+
+Reason for recording this: two merged documents and six merged corrections treat this symptom as established and build
+on it. A future reader must know that the premise is unsupported, or the chain of reasoning above this entry inherits an
+artifact. The gateway trustworthiness findings in the handoff stand on their own evidence and are unaffected; only the
+claim that the symptom is frequent, and the model-versus-gateway contrast drawn from it, depend on this.
+
+Reversal risk: quoting 154-of-292, treating forward-looking phrasing as a malfunction signal, or building any detector
+on that regex. Each propagates the artifact.
+
+Method note: the original count was never reproduced, so the defect is most likely in the counting procedure rather than
+in the sessions. Any replacement measurement must state its unit (turn, message, or item), its window, and how it
+decides a turn was premature, and must show that the classifier does not fire on ordinary mid-task narration.
+
+## CORRECTION: the narration trigger is not context size - 2026-09-21
+
+The entry below reports that context size gates narration-without-action. **That is falsified.** It is retained for
+history, but the trigger section and the onset threshold must not be relied on. The reason is an external-validity
+failure in the experiment: every payload used to derive the curve repeated one identical filler block in every tool
+output, so "long context" and "degenerate repetitive context" were confounded and could not be separated.
+
+**The disconfirming measurement.** A second payload family was built with genuinely distinct tool outputs (20 rotating
+result shapes plus per-index text, every output unique) and matched to the original on byte size and item count. Both
+were run against `deepseek-flash` at matched effort:
+
+| Payload               | Actual input tokens |      n | Narrated |   Rate |
+| --------------------- | ------------------: | -----: | -------: | -----: |
+| repetitive (original) |              66,533 |     28 |        8 |    29% |
+| **varied (matched)**  |          **71,295** | **18** |    **0** | **0%** |
+
+The varied payload is _larger_ than the repetitive one and narrates _never_. Length alone therefore cannot be the
+trigger, which falsifies both "context size is the trigger" and the recorded onset of "between roughly 1k and 4k".
+
+**A controlled interleaved run, and its non-result.** To separate condition from time drift, the three conditions
+(repetitive ~66k, varied ~71k, small ~1k) were cycled round-robin inside a single time window, eight rounds:
+
+| Condition       | Narrated in the interleaved window |
+| --------------- | ---------------------------------: |
+| repetitive ~66k |                          2/8 (25%) |
+| varied ~71k     |                           0/8 (0%) |
+| small ~1k       |                           0/8 (0%) |
+
+Neither contrast is significant in this design (`p = 0.47` each). Pooling all batches raises the repetitive-vs-varied
+contrast to `p = 0.016`, but that pool mixes runs from different time windows and the original effect did not replicate
+across batches on its own payload (5/10, then 1/10, `p = 0.14`).
+
+**What survives, and what does not.**
+
+- **Does not survive:** context size as the trigger; the onset threshold; the implication that long real sessions
+  narrate _because_ they are long. Real sessions are also full of varied content, so the synthetic confound may explain
+  the original 154-of-292 observation as easily as the model does.
+- **Weakly survives:** that _some_ conditions produce narration at a low rate. The pooled repetitive cells total 8/28,
+  which is not zero. Its true trigger is unidentified; repetitive content is a candidate, not an established cause.
+- **Survives:** that `gpt-reserve` never narrated on any payload at any size tested - 0 of 30 pooled across every cell
+  run in this investigation, spanning 61k to 176k input tokens and both payload families. The model contrast is weaker
+  than first reported, because the DeepSeek rate it is measured against fell, but it has not been contradicted.
+
+Reason for recording at this length: the previous entry states a specific causal trigger with statistics behind it, and
+this repository treats that as load-bearing. Leaving a falsified trigger in place would be worse than the correction
+itself — a future reader would tune context budgets or payload shapes against a confound.
+
+Reversal risk: acting on the size trigger, quoting the onset threshold, or treating repetitive context as a confirmed
+cause. Any of those propagates an experiment artifact.
+
+Method note for the next attempt: vary payload content independently of length, and interleave conditions inside one
+time window. Both were missing here, and both are what caught it.
+
+## Narration-without-action is model-specific and context-gated - 2026-09-21
+
+> **Superseded.** The condition this entry measures - a model frequently believing its turn completed mid-task - is not
+> reproducible from the sessions it cites; see the measurement-artifact correction above. The context-size trigger and
+> onset threshold are separately falsified. Treat every rate here as an artifact. The gateway trustworthiness findings
+> in the handoff are unaffected, since they rest on their own evidence.
+
+The investigation that produced the terminal-truthfulness work began with a model believing its turn completed mid-task:
+it narrates the next action in text and terminates without emitting the tool call it described. Earlier measurement
+could not reproduce that shape and reported the gateway as faithful (a tool call in 19 of 20 requests). That measurement
+was taken at a context size far below the real sessions, which is why it came back clean.
+
+**Measured with a context-size sweep.** One payload family, identical tool schemas and identical conversation, varying
+only the amount of prior tool history; nothing else differs between the two models except the id and the reasoning
+effort. Ten runs per cell, work outstanding, classification by whether a `function_call` item was emitted:
+
+| Model                           | Actual input tokens |  n | Emitted tool call | Narrated and stopped |    Rate |
+| ------------------------------- | ------------------: | -: | ----------------: | -------------------: | ------: |
+| `deepseek-flash` (effort `max`) |                 951 | 10 |                10 |                    0 |      0% |
+| `deepseek-flash` (effort `max`) |               4,400 | 10 |                 7 |                    3 |     30% |
+| `deepseek-flash` (effort `max`) |               9,003 | 10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              14,186 | 10 |                 9 |                    1 |     10% |
+| `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
+| `deepseek-flash` (effort `max`) |              28,558 | 10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
+| `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `max`)    |              61,005 | 10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `medium`) |             175,888 | 10 |                10 |                    0 |      0% |
+
+Every run in every cell terminated `response.completed`; the difference is only whether a tool call accompanied it.
+
+Two conclusions follow, and they are the reason this entry exists:
+
+- **It is a model behaviour, not a gateway defect.** At the same ~66k context with the same payload, DeepSeek drops the
+  tool call half the time and `gpt-reserve` never does — including at 175k, nearly three times the DeepSeek band. A
+  translation or transport defect in this gateway would not spare one provider and hit the other on an identical body.
+- **Context size is the trigger, and the onset is between roughly 1k and 4k input tokens.** Fine-grained bands place it
+  lower than first recorded: 0% at 951 tokens, then 30% already at 4,400. Above that onset the rate is flat and noisy
+  across 4k-67k (30 / 40 / 10 / 50 / 40 / 50%) with no monotone trend, pooling to 38% across all bands above 1k. A
+  Fisher exact test of the tiny band against everything above it gives `p = 0.025`. It is a step change, not a gradual
+  degradation, and the earlier clean result was a correctly executed experiment at the wrong scale.
+
+The real symptomatic sessions ran at a median of about 485k input tokens, far above the onset, which is consistent with
+154 of 292 turns ending in narration there.
+
+Reason: the honest scope of the merged fix depends on this distinction. The terminal work makes the outcome _truthful_
+(`response.completed` carrying no tool call is reported accurately instead of being laundered), but no gateway change
+can make the model emit the call it decided to describe and skip. Recording the model-versus-gateway separation, with
+the control that establishes it, prevents a future reader from either re-deriving it or "fixing" the gateway for a
+behaviour it does not cause.
+
+Reversal risk: treating this as a gateway defect and adding gateway-side tool-call requirements or prose heuristics
+would fire on legitimate completions that end with forward-looking wording, and would misattribute an upstream model
+behaviour to the transport layer.
+
+**Effort is not the variable.** The control was re-run at effort `max`, matching DeepSeek exactly on the same payload:
+10 of 10 tool calls, 0% narration at the same 61,005 input tokens, identical to its `medium` result. So the model
+difference survives effort being held constant, and reasoning effort is ruled out as the cause.
+
+**Effort does not show a detectable effect on the DeepSeek side either.** The curve was swept at the ~66k band across
+`max`, `high`, `low` and `none` (10 runs each): 50%, 20%, 30%, 60% narrated. Those point estimates look like a trend and
+are not one — every pairwise Fisher exact comparison among the four levels is non-significant (`p` from 0.17 to 1.00):
+
+| Comparison       | Narrated     |     p |
+| ---------------- | ------------ | ----: |
+| `max` vs `high`  | 5/10 vs 2/10 | 0.350 |
+| `max` vs `low`   | 5/10 vs 3/10 | 0.650 |
+| `max` vs `none`  | 5/10 vs 6/10 | 1.000 |
+| `high` vs `low`  | 2/10 vs 3/10 | 1.000 |
+| `high` vs `none` | 2/10 vs 6/10 | 0.170 |
+| `low` vs `none`  | 3/10 vs 6/10 | 0.370 |
+
+The **model** difference, by contrast, is solid on the same data: DeepSeek pooled across effort narrated 16 of 40 (40%)
+against `gpt-reserve` 0 of 20 (0%), Fisher exact `p = 0.0005`; restricted to the directly matched `max`-vs-`max` cells,
+5/10 against 0/10, `p = 0.033`.
+
+Reason for recording the non-result: the four DeepSeek point estimates could easily be read as "lower effort helps" or
+"higher effort hurts", and neither is supported. n = 10 per cell does not resolve differences of this size, so a future
+reader should not tune reasoning effort on the strength of those numbers.
+
+Reversal risk: selecting or advertising a reasoning tier as a narration mitigation, or dismissing the model difference
+because a single-effort cell happened to look clean, would each act on noise rather than on the measured effect.
+
+Residual limits: rates are point estimates from 10 runs per cell, and the intermediate bands are individually noisy
+enough that only the onset (between ~1k and ~4k) is established rather than a precise threshold. The effort sweep is
+underpowered to exclude a small effort effect.
+
 ## Per-upstream truncation coverage for the terminal mapping - 2026-09-21
 
 The terminal-truthfulness work changes what a truncated generation reports. Whether that is safe per provider was
