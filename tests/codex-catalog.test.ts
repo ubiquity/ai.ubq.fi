@@ -1422,7 +1422,7 @@ test("codex catalog: third-party enrichment fills rows no first-party source des
     assert.equal(deepseek.default_reasoning_level, "high");
     assert.equal(deepseek.context_window, 1_048_576);
     assert.equal(deepseek.max_context_window, 1_048_576);
-    assert.equal(deepseek.auto_compact_token_limit, 891_289, "the limit is derived from the resolved window");
+    assert.equal(deepseek.auto_compact_token_limit, 943_718, "the limit is derived from the resolved window");
     assert.equal(deepseek.effective_context_window_percent, 95);
     assert.equal(deepseek.model_class, undefined, "the curated model class is gone with the curated table");
   } finally {
@@ -1478,7 +1478,7 @@ test("codex catalog: a Codex-served id advertises the widest window a source sta
     assert.ok(astra, "the paid route still advertises the Codex-served id");
     assert.equal(astra.context_window, 1_050_000, "the widest stated window is advertised");
     assert.equal(astra.max_context_window, 1_050_000);
-    assert.equal(astra.auto_compact_token_limit, 892_500);
+    assert.equal(astra.auto_compact_token_limit, 945_000);
     assert.deepEqual(
       (astra.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
       ["low", "medium", "high", "xhigh", "max", "ultra"],
