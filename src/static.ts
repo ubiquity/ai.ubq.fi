@@ -83,6 +83,7 @@ textAsset(["/chat.css"], "chat.css", "text/css; charset=utf-8");
 textAsset(["/models.css"], "models.css", "text/css; charset=utf-8");
 textAsset(["/home.css"], "home.css", "text/css; charset=utf-8");
 textAsset(["/admin.css"], "admin.css", "text/css; charset=utf-8");
+textAsset(["/admin-supervisor.css"], "admin-supervisor.css", "text/css; charset=utf-8");
 
 textAsset(["/app.js"], "app.js", "text/javascript; charset=utf-8");
 textAsset(["/docs.js"], "docs.js", "text/javascript; charset=utf-8");
@@ -91,6 +92,7 @@ textAsset(["/chat-stats.js"], "chat-stats.js", "text/javascript; charset=utf-8")
 textAsset(["/models.js"], "models.js", "text/javascript; charset=utf-8");
 textAsset(["/toast.js"], "toast.js", "text/javascript; charset=utf-8");
 textAsset(["/admin.js"], "admin.js", "text/javascript; charset=utf-8");
+textAsset(["/admin-supervisor.js"], "admin-supervisor.js", "text/javascript; charset=utf-8");
 textAsset(["/admin-cache.js"], "admin-cache.js", "text/javascript; charset=utf-8");
 textAsset(["/auth.js"], "auth.js", "text/javascript; charset=utf-8");
 textAsset(["/auth-relay.js"], "auth-relay.js", "text/javascript; charset=utf-8");

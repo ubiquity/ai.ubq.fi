@@ -26,7 +26,13 @@ import {
 export type RecordedUpstreamReplay = Readonly<{
   fetch: typeof fetch;
   assertComplete: () => void;
-  snapshot: () => { attemptsDispatched: number; attemptsCompleted: number; failed: boolean };
+  snapshot: () => {
+    attemptsDispatched: number;
+    attemptsCompleted: number;
+    chunksConsumed: number;
+    chunksTotal: number;
+    failed: boolean;
+  };
 }>;
 
 const PROVIDERS: readonly SentinelUpstreamProvider[] = ["chatgpt_codex", "surplus", "metered", "cerebras", "deepseek"];
@@ -137,6 +143,7 @@ export const createRecordedUpstreamReplay = (
       completed: false,
     };
   });
+  const totalChunks = replayAttempts.reduce((sum, state) => sum + state.chunks.length, 0);
 
   let dispatchedCount = 0;
   let completedCount = 0;
@@ -241,6 +248,11 @@ export const createRecordedUpstreamReplay = (
     snapshot: () => ({
       attemptsDispatched: dispatchedCount,
       attemptsCompleted: completedCount,
+      // Chunks the consumer actually pulled, which is how a claim that the
+      // whole recorded prefix was replayed is attested without requiring a
+      // parser to read past its own terminal marker.
+      chunksConsumed: replayAttempts.reduce((sum, state) => sum + state.nextChunk, 0),
+      chunksTotal: totalChunks,
       failed,
     }),
   });

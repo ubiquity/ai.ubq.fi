@@ -1,6 +1,8 @@
 type RawBodyObserver = (bytes: Uint8Array<ArrayBuffer>) => void;
+/** Reports why an accepted body never reached its observer, bounded to the fixed reasons. */
+type RawBodyRejection = (reason: "body_over_limit" | "body_unavailable") => void;
 
-const rawBodyObservers = new WeakMap<Request, RawBodyObserver>();
+const rawBodyObservers = new WeakMap<Request, Readonly<{ observer: RawBodyObserver; onRejected?: RawBodyRejection }>>();
 
 export const MAX_ACCEPTED_JSON_BODY_BYTES = 32 * 1_024 * 1_024;
 
@@ -13,21 +15,40 @@ class RequestBodyTooLargeError extends Error {
   }
 }
 
-export const observeRawBodyOnce = (req: Request, observer: RawBodyObserver): void => {
-  rawBodyObservers.set(req, observer);
+export const observeRawBodyOnce = (req: Request, observer: RawBodyObserver, onRejected?: RawBodyRejection): void => {
+  rawBodyObservers.set(req, { observer, onRejected });
 };
 
 /** Transfer one accepted raw body to its observer under the fixed replay cap. */
 export const captureRawBodyOnce = (req: Request, bytes: Uint8Array<ArrayBuffer>): boolean => {
-  const observer = rawBodyObservers.get(req);
+  const pending = rawBodyObservers.get(req);
   rawBodyObservers.delete(req);
-  if (!observer || bytes.byteLength > MAX_ACCEPTED_JSON_BODY_BYTES) return false;
-  observer(bytes);
+  if (!pending) return false;
+  if (bytes.byteLength > MAX_ACCEPTED_JSON_BODY_BYTES) {
+    // The route accepted this body for inference, but the fixed replay storage
+    // contract cannot carry it: report the omission instead of staying silent.
+    pending.onRejected?.("body_over_limit");
+    return false;
+  }
+  pending.observer(bytes);
   return true;
 };
 
 export const discardRawBodyObserverOnce = (req: Request): void => {
   rawBodyObservers.delete(req);
+};
+
+/**
+ * Report that the accepted body never reached its observer because the route
+ * read itself stopped at the fixed cap. Returns whether an observer was
+ * waiting, so a non-inference read stays a no-op.
+ */
+export const rejectRawBodyOnce = (req: Request, reason: "body_over_limit" | "body_unavailable"): boolean => {
+  const pending = rawBodyObservers.get(req);
+  rawBodyObservers.delete(req);
+  if (!pending) return false;
+  pending.onRejected?.(reason);
+  return true;
 };
 
 const declaredContentLength = (req: Request): number | null => {
@@ -89,6 +110,9 @@ export const readJsonBodyWithLimit = async (req: Request, maxBytes: number): Pro
     captured = captureRawBodyOnce(req, bytes);
     return { ok: true, value: parsed };
   } catch (error) {
+    // A body the route refused at its own fixed cap is an explicit omission
+    // reason, not a silently empty capture for the request that failed here.
+    if (error instanceof RequestBodyTooLargeError) rejectRawBodyOnce(req, "body_over_limit");
     return { ok: false, kind: error instanceof RequestBodyTooLargeError ? "too_large" : "invalid" };
   } finally {
     discardRawBodyObserverOnce(req);

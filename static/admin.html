@@ -15,6 +15,7 @@
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
     <link rel="stylesheet" href="/style.css?v=passport-design-20260922" />
     <link rel="stylesheet" href="/admin.css?v=passport-design-20260922" />
+    <link rel="stylesheet" href="/admin-supervisor.css?v=20260922-supervisor-v1" />
   </head>
   <body data-page="admin" data-role="admin" data-auth-widget="collapsed" data-auth-scope="none">
     <div data-shell>
@@ -85,6 +86,16 @@
             </button>
             <button id="view-tab-pubkeys" type="button" role="tab" aria-controls="view-pubkeys" aria-selected="false">
               Kernel attestation
+            </button>
+            <button
+              id="view-tab-supervisor"
+              type="button"
+              role="tab"
+              aria-controls="view-supervisor"
+              aria-selected="false"
+              data-super-admin-only
+            >
+              Supervisor
             </button>
           </div>
         </section>
@@ -859,6 +870,88 @@
               <p data-field-help>
                 To re-pick your favorites: uncheck every model, check the ones you want to keep listed, then save.
               </p>
+            </div>
+          </article>
+        </section>
+
+        <section
+          id="view-supervisor"
+          data-view="supervisor"
+          data-layout="grid"
+          role="tabpanel"
+          aria-labelledby="view-tab-supervisor"
+          hidden
+        >
+          <article data-card aria-labelledby="card-supervisor">
+            <header>
+              <span data-admin-eyebrow>Read-only observation</span>
+              <h2 id="card-supervisor">Codex supervisor</h2>
+              <p>
+                See which Codex sessions are running on each connected machine, what they are working on, and what they are
+                waiting for. This panel only reads: it never resumes, steers, approves, or stops a session. A session is
+                active only when its runtime status says so, not because its timestamp is recent.
+              </p>
+            </header>
+            <div data-card-body>
+              <div data-provider-heading>
+                <span id="supervisor-badge" data-badge data-state="unknown">Not sampled</span>
+                <span id="supervisor-updated" data-muted>Waiting for the first sample</span>
+              </div>
+              <p id="supervisor-summary" data-muted></p>
+              <div id="supervisor-quota" data-supervisor-quota hidden>
+                <p
+                  data-quota-scope>Codex account quota · one shared account-wide window, not per session and not additive across machines</p>
+                <div id="supervisor-quota-list" data-quota-list></div>
+              </div>
+              <div data-supervisor-controls>
+                <label data-field>
+                  <span data-label>Search</span>
+                  <input id="supervisor-search" type="search" placeholder="Title, id, repo, branch, model"
+                    autocomplete="off" />
+                </label>
+                <label data-field>
+                  <span data-label>Machine</span>
+                  <select id="supervisor-machine">
+                    <option value="all">All machines</option>
+                  </select>
+                </label>
+                <label data-field>
+                  <span data-label>State</span>
+                  <select id="supervisor-state">
+                    <option value="active" selected>Active</option>
+                    <option value="active_idle">Active + idle</option>
+                    <option value="all">All states</option>
+                  </select>
+                </label>
+              </div>
+              <div id="supervisor-notice" hidden></div>
+              <div id="supervisor-list" data-key-list role="list" aria-live="polite"></div>
+              <p id="supervisor-empty" data-empty>Waiting for the first sample.</p>
+              <section id="supervisor-follow" aria-label="Follow recorded output" hidden>
+                <div data-provider-heading>
+                  <strong id="supervisor-follow-title">Follow output</strong>
+                  <button id="supervisor-follow-stop" type="button">Stop following</button>
+                </div>
+                <p id="supervisor-follow-status" data-muted></p>
+                <div id="supervisor-follow-log" role="log" aria-live="polite"></div>
+              </section>
+              <section id="supervisor-brief" aria-label="Session brief" hidden>
+                <div data-provider-heading>
+                  <strong id="supervisor-brief-title">Session brief</strong>
+                  <button id="supervisor-brief-close" type="button">Close</button>
+                </div>
+                <p id="supervisor-brief-status" data-muted></p>
+                <div id="supervisor-brief-body" hidden>
+                  <div data-brief-section>
+                    <h3>About this session</h3>
+                    <p id="supervisor-brief-about"></p>
+                  </div>
+                  <div data-brief-section>
+                    <h3>Current status</h3>
+                    <p id="supervisor-brief-state"></p>
+                  </div>
+                </div>
+              </section>
             </div>
           </article>
         </section>

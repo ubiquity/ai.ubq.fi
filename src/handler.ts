@@ -48,6 +48,8 @@ import {
   reserveApiKeyUsageV3,
 } from "./api_key_policy.ts";
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
+import { handleAdminCodexSupervisorOutput, handleAdminCodexSupervisorSessions } from "./codex_supervisor.ts";
+import { handleAdminCodexSupervisorBrief } from "./codex_supervisor_brief.ts";
 import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors as withCorsHeaders, withoutBody } from "./http.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
@@ -90,9 +92,11 @@ import {
   inspectSentinelBufferedResponseBody,
   materializeSentinelReplayInput,
   persistSentinelReplayFromEnvironment,
+  recordSentinelReplayOmissionFromEnvironment,
   resolveSentinelClientFailureObservation,
   type SentinelClientBodyObservation,
   type SentinelFailureObservation,
+  type SentinelReplayCaptureOmissionReason,
   shouldPersistSentinelReplay,
   snapshotSentinelReplayInput,
   zeroSentinelReplayInput,
@@ -458,6 +462,10 @@ export const withTerminalRequestLog = (
     /** Test seam for proving failed replay persistence and successful-request exclusion. */
     sentinelReplayInput?: AcceptedSentinelReplayInput | null;
     persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
+    /** Why this request carries no captured body; published for persistable failures only. */
+    sentinelReplayOmission?: SentinelReplayCaptureOmissionReason | null;
+    /** Test seam for proving a body-less failure still publishes its capture status. */
+    recordSentinelReplayOmission?: typeof recordSentinelReplayOmissionFromEnvironment;
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
     recordAdminError?: typeof recordAdminError;
     waitUntil?: SentinelBackgroundTaskRegistrar;
@@ -480,6 +488,19 @@ export const withTerminalRequestLog = (
     bufferedObservation = inspectSentinelBufferedResponseBody(response);
   }
   let replayFinalization: Promise<void> | null = null;
+  /** The same internal failure observation feeds capture persistence and omission status. */
+  const replayObservationFor = (streamReadFailure: boolean): SentinelFailureObservation => {
+    const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
+    return {
+      status: response.status,
+      stream: streamReadFailure ? (telemetry?.stream ?? true) : (telemetry?.stream ?? null),
+      completed: streamReadFailure ? false : (telemetry?.completed ?? false),
+      terminal_type: streamReadFailure ? (telemetry?.streamTerminalType ?? "error") : (telemetry?.streamTerminalType ?? null),
+      failure_kind: streamReadFailure ? (telemetry?.failureKind ?? "gateway_stream_read_error") : (telemetry?.failureKind ?? null),
+      synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
+      provider_route: telemetry?.provider ?? response.headers.get("x-uos-upstream") ?? "gateway",
+    };
+  };
   const persistReplayAtApplicationTerminal = (streamReadFailure = false): Promise<void> => {
     if (replayFinalization) return replayFinalization;
     const originalReplayInput = input.sentinelReplayInput;
@@ -494,17 +515,24 @@ export const withTerminalRequestLog = (
     // stalled clone, crypto operation, or KV write cannot retain both copies.
     zeroSentinelReplayInput(originalReplayInput);
     replayFinalization = (async () => {
-      if (!backgroundReplayInput) return;
-      const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
-      const observation: SentinelFailureObservation = {
-        status: response.status,
-        stream: streamReadFailure ? (telemetry?.stream ?? true) : (telemetry?.stream ?? null),
-        completed: streamReadFailure ? false : (telemetry?.completed ?? false),
-        terminal_type: streamReadFailure ? (telemetry?.streamTerminalType ?? "error") : (telemetry?.streamTerminalType ?? null),
-        failure_kind: streamReadFailure ? (telemetry?.failureKind ?? "gateway_stream_read_error") : (telemetry?.failureKind ?? null),
-        synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
-        provider_route: telemetry?.provider ?? response.headers.get("x-uos-upstream") ?? "gateway",
-      };
+      const observation = replayObservationFor(streamReadFailure);
+      if (!backgroundReplayInput) {
+        // Nothing was carried into a capture. A persistable failure still
+        // publishes its explicit omission status so a missing key, an omitted
+        // body or a rejected request is never an empty replay history.
+        if (input.sentinelReplayOmission) {
+          const bodyObservation = clientBodyObservation ?? (await bufferedObservation);
+          const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
+          if (shouldPersistSentinelReplay(observation, clientObservation)) {
+            await (input.recordSentinelReplayOmission ?? recordSentinelReplayOmissionFromEnvironment)(
+              input.requestId,
+              input.sentinelReplayOmission,
+              Date.now()
+            );
+          }
+        }
+        return;
+      }
       const startReplayPersistence = (clientObservation: ReturnType<typeof resolveSentinelClientFailureObservation>): Promise<void> => {
         if (!shouldPersistSentinelReplay(observation, clientObservation)) return Promise.resolve();
         return persistSentinelReplayBestEffort(
@@ -514,16 +542,11 @@ export const withTerminalRequestLog = (
           clientObservation
         );
       };
-      const fallbackClientObservation = resolveSentinelClientFailureObservation(observation);
-      // An HTTP failure is already sufficient to decide that the capture is
-      // persistable. Start the best-effort write before waiting for the body
-      // clone so a stalled inspection or delivery cannot delay its handoff.
-      if (input.deliveryCompleted !== undefined && !isSse && shouldPersistSentinelReplay(observation, fallbackClientObservation)) {
-        const replayWrite = startReplayPersistence(fallbackClientObservation);
-        zeroSentinelReplayInput(originalReplayInput);
-        await replayWrite;
-        return;
-      }
+      // Never persist from a status-only fallback when an observed downstream
+      // body is available: the client-visible error code/param and the bounded
+      // terminal body are required replay evidence. The bounded clone was
+      // started as soon as the response was known, so waiting for it keeps the
+      // real HTTP failure capture as rich as the embedded-call one.
       const bodyObservation = clientBodyObservation ?? (await bufferedObservation);
       const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
       await startReplayPersistence(clientObservation);
@@ -859,6 +882,9 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["GET"], path: "/admin/kv-migration/validate", superAdmin: true, run: () => handleAdminKvMigrationValidate() },
   { methods: ["GET"], path: "/admin/sentinel/replay-captures", superAdmin: true, run: (req) => handleAdminSentinelReplayCaptures(req) },
   { methods: ["GET"], path: "/admin/sentinel/incidents", superAdmin: true, run: (req) => handleAdminSentinelIncidents(req) },
+  { methods: ["GET"], path: "/admin/codex/supervisor/sessions", superAdmin: true, run: () => handleAdminCodexSupervisorSessions() },
+  { methods: ["GET"], path: "/admin/codex/supervisor/output", superAdmin: true, run: (req) => handleAdminCodexSupervisorOutput(req) },
+  { methods: ["POST"], path: "/admin/codex/supervisor/brief", superAdmin: true, run: (req) => handleAdminCodexSupervisorBrief(req) },
   { methods: ["GET"], path: "/admin/errors", run: (req) => handleAdminErrors(req) },
   { methods: ["GET", "POST"], path: "/admin/defaults", run: (req) => handleAdminDefaults(req) },
   { methods: ["GET", "POST", "DELETE"], path: "/admin/debug/routing", run: (req) => handleAdminDebugRouting(req) },
@@ -1122,9 +1148,31 @@ const handleTerminalRoute = async (
   }
   let usagePolicy = apiKeyPolicyFrom(authResult);
   let usageReservation: ApiKeyUsageReservation | null = null;
+  // The request candidate is created as soon as the caller is authenticated,
+  // before quota admission, so every authenticated return path can publish an
+  // explicit capture status. An unauthenticated rejection creates nothing, so
+  // its zero-KV behavior is preserved. Candidate creation is passive: it only
+  // registers the one accepted-body observer, it never touches KV.
+  const sentinelReplayCandidate = terminalRoute ? captureAcceptedSentinelReplayInput(req, requestId) : null;
+  let sentinelReplayOmission: SentinelReplayCaptureOmissionReason | null = null;
+  /**
+   * Publishes the explicit status for an authenticated request rejected before
+   * capture setup. Best effort: the rejection response is already final.
+   */
+  const recordPreCaptureRejection = async (): Promise<void> => {
+    discardSentinelReplayCaptureCandidate(sentinelReplayCandidate);
+    sentinelReplayOmission ??= "rejected_before_capture";
+    const omissionTask = recordSentinelReplayOmissionFromEnvironment(requestId, sentinelReplayOmission, Date.now());
+    // Deferred where the runtime supports it so a diagnostic status write can
+    // never extend the client-visible rejection latency.
+    if (!scheduleSentinelBackgroundTask(omissionTask, undefined)) await omissionTask;
+  };
   if (usagePolicy && terminalRoute) {
     const admission = await reserveUsageAdmission(req, usagePolicy, requestId, terminalRoute, requestStartedAtMonotonicMs, delivery);
-    if ("rejection" in admission) return admission.rejection;
+    if ("rejection" in admission) {
+      await recordPreCaptureRejection();
+      return admission.rejection;
+    }
     usageReservation = admission.reservation;
     // Admission re-reads the strict hash policy, so downstream quota headers
     // and paid fallback use the policy that actually reserved this request.
@@ -1145,7 +1193,10 @@ const handleTerminalRoute = async (
       delivery,
       usageReservation,
     });
-    if ("rejection" in admission) return admission.rejection;
+    if ("rejection" in admission) {
+      await recordPreCaptureRejection();
+      return admission.rejection;
+    }
     kernelReservation = admission.reservation;
   }
   // One request-owned passive upstream recorder for accepted terminal
@@ -1176,12 +1227,16 @@ const handleTerminalRoute = async (
       })
     );
   }
-  const sentinelReplayCandidate = terminalRoute ? captureAcceptedSentinelReplayInput(req, requestId) : null;
   const takeSentinelReplayInput = (): AcceptedSentinelReplayInput | null => {
     const materialized = materializeSentinelReplayInput(sentinelReplayCandidate);
+    // Read the omission after materializing: a body-less candidate with no
+    // recorded reason is classified as `body_unavailable`, never silently
+    // dropped. A non-POST terminal route has no body to carry at all.
+    const omission = sentinelReplayCandidate?.body_omitted_reason ?? (sentinelReplayCandidate === null && terminalRoute !== null ? "non_post" : null);
     discardSentinelReplayCaptureCandidate(sentinelReplayCandidate);
     if (!materialized) {
       sentinelUpstreamRecorder?.dispose();
+      if (omission !== null) sentinelReplayOmission ??= omission;
       return null;
     }
     return sentinelUpstreamRecorder ? { ...materialized, upstreamRecorder: sentinelUpstreamRecorder } : materialized;
@@ -1213,6 +1268,7 @@ const handleTerminalRoute = async (
         deliveryCompleted: delivery?.completed,
         deliverySignal: delivery?.downstreamSignal,
         sentinelReplayInput,
+        sentinelReplayOmission,
       });
     } catch (error) {
       zeroSentinelReplayInput(sentinelReplayInput);
@@ -1254,7 +1310,13 @@ const handleTerminalRoute = async (
     if (runError) {
       await bestEffortSettleKernelQuota("incomplete", "inference_exception");
       const sentinelReplayInput = takeSentinelReplayInput();
-      if (sentinelReplayInput) await persistInferenceExceptionReplay(sentinelReplayInput, runError);
+      if (sentinelReplayInput) {
+        await persistInferenceExceptionReplay(sentinelReplayInput, runError);
+      } else if (sentinelReplayOmission !== null) {
+        // A thrown inference failure with no captured body still publishes its
+        // explicit omission status instead of an empty replay history.
+        await recordSentinelReplayOmissionFromEnvironment(requestId, sentinelReplayOmission, Date.now());
+      }
       // `only-throw-error` requires an Error: an Error run failure is rethrown
       // unchanged, and any other value is preserved as the cause.
       throw runError instanceof Error ? runError : new Error("Inference handler threw a non-Error value", { cause: runError });
