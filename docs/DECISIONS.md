@@ -6,6 +6,20 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Synthetic paid hops have separate billing identities - 2026-10-10
+
+Each DeepSeek paid hop owns a separate internal billing request id derived from the client request id and provider.
+
+The original client correlation and request-quota reservation remain shared across the complete waterfall.
+
+Reason: reusing one paid row let a failed Surplus attempt retain ownership of a later successful OpenLux response.
+
+Provider request ids, terminals, spend and reconciliation must belong to the provider that produced them.
+
+Ordinary paid routes keep their current billing identity. Existing limits and pending-billing guards still apply.
+
+Reversal risk: a shared paid id mixes providers and can leave successful fallback billed or reconciled as a failure.
+
 ## Compaction fallback retains request admission until provider dispatch - 2026-10-10
 
 Jev compaction and its ordinary Responses fallback share one `executeInference` lifetime and quota reservation.

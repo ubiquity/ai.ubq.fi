@@ -747,7 +747,7 @@ export const fetchResponsesWithPaidFallback = async (
 
   const reservationInput = {
     keyId,
-    requestId,
+    requestId: options.usageContext?.paidFallbackRequestId ?? requestId,
     createdAtMs,
     model: options.model,
     route: options.route,

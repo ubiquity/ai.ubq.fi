@@ -103,7 +103,12 @@ const dispatchPaidHop = async (paidTail: DeepSeekWaterfallPaidTail, input: Param
   // Surplus hop silently advance to metered and starving the OpenLux hop.
   const allowedPaidProviders = DEEPSEEK_WATERFALL_PAID_PIN[input.provider] ?? null;
   const deepSeekWaterfallPaidHop = input.provider === "openlux" ? "openlux" : "surplus";
-  return await paidTail(paidRequest, paidBody, paidBody, input.usageContext, { allowedPaidProviders, deepSeekWaterfallPaidHop });
+  // Each paid hop settles independently. Preserve the parent correlation and
+  // its bound quota hook while giving billing a provider-specific request key.
+  const paidUsageContext = input.usageContext?.requestId
+    ? { ...input.usageContext, paidFallbackRequestId: `${input.usageContext.requestId}:deepseek_waterfall:${deepSeekWaterfallPaidHop}` }
+    : input.usageContext;
+  return await paidTail(paidRequest, paidBody, paidBody, paidUsageContext, { allowedPaidProviders, deepSeekWaterfallPaidHop });
 };
 
 const defaultDispatchFor = (paidTail: DeepSeekWaterfallPaidTail): DeepSeekWaterfallDispatch => {
