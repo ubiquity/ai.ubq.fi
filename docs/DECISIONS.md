@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Rust verification is manual-only - 2026-11-18
+
+The owner removed the Rust CI gate. Gateway CI no longer defines `rust-native` or `rust-wasm`, `scope` no longer emits Rust selection outputs, `validate` requires only the portable gate, and the native job no longer depends on Rust success. Manual Rust validation remains available through `bun --no-env-file --no-install scripts/rust-verify.ts --stage native|wasm` and `bun run rust:quality`; the Rust source, workspace, and rules are unchanged.
+
+Reason: the base repair exposed stale Rust quality/Clippy baselines and macOS-only Rust preflight failures that were blocking unrelated TypeScript gateway work. The owner directed that the Rust port not gate the TypeScript service.
+
+Reversal risk: Rust changes can now merge without hosted compilation or tests. Re-enabling Rust delivery requires restoring the two jobs and their `validate`/`native` dependencies, or running the manual commands on the exact candidate. This removes no Rust source and grants no deployment or production authority.
+
 ## Direct Claude Messages omits the unsupported hosted web_search - 2026-11-05
 
 The direct Claude subscription and native Messages lane omits every hosted `web_search` declaration from the upstream request instead of rejecting the whole turn. This includes Codex's default `external_web_access:true` declaration, which the TUI restores after a per-thread disable. Function, namespace, MCP and other representable tools remain unchanged. Surplus and other reseller adapters retain their existing rejection of an enabled hosted declaration.
@@ -110,7 +118,7 @@ Reversal risk: removing the arming and audit gate allows an external spend on th
 
 ## Merged-only CI gates expensive jobs behind portable validation - 2026-10-21
 
-This supersedes the merge-group, queue-canary, Sentinel-authored PR, and development-push trigger requirements in "Real CI checks for Sentinel and merge groups" for the current GitHub Actions quota policy. `pull_request: closed` and `workflow_dispatch` are the only triggers, and every job requires a merged pull request or explicit manual dispatch. After `scope`, the portable x64 `portable` gate must pass before `rust-native`; `rust-wasm` follows `rust-native`; `native` and macOS/Darwin work start only after their selected earlier gates pass. The `validate` job remains the required check name and fails closed when a selected portable or Rust gate is missing, skipped, cancelled, or failed. Each job has an explicit timeout, and the workflow never deploys.
+This supersedes the merge-group, queue-canary, Sentinel-authored PR, and development-push trigger requirements in "Real CI checks for Sentinel and merge groups" for the current GitHub Actions quota policy. `pull_request: closed` and `workflow_dispatch` are the only triggers, and every job requires a merged pull request or explicit manual dispatch. After `scope`, the portable x64 `portable` gate must pass before `rust-native`; `rust-wasm` follows `rust-native`; `native` and macOS/Darwin work start only after their selected earlier gates pass. The `validate` job remains the required check name and fails closed when a selected portable or Rust gate is missing, skipped, cancelled, or failed. Each job has an explicit timeout, and the workflow never deploys. The Rust dependency and gate portions of this entry are superseded by "Rust verification is manual-only - 2026-11-18"; the merged-only triggers, portable gate, and non-deploying workflow remain.
 
 Reason: recent failed runs spent 70-90 job-minutes because `native`, `rust-wasm`, and macOS work started even after `rust-native` failed, while `validate` waited for both Rust jobs before running portable checks. The dependency chain preserves every selected check but skips work that cannot be accepted once an earlier selected gate fails.
 
