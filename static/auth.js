@@ -215,16 +215,18 @@ export const clearCachedAuth = () => {
   storage.remove(STORAGE_KEYS.token);
 };
 
-export const signOut = async ({ baseUrl = "", token = "", corsOrigin = "" } = {}) => {
+export const signOut = async ({ baseUrl = "", token = "", corsOrigin = "", passportSession = false } = {}) => {
   const bearer = token.trim();
   try {
     // Passport owns only its app cookie; clearing it never touches the passkey relay.
-    await fetch(buildBackendUrl("/auth/logout", baseUrl), {
+    const response = await fetch(buildBackendUrl("/auth/logout", baseUrl), {
       method: "POST",
       credentials: "include",
       cache: "no-store",
     });
-  } catch {
+    if (passportSession && !response.ok) throw new Error("Sign-out is unavailable. Try again.");
+  } catch (error) {
+    if (passportSession) throw error;
     // A failed server logout still clears local token state below.
   }
   const endpoint = new URL(buildBackendUrl("/api/auth/logout", baseUrl));

@@ -578,8 +578,8 @@ button[data-passport-signin] {
   padding: 0 14px;
   border: 1px solid var(--text);
   border-radius: var(--radius-sm);
-  background: var(--text);
-  color: var(--surface);
+  background: var(--surface);
+  color: var(--text);
   font-size: 0.875rem;
   font-weight: 550;
   line-height: 1;
@@ -599,8 +599,8 @@ button[data-passport-signin] svg {
 @media (hover: hover) and (pointer: fine) {
   button[data-passport-signin]:not(:disabled):hover {
     border-color: var(--text);
-    background: var(--text);
-    color: var(--surface);
+    background: var(--surface);
+    color: var(--text);
     opacity: 0.88;
   }
 }
