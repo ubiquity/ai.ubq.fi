@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "classification": "physical Pi stack probe only; not gateway acceptance",
+  "sourceRevision": "d94fef52ccc76e0d5aa019154f11e47d5e10fba6",
+  "binarySha256": "cc56a55e8aa0869ba64e412146dd2a3ec049b9d4eebb1fa26cf1991282efe13e",
+  "binaryBytes": 559824,
+  "evidenceRef": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/32697524-92c4-46b2-8edb-f0388b3cbdc5",
+  "freshExecutions": 1,
+  "elapsedSeconds": 0.128664,
+  "processMaxRssKiB": 14400,
+  "preExecLimits": {
+    "memory.max": "100663296",
+    "memory.swap.max": "0"
+  },
+  "preExecMemAvailableKiB": 176148,
+  "cgroupPeakBytes": 10194944,
+  "swapBytes": 0,
+  "events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+  "libraries": [
+    {
+      "name": "ld-linux-aarch64.so.1",
+      "sha256": "7fa5037b2ea1643fd2b8b7f3f3c1d9d546271011b4385aeea3e85fed0d5dcadd",
+      "matchesFrozenSysroot": true
+    },
+    {
+      "name": "libc.so.6",
+      "sha256": "31f932525f5373857f0c8b5d94520b841a099e659388763a92484088b2bca235",
+      "matchesFrozenSysroot": true
+    },
+    {
+      "name": "libm.so.6",
+      "sha256": "a84b0bfeb5abf4ad4eaebcd4a69a783736c2319c4f4fcd5d678b29c57d441951",
+      "matchesFrozenSysroot": true
+    },
+    {
+      "name": "libgcc_s.so.1",
+      "sha256": "046856f95f4636f1fc7c3a12bf4f3cd5634c2fc5145c3fdf7395d4f349fa69c7",
+      "matchesFrozenSysroot": true
+    },
+    {
+      "name": "libstdc++.so.6.0.30",
+      "sha256": "532f3a12d7b8fef6cc7a064ea106b6c4ab2365674b73e743e4a385d4ffb6c8ab",
+      "matchesFrozenSysroot": true
+    },
+    {
+      "name": "libcrypto.so.3",
+      "sha256": "908bfe9966f80a31cec61ec4cbd0661d9fe9673edcca1848e038351e122eff74",
+      "matchesFrozenSysroot": true
+    },
+    {
+      "name": "libssl.so.3",
+      "sha256": "09fe45f6e578f6a598b3f67a193d7dc56f679c2259933d90e78a368d594bc8b0",
+      "matchesFrozenSysroot": true
+    }
+  ],
+  "networkRequests": 0,
+  "listeners": 0,
+  "scopeLimit": "Context creation only; no TLS handshake/hostname/CA proof, gateway streaming, client, ledger, load or soak",
+  "cleanup": "unit inactive/dead; exact cgroup absent; descendants reaped"
+}

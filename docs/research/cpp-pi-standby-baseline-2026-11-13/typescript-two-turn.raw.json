@@ -1,0 +1,1373 @@
+{
+  "oracleSourceSha": "d94fef52ccc76e0d5aa019154f11e47d5e10fba6",
+  "providerOwnership": "fixture",
+  "storage": {
+    "mode": "file",
+    "databasePath": "fixture-state/kv-bun.sqlite3",
+    "codec": "bun-jsc-v1",
+    "reopen": {
+      "outcome": "verified",
+      "before": [
+        {
+          "requestId": "9ffb2115-3226-4706-9baf-32495de238d7",
+          "request": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "request_id": "9ffb2115-3226-4706-9baf-32495de238d7",
+            "route": "responses",
+            "state": "dispatched",
+            "reserved_at_ms": 1794531545363,
+            "lease_expires_at_ms": 1794531845363,
+            "provider": "deepseek",
+            "dispatched_at_ms": 1794531545377,
+            "released_at_ms": null,
+            "release_reason": null
+          },
+          "requestVersionstamp": "00000000000000170000",
+          "window": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "policy_version": "v3:3600000",
+            "window_start_ms": 1794531545310,
+            "window_reset_at_ms": 1794535145310,
+            "committed_requests": 2,
+            "reserved_requests": 0,
+            "updated_at_ms": 1794531545429
+          },
+          "windowVersionstamp": "00000000000000240000",
+          "paidFallback": "not_applicable"
+        },
+        {
+          "requestId": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+          "request": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "request_id": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+            "route": "responses",
+            "state": "dispatched",
+            "reserved_at_ms": 1794531545424,
+            "lease_expires_at_ms": 1794531845424,
+            "provider": "deepseek",
+            "dispatched_at_ms": 1794531545429,
+            "released_at_ms": null,
+            "release_reason": null
+          },
+          "requestVersionstamp": "00000000000000240000",
+          "window": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "policy_version": "v3:3600000",
+            "window_start_ms": 1794531545310,
+            "window_reset_at_ms": 1794535145310,
+            "committed_requests": 2,
+            "reserved_requests": 0,
+            "updated_at_ms": 1794531545429
+          },
+          "windowVersionstamp": "00000000000000240000",
+          "paidFallback": "not_applicable"
+        }
+      ],
+      "after": [
+        {
+          "requestId": "9ffb2115-3226-4706-9baf-32495de238d7",
+          "request": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "request_id": "9ffb2115-3226-4706-9baf-32495de238d7",
+            "route": "responses",
+            "state": "dispatched",
+            "reserved_at_ms": 1794531545363,
+            "lease_expires_at_ms": 1794531845363,
+            "provider": "deepseek",
+            "dispatched_at_ms": 1794531545377,
+            "released_at_ms": null,
+            "release_reason": null
+          },
+          "requestVersionstamp": "00000000000000170000",
+          "window": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "policy_version": "v3:3600000",
+            "window_start_ms": 1794531545310,
+            "window_reset_at_ms": 1794535145310,
+            "committed_requests": 2,
+            "reserved_requests": 0,
+            "updated_at_ms": 1794531545429
+          },
+          "windowVersionstamp": "00000000000000240000",
+          "paidFallback": "not_applicable"
+        },
+        {
+          "requestId": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+          "request": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "request_id": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+            "route": "responses",
+            "state": "dispatched",
+            "reserved_at_ms": 1794531545424,
+            "lease_expires_at_ms": 1794531845424,
+            "provider": "deepseek",
+            "dispatched_at_ms": 1794531545429,
+            "released_at_ms": null,
+            "release_reason": null
+          },
+          "requestVersionstamp": "00000000000000240000",
+          "window": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "policy_version": "v3:3600000",
+            "window_start_ms": 1794531545310,
+            "window_reset_at_ms": 1794535145310,
+            "committed_requests": 2,
+            "reserved_requests": 0,
+            "updated_at_ms": 1794531545429
+          },
+          "windowVersionstamp": "00000000000000240000",
+          "paidFallback": "not_applicable"
+        }
+      ],
+      "dispatchesBefore": 2,
+      "dispatchesAfter": 2,
+      "quotaCommitsBefore": 4,
+      "quotaCommitsAfter": 4
+    }
+  },
+  "inbound": [
+    {
+      "path": "/v1/responses",
+      "body": "{\"model\":\"deepseek-v4-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}]}",
+      "headers": {
+        "authorization": "Bearer [REDACTED]",
+        "connection": "close",
+        "content-length": "417",
+        "content-type": "application/json",
+        "host": "127.0.0.1:43931"
+      }
+    },
+    {
+      "path": "/v1/responses",
+      "body": "{\"model\":\"deepseek-v4-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"},{\"id\":\"fc_resp_fixtureprovider1_0\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_fixture_echo_1\",\"name\":\"fixture_echo\",\"arguments\":\"{\\\"text\\\":\\\"fixture-argument-ok\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_fixture_echo_1\",\"output\":\"fixture-tool-ok\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}],\"previous_response_id\":\"resp_fixtureprovider1\"}",
+      "headers": {
+        "authorization": "Bearer [REDACTED]",
+        "connection": "close",
+        "content-length": "738",
+        "content-type": "application/json",
+        "host": "127.0.0.1:43931"
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "path": "/chat/completions",
+      "body": "{\"model\":\"deepseek-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"Use the fixture tool and preserve its result.\\n\\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation.\"},{\"role\":\"system\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"}],\"stream\":true,\"stream_options\":{\"include_usage\":true},\"reasoning_effort\":\"none\",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}}]}",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          "x-request-id": "fixture-provider-1"
+        },
+        "chunksBase64": [
+          "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsicm9sZSI6ImFzc2lzdGFudCIsInRvb2xfY2FsbHMiOlt7ImluZGV4IjowLCJpZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJ0eXBlIjoiZnVuY3Rpb24iLCJmdW5jdGlvbiI6eyJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoie1widGV4dFwiOlwiZml4dHVyZS0ifX1dfSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQoK",
+          "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsidG9vbF9jYWxscyI6W3siaW5kZXgiOjAsImZ1bmN0aW9uIjp7ImFyZ3VtZW50cyI6ImFyZ3VtZW50LW9rXCJ9In19XX0sImZpbmlzaF9yZWFzb24iOiJ0b29sX2NhbGxzIn1dfQoKZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbXSwidXNhZ2UiOnsicHJvbXB0X3Rva2VucyI6MTEsImNvbXBsZXRpb25fdG9rZW5zIjo1LCJ0b3RhbF90b2tlbnMiOjE2LCJwcm9tcHRfY2FjaGVfaGl0X3Rva2VucyI6MH19CgpkYXRhOiBbRE9ORV0KCg=="
+        ]
+      }
+    },
+    {
+      "path": "/chat/completions",
+      "body": "{\"model\":\"deepseek-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"Use the fixture tool and preserve its result.\\n\\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation.\"},{\"role\":\"system\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"},{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_fixture_echo_1\",\"type\":\"function\",\"function\":{\"name\":\"fixture_echo\",\"arguments\":\"{\\\"text\\\":\\\"fixture-argument-ok\\\"}\"}}],\"reasoning_content\":\"\"},{\"role\":\"tool\",\"tool_call_id\":\"call_fixture_echo_1\",\"content\":\"fixture-tool-ok\"}],\"stream\":true,\"stream_options\":{\"include_usage\":true},\"reasoning_effort\":\"none\",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}}]}",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          "x-request-id": "fixture-provider-2"
+        },
+        "chunksBase64": [
+          "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsicm9sZSI6ImFzc2lzdGFudCIsImNvbnRlbnQiOiJmaXh0dXJlLSJ9LCJmaW5pc2hfcmVhc29uIjpudWxsfV19Cgo=",
+          "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6ImZpbmFsLW9rIn0sImZpbmlzaF9yZWFzb24iOiJzdG9wIn1dfQoKZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbXSwidXNhZ2UiOnsicHJvbXB0X3Rva2VucyI6MjMsImNvbXBsZXRpb25fdG9rZW5zIjo3LCJ0b3RhbF90b2tlbnMiOjMwfX0KCmRhdGE6IFtET05FXQoK"
+        ]
+      }
+    }
+  ],
+  "chronology": [
+    {
+      "kind": "quota_commit",
+      "atMs": 734.547008,
+      "detail": {
+        "writes": [
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "window",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545310
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "policy_version": "v3:3600000",
+              "window_start_ms": 1794531545310,
+              "window_reset_at_ms": 1794535145310,
+              "committed_requests": 0,
+              "reserved_requests": 1,
+              "updated_at_ms": 1794531545363
+            }
+          },
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "request",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545310,
+              "9ffb2115-3226-4706-9baf-32495de238d7"
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "request_id": "9ffb2115-3226-4706-9baf-32495de238d7",
+              "route": "responses",
+              "state": "reserved",
+              "reserved_at_ms": 1794531545363,
+              "lease_expires_at_ms": 1794531845363,
+              "provider": null,
+              "dispatched_at_ms": null,
+              "released_at_ms": null,
+              "release_reason": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "quota_commit",
+      "atMs": 746.329282,
+      "detail": {
+        "writes": [
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "request",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545310,
+              "9ffb2115-3226-4706-9baf-32495de238d7"
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "request_id": "9ffb2115-3226-4706-9baf-32495de238d7",
+              "route": "responses",
+              "state": "dispatched",
+              "reserved_at_ms": 1794531545363,
+              "lease_expires_at_ms": 1794531845363,
+              "provider": "deepseek",
+              "dispatched_at_ms": 1794531545377,
+              "released_at_ms": null,
+              "release_reason": null
+            }
+          },
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "window",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545310
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "policy_version": "v3:3600000",
+              "window_start_ms": 1794531545310,
+              "window_reset_at_ms": 1794535145310,
+              "committed_requests": 1,
+              "reserved_requests": 0,
+              "updated_at_ms": 1794531545377
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "provider_dispatch",
+      "atMs": 750.449268,
+      "detail": {
+        "turn": 1,
+        "body": {
+          "model": "deepseek-flash",
+          "messages": [
+            {
+              "role": "system",
+              "content": "Use the fixture tool and preserve its result.\n\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation."
+            },
+            {
+              "role": "system",
+              "content": "Keep the exact fixture values."
+            },
+            {
+              "role": "user",
+              "content": "Run the fixture tool."
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          },
+          "reasoning_effort": "none",
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "provider_first_delta",
+      "atMs": 751.708676,
+      "detail": {
+        "turn": 1
+      }
+    },
+    {
+      "kind": "client_received_delta",
+      "atMs": 764.456717,
+      "detail": {
+        "turn": 1,
+        "event": {
+          "type": "response.function_call_arguments.delta",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "delta": "{\"text\":\"fixture-",
+          "sequence_number": 3
+        }
+      }
+    },
+    {
+      "kind": "provider_resumed",
+      "atMs": 764.466557,
+      "detail": {
+        "turn": 1
+      }
+    },
+    {
+      "kind": "request_terminal",
+      "atMs": 778.200004,
+      "detail": {
+        "request_id": "9ffb2115-3226-4706-9baf-32495de238d7",
+        "route": "responses",
+        "status": 200,
+        "provider": "deepseek",
+        "latency_ms": 55,
+        "admission_wait_ms": 0,
+        "admission_stage": "accepted",
+        "first_provider_dispatch_ms": 23,
+        "first_provider_headers_ms": 28,
+        "first_codex_dispatch_ms": null,
+        "first_codex_headers_ms": null,
+        "first_upstream_sse_event_ms": 34,
+        "first_semantic_commitment_ms": 34,
+        "stream_terminal_ms": 44,
+        "downstream_drain_ms": 3,
+        "delivery_outcome": "delivered",
+        "model": "deepseek-v4-flash",
+        "reasoning": "none",
+        "output_token_allowance": 8192,
+        "rate_limit_wait_ms": null,
+        "rate_limit_failover_model": null,
+        "provider_request_id": "fixture-provider-1",
+        "input_tokens": 11,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": null,
+        "output_tokens": 5,
+        "total_tokens": 16,
+        "usage_observed": true,
+        "usage_telemetry_status": "reported",
+        "prompt_cache_key_present": false,
+        "prompt_cache_mode": "unspecified",
+        "explicit_breakpoint_count": 0,
+        "account_slot": null,
+        "account_cohort_id": null,
+        "active_generation": null,
+        "active_transition_reason": null,
+        "fallback_reason": null,
+        "semantic_output_observed": true,
+        "upstream_event_kinds": [],
+        "stream": true,
+        "stream_terminal_type": "response.completed",
+        "failure_kind": null,
+        "response_created_observed": false,
+        "synthetic_terminal_type": null,
+        "attempted_providers": ["deepseek"],
+        "removed_provider_trigger_class": null,
+        "removed_provider_circuit_transition": null,
+        "removed_provider_selected_model": null,
+        "removed_provider_task_type": null,
+        "removed_provider_latency_ms": null,
+        "removed_provider_terminal_status": null,
+        "removed_provider_semantic_commitment": null,
+        "git_sha": "unknown",
+        "deno_revision": "unknown",
+        "router_revision": null
+      }
+    },
+    {
+      "kind": "quota_commit",
+      "atMs": 794.458507,
+      "detail": {
+        "writes": [
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "window",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545310
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "policy_version": "v3:3600000",
+              "window_start_ms": 1794531545310,
+              "window_reset_at_ms": 1794535145310,
+              "committed_requests": 1,
+              "reserved_requests": 1,
+              "updated_at_ms": 1794531545424
+            }
+          },
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "request",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545310,
+              "842bbf33-5bbe-40cc-af3f-27d0609ae08a"
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "request_id": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+              "route": "responses",
+              "state": "reserved",
+              "reserved_at_ms": 1794531545424,
+              "lease_expires_at_ms": 1794531845424,
+              "provider": null,
+              "dispatched_at_ms": null,
+              "released_at_ms": null,
+              "release_reason": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "quota_commit",
+      "atMs": 797.584247,
+      "detail": {
+        "writes": [
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "request",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545310,
+              "842bbf33-5bbe-40cc-af3f-27d0609ae08a"
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "request_id": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+              "route": "responses",
+              "state": "dispatched",
+              "reserved_at_ms": 1794531545424,
+              "lease_expires_at_ms": 1794531845424,
+              "provider": "deepseek",
+              "dispatched_at_ms": 1794531545429,
+              "released_at_ms": null,
+              "release_reason": null
+            }
+          },
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "window",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545310
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "policy_version": "v3:3600000",
+              "window_start_ms": 1794531545310,
+              "window_reset_at_ms": 1794535145310,
+              "committed_requests": 2,
+              "reserved_requests": 0,
+              "updated_at_ms": 1794531545429
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "provider_dispatch",
+      "atMs": 798.493252,
+      "detail": {
+        "turn": 2,
+        "body": {
+          "model": "deepseek-flash",
+          "messages": [
+            {
+              "role": "system",
+              "content": "Use the fixture tool and preserve its result.\n\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation."
+            },
+            {
+              "role": "system",
+              "content": "Keep the exact fixture values."
+            },
+            {
+              "role": "user",
+              "content": "Run the fixture tool."
+            },
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_fixture_echo_1",
+                  "type": "function",
+                  "function": {
+                    "name": "fixture_echo",
+                    "arguments": "{\"text\":\"fixture-argument-ok\"}"
+                  }
+                }
+              ],
+              "reasoning_content": ""
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "call_fixture_echo_1",
+              "content": "fixture-tool-ok"
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          },
+          "reasoning_effort": "none",
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "provider_first_delta",
+      "atMs": 798.667413,
+      "detail": {
+        "turn": 2
+      }
+    },
+    {
+      "kind": "client_received_delta",
+      "atMs": 801.089629,
+      "detail": {
+        "turn": 2,
+        "event": {
+          "type": "response.output_text.delta",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": "fixture-",
+          "logprobs": [],
+          "sequence_number": 4
+        }
+      }
+    },
+    {
+      "kind": "provider_resumed",
+      "atMs": 801.097629,
+      "detail": {
+        "turn": 2
+      }
+    },
+    {
+      "kind": "request_terminal",
+      "atMs": 803.591925,
+      "detail": {
+        "request_id": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+        "route": "responses",
+        "status": 200,
+        "provider": "deepseek",
+        "latency_ms": 12,
+        "admission_wait_ms": 0,
+        "admission_stage": "accepted",
+        "first_provider_dispatch_ms": 6,
+        "first_provider_headers_ms": 8,
+        "first_codex_dispatch_ms": null,
+        "first_codex_headers_ms": null,
+        "first_upstream_sse_event_ms": 8,
+        "first_semantic_commitment_ms": 8,
+        "stream_terminal_ms": 11,
+        "downstream_drain_ms": 1,
+        "delivery_outcome": "delivered",
+        "model": "deepseek-v4-flash",
+        "reasoning": "none",
+        "output_token_allowance": 8192,
+        "rate_limit_wait_ms": null,
+        "rate_limit_failover_model": null,
+        "provider_request_id": "fixture-provider-2",
+        "input_tokens": 23,
+        "cached_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "output_tokens": 7,
+        "total_tokens": 30,
+        "usage_observed": true,
+        "usage_telemetry_status": "partial",
+        "prompt_cache_key_present": false,
+        "prompt_cache_mode": "unspecified",
+        "explicit_breakpoint_count": 0,
+        "account_slot": null,
+        "account_cohort_id": null,
+        "active_generation": null,
+        "active_transition_reason": null,
+        "fallback_reason": null,
+        "semantic_output_observed": true,
+        "upstream_event_kinds": [],
+        "stream": true,
+        "stream_terminal_type": "response.completed",
+        "failure_kind": null,
+        "response_created_observed": false,
+        "synthetic_terminal_type": null,
+        "attempted_providers": ["deepseek"],
+        "removed_provider_trigger_class": null,
+        "removed_provider_circuit_transition": null,
+        "removed_provider_selected_model": null,
+        "removed_provider_task_type": null,
+        "removed_provider_latency_ms": null,
+        "removed_provider_terminal_status": null,
+        "removed_provider_semantic_commitment": null,
+        "git_sha": "unknown",
+        "deno_revision": "unknown",
+        "router_revision": null
+      }
+    },
+    {
+      "kind": "transport_drained",
+      "atMs": 814.209472,
+      "detail": {}
+    },
+    {
+      "kind": "kv_closed",
+      "atMs": 816.135444,
+      "detail": {}
+    },
+    {
+      "kind": "kv_reopened_verified",
+      "atMs": 818.786541,
+      "detail": {}
+    }
+  ],
+  "terminals": [
+    {
+      "request_id": "9ffb2115-3226-4706-9baf-32495de238d7",
+      "route": "responses",
+      "status": 200,
+      "provider": "deepseek",
+      "latency_ms": 55,
+      "admission_wait_ms": 0,
+      "admission_stage": "accepted",
+      "first_provider_dispatch_ms": 23,
+      "first_provider_headers_ms": 28,
+      "first_codex_dispatch_ms": null,
+      "first_codex_headers_ms": null,
+      "first_upstream_sse_event_ms": 34,
+      "first_semantic_commitment_ms": 34,
+      "stream_terminal_ms": 44,
+      "downstream_drain_ms": 3,
+      "delivery_outcome": "delivered",
+      "model": "deepseek-v4-flash",
+      "reasoning": "none",
+      "output_token_allowance": 8192,
+      "rate_limit_wait_ms": null,
+      "rate_limit_failover_model": null,
+      "provider_request_id": "fixture-provider-1",
+      "input_tokens": 11,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": null,
+      "output_tokens": 5,
+      "total_tokens": 16,
+      "usage_observed": true,
+      "usage_telemetry_status": "reported",
+      "prompt_cache_key_present": false,
+      "prompt_cache_mode": "unspecified",
+      "explicit_breakpoint_count": 0,
+      "account_slot": null,
+      "account_cohort_id": null,
+      "active_generation": null,
+      "active_transition_reason": null,
+      "fallback_reason": null,
+      "semantic_output_observed": true,
+      "upstream_event_kinds": [],
+      "stream": true,
+      "stream_terminal_type": "response.completed",
+      "failure_kind": null,
+      "response_created_observed": false,
+      "synthetic_terminal_type": null,
+      "attempted_providers": ["deepseek"],
+      "removed_provider_trigger_class": null,
+      "removed_provider_circuit_transition": null,
+      "removed_provider_selected_model": null,
+      "removed_provider_task_type": null,
+      "removed_provider_latency_ms": null,
+      "removed_provider_terminal_status": null,
+      "removed_provider_semantic_commitment": null,
+      "git_sha": "unknown",
+      "deno_revision": "unknown",
+      "router_revision": null
+    },
+    {
+      "request_id": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+      "route": "responses",
+      "status": 200,
+      "provider": "deepseek",
+      "latency_ms": 12,
+      "admission_wait_ms": 0,
+      "admission_stage": "accepted",
+      "first_provider_dispatch_ms": 6,
+      "first_provider_headers_ms": 8,
+      "first_codex_dispatch_ms": null,
+      "first_codex_headers_ms": null,
+      "first_upstream_sse_event_ms": 8,
+      "first_semantic_commitment_ms": 8,
+      "stream_terminal_ms": 11,
+      "downstream_drain_ms": 1,
+      "delivery_outcome": "delivered",
+      "model": "deepseek-v4-flash",
+      "reasoning": "none",
+      "output_token_allowance": 8192,
+      "rate_limit_wait_ms": null,
+      "rate_limit_failover_model": null,
+      "provider_request_id": "fixture-provider-2",
+      "input_tokens": 23,
+      "cached_input_tokens": null,
+      "cache_write_input_tokens": null,
+      "output_tokens": 7,
+      "total_tokens": 30,
+      "usage_observed": true,
+      "usage_telemetry_status": "partial",
+      "prompt_cache_key_present": false,
+      "prompt_cache_mode": "unspecified",
+      "explicit_breakpoint_count": 0,
+      "account_slot": null,
+      "account_cohort_id": null,
+      "active_generation": null,
+      "active_transition_reason": null,
+      "fallback_reason": null,
+      "semantic_output_observed": true,
+      "upstream_event_kinds": [],
+      "stream": true,
+      "stream_terminal_type": "response.completed",
+      "failure_kind": null,
+      "response_created_observed": false,
+      "synthetic_terminal_type": null,
+      "attempted_providers": ["deepseek"],
+      "removed_provider_trigger_class": null,
+      "removed_provider_circuit_transition": null,
+      "removed_provider_selected_model": null,
+      "removed_provider_task_type": null,
+      "removed_provider_latency_ms": null,
+      "removed_provider_terminal_status": null,
+      "removed_provider_semantic_commitment": null,
+      "git_sha": "unknown",
+      "deno_revision": "unknown",
+      "router_revision": null
+    }
+  ],
+  "accounting": [
+    {
+      "requestId": "9ffb2115-3226-4706-9baf-32495de238d7",
+      "request": {
+        "v": 3,
+        "key_id": "responses-conformance-key",
+        "request_id": "9ffb2115-3226-4706-9baf-32495de238d7",
+        "route": "responses",
+        "state": "dispatched",
+        "reserved_at_ms": 1794531545363,
+        "lease_expires_at_ms": 1794531845363,
+        "provider": "deepseek",
+        "dispatched_at_ms": 1794531545377,
+        "released_at_ms": null,
+        "release_reason": null
+      },
+      "requestVersionstamp": "00000000000000170000",
+      "window": {
+        "v": 3,
+        "key_id": "responses-conformance-key",
+        "policy_version": "v3:3600000",
+        "window_start_ms": 1794531545310,
+        "window_reset_at_ms": 1794535145310,
+        "committed_requests": 2,
+        "reserved_requests": 0,
+        "updated_at_ms": 1794531545429
+      },
+      "windowVersionstamp": "00000000000000240000",
+      "paidFallback": "not_applicable"
+    },
+    {
+      "requestId": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+      "request": {
+        "v": 3,
+        "key_id": "responses-conformance-key",
+        "request_id": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+        "route": "responses",
+        "state": "dispatched",
+        "reserved_at_ms": 1794531545424,
+        "lease_expires_at_ms": 1794531845424,
+        "provider": "deepseek",
+        "dispatched_at_ms": 1794531545429,
+        "released_at_ms": null,
+        "release_reason": null
+      },
+      "requestVersionstamp": "00000000000000240000",
+      "window": {
+        "v": 3,
+        "key_id": "responses-conformance-key",
+        "policy_version": "v3:3600000",
+        "window_start_ms": 1794531545310,
+        "window_reset_at_ms": 1794535145310,
+        "committed_requests": 2,
+        "reserved_requests": 0,
+        "updated_at_ms": 1794531545429
+      },
+      "windowVersionstamp": "00000000000000240000",
+      "paidFallback": "not_applicable"
+    }
+  ],
+  "captures": [
+    {
+      "request": {
+        "path": "/v1/responses",
+        "body": "{\"model\":\"deepseek-v4-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}]}"
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-cache",
+        "content-type": "text/event-stream",
+        "x-uos-deployment-id": "unknown",
+        "x-uos-git-sha": "unknown",
+        "x-uos-provider-request-id": "fixture-provider-1",
+        "x-uos-request-id": "9ffb2115-3226-4706-9baf-32495de238d7",
+        "x-uos-upstream": "deepseek"
+      },
+      "chunksBase64": [
+        "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuY3JlYXRlZCIsInJlc3BvbnNlIjp7ImlkIjoicmVzcF9maXh0dXJlcHJvdmlkZXIxIiwib2JqZWN0IjoicmVzcG9uc2UiLCJjcmVhdGVkX2F0IjoxNzk0NTMxNTQ1LCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsIm1vZGVsIjoiZGVlcHNlZWstdjQtZmxhc2giLCJvdXRwdXQiOltdLCJlcnJvciI6bnVsbCwiaW5jb21wbGV0ZV9kZXRhaWxzIjpudWxsLCJpbnN0cnVjdGlvbnMiOiJVc2UgdGhlIGZpeHR1cmUgdG9vbCBhbmQgcHJlc2VydmUgaXRzIHJlc3VsdC4iLCJtZXRhZGF0YSI6e30sInBhcmFsbGVsX3Rvb2xfY2FsbHMiOnRydWUsInRvb2xfY2hvaWNlIjoiYXV0byIsInRvb2xzIjpbeyJ0eXBlIjoiZnVuY3Rpb24iLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwicGFyYW1ldGVycyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJ0ZXh0Ijp7InR5cGUiOiJzdHJpbmcifX0sInJlcXVpcmVkIjpbInRleHQiXX19XSwidGVtcGVyYXR1cmUiOm51bGwsInRvcF9wIjpudWxsLCJtYXhfb3V0cHV0X3Rva2VucyI6bnVsbCwicHJldmlvdXNfcmVzcG9uc2VfaWQiOm51bGwsInJlYXNvbmluZyI6bnVsbCwic3RvcmUiOmZhbHNlLCJ0cnVuY2F0aW9uIjoiZGlzYWJsZWQiLCJ1c2FnZSI6bnVsbH0sInNlcXVlbmNlX251bWJlciI6MH0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmluX3Byb2dyZXNzCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmluX3Byb2dyZXNzIiwicmVzcG9uc2UiOnsiaWQiOiJyZXNwX2ZpeHR1cmVwcm92aWRlcjEiLCJvYmplY3QiOiJyZXNwb25zZSIsImNyZWF0ZWRfYXQiOjE3OTQ1MzE1NDUsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwibW9kZWwiOiJkZWVwc2Vlay12NC1mbGFzaCIsIm91dHB1dCI6W10sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjpudWxsfSwic2VxdWVuY2VfbnVtYmVyIjoxfQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkIiwib3V0cHV0X2luZGV4IjowLCJpdGVtIjp7ImlkIjoiZmNfcmVzcF9maXh0dXJlcHJvdmlkZXIxXzAiLCJ0eXBlIjoiZnVuY3Rpb25fY2FsbCIsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwiY2FsbF9pZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoiIn0sInNlcXVlbmNlX251bWJlciI6Mn0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhIiwiaXRlbV9pZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwib3V0cHV0X2luZGV4IjowLCJkZWx0YSI6IntcInRleHRcIjpcImZpeHR1cmUtIiwic2VxdWVuY2VfbnVtYmVyIjozfQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhIiwiaXRlbV9pZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwib3V0cHV0X2luZGV4IjowLCJkZWx0YSI6ImFyZ3VtZW50LW9rXCJ9Iiwic2VxdWVuY2VfbnVtYmVyIjo0fQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuZnVuY3Rpb25fY2FsbF9hcmd1bWVudHMuZG9uZSIsIml0ZW1faWQiOiJmY19yZXNwX2ZpeHR1cmVwcm92aWRlcjFfMCIsIm91dHB1dF9pbmRleCI6MCwiYXJndW1lbnRzIjoie1widGV4dFwiOlwiZml4dHVyZS1hcmd1bWVudC1va1wifSIsInNlcXVlbmNlX251bWJlciI6NX0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X2l0ZW0uZG9uZSIsIm91dHB1dF9pbmRleCI6MCwiaXRlbSI6eyJpZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwidHlwZSI6ImZ1bmN0aW9uX2NhbGwiLCJzdGF0dXMiOiJjb21wbGV0ZWQiLCJjYWxsX2lkIjoiY2FsbF9maXh0dXJlX2VjaG9fMSIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJhcmd1bWVudHMiOiJ7XCJ0ZXh0XCI6XCJmaXh0dXJlLWFyZ3VtZW50LW9rXCJ9In0sInNlcXVlbmNlX251bWJlciI6Nn0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbXBsZXRlZApkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb21wbGV0ZWQiLCJyZXNwb25zZSI6eyJpZCI6InJlc3BfZml4dHVyZXByb3ZpZGVyMSIsIm9iamVjdCI6InJlc3BvbnNlIiwiY3JlYXRlZF9hdCI6MTc5NDUzMTU0NSwic3RhdHVzIjoiY29tcGxldGVkIiwibW9kZWwiOiJkZWVwc2Vlay12NC1mbGFzaCIsIm91dHB1dCI6W3siaWQiOiJmY19yZXNwX2ZpeHR1cmVwcm92aWRlcjFfMCIsInR5cGUiOiJmdW5jdGlvbl9jYWxsIiwic3RhdHVzIjoiY29tcGxldGVkIiwiY2FsbF9pZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoie1widGV4dFwiOlwiZml4dHVyZS1hcmd1bWVudC1va1wifSJ9XSwiZXJyb3IiOm51bGwsImluY29tcGxldGVfZGV0YWlscyI6bnVsbCwiaW5zdHJ1Y3Rpb25zIjoiVXNlIHRoZSBmaXh0dXJlIHRvb2wgYW5kIHByZXNlcnZlIGl0cyByZXN1bHQuIiwibWV0YWRhdGEiOnt9LCJwYXJhbGxlbF90b29sX2NhbGxzIjp0cnVlLCJ0b29sX2Nob2ljZSI6ImF1dG8iLCJ0b29scyI6W3sidHlwZSI6ImZ1bmN0aW9uIiwibmFtZSI6ImZpeHR1cmVfZWNobyIsInBhcmFtZXRlcnMiOnsidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsidGV4dCI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJ0ZXh0Il19fV0sInRlbXBlcmF0dXJlIjpudWxsLCJ0b3BfcCI6bnVsbCwibWF4X291dHB1dF90b2tlbnMiOm51bGwsInByZXZpb3VzX3Jlc3BvbnNlX2lkIjpudWxsLCJyZWFzb25pbmciOm51bGwsInN0b3JlIjpmYWxzZSwidHJ1bmNhdGlvbiI6ImRpc2FibGVkIiwidXNhZ2UiOnsiaW5wdXRfdG9rZW5zIjoxMSwiaW5wdXRfdG9rZW5zX2RldGFpbHMiOnsiY2FjaGVkX3Rva2VucyI6MH0sIm91dHB1dF90b2tlbnMiOjUsInRvdGFsX3Rva2VucyI6MTZ9fSwic2VxdWVuY2VfbnVtYmVyIjo3fQoK"
+      ],
+      "events": [
+        {
+          "type": "response.created",
+          "response": {
+            "id": "resp_fixtureprovider1",
+            "object": "response",
+            "created_at": 1794531545,
+            "status": "in_progress",
+            "model": "deepseek-v4-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 0
+        },
+        {
+          "type": "response.in_progress",
+          "response": {
+            "id": "resp_fixtureprovider1",
+            "object": "response",
+            "created_at": 1794531545,
+            "status": "in_progress",
+            "model": "deepseek-v4-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 1
+        },
+        {
+          "type": "response.output_item.added",
+          "output_index": 0,
+          "item": {
+            "id": "fc_resp_fixtureprovider1_0",
+            "type": "function_call",
+            "status": "in_progress",
+            "call_id": "call_fixture_echo_1",
+            "name": "fixture_echo",
+            "arguments": ""
+          },
+          "sequence_number": 2
+        },
+        {
+          "type": "response.function_call_arguments.delta",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "delta": "{\"text\":\"fixture-",
+          "sequence_number": 3
+        },
+        {
+          "type": "response.function_call_arguments.delta",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "delta": "argument-ok\"}",
+          "sequence_number": 4
+        },
+        {
+          "type": "response.function_call_arguments.done",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "arguments": "{\"text\":\"fixture-argument-ok\"}",
+          "sequence_number": 5
+        },
+        {
+          "type": "response.output_item.done",
+          "output_index": 0,
+          "item": {
+            "id": "fc_resp_fixtureprovider1_0",
+            "type": "function_call",
+            "status": "completed",
+            "call_id": "call_fixture_echo_1",
+            "name": "fixture_echo",
+            "arguments": "{\"text\":\"fixture-argument-ok\"}"
+          },
+          "sequence_number": 6
+        },
+        {
+          "type": "response.completed",
+          "response": {
+            "id": "resp_fixtureprovider1",
+            "object": "response",
+            "created_at": 1794531545,
+            "status": "completed",
+            "model": "deepseek-v4-flash",
+            "output": [
+              {
+                "id": "fc_resp_fixtureprovider1_0",
+                "type": "function_call",
+                "status": "completed",
+                "call_id": "call_fixture_echo_1",
+                "name": "fixture_echo",
+                "arguments": "{\"text\":\"fixture-argument-ok\"}"
+              }
+            ],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": {
+              "input_tokens": 11,
+              "input_tokens_details": {
+                "cached_tokens": 0
+              },
+              "output_tokens": 5,
+              "total_tokens": 16
+            }
+          },
+          "sequence_number": 7
+        }
+      ],
+      "outcome": "delivered",
+      "error": null
+    },
+    {
+      "request": {
+        "path": "/v1/responses",
+        "body": "{\"model\":\"deepseek-v4-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"},{\"id\":\"fc_resp_fixtureprovider1_0\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_fixture_echo_1\",\"name\":\"fixture_echo\",\"arguments\":\"{\\\"text\\\":\\\"fixture-argument-ok\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_fixture_echo_1\",\"output\":\"fixture-tool-ok\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}],\"previous_response_id\":\"resp_fixtureprovider1\"}"
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-cache",
+        "content-type": "text/event-stream",
+        "x-uos-deployment-id": "unknown",
+        "x-uos-git-sha": "unknown",
+        "x-uos-provider-request-id": "fixture-provider-2",
+        "x-uos-request-id": "842bbf33-5bbe-40cc-af3f-27d0609ae08a",
+        "x-uos-upstream": "deepseek"
+      },
+      "chunksBase64": [
+        "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuY3JlYXRlZCIsInJlc3BvbnNlIjp7ImlkIjoicmVzcF9maXh0dXJlcHJvdmlkZXIyIiwib2JqZWN0IjoicmVzcG9uc2UiLCJjcmVhdGVkX2F0IjoxNzk0NTMxNTQ1LCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsIm1vZGVsIjoiZGVlcHNlZWstdjQtZmxhc2giLCJvdXRwdXQiOltdLCJlcnJvciI6bnVsbCwiaW5jb21wbGV0ZV9kZXRhaWxzIjpudWxsLCJpbnN0cnVjdGlvbnMiOiJVc2UgdGhlIGZpeHR1cmUgdG9vbCBhbmQgcHJlc2VydmUgaXRzIHJlc3VsdC4iLCJtZXRhZGF0YSI6e30sInBhcmFsbGVsX3Rvb2xfY2FsbHMiOnRydWUsInRvb2xfY2hvaWNlIjoiYXV0byIsInRvb2xzIjpbeyJ0eXBlIjoiZnVuY3Rpb24iLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwicGFyYW1ldGVycyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJ0ZXh0Ijp7InR5cGUiOiJzdHJpbmcifX0sInJlcXVpcmVkIjpbInRleHQiXX19XSwidGVtcGVyYXR1cmUiOm51bGwsInRvcF9wIjpudWxsLCJtYXhfb3V0cHV0X3Rva2VucyI6bnVsbCwicHJldmlvdXNfcmVzcG9uc2VfaWQiOm51bGwsInJlYXNvbmluZyI6bnVsbCwic3RvcmUiOmZhbHNlLCJ0cnVuY2F0aW9uIjoiZGlzYWJsZWQiLCJ1c2FnZSI6bnVsbH0sInNlcXVlbmNlX251bWJlciI6MH0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmluX3Byb2dyZXNzCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmluX3Byb2dyZXNzIiwicmVzcG9uc2UiOnsiaWQiOiJyZXNwX2ZpeHR1cmVwcm92aWRlcjIiLCJvYmplY3QiOiJyZXNwb25zZSIsImNyZWF0ZWRfYXQiOjE3OTQ1MzE1NDUsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwibW9kZWwiOiJkZWVwc2Vlay12NC1mbGFzaCIsIm91dHB1dCI6W10sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjpudWxsfSwic2VxdWVuY2VfbnVtYmVyIjoxfQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkIiwib3V0cHV0X2luZGV4IjowLCJpdGVtIjp7ImlkIjoibXNnX3Jlc3BfZml4dHVyZXByb3ZpZGVyMl8wIiwidHlwZSI6Im1lc3NhZ2UiLCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsInJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjpbXX0sInNlcXVlbmNlX251bWJlciI6Mn0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbnRlbnRfcGFydC5hZGRlZApkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb250ZW50X3BhcnQuYWRkZWQiLCJpdGVtX2lkIjoibXNnX3Jlc3BfZml4dHVyZXByb3ZpZGVyMl8wIiwib3V0cHV0X2luZGV4IjowLCJjb250ZW50X2luZGV4IjowLCJwYXJ0Ijp7InR5cGUiOiJvdXRwdXRfdGV4dCIsInRleHQiOiIiLCJhbm5vdGF0aW9ucyI6W119LCJzZXF1ZW5jZV9udW1iZXIiOjN9Cgo=",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhIiwiaXRlbV9pZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlLSIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjo0fQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhIiwiaXRlbV9pZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaW5hbC1vayIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjo1fQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X3RleHQuZG9uZSIsIml0ZW1faWQiOiJtc2dfcmVzcF9maXh0dXJlcHJvdmlkZXIyXzAiLCJvdXRwdXRfaW5kZXgiOjAsImNvbnRlbnRfaW5kZXgiOjAsInRleHQiOiJmaXh0dXJlLWZpbmFsLW9rIiwibG9ncHJvYnMiOltdLCJzZXF1ZW5jZV9udW1iZXIiOjZ9Cgo=",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbnRlbnRfcGFydC5kb25lCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNvbnRlbnRfcGFydC5kb25lIiwiaXRlbV9pZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwicGFydCI6eyJ0eXBlIjoib3V0cHV0X3RleHQiLCJ0ZXh0IjoiZml4dHVyZS1maW5hbC1vayIsImFubm90YXRpb25zIjpbXX0sInNlcXVlbmNlX251bWJlciI6N30KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X2l0ZW0uZG9uZSIsIm91dHB1dF9pbmRleCI6MCwiaXRlbSI6eyJpZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsInR5cGUiOiJtZXNzYWdlIiwic3RhdHVzIjoiY29tcGxldGVkIiwicm9sZSI6ImFzc2lzdGFudCIsImNvbnRlbnQiOlt7InR5cGUiOiJvdXRwdXRfdGV4dCIsInRleHQiOiJmaXh0dXJlLWZpbmFsLW9rIiwiYW5ub3RhdGlvbnMiOltdfV19LCJzZXF1ZW5jZV9udW1iZXIiOjh9Cgo=",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbXBsZXRlZApkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb21wbGV0ZWQiLCJyZXNwb25zZSI6eyJpZCI6InJlc3BfZml4dHVyZXByb3ZpZGVyMiIsIm9iamVjdCI6InJlc3BvbnNlIiwiY3JlYXRlZF9hdCI6MTc5NDUzMTU0NSwic3RhdHVzIjoiY29tcGxldGVkIiwibW9kZWwiOiJkZWVwc2Vlay12NC1mbGFzaCIsIm91dHB1dCI6W3siaWQiOiJtc2dfcmVzcF9maXh0dXJlcHJvdmlkZXIyXzAiLCJ0eXBlIjoibWVzc2FnZSIsInN0YXR1cyI6ImNvbXBsZXRlZCIsInJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjpbeyJ0eXBlIjoib3V0cHV0X3RleHQiLCJ0ZXh0IjoiZml4dHVyZS1maW5hbC1vayIsImFubm90YXRpb25zIjpbXX1dfV0sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MjMsIm91dHB1dF90b2tlbnMiOjcsInRvdGFsX3Rva2VucyI6MzB9fSwic2VxdWVuY2VfbnVtYmVyIjo5fQoK"
+      ],
+      "events": [
+        {
+          "type": "response.created",
+          "response": {
+            "id": "resp_fixtureprovider2",
+            "object": "response",
+            "created_at": 1794531545,
+            "status": "in_progress",
+            "model": "deepseek-v4-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 0
+        },
+        {
+          "type": "response.in_progress",
+          "response": {
+            "id": "resp_fixtureprovider2",
+            "object": "response",
+            "created_at": 1794531545,
+            "status": "in_progress",
+            "model": "deepseek-v4-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 1
+        },
+        {
+          "type": "response.output_item.added",
+          "output_index": 0,
+          "item": {
+            "id": "msg_resp_fixtureprovider2_0",
+            "type": "message",
+            "status": "in_progress",
+            "role": "assistant",
+            "content": []
+          },
+          "sequence_number": 2
+        },
+        {
+          "type": "response.content_part.added",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "",
+            "annotations": []
+          },
+          "sequence_number": 3
+        },
+        {
+          "type": "response.output_text.delta",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": "fixture-",
+          "logprobs": [],
+          "sequence_number": 4
+        },
+        {
+          "type": "response.output_text.delta",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": "final-ok",
+          "logprobs": [],
+          "sequence_number": 5
+        },
+        {
+          "type": "response.output_text.done",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "text": "fixture-final-ok",
+          "logprobs": [],
+          "sequence_number": 6
+        },
+        {
+          "type": "response.content_part.done",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "fixture-final-ok",
+            "annotations": []
+          },
+          "sequence_number": 7
+        },
+        {
+          "type": "response.output_item.done",
+          "output_index": 0,
+          "item": {
+            "id": "msg_resp_fixtureprovider2_0",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "fixture-final-ok",
+                "annotations": []
+              }
+            ]
+          },
+          "sequence_number": 8
+        },
+        {
+          "type": "response.completed",
+          "response": {
+            "id": "resp_fixtureprovider2",
+            "object": "response",
+            "created_at": 1794531545,
+            "status": "completed",
+            "model": "deepseek-v4-flash",
+            "output": [
+              {
+                "id": "msg_resp_fixtureprovider2_0",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "text": "fixture-final-ok",
+                    "annotations": []
+                  }
+                ]
+              }
+            ],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": {
+              "input_tokens": 23,
+              "output_tokens": 7,
+              "total_tokens": 30
+            }
+          },
+          "sequence_number": 9
+        }
+      ],
+      "outcome": "delivered",
+      "error": null
+    }
+  ]
+}
