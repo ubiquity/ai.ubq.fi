@@ -6,26 +6,28 @@ use gateway_auth::{
 
 #[test]
 fn audit_identifies_passport_session_without_persisting_credentials() {
-    let claims = serde_json::from_value(serde_json::json!({
-        "iss": "https://passport.ubq.fi",
-        "sub": "passport-subject",
-        "handle": "passport-handle",
-        "isAdmin": true,
-        "aud": "ai",
-        "clientId": "ai",
-        "auth": "sso",
-        "iat": 1_800_000_000,
-        "exp": 1_900_000_000,
-        "jti": "passport-jti"
-    }))
-    .unwrap();
-    let principal = AuthPrincipal {
+    let passport = AuthPrincipal {
         token: Some(Secret::new("passport-jwt-must-not-persist".into())),
-        method: AuthMethod::PassportSession { claims },
+        method: AuthMethod::PassportSession {
+            claims: gateway_auth::passport::PassportClaims {
+                iss: "https://passport.ubq.fi".into(),
+                sub: "passport-subject".into(),
+                handle: "passport-handle".into(),
+                is_admin: true,
+                scopes: Vec::new(),
+                aud: "ai".into(),
+                client_id: "ai".into(),
+                auth: "sso".into(),
+                iat: 1_800_000_000,
+                exp: 1_900_000_000,
+                jti: "passport-jti".into(),
+                agent_token_id: None,
+            },
+        },
         is_admin: true,
         is_super_admin: false,
     };
-    let identified = audit::actor(&principal);
+    let identified = audit::actor(&passport);
     assert_eq!(identified.kind, "passkey_user");
     assert_eq!(identified.principal_id.as_deref(), Some("passport-subject"));
     assert_eq!(
