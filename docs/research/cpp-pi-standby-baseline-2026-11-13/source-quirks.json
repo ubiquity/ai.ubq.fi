@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "handlerOracle": "d94fef52ccc76e0d5aa019154f11e47d5e10fba6",
+  "namespaceReplay": {
+    "fixtureCommit": "8ccbcc06c12f24bb2413024e3cf723b19d25ebc1",
+    "advertisedChatNames": ["fixture_echo", "clock_fixture_echo"],
+    "returnedTool": {
+      "name": "fixture_echo",
+      "namespace": "clock"
+    },
+    "nextChatHistoryName": "fixture_echo",
+    "disposition": "recorded source behavior; not repaired",
+    "durableReceiptSha256": "4cb9ddac1e8d607695ab27d61d4d27c48e5854558b43d79bccddf93dbbf304d3"
+  },
+  "directionalHalfClose": {
+    "sourceCommit": "f587f3a36927437fca722472c9c4ba1a25c37b1e",
+    "sourceTree": "f20c068224f7aecdb871b0532457df2bd79473db",
+    "evidenceRef": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/31488014-a2dc-4de3-9a73-33b0f4b87efc",
+    "cases": [
+      {
+        "name": "normal-full-duplex",
+        "wireStatus": 200,
+        "responseBytes": 5084,
+        "providerDispatches": 1,
+        "quotaCommits": 2,
+        "semanticTerminals": ["response.completed"],
+        "storageReopen": "verified",
+        "delivery": "delivered",
+        "admissionStage": "accepted",
+        "internalStatus": 200
+      },
+      {
+        "name": "write-half-close",
+        "wireStatus": 0,
+        "responseBytes": 0,
+        "providerDispatches": 0,
+        "quotaCommits": 0,
+        "semanticTerminals": [],
+        "storageReopen": "verified",
+        "delivery": "interrupted",
+        "admissionStage": "pre_admission",
+        "internalStatus": 499
+      }
+    ],
+    "scopeLimit": "Immediate postbody write-half-close only; no later FIN/full-close/RST/terminal-write parity inferred",
+    "disposition": "recorded; no source or C++ behavior change authorized"
+  }
+}

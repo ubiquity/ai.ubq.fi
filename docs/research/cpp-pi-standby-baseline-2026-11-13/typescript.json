@@ -1,0 +1,242 @@
+{
+  "schema": 1,
+  "classification": "bounded source fixture; actual Codex separate from raw-client latency",
+  "source": {
+    "commit": "96cfca54d033aedff8e237a4cbcebb051f62f066",
+    "tree": "7ae301184cfe261d45b1add6e0587e77d1f26688",
+    "oracleImplementation": "d94fef52ccc76e0d5aa019154f11e47d5e10fba6"
+  },
+  "evidenceRefs": {
+    "actualClient": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/231317f6-a119-421a-b2a9-ffea18eaafa0",
+    "memory": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/1b4b35f5-a065-4556-bbbb-61f9d816495a",
+    "p95": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/e44da73e-b62e-4896-bedc-9ef5ef15c637"
+  },
+  "runtime": {
+    "bun": "1.4.0",
+    "bunSha256": "086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9",
+    "nativeKvSha256": "d9e6e52f1b0fbe2e0023e63a4c0dcec4394a032801d6d2576b43d2555c314be3",
+    "nativeKvProvenanceSha256": "57d7405783c9f34343f3d4fe089b3733effc079d9521cd341a3dc5bc0c87c201"
+  },
+  "nativeClient": {
+    "version": "0.167.2",
+    "sha256": "b581df3989da98e36fccd7d40cc980727a9ee87bcf0e6ef52ffb2544d6a5302f",
+    "requests": 2,
+    "model": "deepseek-flash",
+    "effort": "none",
+    "nativeCallbackEpochMs": 1794532911993.964,
+    "producerReceiptEpochMs": 1794532911995.5151,
+    "producerResumedEpochMs": 1794532911995.6892,
+    "reopen": "verified",
+    "status": "passed",
+    "toolCallId": "call_fixture_echo_1",
+    "toolName": "fixture_echo",
+    "arguments": "{\"text\":\"fixture-argument-ok\"}",
+    "result": "fixture-tool-ok",
+    "finalText": "fixture-final-ok",
+    "rawClientP95": false
+  },
+  "durability": {
+    "mode": "file",
+    "codec": "bun-jsc-v1",
+    "reopen": "verified",
+    "valuesAndVersionstampsEqual": true,
+    "dispatchesBefore": 0,
+    "dispatchesAfter": 0,
+    "quotaCommitsBefore": 4,
+    "quotaCommitsAfter": 4,
+    "requestRows": 2,
+    "committedRequests": 2,
+    "reservedRequests": 0,
+    "paidSettlement": "not_applicable",
+    "filesystem": "tmpfs",
+    "powerLossOrHostRebootDurabilityProven": false,
+    "boundary": "Private SQLite on VPS /tmp tmpfs; close/fresh-reopen ledger equality only"
+  },
+  "memory": [
+    {
+      "streams": 1,
+      "phase": "cold_ready",
+      "rssMiB": 79.22265625,
+      "pssMiB": 51.115234375,
+      "cgroupMiB": 41.2734375,
+      "cgroupPeakMiB": 41.2734375,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "streams": 1,
+      "phase": "warm_idle_2s_after_one_request",
+      "rssMiB": 85.62109375,
+      "pssMiB": 54.576171875,
+      "cgroupMiB": 41.5859375,
+      "cgroupPeakMiB": 42.4609375,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "streams": 1,
+      "phase": "loaded_1_streams_received_but_terminal_held",
+      "rssMiB": 85.89453125,
+      "pssMiB": 54.6826171875,
+      "cgroupMiB": 41.58203125,
+      "cgroupPeakMiB": 42.4609375,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "streams": 1,
+      "phase": "loaded_1_streams_after_1s",
+      "rssMiB": 86.0546875,
+      "pssMiB": 54.8427734375,
+      "cgroupMiB": 41.8671875,
+      "cgroupPeakMiB": 42.4609375,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "streams": 1,
+      "phase": "postload_idle_2s",
+      "rssMiB": 86.12109375,
+      "pssMiB": 54.8857421875,
+      "cgroupMiB": 41.8203125,
+      "cgroupPeakMiB": 42.4609375,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "streams": 2,
+      "phase": "cold_ready",
+      "rssMiB": 81.69140625,
+      "pssMiB": 52.990234375,
+      "cgroupMiB": 42.8515625,
+      "cgroupPeakMiB": 42.8515625,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "streams": 2,
+      "phase": "warm_idle_2s_after_one_request",
+      "rssMiB": 89.5859375,
+      "pssMiB": 58.1748046875,
+      "cgroupMiB": 45.3125,
+      "cgroupPeakMiB": 45.36328125,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "streams": 2,
+      "phase": "loaded_2_streams_received_but_terminal_held",
+      "rssMiB": 90.76953125,
+      "pssMiB": 59.326171875,
+      "cgroupMiB": 46.29296875,
+      "cgroupPeakMiB": 46.29296875,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "streams": 2,
+      "phase": "loaded_2_streams_after_1s",
+      "rssMiB": 90.734375,
+      "pssMiB": 59.291015625,
+      "cgroupMiB": 46.24609375,
+      "cgroupPeakMiB": 46.5390625,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "streams": 2,
+      "phase": "postload_idle_2s",
+      "rssMiB": 91.390625,
+      "pssMiB": 59.90625,
+      "cgroupMiB": 47.08203125,
+      "cgroupPeakMiB": 47.2421875,
+      "swap": "0",
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    }
+  ],
+  "latency": [
+    {
+      "concurrency": 1,
+      "sampleN": 20,
+      "excludedWarmups": 2,
+      "method": "nearest-rank ceil(0.95*N), one-indexed",
+      "p95Ms": 34.827271999999994,
+      "minMs": 8.612617000000682,
+      "maxMs": 44.89009899999928,
+      "deltaBeforeTerminal": true,
+      "producerReceiptOrdering": true,
+      "mockDispatches": 22,
+      "archiveEntries": 88,
+      "terminalCount": 22,
+      "accountingRows": 22,
+      "reopen": "verified",
+      "finalCommitted": 22,
+      "finalReserved": 0,
+      "gatewaySwap": "0",
+      "gatewayMemoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    {
+      "concurrency": 2,
+      "sampleN": 20,
+      "excludedWarmups": 2,
+      "method": "nearest-rank ceil(0.95*N), one-indexed",
+      "p95Ms": 62.067252999999255,
+      "minMs": 10.590431000000535,
+      "maxMs": 64.57266999999956,
+      "deltaBeforeTerminal": true,
+      "producerReceiptOrdering": true,
+      "mockDispatches": 22,
+      "archiveEntries": 88,
+      "terminalCount": 22,
+      "accountingRows": 22,
+      "reopen": "verified",
+      "finalCommitted": 22,
+      "finalReserved": 0,
+      "gatewaySwap": "0",
+      "gatewayMemoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    }
+  ],
+  "limits": {
+    "outerMiB": 768,
+    "gatewayMiB": 512,
+    "swap": 0,
+    "cpuCores": 1
+  },
+  "boundary": {
+    "gatewayIncludes": [
+      "Bun and complete source-handler imports",
+      "fixture authority/journal",
+      "file-backed native KV"
+    ],
+    "gatewayExcludes": ["mock", "raw/native clients", "controller", "outer namespace helpers"],
+    "gatewayMovedBeforeExec": true,
+    "binaryHashingOutsideMeasuredGroup": true,
+    "sharedPageCharge": "RSS/PSS and cgroup accounting are distinct; do not subtract them",
+    "scope": "one configured synthetic direct DeepSeek route; not production enabled-feature/history equivalence"
+  },
+  "cleanup": {
+    "actual-client": {
+      "controllerExit": 0,
+      "cgroupExists": false,
+      "systemctl": "LoadState=not-found\nActiveState=inactive\nSubState=dead"
+    },
+    "metrics": {
+      "controllerExit": 0,
+      "cgroupExists": false,
+      "systemctl": "LoadState=not-found\nActiveState=inactive\nSubState=dead"
+    },
+    "p95": {
+      "controllerExit": 0,
+      "cgroupExists": false,
+      "systemctl": "LoadState=not-found\nActiveState=inactive\nSubState=dead"
+    }
+  },
+  "rawArtifactHashes": {
+    "actual-client/actual/gateway/raw.json": "de8e499bf2e3b286fe73fc5e8a3794ce1d3d104f485f7d82fec1b5f16e7d8f3f",
+    "actual-client/actual/mock/raw.json": "02757c60430750efeda460d59d55fcfb4150c77d3c800a6464f16fa36539a9fa",
+    "actual-client/actual/native/native-receipt.json": "5fb353672e9b80a18ab6278112af92a9fb5479414b250f8cbce82a17bc0c95c3",
+    "actual-client-prehash.json": "adceb2a68f20931e5c2d80ba32086c32f9c75a0f363b95db33c608689d12f04b",
+    "metrics-prehash.json": "0739c51d1057376779e298543c2deb14282d5d3a2b1e6aad2bfb0af50b316ca3",
+    "p95-prehash.json": "0739c51d1057376779e298543c2deb14282d5d3a2b1e6aad2bfb0af50b316ca3"
+  }
+}
