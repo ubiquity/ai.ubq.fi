@@ -1,0 +1,7 @@
+{
+  "taskEvidenceFilesystem": "tmpfs",
+  "mountpoint": "/tmp",
+  "source": "read-only /proc/self/mountinfo longest matching mount",
+  "claim": "close/reopen persistence and ledger semantics only; no power-loss/host-reboot/failover durability",
+  "piTmp": "disk-backed per host-baseline live preflight; later Pi fsync latency must be measured on target"
+}

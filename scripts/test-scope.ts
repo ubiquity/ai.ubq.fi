@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,6 +16,7 @@ const ALIASES = new Map([
 const UNTRACKED_ROOTS = ["src/", "scripts/", "tests/", "ops/", "benchmarks/", "tools/", "static/", "rust/"];
 const PRIVATE_COPY_CONTROLLER = "tests/private-bun-copy-confinement.test.ts";
 const PRIVATE_COPY_PRODUCT = "tools/cloudflare/private-bun-copy.ts";
+const RESEARCH_ARTIFACT = /^docs\/research\/.+\.(?:json|py)$/i;
 const WORKER_RUNTIME_TEST = "tests/native-authority-workerd.test.ts";
 const WORKER_RUNTIME_INPUT = /^(?:tests\/fixtures\/native-authority\/|tools\/worker-test-runtime\/|scripts\/prepare-worker-test-runtime\.ts$)/;
 const WORKER_RUNTIME_FIXTURES = ["tests/fixtures/native-authority/fixture-worker.mjs", "tests/fixtures/native-authority/bun-client.ts"];
@@ -117,10 +118,14 @@ export const RUST_NATIVE_ONLY_PACKAGES = [
 ] as const;
 const WORKFLOW_CONTRACT_PATH = ".github/workflows/deno-deploy.yml";
 
-export const classifyChangedPaths = (paths: readonly string[]): ChangeScope => {
+const classifyPaths = (paths: readonly string[], separate: ReadonlySet<string>): ChangeScope => {
   const normalized = uniqueSorted(paths.map(normalizePath).filter(Boolean));
-  return { paths: normalized, documentationOnly: normalized.length > 0 && normalized.every(isDocumentationPath) };
+  return {
+    paths: normalized,
+    documentationOnly: normalized.length > 0 && normalized.every((path) => isDocumentationPath(path) || (RESEARCH_ARTIFACT.test(path) && separate.has(path))),
+  };
 };
+export const classifyChangedPaths = (paths: readonly string[], root = ROOT): ChangeScope => classifyPaths(paths, separateComponentPaths(paths, root));
 
 const resolveImportedPath = (from: string, specifier: string, root: string): string | null => {
   const clean = specifier.split(/[?#]/, 1)[0] ?? "";
@@ -173,6 +178,101 @@ const testTouchesChangedPath = (testPath: string, changedPaths: ReadonlySet<stri
     pending.push(...dependenciesOf(file, root));
   }
   return false;
+};
+
+const runtimeSourceFiles = (root: string): string[] => {
+  const files: string[] = [];
+  const visit = (directory: string): void => {
+    if (!existsSync(directory)) return;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (["node_modules", ".git", ".data", ".codex-worktrees", "vendor", "target"].includes(entry.name)) continue;
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.isFile() && SOURCE_FILE.test(entry.name)) files.push(path);
+    }
+  };
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.isFile() && SOURCE_FILE.test(entry.name)) files.push(resolve(root, entry.name));
+  }
+  for (const directory of ["src", "scripts", "ops", "tests", "tools", "benchmarks", "static", ".github"]) visit(resolve(root, directory));
+  return files;
+};
+
+const commentEnd = (source: string, index: number): number => {
+  const pair = source.slice(index, index + 2);
+  if (pair !== "//" && pair !== "/*") return index;
+  const close = pair === "//" ? "\n" : "*/";
+  const end = source.indexOf(close, index + 2);
+  return end < 0 ? source.length : end + close.length;
+};
+const runtimeLiteralPrefix = (source: string, index: number): boolean => {
+  let end = index;
+  while (end > 0 && /\s/.test(source[end - 1])) end--;
+  if (source[end - 1] === "(") end--;
+  while (end > 0 && /\s/.test(source[end - 1])) end--;
+  let start = end;
+  while (start > 0 && /[\w.]/.test(source[start - 1])) start--;
+  const name = source.slice(start, end).split(".").at(-1);
+  return name !== undefined && ["from", "import", "require", "URL", "file", "readFile", "readFileSync", "readTextFile", "readTextFileSync"].includes(name);
+};
+const literalReferences = (file: string, root: string): string[] => {
+  const source = readFileSync(file, "utf8");
+  const references: string[] = [];
+  let index = 0;
+  while (index < source.length) {
+    const afterComment = commentEnd(source, index);
+    if (afterComment !== index) {
+      index = afterComment;
+      continue;
+    }
+    const quote = source[index];
+    if (!["'", '"', "`"].includes(quote)) {
+      index++;
+      continue;
+    }
+    const start = index++;
+    let value = "";
+    while (index < source.length && source[index] !== quote) {
+      if (source[index] === "\\") index++;
+      value += source[index++];
+    }
+    index++;
+    if (runtimeLiteralPrefix(source, start)) references.push(resolve(dirname(file), value), resolve(root, value));
+  }
+  return references;
+};
+const referencesComponent = (reference: string, target: string, component: string): boolean =>
+  reference === target || (!extname(reference) && (reference === component || reference.startsWith(component + "/")) && target.startsWith(reference + "/"));
+
+/** Research records and the CMake pilot are separate unless a Bun consumer reaches them. */
+const separateComponentPaths = (paths: readonly string[], root: string): ReadonlySet<string> => {
+  const candidates = uniqueSorted(paths.map(normalizePath).filter((path) => RESEARCH_ARTIFACT.test(path) || path.startsWith("cpp/")));
+  if (!candidates.length) return new Set();
+  const targets = candidates.map((path) => ({
+    path,
+    absolute: resolve(root, path),
+    component: resolve(root, path.startsWith("cpp/") ? "cpp" : "docs/research"),
+  }));
+  const consumed = new Set<string>();
+  const visited = new Set<string>();
+  const pending = runtimeSourceFiles(root);
+  while (pending.length) {
+    const file = pending.pop();
+    if (!file || visited.has(file) || !SOURCE_FILE.test(file)) continue;
+    visited.add(file);
+    const dependencies = dependenciesOf(file, root);
+    const references = literalReferences(file, root);
+    for (const target of targets) {
+      if (
+        file === target.absolute ||
+        dependencies.includes(target.absolute) ||
+        references.some((reference) => referencesComponent(reference, target.absolute, target.component))
+      )
+        consumed.add(target.path);
+    }
+    pending.push(...dependencies);
+  }
+  return new Set(candidates.filter((path) => !consumed.has(path)));
 };
 
 export const selectAffectedTestFiles = (changedPaths: readonly string[], candidateTests: readonly string[], root = ROOT): string[] => {
@@ -228,16 +328,19 @@ const candidateTestFiles = (changedPaths: readonly string[]): string[] =>
 export const detectTestSelection = (): TestSelection => {
   const paths = changedPathsFromGit();
   if (paths === null) return { paths: [], documentationOnly: false, affectedTests: [], runAll: true, reason: "no-base" };
-  const scope = classifyChangedPaths(paths);
+  const separate = separateComponentPaths(paths, ROOT);
+  const scope = classifyPaths(paths, separate);
   if (scope.paths.length === 0) return { ...scope, affectedTests: [], runAll: true, reason: "no-changes" };
   if (scope.documentationOnly) return { ...scope, affectedTests: [], runAll: false, reason: "documentation-only" };
 
-  const changedCode = scope.paths.filter((path) => !isDocumentationPath(path) && !isRustPath(path) && path !== WORKFLOW_CONTRACT_PATH);
+  const changedCode = scope.paths.filter((path) => !isDocumentationPath(path) && !isRustPath(path) && !separate.has(path) && path !== WORKFLOW_CONTRACT_PATH);
   const candidates = candidateTestFiles(scope.paths);
   const dependencyScoped = changedCode.every((path) => SOURCE_FILE.test(path) || isTestPath(path));
   // The workflow is a readFile dependency of this contract test, not a TS import.
   const workflowTests = scope.paths.includes(WORKFLOW_CONTRACT_PATH) ? ["scripts/test-scope.test.ts"] : [];
-  const affectedTests = uniqueSorted([...(dependencyScoped ? selectAffectedTestFiles(changedCode, candidates) : candidates), ...workflowTests]);
+  // Retain the existing explicit Darwin signing gate for its native/profile inputs.
+  const darwinTests = scope.paths.some((path) => DARWIN_PATH.test(path)) && candidates.includes("tests/gpg-dsh.test.ts") ? ["tests/gpg-dsh.test.ts"] : [];
+  const affectedTests = uniqueSorted([...(dependencyScoped ? selectAffectedTestFiles(changedCode, candidates) : candidates), ...workflowTests, ...darwinTests]);
   if (affectedTests.length === 0) return { ...scope, affectedTests, runAll: false, reason: "no-dependent-tests" };
   return { ...scope, affectedTests, runAll: false, reason: dependencyScoped ? "selected" : "config" };
 };
@@ -275,14 +378,16 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
   const rustPaths = selection.paths.filter(isRustGatePath);
   const nativeOnly = rustPaths.length > 0 && rustPaths.every((path) => RUST_NATIVE_ONLY_PACKAGES.some((name) => path.startsWith(`rust/crates/${name}/`)));
   const needsRustWasm = needsRustNative && (completeCheckSet || selection.runAll || !nativeOnly);
-  const hasTypeScriptWork = selection.paths.some((path) => !isDocumentationPath(path) && !isRustPath(path));
+  const separate = separateComponentPaths(selection.paths, root);
+  const hasTypeScriptWork = selection.paths.some((path) => SOURCE_FILE.test(path) || (!isDocumentationPath(path) && !isRustPath(path) && !separate.has(path)));
   const needsNativeKv =
     selection.runAll ||
     selection.paths.some((path) => NATIVE_PATH.test(path)) ||
     (!docsOnly && selection.affectedTests.some((path) => testRequiresNativeKv(path, root)));
   const needsArtifact = completeCheckSet || (!docsOnly && selection.paths.some((path) => RELEASE_PATH.test(path)));
   const needsWorkerRuntime = workerRuntimeTestExists(root) && (selection.runAll || selection.affectedTests.includes(WORKER_RUNTIME_TEST));
-  const needsDarwinTests = !docsOnly && (selection.runAll || selection.paths.some((path) => DARWIN_PATH.test(path)));
+  const needsDarwinTests =
+    !docsOnly && (selection.runAll || selection.paths.some((path) => DARWIN_PATH.test(path)) || selection.affectedTests.includes(PRIVATE_COPY_CONTROLLER));
   return {
     ...selection,
     completeCheckSet,
@@ -332,10 +437,18 @@ export const formatScopeMessage = (selection: TestSelection, command: string): s
     "Required checks for this change:",
     "  - Format only the changed files.",
     "  - Run `git diff --check`.",
-    "  - Do not run unrelated tests, lint, Knip, native builds, or deployment suites.",
+    ...(selection.paths.some((path) => SOURCE_FILE.test(path))
+      ? ["  - Retain changed-source lint, formatting, and strict no-emit checks; do not run unrelated test suites."]
+      : ["  - Do not run unrelated tests, lint, Knip, native builds, or deployment suites."]),
     "Override only for an explicitly requested test run: TEST_SCOPE_FORCE=1",
     ...(selection.paths.some(isRustGatePath)
       ? ["Rust checks are separate: bun --no-env-file --no-install scripts/rust-verify.ts", "This Bun test selection is not Rust verification."]
+      : []),
+    ...(selection.paths.some((path) => path.startsWith("cpp/"))
+      ? [
+          "C++ checks are separate: run the committed CMake/CTest presets and required local receipts.",
+          "This Bun test selection does not validate the C++ pilot.",
+        ]
       : []),
     "Exit code: 0",
   ].join("\n");
@@ -360,5 +473,5 @@ if (import.meta.main) {
   const selection = detectTestSelection();
   if (selection.runAll) process.exit(10);
   console.log(formatScopeMessage(selection, "bun run verify"));
-  process.exit(selection.affectedTests.length === 0 ? 0 : 10);
+  process.exit(selection.affectedTests.length === 0 && !selection.paths.some((path) => SOURCE_FILE.test(path)) ? 0 : 10);
 }

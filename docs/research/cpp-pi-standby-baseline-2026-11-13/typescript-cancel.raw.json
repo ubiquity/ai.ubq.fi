@@ -1,0 +1,580 @@
+{
+  "oracleSourceSha": "d94fef52ccc76e0d5aa019154f11e47d5e10fba6",
+  "providerOwnership": "fixture",
+  "storage": {
+    "mode": "file",
+    "databasePath": "fixture-state/kv-bun.sqlite3",
+    "codec": "bun-jsc-v1",
+    "reopen": {
+      "outcome": "verified",
+      "before": [
+        {
+          "requestId": "1c786507-a695-467e-b79b-51223d8f80dd",
+          "request": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "request_id": "1c786507-a695-467e-b79b-51223d8f80dd",
+            "route": "responses",
+            "state": "dispatched",
+            "reserved_at_ms": 1794531545476,
+            "lease_expires_at_ms": 1794531845476,
+            "provider": "deepseek",
+            "dispatched_at_ms": 1794531545480,
+            "released_at_ms": null,
+            "release_reason": null
+          },
+          "requestVersionstamp": "00000000000000100000",
+          "window": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "policy_version": "v3:3600000",
+            "window_start_ms": 1794531545459,
+            "window_reset_at_ms": 1794535145459,
+            "committed_requests": 1,
+            "reserved_requests": 0,
+            "updated_at_ms": 1794531545480
+          },
+          "windowVersionstamp": "00000000000000100000",
+          "paidFallback": "not_applicable"
+        }
+      ],
+      "after": [
+        {
+          "requestId": "1c786507-a695-467e-b79b-51223d8f80dd",
+          "request": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "request_id": "1c786507-a695-467e-b79b-51223d8f80dd",
+            "route": "responses",
+            "state": "dispatched",
+            "reserved_at_ms": 1794531545476,
+            "lease_expires_at_ms": 1794531845476,
+            "provider": "deepseek",
+            "dispatched_at_ms": 1794531545480,
+            "released_at_ms": null,
+            "release_reason": null
+          },
+          "requestVersionstamp": "00000000000000100000",
+          "window": {
+            "v": 3,
+            "key_id": "responses-conformance-key",
+            "policy_version": "v3:3600000",
+            "window_start_ms": 1794531545459,
+            "window_reset_at_ms": 1794535145459,
+            "committed_requests": 1,
+            "reserved_requests": 0,
+            "updated_at_ms": 1794531545480
+          },
+          "windowVersionstamp": "00000000000000100000",
+          "paidFallback": "not_applicable"
+        }
+      ],
+      "dispatchesBefore": 1,
+      "dispatchesAfter": 1,
+      "quotaCommitsBefore": 2,
+      "quotaCommitsAfter": 2
+    }
+  },
+  "inbound": [
+    {
+      "path": "/v1/responses",
+      "body": "{\"model\":\"deepseek-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}]}",
+      "headers": {
+        "authorization": "Bearer [REDACTED]",
+        "connection": "close",
+        "content-length": "414",
+        "content-type": "application/json",
+        "host": "127.0.0.1:33923"
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "path": "/chat/completions",
+      "body": "{\"model\":\"deepseek-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"Use the fixture tool and preserve its result.\\n\\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation.\"},{\"role\":\"system\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"}],\"stream\":true,\"stream_options\":{\"include_usage\":true},\"reasoning_effort\":\"none\",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}}]}",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          "x-request-id": "fixture-provider-1"
+        },
+        "chunksBase64": [
+          "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsicm9sZSI6ImFzc2lzdGFudCIsInRvb2xfY2FsbHMiOlt7ImluZGV4IjowLCJpZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJ0eXBlIjoiZnVuY3Rpb24iLCJmdW5jdGlvbiI6eyJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoie1widGV4dFwiOlwiZml4dHVyZS0ifX1dfSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQoK"
+        ]
+      }
+    }
+  ],
+  "chronology": [
+    {
+      "kind": "quota_commit",
+      "atMs": 845.997993,
+      "detail": {
+        "writes": [
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "window",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545459
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "policy_version": "v3:3600000",
+              "window_start_ms": 1794531545459,
+              "window_reset_at_ms": 1794535145459,
+              "committed_requests": 0,
+              "reserved_requests": 1,
+              "updated_at_ms": 1794531545476
+            }
+          },
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "request",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545459,
+              "1c786507-a695-467e-b79b-51223d8f80dd"
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "request_id": "1c786507-a695-467e-b79b-51223d8f80dd",
+              "route": "responses",
+              "state": "reserved",
+              "reserved_at_ms": 1794531545476,
+              "lease_expires_at_ms": 1794531845476,
+              "provider": null,
+              "dispatched_at_ms": null,
+              "released_at_ms": null,
+              "release_reason": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "quota_commit",
+      "atMs": 847.916125,
+      "detail": {
+        "writes": [
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "request",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545459,
+              "1c786507-a695-467e-b79b-51223d8f80dd"
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "request_id": "1c786507-a695-467e-b79b-51223d8f80dd",
+              "route": "responses",
+              "state": "dispatched",
+              "reserved_at_ms": 1794531545476,
+              "lease_expires_at_ms": 1794531845476,
+              "provider": "deepseek",
+              "dispatched_at_ms": 1794531545480,
+              "released_at_ms": null,
+              "release_reason": null
+            }
+          },
+          {
+            "key": [
+              "uos_ai",
+              "api_key_usage",
+              "v3",
+              "window",
+              "responses-conformance-key",
+              "v3:3600000",
+              1794531545459
+            ],
+            "value": {
+              "v": 3,
+              "key_id": "responses-conformance-key",
+              "policy_version": "v3:3600000",
+              "window_start_ms": 1794531545459,
+              "window_reset_at_ms": 1794535145459,
+              "committed_requests": 1,
+              "reserved_requests": 0,
+              "updated_at_ms": 1794531545480
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "provider_dispatch",
+      "atMs": 848.897651,
+      "detail": {
+        "turn": 1,
+        "body": {
+          "model": "deepseek-flash",
+          "messages": [
+            {
+              "role": "system",
+              "content": "Use the fixture tool and preserve its result.\n\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation."
+            },
+            {
+              "role": "system",
+              "content": "Keep the exact fixture values."
+            },
+            {
+              "role": "user",
+              "content": "Run the fixture tool."
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          },
+          "reasoning_effort": "none",
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "provider_first_delta",
+      "atMs": 849.240253,
+      "detail": {
+        "turn": 1
+      }
+    },
+    {
+      "kind": "client_socket_destroyed",
+      "atMs": 851.465187,
+      "detail": {}
+    },
+    {
+      "kind": "request_terminal",
+      "atMs": 853.313239,
+      "detail": {
+        "request_id": "1c786507-a695-467e-b79b-51223d8f80dd",
+        "route": "responses",
+        "status": 200,
+        "provider": "deepseek",
+        "latency_ms": 11,
+        "admission_wait_ms": 0,
+        "admission_stage": "accepted",
+        "first_provider_dispatch_ms": 6,
+        "first_provider_headers_ms": 7,
+        "first_codex_dispatch_ms": null,
+        "first_codex_headers_ms": null,
+        "first_upstream_sse_event_ms": 8,
+        "first_semantic_commitment_ms": 8,
+        "stream_terminal_ms": 10,
+        "downstream_drain_ms": null,
+        "delivery_outcome": "interrupted",
+        "model": "deepseek-flash",
+        "reasoning": "none",
+        "output_token_allowance": 8192,
+        "rate_limit_wait_ms": null,
+        "rate_limit_failover_model": null,
+        "provider_request_id": "fixture-provider-1",
+        "input_tokens": null,
+        "cached_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_observed": false,
+        "usage_telemetry_status": "missing",
+        "prompt_cache_key_present": false,
+        "prompt_cache_mode": "unspecified",
+        "explicit_breakpoint_count": 0,
+        "account_slot": null,
+        "account_cohort_id": null,
+        "active_generation": null,
+        "active_transition_reason": null,
+        "fallback_reason": null,
+        "semantic_output_observed": true,
+        "upstream_event_kinds": [],
+        "stream": true,
+        "stream_terminal_type": "cancelled",
+        "failure_kind": "cancellation",
+        "response_created_observed": false,
+        "synthetic_terminal_type": null,
+        "attempted_providers": ["deepseek"],
+        "removed_provider_trigger_class": null,
+        "removed_provider_circuit_transition": null,
+        "removed_provider_selected_model": null,
+        "removed_provider_task_type": null,
+        "removed_provider_latency_ms": null,
+        "removed_provider_terminal_status": null,
+        "removed_provider_semantic_commitment": null,
+        "git_sha": "unknown",
+        "deno_revision": "unknown",
+        "router_revision": null
+      }
+    },
+    {
+      "kind": "provider_cancelled",
+      "atMs": 854.218685,
+      "detail": {
+        "turn": 1
+      }
+    },
+    {
+      "kind": "transport_drained",
+      "atMs": 856.802261,
+      "detail": {}
+    },
+    {
+      "kind": "kv_closed",
+      "atMs": 857.899108,
+      "detail": {}
+    },
+    {
+      "kind": "kv_reopened_verified",
+      "atMs": 859.81524,
+      "detail": {}
+    }
+  ],
+  "terminals": [
+    {
+      "request_id": "1c786507-a695-467e-b79b-51223d8f80dd",
+      "route": "responses",
+      "status": 200,
+      "provider": "deepseek",
+      "latency_ms": 11,
+      "admission_wait_ms": 0,
+      "admission_stage": "accepted",
+      "first_provider_dispatch_ms": 6,
+      "first_provider_headers_ms": 7,
+      "first_codex_dispatch_ms": null,
+      "first_codex_headers_ms": null,
+      "first_upstream_sse_event_ms": 8,
+      "first_semantic_commitment_ms": 8,
+      "stream_terminal_ms": 10,
+      "downstream_drain_ms": null,
+      "delivery_outcome": "interrupted",
+      "model": "deepseek-flash",
+      "reasoning": "none",
+      "output_token_allowance": 8192,
+      "rate_limit_wait_ms": null,
+      "rate_limit_failover_model": null,
+      "provider_request_id": "fixture-provider-1",
+      "input_tokens": null,
+      "cached_input_tokens": null,
+      "cache_write_input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "usage_observed": false,
+      "usage_telemetry_status": "missing",
+      "prompt_cache_key_present": false,
+      "prompt_cache_mode": "unspecified",
+      "explicit_breakpoint_count": 0,
+      "account_slot": null,
+      "account_cohort_id": null,
+      "active_generation": null,
+      "active_transition_reason": null,
+      "fallback_reason": null,
+      "semantic_output_observed": true,
+      "upstream_event_kinds": [],
+      "stream": true,
+      "stream_terminal_type": "cancelled",
+      "failure_kind": "cancellation",
+      "response_created_observed": false,
+      "synthetic_terminal_type": null,
+      "attempted_providers": ["deepseek"],
+      "removed_provider_trigger_class": null,
+      "removed_provider_circuit_transition": null,
+      "removed_provider_selected_model": null,
+      "removed_provider_task_type": null,
+      "removed_provider_latency_ms": null,
+      "removed_provider_terminal_status": null,
+      "removed_provider_semantic_commitment": null,
+      "git_sha": "unknown",
+      "deno_revision": "unknown",
+      "router_revision": null
+    }
+  ],
+  "accounting": [
+    {
+      "requestId": "1c786507-a695-467e-b79b-51223d8f80dd",
+      "request": {
+        "v": 3,
+        "key_id": "responses-conformance-key",
+        "request_id": "1c786507-a695-467e-b79b-51223d8f80dd",
+        "route": "responses",
+        "state": "dispatched",
+        "reserved_at_ms": 1794531545476,
+        "lease_expires_at_ms": 1794531845476,
+        "provider": "deepseek",
+        "dispatched_at_ms": 1794531545480,
+        "released_at_ms": null,
+        "release_reason": null
+      },
+      "requestVersionstamp": "00000000000000100000",
+      "window": {
+        "v": 3,
+        "key_id": "responses-conformance-key",
+        "policy_version": "v3:3600000",
+        "window_start_ms": 1794531545459,
+        "window_reset_at_ms": 1794535145459,
+        "committed_requests": 1,
+        "reserved_requests": 0,
+        "updated_at_ms": 1794531545480
+      },
+      "windowVersionstamp": "00000000000000100000",
+      "paidFallback": "not_applicable"
+    }
+  ],
+  "captures": {
+    "request": {
+      "path": "/v1/responses",
+      "body": "{\"model\":\"deepseek-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}]}"
+    },
+    "status": 200,
+    "headers": {
+      "cache-control": "no-cache",
+      "content-type": "text/event-stream",
+      "x-uos-deployment-id": "unknown",
+      "x-uos-git-sha": "unknown",
+      "x-uos-provider-request-id": "fixture-provider-1",
+      "x-uos-request-id": "1c786507-a695-467e-b79b-51223d8f80dd",
+      "x-uos-upstream": "deepseek"
+    },
+    "chunksBase64": [
+      "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuY3JlYXRlZCIsInJlc3BvbnNlIjp7ImlkIjoicmVzcF9maXh0dXJlcHJvdmlkZXIxIiwib2JqZWN0IjoicmVzcG9uc2UiLCJjcmVhdGVkX2F0IjoxNzk0NTMxNTQ1LCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJvdXRwdXQiOltdLCJlcnJvciI6bnVsbCwiaW5jb21wbGV0ZV9kZXRhaWxzIjpudWxsLCJpbnN0cnVjdGlvbnMiOiJVc2UgdGhlIGZpeHR1cmUgdG9vbCBhbmQgcHJlc2VydmUgaXRzIHJlc3VsdC4iLCJtZXRhZGF0YSI6e30sInBhcmFsbGVsX3Rvb2xfY2FsbHMiOnRydWUsInRvb2xfY2hvaWNlIjoiYXV0byIsInRvb2xzIjpbeyJ0eXBlIjoiZnVuY3Rpb24iLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwicGFyYW1ldGVycyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJ0ZXh0Ijp7InR5cGUiOiJzdHJpbmcifX0sInJlcXVpcmVkIjpbInRleHQiXX19XSwidGVtcGVyYXR1cmUiOm51bGwsInRvcF9wIjpudWxsLCJtYXhfb3V0cHV0X3Rva2VucyI6bnVsbCwicHJldmlvdXNfcmVzcG9uc2VfaWQiOm51bGwsInJlYXNvbmluZyI6bnVsbCwic3RvcmUiOmZhbHNlLCJ0cnVuY2F0aW9uIjoiZGlzYWJsZWQiLCJ1c2FnZSI6bnVsbH0sInNlcXVlbmNlX251bWJlciI6MH0KCg==",
+      "ZXZlbnQ6IHJlc3BvbnNlLmluX3Byb2dyZXNzCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmluX3Byb2dyZXNzIiwicmVzcG9uc2UiOnsiaWQiOiJyZXNwX2ZpeHR1cmVwcm92aWRlcjEiLCJvYmplY3QiOiJyZXNwb25zZSIsImNyZWF0ZWRfYXQiOjE3OTQ1MzE1NDUsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwibW9kZWwiOiJkZWVwc2Vlay1mbGFzaCIsIm91dHB1dCI6W10sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjpudWxsfSwic2VxdWVuY2VfbnVtYmVyIjoxfQoK",
+      "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkIiwib3V0cHV0X2luZGV4IjowLCJpdGVtIjp7ImlkIjoiZmNfcmVzcF9maXh0dXJlcHJvdmlkZXIxXzAiLCJ0eXBlIjoiZnVuY3Rpb25fY2FsbCIsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwiY2FsbF9pZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoiIn0sInNlcXVlbmNlX251bWJlciI6Mn0KCg==",
+      "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhIiwiaXRlbV9pZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwib3V0cHV0X2luZGV4IjowLCJkZWx0YSI6IntcInRleHRcIjpcImZpeHR1cmUtIiwic2VxdWVuY2VfbnVtYmVyIjozfQoK"
+    ],
+    "events": [
+      {
+        "type": "response.created",
+        "response": {
+          "id": "resp_fixtureprovider1",
+          "object": "response",
+          "created_at": 1794531545,
+          "status": "in_progress",
+          "model": "deepseek-flash",
+          "output": [],
+          "error": null,
+          "incomplete_details": null,
+          "instructions": "Use the fixture tool and preserve its result.",
+          "metadata": {},
+          "parallel_tool_calls": true,
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "type": "function",
+              "name": "fixture_echo",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            }
+          ],
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "previous_response_id": null,
+          "reasoning": null,
+          "store": false,
+          "truncation": "disabled",
+          "usage": null
+        },
+        "sequence_number": 0
+      },
+      {
+        "type": "response.in_progress",
+        "response": {
+          "id": "resp_fixtureprovider1",
+          "object": "response",
+          "created_at": 1794531545,
+          "status": "in_progress",
+          "model": "deepseek-flash",
+          "output": [],
+          "error": null,
+          "incomplete_details": null,
+          "instructions": "Use the fixture tool and preserve its result.",
+          "metadata": {},
+          "parallel_tool_calls": true,
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "type": "function",
+              "name": "fixture_echo",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            }
+          ],
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "previous_response_id": null,
+          "reasoning": null,
+          "store": false,
+          "truncation": "disabled",
+          "usage": null
+        },
+        "sequence_number": 1
+      },
+      {
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {
+          "id": "fc_resp_fixtureprovider1_0",
+          "type": "function_call",
+          "status": "in_progress",
+          "call_id": "call_fixture_echo_1",
+          "name": "fixture_echo",
+          "arguments": ""
+        },
+        "sequence_number": 2
+      },
+      {
+        "type": "response.function_call_arguments.delta",
+        "item_id": "fc_resp_fixtureprovider1_0",
+        "output_index": 0,
+        "delta": "{\"text\":\"fixture-",
+        "sequence_number": 3
+      }
+    ],
+    "outcome": "interrupted",
+    "error": null
+  }
+}
