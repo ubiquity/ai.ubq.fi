@@ -9,7 +9,7 @@ import {
   revokePassportSession,
 } from "./passport-sessions.ts";
 
-const ISSUER = "https://passport.ubq.fi";
+const ISSUER = "https://auth.ubq.fi";
 const ORIGIN = "https://ai.ubq.fi";
 const CALLBACK = `${ORIGIN}/auth/callback`;
 const SESSION_COOKIE = "__Host-uos_ai_passport_session";

@@ -96,7 +96,7 @@ fn jwt(header: Value, claims: &Value) -> String {
 
 fn claims() -> Value {
     json!({
-        "iss":"https://passport.ubq.fi",
+        "iss":"https://auth.ubq.fi",
         "sub":"user-123",
         "handle":"alice",
         "isAdmin":true,
@@ -154,7 +154,7 @@ impl AuthHost for Host {
     ) -> Result<AuthUpstreamResponse, GatewayError> {
         match &request {
             AuthUpstreamRequest::PassportJwks => {
-                assert_eq!(request.url(), "https://passport.ubq.fi/api/auth/jwks");
+                assert_eq!(request.url(), "https://auth.ubq.fi/api/auth/jwks");
                 assert_eq!(request.method(), "GET");
                 self.jwks_fetches.set(self.jwks_fetches.get() + 1);
                 Ok(AuthUpstreamResponse {
@@ -165,7 +165,7 @@ impl AuthHost for Host {
             AuthUpstreamRequest::PassportExchange { .. } => {
                 assert_eq!(
                     request.url(),
-                    "https://passport.ubq.fi/api/auth/sso/exchange"
+                    "https://auth.ubq.fi/api/auth/sso/exchange"
                 );
                 assert_eq!(request.method(), "POST");
                 self.exchange_requests.borrow_mut().push(request);
@@ -281,7 +281,7 @@ fn login_redirect_contains_the_exact_fixed_authorize_contract() {
     let location = url::Url::parse(&response.headers["location"]).unwrap();
     assert_eq!(
         location.origin().ascii_serialization(),
-        "https://passport.ubq.fi"
+        "https://auth.ubq.fi"
     );
     assert_eq!(location.path(), "/authorize");
     let query = location.query_pairs().collect::<BTreeMap<_, _>>();

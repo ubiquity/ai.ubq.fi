@@ -51,7 +51,7 @@ beforeEach(() => {
     assert.equal(new Headers(init.headers).get("Authorization"), `Bearer ${grant.token}`);
     const url = urlOf(input);
     if (url.endsWith("/revoke")) return new Response(null, { status: status === 200 ? 204 : status });
-    assert.equal(url, "https://passport.ubq.fi/api/auth/sso/session");
+    assert.equal(url, "https://auth.ubq.fi/api/auth/sso/session");
     reads += 1;
     return Response.json(bodyOverride ?? sessionBody(), { status });
   });
