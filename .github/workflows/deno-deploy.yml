@@ -443,7 +443,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bun --no-env-file --no-install run test tests/gpg-dsh.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
+          bun --no-env-file --no-install scripts/test-runner.ts darwin "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
 
   verify-artifact:
     needs: [scope, validate, native, mac-containment, darwin-native]
