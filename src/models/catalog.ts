@@ -375,6 +375,10 @@ const addDeepSeekWaterfallCatalogEntries = (models: Map<string, PublicModelCatal
         supported_reasoning_levels: DEEPSEEK_WATERFALL_REASONING_LEVELS,
         default_reasoning_effort: DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
       },
+      // The gateway owns this advertised cap. OpenRouter's rolling DeepSeek
+      // alias publishes the provider's 1,048,576-token API window, which is
+      // wider than the admission-safe window this synthetic route can serve.
+      openRouter: null,
     }
   );
   for (const provider of DEEPSEEK_WATERFALL_ORDER) {

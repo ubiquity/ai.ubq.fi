@@ -316,6 +316,10 @@ const callback = async (req: Request): Promise<Response> => {
     }).catch(() => {
       throw new PassportError(502);
     });
+    if (response.status >= 400 && response.status < 500) {
+      await response.body?.cancel();
+      throw new PassportError();
+    }
     const body = await boundedJson(response, 65_536);
     if (!isRecord(body) || typeof body.accessToken !== "string") throw new PassportError();
     const claims = await verifyToken(body.accessToken);

@@ -70,7 +70,7 @@ test("enrichment is the last resort, and the resolved context derives the auto-c
   const resolved = resolveModelMetadata("gpt-5.6-sol", { openRouter: enrichment() });
   assert.equal(resolved.context_window_tokens, 1_050_000);
   assert.equal(resolved.max_context_window_tokens, 1_050_000);
-  assert.equal(resolved.auto_compact_token_limit_tokens, 892_500);
+  assert.equal(resolved.auto_compact_token_limit_tokens, 945_000);
   assert.equal(resolved.context_source, "openrouter");
   assert.equal(resolved.effective_context_window_percent, CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT);
   assert.equal(resolved.default_reasoning_effort, "medium");
@@ -104,7 +104,7 @@ test("OpenRouter's window wins when it knows the id, so the gateway advertises t
   });
   assert.equal(resolved.context_window_tokens, 1_050_000);
   assert.equal(resolved.max_context_window_tokens, 1_050_000);
-  assert.equal(resolved.auto_compact_token_limit_tokens, 892_500);
+  assert.equal(resolved.auto_compact_token_limit_tokens, 945_000);
   assert.equal(resolved.context_source, "openrouter");
   // Tiers still come from the upload, which stays authoritative for them.
   assert.equal(resolved.reasoning_source, "codex_upload");
