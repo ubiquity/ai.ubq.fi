@@ -263,7 +263,7 @@ const signPassport = async (code) => {
   const now = Math.floor(Date.now() / 1000);
   const admin = code.startsWith("admin");
   const claims = {
-    iss: "https://passport.ubq.fi",
+    iss: "https://auth.ubq.fi",
     sub: `fixture-${code}`,
     handle: admin ? "fixture-admin" : "fixture-user",
     isAdmin: admin,
@@ -307,7 +307,7 @@ async function passportUpstream(request) {
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
-    if (url.hostname === "passport.ubq.fi") return passportUpstream(request);
+    if (url.hostname === "auth.ubq.fi") return passportUpstream(request);
     const matrix = await handleProviderMatrix(request, env, context, (event) => log(env, event));
     if (matrix) return matrix;
     if (url.hostname === "api.github.com" && url.pathname === "/repos/fixture-owner/fixture-repo") {

@@ -18,10 +18,10 @@ use sha2::Sha256;
 use std::{cell::RefCell, collections::BTreeMap};
 use url::Url;
 
-pub const PASSPORT_ISSUER: &str = "https://passport.ubq.fi";
-pub const PASSPORT_AUTHORIZE_URL: &str = "https://passport.ubq.fi/authorize";
-pub const PASSPORT_EXCHANGE_URL: &str = "https://passport.ubq.fi/api/auth/sso/exchange";
-pub const PASSPORT_JWKS_URL: &str = "https://passport.ubq.fi/api/auth/jwks";
+pub const PASSPORT_ISSUER: &str = "https://auth.ubq.fi";
+pub const PASSPORT_AUTHORIZE_URL: &str = "https://auth.ubq.fi/authorize";
+pub const PASSPORT_EXCHANGE_URL: &str = "https://auth.ubq.fi/api/auth/sso/exchange";
+pub const PASSPORT_JWKS_URL: &str = "https://auth.ubq.fi/api/auth/jwks";
 pub const PASSPORT_PRODUCTION_CLIENT_ID: &str = "ai";
 pub const PASSPORT_PRODUCTION_AUDIENCE: &str = "ai";
 pub const PASSPORT_PRODUCTION_ORIGIN: &str = "https://ai.ubq.fi";

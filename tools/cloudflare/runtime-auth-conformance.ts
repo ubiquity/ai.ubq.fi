@@ -26,7 +26,7 @@ export async function passportCases(url: (path: string) => string, cases: string
   assert.equal(login.status, 302);
   const location = login.headers.get("location") ?? "";
   const authorize = new URL(location);
-  assert.equal(authorize.origin, "https://passport.ubq.fi");
+  assert.equal(authorize.origin, "https://auth.ubq.fi");
   assert.equal(authorize.pathname, "/authorize");
   assert.equal(authorize.searchParams.get("client_id"), "ai");
   assert.equal(authorize.searchParams.get("audience"), "ai");
