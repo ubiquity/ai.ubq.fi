@@ -51,3 +51,71 @@ test("opening the account panel never exposes a second Passport button", () => {
   sync();
   assert.equal(authGate.hidden, false);
 });
+
+class QuotaElement {
+  dataset: Record<string, string> = {};
+  hidden = false;
+  textContent = "";
+  children: QuotaElement[] = [];
+  attributes = new Map<string, string>();
+  style = { setProperty: () => {} };
+  setAttribute(name: string, value: string) {
+    this.attributes.set(name, value);
+  }
+  text(): string {
+    return [this.textContent, ...this.children.map((child) => child.text())].join(" ").trim();
+  }
+  append(...children: QuotaElement[]) {
+    this.children.push(...children);
+  }
+  appendChild(child: QuotaElement) {
+    this.append(child);
+  }
+  replaceChildren() {
+    this.children = [];
+  }
+}
+
+test("the Analytics renderer distinguishes fractions, absolute amounts, unknowns, resets and stale observations", () => {
+  const source = adminScript;
+  const panel = {
+    document: { createElement: () => new QuotaElement() },
+    formatDate: (ms: number) => new Date(ms).toISOString(),
+    quotaPercentFormatter: new Intl.NumberFormat("en-US"),
+    setBadge: (badge: QuotaElement, state: string, text: string) => {
+      badge.dataset.state = state;
+      badge.textContent = text;
+    },
+    geminiQuotaCard: new QuotaElement(),
+    geminiQuotaBadge: new QuotaElement(),
+    geminiQuotaDetails: new QuotaElement(),
+    geminiQuotaBuckets: new QuotaElement(),
+    geminiQuotaStatus: new QuotaElement(),
+  };
+  const render = runInNewContext(
+    source.slice(source.indexOf("const appendProviderFact"), source.indexOf("let geminiQuotaRequest")) + "\nrenderGeminiQuota",
+    panel
+  ) as (value: unknown) => void;
+  render({
+    status: "observed",
+    observed_at_ms: Date.UTC(2026, 10, 18, 7),
+    age_ms: 360_000,
+    plan_tier: null,
+    quota: { weekly: { remaining_fraction: 0.25, reset_in_seconds: 60 }, balance: { remaining_amount: 0 }, unknown: { disabled: true } },
+  });
+  const [weekly, balance, unknown] = panel.geminiQuotaBuckets.children;
+  assert.equal(weekly.children[1].children[1].attributes.get("aria-valuenow"), "25");
+  assert.match(weekly.text(), /25% remaining.*Reset 2026-11-18T07:01:00\.000Z · passed/);
+  assert.match(balance.text(), /0 remaining.*Reset Not reported.*Unit Not reported/);
+  assert.equal(balance.children[1].children.length, 1);
+  assert.match(unknown.text(), /Not reported.*State Disabled/);
+  assert.match(panel.geminiQuotaDetails.textContent, /Display only · Plan not reported · Observed 6 minutes ago/);
+  assert.equal(panel.geminiQuotaBadge.textContent, "Stale observation");
+
+  render({ status: "missing" });
+  assert.equal(panel.geminiQuotaCard.hidden, true);
+  assert.equal(panel.geminiQuotaBuckets.children.length, 0);
+  assert.match(panel.geminiQuotaStatus.textContent, /No local Antigravity CLI snapshot/);
+  render({ status: "signed_out", age_ms: 0 });
+  assert.match(panel.geminiQuotaStatus.textContent, /no signed-in account/);
+});
