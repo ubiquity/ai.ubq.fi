@@ -122,7 +122,7 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
   let followController = null;
   let followKey = null;
   let followTurnStatus = null;
-  let followSeen = new Set();
+  let followSeen = new Map();
 
   let briefController = null;
   let briefKey = null;
@@ -385,7 +385,7 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
     followController = null;
     followKey = null;
     followTurnStatus = null;
-    followSeen = new Set();
+    followSeen = new Map();
     if (follow) follow.hidden = true;
     if (followLog) followLog.textContent = "";
     if (followStatus && message) followStatus.textContent = message;
@@ -398,6 +398,29 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
     followStatus.dataset.state = tone ?? "ok";
   };
 
+  const fillFollowEntry = (wrapper, entry) => {
+    wrapper.dataset.followEntry = entry.kind === "command" ? "command" : "message";
+    wrapper.textContent = "";
+    if (entry.kind === "command") {
+      const command = document.createElement("code");
+      command.textContent = text(entry.command) ?? "(command unavailable)";
+      const output = document.createElement("pre");
+      output.textContent = text(entry.text) ?? "(no recorded output yet)";
+      const meta = document.createElement("span");
+      meta.dataset.muted = "";
+      const exit = typeof entry.exitCode === "number" ? ` · exit ${entry.exitCode}` : "";
+      meta.textContent = `command ${text(entry.status) ?? "recorded"}${exit}`;
+      wrapper.append(command, output, meta);
+      return;
+    }
+    const meta = document.createElement("span");
+    meta.dataset.muted = "";
+    meta.textContent = entry.status === "final_answer" ? "Assistant · final" : "Assistant";
+    const body = document.createElement("p");
+    body.textContent = text(entry.text) ?? "";
+    wrapper.append(meta, body);
+  };
+
   const appendEntries = (payload) => {
     if (!followLog || !payload || !Array.isArray(payload.entries)) return;
     // Follow output keeps its own 2s cadence. Only auto-scroll when the
@@ -406,31 +429,30 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
     followTurnStatus = text(payload.turnStatus) ?? followTurnStatus;
     for (const entry of payload.entries) {
       const key = text(entry.key);
-      if (!key || followSeen.has(key)) continue;
-      followSeen.add(key);
-      const wrapper = document.createElement("div");
-      wrapper.dataset.followEntry = entry.kind === "command" ? "command" : "message";
-      if (entry.kind === "command") {
-        const command = document.createElement("code");
-        command.textContent = text(entry.command) ?? "(command unavailable)";
-        const output = document.createElement("pre");
-        output.textContent = text(entry.text) ?? "(no recorded output yet)";
-        const meta = document.createElement("span");
-        meta.dataset.muted = "";
-        const exit = typeof entry.exitCode === "number" ? ` · exit ${entry.exitCode}` : "";
-        meta.textContent = `command ${text(entry.status) ?? "recorded"}${exit}`;
-        wrapper.append(command, output, meta);
-      } else {
-        const meta = document.createElement("span");
-        meta.dataset.muted = "";
-        meta.textContent = entry.status === "final_answer" ? "Assistant · final" : "Assistant";
-        const body = document.createElement("p");
-        body.textContent = text(entry.text) ?? "";
-        wrapper.append(meta, body);
+      if (!key) continue;
+      const revision = text(entry.revision) ?? "";
+      const existing = followSeen.get(key);
+      if (existing) {
+        // The same item index can gain command output, status and an exit code
+        // later; update the rendered entry in place instead of appending.
+        if (existing.revision === revision) continue;
+        existing.revision = revision;
+        fillFollowEntry(existing.node, entry);
+        continue;
       }
+      const wrapper = document.createElement("div");
+      wrapper.dataset.followKey = key;
+      fillFollowEntry(wrapper, entry);
+      followSeen.set(key, { node: wrapper, revision });
       followLog.append(wrapper);
     }
-    while (followLog.childElementCount > FOLLOW_ENTRY_LIMIT) followLog.firstElementChild?.remove();
+    while (followLog.childElementCount > FOLLOW_ENTRY_LIMIT) {
+      const oldest = followLog.firstElementChild;
+      if (!oldest) break;
+      const trimmedKey = oldest.dataset.followKey;
+      if (trimmedKey) followSeen.delete(trimmedKey);
+      oldest.remove();
+    }
     const age = formatClock(payload.sampledAtMs);
     const turn = followTurnStatus ? `turn ${followTurnStatus}` : "turn status unknown";
     setFollowStatus(
@@ -471,7 +493,7 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
     if (!isSuperAdmin()) return;
     const key = `${session.sourceId}:${session.id}`;
     followKey = key;
-    followSeen = new Set();
+    followSeen = new Map();
     followTurnStatus = null;
     if (follow) follow.hidden = false;
     if (followLog) followLog.textContent = "";

@@ -1,4 +1,5 @@
 import { DEEPSEEK_FLASH_MODEL, DeepSeekError, fetchDeepSeekChatCompletions } from "./deepseek.ts";
+import { redactSupervisorSecrets } from "./codex_supervisor_secret.ts";
 import { json, openaiError } from "./http.ts";
 import { readSupervisorRolloutTail, type SupervisorLogEvent } from "./codex_supervisor_log.ts";
 import { openSupervisorConnection, type SupervisorConnection } from "./codex_supervisor_transport.ts";
@@ -72,27 +73,8 @@ const byteLength = (value: string): number => encoder.encode(value).length;
 
 /* ---------------------------------------------------------------- redaction */
 
-const SECRET_PATTERNS: readonly RegExp[] = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /\b[Bb]earer\s+[A-Za-z0-9._~+/=-]{12,}/g,
-  /\b(?:sk|ghp|gho|ghu|ghs|dsk)-[A-Za-z0-9_-]{12,}/g,
-  /\bgithub_pat_\w{12,}/g,
-  /\bu_[0-9a-fA-F]{32,}\b/g,
-  /\b\w*(?:key|token|secret|password)\w*\s*[:=]\s*\S{8,}/gi,
-];
-
-/** Replaces credential-shaped text with a marker and reports how many matches were removed. */
-export const redactBriefText = (value: string): { text: string; redactions: number } => {
-  let redactions = 0;
-  let text = value;
-  for (const pattern of SECRET_PATTERNS) {
-    text = text.replace(pattern, () => {
-      redactions += 1;
-      return "[redacted]";
-    });
-  }
-  return { text, redactions };
-};
+/** Credential-shaped text is removed before any transcript reaches the model. */
+export const redactBriefText = redactSupervisorSecrets;
 
 /* -------------------------------------------------------------- transcript */
 
@@ -262,26 +244,70 @@ const dedupeBriefTurns = (turns: readonly BriefTranscriptTurn[]): BriefTranscrip
   return unique;
 };
 
+/**
+ * The only frame-safe full read: one turn. The transport caps every received
+ * JSON-RPC frame at `SUPERVISOR_MAX_PAYLOAD_BYTES` (1 MiB) and errors the whole
+ * socket when a larger frame arrives, so a multi-turn full page of a long
+ * session can take the brief down with it. `sortDirection: "desc"` with
+ * `limit: 1` is the same shape the pre-delta code used and the largest full
+ * shape this module may issue.
+ */
+const BRIEF_FULL_TURN_LIMIT = 1;
+
+/**
+ * Best-effort full read of the newest recorded turn. A frame-cap failure
+ * rejects the pending call and drops the socket, so the failure is swallowed
+ * here and the recorded summary turn is kept instead of failing the brief.
+ */
+const readBriefNewestFullTurn = async (connection: SupervisorConnection, threadId: string, signal: AbortSignal): Promise<BriefTranscriptTurn | null> => {
+  try {
+    const turns = await fetchBriefTurns(connection, threadId, "desc", BRIEF_FULL_TURN_LIMIT, "full", signal);
+    const newest = turns.at(0);
+    return newest && newest.items.length > 0 ? newest : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Replaces empty summary turns with items from the single frame-safe full read.
+ *
+ * Selection priority is the opening turn first and then the newest recent
+ * turns, but a `desc`, `limit: 1`, `itemsView: "full"` read can only return the
+ * newest recorded turn. Any older empty target is out of reach of every safe
+ * shape, so it keeps its recorded summary without a speculative fetch, while
+ * an opening turn that is also the newest turn is enriched through that same
+ * read. At most one target can match per brief, well inside the two-success
+ * cap; ids are matched exactly, the caller's chronological order is preserved,
+ * and a failed read degrades to the recorded summaries.
+ */
 const enrichBriefTurns = async (
   connection: SupervisorConnection,
   threadId: string,
   turns: BriefTranscriptTurn[],
+  openingId: string | null,
   signal: AbortSignal
 ): Promise<BriefTranscriptTurn[]> => {
+  const newest = turns.at(-1);
+  if (!newest || newest.items.length > 0) return [...turns];
+  const opening = turns.find((turn) => turn.id === openingId && turn.items.length === 0);
+  // `turns` is chronological, so reversing the recent empties yields newest first.
+  const recentEmpty = turns.filter((turn) => turn.id !== openingId && turn.items.length === 0).reverse();
+  const targets = opening ? [opening, ...recentEmpty] : recentEmpty;
+
+  const replacements = new Map<string, BriefTranscriptTurn>();
   let enriched = 0;
-  const result: BriefTranscriptTurn[] = [];
-  for (const turn of turns) {
-    const needsFull = turn.items.length === 0 && enriched < BRIEF_MAX_ENRICHED_TURNS;
-    if (!needsFull) {
-      result.push(turn);
-      continue;
-    }
+  for (const target of targets) {
+    if (enriched >= BRIEF_MAX_ENRICHED_TURNS) break;
+    // Only the newest turn is reachable through the one permitted full shape.
+    if (target.id !== newest.id) continue;
+    const full = await readBriefNewestFullTurn(connection, threadId, signal);
+    if (full?.id !== target.id) continue;
     enriched += 1;
-    const full = await fetchBriefTurns(connection, threadId, "desc", 1, "full", signal);
-    const match = full.find((candidate) => candidate.id === turn.id);
-    result.push(match && match.items.length > 0 ? { ...match, droppedItems: turn.droppedItems + match.droppedItems } : turn);
+    replacements.set(target.id, { ...full, droppedItems: target.droppedItems + full.droppedItems });
   }
-  return result;
+  if (replacements.size === 0) return [...turns];
+  return turns.map((turn) => replacements.get(turn.id) ?? turn);
 };
 
 const readBriefThreadMeta = async (connection: SupervisorConnection, threadId: string, signal: AbortSignal): Promise<BriefThreadMeta> => {
@@ -353,9 +379,11 @@ export const assembleBriefContext = (turns: readonly BriefTranscriptTurn[]): Bri
   };
   const opening = turns.at(0);
   const recentTurns = turns.slice(1);
-  const byFreshness = [...recentTurns].sort((left, right) => turnTimeMs(right) - turnTimeMs(left));
+  // Recent turns are already chronological (ascending), so allocating them in
+  // reverse keeps the newest-first budget priority without relying on
+  // timestamps that may be missing or equal.
   const keptById = new Map<string, BriefTranscriptTurn>();
-  for (const turn of byFreshness) {
+  for (const turn of [...recentTurns].reverse()) {
     const kept = budgetedTurn(turn, budget);
     if (kept) keptById.set(turn.id, kept);
   }
@@ -430,7 +458,11 @@ export const collectBriefTranscript = async (
   const meta = await readBriefThreadMeta(connection, threadId, signal);
   const first = await fetchBriefTurns(connection, threadId, "asc", 1, "summary", signal);
   const recent = await fetchBriefTurns(connection, threadId, "desc", BRIEF_RECENT_TURNS, "summary", signal);
-  const projected = await enrichBriefTurns(connection, threadId, dedupeBriefTurns([...first, ...recent]), signal);
+  // The API page order already supplies chronology: the asc opening turn,
+  // then the reversed newest-first recent page. Dedupe preserves that order.
+  const ordered = dedupeBriefTurns([...first, ...recent.slice().reverse()]);
+  const openingId = first.at(0)?.id ?? null;
+  const projected = await enrichBriefTurns(connection, threadId, ordered, openingId, signal);
   // A local source can read the last 256 KiB of its own rollout when the
   // projected history lags the still-growing log; remote sources cannot.
   const events = await readSupervisorRolloutTail({ codexHome: source.codexHome, threadId, rolloutPath: meta.rolloutPath });

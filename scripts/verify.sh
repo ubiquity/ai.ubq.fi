@@ -26,6 +26,13 @@ run "knip (unused files/exports/deps)" "$TOOLS/node_modules/.bin/knip"
 run "deno fmt" deno fmt --check
 run "deno lint" deno lint
 run "deno check" deno task build
+# The disposable deployment-guard fixtures need scoped filesystem and subprocess
+# capabilities, so they run in their own invocation; the main suite stays
+# restricted and reports them ignored.
+run "deno test (vps deploy guards)" deno test --frozen --allow-run=deno,git \
+  --allow-read=ops,.cleanup-evidence/vps-deploy-guards-fixtures \
+  --allow-write=.cleanup-evidence/vps-deploy-guards-fixtures \
+  --allow-env=PATH tests/vps-deploy-guards.test.ts
 run "deno test" deno task test
 # Mirrors CI's remaining gate, so a green verify cannot still fail the pipeline.
 run "deno test (sentinel local)" deno task sentinel:test-local

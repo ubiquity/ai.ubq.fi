@@ -38,7 +38,6 @@ import {
   DeepSeekError,
   DeepSeekStreamError,
   deepSeekDefaultOutputAllowance,
-  deepSeekFinishDisposition,
   deepSeekThinkingModeActive,
   deepSeekThinkingToolChoiceConflict,
   deepSeekToolChoiceThinkingConflictMessage,
@@ -53,15 +52,9 @@ import {
 import {
   createDeepSeekResponsesStreamTranslator,
   type DeepSeekResponsesEcho,
-  deepSeekRecheckEligibility,
-  deepSeekRecheckToolCalls,
   encodeResponsesEvent,
-  measurableDeepSeekRecheckUsage,
-  mergeDeepSeekRecheckUsage,
-  toDeepSeekRecheckChatBody,
   toDeepSeekResponsesChatBody,
   toDeepSeekResponsesPayload,
-  toResponsesUsage,
 } from "./deepseek_responses.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import { CODEX_CHATGPT_PROMPT_CACHE_PROVIDER, normalizePromptCacheCapabilities, type PromptCacheControls } from "./codex_models.ts";
@@ -10212,243 +10205,9 @@ const handleDeepSeekChatCompletions = async (
 };
 
 /**
- * The gateway usage view of the two legs' summed counters. A recheck whose own
- * usage was not structurally observed keeps the first leg's measured amounts and
- * is reported as partial instead of as a complete total.
- */
-const aggregateDeepSeekUsageTokens = (usage: Record<string, unknown> | null, complete: boolean): UsageTokens | null => {
-  const tokens = extractChatUsageTokens(usage);
-  if (!tokens || complete || tokens.status === "invalid") return tokens;
-  return { ...tokens, status: "partial" };
-};
-
-/**
- * The one bounded continuation recheck this route performs, shared by the
- * buffered and streamed branches.
- *
- * It repeats the same task once, buffered, with the first assistant draft and a
- * neutral instruction in context, and is strictly advisory: any transport,
- * status, or validation failure after the first leg succeeded keeps the first
- * answer instead of turning a success into an error. The second request goes to
- * the provider transport directly rather than through
- * `dispatchDeepSeekUpstream`, because the first leg already owns admission, the
- * attempt telemetry and the provider request id; re-running those hooks would
- * re-admit quota and overwrite the primary terminal. The passive sentinel
- * recorder still observes the attempt, and the transport performs no retry, so
- * the check is exactly one extra request.
- */
-type DeepSeekRecheckOutcome =
-  | Readonly<{ status: "skipped" }>
-  | Readonly<{ status: "unavailable" }>
-  | Readonly<{ status: "observed"; usage: Record<string, unknown> | null; toolCalls: readonly Record<string, unknown>[] | null }>;
-
-type DeepSeekRecheckFirstLeg = Readonly<{
-  finishReason: unknown;
-  refusal: unknown;
-  toolCallCount: number;
-  executableToolCount: number;
-  toolChoice: unknown;
-  completionTokens: number | null;
-}>;
-
-/**
- * Validates the recheck payload's own completion into the advisory outcome
- * through the existing provider validator, but without the primary route's
- * failure telemetry: a bad advisory response must not overwrite the first leg's
- * success classification.
- *
- * The second leg's billable counters are read before validity — a completion the
- * provider billed for keeps its measured usage even when its output fails
- * validation, while a payload with no measurable counter is not invented into
- * one — and tools are accepted only from a completed, non-refusing disposition.
- */
-const observedDeepSeekRecheckCompletion = (
-  payload: unknown,
-  upstreamModel: string,
-  executableToolNames: ReadonlySet<string>,
-  observedUsage: Record<string, unknown> | null
-): DeepSeekRecheckOutcome => {
-  const completion = normalizeDeepSeekChatCompletion(payload, upstreamModel);
-  if (!completion.ok) return observedUsage ? { status: "observed", usage: observedUsage, toolCalls: null } : { status: "unavailable" };
-  const choices = Array.isArray(completion.value.choices) ? completion.value.choices : [];
-  const choice = choices.find((entry) => isRecord(entry) && !Array.isArray(entry));
-  const message = isRecord(choice) && isRecord(choice.message) && !Array.isArray(choice.message) ? choice.message : null;
-  const usage = isRecord(completion.value.usage) ? completion.value.usage : observedUsage;
-  // Tools are accepted only from a completed disposition: a truncated or
-  // interrupted second answer keeps the first answer instead.
-  const disposition = deepSeekFinishDisposition(isRecord(choice) ? choice.finish_reason : undefined);
-  // An explicit refusal is a nonanswer: whatever the provider also emitted
-  // beside it, the advisory check contributes no tool call.
-  const refused = message !== null && typeof message.refusal === "string" && message.refusal.length > 0;
-  const toolCalls = message && !refused && disposition.kind === "completed" ? deepSeekRecheckToolCalls(message, executableToolNames) : null;
-  return { status: "observed", usage, toolCalls };
-};
-
-const runDeepSeekRecheck = async (
-  options: Readonly<{
-    chatBody: Record<string, unknown>;
-    draft: Readonly<{ content: string; reasoning: string }>;
-    firstLeg: DeepSeekRecheckFirstLeg;
-    allowance: number | null;
-    requestedModel: string;
-    upstreamModel: string;
-    executableToolNames: ReadonlySet<string>;
-    requestSignal: AbortSignal;
-    downstreamSignal: AbortSignal;
-    recheckAbort: AbortController;
-    usageContext?: UsageContext;
-    /**
-     * Runs at the real second-request dispatch boundary, after eligibility and
-     * the pre-dispatch abort check. A caller that must later reason about an
-     * unresolved advisory usage marks it here, so a skipped check cannot be
-     * mistaken for dispatched work.
-     */
-    onDispatch?: () => void;
-  }>
-): Promise<DeepSeekRecheckOutcome> => {
-  const eligibility = deepSeekRecheckEligibility({
-    finishReason: options.firstLeg.finishReason,
-    text: options.draft.content,
-    refusal: options.firstLeg.refusal,
-    toolCallCount: options.firstLeg.toolCallCount,
-    executableToolCount: options.firstLeg.executableToolCount,
-    toolChoice: options.firstLeg.toolChoice,
-    firstCompletionTokens: options.firstLeg.completionTokens,
-    allowance: options.allowance,
-  });
-  // The check is advisory and cannot outlive the request: an already-aborted
-  // client, a cancelled download, or a cancellation that arrived before
-  // dispatch never pays for a second provider request whose answer nobody will
-  // read.
-  if (!eligibility.eligible) return { status: "skipped" };
-  if (options.requestSignal.aborted || options.downstreamSignal.aborted || options.recheckAbort.signal.aborted) return { status: "skipped" };
-  const signal = AbortSignal.any([options.requestSignal, options.downstreamSignal, options.recheckAbort.signal]);
-  options.onDispatch?.();
-  let upstream: Response;
-  try {
-    upstream = await fetchDeepSeekChatCompletions(toDeepSeekRecheckChatBody(options.chatBody, options.draft, eligibility.maxTokens), options.requestedModel, {
-      signal,
-      sentinelUpstreamRecorder: options.usageContext?.sentinelUpstreamRecorder,
-    });
-  } catch {
-    return { status: "unavailable" };
-  }
-  if (!upstream.ok) {
-    await upstream.body?.cancel("DeepSeek continuation recheck request failed").catch(() => {});
-    return { status: "unavailable" };
-  }
-  const captured = await readBoundedResponseBody(upstream, {
-    signal,
-    maxBytes: DEEPSEEK_BUFFERED_BODY_MAX_BYTES,
-    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
-    cancellationReason: "DeepSeek continuation recheck body was incomplete",
-  });
-  if (!captured.complete) return { status: "unavailable" };
-  let payload: unknown;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(captured.bytes));
-  } catch {
-    return { status: "unavailable" };
-  }
-  // The second leg's billable counters are read and validated from the raw
-  // payload before the completion itself: a response the provider billed for
-  // keeps its measured tokens even when its output fails validation.
-  const observedUsage = measurableDeepSeekRecheckUsage(isRecord(payload) && !Array.isArray(payload) ? payload.usage : undefined);
-  return observedDeepSeekRecheckCompletion(payload, options.upstreamModel, options.executableToolNames, observedUsage);
-};
-
-/**
- * The advisory recheck's view of the first buffered leg: the draft the answer
- * narrated plus the facts eligibility reads. Kept separate so the buffered
- * finalizer stays a sequence of decisions instead of one long expression.
- */
-const deepSeekBufferedRecheckInput = (
-  firstChoice: unknown,
-  firstMessage: Record<string, unknown> | null,
-  chatBody: Record<string, unknown>,
-  executableToolCount: number,
-  completionTokens: number | null
-): Readonly<{ draft: Readonly<{ content: string; reasoning: string }>; firstLeg: DeepSeekRecheckFirstLeg }> => ({
-  draft: {
-    content: typeof firstMessage?.content === "string" ? firstMessage.content : "",
-    reasoning: typeof firstMessage?.reasoning_content === "string" ? firstMessage.reasoning_content : "",
-  },
-  firstLeg: {
-    finishReason: isRecord(firstChoice) ? firstChoice.finish_reason : undefined,
-    refusal: firstMessage?.refusal,
-    toolCallCount: firstMessage && Array.isArray(firstMessage.tool_calls) ? firstMessage.tool_calls.length : 0,
-    executableToolCount,
-    toolChoice: chatBody.tool_choice,
-    completionTokens,
-  },
-});
-
-/**
- * Folds the advisory recheck's outcome into the buffered response's final
- * payload and accounting.
- *
- * A failed or unusable second leg is merged as a null measurement rather than
- * left unmerged: two requests were made, so an aggregate detail only the first
- * leg measured must not be published as if it covered both. An accepted tool
- * call is translated once onto the first answer together with the merged usage,
- * while a tool-less outcome keeps the first payload and changes only its totals.
- */
-const applyBufferedDeepSeekRecheck = (
-  payload: Record<string, unknown>,
-  firstCompletion: Record<string, unknown>,
-  firstChoice: unknown,
-  firstMessage: Record<string, unknown> | null,
-  firstUsage: Record<string, unknown> | null,
-  usage: UsageTokens | null,
-  recheck: DeepSeekRecheckOutcome,
-  modelRaw: string,
-  responseId: string,
-  echo: DeepSeekResponsesEcho,
-  toolNames: ReadonlyMap<string, string>,
-  customToolNames: ReadonlySet<string>
-): Readonly<{ payload: Record<string, unknown>; usage: UsageTokens | null }> => {
-  const recheckUsage = recheck.status === "observed" ? recheck.usage : null;
-  const merged = recheck.status === "skipped" ? null : mergeDeepSeekRecheckUsage(firstUsage, recheckUsage);
-  const aggregateUsage = recheck.status === "skipped" ? usage : aggregateDeepSeekUsageTokens(merged?.usage ?? firstUsage, merged?.complete ?? false);
-  if (recheck.status === "observed" && recheck.toolCalls?.length) {
-    // One translation of a merged completion: the first answer keeps its text
-    // and reasoning, the accepted tools ride before the original terminal, and
-    // the envelope reports both requests' usage. The response id stays the one
-    // minted for this request.
-    return {
-      payload: toDeepSeekResponsesPayload(
-        {
-          ...firstCompletion,
-          choices: [
-            {
-              ...(isRecord(firstChoice) ? firstChoice : { index: 0 }),
-              message: { ...(firstMessage ?? {}), tool_calls: recheck.toolCalls },
-              finish_reason: "tool_calls",
-            },
-          ],
-          ...(merged?.usage ? { usage: merged.usage } : {}),
-        },
-        modelRaw,
-        responseId,
-        echo,
-        toolNames,
-        customToolNames
-      ),
-      usage: aggregateUsage,
-    };
-  }
-  if (recheck.status !== "skipped" && merged?.usage) {
-    // Keeping the first answer preserves its payload; only the usage totals
-    // change, so the second request's measured tokens are not silently lost.
-    return { payload: { ...payload, usage: toResponsesUsage(merged.usage) }, usage: aggregateUsage };
-  }
-  return { payload, usage: aggregateUsage };
-};
-
-/**
  * Finalizes the buffered DeepSeek Responses branch: reads the captured body,
- * applies the provider terminal's classification first, may run the one bounded
- * advisory recheck, and returns this request's single response.
+ * applies the provider terminal's classification, and returns this request's
+ * single response.
  *
  * Admission, the request record, the response identity and the echo all belong
  * to the caller; this helper only reuses the already-dispatched upstream, so no
@@ -10462,9 +10221,6 @@ const finalizeBufferedDeepSeekResponses = async (
     echo: DeepSeekResponsesEcho;
     toolNames: ReadonlyMap<string, string>;
     customToolNames: ReadonlySet<string>;
-    chatBody: Record<string, unknown>;
-    executableToolNames: ReadonlySet<string>;
-    outputAllowance: number | null;
     upstreamModel: string;
     providerRequestId: string | null;
     requestSignal: AbortSignal;
@@ -10495,9 +10251,6 @@ const finalizeBufferedDeepSeekResponses = async (
   providerRequestId ??= normalizeDeepSeekProviderRequestId(completion.value.id);
   if (options.usageContext?.responseTelemetry) options.usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const firstCompletion = completion.value;
-  const firstChoice = (Array.isArray(firstCompletion.choices) ? firstCompletion.choices : []).find((entry) => isRecord(entry) && !Array.isArray(entry));
-  const firstMessage = isRecord(firstChoice) && isRecord(firstChoice.message) && !Array.isArray(firstChoice.message) ? firstChoice.message : null;
-  const firstUsage = isRecord(firstCompletion.usage) ? firstCompletion.usage : null;
   const payload = toDeepSeekResponsesPayload(firstCompletion, options.modelRaw, options.responseId, options.echo, options.toolNames, options.customToolNames);
   const usage = extractChatUsageTokens(firstCompletion.usage);
   // The provider's own reason decides the terminal first: an explicit
@@ -10507,40 +10260,8 @@ const finalizeBufferedDeepSeekResponses = async (
   if (deepSeekTerminalTypeForPayload(payload.status) === "response.completed" && !chatCompletionHasAnswerBearingOutput(firstCompletion)) {
     return respondDeepSeekEmptyBufferedCompletion(options.usageContext, usage, options.upstream.status, providerRequestId);
   }
-  // Past the truncation and empty guards, one bounded recheck may recover a
-  // tool call the first answer narrated instead of making. It is advisory: a
-  // failed or tool-less check keeps the first answer, and the extra request is
-  // accounted for even when its own usage was not observed.
-  const recheckInput = deepSeekBufferedRecheckInput(firstChoice, firstMessage, options.chatBody, options.executableToolNames.size, usage?.outputTokens ?? null);
-  const recheck = await runDeepSeekRecheck({
-    chatBody: options.chatBody,
-    draft: recheckInput.draft,
-    firstLeg: recheckInput.firstLeg,
-    allowance: options.outputAllowance,
-    requestedModel: options.modelRaw,
-    upstreamModel: options.upstreamModel,
-    executableToolNames: options.executableToolNames,
-    requestSignal: options.requestSignal,
-    downstreamSignal: options.downstreamSignal,
-    recheckAbort: new AbortController(),
-    usageContext: options.usageContext,
-  });
-  const finalized = applyBufferedDeepSeekRecheck(
-    payload,
-    firstCompletion,
-    firstChoice,
-    firstMessage,
-    firstUsage,
-    usage,
-    recheck,
-    options.modelRaw,
-    options.responseId,
-    options.echo,
-    options.toolNames,
-    options.customToolNames
-  );
-  recordBufferedDeepSeekResponsesTerminal(options.usageContext, finalized.payload, finalized.usage, options.upstream.status, providerRequestId);
-  return json(200, finalized.payload, deepseekResponseHeaders(providerRequestId));
+  recordBufferedDeepSeekResponsesTerminal(options.usageContext, payload, usage, options.upstream.status, providerRequestId);
+  return json(200, payload, deepseekResponseHeaders(providerRequestId));
 };
 
 /**
@@ -10580,17 +10301,9 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
   };
   const reasoningLabel = typeof chatBody.reasoning_effort === "string" ? chatBody.reasoning_effort : DEEPSEEK_DEFAULT_REASONING_EFFORT;
   // The client's cap when it sent one, else the provider's own measured default
-  // for the requested tier, else null. A known finite allowance bounds both legs
-  // together; when it is unknown, telemetry stays null and only the one advisory
-  // continuation recheck gets its own 8192-token cap.
+  // for the requested tier, else null. When it is unknown, telemetry stays null
+  // rather than inventing a default for the tier.
   const outputAllowance = (typeof chatBody.max_tokens === "number" ? chatBody.max_tokens : null) ?? deepSeekDefaultOutputAllowance(reasoningLabel);
-  // The chat names of the tools this request actually advertised; a recheck can
-  // only return a call the client can execute.
-  const executableToolNames = new Set(
-    (Array.isArray(chatBody.tools) ? chatBody.tools : []).flatMap((tool) =>
-      isRecord(tool) && isRecord(tool.function) && typeof tool.function.name === "string" ? [tool.function.name] : []
-    )
-  );
   if (usageContext?.responseTelemetry) {
     usageContext.responseTelemetry.provider = "deepseek";
     usageContext.responseTelemetry.reasoning = reasoningLabel;
@@ -10625,7 +10338,7 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
       usageContext,
       downstreamSignal,
       requestSignal,
-      { chatBody, executableToolNames, allowance: outputAllowance, upstreamModel }
+      upstreamModel
     );
   }
 
@@ -10636,30 +10349,12 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
     echo,
     toolNames,
     customToolNames,
-    chatBody,
-    executableToolNames,
-    outputAllowance,
     upstreamModel,
     providerRequestId,
     requestSignal,
     downstreamSignal,
     usageContext,
   });
-};
-
-/**
- * The first nonempty refusal the provider streamed in this chunk, or null. A
- * refusal is a nonanswer, so it is tracked from the chunk seam and later
- * declines the advisory recheck the same way a buffered refusal does.
- */
-const firstStreamedRefusal = (chunk: Record<string, unknown>): string | null => {
-  for (const choice of Array.isArray(chunk.choices) ? chunk.choices : []) {
-    if (!isRecord(choice) || Array.isArray(choice)) continue;
-    const delta = isRecord(choice.delta) && !Array.isArray(choice.delta) ? choice.delta : null;
-    const refusal = delta && typeof delta.refusal === "string" ? delta.refusal : "";
-    if (refusal.length > 0) return refusal;
-  }
-  return null;
 };
 
 /**
@@ -10680,42 +10375,27 @@ const streamDeepSeekResponses = (
   usageContext: UsageContext | undefined,
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
-  recheck: Readonly<{ chatBody: Record<string, unknown>; executableToolNames: ReadonlySet<string>; allowance: number | null; upstreamModel: string }>
+  upstreamModel: string
 ): Response => {
   const encoder = new TextEncoder();
   const headers = new Headers(deepseekResponseHeaders(providerRequestId));
   headers.set("Content-Type", "text/event-stream");
   headers.set("Cache-Control", "no-cache");
 
-  // One stream-owned interrupt for both the parked original read and any active
-  // advisory recheck call. The external request signal alone is driven by Deno
-  // delivery completion, which itself waits on this teardown, so a queued
-  // `iterator.return()` could never reach either read.
+  // One stream-owned interrupt for the parked original read. The external
+  // request signal alone is driven by Deno delivery completion, which itself
+  // waits on this teardown, so a queued `iterator.return()` could never reach
+  // the read.
   const cancellation = new AbortController();
   const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  const iterator = iterateDeepSeekChatCompletionStream(upstream, recheck.upstreamModel, { signal: readSignal });
+  const iterator = iterateDeepSeekChatCompletionStream(upstream, upstreamModel, { signal: readSignal });
   const translator = createDeepSeekResponsesStreamTranslator(requestedModel, responseId, echo, createdAtSeconds, toolNames, customToolNames);
   const state = {
     settled: false,
     cancelled: false,
     semantic: false,
     usage: null as UsageTokens | null,
-    /** The first leg's raw usage object, needed to sum the recheck's counters. */
-    rawUsage: null as Record<string, unknown> | null,
-    /** The first nonempty refusal the provider streamed, if any. */
-    refusal: null as string | null,
-    /** One check per original response; never recursive. */
-    recheckStarted: false,
-    /**
-     * True only after the advisory request actually reached the wire and until
-     * its usage was folded into the aggregate. A skipped or ineligible check
-     * never sets it, so cancellation cannot downgrade an already-complete
-     * first-leg measurement.
-     */
-    recheckUsagePending: false,
   };
-  // The same stream-owned interrupt, named for the advisory call it also ends.
-  const recheckAbort = cancellation;
   /** The next `sequence_number` this response's SSE stream will emit. */
   let sequenceNumber = 0;
 
@@ -10771,93 +10451,9 @@ const streamDeepSeekResponses = (
     return true;
   };
 
-  /**
-   * Whether a cancellation that arrived while an awaited step was pending has
-   * already settled this stream. Read through a call because `cancel()` mutates
-   * the state asynchronously, so a narrowing taken before the await would treat
-   * the property as permanently unset.
-   */
-  const streamSettledOrCancelled = (): boolean => state.settled || state.cancelled;
-
-  /**
-   * Runs the one bounded advisory recheck after the first leg's stream ended and
-   * folds its accepted tool call or extra measured usage into the pending
-   * terminal. Returns true when a concurrent cancellation already owns the
-   * settlement, so the caller must not emit a terminal.
-   */
-  const runStreamedRecheck = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<boolean> => {
-    if (state.recheckStarted) return false;
-    state.recheckStarted = true;
-    const outcome = await runDeepSeekRecheck({
-      chatBody: recheck.chatBody,
-      draft: translator.draftAssistantMessage(),
-      firstLeg: {
-        finishReason: translator.upstreamFinishReason(),
-        // A refusal the provider streamed in any delta is tracked from the
-        // chunk seam, so eligibility declines the recheck for it the same
-        // way it does for a buffered refusal.
-        refusal: state.refusal ?? undefined,
-        // The recheck needs no tool call at all, so it reads the observed
-        // count: a nameless argument-only delta still owns its map slot, and
-        // a second generation's call would concatenate onto it.
-        toolCallCount: translator.observedToolCallCount(),
-        executableToolCount: recheck.executableToolNames.size,
-        toolChoice: recheck.chatBody.tool_choice,
-        completionTokens: state.usage?.outputTokens ?? null,
-      },
-      allowance: recheck.allowance,
-      requestedModel,
-      upstreamModel: recheck.upstreamModel,
-      executableToolNames: recheck.executableToolNames,
-      requestSignal,
-      downstreamSignal,
-      recheckAbort,
-      usageContext,
-      onDispatch: () => {
-        state.recheckUsagePending = true;
-      },
-    });
-    // A cancellation that arrived while the advisory check was pending owns the
-    // settlement: nothing else is enqueued and no success is reported.
-    if (streamSettledOrCancelled()) return true;
-    if (outcome.status === "skipped") return false;
-    const merged = mergeDeepSeekRecheckUsage(state.rawUsage, outcome.status === "observed" ? outcome.usage : null);
-    state.usage = aggregateDeepSeekUsageTokens(merged.usage, merged.complete);
-    state.rawUsage = merged.usage;
-    // The aggregate now carries the second leg's outcome, measured or not.
-    state.recheckUsagePending = false;
-    if (outcome.status === "observed" && outcome.toolCalls?.length) {
-      // One synthetic Chat chunk, fed to the same translator: no second
-      // text or reasoning is pushed, the first leg had no tool calls so
-      // the indices cannot collide, and the aggregated usage rides along.
-      const chunk: Record<string, unknown> = {
-        choices: [
-          {
-            index: 0,
-            delta: {
-              tool_calls: outcome.toolCalls.map((call, index) => ({ index, id: call.id, type: "function", function: call.function })),
-            },
-            finish_reason: "tool_calls",
-          },
-        ],
-      };
-      if (merged.usage) chunk.usage = merged.usage;
-      emit(controller, translator.push(chunk));
-    } else if (merged.usage) {
-      // Usage-only chunk: the original stop reason and text are kept.
-      emit(controller, translator.push({ usage: merged.usage }));
-    }
-    return false;
-  };
-
   const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
     if (state.settled) return;
     try {
-      // The first leg stays progressive; the one bounded recheck runs after its
-      // `[DONE]`/EOF and before the translator settles, and its result is either
-      // an added tool call or extra measured usage on the original answer. A
-      // cancellation that lands while the check is pending owns the settlement.
-      if (await runStreamedRecheck(controller)) return;
       // The provider's own stop reason decides the terminal (Goal B's Delta 1
       // vocabulary), and the provider-agnostic completion-validity predicate
       // (Goal A's G3) decides whether a would-be completion carries anything a
@@ -10922,11 +10518,6 @@ const streamDeepSeekResponses = (
   const handleChunk = (chunk: Record<string, unknown>): Record<string, unknown>[] => {
     const chunkUsage = extractChatUsageTokens(chunk.usage);
     if (chunkUsage) state.usage = chunkUsage;
-    if (isRecord(chunk.usage) && !Array.isArray(chunk.usage)) state.rawUsage = chunk.usage;
-    if (state.refusal === null) {
-      const refusal = firstStreamedRefusal(chunk);
-      if (refusal !== null) state.refusal = refusal;
-    }
     if (!state.semantic && chatChunkHasAnswerBearingOutput(chunk)) {
       state.semantic = true;
       markChatSemanticOutput(usageContext);
@@ -10968,19 +10559,12 @@ const streamDeepSeekResponses = (
     cancel(reason) {
       if (state.cancelled) return;
       state.cancelled = true;
-      // A pending advisory recheck must not outlive the cancellation that
-      // settled this stream.
-      recheckAbort.abort(new DOMException("Client cancelled during the DeepSeek continuation recheck.", "AbortError"));
       settleTerminal("cancelled");
       recordDeepSeekFailureKind(usageContext, "cancellation");
       // Usage observed before the disconnect is real evidence: record it with
       // completed=false so the terminal reports the counters without claiming a
-      // completion. Missing usage stays unknown rather than invented. When an
-      // advisory request was dispatched and its usage never arrived, the
-      // two-leg aggregate is unresolved, so the measured first-leg counters are
-      // kept and the status is the aggregate helper's partial.
-      const cancelledUsage = state.recheckUsagePending ? aggregateDeepSeekUsageTokens(state.rawUsage, false) : state.usage;
-      if (cancelledUsage) recordTerminalUsage(usageContext, cancelledUsage, false);
+      // completion. Missing usage stays unknown rather than invented.
+      if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
       // Abort the local read first: the pending upstream read then rejects, the
       // iterator's own `finally` cancels the physical provider body, and no
       // uninterruptible `return()` can block teardown. A consumer can cancel

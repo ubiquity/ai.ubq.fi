@@ -74,6 +74,14 @@ const loadWebSocketConstructor = async (): Promise<SupervisorWebSocketConstructo
   return candidate;
 };
 
+/**
+ * Test-only seam: replaces the lazily loaded constructor so transport cleanup
+ * can be exercised without a live socket. Passing null restores lazy loading.
+ */
+export const setSupervisorWebSocketConstructorForTest = (candidate: unknown): void => {
+  webSocketConstructor = isSupervisorWebSocketConstructor(candidate) ? candidate : null;
+};
+
 /** Message payloads arrive as Buffer, string, or Buffer[]; only decoded text carries JSON. */
 const textOf = (raw: unknown): string => {
   if (typeof raw === "string") return raw;
@@ -193,11 +201,26 @@ export const openSupervisorConnection = async (socketPath: string, signal?: Abor
     });
   };
 
-  await send("initialize", {
-    clientInfo: { name: "uos_supervisor", version: "1" },
-    capabilities: { experimentalApi: true },
-  });
-  socket.send(JSON.stringify({ method: "initialized" }));
+  try {
+    await send("initialize", {
+      clientInfo: { name: "uos_supervisor", version: "1" },
+      capabilities: { experimentalApi: true },
+    });
+    socket.send(JSON.stringify({ method: "initialized" }));
+  } catch (error) {
+    // The caller never receives a connection when the handshake fails, so this
+    // exact socket is cleaned up here: pending callbacks and their timers
+    // settle, the socket is terminated, and the original failure is rethrown so
+    // the caller can report it and attempt a fresh connection later.
+    closed = true;
+    failPending("app-server connection closed");
+    try {
+      socket.terminate();
+    } catch {
+      // A socket that cannot be terminated is already unusable.
+    }
+    throw error;
+  }
 
   return {
     call: async (method, params = {}, callSignal) => {
