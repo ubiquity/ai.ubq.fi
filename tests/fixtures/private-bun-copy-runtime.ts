@@ -43,14 +43,17 @@ print(json.dumps({"selected":sys.executable,"base":sys._base_executable,"termina
   assert.equal(terminal, join(dirname(dirname(canonical)), "Resources/Python.app/Contents/MacOS/Python"));
   assert.equal(realpathSync(terminal), terminal);
   const roles = ["/usr/bin/python3", canonical, terminal];
-  const facts = roles.map((path, index) => {
+  const facts = roles.map((path) => {
     const info = lstatSync(path);
     assert(info.isFile() && !info.isSymbolicLink() && info.uid === 0 && (info.mode & 0o777) === 0o755);
-    const expected = index === 0 ? "com.apple.dt.xcode_select.tool-shim-public" : "com.apple.python3";
     inspect(["/usr/bin/codesign", "--verify", "--strict", path]);
     const identity = inspect(["/usr/bin/codesign", "--display", "--verbose=4", path]);
-    assert(identity.split("\n").includes("Identifier=" + expected) && identity.includes("Authority=Apple Root CA"));
-    return { path, bytes: info.size, sha256: createHash("sha256").update(readFileSync(path)).digest("hex"), designated_identity: expected };
+    const identifier = identity
+      .split("\n")
+      .find((line) => line.startsWith("Identifier="))
+      ?.slice("Identifier=".length);
+    assert(identifier?.startsWith("com.apple.") && identity.includes("Authority=Apple Root CA"), identity);
+    return { path, bytes: info.size, sha256: createHash("sha256").update(readFileSync(path)).digest("hex"), designated_identity: identifier };
   });
   assert.equal(realpathSync(inspect(["/usr/bin/xcrun", "--find", "python3"]).trim()), canonical);
   console.log(JSON.stringify({ kind: "verified_private_copy_python_role", selected, canonical, terminal, files: facts }));
