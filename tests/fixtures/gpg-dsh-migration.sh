@@ -36,6 +36,12 @@ REAL_CP=$(command -v cp)
 REAL_DATE=$(command -v date)
 export HOME="$root/home" GNUPGHOME="$root/home/.gnupg" TMPDIR="$root/tmp"
 mkdir -p "$GNUPGHOME/private-keys-v1.d" "$TMPDIR" "$root/bin"
+# Seatbelt refuses exec of Darwin's set-ID /bin/ps. Use the same system binary
+# without privilege bits; the installer only needs processes owned by this user.
+if [ "$(uname -s)" = Darwin ]; then
+  "$REAL_CP" /bin/ps "$root/bin/ps"
+  chmod 0755 "$root/bin/ps"
+fi
 printf 'fixture-public\n' >"$GNUPGHOME/pubring.kbx"
 printf 'fixture-secret\n' >"$GNUPGHOME/private-keys-v1.d/AAAA.key"
 git -C "$repo" show ed0ecdda85ee261bc8388558bb26c2c86f5ac9a5:ops/gpg-dsh.sh >"$root/legacy.sh"
