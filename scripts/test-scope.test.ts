@@ -14,6 +14,7 @@ import {
   ROOT,
   selectAffectedTestFiles,
   testRequiresNativeKv,
+  testSelectionForPaths,
   type TestSelection,
 } from "./test-scope.ts";
 
@@ -946,5 +947,69 @@ describe("separate research and CMake component inputs", () => {
       needsDarwinTests: true,
       needsDarwinNative: true,
     });
+  });
+});
+
+describe("the exact lint project is validation-only", () => {
+  test("lint include changes retain static gates without selecting runtime or native jobs", () => {
+    const result = scopeCommand(
+      ["scripts/test-scope.ts", "--ci-json"],
+      { GITHUB_EVENT_NAME: "pull_request", GITHUB_BASE_REF: "development" },
+      "tsconfig.lint.json"
+    );
+    expect(result.status).toBe(0);
+    const scope = JSON.parse(result.stdout);
+    expect(scope).toMatchObject({
+      reason: "validation-only",
+      runAll: false,
+      affectedTests: [],
+      needsValidate: true,
+      needsTypeScriptValidate: true,
+      needsRustNative: false,
+      needsDarwinTests: false,
+      needsDarwinNative: false,
+      needsNativeKv: false,
+      needsArtifact: false,
+    });
+    const verify = scopeCommand(["scripts/test-scope.ts"], {}, "tsconfig.lint.json");
+    expect(verify.status).toBe(10);
+    expect(verify.stdout).toContain("strict no-emit checks");
+  });
+  test("runtime configurations are still conservative, and complete-set overrides remain effective", () => {
+    for (const path of ["package.json", "tsconfig.json"]) {
+      const result = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, path);
+      expect(result.status).toBe(0);
+      const scope = JSON.parse(result.stdout);
+      expect(scope.reason).toBe("config");
+      expect(scope.affectedTests.length).toBeGreaterThan(1);
+    }
+    const selection: TestSelection = { paths: ["tsconfig.lint.json"], documentationOnly: false, affectedTests: [], runAll: false, reason: "validation-only" };
+    expect(ciScopeForSelection(selection, fixture, { GITHUB_EVENT_NAME: "merge_group" })).toMatchObject({
+      completeCheckSet: true,
+      needsRustNative: true,
+      needsDarwinNative: true,
+    });
+  });
+  test("an actual import or literal runtime read of the lint JSON restores runtime validation", () => {
+    for (const operation of ["import", "read"]) {
+      const root = mkdtempSync(join(fixture, "lint-consumer-"));
+      mkdirSync(join(root, "src"));
+      mkdirSync(join(root, "tests"));
+      writeFileSync(join(root, "tsconfig.lint.json"), "{}\n");
+      const specifier = "../tsconfig.lint.json";
+      const source =
+        operation === "import"
+          ? `import config from ${JSON.stringify(specifier)};\nexport {config};\n`
+          : `import {readFileSync} from 'node:fs';\nreadFileSync(new URL(${JSON.stringify(specifier)},import.meta.url));\n`;
+      writeFileSync(join(root, "src/consumer.ts"), source);
+      writeFileSync(join(root, "tests/consumer.test.ts"), "import '../src/consumer.ts';\n");
+      writeFileSync(join(root, "tests/unrelated.test.ts"), "// Unrelated source selection control.\n");
+      const candidates = ["tests/consumer.test.ts", "tests/unrelated.test.ts"];
+      const selection = testSelectionForPaths(["tsconfig.lint.json"], candidates, root);
+      expect(selection.reason).toBe("config");
+      expect(selection.affectedTests).toEqual(candidates);
+      expect(ciScopeForSelection(selection, root, {}).needsTypeScriptValidate).toBe(true);
+      expect(classifyChangedPaths(selection.paths, root).documentationOnly).toBe(false);
+    }
   });
 });
