@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LIVE_E2E_DEFAULT_BASE_URL, liveDestination, testNetworkArgv, type TestNetworkPolicy } from "./test-network.ts";
 import { createTestNativeKvPreload, prepareTestNativeKv, verifiedTestNativeKvBinding, type TestNativeKvBinding } from "./test-native-kv.ts";
-import { detectTestSelection, formatScopeMessage, testRequiresNativeKv } from "./test-scope.ts";
+import { detectTestSelection, formatScopeMessage, testRequiresNativeKv, type TestSelection } from "./test-scope.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let interrupted = false;
@@ -69,6 +69,9 @@ if (!TEST_SELECTION.runAll && TEST_SELECTION.affectedTests.length === 0) {
   process.exit(0);
 }
 type Group = Readonly<{ profile: string; files: readonly string[]; environment: readonly string[]; network?: "live" }>;
+export const testFileSupportsPlatform = (path: string, platform: NodeJS.Platform = process.platform): boolean =>
+  (path !== "tests/private-bun-copy-confinement.test.ts" || platform === "darwin") &&
+  (path !== "tests/native-authority-workerd.test.ts" || platform === "linux");
 const filesBelow = (directory: string): string[] => {
   const found: string[] = [];
   for (const entry of readdirSync(join(ROOT, directory), { withFileTypes: true })) {
@@ -94,16 +97,15 @@ const quality = (): Group =>
     ],
     ["PATH"]
   );
-const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
+const allGroupsFor = (segment: string, explicitFiles: readonly string[], platform: NodeJS.Platform): Group[] => {
   switch (segment) {
+    case "darwin":
+      return platform === "darwin" ? [group("main", ["tests/gpg-dsh.test.ts", "tests/private-bun-copy-confinement.test.ts"], PROVIDER_ENV)] : [];
     case "main":
       return [
         group(
           "main",
-          filesBelow("tests").filter(
-            (path) =>
-              !SPECIAL_MAIN_FILES.has(path.split("/").at(-1) ?? "") && (path !== "tests/native-authority-workerd.test.ts" || process.platform === "linux")
-          ),
+          filesBelow("tests").filter((path) => !SPECIAL_MAIN_FILES.has(path.split("/").at(-1) ?? "") && testFileSupportsPlatform(path, platform)),
           PROVIDER_ENV
         ),
         group(
@@ -120,7 +122,7 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
     case "vps":
       return [
         group("vps", [
-          ...(process.platform === "linux" ? ["ops/tests/vps-release.test.ts"] : []),
+          ...(platform === "linux" ? ["ops/tests/vps-release.test.ts"] : []),
           "ops/tests/release-retention.test.ts",
           "ops/tests/vps-release-driver.test.ts",
           "ops/tests/vps-release-recovery.test.ts",
@@ -148,7 +150,7 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
           ["SENTINEL_REPLAY_KEY"]
         ),
         group("sentinel-upstream", ["tests/sentinel-upstream-providers.test.ts"], ["SENTINEL_REPLAY_KEY"]),
-        ...(process.platform === "linux"
+        ...(platform === "linux"
           ? [group("sentinel-consumer", ["tests/sentinel-replay-consumer.test.ts"], ["DENO_DIR", "DENO_NO_UPDATE_CHECK", "PATH", "HOME"])]
           : []),
       ];
@@ -169,10 +171,15 @@ const segmentHints = new Map([
   ["tests/live-default-model.e2e.ts", "e2e"],
   ["tests/vps-deploy-guards.test.ts", "deploy-guards"],
 ]);
-export const groupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
-  const groups = allGroupsFor(segment, explicitFiles);
-  if (explicitFiles.length === 0 && !TEST_SELECTION.runAll) {
-    const affected = new Set(TEST_SELECTION.affectedTests);
+export const groupsFor = (
+  segment: string,
+  explicitFiles: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  selection: TestSelection = TEST_SELECTION
+): Group[] => {
+  const groups = allGroupsFor(segment, explicitFiles, platform);
+  if (explicitFiles.length === 0 && !selection.runAll) {
+    const affected = new Set(selection.affectedTests);
     return groups.map((item) => ({ ...item, files: item.files.filter((path) => affected.has(path)) })).filter((item) => item.files.length !== 0);
   }
   if (explicitFiles.length === 0 || segment === "files") return groups;
@@ -362,7 +369,9 @@ const portableGroups = (groups: readonly Group[]): Group[] =>
   groups
     .map((item) => ({
       ...item,
-      files: item.files.filter((path) => !PORTABLE_EXCLUDED.some((pattern) => pattern.test(path)) && !testRequiresNativeKv(path)),
+      files: item.files.filter(
+        (path) => testFileSupportsPlatform(path) && !PORTABLE_EXCLUDED.some((pattern) => pattern.test(path)) && !testRequiresNativeKv(path)
+      ),
     }))
     .filter((item) => item.files.length !== 0);
 const resolveNativeTestArtifacts = async (needsNativeKv: boolean, nativeBinding?: string) => {

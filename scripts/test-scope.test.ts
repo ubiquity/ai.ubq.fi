@@ -14,6 +14,7 @@ import {
   ROOT,
   selectAffectedTestFiles,
   testRequiresNativeKv,
+  testSelectionForPaths,
   type TestSelection,
 } from "./test-scope.ts";
 
@@ -878,5 +879,137 @@ describe("private-copy trusted controller source selection", () => {
   test("missing controller and neighboring candidates cannot acquire synthetic controller coverage", () => {
     expect(selectAffectedTestFiles([producer], [controller], create(false))).toEqual([]);
     expect(selectAffectedTestFiles([producer], [controller + ".other"], create())).toEqual([]);
+  });
+});
+
+describe("separate research and CMake component inputs", () => {
+  const create = (reader?: string) => {
+    const root = mkdtempSync(join(fixture, "component-scope-"));
+    for (const path of ["src", "tests", "docs/research", "cpp"]) mkdirSync(join(root, path), { recursive: true });
+    writeFileSync(join(root, "docs/research/selector-fixture.json"), "{}\n");
+    writeFileSync(join(root, "docs/research/selector-fixture.py"), "print('fixture')\n");
+    writeFileSync(join(root, "cpp/selector-fixture.ts"), "export const fixture = 1;\n");
+    if (reader) writeFileSync(join(root, "src/reader.ts"), reader);
+    writeFileSync(join(root, "tests/reader.test.ts"), "import '../src/reader.ts';\n");
+    return root;
+  };
+  test("unconsumed research JSON and Python are documentation, while real config stays conservative", () => {
+    const root = create();
+    expect(classifyChangedPaths(["docs/research/selector-fixture.json", "docs/research/selector-fixture.py"], root).documentationOnly).toBe(true);
+    expect(classifyChangedPaths(["package.json"], root).documentationOnly).toBe(false);
+    expect(classifyChangedPaths(["docs/openapi.json"], root).documentationOnly).toBe(false);
+  });
+  test("real imports and literal file reads preserve research runtime inputs, including deleted data", () => {
+    const json = "../docs/research/selector-fixture.json";
+    const python = "../docs/research/selector-fixture.py";
+    const imported = create(`import value from ${JSON.stringify(json)};\nexport {value};\n`);
+    expect(classifyChangedPaths(["docs/research/selector-fixture.json"], imported).documentationOnly).toBe(false);
+    const read = create(`import {readFileSync} from 'node:fs';\nreadFileSync(new URL(${JSON.stringify(python)},import.meta.url));\n`);
+    expect(classifyChangedPaths(["docs/research/selector-fixture.py"], read).documentationOnly).toBe(false);
+    rmSync(join(read, "docs/research/selector-fixture.py"));
+    expect(classifyChangedPaths(["docs/research/selector-fixture.py"], read).documentationOnly).toBe(false);
+  });
+  test("a quoted fixture program is not an executing runtime reference", () => {
+    const program = "readFileSync(new URL('../docs/research/selector-fixture.json',import.meta.url));";
+    const root = create(`export const example = ${JSON.stringify(program)};\n`);
+    expect(classifyChangedPaths(["docs/research/selector-fixture.json"], root).documentationOnly).toBe(true);
+  });
+  test("a repository-root URL is not a component input, while an explicit component directory remains one", () => {
+    const relativeRoot = "../";
+    const root = create(`export const root = new URL(${JSON.stringify(relativeRoot)},import.meta.url);\n`);
+    expect(classifyChangedPaths(["docs/research/selector-fixture.json"], root).documentationOnly).toBe(true);
+    const directory = "../docs/research/";
+    const reader = create(`export const data = new URL(${JSON.stringify(directory)},import.meta.url);\n`);
+    expect(classifyChangedPaths(["docs/research/selector-fixture.json"], reader).documentationOnly).toBe(false);
+  });
+  test("standalone CPP stays out of Bun gates until an actual Bun consumer is introduced", () => {
+    const path = "cpp/selector-fixture.ts";
+    const native = "cpp/src/selector-fixture.cpp";
+    const selection: TestSelection = { paths: [native], documentationOnly: false, affectedTests: [], runAll: false, reason: "no-dependent-tests" };
+    expect(ciScopeForSelection(selection, create(), {}).needsTypeScriptValidate).toBe(false);
+    expect(formatScopeMessage(selection, "bun test")).toContain("committed CMake/CTest presets");
+    const adapter = { ...selection, paths: ["cpp/tests/selector-fixture.ts"] };
+    expect(ciScopeForSelection(adapter, create(), {}).needsTypeScriptValidate).toBe(true);
+    expect(formatScopeMessage(adapter, "bun test")).toContain("strict no-emit checks");
+    const specifier = "../cpp/selector-fixture.ts";
+    const root = create(`import {fixture} from ${JSON.stringify(specifier)};\nexport {fixture};\n`);
+    const affectedTests = selectAffectedTestFiles([path], ["tests/reader.test.ts"], root);
+    expect(affectedTests).toEqual(["tests/reader.test.ts"]);
+    expect(ciScopeForSelection({ ...selection, paths: [path], affectedTests, reason: "selected" }, root, {}).needsTypeScriptValidate).toBe(true);
+    const literal = create(`import {readFileSync} from 'node:fs';\nreadFileSync(new URL(${JSON.stringify("../" + native)},import.meta.url));\n`);
+    expect(ciScopeForSelection(selection, literal, {}).needsTypeScriptValidate).toBe(true);
+  });
+  test("an affected private-copy controller selects the actual Darwin job", () => {
+    const path = "tests/private-bun-copy-confinement.test.ts";
+    expect(
+      ciScopeForSelection({ paths: [path], documentationOnly: false, affectedTests: [path], runAll: false, reason: "selected" }, create(), {})
+    ).toMatchObject({
+      needsDarwinTests: true,
+      needsDarwinNative: true,
+    });
+  });
+});
+
+describe("the exact lint project is validation-only", () => {
+  test("lint include changes retain static gates without selecting runtime or native jobs", () => {
+    const result = scopeCommand(
+      ["scripts/test-scope.ts", "--ci-json"],
+      { GITHUB_EVENT_NAME: "pull_request", GITHUB_BASE_REF: "development" },
+      "tsconfig.lint.json"
+    );
+    expect(result.status).toBe(0);
+    const scope = JSON.parse(result.stdout);
+    expect(scope).toMatchObject({
+      reason: "validation-only",
+      runAll: false,
+      affectedTests: [],
+      needsValidate: true,
+      needsTypeScriptValidate: true,
+      needsRustNative: false,
+      needsDarwinTests: false,
+      needsDarwinNative: false,
+      needsNativeKv: false,
+      needsArtifact: false,
+    });
+    const verify = scopeCommand(["scripts/test-scope.ts"], {}, "tsconfig.lint.json");
+    expect(verify.status).toBe(10);
+    expect(verify.stdout).toContain("strict no-emit checks");
+  });
+  test("runtime configurations are still conservative, and complete-set overrides remain effective", () => {
+    for (const path of ["package.json", "tsconfig.json"]) {
+      const result = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, path);
+      expect(result.status).toBe(0);
+      const scope = JSON.parse(result.stdout);
+      expect(scope.reason).toBe("config");
+      expect(scope.affectedTests.length).toBeGreaterThan(1);
+    }
+    const selection: TestSelection = { paths: ["tsconfig.lint.json"], documentationOnly: false, affectedTests: [], runAll: false, reason: "validation-only" };
+    expect(ciScopeForSelection(selection, fixture, { GITHUB_EVENT_NAME: "merge_group" })).toMatchObject({
+      completeCheckSet: true,
+      needsRustNative: true,
+      needsDarwinNative: true,
+    });
+  });
+  test("an actual import or literal runtime read of the lint JSON restores runtime validation", () => {
+    for (const operation of ["import", "read"]) {
+      const root = mkdtempSync(join(fixture, "lint-consumer-"));
+      mkdirSync(join(root, "src"));
+      mkdirSync(join(root, "tests"));
+      writeFileSync(join(root, "tsconfig.lint.json"), "{}\n");
+      const specifier = "../tsconfig.lint.json";
+      const source =
+        operation === "import"
+          ? `import config from ${JSON.stringify(specifier)};\nexport {config};\n`
+          : `import {readFileSync} from 'node:fs';\nreadFileSync(new URL(${JSON.stringify(specifier)},import.meta.url));\n`;
+      writeFileSync(join(root, "src/consumer.ts"), source);
+      writeFileSync(join(root, "tests/consumer.test.ts"), "import '../src/consumer.ts';\n");
+      writeFileSync(join(root, "tests/unrelated.test.ts"), "// Unrelated source selection control.\n");
+      const candidates = ["tests/consumer.test.ts", "tests/unrelated.test.ts"];
+      const selection = testSelectionForPaths(["tsconfig.lint.json"], candidates, root);
+      expect(selection.reason).toBe("config");
+      expect(selection.affectedTests).toEqual(candidates);
+      expect(ciScopeForSelection(selection, root, {}).needsTypeScriptValidate).toBe(true);
+      expect(classifyChangedPaths(selection.paths, root).documentationOnly).toBe(false);
+    }
   });
 });

@@ -1,0 +1,610 @@
+{
+  "schema": 1,
+  "status": "completed_with_cancellation_mismatch",
+  "fixtureCommit": "96cfca54d033aedff8e237a4cbcebb051f62f066",
+  "fixtureTree": "7ae301184cfe261d45b1add6e0587e77d1f26688",
+  "oracleSource": "d94fef52ccc76e0d5aa019154f11e47d5e10fba6",
+  "release": {
+    "commit": "b588420dc1275ac1f7548a6932a5e63330751cea",
+    "tree": "c9bf439743b2f03d4761639fedd17ef2731430d3",
+    "receiptSha256": "4cb1c25d7738857c26ce0604e0e7d5a577be2f967cb84a5e882d6d835318944f",
+    "profile": {
+      "lto": true,
+      "codegenUnits": 1,
+      "optLevel": "s",
+      "strip": "debuginfo",
+      "buildLogReleaseSeconds": 442
+    }
+  },
+  "runtime": {
+    "bytes": 139427808,
+    "sha256": "fabfd6c40a3bb74a98aac54999b456bdb3b7aa7ede4cbbb33898e1f8836a2564",
+    "package_version": "1.20261012.1",
+    "elf_machine": "AArch64"
+  },
+  "accountingDifference": "Rust fixture-access ordinary principal has no API/kernel/paid reservations; actual routing lifetime/terminal persistence verified only. TypeScript fixture uses synthetic API quota authority. No equivalence of those accounting families is claimed.",
+  "featureDifference": "Rust emits auxiliary OpenRouter models GET; scratch exact listener wrapper records/refuses it with503 before generation counting. All other requests retain method/path/host; unexpectedPOST fails. Original factory/frame/barrier block unchanged.",
+  "deliveryDifference": "Client raw captures observe delivered/interrupted sockets; Worker durable delivery remains unobserved. Cancellation row records failed/eof/drained after mock safety deadline, not cancellation.",
+  "measurementScope": "Native workerd process+WASM/authority only in measured512MiB cgroup; mock/client/namespace/controller in actors sibling under768MiB parent. Artifacts hashed outside measured cgroup; shared mapped pages need not be charged to this cgroup. No language attribution.",
+  "filesystem": "VPS /tmp tmpfs; task-temp SQLite snapshots/readback do not prove power-loss or host-reboot durability",
+  "cases": [
+    {
+      "case": "roundtrip",
+      "status": "passed",
+      "evidenceRef": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/2163280e-47e4-436b-97ce-b53e9b130559",
+      "evidenceTarget": "cpp-pilot-rust-shared-roundtrip-v3",
+      "captureExit": 0,
+      "durationMs": 3352,
+      "planSha256": "34a0e7227d26262259a31e20f65c9cc4bc6cb6980358cd8e5308a3677db2d490",
+      "generationDispatches": 2,
+      "auxiliaryRequests": [
+        {
+          "sequence": 2,
+          "atMs": 1034.395478,
+          "method": "GET",
+          "path": "/api/v1/models?output_modalities=text%2Cdecisions",
+          "host": "openrouter.ai",
+          "classification": "auxiliary_catalog_get",
+          "possibleAdditionalGeneration": false,
+          "bodyBase64": "",
+          "syntheticStatus": 503
+        }
+      ],
+      "failedIncrementalAssertions": [],
+      "durableOutcome": "verified",
+      "durableRows": 2,
+      "cancelLatencyMs": null,
+      "ttfd": null,
+      "primaryTtfd": null,
+      "actualTerminal": null,
+      "cgroupExistsAfter": false,
+      "workerdExit": 0,
+      "memory": [
+        {
+          "stage": "cold-ready",
+          "rssKiB": 108688,
+          "rssMiB": 106.140625,
+          "gatewayCurrentBytes": 72605696,
+          "gatewayPeakBytes": 82575360,
+          "pssKiB": 106930,
+          "pssMiB": 104.423828125
+        },
+        {
+          "stage": "loaded-one-stream",
+          "rssKiB": 251552,
+          "rssMiB": 245.65625,
+          "gatewayCurrentBytes": 212606976,
+          "gatewayPeakBytes": 212606976,
+          "pssKiB": 249794,
+          "pssMiB": 243.939453125
+        },
+        {
+          "stage": "warm-idle",
+          "rssKiB": 289964,
+          "rssMiB": 283.16796875,
+          "gatewayCurrentBytes": 250720256,
+          "gatewayPeakBytes": 250777600,
+          "pssKiB": 288206,
+          "pssMiB": 281.451171875
+        }
+      ],
+      "afterStopCounters": {
+        "memory.current": "1433600",
+        "memory.peak": "251244544",
+        "memory.max": "536870912",
+        "memory.swap.current": "0",
+        "memory.swap.max": "0",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 1925217\nuser_usec 1713773\nsystem_usec 211444\nnice_usec 0\nnr_periods 23\nnr_throttled 4\nthrottled_usec 43138\nnr_bursts 0\nburst_usec 0",
+        "pids.current": "0",
+        "pids.max": "96",
+        "cgroup.procs": ""
+      },
+      "originalRawSha256": "c45138126aa012b6d782c05ce7fb2ca03201652d0ca0a5af0d5303dc9c99cc4f",
+      "originalDurableReadbackSha256": "fbab9f6719b947b2151c115c5de851e3857c51747517f00c20b690fab448a103"
+    },
+    {
+      "case": "cancel",
+      "status": "failed",
+      "evidenceRef": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/225b2739-8b0c-4c49-95b9-de978995698d",
+      "evidenceTarget": "cpp-pilot-rust-shared-cancel-v3",
+      "captureExit": 1,
+      "durationMs": 7090,
+      "planSha256": "6d88da21e4f535d8a86212058813b86098239b500df375dea6c12664bffa2fb6",
+      "generationDispatches": 1,
+      "auxiliaryRequests": [
+        {
+          "sequence": 2,
+          "atMs": 924.246193,
+          "method": "GET",
+          "path": "/api/v1/models?output_modalities=text%2Cdecisions",
+          "host": "openrouter.ai",
+          "classification": "auxiliary_catalog_get",
+          "possibleAdditionalGeneration": false,
+          "bodyBase64": "",
+          "syntheticStatus": 503
+        }
+      ],
+      "failedIncrementalAssertions": [],
+      "durableOutcome": "verified",
+      "durableRows": 1,
+      "cancelLatencyMs": 4878.2870139999995,
+      "ttfd": null,
+      "primaryTtfd": null,
+      "actualTerminal": {
+        "semantic_terminal": "response.failed",
+        "reader_termination": "eof",
+        "body": "drained",
+        "delivery": "unobserved"
+      },
+      "cgroupExistsAfter": false,
+      "workerdExit": 0,
+      "memory": [
+        {
+          "stage": "cold-ready",
+          "rssKiB": 108880,
+          "rssMiB": 106.328125,
+          "gatewayCurrentBytes": 73117696,
+          "gatewayPeakBytes": 82370560,
+          "pssKiB": 107122,
+          "pssMiB": 104.611328125
+        },
+        {
+          "stage": "loaded-before-cancel",
+          "rssKiB": 230504,
+          "rssMiB": 225.1015625,
+          "gatewayCurrentBytes": 191234048,
+          "gatewayPeakBytes": 191234048,
+          "pssKiB": 228746,
+          "pssMiB": 223.384765625
+        }
+      ],
+      "afterStopCounters": {
+        "memory.current": "1294336",
+        "memory.peak": "251154432",
+        "memory.max": "536870912",
+        "memory.swap.current": "0",
+        "memory.swap.max": "0",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 2803180\nuser_usec 2564191\nsystem_usec 238989\nnice_usec 0\nnr_periods 34\nnr_throttled 2\nthrottled_usec 86388\nnr_bursts 0\nburst_usec 0",
+        "pids.current": "0",
+        "pids.max": "96",
+        "cgroup.procs": ""
+      },
+      "originalRawSha256": "e6294907deede3425827c00b725ab3de1b6eb98724c4ba8f335523ca849ca601",
+      "originalDurableReadbackSha256": "2c3bd69774bfaeccad5415467172613815b434864f2ce5e029831cd5d3df51df"
+    },
+    {
+      "case": "one",
+      "status": "passed",
+      "evidenceRef": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/4abd1110-eeee-41e2-8a23-4dce548a9435",
+      "evidenceTarget": "cpp-pilot-rust-shared-one-v3",
+      "captureExit": 0,
+      "durationMs": 8415,
+      "planSha256": "c2f5765deef45c867e900c86934b65f2bb417be690516d8052f45be6e06e8428",
+      "generationDispatches": 2,
+      "auxiliaryRequests": [
+        {
+          "sequence": 2,
+          "atMs": 939.373849,
+          "method": "GET",
+          "path": "/api/v1/models?output_modalities=text%2Cdecisions",
+          "host": "openrouter.ai",
+          "classification": "auxiliary_catalog_get",
+          "possibleAdditionalGeneration": false,
+          "bodyBase64": "",
+          "syntheticStatus": 503
+        }
+      ],
+      "failedIncrementalAssertions": [],
+      "durableOutcome": "verified",
+      "durableRows": 2,
+      "cancelLatencyMs": null,
+      "ttfd": null,
+      "primaryTtfd": [
+        {
+          "request": 0,
+          "actualMeaningfulDelta": true,
+          "ttfdMs": 255.46315800000002
+        }
+      ],
+      "actualTerminal": null,
+      "cgroupExistsAfter": false,
+      "workerdExit": 0,
+      "memory": [
+        {
+          "stage": "cold-ready",
+          "rssKiB": 108600,
+          "rssMiB": 106.0546875,
+          "gatewayCurrentBytes": 72802304,
+          "gatewayPeakBytes": 82313216,
+          "pssKiB": 106842,
+          "pssMiB": 104.337890625
+        },
+        {
+          "stage": "warm-idle-after-warmup-2s",
+          "rssKiB": 294396,
+          "rssMiB": 287.49609375,
+          "gatewayCurrentBytes": 255238144,
+          "gatewayPeakBytes": 255238144,
+          "pssKiB": 292638,
+          "pssMiB": 285.779296875
+        },
+        {
+          "stage": "loaded-1-streams-before-receipt",
+          "rssKiB": 296412,
+          "rssMiB": 289.46484375,
+          "gatewayCurrentBytes": 257433600,
+          "gatewayPeakBytes": 257433600,
+          "pssKiB": 294654,
+          "pssMiB": 287.748046875
+        },
+        {
+          "stage": "loaded-1-streams-held-1s",
+          "rssKiB": 298612,
+          "rssMiB": 291.61328125,
+          "gatewayCurrentBytes": 256274432,
+          "gatewayPeakBytes": 258482176,
+          "pssKiB": 296854,
+          "pssMiB": 289.896484375
+        },
+        {
+          "stage": "postload-idle-2s",
+          "rssKiB": 294052,
+          "rssMiB": 287.16015625,
+          "gatewayCurrentBytes": 251654144,
+          "gatewayPeakBytes": 258482176,
+          "pssKiB": 292294,
+          "pssMiB": 285.443359375
+        },
+        {
+          "stage": "warm-idle",
+          "rssKiB": 294052,
+          "rssMiB": 287.16015625,
+          "gatewayCurrentBytes": 251650048,
+          "gatewayPeakBytes": 258482176,
+          "pssKiB": 292294,
+          "pssMiB": 285.443359375
+        }
+      ],
+      "afterStopCounters": {
+        "memory.current": "1224704",
+        "memory.peak": "258482176",
+        "memory.max": "536870912",
+        "memory.swap.current": "0",
+        "memory.swap.max": "0",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 2912387\nuser_usec 2657415\nsystem_usec 254972\nnice_usec 0\nnr_periods 39\nnr_throttled 1\nthrottled_usec 10601\nnr_bursts 0\nburst_usec 0",
+        "pids.current": "0",
+        "pids.max": "96",
+        "cgroup.procs": ""
+      },
+      "originalRawSha256": "e96cb4ad80d4bc02a745e7bbfb554b8a2c5f3323d06edd10168d7130d10b8187",
+      "originalDurableReadbackSha256": "617b961e8c17411d887bb8de028274b010b9c6c4a90572399c2ad0d00804f12c"
+    },
+    {
+      "case": "two",
+      "status": "passed",
+      "evidenceRef": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/343c4e9a-7d7f-4b1c-90f0-ef1ae0a62099",
+      "evidenceTarget": "cpp-pilot-rust-shared-two-v3",
+      "captureExit": 0,
+      "durationMs": 8712,
+      "planSha256": "aaaad48ac7327fb192ce580db4c86a8f03da3f29999644d25108ae6ecbfae8d5",
+      "generationDispatches": 3,
+      "auxiliaryRequests": [
+        {
+          "sequence": 2,
+          "atMs": 1006.98501,
+          "method": "GET",
+          "path": "/api/v1/models?output_modalities=text%2Cdecisions",
+          "host": "openrouter.ai",
+          "classification": "auxiliary_catalog_get",
+          "possibleAdditionalGeneration": false,
+          "bodyBase64": "",
+          "syntheticStatus": 503
+        }
+      ],
+      "failedIncrementalAssertions": [],
+      "durableOutcome": "verified",
+      "durableRows": 3,
+      "cancelLatencyMs": null,
+      "ttfd": null,
+      "primaryTtfd": [
+        {
+          "request": 0,
+          "actualMeaningfulDelta": true,
+          "ttfdMs": 431.1383099999998
+        },
+        {
+          "request": 1,
+          "actualMeaningfulDelta": true,
+          "ttfdMs": 434.1851700000002
+        }
+      ],
+      "actualTerminal": null,
+      "cgroupExistsAfter": false,
+      "workerdExit": 0,
+      "memory": [
+        {
+          "stage": "cold-ready",
+          "rssKiB": 108448,
+          "rssMiB": 105.90625,
+          "gatewayCurrentBytes": 72359936,
+          "gatewayPeakBytes": 82313216,
+          "pssKiB": 106709,
+          "pssMiB": 104.2080078125
+        },
+        {
+          "stage": "warm-idle-after-warmup-2s",
+          "rssKiB": 281736,
+          "rssMiB": 275.1328125,
+          "gatewayCurrentBytes": 242200576,
+          "gatewayPeakBytes": 253239296,
+          "pssKiB": 279997,
+          "pssMiB": 273.4345703125
+        },
+        {
+          "stage": "loaded-2-streams-before-receipt",
+          "rssKiB": 284684,
+          "rssMiB": 278.01171875,
+          "gatewayCurrentBytes": 245608448,
+          "gatewayPeakBytes": 253239296,
+          "pssKiB": 282945,
+          "pssMiB": 276.3134765625
+        },
+        {
+          "stage": "loaded-2-streams-held-1s",
+          "rssKiB": 286916,
+          "rssMiB": 280.19140625,
+          "gatewayCurrentBytes": 244350976,
+          "gatewayPeakBytes": 253239296,
+          "pssKiB": 285177,
+          "pssMiB": 278.4931640625
+        },
+        {
+          "stage": "postload-idle-2s",
+          "rssKiB": 282420,
+          "rssMiB": 275.80078125,
+          "gatewayCurrentBytes": 239845376,
+          "gatewayPeakBytes": 253239296,
+          "pssKiB": 280681,
+          "pssMiB": 274.1025390625
+        },
+        {
+          "stage": "warm-idle",
+          "rssKiB": 282420,
+          "rssMiB": 275.80078125,
+          "gatewayCurrentBytes": 239845376,
+          "gatewayPeakBytes": 253239296,
+          "pssKiB": 280681,
+          "pssMiB": 274.1025390625
+        }
+      ],
+      "afterStopCounters": {
+        "memory.current": "1310720",
+        "memory.peak": "253239296",
+        "memory.max": "536870912",
+        "memory.swap.current": "0",
+        "memory.swap.max": "0",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 3151868\nuser_usec 2899587\nsystem_usec 252281\nnice_usec 0\nnr_periods 44\nnr_throttled 1\nthrottled_usec 2322\nnr_bursts 0\nburst_usec 0",
+        "pids.current": "0",
+        "pids.max": "96",
+        "cgroup.procs": ""
+      },
+      "originalRawSha256": "982e591d104590d65b014973741b77ed324335f7f42b98d8151aae1a8e22b0fe",
+      "originalDurableReadbackSha256": "abe04dfc1ef1970376936ce6048449d0bdee81e1199090c88ab1ecc07a56d6b3"
+    },
+    {
+      "case": "latency-one",
+      "status": "passed",
+      "evidenceRef": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/b953fc45-6817-4389-9e51-b0779b6fef20",
+      "evidenceTarget": "cpp-pilot-rust-shared-latency-one-v3",
+      "captureExit": 0,
+      "durationMs": 8717,
+      "planSha256": "42d48922fabf9dca2d587b06d1c691a2263d8a7be9dc75c9c9f1b11c61c7cb6d",
+      "generationDispatches": 22,
+      "auxiliaryRequests": [
+        {
+          "sequence": 2,
+          "atMs": 976.260631,
+          "method": "GET",
+          "path": "/api/v1/models?output_modalities=text%2Cdecisions",
+          "host": "openrouter.ai",
+          "classification": "auxiliary_catalog_get",
+          "possibleAdditionalGeneration": false,
+          "bodyBase64": "",
+          "syntheticStatus": 503
+        }
+      ],
+      "failedIncrementalAssertions": [],
+      "durableOutcome": "verified",
+      "durableRows": 22,
+      "cancelLatencyMs": null,
+      "ttfd": {
+        "concurrency": 1,
+        "issued": 20,
+        "successful": 20,
+        "warmupExcluded": true,
+        "percentileMethod": "nearest-rank ceil(p*N), measured client request start to first actual meaningful text delta",
+        "elapsedMs": 3208.631356,
+        "p50Ms": 123.27674699999989,
+        "p95Ms": 231.54540799999995,
+        "comparableSuccessMetric": true
+      },
+      "primaryTtfd": null,
+      "actualTerminal": null,
+      "cgroupExistsAfter": false,
+      "workerdExit": 0,
+      "memory": [
+        {
+          "stage": "cold-ready",
+          "rssKiB": 108584,
+          "rssMiB": 106.0390625,
+          "gatewayCurrentBytes": 72798208,
+          "gatewayPeakBytes": 82575360,
+          "pssKiB": 106826,
+          "pssMiB": 104.322265625
+        },
+        {
+          "stage": "latency-warm-idle-after-two-warmups-2s",
+          "rssKiB": 293612,
+          "rssMiB": 286.73046875,
+          "gatewayCurrentBytes": 254636032,
+          "gatewayPeakBytes": 260886528,
+          "pssKiB": 291854,
+          "pssMiB": 285.013671875
+        },
+        {
+          "stage": "after-benchmark",
+          "rssKiB": 318988,
+          "rssMiB": 311.51171875,
+          "gatewayCurrentBytes": 277430272,
+          "gatewayPeakBytes": 277430272,
+          "pssKiB": 317230,
+          "pssMiB": 309.794921875
+        },
+        {
+          "stage": "warm-idle",
+          "rssKiB": 319360,
+          "rssMiB": 311.875,
+          "gatewayCurrentBytes": 277520384,
+          "gatewayPeakBytes": 277692416,
+          "pssKiB": 317602,
+          "pssMiB": 310.158203125
+        }
+      ],
+      "afterStopCounters": {
+        "memory.current": "3604480",
+        "memory.peak": "277782528",
+        "memory.max": "536870912",
+        "memory.swap.current": "0",
+        "memory.swap.max": "0",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 5569964\nuser_usec 5208545\nsystem_usec 361418\nnice_usec 0\nnr_periods 68\nnr_throttled 3\nthrottled_usec 110670\nnr_bursts 0\nburst_usec 0",
+        "pids.current": "0",
+        "pids.max": "96",
+        "cgroup.procs": ""
+      },
+      "originalRawSha256": "fda0ffa826ff108fde27f0ace81894580eed35cfba6b07a31e9c449efcce3220",
+      "originalDurableReadbackSha256": "96738ebc0dbde9347720ce181f6f7b50066cd36b4e2703ca979146abee353c34"
+    },
+    {
+      "case": "latency-two",
+      "status": "passed",
+      "evidenceRef": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/9eedbac8-a538-43ff-bdb8-d551d3925271",
+      "evidenceTarget": "cpp-pilot-rust-shared-latency-two-v3",
+      "captureExit": 0,
+      "durationMs": 8639,
+      "planSha256": "4a82ebd26357100b088f4a8707a3e5f349d72dd1702dcf825502b35f187214db",
+      "generationDispatches": 22,
+      "auxiliaryRequests": [
+        {
+          "sequence": 2,
+          "atMs": 1098.352332,
+          "method": "GET",
+          "path": "/api/v1/models?output_modalities=text%2Cdecisions",
+          "host": "openrouter.ai",
+          "classification": "auxiliary_catalog_get",
+          "possibleAdditionalGeneration": false,
+          "bodyBase64": "",
+          "syntheticStatus": 503
+        }
+      ],
+      "failedIncrementalAssertions": [],
+      "durableOutcome": "verified",
+      "durableRows": 22,
+      "cancelLatencyMs": null,
+      "ttfd": {
+        "concurrency": 2,
+        "issued": 20,
+        "successful": 20,
+        "warmupExcluded": true,
+        "percentileMethod": "nearest-rank ceil(p*N), measured client request start to first actual meaningful text delta",
+        "elapsedMs": 3067.1062620000002,
+        "p50Ms": 220.10450200000014,
+        "p95Ms": 373.3158880000001,
+        "comparableSuccessMetric": true
+      },
+      "primaryTtfd": null,
+      "actualTerminal": null,
+      "cgroupExistsAfter": false,
+      "workerdExit": 0,
+      "memory": [
+        {
+          "stage": "cold-ready",
+          "rssKiB": 108668,
+          "rssMiB": 106.12109375,
+          "gatewayCurrentBytes": 72654848,
+          "gatewayPeakBytes": 82309120,
+          "pssKiB": 106913,
+          "pssMiB": 104.4072265625
+        },
+        {
+          "stage": "latency-warm-idle-after-two-warmups-2s",
+          "rssKiB": 285900,
+          "rssMiB": 279.19921875,
+          "gatewayCurrentBytes": 246579200,
+          "gatewayPeakBytes": 257208320,
+          "pssKiB": 284145,
+          "pssMiB": 277.4853515625
+        },
+        {
+          "stage": "after-benchmark",
+          "rssKiB": 315156,
+          "rssMiB": 307.76953125,
+          "gatewayCurrentBytes": 273256448,
+          "gatewayPeakBytes": 273256448,
+          "pssKiB": 313402,
+          "pssMiB": 306.056640625
+        },
+        {
+          "stage": "warm-idle",
+          "rssKiB": 315944,
+          "rssMiB": 308.5390625,
+          "gatewayCurrentBytes": 274186240,
+          "gatewayPeakBytes": 274305024,
+          "pssKiB": 314190,
+          "pssMiB": 306.826171875
+        }
+      ],
+      "afterStopCounters": {
+        "memory.current": "3764224",
+        "memory.peak": "274448384",
+        "memory.max": "536870912",
+        "memory.swap.current": "0",
+        "memory.swap.max": "0",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 5587162\nuser_usec 5253956\nsystem_usec 333205\nnice_usec 0\nnr_periods 70\nnr_throttled 9\nthrottled_usec 126952\nnr_bursts 0\nburst_usec 0",
+        "pids.current": "0",
+        "pids.max": "96",
+        "cgroup.procs": ""
+      },
+      "originalRawSha256": "35e7fd8ba56857b04abc772943cc071beafb527edd33f751112ba09c2114294f",
+      "originalDurableReadbackSha256": "86455c24dce4823914302cd632c04b7ef047745836c6418a3fd5867da6e9b2d5"
+    }
+  ],
+  "remainingCoverage": [
+    "late reasoning before tool and all SDK accumulation permutations",
+    "API/quota/paid/kernel settlement equivalence",
+    "every upstream finish/error/timeout/terminal-write boundary",
+    "namespaced/freeform collision runtime permutations",
+    "current-source Rust artifact, real-provider/native Codex-through-Rust, production/standby/Pi acceptance"
+  ],
+  "cleanup": {
+    "ownedCgroupsRemaining": 0,
+    "sourceWrites": [],
+    "builds": 0,
+    "installs": 0,
+    "paidProviderCalls": 0,
+    "credentialMutations": 0
+  },
+  "sealedSummarySha256": "ad559c0732d00a6793159b7fccccbb37a114374dbb5e5c5dae91acc28951f8a3",
+  "sealedManifestSha256": "d19bc2658d13a52a5aa7581708d287d2ce7ba3c68d17ea963c42cc6b4fa70162"
+}

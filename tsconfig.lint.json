@@ -5,6 +5,7 @@
     "serve.ts",
     "src/**/*.ts",
     "tests/**/*.ts",
+    "cpp/tests/**/*.ts",
     "scripts/**/*.ts",
     "benchmarks/**/*.ts",
     "ops/**/*.ts",

@@ -1,0 +1,84 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "pi-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../.data/cpp-build/pi-release",
+      "cacheVariables": {
+        "CMAKE_MAKE_PROGRAM": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr/bin/ninja",
+        "Boost_DIR": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr/lib/aarch64-linux-gnu/cmake/Boost-1.81.0",
+        "CMAKE_PREFIX_PATH": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "/usr/bin/python3;${sourceDir}/tools/compiler-limit.py",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_TOOLCHAIN_FILE": "$env{UOS_CPP_TOOLCHAIN_DIR}/probe/pi-arm64.cmake",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -DNDEBUG -g1",
+        "CMAKE_CXX_FLAGS": "-B$env{UOS_CPP_TOOLCHAIN_DIR}/host-tools/bin/",
+        "CMAKE_AR": "$env{UOS_CPP_TOOLCHAIN_DIR}/host-tools/bin/ar",
+        "CMAKE_RANLIB": "$env{UOS_CPP_TOOLCHAIN_DIR}/host-tools/bin/ranlib",
+        "CMAKE_LINKER": "$env{UOS_CPP_TOOLCHAIN_DIR}/host-tools/bin/ld",
+        "CMAKE_STRIP": "$env{UOS_CPP_TOOLCHAIN_DIR}/host-tools/bin/strip",
+        "OPENSSL_INCLUDE_DIR": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr/include",
+        "OPENSSL_SSL_LIBRARY": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr/lib/aarch64-linux-gnu/libssl.so",
+        "OPENSSL_CRYPTO_LIBRARY": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr/lib/aarch64-linux-gnu/libcrypto.so",
+        "CMAKE_CROSSCOMPILING_EMULATOR": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/lib/ld-linux-aarch64.so.1;--library-path;$env{UOS_CPP_TOOLCHAIN_DIR}/root/lib/aarch64-linux-gnu:$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr/lib/aarch64-linux-gnu"
+      }
+    },
+    {
+      "name": "native-asan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../.data/cpp-build/native-asan",
+      "cacheVariables": {
+        "CMAKE_MAKE_PROGRAM": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr/bin/ninja",
+        "Boost_DIR": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr/lib/aarch64-linux-gnu/cmake/Boost-1.81.0",
+        "CMAKE_PREFIX_PATH": "$env{UOS_CPP_TOOLCHAIN_DIR}/root/usr",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "/usr/bin/python3;${sourceDir}/tools/compiler-limit.py",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_CXX_COMPILER": "/usr/bin/g++",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g1",
+        "UOS_SANITIZE": "ON",
+        "OPENSSL_INCLUDE_DIR": "/usr/include",
+        "OPENSSL_SSL_LIBRARY": "/usr/lib/libssl.so",
+        "OPENSSL_CRYPTO_LIBRARY": "/usr/lib/libcrypto.so"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "pi-release",
+      "configurePreset": "pi-release",
+      "jobs": 1
+    },
+    {
+      "name": "native-asan",
+      "configurePreset": "native-asan",
+      "jobs": 1
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "pi-release",
+      "configurePreset": "pi-release",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "native-asan",
+      "configurePreset": "native-asan",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

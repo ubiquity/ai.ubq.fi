@@ -1,0 +1,568 @@
+{
+  "schema": "uos-cpp-pi-pilot-report/v1",
+  "candidate": {
+    "sourceCommit": "7069c31b3f50d0552ef77e99b984f59fde479b13",
+    "sourceTree": "827f3281deaa0b36002d710c172a6b0e43d89a38",
+    "strippedSha256": "bbb18300ea225e2803bc1f95ce5576b42af862c135c828667fd163a191c5bfd3",
+    "bytes": 991848,
+    "profile": {
+      "stream": true,
+      "unsupportedStreamFalseOrMissing": true,
+      "model": "deepseek-flash",
+      "upstream": "official DeepSeek Chat translated to Responses",
+      "active": 2,
+      "waiting": 0,
+      "headerSockets": 8,
+      "requestBytes": 4194304,
+      "upstreamEventBytes": 1048576,
+      "terminalBytes": 2097152,
+      "headerBytes": 16384,
+      "jsonDepth": 64,
+      "authority": "synthetic fixture credential/quota/journal; not production Bun/Deno KV compatibility"
+    }
+  },
+  "verdicts": {
+    "gatewayNamespaceBudget": "PASS",
+    "observedHostReserve": "PASS",
+    "prefixSoakPostOverloadAndIdle": "PASS",
+    "wholeTransportZeroNewSwap": "NOT_MET_IN_OBSERVED_INTERVAL; INITIAL_ATTRIBUTION_UNPROVED",
+    "productionStandby": "NOT_QUALIFIED"
+  },
+  "physicalPi": {
+    "prefixRows": [
+      {
+        "name": "cold_idle",
+        "operation": "idle",
+        "elapsed_seconds": 5.081593,
+        "N": 0,
+        "p95_ms_recomputed_fullN": null,
+        "reported_helper_p95_ms": null,
+        "posts": 0,
+        "settlements": 0,
+        "unsettled": 0,
+        "CPP_RSS_kib": 7960,
+        "CPP_PSS_kib": 3949,
+        "sampled_current_bytes": 20418560,
+        "cumulative_peak_bytes": 20856832,
+        "host_MemAvailable_kib": 178944
+      },
+      {
+        "name": "native_two_turn",
+        "operation": "native",
+        "elapsed_seconds": 2.239521,
+        "N": 0,
+        "p95_ms_recomputed_fullN": null,
+        "reported_helper_p95_ms": null,
+        "posts": 2,
+        "settlements": 2,
+        "unsettled": 0,
+        "CPP_RSS_kib": 8880,
+        "CPP_PSS_kib": 4745,
+        "sampled_current_bytes": 21213184,
+        "cumulative_peak_bytes": 21860352,
+        "host_MemAvailable_kib": 178688
+      },
+      {
+        "name": "warm_idle",
+        "operation": "idle",
+        "elapsed_seconds": 10.073461,
+        "N": 0,
+        "p95_ms_recomputed_fullN": null,
+        "reported_helper_p95_ms": null,
+        "posts": 2,
+        "settlements": 2,
+        "unsettled": 0,
+        "CPP_RSS_kib": 8880,
+        "CPP_PSS_kib": 4853,
+        "sampled_current_bytes": 21213184,
+        "cumulative_peak_bytes": 21860352,
+        "host_MemAvailable_kib": 187936
+      },
+      {
+        "name": "one_stream",
+        "operation": "batch",
+        "elapsed_seconds": 3.31634,
+        "N": 20,
+        "p95_ms_recomputed_fullN": 145.73189099999945,
+        "reported_helper_p95_ms": 211.37294999999722,
+        "posts": 22,
+        "settlements": 22,
+        "unsettled": 0,
+        "CPP_RSS_kib": 9136,
+        "CPP_PSS_kib": 5109,
+        "sampled_current_bytes": 21733376,
+        "cumulative_peak_bytes": 22441984,
+        "host_MemAvailable_kib": 190980
+      },
+      {
+        "name": "two_streams",
+        "operation": "batch",
+        "elapsed_seconds": 1.798725,
+        "N": 20,
+        "p95_ms_recomputed_fullN": 155.52779299999747,
+        "reported_helper_p95_ms": 158.53037299999778,
+        "posts": 42,
+        "settlements": 42,
+        "unsettled": 0,
+        "CPP_RSS_kib": 9140,
+        "CPP_PSS_kib": 5113,
+        "sampled_current_bytes": 22179840,
+        "cumulative_peak_bytes": 22798336,
+        "host_MemAvailable_kib": 191028
+      },
+      {
+        "name": "accepted_large_1536k",
+        "operation": "large",
+        "elapsed_seconds": 1.741167,
+        "N": 0,
+        "p95_ms_recomputed_fullN": null,
+        "reported_helper_p95_ms": null,
+        "posts": 43,
+        "settlements": 43,
+        "unsettled": 0,
+        "CPP_RSS_kib": 15824,
+        "CPP_PSS_kib": 11797,
+        "sampled_current_bytes": 28897280,
+        "cumulative_peak_bytes": 34422784,
+        "host_MemAvailable_kib": 189880
+      },
+      {
+        "name": "accepted_summary_720k",
+        "operation": "large",
+        "elapsed_seconds": 0.880402,
+        "N": 0,
+        "p95_ms_recomputed_fullN": null,
+        "reported_helper_p95_ms": null,
+        "posts": 44,
+        "settlements": 44,
+        "unsettled": 0,
+        "CPP_RSS_kib": 9240,
+        "CPP_PSS_kib": 5213,
+        "sampled_current_bytes": 21901312,
+        "cumulative_peak_bytes": 34422784,
+        "host_MemAvailable_kib": 196820
+      },
+      {
+        "name": "slow_reader",
+        "operation": "slow_reader",
+        "elapsed_seconds": 2.040373,
+        "N": 0,
+        "p95_ms_recomputed_fullN": null,
+        "reported_helper_p95_ms": null,
+        "posts": 46,
+        "settlements": 46,
+        "unsettled": 0,
+        "CPP_RSS_kib": 11664,
+        "CPP_PSS_kib": 7637,
+        "sampled_current_bytes": 24571904,
+        "cumulative_peak_bytes": 34422784,
+        "host_MemAvailable_kib": 192976
+      },
+      {
+        "name": "repeated_cancel",
+        "operation": "cancel",
+        "elapsed_seconds": 1.541645,
+        "N": 10,
+        "p95_ms_recomputed_fullN": 157.4041249999973,
+        "reported_helper_p95_ms": 157.4041249999973,
+        "posts": 56,
+        "settlements": 56,
+        "unsettled": 0,
+        "CPP_RSS_kib": 11664,
+        "CPP_PSS_kib": 7637,
+        "sampled_current_bytes": 24801280,
+        "cumulative_peak_bytes": 34422784,
+        "host_MemAvailable_kib": 192868
+      },
+      {
+        "name": "four_stream_overload",
+        "operation": "overload",
+        "elapsed_seconds": 0.418299,
+        "N": 0,
+        "p95_ms_recomputed_fullN": null,
+        "reported_helper_p95_ms": null,
+        "posts": 58,
+        "settlements": 58,
+        "unsettled": 0,
+        "CPP_RSS_kib": 11664,
+        "CPP_PSS_kib": 7637,
+        "sampled_current_bytes": 24899584,
+        "cumulative_peak_bytes": 34422784,
+        "host_MemAvailable_kib": 192420
+      },
+      {
+        "name": "four_stream_overload_postsoak",
+        "operation": "overload",
+        "elapsed_seconds": 0.424785,
+        "N": 0,
+        "p95_ms_recomputed_fullN": null,
+        "reported_helper_p95_ms": null,
+        "posts": 778,
+        "settlements": 778,
+        "unsettled": 0,
+        "CPP_RSS_kib": 10360,
+        "CPP_PSS_kib": 6418,
+        "sampled_current_bytes": 24526848,
+        "cumulative_peak_bytes": 34422784,
+        "host_MemAvailable_kib": 196544
+      },
+      {
+        "name": "post_idle",
+        "operation": "idle",
+        "elapsed_seconds": 30.078841,
+        "N": 0,
+        "p95_ms_recomputed_fullN": null,
+        "reported_helper_p95_ms": null,
+        "posts": 778,
+        "settlements": 778,
+        "unsettled": 0,
+        "CPP_RSS_kib": 10360,
+        "CPP_PSS_kib": 6312,
+        "sampled_current_bytes": 24211456,
+        "cumulative_peak_bytes": 34422784,
+        "host_MemAvailable_kib": 186424
+      }
+    ],
+    "soak": {
+      "start_epoch_ms": 1794560337927,
+      "deadline_epoch_ms": 1794563937927,
+      "finish_epoch_ms": 1794563937927,
+      "monotonic_elapsed_seconds": 3600.0002261849586,
+      "batch_period_seconds": 10,
+      "concurrency": 2,
+      "N": 718,
+      "batches": 359,
+      "p50_ms": 141.50930499998503,
+      "p95_ms": 292.40199199999915,
+      "p99_ms": 762.2158449999988,
+      "max_ms": 1459.1072420000564,
+      "timing_surface": "off-Pi client start to first meaningful delta through private SSH ingress; producer waits actual receipt; warmups/native excluded",
+      "p95_method": "nearest rank ceil(0.95*N), recomputed from all718 retained raw samples"
+    },
+    "allPhaseMemory": {
+      "gateway_namespace_limit_bytes": 100663296,
+      "gateway_namespace_swap_limit_bytes": 0,
+      "cumulative_all_phase_peak_bytes": 34422784,
+      "cumulative_all_phase_peak_MiB": 32.828125,
+      "final_held_current_bytes": 13881344,
+      "all_sampled_gateway_swap_zero": true,
+      "final_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "host_internal_1Hz_low_water_kib": 114840,
+      "host_phase_sample_low_water_kib": 119532,
+      "required_host_reserve_kib": 65536,
+      "CPP_pre_exit_kernel_VmHWM_kib": 21220,
+      "CPP_pre_exit_VmRSS_kib": 10360,
+      "CPP_pre_exit_VmSwap_kib": 0,
+      "HWM_observation_utc": "2026-11-13T09:57:29Z",
+      "outside_helper_HWM_sum_kib": 53212,
+      "gateway_peak_plus_outside_HWM_bytes": 88911872,
+      "gateway_peak_plus_outside_HWM_MiB": 84.79296875,
+      "bound_caveat": "Conservative charged-memory plus per-PID RSS high-water sum, shared mappings double-counted; not physical incremental RAM. Pre-exit HWM coverage ends at09:57:29, final cgroup peak includes normal shutdown.",
+      "phase_peak_caveat": "Kernel peak was cumulative and not reset; per-phase current samples are lower bounds on phase-only peaks."
+    },
+    "accounting": {
+      "snapshot_sequence": 3074,
+      "last_sequence": 3890,
+      "validated_frames": 816,
+      "journal_bytes": 364962,
+      "records": 778,
+      "dispatched": 778,
+      "settled": 778,
+      "reserved": 0,
+      "quota_transactions": 1556,
+      "quota_mutations": 3112,
+      "terminals": {
+        "response.completed": 767,
+        "response.failed": 1,
+        "cancelled": 10
+      },
+      "delivery": {
+        "delivered": 767,
+        "interrupted": 11
+      }
+    },
+    "outsideHelpers": {
+      "sampleUTC": "2026-11-13T09:57:29Z",
+      "rows": [
+        {
+          "name": "sshd",
+          "VmHWM_kib": 9808,
+          "VmRSS_kib": 9808,
+          "VmSwap_kib": 100,
+          "continuity": true
+        },
+        {
+          "name": "sshd",
+          "VmHWM_kib": 6724,
+          "VmRSS_kib": 6180,
+          "VmSwap_kib": 484,
+          "continuity": true
+        },
+        {
+          "name": "systemd-run",
+          "VmHWM_kib": 6204,
+          "VmRSS_kib": 3680,
+          "VmSwap_kib": 924,
+          "continuity": "first-HWM-sample"
+        },
+        {
+          "name": "python3",
+          "VmHWM_kib": 10316,
+          "VmRSS_kib": 2596,
+          "VmSwap_kib": 5236,
+          "continuity": "first-HWM-sample"
+        },
+        {
+          "name": "sshd",
+          "VmHWM_kib": 9956,
+          "VmRSS_kib": 9820,
+          "VmSwap_kib": 92,
+          "continuity": true
+        },
+        {
+          "name": "sshd",
+          "VmHWM_kib": 9032,
+          "VmRSS_kib": 6396,
+          "VmSwap_kib": 1048,
+          "continuity": true
+        },
+        {
+          "name": "cat",
+          "VmHWM_kib": 1172,
+          "VmRSS_kib": 852,
+          "VmSwap_kib": 88,
+          "continuity": "first-HWM-sample"
+        }
+      ],
+      "HWM_sum_kib": 53212,
+      "sharedMasterExcluded": true,
+      "RSS_and_charge_upper_bound_MiB": 84.79296875,
+      "bound": "Non-concurrent per-PID HWM plus cgroup charge double-counts shared pages; not physical incremental RAM; HWM coverage ends09:57:29 while cgroup peak includes later shutdown",
+      "swapSnapshots": {
+        "firstUTC": "2026-11-13T09:13:59Z",
+        "laterUTC": "2026-11-13T09:28:04Z",
+        "firstSSHSmapsSwapKiB": 1724,
+        "laterSSHSmapsSwapKiB": 1728,
+        "observedDeltaKiB": 4,
+        "prestartBaselineAndInheritance": "UNPROVED",
+        "perProcessDeltasKiB": [0, 0, 0, 4]
+      }
+    },
+    "overload": [
+      {
+        "statuses": [200, 200, 503, 503],
+        "codes": ["local_inference_overload", "local_inference_overload"],
+        "retryAfter": ["1", "1"],
+        "actualPosts": 2,
+        "logicalDispatches": 2,
+        "heldActive": 2,
+        "heldQueued": 0
+      },
+      {
+        "statuses": [200, 200, 503, 503],
+        "codes": ["local_inference_overload", "local_inference_overload"],
+        "retryAfter": ["1", "1"],
+        "actualPosts": 2,
+        "logicalDispatches": 2,
+        "heldActive": 2,
+        "heldQueued": 0
+      }
+    ],
+    "cleanup": {
+      "bothUnitsCollected": true,
+      "cgroupAbsent": true,
+      "taskPidsRemaining": 0,
+      "taskListenersRemaining": 0,
+      "local18799Listeners": 0,
+      "allHandlesSettled0": true,
+      "sharedSshdMasterPreserved": true,
+      "binaryHashUnchanged": true,
+      "allSevenLibraryHashesMatch": true
+    }
+  },
+  "builds": [
+    {
+      "label": "pi-release-clean",
+      "wall_seconds": 121.282365303,
+      "single_child_peak_rss_kib": 596240,
+      "cgroup_peak_bytes": 798167040,
+      "memory_max_events": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "swap_peak_bytes": 0,
+      "candidate_baseline_bytes": 376860672,
+      "candidate_peak_sampled_lower_bound_bytes": 402448384,
+      "additional_peak_sampled_lower_bound_bytes": 25587712,
+      "sample_interval_s": 1,
+      "ninja_edge_method": "exact appended Ninja log records",
+      "compiled_tus": 13,
+      "link_seconds": 0.539,
+      "all_ninja_edge_seconds": 120.359,
+      "ninja_edge_span_seconds": 120.365,
+      "artifact_sha256": "143d542bb842420f7a5d317de4cf9d91f4b31a643738f80be7670fbe0f6fbbd7",
+      "one_file_exact": null
+    },
+    {
+      "label": "pi-release-one-file",
+      "wall_seconds": 5.538512283,
+      "single_child_peak_rss_kib": 276108,
+      "cgroup_peak_bytes": 289214464,
+      "memory_max_events": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "swap_peak_bytes": 0,
+      "candidate_baseline_bytes": 403992576,
+      "candidate_peak_sampled_lower_bound_bytes": 404156416,
+      "additional_peak_sampled_lower_bound_bytes": 163840,
+      "sample_interval_s": 1,
+      "ninja_edge_method": "exact appended Ninja log records",
+      "compiled_tus": 1,
+      "link_seconds": 0.461,
+      "all_ninja_edge_seconds": 4.667,
+      "ninja_edge_span_seconds": 4.669,
+      "artifact_sha256": "143d542bb842420f7a5d317de4cf9d91f4b31a643738f80be7670fbe0f6fbbd7",
+      "one_file_exact": true
+    },
+    {
+      "label": "native-asan-clean",
+      "wall_seconds": 154.145103471,
+      "single_child_peak_rss_kib": 921300,
+      "cgroup_peak_bytes": 1073741824,
+      "memory_max_events": 211,
+      "oom": 0,
+      "oom_kill": 0,
+      "swap_peak_bytes": 0,
+      "candidate_baseline_bytes": 271097856,
+      "candidate_peak_sampled_lower_bound_bytes": 399708160,
+      "additional_peak_sampled_lower_bound_bytes": 128610304,
+      "sample_interval_s": 1,
+      "ninja_edge_method": "exact appended Ninja log records",
+      "compiled_tus": 13,
+      "link_seconds": 2.099,
+      "all_ninja_edge_seconds": 152.974,
+      "ninja_edge_span_seconds": 152.978,
+      "artifact_sha256": "c451963df901583d5cdd481b189ca2d2bfb1d70887685a8cb08df1fe90590d9b",
+      "one_file_exact": null
+    },
+    {
+      "label": "native-asan-one-file",
+      "wall_seconds": 7.789552909,
+      "single_child_peak_rss_kib": 361668,
+      "cgroup_peak_bytes": 370892800,
+      "memory_max_events": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "swap_peak_bytes": 0,
+      "candidate_baseline_bytes": 404320256,
+      "candidate_peak_sampled_lower_bound_bytes": 405008384,
+      "additional_peak_sampled_lower_bound_bytes": 688128,
+      "sample_interval_s": 1,
+      "ninja_edge_method": "exact appended Ninja log records",
+      "compiled_tus": 1,
+      "link_seconds": 1.428,
+      "all_ninja_edge_seconds": 7.35,
+      "ninja_edge_span_seconds": 7.35,
+      "artifact_sha256": "c451963df901583d5cdd481b189ca2d2bfb1d70887685a8cb08df1fe90590d9b",
+      "one_file_exact": true
+    }
+  ],
+  "installedFileFootprint": {
+    "installed": {
+      "bytes": 991848,
+      "sha256": "bbb18300ea225e2803bc1f95ce5576b42af862c135c828667fd163a191c5bfd3"
+    },
+    "unstripped": {
+      "bytes": 6706448,
+      "sha256": "143d542bb842420f7a5d317de4cf9d91f4b31a643738f80be7670fbe0f6fbbd7"
+    },
+    "builderDebug": {
+      "bytes": 5717544,
+      "sha256": "e6a5815ec6ab9f469baf5810f3483a68c8cf63e18d166fcc2d933a0459365557"
+    },
+    "elf": {
+      "machine": "AArch64",
+      "class": "ELF64",
+      "interpreter": "/lib/ld-linux-aarch64.so.1",
+      "needed": [
+        "libssl.so.3",
+        "libcrypto.so.3",
+        "libstdc++.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6",
+        "ld-linux-aarch64.so.1"
+      ],
+      "maximum_version_requirements": {
+        "GLIBC": "2.34",
+        "GLIBCXX": "3.4.29",
+        "CXXABI": "1.3.13"
+      },
+      "rpath": null,
+      "runpath": null,
+      "debuglink": "uos_cpp_pilot.debug",
+      "builder_paths_absent": true
+    },
+    "addedBinaryPayloadBytes": 991848,
+    "existingOsLibraryBytes": 10023608,
+    "osLibrariesBundled": false,
+    "binaryPlusRequiredLibrariesBytes": 11015456,
+    "runtimeConfigAndState": "Generated separately; not claimed zero or included in binary-only install",
+    "libraryHashes": [
+      {
+        "target": "/usr/lib/aarch64-linux-gnu/libssl.so.3",
+        "bytes": 737192,
+        "sha256": "09fe45f6e578f6a598b3f67a193d7dc56f679c2259933d90e78a368d594bc8b0"
+      },
+      {
+        "target": "/usr/lib/aarch64-linux-gnu/libcrypto.so.3",
+        "bytes": 4532392,
+        "sha256": "908bfe9966f80a31cec61ec4cbd0661d9fe9673edcca1848e038351e122eff74"
+      },
+      {
+        "target": "/usr/lib/aarch64-linux-gnu/libstdc++.so.6",
+        "bytes": 2174296,
+        "sha256": "532f3a12d7b8fef6cc7a064ea106b6c4ab2365674b73e743e4a385d4ffb6c8ab"
+      },
+      {
+        "target": "/lib/aarch64-linux-gnu/libgcc_s.so.1",
+        "bytes": 133448,
+        "sha256": "046856f95f4636f1fc7c3a12bf4f3cd5634c2fc5145c3fdf7395d4f349fa69c7"
+      },
+      {
+        "target": "/lib/aarch64-linux-gnu/libc.so.6",
+        "bytes": 1651408,
+        "sha256": "31f932525f5373857f0c8b5d94520b841a099e659388763a92484088b2bca235"
+      },
+      {
+        "target": "/lib/ld-linux-aarch64.so.1",
+        "bytes": 202912,
+        "sha256": "7fa5037b2ea1643fd2b8b7f3f3c1d9d546271011b4385aeea3e85fed0d5dcadd"
+      },
+      {
+        "target": "/lib/aarch64-linux-gnu/libm.so.6",
+        "bytes": 591960,
+        "sha256": "a84b0bfeb5abf4ad4eaebcd4a69a783736c2319c4f4fcd5d678b29c57d441951"
+      }
+    ]
+  },
+  "staticAndLocalReceipts": {
+    "node": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/f87ecea8-bcb2-4ada-94e0-7e1dc5d67c92",
+    "core": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/8b0902cc-1c71-4f4c-8425-e937f586b498",
+    "TLSAndPressure": [
+      "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/d7858bb1-7fc4-4043-90fb-a36697ad89b7",
+      "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/8452eda1-6019-4596-a64a-f5fc70e28ce1"
+    ]
+  },
+  "remainingGaps": [
+    "Whole-transport zero-new-swap not met/unproved; source of initial helper swap unproved",
+    "Production credentials/state/codec import, distributed revocation/quota and single-writer failover not implemented/qualified",
+    "Public/independent ingress and complete VPS-host outage unproved; current mock/client require VPS",
+    "Power-loss/host-reboot durability unmeasured; local crash tests and stopped journal readback are separate",
+    "Development-host C++ primary memory/p95 curves unmeasured; unlike-host/feature comparisons cannot imply language-level RAM savings",
+    "Exact final filesystem type not restated in sealed summary; disk-backed Pi/tmp provenance retained"
+  ],
+  "recommendations": {
+    "piRedundancy": "Best currently measured Pi runtime candidate within the declared C++ profile; production redundancy remains conditional and not activated. A verified small Rust fix that meets Pi acceptance retains user preference; none was provided here.",
+    "nextSmallVpsUtility": "Recommend ONE bounded C++ utility pilot with explicit ownership, compatibility, build/disk and sanitizer gates; no default or language-wide rewrite."
+  },
+  "receiptFiles": ["pi-receipt.json", "build-receipt.json", "local-receipt.json", "sources.json"]
+}
