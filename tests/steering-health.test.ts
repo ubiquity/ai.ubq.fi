@@ -4,6 +4,7 @@ import { createServer, type ServerResponse, type IncomingMessage } from "node:ht
 import { chmod, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readToken } from "../scripts/steering-health.ts";
 import { runSteeringProbe, validateSteering } from "../scripts/steering-health/probe.ts";
 import { LIMITS, MODEL, record, startProbeProxy, type RequestSample } from "../scripts/steering-health/proxy.ts";
 
@@ -26,9 +27,16 @@ const sendAnswer = (response: ServerResponse, text: string): void => {
   response.end();
 };
 
-const fixtureGateway = async (mode: "healthy" | "blocked" | "identity" | "auth" | "reply" | "changed") => {
+const fixtureGateway = async (mode: "healthy" | "blocked" | "identity" | "auth" | "reply" | "changed" | "preflight-auth") => {
   let calls = 0;
+  const credentials: (string | undefined)[] = [];
   const serve = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    if (mode === "preflight-auth") {
+      credentials.push(request.headers.authorization);
+      response.writeHead(401);
+      response.end("{}");
+      return;
+    }
     if (request.url === "/health") {
       const sha = "a".repeat(40);
       response.writeHead(200, {
@@ -75,6 +83,7 @@ const fixtureGateway = async (mode: "healthy" | "blocked" | "identity" | "auth" 
   return {
     endpoint: new URL(`http://127.0.0.1:${address.port}`),
     calls: () => calls,
+    credentials: () => credentials,
     stop: async () => {
       server.closeAllConnections();
       await new Promise<void>((resolve) =>
@@ -88,8 +97,8 @@ const fixtureGateway = async (mode: "healthy" | "blocked" | "identity" | "auth" 
 
 test("steering rejects ACK-only, duplicate, reordered, wrong-turn and wrong-answer receipts", () => {
   const identity = { thread_id: "thread", session_id: "thread", turn_id: "turn" };
-  const first: RequestSample = { started: 0, bytes: 1, markerCount: 0, ordered: false, identity, cancelled: true };
-  const second: RequestSample = { started: 1, bytes: 1, markerCount: 1, ordered: true, identity };
+  const first: RequestSample = { started: 0, headers: 1, bytes: 1, markerCount: 0, ordered: false, identity, cancelled: true };
+  const second: RequestSample = { started: 1, headers: 2, bytes: 1, markerCount: 1, ordered: true, identity };
   assert.equal(validateSteering([first, second], "thread", "turn", "marker", "marker"), null);
   for (const bad of [
     { ...second, markerCount: 0 },
@@ -190,6 +199,71 @@ test("a native crash is a failed JSON receipt with its real exit status", async 
     assert.equal(record(result.cleanup).nativeExitCode, 7);
     assert.equal(record(result.cleanup).childSettled, true);
     assert.equal(gateway.calls(), 0);
+  } finally {
+    await gateway.stop();
+  }
+});
+
+test("session identity stays independent and opaque, and header observations are required", () => {
+  const identity = { session_id: " independent-session ", thread_id: "thread", turn_id: "turn" };
+  const first: RequestSample = { started: 0, headers: 1, bytes: 1, markerCount: 0, ordered: false, identity, cancelled: true };
+  const second: RequestSample = { started: 2, headers: 3, bytes: 1, markerCount: 1, ordered: true, identity };
+  assert.equal(validateSteering([first, second], "thread", "turn", "marker", "marker"), null);
+  for (const session of ["", "  ", "different-session", "independent-session"]) {
+    assert.ok(validateSteering([first, { ...second, identity: { ...identity, session_id: session } }], "thread", "turn", "marker", "marker"));
+  }
+  assert.ok(validateSteering([{ ...first, identity: { ...identity, session_id: "" } }, second], "thread", "turn", "marker", "marker"));
+  for (const headers of [undefined, NaN]) {
+    assert.match(validateSteering([{ ...first, headers }, second], "thread", "turn", "marker", "marker") ?? "", /measurement incomplete/);
+    assert.match(validateSteering([first, { ...second, headers }], "thread", "turn", "marker", "marker") ?? "", /measurement incomplete/);
+  }
+});
+
+test("documented token lists match the pinned Bun loader without modifying process credentials", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "uos-token-list-test-"));
+  const before = process.env.UOS_AI_TOKEN;
+  const cases = [
+    "UOS_AI_TOKEN=first\n",
+    "UOS_AI_TOKEN=,, first, second,\n",
+    'UOS_AI_TOKEN="first\nsecond"\n',
+    'export UOS_AI_TOKEN="first\\nsecond"\n',
+    "UOS_AI_TOKEN='first\nsecond'\n",
+  ];
+  for (const [index, text] of cases.entries()) {
+    const path = join(directory, `${index}.env`);
+    await writeFile(path, text);
+    const child = Bun.spawnSync(
+      [process.execPath, "--no-env-file", `--env-file=${path}`, "--no-install", "-e", "console.log(JSON.stringify(process.env.UOS_AI_TOKEN))"],
+      {
+        cwd: directory,
+        env: { PATH: process.env.PATH, HOME: process.env.HOME },
+        stderr: "pipe",
+      }
+    );
+    assert.equal(child.exitCode, 0);
+    const loaded = String(JSON.parse(child.stdout.toString()));
+    assert.equal(
+      readToken(text),
+      loaded
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .find(Boolean)
+    );
+    assert.equal(readToken(text), "first");
+  }
+  assert.equal(process.env.UOS_AI_TOKEN, before);
+  assert.throws(() => readToken('UOS_AI_TOKEN=" ,\n , "\n'), /nonempty/);
+});
+
+test("the first configured token is used once and never cycled after preflight refusal", async () => {
+  const token = readToken("UOS_AI_TOKEN=,dummy-first,dummy-second\n");
+  const gateway = await fixtureGateway("preflight-auth");
+  try {
+    const result = await runSteeringProbe({ endpoint: gateway.endpoint, token, executable: "missing-codex", deadlineMs: 2000 });
+    assert.equal(result.status, "failed");
+    assert.equal(gateway.calls(), 0);
+    assert.deepEqual(gateway.credentials(), ["Bearer dummy-first"]);
+    await assertNoRetainedToken(String(result.artifacts), token);
   } finally {
     await gateway.stop();
   }
