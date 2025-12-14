@@ -51,6 +51,9 @@ const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_USER_AGENT = "codex_cli_rs/0.99.0 (ai.ubq.fi)";
 const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
 const CODEX_INSTRUCTIONS_URL = new URL("./codex_instructions.md", import.meta.url);
+const INDEX_HTML_URL = new URL("./index.html", import.meta.url);
+const STYLE_CSS_URL = new URL("./style.css", import.meta.url);
+const APP_JS_URL = new URL("./app.js", import.meta.url);
 
 const parseTokens = (raw: string | undefined | null): Set<string> => {
   if (!raw) return new Set();
@@ -107,6 +110,33 @@ const decodeBase64ToString = (raw: string): string => {
 const codexInstructionsPromise: Promise<string> = (async () => {
   if (config.codexInstructionsB64) return decodeBase64ToString(config.codexInstructionsB64);
   return await Deno.readTextFile(CODEX_INSTRUCTIONS_URL);
+})();
+
+const indexHtmlPromise: Promise<string | null> = (async () => {
+  try {
+    return await Deno.readTextFile(INDEX_HTML_URL);
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to load index.html:", error);
+    return null;
+  }
+})();
+
+const styleCssPromise: Promise<string | null> = (async () => {
+  try {
+    return await Deno.readTextFile(STYLE_CSS_URL);
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to load style.css:", error);
+    return null;
+  }
+})();
+
+const appJsPromise: Promise<string | null> = (async () => {
+  try {
+    return await Deno.readTextFile(APP_JS_URL);
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to load app.js:", error);
+    return null;
+  }
 })();
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
@@ -874,20 +904,91 @@ async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
 
-  if (req.method === "GET" && path === "/") {
+  if (req.method === "GET" && (path === "/" || path === "/index.html")) {
+    const accept = req.headers.get("Accept") ?? "";
+    const wantsHtml = path === "/index.html" || accept.includes("text/html") ||
+      accept.includes("application/xhtml+xml");
+    if (wantsHtml) {
+      const html = await indexHtmlPromise;
+      if (html) {
+        return withCors(
+          new Response(html, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Vary": "Accept",
+              "Cache-Control": "public, max-age=300",
+              "Content-Security-Policy":
+                "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'",
+              "Referrer-Policy": "no-referrer",
+              "X-Content-Type-Options": "nosniff",
+            },
+          }),
+        );
+      }
+    }
+
     return withCors(
-      json(200, {
-        ok: true,
-        service: "ai.ubq.fi",
-        upstream: "chatgpt_codex",
-        auth: config.authMisconfigured
-          ? "misconfigured"
-          : config.authTokens.size > 0
-          ? "required"
-          : "disabled (local only)",
-        endpoints: {
-          openai_compat: "/v1/*",
-          health: "/health",
+      json(
+        200,
+        {
+          ok: true,
+          service: "ai.ubq.fi",
+          upstream: "chatgpt_codex",
+          auth: config.authMisconfigured
+            ? "misconfigured"
+            : config.authTokens.size > 0
+            ? "required"
+            : "disabled (local only)",
+          endpoints: {
+            openai_compat: "/v1/*",
+            health: "/health",
+          },
+        },
+        { "Vary": "Accept" },
+      ),
+    );
+  }
+
+  if (req.method === "GET" && path === "/style.css") {
+    const css = await styleCssPromise;
+    if (!css) {
+      return withCors(
+        new Response("Not found", {
+          status: 404,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        }),
+      );
+    }
+    return withCors(
+      new Response(css, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/css; charset=utf-8",
+          "Cache-Control": "public, max-age=300",
+          "X-Content-Type-Options": "nosniff",
+        },
+      }),
+    );
+  }
+
+  if (req.method === "GET" && path === "/app.js") {
+    const js = await appJsPromise;
+    if (!js) {
+      return withCors(
+        new Response("Not found", {
+          status: 404,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        }),
+      );
+    }
+    return withCors(
+      new Response(js, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Cache-Control": "public, max-age=300",
+          "X-Content-Type-Options": "nosniff",
         },
       }),
     );
