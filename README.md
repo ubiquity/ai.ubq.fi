@@ -10,6 +10,8 @@ OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
   - For upstream requests, it uses **Codex CLI ChatGPT auth** from `CODEX_AUTH_JSON_B64` (base64 of
     `~/.codex/auth.json`).
   - Usage is billed to that Codex/ChatGPT account (not to client-provided OpenAI API keys).
+  - The OAuth `client_id` used for refresh-token rotation is **public** (not a secret); the secrets are the tokens in
+    `CODEX_AUTH_JSON_B64` and your `UBQ_AI_AUTH_TOKENS`.
 
 ## Quickstart (curl)
 
@@ -49,6 +51,16 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
     "messages": [{"role":"user","content":"Tell me a short joke."}],
     "stream": false
   }'
+```
+
+Just the assistant message text:
+
+```bash
+curl -sS https://ai.ubq.fi/v1/chat/completions \
+  -H "Authorization: Bearer $UBQ_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"model":"gpt-5.2-chat-latest","messages":[{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
+  | jq -r '.choices[0].message.content'
 ```
 
 Notes:
