@@ -1,6 +1,7 @@
 {
   "tasks": {
     "dev": "deno serve --allow-env --allow-net --allow-read --unstable-kv serve.ts",
+    "ubq-ai": "deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts",
     "upload:auth": "deno run --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts",
     "keys:create": "deno run --allow-env --allow-net scripts/api-keys.ts create",
     "keys:list": "deno run --allow-env --allow-net scripts/api-keys.ts list",

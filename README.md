@@ -86,6 +86,42 @@ curl -N https://ai.ubq.fi/v1/chat/completions \
   }'
 ```
 
+## CLI (ubq-ai)
+
+Run from this repo:
+
+```bash
+cd lib/ai.ubq.fi
+export UBQ_AI_TOKEN="..."
+deno task ubq-ai -- chat "Tell me a short joke."
+```
+
+Install on your machine:
+
+```bash
+cd lib/ai.ubq.fi
+deno install -g --allow-env --allow-net --allow-read -n ubq-ai scripts/ubq-ai.ts
+```
+
+Examples:
+
+```bash
+export UBQ_AI_TOKEN="..."
+ubq-ai models | jq
+ubq-ai chat "Tell me a short joke."
+ubq-ai chat --stream "Say hello in 5 different ways."
+ubq-ai responses --model gpt-5.2 "Summarize this in 1 sentence: ..."
+```
+
+Admin examples (uses `UBQ_AI_ADMIN_TOKEN` or falls back to `DENO_DEPLOY_TOKEN`):
+
+```bash
+export DENO_DEPLOY_TOKEN="ddw_..."
+ubq-ai admin upload-auth --auth-json ~/.codex/auth.json | jq
+ubq-ai admin keys create --name "example key" --token-only
+ubq-ai admin keys list | jq
+```
+
 ## Runtime env
 
 - `CODEX_AUTH_JSON_B64` (required): base64 of `~/.codex/auth.json` from a machine that ran `codex login`.
