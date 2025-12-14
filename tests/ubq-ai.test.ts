@@ -92,6 +92,56 @@ const makeRuntime = (
   };
 };
 
+Deno.test("ubq-ai: health prints JSON", async () => {
+  const { runtime, outText, errText, requests } = makeRuntime({
+    fetch: (_req, recorded) => {
+      assert.ok(recorded.url.endsWith("/health"));
+      assert.equal(recorded.method, "GET");
+      return jsonResponse(200, { ok: true, problems: [] });
+    },
+  });
+
+  const code = await runUbqAi(["health"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.ok(outText().includes('"ok": true'));
+  assert.equal(requests.length, 1);
+});
+
+Deno.test("ubq-ai: info prints JSON", async () => {
+  const { runtime, outText, errText, requests } = makeRuntime({
+    fetch: (_req, recorded) => {
+      assert.equal(new URL(recorded.url).pathname, "/");
+      assert.equal(recorded.method, "GET");
+      return jsonResponse(200, { ok: true, service: "ai.ubq.fi" });
+    },
+  });
+
+  const code = await runUbqAi(["info"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.ok(outText().includes('"service": "ai.ubq.fi"'));
+  assert.equal(requests.length, 1);
+});
+
+Deno.test("ubq-ai: models uses client token and prints JSON", async () => {
+  const { runtime, outText, errText, requests } = makeRuntime({
+    env: { UBQ_AI_TOKEN: "ubq_ai_test_token_1234567890" },
+    fetch: (_req, recorded) => {
+      assert.ok(recorded.url.endsWith("/v1/models"));
+      assert.equal(recorded.method, "GET");
+      assert.equal(recorded.headers.authorization, "Bearer ubq_ai_test_token_1234567890");
+      return jsonResponse(200, { object: "list", data: [{ id: "gpt-5.2" }] });
+    },
+  });
+
+  const code = await runUbqAi(["models"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.ok(outText().includes('"id": "gpt-5.2"'));
+  assert.equal(requests.length, 1);
+});
+
 Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", async () => {
   const { runtime, requests, outText, errText } = makeRuntime({
     env: { UBQ_AI_TOKEN: "ubq_ai_test_token_1234567890" },
@@ -205,6 +255,26 @@ Deno.test("ubq-ai: admin keys create --token-only prints token", async () => {
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "ubq_ai_token_value\n");
+});
+
+Deno.test("ubq-ai: admin keys revoke posts id", async () => {
+  const { runtime, outText, errText, requests } = makeRuntime({
+    env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
+    fetch: (_req, recorded) => {
+      assert.ok(recorded.url.endsWith("/admin/api-keys/revoke"));
+      assert.equal(recorded.method, "POST");
+      assert.equal(recorded.headers.authorization, "Bearer deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz");
+      const body = JSON.parse(recorded.bodyText ?? "null") as { id?: unknown };
+      assert.equal(body.id, "id_123");
+      return jsonResponse(200, { ok: true, id: "id_123", revoked_at_ms: 123 });
+    },
+  });
+
+  const code = await runUbqAi(["admin", "keys", "revoke", "--id", "id_123"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.ok(outText().includes('"revoked_at_ms": 123'));
+  assert.equal(requests.length, 1);
 });
 
 Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
