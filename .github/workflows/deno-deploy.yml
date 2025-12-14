@@ -14,15 +14,16 @@ jobs:
     with:
       project: ai-ubq-fi
       entrypoint: serve.ts
+      include: |
+        codex_instructions.md
       env_var_keys: |
-        OPENAI_API_KEY
+        CODEX_AUTH_JSON_B64
         UBQ_AI_AUTH_TOKENS
       extra_paths: |
         /health
       debug_fetch_fail: true
       required_env: |
         DENO_DEPLOY_TOKEN
-        OPENAI_API_KEY
+        CODEX_AUTH_JSON_B64
         UBQ_AI_AUTH_TOKENS
     secrets: inherit
-
