@@ -1,10 +1,10 @@
 /// <reference lib="deno.ns" />
 
 type Config = Readonly<{
+  isDeploy: boolean;
   allowOrigin: string;
   authTokens: ReadonlySet<string>;
   adminTokens: ReadonlySet<string>;
-  authMisconfigured: boolean;
   codexBaseUrl: string;
   codexAuthJsonB64: string;
   codexInstructionsB64: string | null;
@@ -15,6 +15,20 @@ type CodexAuthState = Readonly<{
   refresh_token: string;
   account_id: string;
   updated_at_ms: number;
+}>;
+
+type ApiKeyRecord = Readonly<{
+  id: string;
+  name: string;
+  prefix: string;
+  hash: string;
+  created_at_ms: number;
+  revoked_at_ms: number | null;
+}>;
+
+type ApiKeyHashRecord = Readonly<{
+  id: string;
+  revoked_at_ms: number | null;
 }>;
 
 type ChatCompletionRequest = Readonly<{
@@ -50,6 +64,8 @@ const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_USER_AGENT = "codex_cli_rs/0.99.0 (ai.ubq.fi)";
 const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
+const API_KEY_ID_PREFIX = ["ubq_ai", "api_keys", "id"] as const;
+const API_KEY_HASH_PREFIX = ["ubq_ai", "api_keys", "hash"] as const;
 const CODEX_INSTRUCTIONS_URL = new URL("./codex_instructions.md", import.meta.url);
 const INDEX_HTML_URL = new URL("./index.html", import.meta.url);
 const STYLE_CSS_URL = new URL("./style.css", import.meta.url);
@@ -78,13 +94,13 @@ const loadConfig = (): Config => {
   const codexInstructionsB64 = (Deno.env.get("CODEX_INSTRUCTIONS_B64") ?? "").trim() || null;
 
   return {
+    isDeploy,
     codexBaseUrl,
     codexAuthJsonB64,
     codexInstructionsB64,
     allowOrigin,
     authTokens,
     adminTokens,
-    authMisconfigured: isDeploy && authTokens.size === 0,
   };
 };
 
@@ -105,6 +121,27 @@ const decodeBase64ToString = (raw: string): string => {
   const cleaned = raw.trim().replace(/\s+/g, "");
   const bytes = Uint8Array.from(atob(cleaned), (ch) => ch.charCodeAt(0));
   return new TextDecoder().decode(bytes);
+};
+
+const encodeBase64Url = (bytes: Uint8Array): string => {
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+};
+
+const sha256Base64Url = async (value: string): Promise<string> => {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return encodeBase64Url(new Uint8Array(digest));
+};
+
+const apiKeyIdKey = (id: string) => [...API_KEY_ID_PREFIX, id] as const;
+const apiKeyHashKey = (hash: string) => [...API_KEY_HASH_PREFIX, hash] as const;
+
+const generateApiKeyToken = (): string => {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `ubq_ai_${encodeBase64Url(bytes)}`;
 };
 
 const codexInstructionsPromise: Promise<string> = (async () => {
@@ -187,27 +224,96 @@ const getBearerToken = (req: Request): string | null => {
   return match?.[1]?.trim() || null;
 };
 
-const requireClientAuth = (req: Request): Response | null => {
-  if (config.authMisconfigured) {
-    return openaiError(500, "Server misconfigured: UBQ_AI_AUTH_TOKENS is required in production", "server_error");
-  }
-  if (config.authTokens.size === 0) return null;
-  const token = getBearerToken(req);
-  if (!token || !config.authTokens.has(token)) {
-    return openaiError(401, "Unauthorized", "invalid_api_key");
-  }
-  return null;
+const isValidClientKey = async (kv: Deno.Kv, token: string): Promise<boolean> => {
+  const hash = await sha256Base64Url(token);
+  const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(hash));
+  if (!entry.value) return false;
+  return entry.value.revoked_at_ms == null;
 };
 
-const requireAdminAuth = (req: Request): Response | null => {
-  if (config.adminTokens.size === 0) {
-    return openaiError(404, "Not found", "not_found");
-  }
+const requireClientAuth = async (req: Request): Promise<Response | null> => {
+  const kv = await kvPromise;
+  const localAuthDisabled = !config.isDeploy && config.authTokens.size === 0 && !kv;
+  if (localAuthDisabled) return null;
+
   const token = getBearerToken(req);
-  if (!token || !config.adminTokens.has(token)) {
+  if (!token) return openaiError(401, "Unauthorized", "invalid_api_key");
+
+  if (config.authTokens.has(token)) return null;
+
+  if (kv) {
+    if (await isValidClientKey(kv, token)) return null;
     return openaiError(401, "Unauthorized", "invalid_api_key");
   }
-  return null;
+
+  if (config.isDeploy && config.authTokens.size === 0) {
+    return openaiError(500, "Server misconfigured: set UBQ_AI_AUTH_TOKENS or enable Deno KV", "server_error");
+  }
+
+  return openaiError(401, "Unauthorized", "invalid_api_key");
+};
+
+const DENO_API_BASE_URL = "https://api.deno.com/v1";
+const DENO_DEPLOY_TOKEN_PREFIX = "ddw_";
+const DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS = 10 * 60_000;
+const deployTokenAdminCache = new Map<string, number>();
+
+const looksLikeDenoDeployToken = (token: string): boolean =>
+  token.startsWith(DENO_DEPLOY_TOKEN_PREFIX) && token.length >= 20 && token.length <= 200;
+
+const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
+  if (!config.isDeploy) return false;
+  const deploymentId = (Deno.env.get("DENO_DEPLOYMENT_ID") ?? "").trim();
+  if (!deploymentId) return false;
+
+  const url = `${DENO_API_BASE_URL}/deployments/${deploymentId}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Accept": "application/json",
+    },
+    redirect: "manual",
+  });
+
+  try {
+    await res.body?.cancel();
+  } catch {
+    // ignore
+  }
+
+  return res.ok;
+};
+
+const requireAdminAuth = async (req: Request): Promise<Response | null> => {
+  const token = getBearerToken(req);
+  if (!token) return openaiError(401, "Unauthorized", "invalid_api_key");
+
+  if (config.adminTokens.size > 0) {
+    if (config.adminTokens.has(token)) return null;
+    return openaiError(401, "Unauthorized", "invalid_api_key");
+  }
+
+  if (!looksLikeDenoDeployToken(token)) return openaiError(404, "Not found", "not_found");
+
+  let keyHash: string | null = null;
+  try {
+    keyHash = await sha256Base64Url(token);
+    const cachedUntil = deployTokenAdminCache.get(keyHash) ?? 0;
+    if (cachedUntil > Date.now()) return null;
+  } catch {
+    // ignore and try network verification
+  }
+
+  try {
+    const ok = await verifyDenoDeployTokenForThisDeployment(token);
+    if (!ok) return openaiError(401, "Unauthorized", "invalid_api_key");
+    if (keyHash) deployTokenAdminCache.set(keyHash, Date.now() + DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS);
+    return null;
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to verify Deno Deploy token for admin auth:", error);
+    return openaiError(502, "Failed to verify admin token", "bad_gateway");
+  }
 };
 
 const parseCodexAuthFromAuthJson = (value: unknown): Omit<CodexAuthState, "updated_at_ms"> | null => {
@@ -896,6 +1002,154 @@ const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   );
 };
 
+const normalizeApiKeyName = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const name = value.trim();
+  if (!name) return null;
+  if (name.length > 80) return null;
+  if (/[\r\n]/.test(name)) return null;
+  return name;
+};
+
+const normalizeOptionalApiKeyToken = (value: unknown): string | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") return null;
+  const token = value.trim();
+  if (!token) return null;
+  if (/\s/.test(token)) return null;
+  if (token.length < 24) return null;
+  if (token.length > 300) return null;
+  return token;
+};
+
+const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
+  }
+
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+
+  const name = normalizeApiKeyName(raw.name);
+  if (!name) return openaiError(400, "name must be a non-empty string (<=80 chars)", "invalid_request_error");
+
+  const providedToken = normalizeOptionalApiKeyToken(raw.token);
+  const token = providedToken ?? generateApiKeyToken();
+
+  const hash = await sha256Base64Url(token);
+  const hashKey = apiKeyHashKey(hash);
+  const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
+  if (hashEntry.value) {
+    return openaiError(409, "API key already exists", "invalid_request_error");
+  }
+
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const record: ApiKeyRecord = {
+    id,
+    name,
+    prefix: token.slice(0, 12),
+    hash,
+    created_at_ms: now,
+    revoked_at_ms: null,
+  };
+  const hashRecord: ApiKeyHashRecord = { id, revoked_at_ms: null };
+
+  const commit = await kv.atomic()
+    .check(hashEntry)
+    .set(apiKeyIdKey(id), record)
+    .set(hashKey, hashRecord)
+    .commit();
+  if (!commit.ok) {
+    return openaiError(500, "Failed to persist API key", "server_error");
+  }
+
+  return json(
+    200,
+    {
+      ok: true,
+      id,
+      name,
+      token,
+      prefix: record.prefix,
+      created_at_ms: record.created_at_ms,
+    },
+    { "x-ubq-upstream": "chatgpt_codex" },
+  );
+};
+
+const handleAdminApiKeysList = async (): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
+  }
+
+  const records: ApiKeyRecord[] = [];
+  for await (const entry of kv.list<ApiKeyRecord>({ prefix: API_KEY_ID_PREFIX })) {
+    if (entry.value) records.push(entry.value);
+  }
+  records.sort((a, b) => b.created_at_ms - a.created_at_ms);
+
+  return json(
+    200,
+    {
+      object: "list",
+      data: records.map((r) => ({
+        id: r.id,
+        name: r.name,
+        prefix: r.prefix,
+        created_at_ms: r.created_at_ms,
+        revoked_at_ms: r.revoked_at_ms,
+      })),
+    },
+    { "x-ubq-upstream": "chatgpt_codex" },
+  );
+};
+
+const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
+  }
+
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const id = getString(raw.id);
+  if (!id) return openaiError(400, "id is required", "invalid_request_error");
+
+  const idKey = apiKeyIdKey(id);
+  const entry = await kv.get<ApiKeyRecord>(idKey);
+  if (!entry.value) return openaiError(404, "Not found", "not_found");
+
+  const now = Date.now();
+  const updated: ApiKeyRecord = entry.value.revoked_at_ms ? entry.value : { ...entry.value, revoked_at_ms: now };
+  const hashKey = apiKeyHashKey(entry.value.hash);
+  const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
+  const updatedHash: ApiKeyHashRecord = { id, revoked_at_ms: updated.revoked_at_ms };
+
+  const atomic = kv.atomic()
+    .check(entry)
+    .set(idKey, updated)
+    .set(hashKey, updatedHash);
+  if (hashEntry.versionstamp) atomic.check(hashEntry);
+
+  const commit = await atomic.commit();
+  if (!commit.ok) {
+    return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
+  }
+
+  return json(
+    200,
+    {
+      ok: true,
+      id: updated.id,
+      revoked_at_ms: updated.revoked_at_ms,
+    },
+    { "x-ubq-upstream": "chatgpt_codex" },
+  );
+};
+
 async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return withCors(new Response(null, { status: 204, headers: corsHeaders() }));
@@ -928,6 +1182,13 @@ async function handler(req: Request): Promise<Response> {
       }
     }
 
+    const kv = await kvPromise;
+    const auth = config.isDeploy && config.authTokens.size === 0 && !kv
+      ? "misconfigured"
+      : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)
+      ? "required"
+      : "disabled (local only)";
+
     return withCors(
       json(
         200,
@@ -935,11 +1196,7 @@ async function handler(req: Request): Promise<Response> {
           ok: true,
           service: "ai.ubq.fi",
           upstream: "chatgpt_codex",
-          auth: config.authMisconfigured
-            ? "misconfigured"
-            : config.authTokens.size > 0
-            ? "required"
-            : "disabled (local only)",
+          auth,
           endpoints: {
             openai_compat: "/v1/*",
             health: "/health",
@@ -997,7 +1254,10 @@ async function handler(req: Request): Promise<Response> {
   if (req.method === "GET" && path === "/health") {
     const problems: string[] = [];
     if (!config.codexAuthJsonB64) problems.push("CODEX_AUTH_JSON_B64 missing");
-    if (config.authMisconfigured) problems.push("UBQ_AI_AUTH_TOKENS missing");
+    const kv = await kvPromise;
+    if (config.isDeploy && config.authTokens.size === 0 && !kv) {
+      problems.push("No UBQ_AI_AUTH_TOKENS and Deno KV unavailable");
+    }
     try {
       await codexInstructionsPromise;
     } catch {
@@ -1012,14 +1272,35 @@ async function handler(req: Request): Promise<Response> {
   }
 
   if (req.method === "POST" && path === "/admin/codex/auth") {
-    const authError = requireAdminAuth(req);
+    const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminCodexAuth(req));
+  }
+
+  if (req.method === "POST" && path === "/admin/api-keys") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminApiKeysCreate(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/api-keys") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminApiKeysList());
+  }
+
+  if (req.method === "POST" && path === "/admin/api-keys/revoke") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminApiKeysRevoke(req));
   }
 
   if (!path.startsWith("/v1/")) {
     return withCors(openaiError(404, "Not found", "not_found"));
   }
+
+  const authError = await requireClientAuth(req);
+  if (authError) return withCors(authError);
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(
@@ -1039,9 +1320,6 @@ async function handler(req: Request): Promise<Response> {
       ),
     );
   }
-
-  const authError = requireClientAuth(req);
-  if (authError) return withCors(authError);
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
     return withCors(await handleChatCompletions(req));

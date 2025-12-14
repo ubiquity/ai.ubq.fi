@@ -50,10 +50,11 @@ if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
 const parsed = parseArgs(Deno.args);
 const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
 const authJsonPath = expandTilde((parsed["auth-json"] as string | undefined) ?? "~/.codex/auth.json");
-const adminToken = (parsed["admin-token"] as string | undefined) ?? Deno.env.get("UBQ_AI_ADMIN_TOKEN") ?? "";
+const adminToken = (parsed["admin-token"] as string | undefined) ?? Deno.env.get("UBQ_AI_ADMIN_TOKEN") ??
+  Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
 
 if (!adminToken) {
-  console.error("Missing admin token. Set UBQ_AI_ADMIN_TOKEN or pass --admin-token.");
+  console.error("Missing admin token. Set UBQ_AI_ADMIN_TOKEN (or DENO_DEPLOY_TOKEN) or pass --admin-token.");
   Deno.exit(2);
 }
 
