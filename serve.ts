@@ -1021,9 +1021,6 @@ async function handler(req: Request): Promise<Response> {
     return withCors(openaiError(404, "Not found", "not_found"));
   }
 
-  const authError = requireClientAuth(req);
-  if (authError) return withCors(authError);
-
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(
       json(
@@ -1042,6 +1039,9 @@ async function handler(req: Request): Promise<Response> {
       ),
     );
   }
+
+  const authError = requireClientAuth(req);
+  if (authError) return withCors(authError);
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
     return withCors(await handleChatCompletions(req));
