@@ -33,6 +33,14 @@ const pushFlag = (flags: Record<string, FlagValue>, key: string, value: string |
   }
 };
 
+const BOOLEAN_FLAGS = new Set([
+  "help",
+  "json",
+  "raw",
+  "stream",
+  "token-only",
+]);
+
 const parseArgs = (args: string[]): ParsedArgs => {
   const flags: Record<string, FlagValue> = {};
   const positional: string[] = [];
@@ -53,11 +61,22 @@ const parseArgs = (args: string[]): ParsedArgs => {
     if (eq !== -1) {
       const key = arg.slice(2, eq);
       const value = arg.slice(eq + 1);
-      if (key) pushFlag(flags, key, value);
+      if (key) {
+        if (BOOLEAN_FLAGS.has(key)) {
+          const normalized = value.trim().toLowerCase();
+          pushFlag(flags, key, !(normalized === "0" || normalized === "false" || normalized === "no"));
+        } else {
+          pushFlag(flags, key, value);
+        }
+      }
       continue;
     }
 
     const key = arg.slice(2);
+    if (BOOLEAN_FLAGS.has(key)) {
+      pushFlag(flags, key, true);
+      continue;
+    }
     const next = args[i + 1];
     if (!next || next.startsWith("-")) {
       if (key) pushFlag(flags, key, true);
