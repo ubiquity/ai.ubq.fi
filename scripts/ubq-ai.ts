@@ -99,7 +99,7 @@ Usage:
 Global options:
   --url <url>                 Base URL (default: https://ai.ubq.fi)
   --token <token>             Client token (or set UBQ_AI_TOKEN)
-  --admin-token <token>       Admin token (or set UBQ_AI_ADMIN_TOKEN; fallback DENO_DEPLOY_TOKEN)
+  --admin-token <token>       Admin token (or set UBQ_AI_ADMIN_TOKEN; fallback DENO_DEPLOY_TOKEN/UBQ_AI_TOKEN)
   --json                      Print full JSON (default prints text when possible)
   --stream                    Stream output (when supported)
   --raw                       For streams: print raw SSE bytes (no parsing)
