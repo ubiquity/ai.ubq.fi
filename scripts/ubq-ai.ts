@@ -1,6 +1,6 @@
-type FlagValue = string | boolean | string[];
+export type FlagValue = string | boolean | string[];
 
-type ParsedArgs = Readonly<{
+export type ParsedArgs = Readonly<{
   _: string[];
   flags: Record<string, FlagValue>;
 }>;
@@ -9,12 +9,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 
 const getString = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
-const expandTilde = (path: string): string => {
-  if (path === "~") return Deno.env.get("HOME") ?? path;
-  if (path.startsWith("~/")) {
-    const home = Deno.env.get("HOME");
-    if (home) return `${home}${path.slice(1)}`;
-  }
+const TEXT_ENCODER = new TextEncoder();
+
+const expandTilde = (path: string, homeDir: string | undefined): string => {
+  if (path === "~") return homeDir ?? path;
+  if (path.startsWith("~/") && homeDir) return `${homeDir}${path.slice(1)}`;
   return path;
 };
 
@@ -41,7 +40,7 @@ const BOOLEAN_FLAGS = new Set([
   "token-only",
 ]);
 
-const parseArgs = (args: string[]): ParsedArgs => {
+export const parseArgs = (args: string[]): ParsedArgs => {
   const flags: Record<string, FlagValue> = {};
   const positional: string[] = [];
 
@@ -89,8 +88,8 @@ const parseArgs = (args: string[]): ParsedArgs => {
   return { _: positional, flags };
 };
 
-const usage = () => {
-  console.log(`ubq-ai.ts
+const usageText = (): string =>
+  `ubq-ai.ts
 
 Unified CLI for https://ai.ubq.fi (client + admin).
 
@@ -122,7 +121,24 @@ Examples:
   UBQ_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create --name \"example\" --token-only
-`);
+`;
+
+export type UbqAiRuntime = Readonly<{
+  fetch: (req: Request) => Promise<Response>;
+  envGet: (key: string) => string | undefined;
+  readTextFile: (path: string) => Promise<string>;
+  stdinIsTerminal: boolean;
+  readStdin: () => Promise<string>;
+  out: (chunk: Uint8Array) => Promise<void>;
+  err: (chunk: Uint8Array) => Promise<void>;
+}>;
+
+const writeOutText = async (runtime: UbqAiRuntime, text: string): Promise<void> => {
+  await runtime.out(TEXT_ENCODER.encode(text));
+};
+
+const writeErrText = async (runtime: UbqAiRuntime, text: string): Promise<void> => {
+  await runtime.err(TEXT_ENCODER.encode(text));
 };
 
 const readStdin = async (): Promise<string> => {
@@ -152,6 +168,7 @@ const readStdin = async (): Promise<string> => {
 };
 
 const doFetch = async (
+  runtime: UbqAiRuntime,
   req: Request,
 ): Promise<
   { ok: true; status: number; contentType: string; json: unknown; headers: Headers } | {
@@ -162,7 +179,7 @@ const doFetch = async (
     headers: Headers;
   }
 > => {
-  const res = await fetch(req);
+  const res = await runtime.fetch(req);
   const contentType = res.headers.get("Content-Type") ?? "";
   const isJson = contentType.includes("application/json");
   if (res.ok) {
@@ -173,13 +190,13 @@ const doFetch = async (
   return { ok: false, status: res.status, contentType, body: body || res.statusText, headers: res.headers };
 };
 
-const streamToStdout = async (body: ReadableStream<Uint8Array>): Promise<void> => {
+const streamToOut = async (runtime: UbqAiRuntime, body: ReadableStream<Uint8Array>): Promise<void> => {
   const reader = body.getReader();
   try {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      if (value) await Deno.stdout.write(value);
+      if (value) await runtime.out(value);
     }
   } finally {
     try {
@@ -285,32 +302,40 @@ const extractResponseText = (json: unknown): string | null => {
 
 const normalizeBaseUrl = (raw: string): string => raw.trim().replace(/\/$/, "") || "https://ai.ubq.fi";
 
-const requireClientToken = (token: string): string => {
-  if (!token.trim()) {
-    console.error("Missing client token. Set UBQ_AI_TOKEN or pass --token.");
-    Deno.exit(2);
-  }
-  return token.trim();
+const getFlagString = (flags: Record<string, FlagValue>, key: string): string | null => {
+  const value = flags[key];
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value[value.length - 1] ?? null;
+  return null;
 };
 
-const requireAdminToken = (token: string): string => {
-  if (!token.trim()) {
-    console.error("Missing admin token. Set UBQ_AI_ADMIN_TOKEN (or DENO_DEPLOY_TOKEN) or pass --admin-token.");
-    Deno.exit(2);
-  }
-  return token.trim();
+const resolveClientToken = (flags: Record<string, FlagValue>, runtime: UbqAiRuntime): string | null => {
+  const fromFlag = getFlagString(flags, "token");
+  const fromEnv = runtime.envGet("UBQ_AI_TOKEN") ?? "";
+  const token = (fromFlag ?? fromEnv).trim();
+  return token || null;
 };
 
-const main = async () => {
-  const parsed = parseArgs(Deno.args);
+const resolveAdminToken = (flags: Record<string, FlagValue>, runtime: UbqAiRuntime): string | null => {
+  const fromFlag = getFlagString(flags, "admin-token");
+  const fromEnv = runtime.envGet("UBQ_AI_ADMIN_TOKEN") ?? runtime.envGet("DENO_DEPLOY_TOKEN") ??
+    runtime.envGet("UBQ_AI_TOKEN") ??
+    "";
+  const token = (fromFlag ?? fromEnv).trim();
+  return token || null;
+};
+
+export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<number> => {
+  const parsed = parseArgs(argv);
   const flags = parsed.flags;
 
   if (flags.help === true || flags.h === true || parsed._.length === 0) {
-    usage();
-    Deno.exit(parsed._.length === 0 ? 2 : 0);
+    await writeOutText(runtime, usageText());
+    return parsed._.length === 0 ? 2 : 0;
   }
 
-  const baseUrl = normalizeBaseUrl((flags.url as string | undefined) ?? "https://ai.ubq.fi");
+  const baseUrl = normalizeBaseUrl(getFlagString(flags, "url") ?? "https://ai.ubq.fi");
+  const homeDir = runtime.envGet("HOME");
   const wantsJson = flags.json === true;
   const wantsStream = flags.stream === true;
   const wantsRaw = flags.raw === true;
@@ -322,30 +347,34 @@ const main = async () => {
 
   if (cmd === "health") {
     const req = new Request(endpoint("/health"), { method: "GET", headers: { "Accept": "application/json" } });
-    const result = await doFetch(req);
+    const result = await doFetch(runtime, req);
     if (!result.ok) {
-      console.error(`Request failed (${result.status}).`);
-      console.error(result.body);
-      Deno.exit(1);
+      await writeErrText(runtime, `Request failed (${result.status}).\n`);
+      await writeErrText(runtime, `${result.body}\n`);
+      return 1;
     }
-    console.log(JSON.stringify(result.json, null, 2));
-    return;
+    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+    return 0;
   }
 
   if (cmd === "info") {
     const req = new Request(endpoint("/"), { method: "GET", headers: { "Accept": "application/json" } });
-    const result = await doFetch(req);
+    const result = await doFetch(runtime, req);
     if (!result.ok) {
-      console.error(`Request failed (${result.status}).`);
-      console.error(result.body);
-      Deno.exit(1);
+      await writeErrText(runtime, `Request failed (${result.status}).\n`);
+      await writeErrText(runtime, `${result.body}\n`);
+      return 1;
     }
-    console.log(JSON.stringify(result.json, null, 2));
-    return;
+    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+    return 0;
   }
 
   if (cmd === "models") {
-    const token = requireClientToken((flags.token as string | undefined) ?? Deno.env.get("UBQ_AI_TOKEN") ?? "");
+    const token = resolveClientToken(flags, runtime);
+    if (!token) {
+      await writeErrText(runtime, "Missing client token. Set UBQ_AI_TOKEN or pass --token.\n");
+      return 2;
+    }
     const req = new Request(endpoint("/v1/models"), {
       method: "GET",
       headers: {
@@ -353,52 +382,68 @@ const main = async () => {
         "Accept": "application/json",
       },
     });
-    const result = await doFetch(req);
+    const result = await doFetch(runtime, req);
     if (!result.ok) {
-      console.error(`Request failed (${result.status}).`);
-      console.error(result.body);
-      Deno.exit(1);
+      await writeErrText(runtime, `Request failed (${result.status}).\n`);
+      await writeErrText(runtime, `${result.body}\n`);
+      return 1;
     }
-    console.log(JSON.stringify(result.json, null, 2));
-    return;
+    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+    return 0;
   }
 
   if (cmd === "chat") {
-    const token = requireClientToken((flags.token as string | undefined) ?? Deno.env.get("UBQ_AI_TOKEN") ?? "");
-    const model = ((flags.model as string | undefined) ?? "gpt-5.2-chat-latest").trim() || "gpt-5.2-chat-latest";
+    const token = resolveClientToken(flags, runtime);
+    if (!token) {
+      await writeErrText(runtime, "Missing client token. Set UBQ_AI_TOKEN or pass --token.\n");
+      return 2;
+    }
+    const model = (getFlagString(flags, "model") ?? "gpt-5.2-chat-latest").trim() || "gpt-5.2-chat-latest";
 
-    const messagesFromJson = (raw: string): unknown => {
+    const messagesFromJson = (raw: string): unknown | null => {
       try {
         return JSON.parse(raw);
       } catch {
-        console.error("Invalid JSON in --messages-json");
-        Deno.exit(2);
+        return null;
       }
     };
 
     let messages: unknown;
-    const messagesJson = flags["messages-json"];
-    const messagesFile = flags["messages-file"];
+    const messagesJson = getFlagString(flags, "messages-json");
+    const messagesFile = getFlagString(flags, "messages-file");
     if (typeof messagesJson === "string") {
-      messages = messagesFromJson(messagesJson);
+      const parsed = messagesFromJson(messagesJson);
+      if (parsed === null) {
+        await writeErrText(runtime, "Invalid JSON in --messages-json\n");
+        return 2;
+      }
+      messages = parsed;
     } else if (typeof messagesFile === "string") {
-      const path = expandTilde(messagesFile);
-      const text = await Deno.readTextFile(path).catch((err) => {
-        console.error(`Failed to read messages file: ${path}`);
-        console.error(err);
-        Deno.exit(2);
-      });
-      messages = messagesFromJson(text);
+      const path = expandTilde(messagesFile, homeDir);
+      let text: string;
+      try {
+        text = await runtime.readTextFile(path);
+      } catch (error) {
+        await writeErrText(runtime, `Failed to read messages file: ${path}\n`);
+        await writeErrText(runtime, `${error}\n`);
+        return 2;
+      }
+      const parsed = messagesFromJson(text);
+      if (parsed === null) {
+        await writeErrText(runtime, `Invalid JSON in messages file: ${path}\n`);
+        return 2;
+      }
+      messages = parsed;
     } else {
-      const system = typeof flags.system === "string" ? flags.system : "";
-      const developer = typeof flags.developer === "string" ? flags.developer : "";
+      const system = getFlagString(flags, "system") ?? "";
+      const developer = getFlagString(flags, "developer") ?? "";
       let prompt = rest.join(" ").trim();
-      if (!prompt && !Deno.stdin.isTerminal()) {
-        prompt = (await readStdin()).trim();
+      if (!prompt && !runtime.stdinIsTerminal) {
+        prompt = (await runtime.readStdin()).trim();
       }
       if (!prompt) {
-        console.error("Missing prompt. Pass it as an argument, or pipe via stdin.");
-        Deno.exit(2);
+        await writeErrText(runtime, "Missing prompt. Pass it as an argument, or pipe via stdin.\n");
+        return 2;
       }
 
       const m: Array<{ role: string; content: string }> = [];
@@ -425,91 +470,107 @@ const main = async () => {
     });
 
     if (wantsStream) {
-      const res = await fetch(req);
+      const res = await runtime.fetch(req);
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        console.error(`Request failed (${res.status}).`);
-        console.error(text || res.statusText);
-        Deno.exit(1);
+        await writeErrText(runtime, `Request failed (${res.status}).\n`);
+        await writeErrText(runtime, `${text || res.statusText}\n`);
+        return 1;
       }
       if (!res.body) {
-        console.error("Stream response missing body.");
-        Deno.exit(1);
+        await writeErrText(runtime, "Stream response missing body.\n");
+        return 1;
       }
 
       if (wantsRaw) {
-        await streamToStdout(res.body);
-        return;
+        await streamToOut(runtime, res.body);
+        return 0;
       }
 
       for await (const ev of parseSseEvents(res.body)) {
         if (ev === "[DONE]") break;
         if (wantsJson) {
-          console.log(JSON.stringify(ev));
+          await writeOutText(runtime, `${JSON.stringify(ev)}\n`);
           continue;
         }
         const delta = extractChatDelta(ev);
-        if (delta) await Deno.stdout.write(new TextEncoder().encode(delta));
+        if (delta) await runtime.out(TEXT_ENCODER.encode(delta));
       }
-      if (!wantsJson) await Deno.stdout.write(new TextEncoder().encode("\n"));
-      return;
+      if (!wantsJson) await runtime.out(TEXT_ENCODER.encode("\n"));
+      return 0;
     }
 
-    const result = await doFetch(req);
+    const result = await doFetch(runtime, req);
     if (!result.ok) {
-      console.error(`Request failed (${result.status}).`);
-      console.error(result.body);
-      Deno.exit(1);
+      await writeErrText(runtime, `Request failed (${result.status}).\n`);
+      await writeErrText(runtime, `${result.body}\n`);
+      return 1;
     }
 
     if (wantsJson) {
-      console.log(JSON.stringify(result.json, null, 2));
-      return;
+      await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+      return 0;
     }
 
     const content = extractChatContent(result.json);
     if (content !== null) {
-      console.log(content);
-      return;
+      await writeOutText(runtime, `${content}\n`);
+      return 0;
     }
-    console.log(JSON.stringify(result.json, null, 2));
-    return;
+    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+    return 0;
   }
 
   if (cmd === "responses") {
-    const token = requireClientToken((flags.token as string | undefined) ?? Deno.env.get("UBQ_AI_TOKEN") ?? "");
-    const model = ((flags.model as string | undefined) ?? "gpt-5.2").trim() || "gpt-5.2";
+    const token = resolveClientToken(flags, runtime);
+    if (!token) {
+      await writeErrText(runtime, "Missing client token. Set UBQ_AI_TOKEN or pass --token.\n");
+      return 2;
+    }
+    const model = (getFlagString(flags, "model") ?? "gpt-5.2").trim() || "gpt-5.2";
 
-    const inputFromJson = (raw: string): unknown => {
+    const inputFromJson = (raw: string): unknown | null => {
       try {
         return JSON.parse(raw);
       } catch {
-        console.error("Invalid JSON in --input-json");
-        Deno.exit(2);
+        return null;
       }
     };
 
     let input: unknown;
-    const inputJson = flags["input-json"];
-    const inputFile = flags["input-file"];
+    const inputJson = getFlagString(flags, "input-json");
+    const inputFile = getFlagString(flags, "input-file");
     if (typeof inputJson === "string") {
-      input = inputFromJson(inputJson);
+      const parsed = inputFromJson(inputJson);
+      if (parsed === null) {
+        await writeErrText(runtime, "Invalid JSON in --input-json\n");
+        return 2;
+      }
+      input = parsed;
     } else if (typeof inputFile === "string") {
-      const path = expandTilde(inputFile);
-      const text = await Deno.readTextFile(path).catch((err) => {
-        console.error(`Failed to read input file: ${path}`);
-        console.error(err);
-        Deno.exit(2);
-      });
-      input = inputFromJson(text);
+      const path = expandTilde(inputFile, homeDir);
+      let text: string;
+      try {
+        text = await runtime.readTextFile(path);
+      } catch (error) {
+        await writeErrText(runtime, `Failed to read input file: ${path}\n`);
+        await writeErrText(runtime, `${error}\n`);
+        return 2;
+      }
+      const parsed = inputFromJson(text);
+      if (parsed === null) {
+        await writeErrText(runtime, `Invalid JSON in input file: ${path}\n`);
+        return 2;
+      }
+      input = parsed;
     } else {
       let text = rest.join(" ").trim();
-      if (!text && !Deno.stdin.isTerminal()) {
-        text = (await readStdin()).trim();
+      if (!text && !runtime.stdinIsTerminal) {
+        text = (await runtime.readStdin()).trim();
       }
       if (!text) {
-        console.error("Missing input. Pass it as an argument, or pipe via stdin.");
-        Deno.exit(2);
+        await writeErrText(runtime, "Missing input. Pass it as an argument, or pipe via stdin.\n");
+        return 2;
       }
       input = text;
     }
@@ -531,82 +592,88 @@ const main = async () => {
     });
 
     if (wantsStream) {
-      const res = await fetch(req);
+      const res = await runtime.fetch(req);
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        console.error(`Request failed (${res.status}).`);
-        console.error(text || res.statusText);
-        Deno.exit(1);
+        await writeErrText(runtime, `Request failed (${res.status}).\n`);
+        await writeErrText(runtime, `${text || res.statusText}\n`);
+        return 1;
       }
       if (!res.body) {
-        console.error("Stream response missing body.");
-        Deno.exit(1);
+        await writeErrText(runtime, "Stream response missing body.\n");
+        return 1;
       }
 
       if (wantsRaw) {
-        await streamToStdout(res.body);
-        return;
+        await streamToOut(runtime, res.body);
+        return 0;
       }
 
       for await (const ev of parseSseEvents(res.body)) {
         if (ev === "[DONE]") break;
         if (wantsJson) {
-          console.log(JSON.stringify(ev));
+          await writeOutText(runtime, `${JSON.stringify(ev)}\n`);
           continue;
         }
+        if (isRecord(ev) && getString(ev.type) === "response.completed") break;
         const delta = extractResponseDelta(ev);
-        if (delta) await Deno.stdout.write(new TextEncoder().encode(delta));
+        if (delta) await runtime.out(TEXT_ENCODER.encode(delta));
       }
-      if (!wantsJson) await Deno.stdout.write(new TextEncoder().encode("\n"));
-      return;
+      if (!wantsJson) await runtime.out(TEXT_ENCODER.encode("\n"));
+      return 0;
     }
 
-    const result = await doFetch(req);
+    const result = await doFetch(runtime, req);
     if (!result.ok) {
-      console.error(`Request failed (${result.status}).`);
-      console.error(result.body);
-      Deno.exit(1);
+      await writeErrText(runtime, `Request failed (${result.status}).\n`);
+      await writeErrText(runtime, `${result.body}\n`);
+      return 1;
     }
 
     if (wantsJson) {
-      console.log(JSON.stringify(result.json, null, 2));
-      return;
+      await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+      return 0;
     }
 
     const text = extractResponseText(result.json);
     if (text !== null) {
-      console.log(text);
-      return;
+      await writeOutText(runtime, `${text}\n`);
+      return 0;
     }
-    console.log(JSON.stringify(result.json, null, 2));
-    return;
+    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+    return 0;
   }
 
   if (cmd === "admin") {
-    const adminToken = requireAdminToken(
-      (flags["admin-token"] as string | undefined) ?? Deno.env.get("UBQ_AI_ADMIN_TOKEN") ??
-        Deno.env.get("DENO_DEPLOY_TOKEN") ??
-        "",
-    );
+    const adminToken = resolveAdminToken(flags, runtime);
+    if (!adminToken) {
+      await writeErrText(
+        runtime,
+        "Missing admin token. Set UBQ_AI_ADMIN_TOKEN (or DENO_DEPLOY_TOKEN) or pass --admin-token.\n",
+      );
+      return 2;
+    }
 
     const sub = rest[0] ?? "";
     const subRest = rest.slice(1);
 
     if (sub === "upload-auth") {
-      const authJsonPath = expandTilde((flags["auth-json"] as string | undefined) ?? "~/.codex/auth.json");
+      const authJsonPath = expandTilde(getFlagString(flags, "auth-json") ?? "~/.codex/auth.json", homeDir);
       let authJsonText: string;
       try {
-        authJsonText = await Deno.readTextFile(authJsonPath);
+        authJsonText = await runtime.readTextFile(authJsonPath);
       } catch (error) {
-        console.error(`Failed to read auth.json at ${authJsonPath}:`, error);
-        Deno.exit(2);
+        await writeErrText(runtime, `Failed to read auth.json at ${authJsonPath}:\n`);
+        await writeErrText(runtime, `${error}\n`);
+        return 2;
       }
 
       try {
         JSON.parse(authJsonText);
       } catch (error) {
-        console.error(`auth.json at ${authJsonPath} is not valid JSON:`, error);
-        Deno.exit(2);
+        await writeErrText(runtime, `auth.json at ${authJsonPath} is not valid JSON:\n`);
+        await writeErrText(runtime, `${error}\n`);
+        return 2;
       }
 
       const req = new Request(endpoint("/admin/codex/auth"), {
@@ -619,26 +686,26 @@ const main = async () => {
         body: authJsonText,
       });
 
-      const result = await doFetch(req);
+      const result = await doFetch(runtime, req);
       if (!result.ok) {
-        console.error(`Request failed (${result.status}).`);
-        console.error(result.body);
-        Deno.exit(1);
+        await writeErrText(runtime, `Request failed (${result.status}).\n`);
+        await writeErrText(runtime, `${result.body}\n`);
+        return 1;
       }
-      console.log(JSON.stringify(result.json, null, 2));
-      return;
+      await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+      return 0;
     }
 
     if (sub === "keys") {
       const action = subRest[0] ?? "";
 
       if (action === "create") {
-        const name = typeof flags.name === "string" ? flags.name : "";
+        const name = getFlagString(flags, "name") ?? "";
         if (!name.trim()) {
-          console.error("Missing --name");
-          Deno.exit(2);
+          await writeErrText(runtime, "Missing --name\n");
+          return 2;
         }
-        const token = typeof flags.token === "string" ? flags.token.trim() : "";
+        const token = (getFlagString(flags, "token") ?? "").trim();
         const tokenOnly = flags["token-only"] === true;
 
         const req = new Request(endpoint("/admin/api-keys"), {
@@ -651,23 +718,23 @@ const main = async () => {
           body: JSON.stringify(token ? { name, token } : { name }),
         });
 
-        const result = await doFetch(req);
+        const result = await doFetch(runtime, req);
         if (!result.ok) {
-          console.error(`Request failed (${result.status}).`);
-          console.error(result.body);
-          Deno.exit(1);
+          await writeErrText(runtime, `Request failed (${result.status}).\n`);
+          await writeErrText(runtime, `${result.body}\n`);
+          return 1;
         }
 
         if (tokenOnly) {
           const tokenValue = (result.json && typeof result.json === "object" && "token" in result.json)
             ? (result.json as { token?: unknown }).token
             : null;
-          console.log(typeof tokenValue === "string" ? tokenValue : "");
-          return;
+          await writeOutText(runtime, `${typeof tokenValue === "string" ? tokenValue : ""}\n`);
+          return 0;
         }
 
-        console.log(JSON.stringify(result.json, null, 2));
-        return;
+        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+        return 0;
       }
 
       if (action === "list") {
@@ -678,21 +745,21 @@ const main = async () => {
             "Accept": "application/json",
           },
         });
-        const result = await doFetch(req);
+        const result = await doFetch(runtime, req);
         if (!result.ok) {
-          console.error(`Request failed (${result.status}).`);
-          console.error(result.body);
-          Deno.exit(1);
+          await writeErrText(runtime, `Request failed (${result.status}).\n`);
+          await writeErrText(runtime, `${result.body}\n`);
+          return 1;
         }
-        console.log(JSON.stringify(result.json, null, 2));
-        return;
+        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+        return 0;
       }
 
       if (action === "revoke") {
-        const id = typeof flags.id === "string" ? flags.id.trim() : "";
+        const id = (getFlagString(flags, "id") ?? "").trim();
         if (!id) {
-          console.error("Missing --id");
-          Deno.exit(2);
+          await writeErrText(runtime, "Missing --id\n");
+          return 2;
         }
         const req = new Request(endpoint("/admin/api-keys/revoke"), {
           method: "POST",
@@ -703,29 +770,46 @@ const main = async () => {
           },
           body: JSON.stringify({ id }),
         });
-        const result = await doFetch(req);
+        const result = await doFetch(runtime, req);
         if (!result.ok) {
-          console.error(`Request failed (${result.status}).`);
-          console.error(result.body);
-          Deno.exit(1);
+          await writeErrText(runtime, `Request failed (${result.status}).\n`);
+          await writeErrText(runtime, `${result.body}\n`);
+          return 1;
         }
-        console.log(JSON.stringify(result.json, null, 2));
-        return;
+        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+        return 0;
       }
 
-      console.error(`Unknown admin keys command: ${action || "(missing)"}`);
-      usage();
-      Deno.exit(2);
+      await writeErrText(runtime, `Unknown admin keys command: ${action || "(missing)"}\n`);
+      await writeOutText(runtime, usageText());
+      return 2;
     }
 
-    console.error(`Unknown admin command: ${sub || "(missing)"}`);
-    usage();
-    Deno.exit(2);
+    await writeErrText(runtime, `Unknown admin command: ${sub || "(missing)"}\n`);
+    await writeOutText(runtime, usageText());
+    return 2;
   }
 
-  console.error(`Unknown command: ${cmd}`);
-  usage();
-  Deno.exit(2);
+  await writeErrText(runtime, `Unknown command: ${cmd}\n`);
+  await writeOutText(runtime, usageText());
+  return 2;
 };
 
-await main();
+const getDefaultRuntime = (): UbqAiRuntime => ({
+  fetch,
+  envGet: (key: string) => Deno.env.get(key),
+  readTextFile: (path: string) => Deno.readTextFile(path),
+  stdinIsTerminal: Deno.stdin.isTerminal(),
+  readStdin,
+  out: async (chunk: Uint8Array) => {
+    await Deno.stdout.write(chunk);
+  },
+  err: async (chunk: Uint8Array) => {
+    await Deno.stderr.write(chunk);
+  },
+});
+
+if (import.meta.main) {
+  const code = await runUbqAi(Deno.args, getDefaultRuntime());
+  Deno.exit(code);
+}

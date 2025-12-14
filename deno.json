@@ -6,6 +6,7 @@
     "keys:create": "deno run --allow-env --allow-net scripts/api-keys.ts create",
     "keys:list": "deno run --allow-env --allow-net scripts/api-keys.ts list",
     "keys:revoke": "deno run --allow-env --allow-net scripts/api-keys.ts revoke",
+    "test": "deno test",
     "fmt": "deno fmt",
     "lint": "deno lint"
   },
