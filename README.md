@@ -44,6 +44,11 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
   }'
 ```
 
+Notes:
+
+- Some models (including `gpt-5.2-chat-latest`) require `max_completion_tokens` instead of `max_tokens`.
+- Some models only support the default `temperature` value; omit `temperature` if you get `unsupported_value`.
+
 Streaming:
 
 ```bash
