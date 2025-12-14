@@ -120,8 +120,8 @@ Commands:
 Examples:
   UBQ_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat \"Tell me a short joke.\"
   UBQ_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
-  DENO_DEPLOY_TOKEN=ddw_... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
-  DENO_DEPLOY_TOKEN=ddw_... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create --name \"example\" --token-only
+  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
+  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create --name \"example\" --token-only
 `);
 };
 

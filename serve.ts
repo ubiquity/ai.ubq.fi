@@ -254,12 +254,16 @@ const requireClientAuth = async (req: Request): Promise<Response | null> => {
 };
 
 const DENO_API_BASE_URL = "https://api.deno.com/v1";
-const DENO_DEPLOY_TOKEN_PREFIX = "ddw_";
 const DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS = 10 * 60_000;
 const deployTokenAdminCache = new Map<string, number>();
 
-const looksLikeDenoDeployToken = (token: string): boolean =>
-  token.startsWith(DENO_DEPLOY_TOKEN_PREFIX) && token.length >= 20 && token.length <= 200;
+const looksLikeDenoDeployToken = (token: string): boolean => {
+  const trimmed = token.trim();
+  if (trimmed.length < 20) return false;
+  if (trimmed.length > 500) return false;
+  if (/\s/.test(trimmed)) return false;
+  return true;
+};
 
 const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
   if (!config.isDeploy) return false;

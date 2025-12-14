@@ -116,7 +116,7 @@ ubq-ai responses --model gpt-5.2 "Summarize this in 1 sentence: ..."
 Admin examples (uses `UBQ_AI_ADMIN_TOKEN` or falls back to `DENO_DEPLOY_TOKEN`):
 
 ```bash
-export DENO_DEPLOY_TOKEN="ddw_..."
+export DENO_DEPLOY_TOKEN="..."
 ubq-ai admin upload-auth --auth-json ~/.codex/auth.json | jq
 ubq-ai admin keys create --name "example key" --token-only
 ubq-ai admin keys list | jq
@@ -128,7 +128,7 @@ ubq-ai admin keys list | jq
 - `UBQ_AI_AUTH_TOKENS` (optional): Comma- or newline-separated client tokens accepted via `Authorization: Bearer ...`.
   The gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `UBQ_AI_ADMIN_TOKENS` (optional, recommended): Tokens accepted for admin endpoints. If unset on Deno Deploy, the admin
-  endpoints accept a Deno Deploy token (`DENO_DEPLOY_TOKEN`, `ddw_...`) after verification against the Deno API.
+  endpoints accept a Deno Deploy token (`DENO_DEPLOY_TOKEN`) after verification against the Deno API.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
 - `CODEX_INSTRUCTIONS_B64` (optional): base64 override for the upstream `instructions` string (defaults to
   `codex_instructions.md`).
