@@ -1,6 +1,7 @@
 {
   "tasks": {
     "dev": "deno serve --allow-env --allow-net --allow-read --unstable-kv serve.ts",
+    "upload:auth": "deno run --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts",
     "fmt": "deno fmt",
     "lint": "deno lint"
   },

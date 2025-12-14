@@ -19,6 +19,7 @@ jobs:
       env_var_keys: |
         CODEX_AUTH_JSON_B64
         UBQ_AI_AUTH_TOKENS
+        UBQ_AI_ADMIN_TOKENS
       extra_paths: |
         /health
       debug_fetch_fail: true

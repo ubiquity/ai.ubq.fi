@@ -87,14 +87,41 @@ curl -N https://ai.ubq.fi/v1/chat/completions \
 - `CODEX_AUTH_JSON_B64` (required): base64 of `~/.codex/auth.json` from a machine that ran `codex login`.
 - `UBQ_AI_AUTH_TOKENS` (required in production): Comma- or newline-separated tokens accepted from clients via
   `Authorization: Bearer ...` (gateway tokens, not OpenAI API keys).
+- `UBQ_AI_ADMIN_TOKENS` (optional): Tokens accepted for admin endpoints (recommended to be separate from
+  `UBQ_AI_AUTH_TOKENS`). If unset, admin endpoints are disabled.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
 - `CODEX_INSTRUCTIONS_B64` (optional): base64 override for the upstream `instructions` string (defaults to
   `codex_instructions.md`).
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 
+## Admin: upload/validate Codex auth.json
+
+This validates your posted `auth.json` against the upstream Codex endpoint and, if valid, stores the tokens in Deno KV
+(becoming the active upstream auth for subsequent requests).
+
+Treat `auth.json` as a secret (it contains refresh tokens).
+
+```bash
+export UBQ_AI_ADMIN_TOKEN="..."
+curl -sS https://ai.ubq.fi/admin/codex/auth \
+  -H "Authorization: Bearer $UBQ_AI_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @~/.codex/auth.json \
+  | jq
+```
+
+Or use the repo helper CLI:
+
+```bash
+cd lib/ai.ubq.fi
+export UBQ_AI_ADMIN_TOKEN="..."
+deno task upload:auth -- --url https://ai.ubq.fi
+```
+
 ## Supported routes
 
 - `GET /` and `GET /health`
+- `POST /admin/codex/auth` (admin only)
 - `GET /v1/models`
 - `POST /v1/chat/completions` (streaming and non-streaming)
 - `POST /v1/responses` (streaming and non-streaming; non-streaming buffers upstream SSE)

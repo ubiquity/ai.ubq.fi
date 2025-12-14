@@ -3,6 +3,7 @@
 type Config = Readonly<{
   allowOrigin: string;
   authTokens: ReadonlySet<string>;
+  adminTokens: ReadonlySet<string>;
   authMisconfigured: boolean;
   codexBaseUrl: string;
   codexAuthJsonB64: string;
@@ -64,6 +65,7 @@ const parseTokens = (raw: string | undefined | null): Set<string> => {
 const loadConfig = (): Config => {
   const isDeploy = Boolean(Deno.env.get("DENO_DEPLOYMENT_ID") ?? Deno.env.get("DENO_REGION"));
   const authTokens = parseTokens(Deno.env.get("UBQ_AI_AUTH_TOKENS") ?? Deno.env.get("UBQ_AI_API_KEYS"));
+  const adminTokens = parseTokens(Deno.env.get("UBQ_AI_ADMIN_TOKENS") ?? Deno.env.get("UBQ_AI_ADMIN_API_KEYS"));
   const allowOrigin = (Deno.env.get("CORS_ALLOW_ORIGIN") ?? "*").trim() || "*";
 
   const codexBaseUrl = (Deno.env.get("CODEX_BASE_URL") ?? "https://chatgpt.com/backend-api/codex")
@@ -78,6 +80,7 @@ const loadConfig = (): Config => {
     codexInstructionsB64,
     allowOrigin,
     authTokens,
+    adminTokens,
     authMisconfigured: isDeploy && authTokens.size === 0,
   };
 };
@@ -161,6 +164,17 @@ const requireClientAuth = (req: Request): Response | null => {
   if (config.authTokens.size === 0) return null;
   const token = getBearerToken(req);
   if (!token || !config.authTokens.has(token)) {
+    return openaiError(401, "Unauthorized", "invalid_api_key");
+  }
+  return null;
+};
+
+const requireAdminAuth = (req: Request): Response | null => {
+  if (config.adminTokens.size === 0) {
+    return openaiError(404, "Not found", "not_found");
+  }
+  const token = getBearerToken(req);
+  if (!token || !config.adminTokens.has(token)) {
     return openaiError(401, "Unauthorized", "invalid_api_key");
   }
   return null;
@@ -292,6 +306,41 @@ const refreshAuth = async (
   return next;
 };
 
+const refreshAuthStateless = async (auth: CodexAuthState): Promise<CodexAuthState> => {
+  const response = await fetch(CODEX_REFRESH_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+    body: JSON.stringify({
+      client_id: CODEX_REFRESH_CLIENT_ID,
+      grant_type: "refresh_token",
+      refresh_token: auth.refresh_token,
+      scope: "openid profile email",
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Token refresh failed (${response.status}): ${text || response.statusText}`);
+  }
+
+  const parsed = (await response.json().catch(() => null)) as null | Record<string, unknown>;
+  const access_token = parsed && getString(parsed.access_token);
+  const refresh_token = parsed && getString(parsed.refresh_token);
+  if (!access_token) {
+    throw new Error("Token refresh response missing access_token");
+  }
+
+  return {
+    access_token,
+    refresh_token: refresh_token ?? auth.refresh_token,
+    account_id: auth.account_id,
+    updated_at_ms: Date.now(),
+  };
+};
+
 const getValidAuth = async (): Promise<CodexAuthState> => {
   const current = await getAuthEntry();
   if (!needsRefresh(current.auth)) return current.auth;
@@ -304,6 +353,26 @@ const getValidAuth = async (): Promise<CodexAuthState> => {
     refreshInFlight = null;
   });
   return await refreshInFlight;
+};
+
+const fetchCodexResponsesWithAuth = async (auth: CodexAuthState, body: unknown): Promise<Response> => {
+  const url = `${config.codexBaseUrl}/responses`;
+
+  const headers = new Headers();
+  headers.set("Authorization", `Bearer ${auth.access_token}`);
+  headers.set("ChatGPT-Account-ID", auth.account_id);
+  headers.set("originator", CODEX_ORIGINATOR);
+  headers.set("user-agent", CODEX_USER_AGENT);
+  headers.set("Content-Type", "application/json");
+  headers.set("Accept", "text/event-stream");
+  headers.set("conversation_id", crypto.randomUUID());
+
+  return await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    redirect: "manual",
+  });
 };
 
 const fetchCodexResponses = async (body: unknown): Promise<Response> => {
@@ -343,6 +412,53 @@ const fetchCodexResponses = async (body: unknown): Promise<Response> => {
     body: JSON.stringify(body),
     redirect: "manual",
   });
+};
+
+const validateCodexAuthJson = async (
+  auth: CodexAuthState,
+): Promise<
+  { ok: true; auth: CodexAuthState; refreshed: boolean; status: number; contentType: string | null } | {
+    ok: false;
+    status: number;
+    body: string;
+  }
+> => {
+  const model = "gpt-5.1-codex-mini";
+  const input: ResponseMessageItem[] = [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "ping" }],
+    },
+  ];
+  const body = await buildCodexRequest(model, input);
+
+  let refreshed = false;
+  let res = await fetchCodexResponsesWithAuth(auth, body);
+  if (res.status === 401) {
+    try {
+      const next = await refreshAuthStateless(auth);
+      refreshed = true;
+      res = await fetchCodexResponsesWithAuth(next, body);
+      auth = next;
+    } catch {
+      // ignore and return the original 401 response
+    }
+  }
+
+  const contentType = res.headers.get("Content-Type");
+  if (res.ok) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // ignore
+    }
+    return { ok: true, auth, refreshed, status: res.status, contentType };
+  }
+
+  const text = await res.text().catch(() => "");
+  const bodySnippet = (text || res.statusText).slice(0, 8_000);
+  return { ok: false, status: res.status, body: bodySnippet };
 };
 
 const readJsonBody = async (req: Request): Promise<unknown> => {
@@ -700,6 +816,56 @@ const handleResponses = async (req: Request): Promise<Response> => {
   return json(200, finalResponse, { "x-ubq-upstream": "chatgpt_codex" });
 };
 
+const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot persist Codex auth", "server_error");
+  }
+
+  const body = await readJsonBody(req);
+  const tokenData = parseCodexAuthFromAuthJson(body);
+  if (!tokenData) {
+    return openaiError(400, "Body does not look like a Codex auth.json", "invalid_request_error");
+  }
+
+  const seed: CodexAuthState = { ...tokenData, updated_at_ms: Date.now() };
+
+  let validated: Awaited<ReturnType<typeof validateCodexAuthJson>>;
+  try {
+    validated = await validateCodexAuthJson(seed);
+  } catch (error) {
+    console.error("[ai.ubq.fi] Codex auth validation failed:", error);
+    return openaiError(502, "Upstream validation request failed", "bad_gateway");
+  }
+
+  if (!validated.ok) {
+    return openaiError(
+      401,
+      `Invalid Codex auth.json (upstream ${validated.status}): ${validated.body}`,
+      "invalid_api_key",
+    );
+  }
+
+  await kv.set(CODEX_KV_KEY, validated.auth);
+  cachedAuth = validated.auth;
+
+  const expMs = getJwtExpMs(validated.auth.access_token);
+  return json(
+    200,
+    {
+      ok: true,
+      stored: true,
+      refreshed: validated.refreshed,
+      account_id: validated.auth.account_id,
+      access_token_expires_at_ms: expMs,
+      updated_at_ms: validated.auth.updated_at_ms,
+      upstream_status: validated.status,
+      upstream_content_type: validated.contentType,
+    },
+    { "x-ubq-upstream": "chatgpt_codex" },
+  );
+};
+
 async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return withCors(new Response(null, { status: 204, headers: corsHeaders() }));
@@ -742,6 +908,12 @@ async function handler(req: Request): Promise<Response> {
         problems,
       }),
     );
+  }
+
+  if (req.method === "POST" && path === "/admin/codex/auth") {
+    const authError = requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminCodexAuth(req));
   }
 
   if (!path.startsWith("/v1/")) {
