@@ -9,7 +9,7 @@ OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 - The gateway **does not use or forward your client token upstream**.
   - For upstream requests, it uses **Codex CLI ChatGPT auth** from `CODEX_AUTH_JSON_B64` (base64 of
     `~/.codex/auth.json`).
-  - Usage is billed to that Codex/ChatGPT account (not to client-provided OpenAI API keys).
+  - Upstream usage/limits are tied to that OpenAI account + plan; client-provided OpenAI API keys are ignored.
   - The OAuth `client_id` used for refresh-token rotation is **public** (not a secret); the secrets are the tokens in
     `CODEX_AUTH_JSON_B64` and your client/admin tokens.
 
