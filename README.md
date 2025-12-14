@@ -93,7 +93,7 @@ Run from this repo:
 ```bash
 cd lib/ai.ubq.fi
 export UBQ_AI_TOKEN="..."
-deno task ubq-ai -- chat "Tell me a short joke."
+deno task ubq-ai chat "Tell me a short joke."
 ```
 
 Install on your machine:
@@ -155,7 +155,7 @@ Or use the repo helper CLI:
 ```bash
 cd lib/ai.ubq.fi
 export UBQ_AI_ADMIN_TOKEN="..."
-deno task upload:auth -- --url https://ai.ubq.fi
+deno task upload:auth --url https://ai.ubq.fi
 ```
 
 The helper CLI also accepts `DENO_DEPLOY_TOKEN` (if `UBQ_AI_ADMIN_TOKEN` is unset).
@@ -169,7 +169,7 @@ Create (token only):
 ```bash
 cd lib/ai.ubq.fi
 export UBQ_AI_ADMIN_TOKEN="..."
-deno task keys:create -- --name "example key" --token-only
+deno task keys:create --name "example key" --token-only
 ```
 
 List (admin):
@@ -181,7 +181,7 @@ deno task keys:list
 Revoke (admin):
 
 ```bash
-deno task keys:revoke -- --id "<id>"
+deno task keys:revoke --id "<id>"
 ```
 
 ## Supported routes

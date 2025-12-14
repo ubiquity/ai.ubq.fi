@@ -39,6 +39,7 @@ const parseArgs = (args: string[]): ParsedArgs => {
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? "";
+    if (arg === "--") continue;
     if (arg === "-h") {
       flags.help = true;
       continue;
