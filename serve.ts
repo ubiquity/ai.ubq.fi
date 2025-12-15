@@ -256,7 +256,7 @@ const corsHeaders = (): HeadersInit => ({
   "Access-Control-Allow-Origin": config.allowOrigin,
   "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "Access-Control-Allow-Headers":
-    "Authorization,Content-Type,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id",
+    "Authorization,Content-Type,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
   "Access-Control-Max-Age": "86400",
 });
 
@@ -303,6 +303,312 @@ const githubTokenCache = new Map<string, number>();
 
 const looksLikeGitHubToken = (token: string): boolean => token.trim().startsWith("gh");
 
+const DEFAULT_KERNEL_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs96DOU+JqM8SyNXOB6u3
+uBKIFiyrcST/LZTYN6y7LeJlyCuGPqSDrWCfjU9Ph5PLf9TWiNmeM8DGaOpwEFC7
+U3NRxOSglo4plnQ5zRwIHHXvxyK400sQP2oISXymISuBQWjEIqkC9DybQrKwNzf+
+I0JHWPqmwMIw26UvVOtXGOOWBqTkk+N2+/9f8eDIJP5QQVwwszc8s1rXOsLMlVIf
+wShw7GO4E2jyK8TSJKpyjV8eb1JJMDwFhPiRrtZfQJUtDf2mV/67shQww61BH2Y/
+Plnalo58kWIbkqZoq1yJrL5sFb73osM5+vADTXVn79bkvea7W19nSkdMiarYt4Hq
+JQIDAQAB
+-----END PUBLIC KEY-----`;
+
+const normalizePemValue = (raw: string): string => raw.trim().replace(/\\n/g, "\n");
+
+const extractPemBlocks = (raw: string, begin: string, end: string): string[] => {
+  const blocks: string[] = [];
+  let cursor = 0;
+  while (cursor < raw.length) {
+    const start = raw.indexOf(begin, cursor);
+    if (start === -1) break;
+    const finish = raw.indexOf(end, start);
+    if (finish === -1) break;
+    blocks.push(raw.slice(start, finish + end.length).trim());
+    cursor = finish + end.length;
+  }
+  return blocks;
+};
+
+const getKernelPublicKeyPems = (): string[] => {
+  const envRaw = (Deno.env.get("UBIQUITY_AI_KERNEL_PUBLIC_KEY") ?? "").trim();
+  if (envRaw) {
+    const normalized = normalizePemValue(envRaw);
+    const blocks = extractPemBlocks(normalized, "-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----");
+    return blocks.length > 0 ? blocks : [normalized];
+  }
+  return [DEFAULT_KERNEL_PUBLIC_KEY_PEM];
+};
+
+const importRsaPublicKey = async (publicKeyPem: string): Promise<CryptoKey> => {
+  const pemContents = publicKeyPem
+    .replace("-----BEGIN PUBLIC KEY-----", "")
+    .replace("-----END PUBLIC KEY-----", "")
+    .trim()
+    .replace(/\s+/g, "");
+
+  const binaryDer = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+  return await crypto.subtle.importKey(
+    "spki",
+    binaryDer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    true,
+    ["verify"],
+  );
+};
+
+const kernelPublicKeysPromise: Promise<ReadonlyArray<CryptoKey>> = (async () => {
+  const pems = getKernelPublicKeyPems();
+  const keys: CryptoKey[] = [];
+  for (const pem of pems) {
+    try {
+      keys.push(await importRsaPublicKey(pem));
+    } catch (error) {
+      console.error("[ai.ubq.fi] Failed to import kernel public key:", error);
+    }
+  }
+  return keys;
+})();
+
+const decodeBase64UrlToBytes = (raw: string): Uint8Array => {
+  const b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+};
+
+const decodeBase64UrlToJson = (raw: string): unknown => {
+  const bytes = decodeBase64UrlToBytes(raw);
+  const text = new TextDecoder().decode(bytes);
+  return JSON.parse(text);
+};
+
+type KernelAttestationPayload = Readonly<{
+  iss: "ubiquity-os-kernel";
+  aud: "ai.ubq.fi";
+  iat: number;
+  exp: number;
+  jti: string;
+  owner: string;
+  repo: string;
+  installation_id: number | null;
+  auth_token_sha256: string;
+  state_id: string;
+}>;
+
+const parseKernelAttestationPayload = (value: unknown): KernelAttestationPayload | null => {
+  if (!isRecord(value)) return null;
+
+  const iss = getString(value.iss);
+  const aud = getString(value.aud);
+  const jti = getString(value.jti);
+  const owner = getString(value.owner);
+  const repo = getString(value.repo);
+  const authTokenSha = getString(value.auth_token_sha256);
+  const stateId = getString(value.state_id);
+
+  const iat = typeof value.iat === "number" && Number.isFinite(value.iat) ? Math.trunc(value.iat) : null;
+  const exp = typeof value.exp === "number" && Number.isFinite(value.exp) ? Math.trunc(value.exp) : null;
+  if (iat === null || exp === null) return null;
+
+  const installationIdValue = value.installation_id;
+  const installationId = installationIdValue === null
+    ? null
+    : typeof installationIdValue === "number" && Number.isFinite(installationIdValue)
+    ? Math.trunc(installationIdValue)
+    : null;
+  if (installationIdValue !== null && installationId === null) return null;
+
+  if (iss !== "ubiquity-os-kernel") return null;
+  if (aud !== "ai.ubq.fi") return null;
+  if (!jti || !owner || !repo || !authTokenSha || !stateId) return null;
+
+  return {
+    iss: "ubiquity-os-kernel",
+    aud: "ai.ubq.fi",
+    iat,
+    exp,
+    jti,
+    owner,
+    repo,
+    installation_id: installationId,
+    auth_token_sha256: authTokenSha,
+    state_id: stateId,
+  };
+};
+
+const KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS = 60;
+const KERNEL_ATTESTATION_MAX_TTL_SECONDS = 10 * 60;
+
+const parseInstallationIdHeader = (req: Request): number | null => {
+  const raw = (req.headers.get("X-GitHub-Installation-Id") ?? "").trim();
+  if (!raw) return null;
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return null;
+  return Math.trunc(num);
+};
+
+const kernelTokenJtiCache = new Map<string, number>();
+
+const pruneKernelTokenJtiCache = () => {
+  const now = Date.now();
+  for (const [jti, expiresAtMs] of kernelTokenJtiCache.entries()) {
+    if (expiresAtMs <= now) kernelTokenJtiCache.delete(jti);
+  }
+};
+
+const verifyKernelAttestation = async (
+  req: Request,
+  { token, owner, repo }: { token: string; owner: string; repo: string },
+): Promise<{ ok: true } | { ok: false; response: Response }> => {
+  const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
+  if (!kernelToken) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (missing kernel attestation)", "missing_kernel_token"),
+    };
+  }
+
+  const keys = await kernelPublicKeysPromise;
+  if (keys.length === 0) {
+    return { ok: false, response: openaiError(500, "Server misconfigured: kernel public key missing", "server_error") };
+  }
+
+  const parts = kernelToken.split(".");
+  if (parts.length !== 3) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  let header: unknown;
+  let payload: KernelAttestationPayload | null = null;
+
+  try {
+    header = decodeBase64UrlToJson(parts[0]);
+    payload = parseKernelAttestationPayload(decodeBase64UrlToJson(parts[1]));
+  } catch {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  if (!isRecord(header) || getString(header.alg) !== "RS256") {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  if (!payload) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp < payload.iat) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+  if (payload.exp - payload.iat > KERNEL_ATTESTATION_MAX_TTL_SECONDS) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation too long-lived)", "invalid_kernel_token"),
+    };
+  }
+  if (payload.iat > now + KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation not yet valid)", "invalid_kernel_token"),
+    };
+  }
+  if (payload.exp < now - KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation expired)", "invalid_kernel_token"),
+    };
+  }
+
+  if (payload.owner !== owner || payload.repo !== repo) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation repo mismatch)", "invalid_kernel_token"),
+    };
+  }
+
+  const installationId = parseInstallationIdHeader(req);
+  if (installationId === null) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (missing X-GitHub-Installation-Id)", "missing_installation_id"),
+    };
+  }
+  if (payload.installation_id !== installationId) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation installation mismatch)", "invalid_kernel_token"),
+    };
+  }
+
+  const expectedTokenSha = await sha256Base64Url(token);
+  if (payload.auth_token_sha256 !== expectedTokenSha) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation token mismatch)", "invalid_kernel_token"),
+    };
+  }
+
+  const signingInput = `${parts[0]}.${parts[1]}`;
+  const dataArray = new TextEncoder().encode(signingInput);
+  let signatureBytes: Uint8Array;
+  try {
+    signatureBytes = decodeBase64UrlToBytes(parts[2]);
+  } catch {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  let signatureValid = false;
+  for (const key of keys) {
+    try {
+      const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signatureBytes, dataArray);
+      if (ok) {
+        signatureValid = true;
+        break;
+      }
+    } catch {
+      // ignore and try next key
+    }
+  }
+  if (!signatureValid) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  pruneKernelTokenJtiCache();
+  const jti = payload.jti;
+  const nowMs = Date.now();
+  const cachedUntilMs = kernelTokenJtiCache.get(jti) ?? 0;
+  if (cachedUntilMs > nowMs) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation replay)", "invalid_kernel_token"),
+    };
+  }
+  kernelTokenJtiCache.set(jti, payload.exp * 1000);
+
+  return { ok: true };
+};
+
 const getGitHubRepoHeaders = (req: Request): { owner: string; repo: string } | null => {
   const owner = (req.headers.get("X-GitHub-Owner") ?? "").trim();
   const repo = (req.headers.get("X-GitHub-Repo") ?? "").trim();
@@ -341,6 +647,9 @@ const authenticateGitHubToken = async (
   if (!repoHeaders) return null;
 
   const { owner, repo } = repoHeaders;
+  const attestation = await verifyKernelAttestation(req, { token, owner, repo });
+  if (!attestation.ok) return { ok: false, response: attestation.response };
+
   const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
   const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
   if (cachedUntil > Date.now()) return { ok: true, method: { kind: "github_token", owner, repo } };

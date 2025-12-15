@@ -187,7 +187,16 @@ const gitShortRevision = async (runtime: UbqAiRuntime): Promise<string | null> =
   const env = toShortGitRevision(runtime.envGet("GIT_REVISION") ?? runtime.envGet("GITHUB_SHA") ?? undefined);
   if (env) return env;
 
-  const gitRoots = [".", "..", "../..", "../../..", "../../../..", "../../../../..", "../../../../../..", "../../../../../../.."];
+  const gitRoots = [
+    ".",
+    "..",
+    "../..",
+    "../../..",
+    "../../../..",
+    "../../../../..",
+    "../../../../../..",
+    "../../../../../../..",
+  ];
   for (const root of gitRoots) {
     const dotGitHead = await tryReadTextFile(runtime, `${root}/.git/HEAD`);
     if (dotGitHead) return await readGitHeadShortRevision(runtime, `${root}/.git`);
