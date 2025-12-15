@@ -255,7 +255,8 @@ const parseReasoningParam = (
 const corsHeaders = (): HeadersInit => ({
   "Access-Control-Allow-Origin": config.allowOrigin,
   "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-  "Access-Control-Allow-Headers": "Authorization,Content-Type,OpenAI-Beta,OpenAI-Organization,OpenAI-Project",
+  "Access-Control-Allow-Headers":
+    "Authorization,Content-Type,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id",
   "Access-Control-Max-Age": "86400",
 });
 
@@ -296,6 +297,68 @@ const getBearerToken = (req: Request): string | null => {
   return match?.[1]?.trim() || null;
 };
 
+const GITHUB_API_BASE_URL = "https://api.github.com";
+const GITHUB_TOKEN_CACHE_TTL_MS = 5 * 60_000;
+const githubTokenCache = new Map<string, number>();
+
+const looksLikeGitHubToken = (token: string): boolean => token.trim().startsWith("gh");
+
+const getGitHubRepoHeaders = (req: Request): { owner: string; repo: string } | null => {
+  const owner = (req.headers.get("X-GitHub-Owner") ?? "").trim();
+  const repo = (req.headers.get("X-GitHub-Repo") ?? "").trim();
+  if (!owner || !repo) return null;
+  return { owner, repo };
+};
+
+const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: string): Promise<boolean> => {
+  const res = await fetch(`${GITHUB_API_BASE_URL}/repos/${owner}/${repo}`, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "ai.ubq.fi",
+    },
+    redirect: "manual",
+  });
+
+  try {
+    await res.body?.cancel();
+  } catch {
+    // ignore
+  }
+
+  return res.ok;
+};
+
+const authenticateGitHubToken = async (
+  req: Request,
+  token: string,
+): Promise<{ ok: true; method: ClientAuthMethod } | { ok: false; response: Response } | null> => {
+  if (!looksLikeGitHubToken(token)) return null;
+
+  const repoHeaders = getGitHubRepoHeaders(req);
+  if (!repoHeaders) return null;
+
+  const { owner, repo } = repoHeaders;
+  const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
+  const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
+  if (cachedUntil > Date.now()) return { ok: true, method: { kind: "github_token", owner, repo } };
+
+  try {
+    const hasAccess = await verifyGitHubTokenRepoAccess(token, owner, repo);
+    if (!hasAccess) {
+      return { ok: false, response: openaiError(401, "Invalid GitHub token for repo", "invalid_auth_for_repo") };
+    }
+
+    githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
+    return { ok: true, method: { kind: "github_token", owner, repo } };
+  } catch (error) {
+    console.error("[ai.ubq.fi] GitHub token verification failed:", error);
+    return { ok: false, response: openaiError(502, "Failed to verify GitHub token", "bad_gateway") };
+  }
+};
+
 const looksLikeUbqAiClientToken = (token: string): boolean => token.trim().startsWith("ubq_ai_");
 
 const classifyToken = (token: string): string => {
@@ -310,6 +373,7 @@ const classifyToken = (token: string): string => {
 
 type ClientAuthMethod =
   | { kind: "disabled" }
+  | { kind: "github_token"; owner: string; repo: string }
   | { kind: "auth_tokens_allowlist" }
   | { kind: "kv_api_key"; key_id: string }
   | { kind: "admin_allowlist" }
@@ -332,6 +396,13 @@ const authenticateClient = async (req: Request): Promise<AuthenticateClientResul
   if (!token) return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
 
   if (config.authTokens.has(token)) return { ok: true, token, method: { kind: "auth_tokens_allowlist" } };
+
+  const githubResult = await authenticateGitHubToken(req, token);
+  if (githubResult) {
+    return githubResult.ok
+      ? { ok: true, token, method: githubResult.method }
+      : { ok: false, response: githubResult.response };
+  }
 
   if (kv) {
     const hash = await sha256Base64Url(token);
@@ -1530,6 +1601,10 @@ async function handler(req: Request): Promise<Response> {
 
     const method: Record<string, unknown> = { kind: authResult.method.kind };
     const isAdmin = authResult.method.kind === "admin_allowlist" || authResult.method.kind === "deno_deploy_token";
+
+    if (authResult.method.kind === "github_token") {
+      method.repo = { owner: authResult.method.owner, repo: authResult.method.repo };
+    }
 
     if (authResult.method.kind === "kv_api_key") {
       const id = authResult.method.key_id;
