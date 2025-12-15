@@ -29,7 +29,7 @@ Create one (admin):
 curl -sS https://ai.ubq.fi/admin/api-keys \
   -H "Authorization: Bearer $UBIQUITY_AI_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"name":"example key"}' \
+  --data '{"name":"example key","expires_at_ms":-1}' \
   | jq -r .token
 ```
 
@@ -157,6 +157,7 @@ Admin examples (uses `UBIQUITY_AI_ADMIN_TOKEN` or falls back to `DENO_DEPLOY_TOK
 export DENO_DEPLOY_TOKEN="..."
 ubq-ai admin upload-auth --auth-json ~/.codex/auth.json | jq
 ubq-ai admin keys create "example key"
+ubq-ai admin keys create "tmp key" --expires week
 ubq-ai admin keys list | jq
 ```
 
@@ -202,12 +203,23 @@ The helper CLI also accepts `DENO_DEPLOY_TOKEN` (if `UBIQUITY_AI_ADMIN_TOKEN` is
 
 API keys are stored in Deno KV (hashed) and are only returned once on creation.
 
+Expiration:
+
+- `expires_at_ms` is a Unix epoch millisecond timestamp; `-1` means "does not expire".
+- Expired keys are rejected like revoked keys.
+
 Create (token only):
 
 ```bash
 cd lib/ai.ubq.fi
 export UBIQUITY_AI_ADMIN_TOKEN="..."
 deno task ubq-ai admin keys create "example key"
+```
+
+Create (expires in a week):
+
+```bash
+deno task ubq-ai admin keys create "tmp key" --expires week
 ```
 
 List (admin):

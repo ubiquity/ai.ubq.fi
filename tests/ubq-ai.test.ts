@@ -426,6 +426,67 @@ Deno.test("ubq-ai: admin keys create prints token", async () => {
   assert.equal(outText(), "ubq_ai_token_value\n");
 });
 
+Deno.test("ubq-ai: admin keys create --expires week sends expires_at_ms", async () => {
+  const originalNow = Date.now;
+  Date.now = () => 1_000_000;
+  try {
+    const { runtime, outText, errText } = makeRuntime({
+      env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
+      fetch: (_req, recorded) => {
+        assert.ok(recorded.url.endsWith("/admin/api-keys"));
+        assert.equal(recorded.method, "POST");
+        const body = JSON.parse(recorded.bodyText ?? "null") as { name?: unknown; expires_at_ms?: unknown };
+        assert.equal(body.name, "week key");
+        assert.equal(body.expires_at_ms, 1_000_000 + 7 * 24 * 60 * 60 * 1000);
+        return jsonResponse(200, { ok: true, token: "ubq_ai_token_value" });
+      },
+    });
+
+    const code = await runUbqAi(["admin", "keys", "create", "week key", "--expires", "week"], runtime);
+    assert.equal(code, 0);
+    assert.equal(errText(), "");
+    assert.equal(outText(), "ubq_ai_token_value\n");
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+Deno.test("ubq-ai: admin keys create --expires forever sends -1", async () => {
+  const { runtime, outText, errText } = makeRuntime({
+    env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
+    fetch: (_req, recorded) => {
+      assert.ok(recorded.url.endsWith("/admin/api-keys"));
+      assert.equal(recorded.method, "POST");
+      const body = JSON.parse(recorded.bodyText ?? "null") as { name?: unknown; expires_at_ms?: unknown };
+      assert.equal(body.name, "forever key");
+      assert.equal(body.expires_at_ms, -1);
+      return jsonResponse(200, { ok: true, token: "ubq_ai_token_value" });
+    },
+  });
+
+  const code = await runUbqAi(["admin", "keys", "create", "forever key", "--expires", "forever"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.equal(outText(), "ubq_ai_token_value\n");
+});
+
+Deno.test("ubq-ai: admin keys create errors when both expires flags are set", async () => {
+  const { runtime, errText, requests } = makeRuntime({
+    env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
+    fetch: () => {
+      throw new Error("fetch should not be called");
+    },
+  });
+
+  const code = await runUbqAi(
+    ["admin", "keys", "create", "bad key", "--expires", "week", "--expires-at-ms", "123"],
+    runtime,
+  );
+  assert.equal(code, 2);
+  assert.ok(errText().includes("Pass only one of --expires-at-ms or --expires"));
+  assert.equal(requests.length, 0);
+});
+
 Deno.test("ubq-ai: admin keys create --json prints full JSON response", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },

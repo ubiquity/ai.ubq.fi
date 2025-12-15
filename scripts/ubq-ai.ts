@@ -127,10 +127,102 @@ export const parseArgs = (args: string[]): ParsedArgs => {
   return { _: positional, flags };
 };
 
-const usageText = (): string =>
-  `ubq-ai.ts
+const SHORT_GIT_REVISION_LEN = 7;
 
-Unified CLI for https://ai.ubq.fi (client + admin).
+const toShortGitRevision = (value: string | undefined): string | null => {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return null;
+  if (!/^[0-9a-fA-F]{7,40}$/.test(trimmed)) return null;
+  return trimmed.slice(0, SHORT_GIT_REVISION_LEN);
+};
+
+const tryReadTextFile = async (runtime: UbqAiRuntime, path: string): Promise<string | null> => {
+  try {
+    return await runtime.readTextFile(path);
+  } catch {
+    return null;
+  }
+};
+
+const parseGitDirFromDotGitFile = (content: string): string | null => {
+  const firstLine = (content.split(/\r?\n/, 1)[0] ?? "").trim();
+  const match = firstLine.match(/^gitdir:\s*(.+)\s*$/i);
+  return match?.[1]?.trim() || null;
+};
+
+const isAbsolutePath = (path: string): boolean =>
+  path.startsWith("/") || path.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(path);
+
+const readGitHeadShortRevision = async (runtime: UbqAiRuntime, gitDir: string): Promise<string | null> => {
+  const head = await tryReadTextFile(runtime, `${gitDir}/HEAD`);
+  if (!head) return null;
+  const trimmedHead = head.trim();
+
+  const refMatch = trimmedHead.match(/^ref:\s*(.+)\s*$/);
+  if (!refMatch) return toShortGitRevision(trimmedHead);
+
+  const refPath = refMatch[1]?.trim();
+  if (!refPath) return null;
+
+  const ref = await tryReadTextFile(runtime, `${gitDir}/${refPath}`);
+  if (ref) return toShortGitRevision(ref.trim());
+
+  const packedRefs = await tryReadTextFile(runtime, `${gitDir}/packed-refs`);
+  if (!packedRefs) return null;
+
+  for (const line of packedRefs.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("^")) continue;
+    const space = trimmed.indexOf(" ");
+    if (space === -1) continue;
+    const hash = trimmed.slice(0, space).trim();
+    const refName = trimmed.slice(space + 1).trim();
+    if (refName === refPath) return toShortGitRevision(hash);
+  }
+
+  return null;
+};
+
+const gitShortRevision = async (runtime: UbqAiRuntime): Promise<string | null> => {
+  const env = toShortGitRevision(runtime.envGet("GIT_REVISION") ?? runtime.envGet("GITHUB_SHA") ?? undefined);
+  if (env) return env;
+
+  const gitRoots = [".", "..", "../..", "../../..", "../../../..", "../../../../..", "../../../../../..", "../../../../../../.."];
+  for (const root of gitRoots) {
+    const dotGitHead = await tryReadTextFile(runtime, `${root}/.git/HEAD`);
+    if (dotGitHead) return await readGitHeadShortRevision(runtime, `${root}/.git`);
+
+    const dotGitFile = await tryReadTextFile(runtime, `${root}/.git`);
+    if (!dotGitFile) continue;
+    const gitDir = parseGitDirFromDotGitFile(dotGitFile);
+    if (!gitDir) continue;
+    const resolvedGitDir = isAbsolutePath(gitDir) ? gitDir : `${root}/${gitDir}`;
+    const rev = await readGitHeadShortRevision(runtime, resolvedGitDir);
+    if (rev) return rev;
+  }
+
+  return null;
+};
+
+const renderUbqLogo = (revision: string | null): string => {
+  const revLabel = revision ? `${revision}` : "";
+  return `⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣾⣷⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⣀⣴⣾⡿⠛⠉⠉⠛⢿⣷⣦⣀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⣠⣴⣿⠿⠛⠁⠀⠀⠀⠀⠀⠀⠈⠛⠿⣿⣦⣄⠀⠀⠀
+⠀⢰⣿⣿⣿⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢈⣿⣿⣿⡆⠀
+⠀⢸⣿⡟⠻⢿⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣾⡿⠟⢻⣿⡇⠀
+⠀⢸⣿⡇⠀⠀⢻⣷⠀⠀⠀⠀⠀⠀⠀⠀⣾⡟⠀⠀⢸⣿⡇⠀ai.ubq.fi
+⠀⢸⣿⡇⠀⠀⠀⣿⣇⠀⠀⠀⠀⠀⠀⣸⣿⠀⠀⠀⢸⣿⡇⠀
+⠀⢸⣿⡇⠀⠀⠀⢸⣿⡀⠀⠀⠀⠀⢀⣿⡇⠀⠀⠀⢸⣿⡇⠀${revLabel}
+⠀⢸⣿⡇⠀⠀⠀⠀⢻⣷⣄⣀⣀⣠⣾⡟⠀⠀⠀⠀⢸⣿⡇⠀
+⠀⢸⣿⣧⣀⠀⠀⠀⠀⠙⠛⠿⠿⠛⠋⠀⠀⠀⠀⣀⣼⣿⡇⠀
+⠀⠀⠈⠛⠿⣷⣦⣀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣴⣾⠿⠛⠁⠀⠀
+⠀⠀⠀⠀⠀⠈⠙⠿⣷⣦⣄⠀⠀⣠⣴⣾⠿⠋⠁⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠻⣿⣿⠟⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀`;
+};
+
+const usageText = async (runtime: UbqAiRuntime): Promise<string> =>
+  `${renderUbqLogo(await gitShortRevision(runtime))}
 
 Usage:
   deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts [--url <base>] <command> [options]
@@ -153,16 +245,22 @@ Commands:
   chat [<prompt>] [--model <id>] [--reasoning-effort <level>] [--system <text>] [--developer <text>] [--messages-json <json>] [--messages-file <path>]
   responses [<input>] [--model <id>] [--reasoning-effort <level>] [--input-json <json>] [--input-file <path>]
   admin upload-auth [--auth-json <path>]
-  admin keys create "<name>" [--token <token>]
+  admin keys create "<name>" [--token <token>] [--expires <preset>|--expires-at-ms <ms>]
   admin keys list
   admin keys revoke --id <id>
+
+Admin key expiration:
+  --expires <preset>           day|week|month|quarter|year|forever (sets expires_at_ms)
+  --expires-at-ms <ms>         Unix epoch ms timestamp; -1 means does not expire
 
 Examples:
   UBIQUITY_AI_USER_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat \"Tell me a short joke.\"
   UBIQUITY_AI_USER_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"example key\"
+  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"tmp key\" --expires week
   UBIQUITY_AI_USER_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts whoami | jq
+
 `;
 
 export type UbqAiRuntime = Readonly<{
@@ -351,6 +449,75 @@ const getFlagString = (flags: Record<string, FlagValue>, key: string): string | 
   return null;
 };
 
+type ApiKeyExpiryPreset = "day" | "week" | "month" | "quarter" | "year" | "forever";
+
+const normalizeApiKeyExpiryPreset = (raw: string): ApiKeyExpiryPreset | null => {
+  const normalized = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (!normalized) return null;
+
+  if (normalized === "day" || normalized === "1d" || normalized === "1day" || normalized === "oneday") return "day";
+  if (normalized === "week" || normalized === "1w" || normalized === "1week" || normalized === "oneweek") return "week";
+  if (normalized === "month" || normalized === "1m" || normalized === "1month" || normalized === "onemonth") {
+    return "month";
+  }
+  if (normalized === "quarter" || normalized === "1q" || normalized === "1quarter" || normalized === "onequarter") {
+    return "quarter";
+  }
+  if (normalized === "year" || normalized === "1y" || normalized === "1year" || normalized === "oneyear") return "year";
+  if (
+    normalized === "forever" || normalized === "never" || normalized === "noexpiry" || normalized === "noexpiration"
+  ) {
+    return "forever";
+  }
+  return null;
+};
+
+const apiKeyExpiresAtMsFromPreset = (preset: ApiKeyExpiryPreset, nowMs: number): number => {
+  if (preset === "forever") return -1;
+  const HOUR_MS = 60 * 60_000;
+  const DAY_MS = 24 * HOUR_MS;
+  const durations: Record<Exclude<ApiKeyExpiryPreset, "forever">, number> = {
+    day: DAY_MS,
+    week: 7 * DAY_MS,
+    month: 30 * DAY_MS,
+    quarter: 90 * DAY_MS,
+    year: 365 * DAY_MS,
+  };
+  return nowMs + durations[preset];
+};
+
+const parseApiKeyExpiresAtMs = (
+  flags: Record<string, FlagValue>,
+): { ok: true; value: number | undefined } | { ok: false; message: string } => {
+  const rawExpiresAtMs = getFlagString(flags, "expires-at-ms");
+  const rawPreset = getFlagString(flags, "expires");
+  if (rawExpiresAtMs && rawPreset) {
+    return { ok: false, message: "Pass only one of --expires-at-ms or --expires." };
+  }
+
+  if (rawExpiresAtMs) {
+    const trimmed = rawExpiresAtMs.trim();
+    if (!trimmed) return { ok: false, message: "--expires-at-ms must be a number (Unix epoch ms) or -1." };
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return { ok: false, message: "--expires-at-ms must be a finite number." };
+    const expiresAtMs = Math.trunc(parsed);
+    if (expiresAtMs === -1) return { ok: true, value: -1 };
+    if (expiresAtMs < 0) return { ok: false, message: "--expires-at-ms must be -1 or a future timestamp." };
+    if (expiresAtMs <= Date.now()) return { ok: false, message: "--expires-at-ms must be in the future (or -1)." };
+    return { ok: true, value: expiresAtMs };
+  }
+
+  if (rawPreset) {
+    const preset = normalizeApiKeyExpiryPreset(rawPreset);
+    if (!preset) {
+      return { ok: false, message: "--expires must be one of: day, week, month, quarter, year, forever." };
+    }
+    return { ok: true, value: apiKeyExpiresAtMsFromPreset(preset, Date.now()) };
+  }
+
+  return { ok: true, value: undefined };
+};
+
 const resolveClientToken = (flags: Record<string, FlagValue>, runtime: UbqAiRuntime): string | null => {
   const fromFlag = getFlagString(flags, "token");
   const fromEnv = runtime.envGet("UBIQUITY_AI_USER_TOKEN") ?? "";
@@ -371,7 +538,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   const flags = parsed.flags;
 
   if (flags.help === true || flags.h === true || parsed._.length === 0) {
-    await writeOutText(runtime, usageText());
+    await writeOutText(runtime, await usageText(runtime));
     return parsed._.length === 0 ? 2 : 0;
   }
 
@@ -860,6 +1027,15 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         const tokenOnlyFlag = flags["token-only"];
         const tokenOnly = !wantsJson && tokenOnlyFlag !== false;
 
+        const expiresAt = parseApiKeyExpiresAtMs(flags);
+        if (!expiresAt.ok) {
+          await writeErrText(runtime, `${expiresAt.message}\n`);
+          return 2;
+        }
+
+        const body: Record<string, unknown> = token ? { name, token } : { name };
+        if (expiresAt.value !== undefined) body.expires_at_ms = expiresAt.value;
+
         const req = new Request(endpoint("/admin/api-keys"), {
           method: "POST",
           headers: {
@@ -867,7 +1043,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
             "Content-Type": "application/json",
             "Accept": "application/json",
           },
-          body: JSON.stringify(token ? { name, token } : { name }),
+          body: JSON.stringify(body),
         });
 
         const result = await doFetchWithDebug(req);
@@ -937,17 +1113,17 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       }
 
       await writeErrText(runtime, `Unknown admin keys command: ${action || "(missing)"}\n`);
-      await writeOutText(runtime, usageText());
+      await writeOutText(runtime, await usageText(runtime));
       return 2;
     }
 
     await writeErrText(runtime, `Unknown admin command: ${sub || "(missing)"}\n`);
-    await writeOutText(runtime, usageText());
+    await writeOutText(runtime, await usageText(runtime));
     return 2;
   }
 
   await writeErrText(runtime, `Unknown command: ${cmd}\n`);
-  await writeOutText(runtime, usageText());
+  await writeOutText(runtime, await usageText(runtime));
   return 2;
 };
 

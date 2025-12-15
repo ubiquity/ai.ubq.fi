@@ -29,13 +29,15 @@ Usage:
   deno run --allow-env --allow-net scripts/api-keys.ts <command> [options]
 
 Commands:
-  create --name "<label>" [--token "<exact token>"] [--token-only]
+  create --name "<label>" [--token "<exact token>"] [--expires <preset>|--expires-at-ms <ms>] [--token-only]
   list
   revoke --id "<id>"
 
 Options:
   --url https://ai.ubq.fi          Base URL (default: https://ai.ubq.fi)
   --admin-token "<token>"         Admin token (or set UBIQUITY_AI_ADMIN_TOKEN or DENO_DEPLOY_TOKEN)
+  --expires <preset>              day|week|month|quarter|year|forever (sets expires_at_ms)
+  --expires-at-ms <ms>            Unix epoch ms timestamp; -1 means does not expire
 `);
 };
 
@@ -77,6 +79,43 @@ const doFetch = async (
 
 const endpoint = (path: string): URL => new URL(path, baseUrl);
 
+type ApiKeyExpiryPreset = "day" | "week" | "month" | "quarter" | "year" | "forever";
+
+const normalizeApiKeyExpiryPreset = (raw: string): ApiKeyExpiryPreset | null => {
+  const normalized = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (!normalized) return null;
+
+  if (normalized === "day" || normalized === "1d" || normalized === "1day" || normalized === "oneday") return "day";
+  if (normalized === "week" || normalized === "1w" || normalized === "1week" || normalized === "oneweek") return "week";
+  if (normalized === "month" || normalized === "1m" || normalized === "1month" || normalized === "onemonth") {
+    return "month";
+  }
+  if (normalized === "quarter" || normalized === "1q" || normalized === "1quarter" || normalized === "onequarter") {
+    return "quarter";
+  }
+  if (normalized === "year" || normalized === "1y" || normalized === "1year" || normalized === "oneyear") return "year";
+  if (
+    normalized === "forever" || normalized === "never" || normalized === "noexpiry" || normalized === "noexpiration"
+  ) {
+    return "forever";
+  }
+  return null;
+};
+
+const apiKeyExpiresAtMsFromPreset = (preset: ApiKeyExpiryPreset, nowMs: number): number => {
+  if (preset === "forever") return -1;
+  const HOUR_MS = 60 * 60_000;
+  const DAY_MS = 24 * HOUR_MS;
+  const durations: Record<Exclude<ApiKeyExpiryPreset, "forever">, number> = {
+    day: DAY_MS,
+    week: 7 * DAY_MS,
+    month: 30 * DAY_MS,
+    quarter: 90 * DAY_MS,
+    year: 365 * DAY_MS,
+  };
+  return nowMs + durations[preset];
+};
+
 if (command === "create") {
   const name = (parsed.name as string | undefined) ?? "";
   if (!name.trim()) {
@@ -84,7 +123,43 @@ if (command === "create") {
     Deno.exit(2);
   }
 
+  const rawExpiresAtMs = parsed["expires-at-ms"];
+  const rawPreset = parsed.expires;
+  if (typeof rawExpiresAtMs === "string" && typeof rawPreset === "string") {
+    console.error("Pass only one of --expires-at-ms or --expires.");
+    Deno.exit(2);
+  }
+
+  let expires_at_ms: number | undefined;
+  if (typeof rawExpiresAtMs === "string") {
+    const parsedNumber = Number(rawExpiresAtMs.trim());
+    if (!Number.isFinite(parsedNumber)) {
+      console.error("--expires-at-ms must be a finite number (Unix epoch ms) or -1.");
+      Deno.exit(2);
+    }
+    const expiresAtMs = Math.trunc(parsedNumber);
+    if (expiresAtMs === -1) expires_at_ms = -1;
+    else if (expiresAtMs <= Date.now()) {
+      console.error("--expires-at-ms must be in the future (or -1).");
+      Deno.exit(2);
+    } else if (expiresAtMs < 0) {
+      console.error("--expires-at-ms must be -1 or a future timestamp.");
+      Deno.exit(2);
+    } else {
+      expires_at_ms = expiresAtMs;
+    }
+  } else if (typeof rawPreset === "string") {
+    const preset = normalizeApiKeyExpiryPreset(rawPreset);
+    if (!preset) {
+      console.error("--expires must be one of: day, week, month, quarter, year, forever.");
+      Deno.exit(2);
+    }
+    expires_at_ms = apiKeyExpiresAtMsFromPreset(preset, Date.now());
+  }
+
   const token = (parsed.token as string | undefined) ?? null;
+  const body: Record<string, unknown> = token ? { name, token } : { name };
+  if (expires_at_ms !== undefined) body.expires_at_ms = expires_at_ms;
   const req = new Request(endpoint("/admin/api-keys"), {
     method: "POST",
     headers: {
@@ -92,7 +167,7 @@ if (command === "create") {
       "Content-Type": "application/json",
       "Accept": "application/json",
     },
-    body: JSON.stringify(token ? { name, token } : { name }),
+    body: JSON.stringify(body),
   });
 
   const result = await doFetch(req);

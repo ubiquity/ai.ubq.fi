@@ -23,11 +23,13 @@ type ApiKeyRecord = Readonly<{
   prefix: string;
   hash: string;
   created_at_ms: number;
+  expires_at_ms: number;
   revoked_at_ms: number | null;
 }>;
 
 type ApiKeyHashRecord = Readonly<{
   id: string;
+  expires_at_ms: number;
   revoked_at_ms: number | null;
 }>;
 
@@ -68,6 +70,7 @@ const CODEX_USER_AGENT = "codex_cli_rs/0.99.0 (ai.ubq.fi)";
 const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
 const API_KEY_ID_PREFIX = ["ubq_ai", "api_keys", "id"] as const;
 const API_KEY_HASH_PREFIX = ["ubq_ai", "api_keys", "hash"] as const;
+const API_KEY_NO_EXPIRATION_MS = -1;
 const CODEX_INSTRUCTIONS_URL = new URL("./codex_instructions.md", import.meta.url);
 const INDEX_HTML_URL = new URL("./index.html", import.meta.url);
 const STYLE_CSS_URL = new URL("./style.css", import.meta.url);
@@ -334,6 +337,12 @@ const authenticateClient = async (req: Request): Promise<AuthenticateClientResul
     const hash = await sha256Base64Url(token);
     const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(hash));
     if (entry.value && entry.value.revoked_at_ms == null) {
+      const expiresAtMs = typeof entry.value.expires_at_ms === "number" && Number.isFinite(entry.value.expires_at_ms)
+        ? Math.trunc(entry.value.expires_at_ms)
+        : API_KEY_NO_EXPIRATION_MS;
+      if (expiresAtMs !== API_KEY_NO_EXPIRATION_MS && expiresAtMs <= Date.now()) {
+        return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+      }
       return { ok: true, token, method: { kind: "kv_api_key", key_id: entry.value.id } };
     }
   }
@@ -1177,6 +1186,26 @@ const normalizeOptionalApiKeyToken = (value: unknown): string | null => {
   return token;
 };
 
+const coerceApiKeyExpiresAtMs = (record: unknown): number => {
+  if (!isRecord(record)) return API_KEY_NO_EXPIRATION_MS;
+  const value = record.expires_at_ms;
+  if (typeof value !== "number" || !Number.isFinite(value)) return API_KEY_NO_EXPIRATION_MS;
+  const expiresAtMs = Math.trunc(value);
+  if (expiresAtMs === API_KEY_NO_EXPIRATION_MS) return API_KEY_NO_EXPIRATION_MS;
+  if (expiresAtMs < 0) return API_KEY_NO_EXPIRATION_MS;
+  return expiresAtMs;
+};
+
+const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | null => {
+  if (value === undefined || value === null) return API_KEY_NO_EXPIRATION_MS;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const expiresAtMs = Math.trunc(value);
+  if (expiresAtMs === API_KEY_NO_EXPIRATION_MS) return API_KEY_NO_EXPIRATION_MS;
+  if (expiresAtMs < 0) return null;
+  if (expiresAtMs <= nowMs) return null;
+  return expiresAtMs;
+};
+
 const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
   if (!kv) {
@@ -1192,6 +1221,16 @@ const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
   const providedToken = normalizeOptionalApiKeyToken(raw.token);
   const token = providedToken ?? generateApiKeyToken();
 
+  const now = Date.now();
+  const expiresAtMs = normalizeApiKeyExpiresAtMs(raw.expires_at_ms, now);
+  if (expiresAtMs === null) {
+    return openaiError(
+      400,
+      "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1",
+      "invalid_request_error",
+    );
+  }
+
   const hash = await sha256Base64Url(token);
   const hashKey = apiKeyHashKey(hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
@@ -1200,16 +1239,16 @@ const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
   }
 
   const id = crypto.randomUUID();
-  const now = Date.now();
   const record: ApiKeyRecord = {
     id,
     name,
     prefix: token.slice(0, 12),
     hash,
     created_at_ms: now,
+    expires_at_ms: expiresAtMs,
     revoked_at_ms: null,
   };
-  const hashRecord: ApiKeyHashRecord = { id, revoked_at_ms: null };
+  const hashRecord: ApiKeyHashRecord = { id, expires_at_ms: expiresAtMs, revoked_at_ms: null };
 
   const commit = await kv.atomic()
     .check(hashEntry)
@@ -1229,6 +1268,7 @@ const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
       token,
       prefix: record.prefix,
       created_at_ms: record.created_at_ms,
+      expires_at_ms: record.expires_at_ms,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
@@ -1255,6 +1295,7 @@ const handleAdminApiKeysList = async (): Promise<Response> => {
         name: r.name,
         prefix: r.prefix,
         created_at_ms: r.created_at_ms,
+        expires_at_ms: coerceApiKeyExpiresAtMs(r),
         revoked_at_ms: r.revoked_at_ms,
       })),
     },
@@ -1278,10 +1319,17 @@ const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> => {
   if (!entry.value) return openaiError(404, "Not found", "not_found");
 
   const now = Date.now();
-  const updated: ApiKeyRecord = entry.value.revoked_at_ms ? entry.value : { ...entry.value, revoked_at_ms: now };
+  const expiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
+  const updated: ApiKeyRecord = entry.value.revoked_at_ms
+    ? { ...entry.value, expires_at_ms: expiresAtMs }
+    : { ...entry.value, expires_at_ms: expiresAtMs, revoked_at_ms: now };
   const hashKey = apiKeyHashKey(entry.value.hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
-  const updatedHash: ApiKeyHashRecord = { id, revoked_at_ms: updated.revoked_at_ms };
+  const updatedHash: ApiKeyHashRecord = {
+    id,
+    expires_at_ms: updated.expires_at_ms,
+    revoked_at_ms: updated.revoked_at_ms,
+  };
 
   const atomic = kv.atomic()
     .check(entry)
@@ -1494,6 +1542,7 @@ async function handler(req: Request): Promise<Response> {
             name: entry.value.name,
             prefix: entry.value.prefix,
             created_at_ms: entry.value.created_at_ms,
+            expires_at_ms: coerceApiKeyExpiresAtMs(entry.value),
             revoked_at_ms: entry.value.revoked_at_ms,
           };
         }
