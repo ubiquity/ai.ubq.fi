@@ -148,6 +148,7 @@ Global options:
 Commands:
   health
   info
+  whoami
   models
   chat [<prompt>] [--model <id>] [--reasoning-effort <level>] [--system <text>] [--developer <text>] [--messages-json <json>] [--messages-file <path>]
   responses [<input>] [--model <id>] [--reasoning-effort <level>] [--input-json <json>] [--input-file <path>]
@@ -161,6 +162,7 @@ Examples:
   UBQ_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"example key\"
+  UBQ_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts whoami | jq
 `;
 
 export type UbqAiRuntime = Readonly<{
@@ -438,6 +440,32 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
 
   if (cmd === "info") {
     const req = new Request(endpoint("/"), { method: "GET", headers: { "Accept": "application/json" } });
+    const result = await doFetchWithDebug(req);
+    if (!result.ok) {
+      await writeErrText(runtime, `Request failed (${result.status}).\n`);
+      await writeErrText(runtime, `${result.body}\n`);
+      return 1;
+    }
+    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+    return 0;
+  }
+
+  if (cmd === "whoami") {
+    const token = resolveClientToken(flags, runtime);
+    if (!token) {
+      await writeErrText(
+        runtime,
+        "Missing client token. Set UBQ_AI_TOKEN (or UBQ_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+      );
+      return 2;
+    }
+    const req = new Request(endpoint("/v1/auth"), {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/json",
+      },
+    });
     const result = await doFetchWithDebug(req);
     if (!result.ok) {
       await writeErrText(runtime, `Request failed (${result.status}).\n`);

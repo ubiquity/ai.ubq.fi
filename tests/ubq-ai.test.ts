@@ -124,6 +124,42 @@ Deno.test("ubq-ai: info prints JSON", async () => {
   assert.equal(requests.length, 1);
 });
 
+Deno.test("ubq-ai: whoami uses client token and prints JSON", async () => {
+  const { runtime, outText, errText, requests } = makeRuntime({
+    env: { UBQ_AI_TOKEN: "ubq_ai_test_token_1234567890" },
+    fetch: (_req, recorded) => {
+      assert.ok(recorded.url.endsWith("/v1/auth"));
+      assert.equal(recorded.method, "GET");
+      assert.equal(recorded.headers.authorization, "Bearer ubq_ai_test_token_1234567890");
+      return jsonResponse(200, { ok: true, service: "ai.ubq.fi", auth: { mode: "required" } });
+    },
+  });
+
+  const code = await runUbqAi(["whoami"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.ok(outText().includes('"service": "ai.ubq.fi"'));
+  assert.equal(requests.length, 1);
+});
+
+Deno.test("ubq-ai: whoami falls back to admin token when client token missing", async () => {
+  const { runtime, outText, errText, requests } = makeRuntime({
+    env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
+    fetch: (_req, recorded) => {
+      assert.ok(recorded.url.endsWith("/v1/auth"));
+      assert.equal(recorded.method, "GET");
+      assert.equal(recorded.headers.authorization, "Bearer deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz");
+      return jsonResponse(200, { ok: true, service: "ai.ubq.fi", auth: { mode: "required" } });
+    },
+  });
+
+  const code = await runUbqAi(["whoami"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.ok(outText().includes('"service": "ai.ubq.fi"'));
+  assert.equal(requests.length, 1);
+});
+
 Deno.test("ubq-ai: models uses client token and prints JSON", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { UBQ_AI_TOKEN: "ubq_ai_test_token_1234567890" },

@@ -45,6 +45,14 @@ curl -sS https://ai.ubq.fi/v1/models \
   -H "Authorization: Bearer $UBQ_AI_TOKEN"
 ```
 
+Whoami (debug which auth method was used; never returns raw secrets):
+
+```bash
+curl -sS https://ai.ubq.fi/v1/auth \
+  -H "Authorization: Bearer $UBQ_AI_TOKEN" \
+  | jq
+```
+
 Chat completion (OpenAI-compatible):
 
 ```bash
@@ -126,6 +134,7 @@ Examples:
 
 ```bash
 export UBQ_AI_TOKEN="..."
+ubq-ai whoami | jq
 ubq-ai models | jq
 ubq-ai chat "Tell me a short joke."
 ubq-ai chat --reasoning-effort high "Solve: 24*7."
@@ -218,6 +227,7 @@ deno task ubq-ai admin keys revoke --id "<id>"
 - `POST /admin/api-keys` (admin only)
 - `GET /admin/api-keys` (admin only)
 - `POST /admin/api-keys/revoke` (admin only)
+- `GET /v1/auth`
 - `GET /v1/models`
 - `POST /v1/chat/completions` (streaming and non-streaming)
 - `POST /v1/responses` (streaming and non-streaming; non-streaming buffers upstream SSE)

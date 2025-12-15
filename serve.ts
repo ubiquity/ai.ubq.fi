@@ -143,6 +143,12 @@ const encodeHex = (bytes: Uint8Array): string => {
   return out;
 };
 
+const sha256Hex = async (value: string): Promise<string> => {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return encodeHex(new Uint8Array(digest));
+};
+
 const apiKeyIdKey = (id: string) => [...API_KEY_ID_PREFIX, id] as const;
 const apiKeyHashKey = (hash: string) => [...API_KEY_HASH_PREFIX, hash] as const;
 
@@ -289,40 +295,68 @@ const getBearerToken = (req: Request): string | null => {
 
 const looksLikeUbqAiClientToken = (token: string): boolean => token.trim().startsWith("ubq_ai_");
 
-const isValidClientKey = async (kv: Deno.Kv, token: string): Promise<boolean> => {
-  const hash = await sha256Base64Url(token);
-  const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(hash));
-  if (!entry.value) return false;
-  return entry.value.revoked_at_ms == null;
+const classifyToken = (token: string): string => {
+  const trimmed = token.trim();
+  if (!trimmed) return "unset";
+  if (trimmed.startsWith("ddw_")) return "deno_deploy_like(ddw_)";
+  if (trimmed.startsWith("ubq_ai_")) return "ubq_ai_prefix";
+  if (/^[0-9a-fA-F]{64}$/.test(trimmed)) return "hex64";
+  if (trimmed.includes("_")) return "has_underscore";
+  return "other";
+};
+
+type ClientAuthMethod =
+  | { kind: "disabled" }
+  | { kind: "auth_tokens_allowlist" }
+  | { kind: "kv_api_key"; key_id: string }
+  | { kind: "admin_allowlist" }
+  | { kind: "deno_deploy_token" };
+
+type AuthenticateClientResult =
+  | { ok: true; token: string | null; method: ClientAuthMethod }
+  | { ok: false; response: Response };
+
+type CheckAdminTokenResult =
+  | { ok: true; kind: "admin_allowlist" | "deno_deploy_token" }
+  | { ok: false; response: Response | null };
+
+const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
+  const kv = await kvPromise;
+  const localAuthDisabled = !config.isDeploy && config.authTokens.size === 0 && !kv;
+  const token = getBearerToken(req);
+  if (localAuthDisabled) return { ok: true, token, method: { kind: "disabled" } };
+
+  if (!token) return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+
+  if (config.authTokens.has(token)) return { ok: true, token, method: { kind: "auth_tokens_allowlist" } };
+
+  if (kv) {
+    const hash = await sha256Base64Url(token);
+    const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(hash));
+    if (entry.value && entry.value.revoked_at_ms == null) {
+      return { ok: true, token, method: { kind: "kv_api_key", key_id: entry.value.id } };
+    }
+  }
+
+  const adminResult = await checkAdminToken(token);
+  if (adminResult.ok) return { ok: true, token, method: { kind: adminResult.kind } };
+  if (adminResult.response) return { ok: false, response: adminResult.response };
+
+  if (kv) return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+
+  if (config.isDeploy && config.authTokens.size === 0) {
+    return {
+      ok: false,
+      response: openaiError(500, "Server misconfigured: set UBQ_AI_AUTH_TOKENS or enable Deno KV", "server_error"),
+    };
+  }
+
+  return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
 };
 
 const requireClientAuth = async (req: Request): Promise<Response | null> => {
-  const kv = await kvPromise;
-  const localAuthDisabled = !config.isDeploy && config.authTokens.size === 0 && !kv;
-  if (localAuthDisabled) return null;
-
-  const token = getBearerToken(req);
-  if (!token) return openaiError(401, "Unauthorized", "invalid_api_key");
-
-  if (config.authTokens.has(token)) return null;
-
-  if (kv) {
-    if (await isValidClientKey(kv, token)) return null;
-  }
-
-  const adminResult = await isAdminToken(token);
-  if (adminResult.ok) return null;
-  if (adminResult.response) return adminResult.response;
-
-  if (kv) {
-    return openaiError(401, "Unauthorized", "invalid_api_key");
-  }
-
-  if (config.isDeploy && config.authTokens.size === 0) {
-    return openaiError(500, "Server misconfigured: set UBQ_AI_AUTH_TOKENS or enable Deno KV", "server_error");
-  }
-
-  return openaiError(401, "Unauthorized", "invalid_api_key");
+  const result = await authenticateClient(req);
+  return result.ok ? null : result.response;
 };
 
 const DENO_API_BASE_URL = "https://api.deno.com/v1";
@@ -362,14 +396,21 @@ const verifyDenoDeployTokenCached = async (token: string): Promise<
   }
 };
 
-const isAdminToken = async (token: string): Promise<{ ok: true } | { ok: false; response: Response | null }> => {
+const checkAdminToken = async (token: string): Promise<CheckAdminTokenResult> => {
   if (config.adminTokens.size > 0) {
-    return config.adminTokens.has(token) ? { ok: true } : { ok: false, response: null };
+    return config.adminTokens.has(token) ? { ok: true, kind: "admin_allowlist" } : { ok: false, response: null };
   }
 
   if (!looksLikeDenoDeployToken(token)) return { ok: false, response: null };
 
-  return await verifyDenoDeployTokenCached(token);
+  const verified = await verifyDenoDeployTokenCached(token);
+  if (verified.ok) return { ok: true, kind: "deno_deploy_token" };
+  return verified;
+};
+
+const isAdminToken = async (token: string): Promise<{ ok: true } | { ok: false; response: Response | null }> => {
+  const result = await checkAdminToken(token);
+  return result.ok ? { ok: true } : result;
 };
 
 const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
@@ -1411,6 +1452,71 @@ async function handler(req: Request): Promise<Response> {
 
   if (!path.startsWith("/v1/")) {
     return withCors(openaiError(404, "Not found", "not_found"));
+  }
+
+  if (req.method === "GET" && path === "/v1/auth") {
+    const authResult = await authenticateClient(req);
+    if (!authResult.ok) return withCors(authResult.response);
+
+    const kv = await kvPromise;
+    const mode = config.isDeploy && config.authTokens.size === 0 && !kv
+      ? "misconfigured"
+      : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)
+      ? "required"
+      : "disabled";
+
+    const token = authResult.token;
+    const tokenInfo = token
+      ? {
+        present: true,
+        length: token.length,
+        shape: classifyToken(token),
+        sha256_12: (await sha256Hex(token)).slice(0, 12),
+      }
+      : {
+        present: false,
+        length: null,
+        shape: null,
+        sha256_12: null,
+      };
+
+    const method: Record<string, unknown> = { kind: authResult.method.kind };
+    const isAdmin = authResult.method.kind === "admin_allowlist" || authResult.method.kind === "deno_deploy_token";
+
+    if (authResult.method.kind === "kv_api_key") {
+      const id = authResult.method.key_id;
+      let key: Record<string, unknown> = { id };
+      if (kv) {
+        const entry = await kv.get<ApiKeyRecord>(apiKeyIdKey(id));
+        if (entry.value) {
+          key = {
+            id: entry.value.id,
+            name: entry.value.name,
+            prefix: entry.value.prefix,
+            created_at_ms: entry.value.created_at_ms,
+            revoked_at_ms: entry.value.revoked_at_ms,
+          };
+        }
+      }
+      method.key = key;
+    }
+
+    return withCors(
+      json(
+        200,
+        {
+          ok: true,
+          service: "ai.ubq.fi",
+          auth: {
+            mode,
+            is_admin: isAdmin,
+            method,
+            token: tokenInfo,
+          },
+        },
+        { "Cache-Control": "no-store" },
+      ),
+    );
   }
 
   const authError = await requireClientAuth(req);
