@@ -34,12 +34,14 @@ type ApiKeyHashRecord = Readonly<{
 type ChatCompletionRequest = Readonly<{
   model?: unknown;
   messages?: unknown;
+  reasoning_effort?: unknown;
   stream?: unknown;
 }>;
 
 type ResponsesRequest = Readonly<{
   model?: unknown;
   input?: unknown;
+  reasoning?: unknown;
   stream?: unknown;
 }>;
 
@@ -135,13 +137,19 @@ const sha256Base64Url = async (value: string): Promise<string> => {
   return encodeBase64Url(new Uint8Array(digest));
 };
 
+const encodeHex = (bytes: Uint8Array): string => {
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+};
+
 const apiKeyIdKey = (id: string) => [...API_KEY_ID_PREFIX, id] as const;
 const apiKeyHashKey = (hash: string) => [...API_KEY_HASH_PREFIX, hash] as const;
 
 const generateApiKeyToken = (): string => {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
-  return `ubq_ai_${encodeBase64Url(bytes)}`;
+  return encodeHex(bytes);
 };
 
 const codexInstructionsPromise: Promise<string> = (async () => {
@@ -179,6 +187,53 @@ const appJsPromise: Promise<string | null> = (async () => {
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 const getString = (value: unknown): string | null => (typeof value === "string" ? value : null);
+
+type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+
+const parseReasoningEffortField = (
+  value: unknown,
+  fieldName: string,
+): { ok: true; value: ReasoningEffort | null | undefined } | { ok: false; message: string } => {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (value === null) return { ok: true, value: null };
+  if (typeof value !== "string") {
+    return { ok: false, message: `${fieldName} must be a string or null` };
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return { ok: false, message: `${fieldName} must be a non-empty string or null` };
+  if (!REASONING_EFFORTS.has(normalized as ReasoningEffort)) {
+    return { ok: false, message: `${fieldName} must be one of: none, minimal, low, medium, high, xhigh` };
+  }
+  return { ok: true, value: normalized as ReasoningEffort };
+};
+
+const parseReasoningParam = (
+  value: unknown,
+): { ok: true; value: Record<string, unknown> | null | undefined } | { ok: false; message: string } => {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (value === null) return { ok: true, value: null };
+  if (!isRecord(value)) return { ok: false, message: "reasoning must be an object or null" };
+  if ("effort" in value) {
+    const effort = parseReasoningEffortField(value.effort, "reasoning.effort");
+    if (!effort.ok) return effort;
+  }
+  if ("summary" in value) {
+    const summary = value.summary;
+    if (summary !== undefined && summary !== null && typeof summary !== "string") {
+      return { ok: false, message: "reasoning.summary must be a string or null" };
+    }
+  }
+  if ("generate_summary" in value) {
+    const generateSummary = value.generate_summary;
+    if (generateSummary !== undefined && generateSummary !== null && typeof generateSummary !== "string") {
+      return { ok: false, message: "reasoning.generate_summary must be a string or null" };
+    }
+  }
+
+  return { ok: true, value };
+};
 
 const corsHeaders = (): HeadersInit => ({
   "Access-Control-Allow-Origin": config.allowOrigin,
@@ -224,6 +279,8 @@ const getBearerToken = (req: Request): string | null => {
   return match?.[1]?.trim() || null;
 };
 
+const looksLikeUbqAiClientToken = (token: string): boolean => token.trim().startsWith("ubq_ai_");
+
 const isValidClientKey = async (kv: Deno.Kv, token: string): Promise<boolean> => {
   const hash = await sha256Base64Url(token);
   const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(hash));
@@ -243,6 +300,13 @@ const requireClientAuth = async (req: Request): Promise<Response | null> => {
 
   if (kv) {
     if (await isValidClientKey(kv, token)) return null;
+  }
+
+  const adminResult = await isAdminToken(token);
+  if (adminResult.ok) return null;
+  if (adminResult.response) return adminResult.response;
+
+  if (kv) {
     return openaiError(401, "Unauthorized", "invalid_api_key");
   }
 
@@ -262,7 +326,42 @@ const looksLikeDenoDeployToken = (token: string): boolean => {
   if (trimmed.length < 20) return false;
   if (trimmed.length > 500) return false;
   if (/\s/.test(trimmed)) return false;
+  if (looksLikeUbqAiClientToken(trimmed)) return false;
+  if (!trimmed.includes("_")) return false;
   return true;
+};
+
+const verifyDenoDeployTokenCached = async (token: string): Promise<
+  { ok: true } | { ok: false; response: Response | null }
+> => {
+  let keyHash: string | null = null;
+  try {
+    keyHash = await sha256Base64Url(token);
+    const cachedUntil = deployTokenAdminCache.get(keyHash) ?? 0;
+    if (cachedUntil > Date.now()) return { ok: true };
+  } catch {
+    // ignore and try network verification
+  }
+
+  try {
+    const ok = await verifyDenoDeployTokenForThisDeployment(token);
+    if (!ok) return { ok: false, response: null };
+    if (keyHash) deployTokenAdminCache.set(keyHash, Date.now() + DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS);
+    return { ok: true };
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to verify Deno Deploy token:", error);
+    return { ok: false, response: openaiError(502, "Failed to verify admin token", "bad_gateway") };
+  }
+};
+
+const isAdminToken = async (token: string): Promise<{ ok: true } | { ok: false; response: Response | null }> => {
+  if (config.adminTokens.size > 0) {
+    return config.adminTokens.has(token) ? { ok: true } : { ok: false, response: null };
+  }
+
+  if (!looksLikeDenoDeployToken(token)) return { ok: false, response: null };
+
+  return await verifyDenoDeployTokenCached(token);
 };
 
 const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
@@ -293,31 +392,13 @@ const requireAdminAuth = async (req: Request): Promise<Response | null> => {
   const token = getBearerToken(req);
   if (!token) return openaiError(401, "Unauthorized", "invalid_api_key");
 
-  if (config.adminTokens.size > 0) {
-    if (config.adminTokens.has(token)) return null;
-    return openaiError(401, "Unauthorized", "invalid_api_key");
+  if (config.adminTokens.size === 0 && !looksLikeDenoDeployToken(token)) {
+    return openaiError(404, "Not found", "not_found");
   }
 
-  if (!looksLikeDenoDeployToken(token)) return openaiError(404, "Not found", "not_found");
-
-  let keyHash: string | null = null;
-  try {
-    keyHash = await sha256Base64Url(token);
-    const cachedUntil = deployTokenAdminCache.get(keyHash) ?? 0;
-    if (cachedUntil > Date.now()) return null;
-  } catch {
-    // ignore and try network verification
-  }
-
-  try {
-    const ok = await verifyDenoDeployTokenForThisDeployment(token);
-    if (!ok) return openaiError(401, "Unauthorized", "invalid_api_key");
-    if (keyHash) deployTokenAdminCache.set(keyHash, Date.now() + DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS);
-    return null;
-  } catch (error) {
-    console.error("[ai.ubq.fi] Failed to verify Deno Deploy token for admin auth:", error);
-    return openaiError(502, "Failed to verify admin token", "bad_gateway");
-  }
+  const result = await isAdminToken(token);
+  if (result.ok) return null;
+  return result.response ?? openaiError(401, "Unauthorized", "invalid_api_key");
 };
 
 const parseCodexAuthFromAuthJson = (value: unknown): Omit<CodexAuthState, "updated_at_ms"> | null => {
@@ -664,17 +745,24 @@ const toResponseMessageItem = (message: unknown): ResponseMessageItem | null => 
 const buildCodexRequest = async (
   model: string,
   input: ResponseMessageItem[],
-): Promise<Record<string, unknown>> => ({
-  model,
-  instructions: await codexInstructionsPromise,
-  input,
-  tools: [],
-  tool_choice: "auto",
-  parallel_tool_calls: false,
-  store: false,
-  stream: true,
-  include: [],
-});
+  options: Readonly<{ reasoning?: Record<string, unknown> | null }> = {},
+): Promise<Record<string, unknown>> => {
+  const body: Record<string, unknown> = {
+    model,
+    instructions: await codexInstructionsPromise,
+    input,
+    tools: [],
+    tool_choice: "auto",
+    parallel_tool_calls: false,
+    store: false,
+    stream: true,
+    include: [],
+  };
+
+  if (options.reasoning !== undefined) body.reasoning = options.reasoning;
+
+  return body;
+};
 
 const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
   const reader = stream.getReader();
@@ -857,6 +945,9 @@ const handleChatCompletions = async (req: Request): Promise<Response> => {
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
 
+  const reasoningEffort = parseReasoningEffortField(body.reasoning_effort, "reasoning_effort");
+  if (!reasoningEffort.ok) return openaiError(400, reasoningEffort.message, "invalid_request_error");
+
   const input: ResponseMessageItem[] = [];
   for (const msg of messagesRaw) {
     const converted = toResponseMessageItem(msg);
@@ -864,7 +955,9 @@ const handleChatCompletions = async (req: Request): Promise<Response> => {
     input.push(converted);
   }
 
-  const codexBody = await buildCodexRequest(model, input);
+  const codexBody = await buildCodexRequest(model, input, {
+    reasoning: reasoningEffort.value === undefined ? undefined : { effort: reasoningEffort.value },
+  });
 
   let upstream: Response;
   try {
@@ -910,7 +1003,10 @@ const handleResponses = async (req: Request): Promise<Response> => {
     return openaiError(400, "input must be a string or an array", "invalid_request_error");
   }
 
-  const codexBody = await buildCodexRequest(model, input);
+  const reasoning = parseReasoningParam(body.reasoning);
+  if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
+
+  const codexBody = await buildCodexRequest(model, input, { reasoning: reasoning.value });
 
   let upstream: Response;
   try {

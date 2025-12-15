@@ -3,9 +3,9 @@
     "dev": "deno serve --allow-env --allow-net --allow-read --unstable-kv serve.ts",
     "ubq-ai": "deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts",
     "upload:auth": "deno run --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts",
-    "keys:create": "deno run --allow-env --allow-net scripts/api-keys.ts create",
-    "keys:list": "deno run --allow-env --allow-net scripts/api-keys.ts list",
-    "keys:revoke": "deno run --allow-env --allow-net scripts/api-keys.ts revoke",
+    "keys:create": "deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys create",
+    "keys:list": "deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys list",
+    "keys:revoke": "deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys revoke",
     "test": "deno test",
     "fmt": "deno fmt",
     "lint": "deno lint"

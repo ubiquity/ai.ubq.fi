@@ -6,6 +6,7 @@ OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 
 - Clients authenticate to `ai.ubq.fi` with a **UBQ gateway token**: `Authorization: Bearer <token>`.
   - Accepted tokens come from `UBQ_AI_AUTH_TOKENS` and/or API keys stored in Deno KV (created via `/admin/api-keys`).
+  - Admin tokens (including Deno Deploy tokens) also grant access to client routes (`/v1/*`).
 - The gateway **does not use or forward your client token upstream**.
   - For upstream requests, it uses **Codex CLI ChatGPT auth** from `CODEX_AUTH_JSON_B64` (base64 of
     `~/.codex/auth.json`).
@@ -52,6 +53,7 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Content-Type: application/json" \
   --data '{
     "model": "gpt-5.1-codex-mini",
+    "reasoning_effort": "high",
     "messages": [{"role":"user","content":"Tell me a short joke."}],
     "stream": false
   }'
@@ -86,6 +88,19 @@ curl -N https://ai.ubq.fi/v1/chat/completions \
   }'
 ```
 
+Responses (OpenAI-compatible):
+
+```bash
+curl -sS https://ai.ubq.fi/v1/responses \
+  -H "Authorization: Bearer $UBQ_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "model": "gpt-5.2",
+    "reasoning": { "effort": "high" },
+    "input": "Summarize this in 1 sentence: ..."
+  }'
+```
+
 ## CLI (ubq-ai)
 
 Run from this repo:
@@ -95,6 +110,8 @@ cd lib/ai.ubq.fi
 export UBQ_AI_TOKEN="..."
 deno task ubq-ai chat "Tell me a short joke."
 ```
+
+Client commands also accept an admin token (`UBQ_AI_ADMIN_TOKEN` or `DENO_DEPLOY_TOKEN`) when `UBQ_AI_TOKEN` is unset.
 
 Install on your machine:
 
@@ -109,8 +126,16 @@ Examples:
 export UBQ_AI_TOKEN="..."
 ubq-ai models | jq
 ubq-ai chat "Tell me a short joke."
+ubq-ai chat --reasoning-effort high "Solve: 24*7."
 ubq-ai chat --stream "Say hello in 5 different ways."
 ubq-ai responses --model gpt-5.2 "Summarize this in 1 sentence: ..."
+ubq-ai responses --reasoning-effort high --model gpt-5.2 "Write a short proof sketch for the pigeonhole principle."
+```
+
+Debug (prints useful env/token fingerprints to stderr, never raw secrets):
+
+```bash
+ubq-ai -v models
 ```
 
 Admin examples (uses `UBQ_AI_ADMIN_TOKEN` or falls back to `DENO_DEPLOY_TOKEN`):
@@ -118,7 +143,7 @@ Admin examples (uses `UBQ_AI_ADMIN_TOKEN` or falls back to `DENO_DEPLOY_TOKEN`):
 ```bash
 export DENO_DEPLOY_TOKEN="..."
 ubq-ai admin upload-auth --auth-json ~/.codex/auth.json | jq
-ubq-ai admin keys create --name "example key" --token-only
+ubq-ai admin keys create "example key"
 ubq-ai admin keys list | jq
 ```
 
@@ -169,19 +194,19 @@ Create (token only):
 ```bash
 cd lib/ai.ubq.fi
 export UBQ_AI_ADMIN_TOKEN="..."
-deno task keys:create --name "example key" --token-only
+deno task ubq-ai admin keys create "example key"
 ```
 
 List (admin):
 
 ```bash
-deno task keys:list
+deno task ubq-ai admin keys list
 ```
 
 Revoke (admin):
 
 ```bash
-deno task keys:revoke --id "<id>"
+deno task ubq-ai admin keys revoke --id "<id>"
 ```
 
 ## Supported routes

@@ -11,6 +11,38 @@ const getString = (value: unknown): string | null => (typeof value === "string" 
 
 const TEXT_ENCODER = new TextEncoder();
 
+const encodeHex = (bytes: Uint8Array): string => {
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+};
+
+const sha256Hex = async (value: string): Promise<string> => {
+  const digest = await crypto.subtle.digest("SHA-256", TEXT_ENCODER.encode(value));
+  return encodeHex(new Uint8Array(digest));
+};
+
+const describeSecret = async (value: string | undefined): Promise<string> => {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return "(unset)";
+  try {
+    const fp = (await sha256Hex(trimmed)).slice(0, 12);
+    return `(set len=${trimmed.length} sha256=${fp})`;
+  } catch {
+    return `(set len=${trimmed.length})`;
+  }
+};
+
+const classifyToken = (token: string): string => {
+  const trimmed = token.trim();
+  if (!trimmed) return "unset";
+  if (trimmed.startsWith("ddw_")) return "deno_deploy_like(ddw_)";
+  if (trimmed.startsWith("ubq_ai_")) return "ubq_ai_prefix";
+  if (/^[0-9a-fA-F]{64}$/.test(trimmed)) return "hex64";
+  if (trimmed.includes("_")) return "has_underscore";
+  return "other";
+};
+
 const expandTilde = (path: string, homeDir: string | undefined): string => {
   if (path === "~") return homeDir ?? path;
   if (path.startsWith("~/") && homeDir) return `${homeDir}${path.slice(1)}`;
@@ -38,7 +70,10 @@ const BOOLEAN_FLAGS = new Set([
   "raw",
   "stream",
   "token-only",
+  "verbose",
 ]);
+
+const REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 
 export const parseArgs = (args: string[]): ParsedArgs => {
   const flags: Record<string, FlagValue> = {};
@@ -49,6 +84,10 @@ export const parseArgs = (args: string[]): ParsedArgs => {
     if (arg === "--") continue;
     if (arg === "-h") {
       flags.help = true;
+      continue;
+    }
+    if (arg === "-v") {
+      flags.verbose = true;
       continue;
     }
     if (!arg.startsWith("--")) {
@@ -98,21 +137,22 @@ Usage:
 
 Global options:
   --url <url>                 Base URL (default: https://ai.ubq.fi)
-  --token <token>             Client token (or set UBQ_AI_TOKEN)
-  --admin-token <token>       Admin token (or set UBQ_AI_ADMIN_TOKEN; fallback DENO_DEPLOY_TOKEN/UBQ_AI_TOKEN)
+  --token <token>             Client token (or set UBQ_AI_TOKEN; falls back to admin token if unset)
+  --admin-token <token>       Admin token (or set UBQ_AI_ADMIN_TOKEN; fallback DENO_DEPLOY_TOKEN)
   --json                      Print full JSON (default prints text when possible)
   --stream                    Stream output (when supported)
   --raw                       For streams: print raw SSE bytes (no parsing)
+  -v, --verbose               Print debug info (no secrets)
   -h, --help                  Show help
 
 Commands:
   health
   info
   models
-  chat [<prompt>] [--model <id>] [--system <text>] [--developer <text>] [--messages-json <json>] [--messages-file <path>]
-  responses [<input>] [--model <id>] [--input-json <json>] [--input-file <path>]
+  chat [<prompt>] [--model <id>] [--reasoning-effort <level>] [--system <text>] [--developer <text>] [--messages-json <json>] [--messages-file <path>]
+  responses [<input>] [--model <id>] [--reasoning-effort <level>] [--input-json <json>] [--input-file <path>]
   admin upload-auth [--auth-json <path>]
-  admin keys create --name <name> [--token <token>] [--token-only]
+  admin keys create "<name>" [--token <token>]
   admin keys list
   admin keys revoke --id <id>
 
@@ -120,7 +160,7 @@ Examples:
   UBQ_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat \"Tell me a short joke.\"
   UBQ_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
-  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create --name \"example\" --token-only
+  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"example key\"
 `;
 
 export type UbqAiRuntime = Readonly<{
@@ -313,14 +353,13 @@ const resolveClientToken = (flags: Record<string, FlagValue>, runtime: UbqAiRunt
   const fromFlag = getFlagString(flags, "token");
   const fromEnv = runtime.envGet("UBQ_AI_TOKEN") ?? "";
   const token = (fromFlag ?? fromEnv).trim();
-  return token || null;
+  if (token) return token;
+  return resolveAdminToken(flags, runtime);
 };
 
 const resolveAdminToken = (flags: Record<string, FlagValue>, runtime: UbqAiRuntime): string | null => {
   const fromFlag = getFlagString(flags, "admin-token");
-  const fromEnv = runtime.envGet("UBQ_AI_ADMIN_TOKEN") ?? runtime.envGet("DENO_DEPLOY_TOKEN") ??
-    runtime.envGet("UBQ_AI_TOKEN") ??
-    "";
+  const fromEnv = runtime.envGet("UBQ_AI_ADMIN_TOKEN") ?? runtime.envGet("DENO_DEPLOY_TOKEN") ?? "";
   const token = (fromFlag ?? fromEnv).trim();
   return token || null;
 };
@@ -339,15 +378,55 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   const wantsJson = flags.json === true;
   const wantsStream = flags.stream === true;
   const wantsRaw = flags.raw === true;
+  const wantsVerbose = flags.verbose === true;
+
+  const debug = async (line: string): Promise<void> => {
+    if (!wantsVerbose) return;
+    await writeErrText(runtime, line);
+  };
+
+  await debug(`[ubq-ai] url=${baseUrl}\n`);
+  await debug(`[ubq-ai] env UBQ_AI_TOKEN=${await describeSecret(runtime.envGet("UBQ_AI_TOKEN"))}\n`);
+  await debug(`[ubq-ai] env UBQ_AI_ADMIN_TOKEN=${await describeSecret(runtime.envGet("UBQ_AI_ADMIN_TOKEN"))}\n`);
+  await debug(`[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`);
+  const clientSource = getFlagString(flags, "token")
+    ? "--token"
+    : (runtime.envGet("UBQ_AI_TOKEN") ?? "").trim()
+    ? "UBQ_AI_TOKEN"
+    : resolveAdminToken(flags, runtime)
+    ? "(admin fallback)"
+    : "(unset)";
+  const adminSource = getFlagString(flags, "admin-token")
+    ? "--admin-token"
+    : (runtime.envGet("UBQ_AI_ADMIN_TOKEN") ?? "").trim()
+    ? "UBQ_AI_ADMIN_TOKEN"
+    : (runtime.envGet("DENO_DEPLOY_TOKEN") ?? "").trim()
+    ? "DENO_DEPLOY_TOKEN"
+    : "(unset)";
+  await debug(`[ubq-ai] token_sources client=${clientSource} admin=${adminSource}\n`);
+  const resolvedClientToken = resolveClientToken(flags, runtime) ?? undefined;
+  const resolvedAdminToken = resolveAdminToken(flags, runtime) ?? undefined;
+  await debug(`[ubq-ai] resolved client_token=${await describeSecret(resolvedClientToken)}\n`);
+  await debug(`[ubq-ai] resolved admin_token=${await describeSecret(resolvedAdminToken)}\n`);
+  await debug(`[ubq-ai] client_token_shape=${resolvedClientToken ? classifyToken(resolvedClientToken) : "unset"}\n`);
+  await debug(`[ubq-ai] admin_token_shape=${resolvedAdminToken ? classifyToken(resolvedAdminToken) : "unset"}\n`);
+  await debug(`[ubq-ai] flags json=${wantsJson} stream=${wantsStream} raw=${wantsRaw}\n`);
 
   const cmd = parsed._[0] ?? "";
   const rest = parsed._.slice(1);
 
   const endpoint = (path: string): URL => new URL(path, baseUrl);
 
+  const doFetchWithDebug = async (req: Request): Promise<Awaited<ReturnType<typeof doFetch>>> => {
+    await debug(`[ubq-ai] -> ${req.method} ${req.url}\n`);
+    const result = await doFetch(runtime, req);
+    await debug(`[ubq-ai] <- ${result.status}\n`);
+    return result;
+  };
+
   if (cmd === "health") {
     const req = new Request(endpoint("/health"), { method: "GET", headers: { "Accept": "application/json" } });
-    const result = await doFetch(runtime, req);
+    const result = await doFetchWithDebug(req);
     if (!result.ok) {
       await writeErrText(runtime, `Request failed (${result.status}).\n`);
       await writeErrText(runtime, `${result.body}\n`);
@@ -359,7 +438,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
 
   if (cmd === "info") {
     const req = new Request(endpoint("/"), { method: "GET", headers: { "Accept": "application/json" } });
-    const result = await doFetch(runtime, req);
+    const result = await doFetchWithDebug(req);
     if (!result.ok) {
       await writeErrText(runtime, `Request failed (${result.status}).\n`);
       await writeErrText(runtime, `${result.body}\n`);
@@ -372,7 +451,10 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   if (cmd === "models") {
     const token = resolveClientToken(flags, runtime);
     if (!token) {
-      await writeErrText(runtime, "Missing client token. Set UBQ_AI_TOKEN or pass --token.\n");
+      await writeErrText(
+        runtime,
+        "Missing client token. Set UBQ_AI_TOKEN (or UBQ_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+      );
       return 2;
     }
     const req = new Request(endpoint("/v1/models"), {
@@ -382,7 +464,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         "Accept": "application/json",
       },
     });
-    const result = await doFetch(runtime, req);
+    const result = await doFetchWithDebug(req);
     if (!result.ok) {
       await writeErrText(runtime, `Request failed (${result.status}).\n`);
       await writeErrText(runtime, `${result.body}\n`);
@@ -395,7 +477,10 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   if (cmd === "chat") {
     const token = resolveClientToken(flags, runtime);
     if (!token) {
-      await writeErrText(runtime, "Missing client token. Set UBQ_AI_TOKEN or pass --token.\n");
+      await writeErrText(
+        runtime,
+        "Missing client token. Set UBQ_AI_TOKEN (or UBQ_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+      );
       return 2;
     }
     const model = (getFlagString(flags, "model") ?? "gpt-5.2-chat-latest").trim() || "gpt-5.2-chat-latest";
@@ -453,11 +538,24 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       messages = m;
     }
 
-    const body = {
+    const body: Record<string, unknown> = {
       model,
       messages,
       stream: wantsStream,
     };
+
+    const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
+    if (reasoningEffortRaw) {
+      const normalized = reasoningEffortRaw.toLowerCase();
+      if (!REASONING_EFFORTS.has(normalized)) {
+        await writeErrText(
+          runtime,
+          "Invalid --reasoning-effort. Expected one of: none, minimal, low, medium, high, xhigh.\n",
+        );
+        return 2;
+      }
+      body.reasoning_effort = normalized;
+    }
 
     const req = new Request(endpoint("/v1/chat/completions"), {
       method: "POST",
@@ -470,7 +568,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     });
 
     if (wantsStream) {
+      await debug(`[ubq-ai] -> ${req.method} ${req.url} (stream)\n`);
       const res = await runtime.fetch(req);
+      await debug(`[ubq-ai] <- ${res.status}\n`);
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         await writeErrText(runtime, `Request failed (${res.status}).\n`);
@@ -500,7 +600,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       return 0;
     }
 
-    const result = await doFetch(runtime, req);
+    const result = await doFetchWithDebug(req);
     if (!result.ok) {
       await writeErrText(runtime, `Request failed (${result.status}).\n`);
       await writeErrText(runtime, `${result.body}\n`);
@@ -524,7 +624,10 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   if (cmd === "responses") {
     const token = resolveClientToken(flags, runtime);
     if (!token) {
-      await writeErrText(runtime, "Missing client token. Set UBQ_AI_TOKEN or pass --token.\n");
+      await writeErrText(
+        runtime,
+        "Missing client token. Set UBQ_AI_TOKEN (or UBQ_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+      );
       return 2;
     }
     const model = (getFlagString(flags, "model") ?? "gpt-5.2").trim() || "gpt-5.2";
@@ -575,11 +678,24 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       input = text;
     }
 
-    const body = {
+    const body: Record<string, unknown> = {
       model,
       input,
       stream: wantsStream,
     };
+
+    const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
+    if (reasoningEffortRaw) {
+      const normalized = reasoningEffortRaw.toLowerCase();
+      if (!REASONING_EFFORTS.has(normalized)) {
+        await writeErrText(
+          runtime,
+          "Invalid --reasoning-effort. Expected one of: none, minimal, low, medium, high, xhigh.\n",
+        );
+        return 2;
+      }
+      body.reasoning = { effort: normalized };
+    }
 
     const req = new Request(endpoint("/v1/responses"), {
       method: "POST",
@@ -592,7 +708,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     });
 
     if (wantsStream) {
+      await debug(`[ubq-ai] -> ${req.method} ${req.url} (stream)\n`);
       const res = await runtime.fetch(req);
+      await debug(`[ubq-ai] <- ${res.status}\n`);
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         await writeErrText(runtime, `Request failed (${res.status}).\n`);
@@ -623,7 +741,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       return 0;
     }
 
-    const result = await doFetch(runtime, req);
+    const result = await doFetchWithDebug(req);
     if (!result.ok) {
       await writeErrText(runtime, `Request failed (${result.status}).\n`);
       await writeErrText(runtime, `${result.body}\n`);
@@ -686,7 +804,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         body: authJsonText,
       });
 
-      const result = await doFetch(runtime, req);
+      const result = await doFetchWithDebug(req);
       if (!result.ok) {
         await writeErrText(runtime, `Request failed (${result.status}).\n`);
         await writeErrText(runtime, `${result.body}\n`);
@@ -700,13 +818,15 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       const action = subRest[0] ?? "";
 
       if (action === "create") {
-        const name = getFlagString(flags, "name") ?? "";
+        const positionalName = subRest.slice(1).join(" ").trim();
+        const name = (getFlagString(flags, "name") ?? positionalName).trim();
         if (!name.trim()) {
-          await writeErrText(runtime, "Missing --name\n");
+          await writeErrText(runtime, "Missing key name. Pass it as an argument or via --name.\n");
           return 2;
         }
         const token = (getFlagString(flags, "token") ?? "").trim();
-        const tokenOnly = flags["token-only"] === true;
+        const tokenOnlyFlag = flags["token-only"];
+        const tokenOnly = !wantsJson && tokenOnlyFlag !== false;
 
         const req = new Request(endpoint("/admin/api-keys"), {
           method: "POST",
@@ -718,7 +838,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
           body: JSON.stringify(token ? { name, token } : { name }),
         });
 
-        const result = await doFetch(runtime, req);
+        const result = await doFetchWithDebug(req);
         if (!result.ok) {
           await writeErrText(runtime, `Request failed (${result.status}).\n`);
           await writeErrText(runtime, `${result.body}\n`);
@@ -729,8 +849,12 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
           const tokenValue = (result.json && typeof result.json === "object" && "token" in result.json)
             ? (result.json as { token?: unknown }).token
             : null;
-          await writeOutText(runtime, `${typeof tokenValue === "string" ? tokenValue : ""}\n`);
-          return 0;
+          if (typeof tokenValue === "string" && tokenValue.trim()) {
+            await writeOutText(runtime, `${tokenValue}\n`);
+            return 0;
+          }
+          await writeErrText(runtime, "Create succeeded but response was missing token.\n");
+          return 1;
         }
 
         await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
@@ -745,7 +869,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
             "Accept": "application/json",
           },
         });
-        const result = await doFetch(runtime, req);
+        const result = await doFetchWithDebug(req);
         if (!result.ok) {
           await writeErrText(runtime, `Request failed (${result.status}).\n`);
           await writeErrText(runtime, `${result.body}\n`);
@@ -770,7 +894,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
           },
           body: JSON.stringify({ id }),
         });
-        const result = await doFetch(runtime, req);
+        const result = await doFetchWithDebug(req);
         if (!result.ok) {
           await writeErrText(runtime, `Request failed (${result.status}).\n`);
           await writeErrText(runtime, `${result.body}\n`);
