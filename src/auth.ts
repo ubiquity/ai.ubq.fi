@@ -1,0 +1,621 @@
+import { config } from "./config.ts";
+import { API_KEY_NO_EXPIRATION_MS, apiKeyHashKey, apiKeyIdKey, coerceApiKeyExpiresAtMs } from "./api_keys.ts";
+import { json, openaiError } from "./http.ts";
+import { getBearerToken } from "./http.ts";
+import { kvPromise } from "./kv.ts";
+import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
+
+const GITHUB_API_BASE_URL = "https://api.github.com";
+const GITHUB_TOKEN_CACHE_TTL_MS = 5 * 60_000;
+const githubTokenCache = new Map<string, number>();
+
+const looksLikeGitHubToken = (token: string): boolean => token.trim().startsWith("gh");
+
+const DEFAULT_KERNEL_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs96DOU+JqM8SyNXOB6u3
+uBKIFiyrcST/LZTYN6y7LeJlyCuGPqSDrWCfjU9Ph5PLf9TWiNmeM8DGaOpwEFC7
+U3NRxOSglo4plnQ5zRwIHHXvxyK400sQP2oISXymISuBQWjEIqkC9DybQrKwNzf+
+I0JHWPqmwMIw26UvVOtXGOOWBqTkk+N2+/9f8eDIJP5QQVwwszc8s1rXOsLMlVIf
+wShw7GO4E2jyK8TSJKpyjV8eb1JJMDwFhPiRrtZfQJUtDf2mV/67shQww61BH2Y/
+Plnalo58kWIbkqZoq1yJrL5sFb73osM5+vADTXVn79bkvea7W19nSkdMiarYt4Hq
+JQIDAQAB
+-----END PUBLIC KEY-----`;
+
+const normalizePemValue = (raw: string): string => raw.trim().replace(/\\n/g, "\n");
+
+const extractPemBlocks = (raw: string, begin: string, end: string): string[] => {
+  const blocks: string[] = [];
+  let cursor = 0;
+  while (cursor < raw.length) {
+    const start = raw.indexOf(begin, cursor);
+    if (start === -1) break;
+    const finish = raw.indexOf(end, start);
+    if (finish === -1) break;
+    blocks.push(raw.slice(start, finish + end.length).trim());
+    cursor = finish + end.length;
+  }
+  return blocks;
+};
+
+const getKernelPublicKeyPems = (): string[] => {
+  const envRaw = (Deno.env.get("UBIQUITY_AI_KERNEL_PUBLIC_KEY") ?? "").trim();
+  if (envRaw) {
+    const normalized = normalizePemValue(envRaw);
+    const blocks = extractPemBlocks(normalized, "-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----");
+    return blocks.length > 0 ? blocks : [normalized];
+  }
+  return [DEFAULT_KERNEL_PUBLIC_KEY_PEM];
+};
+
+const importRsaPublicKey = async (publicKeyPem: string): Promise<CryptoKey> => {
+  const pemContents = publicKeyPem
+    .replace("-----BEGIN PUBLIC KEY-----", "")
+    .replace("-----END PUBLIC KEY-----", "")
+    .trim()
+    .replace(/\s+/g, "");
+
+  const binary = atob(pemContents);
+  const binaryDer: Uint8Array<ArrayBuffer> = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) binaryDer[i] = binary.charCodeAt(i);
+  return await crypto.subtle.importKey(
+    "spki",
+    binaryDer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    true,
+    ["verify"],
+  );
+};
+
+const kernelPublicKeysPromise: Promise<ReadonlyArray<CryptoKey>> = (async () => {
+  const pems = getKernelPublicKeyPems();
+  const keys: CryptoKey[] = [];
+  for (const pem of pems) {
+    try {
+      keys.push(await importRsaPublicKey(pem));
+    } catch (error) {
+      console.error("[ai.ubq.fi] Failed to import kernel public key:", error);
+    }
+  }
+  return keys;
+})();
+
+const decodeBase64UrlToBytes = (raw: string): Uint8Array<ArrayBuffer> => {
+  const b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes: Uint8Array<ArrayBuffer> = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+};
+
+const decodeBase64UrlToJson = (raw: string): unknown => {
+  const bytes = decodeBase64UrlToBytes(raw);
+  const text = new TextDecoder().decode(bytes);
+  return JSON.parse(text);
+};
+
+type KernelAttestationPayload = Readonly<{
+  iss: "ubiquity-os-kernel";
+  aud: "ai.ubq.fi";
+  iat: number;
+  exp: number;
+  jti: string;
+  owner: string;
+  repo: string;
+  installation_id: number | null;
+  auth_token_sha256: string;
+  state_id: string;
+}>;
+
+const parseKernelAttestationPayload = (value: unknown): KernelAttestationPayload | null => {
+  if (!isRecord(value)) return null;
+
+  const iss = getString(value.iss);
+  const aud = getString(value.aud);
+  const jti = getString(value.jti);
+  const owner = getString(value.owner);
+  const repo = getString(value.repo);
+  const authTokenSha = getString(value.auth_token_sha256);
+  const stateId = getString(value.state_id);
+
+  const iat = typeof value.iat === "number" && Number.isFinite(value.iat) ? Math.trunc(value.iat) : null;
+  const exp = typeof value.exp === "number" && Number.isFinite(value.exp) ? Math.trunc(value.exp) : null;
+  if (iat === null || exp === null) return null;
+
+  const installationIdValue = value.installation_id;
+  const installationId = installationIdValue === null
+    ? null
+    : typeof installationIdValue === "number" && Number.isFinite(installationIdValue)
+    ? Math.trunc(installationIdValue)
+    : null;
+  if (installationIdValue !== null && installationId === null) return null;
+
+  if (iss !== "ubiquity-os-kernel") return null;
+  if (aud !== "ai.ubq.fi") return null;
+  if (!jti || !owner || !repo || !authTokenSha || !stateId) return null;
+
+  return {
+    iss: "ubiquity-os-kernel",
+    aud: "ai.ubq.fi",
+    iat,
+    exp,
+    jti,
+    owner,
+    repo,
+    installation_id: installationId,
+    auth_token_sha256: authTokenSha,
+    state_id: stateId,
+  };
+};
+
+const KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS = 60;
+const KERNEL_ATTESTATION_MAX_TTL_SECONDS = 10 * 60;
+
+const parseInstallationIdHeader = (req: Request): number | null => {
+  const raw = (req.headers.get("X-GitHub-Installation-Id") ?? "").trim();
+  if (!raw) return null;
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return null;
+  return Math.trunc(num);
+};
+
+const kernelTokenJtiCache = new Map<string, number>();
+
+const pruneKernelTokenJtiCache = () => {
+  const now = Date.now();
+  for (const [jti, expiresAtMs] of kernelTokenJtiCache.entries()) {
+    if (expiresAtMs <= now) kernelTokenJtiCache.delete(jti);
+  }
+};
+
+const verifyKernelAttestation = async (
+  req: Request,
+  { token, owner, repo }: { token: string; owner: string; repo: string },
+): Promise<{ ok: true } | { ok: false; response: Response }> => {
+  const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
+  if (!kernelToken) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (missing kernel attestation)", "missing_kernel_token"),
+    };
+  }
+
+  const keys = await kernelPublicKeysPromise;
+  if (keys.length === 0) {
+    return { ok: false, response: openaiError(500, "Server misconfigured: kernel public key missing", "server_error") };
+  }
+
+  const parts = kernelToken.split(".");
+  if (parts.length !== 3) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  let header: unknown;
+  let payload: KernelAttestationPayload | null = null;
+
+  try {
+    header = decodeBase64UrlToJson(parts[0]);
+    payload = parseKernelAttestationPayload(decodeBase64UrlToJson(parts[1]));
+  } catch {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  if (!isRecord(header) || getString(header.alg) !== "RS256") {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  if (!payload) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp < payload.iat) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+  if (payload.exp - payload.iat > KERNEL_ATTESTATION_MAX_TTL_SECONDS) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation too long-lived)", "invalid_kernel_token"),
+    };
+  }
+  if (payload.iat > now + KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation not yet valid)", "invalid_kernel_token"),
+    };
+  }
+  if (payload.exp < now - KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation expired)", "invalid_kernel_token"),
+    };
+  }
+
+  if (payload.owner !== owner || payload.repo !== repo) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation repo mismatch)", "invalid_kernel_token"),
+    };
+  }
+
+  const installationId = parseInstallationIdHeader(req);
+  if (installationId === null) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (missing X-GitHub-Installation-Id)", "missing_installation_id"),
+    };
+  }
+  if (payload.installation_id !== installationId) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation installation mismatch)", "invalid_kernel_token"),
+    };
+  }
+
+  const expectedTokenSha = await sha256Base64Url(token);
+  if (payload.auth_token_sha256 !== expectedTokenSha) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation token mismatch)", "invalid_kernel_token"),
+    };
+  }
+
+  const signingInput = `${parts[0]}.${parts[1]}`;
+  const dataArray = new TextEncoder().encode(signingInput) as Uint8Array<ArrayBuffer>;
+  let signatureBytes: Uint8Array<ArrayBuffer>;
+  try {
+    signatureBytes = decodeBase64UrlToBytes(parts[2]);
+  } catch {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  let signatureValid = false;
+  for (const key of keys) {
+    try {
+      const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signatureBytes, dataArray);
+      if (ok) {
+        signatureValid = true;
+        break;
+      }
+    } catch {
+      // ignore and try next key
+    }
+  }
+  if (!signatureValid) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+
+  pruneKernelTokenJtiCache();
+  const jti = payload.jti;
+  const nowMs = Date.now();
+  const cachedUntilMs = kernelTokenJtiCache.get(jti) ?? 0;
+  if (cachedUntilMs > nowMs) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation replay)", "invalid_kernel_token"),
+    };
+  }
+  kernelTokenJtiCache.set(jti, payload.exp * 1000);
+
+  return { ok: true };
+};
+
+const getGitHubRepoHeaders = (req: Request): { owner: string; repo: string } | null => {
+  const owner = (req.headers.get("X-GitHub-Owner") ?? "").trim();
+  const repo = (req.headers.get("X-GitHub-Repo") ?? "").trim();
+  if (!owner || !repo) return null;
+  return { owner, repo };
+};
+
+const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: string): Promise<boolean> => {
+  const res = await fetch(`${GITHUB_API_BASE_URL}/repos/${owner}/${repo}`, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "ai.ubq.fi",
+    },
+    redirect: "manual",
+  });
+
+  try {
+    await res.body?.cancel();
+  } catch {
+    // ignore
+  }
+
+  return res.ok;
+};
+
+type ClientAuthMethod =
+  | { kind: "disabled" }
+  | { kind: "github_token"; owner: string; repo: string }
+  | { kind: "auth_tokens_allowlist" }
+  | { kind: "kv_api_key"; key_id: string }
+  | { kind: "admin_allowlist" }
+  | { kind: "deno_deploy_token" };
+
+type AuthenticateClientResult =
+  | { ok: true; token: string | null; method: ClientAuthMethod }
+  | { ok: false; response: Response };
+
+type CheckAdminTokenResult =
+  | { ok: true; kind: "admin_allowlist" | "deno_deploy_token" }
+  | { ok: false; response: Response | null };
+
+const authenticateGitHubToken = async (
+  req: Request,
+  token: string,
+): Promise<{ ok: true; method: ClientAuthMethod } | { ok: false; response: Response } | null> => {
+  if (!looksLikeGitHubToken(token)) return null;
+
+  const repoHeaders = getGitHubRepoHeaders(req);
+  if (!repoHeaders) return null;
+
+  const { owner, repo } = repoHeaders;
+  const attestation = await verifyKernelAttestation(req, { token, owner, repo });
+  if (!attestation.ok) return { ok: false, response: attestation.response };
+
+  const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
+  const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
+  if (cachedUntil > Date.now()) return { ok: true, method: { kind: "github_token", owner, repo } };
+
+  try {
+    const hasAccess = await verifyGitHubTokenRepoAccess(token, owner, repo);
+    if (!hasAccess) {
+      return { ok: false, response: openaiError(401, "Invalid GitHub token for repo", "invalid_auth_for_repo") };
+    }
+
+    githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
+    return { ok: true, method: { kind: "github_token", owner, repo } };
+  } catch (error) {
+    console.error("[ai.ubq.fi] GitHub token verification failed:", error);
+    return { ok: false, response: openaiError(502, "Failed to verify GitHub token", "bad_gateway") };
+  }
+};
+
+const looksLikeUbqAiClientToken = (token: string): boolean => token.trim().startsWith("ubq_ai_");
+
+const classifyToken = (token: string): string => {
+  const trimmed = token.trim();
+  if (!trimmed) return "unset";
+  if (trimmed.startsWith("ddw_")) return "deno_deploy_like(ddw_)";
+  if (trimmed.startsWith("ubq_ai_")) return "ubq_ai_prefix";
+  if (/^[0-9a-fA-F]{64}$/.test(trimmed)) return "hex64";
+  if (trimmed.includes("_")) return "has_underscore";
+  return "other";
+};
+
+export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
+  const kv = await kvPromise;
+  const localAuthDisabled = !config.isDeploy && config.authTokens.size === 0 && !kv;
+  const token = getBearerToken(req);
+  if (localAuthDisabled) return { ok: true, token, method: { kind: "disabled" } };
+
+  if (!token) return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+
+  if (config.authTokens.has(token)) return { ok: true, token, method: { kind: "auth_tokens_allowlist" } };
+
+  const githubResult = await authenticateGitHubToken(req, token);
+  if (githubResult) {
+    return githubResult.ok
+      ? { ok: true, token, method: githubResult.method }
+      : { ok: false, response: githubResult.response };
+  }
+
+  if (kv) {
+    const hash = await sha256Base64Url(token);
+    const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(hash));
+    if (entry.value && entry.value.revoked_at_ms == null) {
+      const expiresAtMs = typeof entry.value.expires_at_ms === "number" && Number.isFinite(entry.value.expires_at_ms)
+        ? Math.trunc(entry.value.expires_at_ms)
+        : API_KEY_NO_EXPIRATION_MS;
+      if (expiresAtMs !== API_KEY_NO_EXPIRATION_MS && expiresAtMs <= Date.now()) {
+        return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+      }
+      return { ok: true, token, method: { kind: "kv_api_key", key_id: entry.value.id } };
+    }
+  }
+
+  const adminResult = await checkAdminToken(token);
+  if (adminResult.ok) return { ok: true, token, method: { kind: adminResult.kind } };
+  if (adminResult.response) return { ok: false, response: adminResult.response };
+
+  if (kv) return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+
+  if (config.isDeploy && config.authTokens.size === 0) {
+    return {
+      ok: false,
+      response: openaiError(500, "Server misconfigured: set UBIQUITY_AI_USER_TOKEN or enable Deno KV", "server_error"),
+    };
+  }
+
+  return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+};
+
+export const requireClientAuth = async (req: Request): Promise<Response | null> => {
+  const result = await authenticateClient(req);
+  return result.ok ? null : result.response;
+};
+
+const DENO_API_BASE_URL = "https://api.deno.com/v1";
+const DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS = 10 * 60_000;
+const deployTokenAdminCache = new Map<string, number>();
+
+const looksLikeDenoDeployToken = (token: string): boolean => {
+  const trimmed = token.trim();
+  if (trimmed.length < 20) return false;
+  if (trimmed.length > 500) return false;
+  if (/\s/.test(trimmed)) return false;
+  if (looksLikeUbqAiClientToken(trimmed)) return false;
+  if (!trimmed.includes("_")) return false;
+  return true;
+};
+
+const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
+  if (!config.isDeploy) return false;
+  const deploymentId = (Deno.env.get("DENO_DEPLOYMENT_ID") ?? "").trim();
+  if (!deploymentId) return false;
+
+  const url = `${DENO_API_BASE_URL}/deployments/${deploymentId}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Accept": "application/json",
+    },
+    redirect: "manual",
+  });
+
+  try {
+    await res.body?.cancel();
+  } catch {
+    // ignore
+  }
+
+  return res.ok;
+};
+
+const verifyDenoDeployTokenCached = async (token: string): Promise<
+  { ok: true } | { ok: false; response: Response | null }
+> => {
+  let keyHash: string | null = null;
+  try {
+    keyHash = await sha256Base64Url(token);
+    const cachedUntil = deployTokenAdminCache.get(keyHash) ?? 0;
+    if (cachedUntil > Date.now()) return { ok: true };
+  } catch {
+    // ignore and try network verification
+  }
+
+  try {
+    const ok = await verifyDenoDeployTokenForThisDeployment(token);
+    if (!ok) return { ok: false, response: null };
+    if (keyHash) deployTokenAdminCache.set(keyHash, Date.now() + DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS);
+    return { ok: true };
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to verify Deno Deploy token:", error);
+    return { ok: false, response: openaiError(502, "Failed to verify admin token", "bad_gateway") };
+  }
+};
+
+const checkAdminToken = async (token: string): Promise<CheckAdminTokenResult> => {
+  if (config.adminTokens.size > 0) {
+    return config.adminTokens.has(token) ? { ok: true, kind: "admin_allowlist" } : { ok: false, response: null };
+  }
+
+  if (!looksLikeDenoDeployToken(token)) return { ok: false, response: null };
+
+  const verified = await verifyDenoDeployTokenCached(token);
+  if (verified.ok) return { ok: true, kind: "deno_deploy_token" };
+  return verified;
+};
+
+const isAdminToken = async (token: string): Promise<{ ok: true } | { ok: false; response: Response | null }> => {
+  const result = await checkAdminToken(token);
+  return result.ok ? { ok: true } : result;
+};
+
+export const requireAdminAuth = async (req: Request): Promise<Response | null> => {
+  const token = getBearerToken(req);
+  if (!token) return openaiError(401, "Unauthorized", "invalid_api_key");
+
+  if (config.adminTokens.size === 0 && !looksLikeDenoDeployToken(token)) {
+    return openaiError(404, "Not found", "not_found");
+  }
+
+  const result = await isAdminToken(token);
+  if (result.ok) return null;
+  return result.response ?? openaiError(401, "Unauthorized", "invalid_api_key");
+};
+
+export const handleV1Auth = async (req: Request): Promise<Response> => {
+  const authResult = await authenticateClient(req);
+  if (!authResult.ok) return authResult.response;
+
+  const kv = await kvPromise;
+  const mode = config.isDeploy && config.authTokens.size === 0 && !kv
+    ? "misconfigured"
+    : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)
+    ? "required"
+    : "disabled";
+
+  const token = authResult.token;
+  const tokenInfo = token
+    ? {
+      present: true,
+      length: token.length,
+      shape: classifyToken(token),
+      sha256_12: (await sha256Hex(token)).slice(0, 12),
+    }
+    : {
+      present: false,
+      length: null,
+      shape: null,
+      sha256_12: null,
+    };
+
+  const method: Record<string, unknown> = { kind: authResult.method.kind };
+  const isAdmin = authResult.method.kind === "admin_allowlist" || authResult.method.kind === "deno_deploy_token";
+
+  if (authResult.method.kind === "github_token") {
+    method.repo = { owner: authResult.method.owner, repo: authResult.method.repo };
+  }
+
+  if (authResult.method.kind === "kv_api_key") {
+    const id = authResult.method.key_id;
+    let key: Record<string, unknown> = { id };
+    if (kv) {
+      const entry = await kv.get<ApiKeyRecord>(apiKeyIdKey(id));
+      if (entry.value) {
+        key = {
+          id: entry.value.id,
+          name: entry.value.name,
+          prefix: entry.value.prefix,
+          created_at_ms: entry.value.created_at_ms,
+          expires_at_ms: coerceApiKeyExpiresAtMs(entry.value),
+          revoked_at_ms: entry.value.revoked_at_ms,
+        };
+      }
+    }
+    method.key = key;
+  }
+
+  return json(
+    200,
+    {
+      ok: true,
+      service: "ai.ubq.fi",
+      auth: {
+        mode,
+        is_admin: isAdmin,
+        method,
+        token: tokenInfo,
+      },
+    },
+    { "Cache-Control": "no-store" },
+  );
+};
