@@ -192,6 +192,14 @@ type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 
+const DEFAULT_MODEL = "gpt-5-chat-latest";
+const DEFAULT_REASONING_EFFORT: ReasoningEffort = "xhigh";
+
+const looksLikeReasoningModel = (model: string): boolean => {
+  const trimmed = model.trim().toLowerCase();
+  return trimmed.startsWith("gpt-5") || trimmed.startsWith("o");
+};
+
 const parseReasoningEffortField = (
   value: unknown,
   fieldName: string,
@@ -725,7 +733,7 @@ const normalizeModelForCodex = (model: string): string => {
   if (!trimmed) return "gpt-5.1-codex-mini";
   if (trimmed === "gpt-5.2-chat-latest") return "gpt-5.2";
   if (trimmed === "gpt-5.1-chat-latest") return "gpt-5.1";
-  if (trimmed === "gpt-5-chat-latest") return "gpt-5.1";
+  if (trimmed === "gpt-5-chat-latest") return "gpt-5.2";
   return trimmed;
 };
 
@@ -941,7 +949,8 @@ const handleChatCompletions = async (req: Request): Promise<Response> => {
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;
   if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-  const model = normalizeModelForCodex(getString(body.model) ?? "");
+  const modelRaw = (getString(body.model) ?? "").trim() || DEFAULT_MODEL;
+  const model = normalizeModelForCodex(modelRaw);
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
 
@@ -955,8 +964,9 @@ const handleChatCompletions = async (req: Request): Promise<Response> => {
     input.push(converted);
   }
 
+  const defaultReasoning = looksLikeReasoningModel(model) ? { effort: DEFAULT_REASONING_EFFORT } : undefined;
   const codexBody = await buildCodexRequest(model, input, {
-    reasoning: reasoningEffort.value === undefined ? undefined : { effort: reasoningEffort.value },
+    reasoning: reasoningEffort.value === undefined ? defaultReasoning : { effort: reasoningEffort.value },
   });
 
   let upstream: Response;
@@ -986,7 +996,8 @@ const handleResponses = async (req: Request): Promise<Response> => {
   const body = (await readJsonBody(req)) as ResponsesRequest | null;
   if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-  const model = normalizeModelForCodex(getString(body.model) ?? "");
+  const modelRaw = (getString(body.model) ?? "").trim() || DEFAULT_MODEL;
+  const model = normalizeModelForCodex(modelRaw);
   const inputRaw = body.input;
 
   let input: ResponseMessageItem[];
@@ -1006,7 +1017,10 @@ const handleResponses = async (req: Request): Promise<Response> => {
   const reasoning = parseReasoningParam(body.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
 
-  const codexBody = await buildCodexRequest(model, input, { reasoning: reasoning.value });
+  const defaultReasoning = looksLikeReasoningModel(model) ? { effort: DEFAULT_REASONING_EFFORT } : undefined;
+  const codexBody = await buildCodexRequest(model, input, {
+    reasoning: reasoning.value === undefined ? defaultReasoning : reasoning.value,
+  });
 
   let upstream: Response;
   try {
@@ -1409,6 +1423,9 @@ async function handler(req: Request): Promise<Response> {
         {
           object: "list",
           data: [
+            { id: "gpt-5-chat-latest", object: "model", owned_by: "openai" },
+            { id: "gpt-5.2-chat-latest", object: "model", owned_by: "openai" },
+            { id: "gpt-5.1-chat-latest", object: "model", owned_by: "openai" },
             { id: "gpt-5.1-codex-max", object: "model", owned_by: "openai" },
             { id: "gpt-5.1-codex", object: "model", owned_by: "openai" },
             { id: "gpt-5.1-codex-mini", object: "model", owned_by: "openai" },

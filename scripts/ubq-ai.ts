@@ -483,7 +483,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       );
       return 2;
     }
-    const model = (getFlagString(flags, "model") ?? "gpt-5.2-chat-latest").trim() || "gpt-5.2-chat-latest";
+    const model = (getFlagString(flags, "model") ?? "gpt-5-chat-latest").trim() || "gpt-5-chat-latest";
 
     const messagesFromJson = (raw: string): unknown | null => {
       try {
@@ -630,7 +630,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       );
       return 2;
     }
-    const model = (getFlagString(flags, "model") ?? "gpt-5.2").trim() || "gpt-5.2";
+    const model = (getFlagString(flags, "model") ?? "gpt-5-chat-latest").trim() || "gpt-5-chat-latest";
 
     const inputFromJson = (raw: string): unknown | null => {
       try {

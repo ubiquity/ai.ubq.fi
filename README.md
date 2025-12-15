@@ -65,7 +65,7 @@ Just the assistant message text:
 curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UBQ_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"model":"gpt-5.2-chat-latest","messages":[{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
+  --data '{"model":"gpt-5-chat-latest","messages":[{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
   | jq -r '.choices[0].message.content'
 ```
 
@@ -74,6 +74,8 @@ Notes:
 - `system` messages are not supported by the Codex upstream; the gateway converts them to `developer`.
 - The Codex upstream requires `stream: true`; when you set `"stream": false`, the gateway buffers the upstream stream
   and returns a normal JSON response.
+- Defaults: if `model` is omitted/blank, the gateway uses `gpt-5-chat-latest`; if reasoning is omitted, the gateway uses
+  `xhigh` reasoning effort (for `gpt-5*` and `o*` models).
 
 Streaming:
 
@@ -95,7 +97,7 @@ curl -sS https://ai.ubq.fi/v1/responses \
   -H "Authorization: Bearer $UBQ_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
-    "model": "gpt-5.2",
+    "model": "gpt-5-chat-latest",
     "reasoning": { "effort": "high" },
     "input": "Summarize this in 1 sentence: ..."
   }'
@@ -128,8 +130,8 @@ ubq-ai models | jq
 ubq-ai chat "Tell me a short joke."
 ubq-ai chat --reasoning-effort high "Solve: 24*7."
 ubq-ai chat --stream "Say hello in 5 different ways."
-ubq-ai responses --model gpt-5.2 "Summarize this in 1 sentence: ..."
-ubq-ai responses --reasoning-effort high --model gpt-5.2 "Write a short proof sketch for the pigeonhole principle."
+ubq-ai responses "Summarize this in 1 sentence: ..."
+ubq-ai responses --reasoning-effort high "Write a short proof sketch for the pigeonhole principle."
 ```
 
 Debug (prints useful env/token fingerprints to stderr, never raw secrets):
