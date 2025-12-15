@@ -66,31 +66,19 @@
             <pre
               class="code"
             >
-<code>export UBQ_AI_TOKEN="..."
+<code>export UBIQUITY_AI_USER_TOKEN="..."
 
 curl -sS https://ai.ubq.fi/health
 
 curl -sS https://ai.ubq.fi/v1/models \
-  -H "Authorization: Bearer $UBQ_AI_TOKEN"
+  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN"
 
 curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBQ_AI_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"model":"gpt-5.1-codex-mini","messages":[{"role":"user","content":"Hello!"}],"stream":false}'</code></pre>
           </section>
         </div>
-
-        <footer>
-          <div class="status">
-            <span>Service:</span>
-            <span><code>ai.ubq.fi</code></span>
-          </div>
-          <div>
-            <a href="/health">/health</a>
-            ·
-            <code>/v1/models</code>
-          </div>
-        </footer>
       </main>
     </div>
     <script type="module" src="/app.js"></script>

@@ -21,8 +21,8 @@ jobs:
         app.js
       env_var_keys: |
         CODEX_AUTH_JSON_B64
-        UBQ_AI_AUTH_TOKENS
-        UBQ_AI_ADMIN_TOKENS
+        UBIQUITY_AI_USER_TOKEN
+        UBIQUITY_AI_ADMIN_TOKEN
       extra_paths: |
         /health
       debug_fetch_fail: true

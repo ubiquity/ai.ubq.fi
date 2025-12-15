@@ -85,8 +85,8 @@ const parseTokens = (raw: string | undefined | null): Set<string> => {
 
 const loadConfig = (): Config => {
   const isDeploy = Boolean(Deno.env.get("DENO_DEPLOYMENT_ID") ?? Deno.env.get("DENO_REGION"));
-  const authTokens = parseTokens(Deno.env.get("UBQ_AI_AUTH_TOKENS") ?? Deno.env.get("UBQ_AI_API_KEYS"));
-  const adminTokens = parseTokens(Deno.env.get("UBQ_AI_ADMIN_TOKENS") ?? Deno.env.get("UBQ_AI_ADMIN_API_KEYS"));
+  const authTokens = parseTokens(Deno.env.get("UBIQUITY_AI_USER_TOKEN"));
+  const adminTokens = parseTokens(Deno.env.get("UBIQUITY_AI_ADMIN_TOKEN"));
   const allowOrigin = (Deno.env.get("CORS_ALLOW_ORIGIN") ?? "*").trim() || "*";
 
   const codexBaseUrl = (Deno.env.get("CODEX_BASE_URL") ?? "https://chatgpt.com/backend-api/codex")
@@ -347,7 +347,7 @@ const authenticateClient = async (req: Request): Promise<AuthenticateClientResul
   if (config.isDeploy && config.authTokens.size === 0) {
     return {
       ok: false,
-      response: openaiError(500, "Server misconfigured: set UBQ_AI_AUTH_TOKENS or enable Deno KV", "server_error"),
+      response: openaiError(500, "Server misconfigured: set UBIQUITY_AI_USER_TOKEN or enable Deno KV", "server_error"),
     };
   }
 
@@ -1411,7 +1411,7 @@ async function handler(req: Request): Promise<Response> {
     if (!config.codexAuthJsonB64) problems.push("CODEX_AUTH_JSON_B64 missing");
     const kv = await kvPromise;
     if (config.isDeploy && config.authTokens.size === 0 && !kv) {
-      problems.push("No UBQ_AI_AUTH_TOKENS and Deno KV unavailable");
+      problems.push("No UBIQUITY_AI_USER_TOKEN and Deno KV unavailable");
     }
     try {
       await codexInstructionsPromise;

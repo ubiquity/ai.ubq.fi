@@ -5,7 +5,8 @@ OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 ## How auth works
 
 - Clients authenticate to `ai.ubq.fi` with a **UBQ gateway token**: `Authorization: Bearer <token>`.
-  - Accepted tokens come from `UBQ_AI_AUTH_TOKENS` and/or API keys stored in Deno KV (created via `/admin/api-keys`).
+  - Accepted tokens come from `UBIQUITY_AI_USER_TOKEN` and/or API keys stored in Deno KV (created via
+    `/admin/api-keys`).
   - Admin tokens (including Deno Deploy tokens) also grant access to client routes (`/v1/*`).
 - The gateway **does not use or forward your client token upstream**.
   - For upstream requests, it uses **Codex CLI ChatGPT auth** from `CODEX_AUTH_JSON_B64` (base64 of
@@ -19,14 +20,14 @@ OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 Set a gateway token:
 
 ```bash
-export UBQ_AI_TOKEN="..."
+export UBIQUITY_AI_USER_TOKEN="..."
 ```
 
 Create one (admin):
 
 ```bash
 curl -sS https://ai.ubq.fi/admin/api-keys \
-  -H "Authorization: Bearer $UBQ_AI_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"name":"example key"}' \
   | jq -r .token
@@ -42,14 +43,14 @@ List models:
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/models \
-  -H "Authorization: Bearer $UBQ_AI_TOKEN"
+  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN"
 ```
 
 Whoami (debug which auth method was used; never returns raw secrets):
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/auth \
-  -H "Authorization: Bearer $UBQ_AI_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
   | jq
 ```
 
@@ -57,7 +58,7 @@ Chat completion (OpenAI-compatible):
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBQ_AI_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
     "model": "gpt-5.1-codex-mini",
@@ -71,7 +72,7 @@ Just the assistant message text:
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBQ_AI_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"model":"gpt-5-chat-latest","messages":[{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
   | jq -r '.choices[0].message.content'
@@ -89,7 +90,7 @@ Streaming:
 
 ```bash
 curl -N https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBQ_AI_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
     "model": "gpt-5.1-codex-mini",
@@ -102,7 +103,7 @@ Responses (OpenAI-compatible):
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/responses \
-  -H "Authorization: Bearer $UBQ_AI_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
     "model": "gpt-5-chat-latest",
@@ -117,11 +118,12 @@ Run from this repo:
 
 ```bash
 cd lib/ai.ubq.fi
-export UBQ_AI_TOKEN="..."
+export UBIQUITY_AI_USER_TOKEN="..."
 deno task ubq-ai chat "Tell me a short joke."
 ```
 
-Client commands also accept an admin token (`UBQ_AI_ADMIN_TOKEN` or `DENO_DEPLOY_TOKEN`) when `UBQ_AI_TOKEN` is unset.
+Client commands also accept an admin token (`UBIQUITY_AI_ADMIN_TOKEN` or `DENO_DEPLOY_TOKEN`) when
+`UBIQUITY_AI_USER_TOKEN` is unset.
 
 Install on your machine:
 
@@ -133,7 +135,7 @@ deno install -g --allow-env --allow-net --allow-read -n ubq-ai scripts/ubq-ai.ts
 Examples:
 
 ```bash
-export UBQ_AI_TOKEN="..."
+export UBIQUITY_AI_USER_TOKEN="..."
 ubq-ai whoami | jq
 ubq-ai models | jq
 ubq-ai chat "Tell me a short joke."
@@ -149,7 +151,7 @@ Debug (prints useful env/token fingerprints to stderr, never raw secrets):
 ubq-ai -v models
 ```
 
-Admin examples (uses `UBQ_AI_ADMIN_TOKEN` or falls back to `DENO_DEPLOY_TOKEN`):
+Admin examples (uses `UBIQUITY_AI_ADMIN_TOKEN` or falls back to `DENO_DEPLOY_TOKEN`):
 
 ```bash
 export DENO_DEPLOY_TOKEN="..."
@@ -161,10 +163,10 @@ ubq-ai admin keys list | jq
 ## Runtime env
 
 - `CODEX_AUTH_JSON_B64` (required): base64 of `~/.codex/auth.json` from a machine that ran `codex login`.
-- `UBQ_AI_AUTH_TOKENS` (optional): Comma- or newline-separated client tokens accepted via `Authorization: Bearer ...`.
-  The gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
-- `UBQ_AI_ADMIN_TOKENS` (optional, recommended): Tokens accepted for admin endpoints. If unset on Deno Deploy, the admin
-  endpoints accept a Deno Deploy token (`DENO_DEPLOY_TOKEN`) after verification against the Deno API.
+- `UBIQUITY_AI_USER_TOKEN` (optional): Comma- or newline-separated client tokens accepted via
+  `Authorization: Bearer ...`. The gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
+- `UBIQUITY_AI_ADMIN_TOKEN` (optional, recommended): Tokens accepted for admin endpoints. If unset on Deno Deploy, the
+  admin endpoints accept a Deno Deploy token (`DENO_DEPLOY_TOKEN`) after verification against the Deno API.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
 - `CODEX_INSTRUCTIONS_B64` (optional): base64 override for the upstream `instructions` string (defaults to
   `codex_instructions.md`).
@@ -178,9 +180,9 @@ This validates your posted `auth.json` against the upstream Codex endpoint and, 
 Treat `auth.json` as a secret (it contains refresh tokens).
 
 ```bash
-export UBQ_AI_ADMIN_TOKEN="..."
+export UBIQUITY_AI_ADMIN_TOKEN="..."
 curl -sS https://ai.ubq.fi/admin/codex/auth \
-  -H "Authorization: Bearer $UBQ_AI_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   --data-binary @~/.codex/auth.json \
   | jq
@@ -190,11 +192,11 @@ Or use the repo helper CLI:
 
 ```bash
 cd lib/ai.ubq.fi
-export UBQ_AI_ADMIN_TOKEN="..."
+export UBIQUITY_AI_ADMIN_TOKEN="..."
 deno task upload:auth --url https://ai.ubq.fi
 ```
 
-The helper CLI also accepts `DENO_DEPLOY_TOKEN` (if `UBQ_AI_ADMIN_TOKEN` is unset).
+The helper CLI also accepts `DENO_DEPLOY_TOKEN` (if `UBIQUITY_AI_ADMIN_TOKEN` is unset).
 
 ## Admin: create/manage UBQ API keys
 
@@ -204,7 +206,7 @@ Create (token only):
 
 ```bash
 cd lib/ai.ubq.fi
-export UBQ_AI_ADMIN_TOKEN="..."
+export UBIQUITY_AI_ADMIN_TOKEN="..."
 deno task ubq-ai admin keys create "example key"
 ```
 
@@ -235,7 +237,7 @@ deno task ubq-ai admin keys revoke --id "<id>"
 ## Local dev
 
 ```bash
-export UBQ_AI_AUTH_TOKENS="dev-token"
+export UBIQUITY_AI_USER_TOKEN="dev-token"
 export CODEX_AUTH_JSON_B64="$(base64 < ~/.codex/auth.json | tr -d '\n')"
 deno task dev
 ```
