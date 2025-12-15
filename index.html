@@ -53,12 +53,9 @@
               OpenAI-compatible endpoints live under
               <code>/v1/</code>
               (for example:
-              <a href="/v1/models">/v1/models</a>
-              ).
+              <code>/v1/models</code>
+              ). Most endpoints require a gateway token via <code>Authorization: Bearer …</code>.
             </p>
-            <div class="row row-spaced">
-              <a class="btn primary" href="/v1/models">List models</a>
-            </div>
           </section>
 
           <section class="card" role="listitem" aria-labelledby="card-curl">
@@ -91,7 +88,7 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
           <div>
             <a href="/health">/health</a>
             ·
-            <a href="/v1/models">/v1/models</a>
+            <code>/v1/models</code>
           </div>
         </footer>
       </main>
