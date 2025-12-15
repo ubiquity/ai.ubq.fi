@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ai.ubq.fi — Chat Playground</title>
+    <meta
+      name="description"
+      content="Browser chat playground for ai.ubq.fi (/v1/chat/completions). Stores your gateway token in localStorage only if you opt in."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs/%3E%3Crect width='64' height='64' rx='14' fill='%2310182a'/%3E%3Cpath d='M20 43V21h10.8c7.6 0 12.2 4 12.2 11s-4.6 11-12.2 11H20zm7-6h3.5c3.7 0 5.9-1.9 5.9-5s-2.2-5-5.9-5H27v10z' fill='%23ffffff'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand">
+          <span class="dot" aria-hidden="true"></span>
+          <a class="brand-link" href="/">ai.ubq.fi</a>
+        </div>
+        <div class="row">
+          <a class="btn" href="/">Docs</a>
+          <a class="btn primary" href="/chat">Chat playground</a>
+        </div>
+      </header>
+
+      <main>
+        <h1>Chat playground</h1>
+        <p class="sub">
+          Test <code>/v1/chat/completions</code> from your browser. Your gateway token is only saved to
+          <code>localStorage</code> if you enable “Remember”.
+        </p>
+
+        <div class="grid" role="list">
+          <section class="card half" role="listitem" aria-labelledby="card-auth">
+            <h2 id="card-auth">Auth</h2>
+            <label class="field">
+              <span class="label">Gateway token</span>
+              <input
+                id="token"
+                type="password"
+                inputmode="text"
+                autocomplete="off"
+                placeholder="Paste token (used as Authorization: Bearer …)"
+              />
+            </label>
+            <div class="row row-spaced">
+              <label class="check">
+                <input id="remember-token" type="checkbox" />
+                <span>Remember</span>
+              </label>
+              <label class="check">
+                <input id="show-token" type="checkbox" />
+                <span>Show</span>
+              </label>
+              <button id="clear-token" class="btn" type="button">Clear</button>
+            </div>
+            <p class="help warning">Remember stores the token in this browser’s localStorage in cleartext.</p>
+          </section>
+
+          <section class="card half" role="listitem" aria-labelledby="card-request">
+            <h2 id="card-request">Request</h2>
+            <label class="field">
+              <span class="label">Model</span>
+              <input id="model" type="text" inputmode="text" autocomplete="off" placeholder="gpt-5-chat-latest" />
+            </label>
+            <label class="field">
+              <span class="label">Reasoning effort</span>
+              <select id="reasoning-effort">
+                <option value="">Default</option>
+                <option value="none">none</option>
+                <option value="minimal">minimal</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+              </select>
+            </label>
+            <label class="check row-spaced">
+              <input id="stream" type="checkbox" />
+              <span>Stream response (SSE)</span>
+            </label>
+            <label class="field row-spaced">
+              <span class="label">System prompt (optional)</span>
+              <textarea id="system" rows="4" placeholder="You are a helpful assistant."></textarea>
+            </label>
+            <div class="row row-spaced">
+              <button id="test-auth" class="btn" type="button">Test token</button>
+              <span id="auth-badge" class="status-badge" data-state="unknown">Not checked</span>
+            </div>
+          </section>
+
+          <section class="card" role="listitem" aria-labelledby="card-chat">
+            <h2 id="card-chat">Chat</h2>
+            <div class="chat">
+              <div id="messages" class="chat-messages" role="log" aria-live="polite"></div>
+              <div class="row row-spaced">
+                <button id="reset-chat" class="btn" type="button">Reset chat</button>
+                <button id="stop" class="btn" type="button" disabled>Stop</button>
+              </div>
+              <form id="chat-form" class="chat-form" autocomplete="off">
+                <textarea
+                  id="prompt"
+                  rows="3"
+                  placeholder="Message… (Enter to send, Shift+Enter for newline)"
+                ></textarea>
+                <button id="send" class="btn primary" type="submit">Send</button>
+              </form>
+              <p class="help">
+                Requests go to <code>/v1/chat/completions</code> with <code>Authorization: Bearer …</code>.
+              </p>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/chat.js"></script>
+  </body>
+</html>

@@ -73,8 +73,10 @@ const API_KEY_HASH_PREFIX = ["ubq_ai", "api_keys", "hash"] as const;
 const API_KEY_NO_EXPIRATION_MS = -1;
 const CODEX_INSTRUCTIONS_URL = new URL("./codex_instructions.md", import.meta.url);
 const INDEX_HTML_URL = new URL("./index.html", import.meta.url);
+const CHAT_HTML_URL = new URL("./chat.html", import.meta.url);
 const STYLE_CSS_URL = new URL("./style.css", import.meta.url);
 const APP_JS_URL = new URL("./app.js", import.meta.url);
+const CHAT_JS_URL = new URL("./chat.js", import.meta.url);
 
 const parseTokens = (raw: string | undefined | null): Set<string> => {
   if (!raw) return new Set();
@@ -175,6 +177,15 @@ const indexHtmlPromise: Promise<string | null> = (async () => {
   }
 })();
 
+const chatHtmlPromise: Promise<string | null> = (async () => {
+  try {
+    return await Deno.readTextFile(CHAT_HTML_URL);
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to load chat.html:", error);
+    return null;
+  }
+})();
+
 const styleCssPromise: Promise<string | null> = (async () => {
   try {
     return await Deno.readTextFile(STYLE_CSS_URL);
@@ -189,6 +200,15 @@ const appJsPromise: Promise<string | null> = (async () => {
     return await Deno.readTextFile(APP_JS_URL);
   } catch (error) {
     console.error("[ai.ubq.fi] Failed to load app.js:", error);
+    return null;
+  }
+})();
+
+const chatJsPromise: Promise<string | null> = (async () => {
+  try {
+    return await Deno.readTextFile(CHAT_JS_URL);
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to load chat.js:", error);
     return null;
   }
 })();
@@ -1407,6 +1427,53 @@ async function handler(req: Request): Promise<Response> {
         },
         { "Vary": "Accept" },
       ),
+    );
+  }
+
+  if (req.method === "GET" && (path === "/chat" || path === "/chat.html")) {
+    const html = await chatHtmlPromise;
+    if (!html) {
+      return withCors(
+        new Response("Not found", {
+          status: 404,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        }),
+      );
+    }
+    return withCors(
+      new Response(html, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "public, max-age=300",
+          "Content-Security-Policy":
+            "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'",
+          "Referrer-Policy": "no-referrer",
+          "X-Content-Type-Options": "nosniff",
+        },
+      }),
+    );
+  }
+
+  if (req.method === "GET" && path === "/chat.js") {
+    const js = await chatJsPromise;
+    if (!js) {
+      return withCors(
+        new Response("Not found", {
+          status: 404,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        }),
+      );
+    }
+    return withCors(
+      new Response(js, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Cache-Control": "public, max-age=300",
+          "X-Content-Type-Options": "nosniff",
+        },
+      }),
     );
   }
 

@@ -17,8 +17,10 @@ jobs:
       include: |
         codex_instructions.md
         index.html
+        chat.html
         style.css
         app.js
+        chat.js
       env_var_keys: |
         CODEX_AUTH_JSON_B64
         UBIQUITY_AI_USER_TOKEN
