@@ -60,8 +60,18 @@
 
           <section class="card" role="listitem" aria-labelledby="card-curl">
             <h2 id="card-curl">Quickstart (curl)</h2>
+            <p><strong>Try it now:</strong> (assumes <code>$UBIQUITY_AI_USER_TOKEN</code> is set)</p>
+            <pre
+              class="code"
+            >
+<code>curl -sS https://ai.ubq.fi/v1/chat/completions \
+  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"messages":[{"role":"user","content":"Tell me a short joke."}]}'</code></pre>
+
             <p>
-              Set a gateway token that matches the server's configured allowlist, then call the OpenAI-style routes.
+              More parameters are supported (for example <code>model</code>, <code>reasoning_effort</code>,
+              <code>stream</code>, and system/developer messages). Full example:
             </p>
             <pre
               class="code"
