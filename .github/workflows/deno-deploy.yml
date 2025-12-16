@@ -17,6 +17,7 @@ jobs:
       include: |
         codex_instructions.md
         static/**
+        src/**
       env_var_keys: |
         CODEX_AUTH_JSON_B64
         UBIQUITY_AI_USER_TOKEN
