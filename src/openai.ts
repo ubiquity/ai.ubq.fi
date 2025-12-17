@@ -59,25 +59,46 @@ const parseReasoningParam = (
   return { ok: true, value };
 };
 
-const extractTextParts = (content: unknown): string => {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const item of content) {
-    if (!isRecord(item)) continue;
-    const type = getString(item.type);
-    if (type === "text") {
-      const text = getString(item.text);
-      if (text) parts.push(text);
-    } else if (type === "input_text") {
-      const text = getString(item.text);
-      if (text) parts.push(text);
-    } else if (type === "output_text") {
-      const text = getString(item.text);
-      if (text) parts.push(text);
+const extractMessageContentItems = (role: ResponseMessageItem["role"], content: unknown): MessageContentItem[] => {
+  const isAssistant = role === "assistant";
+  const textItemType: MessageContentItem["type"] = isAssistant ? "output_text" : "input_text";
+
+  if (typeof content === "string") {
+    return [{ type: textItemType, text: content }];
+  }
+
+  if (!Array.isArray(content)) {
+    return [{ type: textItemType, text: "" }];
+  }
+
+  const items: MessageContentItem[] = [];
+  for (const part of content) {
+    if (!isRecord(part)) continue;
+    const partType = getString(part.type);
+
+    if (partType === "text" || partType === "input_text" || partType === "output_text") {
+      const text = getString(part.text);
+      if (text) items.push({ type: textItemType, text });
+      continue;
+    }
+
+    if (partType === "image_url" || partType === "input_image") {
+      if (isAssistant) continue;
+      let url: string | null = null;
+      if (partType === "image_url") {
+        const image = isRecord(part.image_url) ? part.image_url : null;
+        url = image ? getString(image.url) : null;
+      } else {
+        url = getString(part.image_url);
+      }
+      const trimmed = (url ?? "").trim();
+      if (trimmed) items.push({ type: "input_image", image_url: trimmed });
+      continue;
     }
   }
-  return parts.join("");
+
+  if (items.length > 0) return items;
+  return [{ type: textItemType, text: "" }];
 };
 
 const chatRoleToCodexRole = (role: string): ResponseMessageItem["role"] | null => {
@@ -104,10 +125,7 @@ const toResponseMessageItem = (message: unknown): ResponseMessageItem | null => 
   if (!roleRaw) return null;
   const role = chatRoleToCodexRole(roleRaw);
   if (!role) return null;
-  const text = extractTextParts(message.content);
-  const content: MessageContentItem[] = role === "assistant"
-    ? [{ type: "output_text", text }]
-    : [{ type: "input_text", text }];
+  const content = extractMessageContentItems(role, message.content);
   return { type: "message", role, content };
 };
 

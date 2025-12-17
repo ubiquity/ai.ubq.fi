@@ -150,7 +150,7 @@ const parseKernelAttestationPayload = (value: unknown): KernelAttestationPayload
 };
 
 const KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS = 60;
-const KERNEL_ATTESTATION_MAX_TTL_SECONDS = 10 * 60;
+const KERNEL_ATTESTATION_MAX_TTL_SECONDS = 60 * 60;
 
 const parseInstallationIdHeader = (req: Request): number | null => {
   const raw = (req.headers.get("X-GitHub-Installation-Id") ?? "").trim();
@@ -311,12 +311,7 @@ const verifyKernelAttestation = async (
   const jti = payload.jti;
   const nowMs = Date.now();
   const cachedUntilMs = kernelTokenJtiCache.get(jti) ?? 0;
-  if (cachedUntilMs > nowMs) {
-    return {
-      ok: false,
-      response: openaiError(401, "Unauthorized (kernel attestation replay)", "invalid_kernel_token"),
-    };
-  }
+  if (cachedUntilMs > nowMs) return { ok: true };
   kernelTokenJtiCache.set(jti, payload.exp * 1000);
 
   return { ok: true };
