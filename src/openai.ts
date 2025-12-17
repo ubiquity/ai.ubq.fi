@@ -1,4 +1,4 @@
-import { buildCodexRequest, fetchCodexResponses } from "./codex.ts";
+import { buildCodexRequest, codexInstructionsPromise, fetchCodexResponses } from "./codex.ts";
 import { json, openaiError } from "./http.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord } from "./utils.ts";
@@ -369,34 +369,47 @@ export const handleChatCompletions = async (req: Request): Promise<Response> => 
 };
 
 export const handleResponses = async (req: Request): Promise<Response> => {
-  const body = (await readJsonBody(req)) as ResponsesRequest | null;
-  if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const rawBody = (await readJsonBody(req)) as ResponsesRequest | null;
+  if (!rawBody || !isRecord(rawBody)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-  const modelRaw = (getString(body.model) ?? "").trim() || DEFAULT_MODEL;
+  const clientWantsStream = Boolean(rawBody.stream);
+
+  const modelRaw = (getString(rawBody.model) ?? "").trim() || DEFAULT_MODEL;
   const model = normalizeModelForCodex(modelRaw);
-  const inputRaw = body.input;
 
-  let input: ResponseMessageItem[];
+  const inputRaw = rawBody.input;
+  let input: unknown;
   if (typeof inputRaw === "string") {
     input = [{ type: "message", role: "user", content: [{ type: "input_text", text: inputRaw }] }];
   } else if (Array.isArray(inputRaw)) {
-    input = [];
-    for (const item of inputRaw) {
-      const converted = toResponseMessageItem(item);
-      if (!converted) return openaiError(400, "Invalid item in input[]", "invalid_request_error");
-      input.push(converted);
-    }
+    input = inputRaw;
   } else {
     return openaiError(400, "input must be a string or an array", "invalid_request_error");
   }
 
-  const reasoning = parseReasoningParam(body.reasoning);
+  const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
 
   const defaultReasoning = looksLikeReasoningModel(model) ? { effort: DEFAULT_REASONING_EFFORT } : undefined;
-  const codexBody = await buildCodexRequest(model, input, {
-    reasoning: reasoning.value === undefined ? defaultReasoning : reasoning.value,
-  });
+
+  // Preserve all additional fields from the incoming request (e.g. tools/tool_choice) so Codex CLI can function.
+  const codexBody: Record<string, unknown> = {
+    ...rawBody,
+    model,
+    input,
+    stream: true, // upstream requires streaming
+  };
+
+  if (reasoning.value !== undefined) {
+    codexBody.reasoning = reasoning.value;
+  } else if (defaultReasoning !== undefined) {
+    codexBody.reasoning = defaultReasoning;
+  }
+
+  const instructions = getString(codexBody.instructions);
+  if (!instructions?.trim()) {
+    codexBody.instructions = await codexInstructionsPromise;
+  }
 
   let upstream: Response;
   try {
@@ -417,7 +430,6 @@ export const handleResponses = async (req: Request): Promise<Response> => {
     });
   }
 
-  const clientWantsStream = Boolean(body.stream);
   if (clientWantsStream) {
     const headers = new Headers(upstream.headers);
     headers.set("x-ubq-upstream", "chatgpt_codex");
