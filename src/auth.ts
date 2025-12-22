@@ -172,7 +172,7 @@ const pruneKernelTokenJtiCache = () => {
 const verifyKernelAttestation = async (
   req: Request,
   { token, owner, repo }: { token: string; owner: string; repo: string },
-): Promise<{ ok: true } | { ok: false; response: Response }> => {
+): Promise<{ ok: true; payload: KernelAttestationPayload } | { ok: false; response: Response }> => {
   const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
   if (!kernelToken) {
     return {
@@ -311,10 +311,10 @@ const verifyKernelAttestation = async (
   const jti = payload.jti;
   const nowMs = Date.now();
   const cachedUntilMs = kernelTokenJtiCache.get(jti) ?? 0;
-  if (cachedUntilMs > nowMs) return { ok: true };
+  if (cachedUntilMs > nowMs) return { ok: true, payload };
   kernelTokenJtiCache.set(jti, payload.exp * 1000);
 
-  return { ok: true };
+  return { ok: true, payload };
 };
 
 const getGitHubRepoHeaders = (req: Request): { owner: string; repo: string } | null => {
@@ -347,7 +347,7 @@ const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: s
 
 type ClientAuthMethod =
   | { kind: "disabled" }
-  | { kind: "github_token"; owner: string; repo: string }
+  | { kind: "github_token"; owner: string; repo: string; state_id: string }
   | { kind: "auth_tokens_allowlist" }
   | { kind: "kv_api_key"; key_id: string }
   | { kind: "admin_allowlist" }
@@ -373,10 +373,13 @@ const authenticateGitHubToken = async (
   const { owner, repo } = repoHeaders;
   const attestation = await verifyKernelAttestation(req, { token, owner, repo });
   if (!attestation.ok) return { ok: false, response: attestation.response };
+  const stateId = attestation.payload.state_id;
 
   const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
   const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
-  if (cachedUntil > Date.now()) return { ok: true, method: { kind: "github_token", owner, repo } };
+  if (cachedUntil > Date.now()) {
+    return { ok: true, method: { kind: "github_token", owner, repo, state_id: stateId } };
+  }
 
   try {
     const hasAccess = await verifyGitHubTokenRepoAccess(token, owner, repo);
@@ -385,7 +388,7 @@ const authenticateGitHubToken = async (
     }
 
     githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
-    return { ok: true, method: { kind: "github_token", owner, repo } };
+    return { ok: true, method: { kind: "github_token", owner, repo, state_id: stateId } };
   } catch (error) {
     console.error("[ai.ubq.fi] GitHub token verification failed:", error);
     return { ok: false, response: openaiError(502, "Failed to verify GitHub token", "bad_gateway") };
@@ -578,6 +581,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
 
   if (authResult.method.kind === "github_token") {
     method.repo = { owner: authResult.method.owner, repo: authResult.method.repo };
+    method.state_id = authResult.method.state_id;
   }
 
   if (authResult.method.kind === "kv_api_key") {

@@ -138,7 +138,8 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
+      const normalized = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const parts = normalized.split("\n\n");
       buffer = parts.pop() ?? "";
       for (const part of parts) {
         if (!part.trim()) continue;
@@ -148,7 +149,9 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
         if (!data) continue;
         try {
           yield JSON.parse(data);
-        } catch {
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn("[ai.ubq.fi] SSE parse error:", message);
           continue;
         }
       }
@@ -329,6 +332,7 @@ export const handleChatCompletions = async (req: Request): Promise<Response> => 
   const model = normalizeModelForCodex(modelRaw);
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
+  if (messagesRaw.length === 0) return openaiError(400, "messages must be a non-empty array", "invalid_request_error");
 
   const reasoningEffort = parseReasoningEffortField(body.reasoning_effort, "reasoning_effort");
   if (!reasoningEffort.ok) return openaiError(400, reasoningEffort.message, "invalid_request_error");
