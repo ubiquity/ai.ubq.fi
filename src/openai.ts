@@ -382,11 +382,27 @@ export const handleResponses = async (req: Request): Promise<Response> => {
   const model = normalizeModelForCodex(modelRaw);
 
   const inputRaw = rawBody.input;
-  let input: unknown;
+  let input: ResponseMessageItem[] | unknown[];
   if (typeof inputRaw === "string") {
     input = [{ type: "message", role: "user", content: [{ type: "input_text", text: inputRaw }] }];
   } else if (Array.isArray(inputRaw)) {
-    input = inputRaw;
+    if (inputRaw.length === 0) return openaiError(400, "input must be a non-empty array", "invalid_request_error");
+    const isResponseItem = (value: unknown): boolean => isRecord(value) && typeof value.type === "string";
+    const isChatMessage = (value: unknown): boolean => isRecord(value) && typeof value.role === "string";
+
+    if (inputRaw.every(isResponseItem)) {
+      input = inputRaw;
+    } else if (inputRaw.every(isChatMessage)) {
+      const converted: ResponseMessageItem[] = [];
+      for (const msg of inputRaw) {
+        const mapped = toResponseMessageItem(msg);
+        if (!mapped) return openaiError(400, "Invalid message in input[]", "invalid_request_error");
+        converted.push(mapped);
+      }
+      input = converted;
+    } else {
+      return openaiError(400, "input items must be response items or chat messages", "invalid_request_error");
+    }
   } else {
     return openaiError(400, "input must be a string or an array", "invalid_request_error");
   }
@@ -403,6 +419,9 @@ export const handleResponses = async (req: Request): Promise<Response> => {
     input,
     stream: true, // upstream requires streaming
   };
+  if (!Object.prototype.hasOwnProperty.call(rawBody, "store")) {
+    codexBody.store = false;
+  }
 
   if (reasoning.value !== undefined) {
     codexBody.reasoning = reasoning.value;
