@@ -1,12 +1,17 @@
 import { config } from "./config.ts";
-import { codexInstructionsPromise } from "./codex.ts";
+import { CODEX_KV_KEY, codexInstructionsPromise } from "./codex.ts";
 import { json } from "./http.ts";
 import { kvPromise } from "./kv.ts";
 
 export const handleHealth = async (): Promise<Response> => {
   const problems: string[] = [];
-  if (!config.codexAuthJsonB64) problems.push("CODEX_AUTH_JSON_B64 missing");
   const kv = await kvPromise;
+  let hasCodexAuth = Boolean(config.codexAuthJsonB64);
+  if (!hasCodexAuth && kv) {
+    const entry = await kv.get(CODEX_KV_KEY);
+    hasCodexAuth = Boolean(entry.value);
+  }
+  if (!hasCodexAuth) problems.push("CODEX_AUTH_JSON_B64 missing");
   if (config.isDeploy && config.authTokens.size === 0 && !kv) {
     problems.push("No UBIQUITY_AI_USER_TOKEN and Deno KV unavailable");
   }

@@ -9,7 +9,15 @@ import { handleV1Auth, requireAdminAuth, requireClientAuth } from "./auth.ts";
 import { handleHealth } from "./health.ts";
 import { corsHeaders, openaiError, withCors } from "./http.ts";
 import { handleChatCompletions, handleModels, handleResponses } from "./openai.ts";
-import { handleAppJs, handleChatJs, handleChatPage, handleRoot, handleStyleCss } from "./static.ts";
+import {
+  handleAppJs,
+  handleChatJs,
+  handleChatPage,
+  handleFavicon,
+  handleFavicon32,
+  handleRoot,
+  handleStyleCss,
+} from "./static.ts";
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
@@ -37,6 +45,14 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/app.js") {
     return withCors(await handleAppJs());
+  }
+
+  if (req.method === "GET" && path === "/favicon-32.png") {
+    return withCors(await handleFavicon32());
+  }
+
+  if (req.method === "GET" && path === "/favicon.png") {
+    return withCors(await handleFavicon());
   }
 
   if (req.method === "GET" && path === "/health") {
