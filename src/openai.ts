@@ -129,6 +129,13 @@ const toResponseMessageItem = (message: unknown): ResponseMessageItem | null => 
   return { type: "message", role, content };
 };
 
+const normalizeResponseInputItem = (value: unknown): ResponseMessageItem | null => {
+  if (!isRecord(value)) return null;
+  const itemType = getString(value.type);
+  if (itemType && itemType !== "message") return null;
+  return toResponseMessageItem(value);
+};
+
 const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -382,27 +389,18 @@ export const handleResponses = async (req: Request): Promise<Response> => {
   const model = normalizeModelForCodex(modelRaw);
 
   const inputRaw = rawBody.input;
-  let input: ResponseMessageItem[] | unknown[];
+  let input: ResponseMessageItem[];
   if (typeof inputRaw === "string") {
     input = [{ type: "message", role: "user", content: [{ type: "input_text", text: inputRaw }] }];
   } else if (Array.isArray(inputRaw)) {
     if (inputRaw.length === 0) return openaiError(400, "input must be a non-empty array", "invalid_request_error");
-    const isResponseItem = (value: unknown): boolean => isRecord(value) && typeof value.type === "string";
-    const isChatMessage = (value: unknown): boolean => isRecord(value) && typeof value.role === "string";
-
-    if (inputRaw.every(isResponseItem)) {
-      input = inputRaw;
-    } else if (inputRaw.every(isChatMessage)) {
-      const converted: ResponseMessageItem[] = [];
-      for (const msg of inputRaw) {
-        const mapped = toResponseMessageItem(msg);
-        if (!mapped) return openaiError(400, "Invalid message in input[]", "invalid_request_error");
-        converted.push(mapped);
-      }
-      input = converted;
-    } else {
-      return openaiError(400, "input items must be response items or chat messages", "invalid_request_error");
+    const converted: ResponseMessageItem[] = [];
+    for (const msg of inputRaw) {
+      const mapped = normalizeResponseInputItem(msg);
+      if (!mapped) return openaiError(400, "Invalid message in input[]", "invalid_request_error");
+      converted.push(mapped);
     }
+    input = converted;
   } else {
     return openaiError(400, "input must be a string or an array", "invalid_request_error");
   }
@@ -411,23 +409,34 @@ export const handleResponses = async (req: Request): Promise<Response> => {
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
 
   const defaultReasoning = looksLikeReasoningModel(model) ? { effort: DEFAULT_REASONING_EFFORT } : undefined;
+  const reasoningValue = reasoning.value !== undefined ? reasoning.value : defaultReasoning;
 
-  // Preserve all additional fields from the incoming request (e.g. tools/tool_choice) so Codex CLI can function.
-  const codexBody: Record<string, unknown> = {
-    ...rawBody,
-    model,
-    input,
-    stream: true, // upstream requires streaming
-  };
-  if (!Object.prototype.hasOwnProperty.call(rawBody, "store")) {
-    codexBody.store = false;
+  const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue });
+  const passthroughKeys = [
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "metadata",
+    "max_output_tokens",
+    "temperature",
+    "top_p",
+    "seed",
+    "truncation",
+    "response_format",
+    "user",
+    "include",
+    "store",
+    "instructions",
+  ];
+  const rawRecord = rawBody as Record<string, unknown>;
+  for (const key of passthroughKeys) {
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
+      codexBody[key] = rawRecord[key];
+    }
   }
-
-  if (reasoning.value !== undefined) {
-    codexBody.reasoning = reasoning.value;
-  } else if (defaultReasoning !== undefined) {
-    codexBody.reasoning = defaultReasoning;
-  }
+  codexBody.model = model;
+  codexBody.input = input;
+  codexBody.stream = true;
 
   const instructions = getString(codexBody.instructions);
   if (!instructions?.trim()) {

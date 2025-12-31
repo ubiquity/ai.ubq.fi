@@ -26,6 +26,20 @@ type AgentMessageRecord = Readonly<{
   created_at_ms: number;
 }>;
 
+type AgentMessagesKvListIterator<T> = AsyncIterableIterator<Deno.KvEntry<T>> & { readonly cursor: string };
+
+type AgentMessagesKv = Readonly<{
+  set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => Promise<unknown>;
+  list: <T>(selector: Deno.KvListSelector, options?: Deno.KvListOptions) => AgentMessagesKvListIterator<T>;
+}>;
+
+type AgentMessagesDeps = Readonly<{
+  authenticateClient?: typeof authenticateClient;
+  kv?: AgentMessagesKv | null;
+  now?: () => number;
+  uuid?: () => string;
+}>;
+
 const normalizeAgentId = (value: unknown): string | null => {
   const raw = getString(value);
   if (!raw) return null;
@@ -49,8 +63,9 @@ const normalizeOptionalTag = (value: unknown, maxLength: number): string | null 
 
 const normalizeBody = (value: unknown): string | null => {
   const raw = getString(value);
-  if (!raw) return null;
-  if (!raw.trim()) return null;
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
   if (raw.length > MAX_BODY_LENGTH) return null;
   return raw;
 };
@@ -71,18 +86,18 @@ const parsePositiveInt = (value: string | null): number | null => {
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return null;
-  if (parsed < 0) return null;
+  if (parsed <= 0) return null;
   return Math.trunc(parsed);
 };
 
-export const handleAgentMessagesPost = async (req: Request): Promise<Response> => {
-  const authResult = await authenticateClient(req);
+export const handleAgentMessagesPost = async (req: Request, deps: AgentMessagesDeps = {}): Promise<Response> => {
+  const authResult = await (deps.authenticateClient ?? authenticateClient)(req);
   if (!authResult.ok) return authResult.response;
   if (authResult.method.kind !== "github_token") {
     return openaiError(403, "GitHub token auth required", "forbidden");
   }
 
-  const kv = await kvPromise;
+  const kv = deps.kv !== undefined ? deps.kv : await kvPromise;
   if (!kv) return openaiError(503, "Deno KV unavailable", "server_error");
 
   const raw = await readJsonBody(req);
@@ -109,8 +124,8 @@ export const handleAgentMessagesPost = async (req: Request): Promise<Response> =
     return openaiError(400, "metadata must be a JSON object (<=8000 chars)", "invalid_request_error");
   }
 
-  const createdAtMs = Date.now();
-  const id = crypto.randomUUID();
+  const createdAtMs = (deps.now ?? Date.now)();
+  const id = (deps.uuid ?? (() => crypto.randomUUID()))();
   const record: AgentMessageRecord = {
     id,
     owner: authResult.method.owner,
@@ -130,14 +145,14 @@ export const handleAgentMessagesPost = async (req: Request): Promise<Response> =
   return json(200, { ok: true, message: record }, { "Cache-Control": "no-store" });
 };
 
-export const handleAgentMessagesList = async (req: Request): Promise<Response> => {
-  const authResult = await authenticateClient(req);
+export const handleAgentMessagesList = async (req: Request, deps: AgentMessagesDeps = {}): Promise<Response> => {
+  const authResult = await (deps.authenticateClient ?? authenticateClient)(req);
   if (!authResult.ok) return authResult.response;
   if (authResult.method.kind !== "github_token") {
     return openaiError(403, "GitHub token auth required", "forbidden");
   }
 
-  const kv = await kvPromise;
+  const kv = deps.kv !== undefined ? deps.kv : await kvPromise;
   if (!kv) return openaiError(503, "Deno KV unavailable", "server_error");
 
   const url = new URL(req.url);
@@ -150,13 +165,11 @@ export const handleAgentMessagesList = async (req: Request): Promise<Response> =
   const agentId = normalizeOptionalTag(url.searchParams.get("agent_id"), MAX_AGENT_ID_LENGTH);
 
   const prefix = ["agent_messages", authResult.method.owner, authResult.method.repo, authResult.method.state_id];
-  const scanLimit = Math.min(limit * 3, MAX_LIMIT * 3);
+  const scanLimit = channel || agentId ? Math.min(limit * 2, MAX_LIMIT) : limit;
 
   const options: Deno.KvListOptions = { limit: scanLimit };
   if (cursor) {
     options.cursor = cursor;
-  } else if (since !== null) {
-    options.start = [...prefix, since, ""] as Deno.KvKey;
   }
 
   const iterator = kv.list<AgentMessageRecord>({ prefix }, options);
@@ -164,6 +177,7 @@ export const handleAgentMessagesList = async (req: Request): Promise<Response> =
 
   for await (const entry of iterator) {
     const value = entry.value;
+    if (since !== null && value.created_at_ms < since) continue;
     if (agentId && value.agent_id !== agentId) continue;
     if (channel && value.channel !== channel) continue;
     messages.push(value);
@@ -171,7 +185,7 @@ export const handleAgentMessagesList = async (req: Request): Promise<Response> =
   }
 
   const last = messages.length > 0 ? messages[messages.length - 1] : null;
-  const nextSince = last ? last.created_at_ms : since ?? null;
+  const nextSince = last ? last.created_at_ms : null;
   const nextCursor = iterator.cursor && iterator.cursor.length > 0 ? iterator.cursor : null;
 
   return json(

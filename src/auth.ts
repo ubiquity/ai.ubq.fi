@@ -12,6 +12,14 @@ const githubTokenCache = new Map<string, number>();
 
 const looksLikeGitHubToken = (token: string): boolean => token.trim().startsWith("gh");
 
+const getEnv = (key: string): string | undefined => {
+  try {
+    return Deno.env.get(key);
+  } catch {
+    return undefined;
+  }
+};
+
 const DEFAULT_KERNEL_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs96DOU+JqM8SyNXOB6u3
 uBKIFiyrcST/LZTYN6y7LeJlyCuGPqSDrWCfjU9Ph5PLf9TWiNmeM8DGaOpwEFC7
@@ -39,7 +47,7 @@ const extractPemBlocks = (raw: string, begin: string, end: string): string[] => 
 };
 
 const getKernelPublicKeyPems = (): string[] => {
-  const envRaw = (Deno.env.get("UBIQUITY_AI_KERNEL_PUBLIC_KEY") ?? "").trim();
+  const envRaw = (getEnv("UBIQUITY_AI_KERNEL_PUBLIC_KEY") ?? "").trim();
   if (envRaw) {
     const normalized = normalizePemValue(envRaw);
     const blocks = extractPemBlocks(normalized, "-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----");
@@ -150,7 +158,7 @@ const parseKernelAttestationPayload = (value: unknown): KernelAttestationPayload
 };
 
 const KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS = 60;
-const KERNEL_ATTESTATION_MAX_TTL_SECONDS = 60 * 60;
+const KERNEL_ATTESTATION_MAX_TTL_SECONDS = 10 * 60;
 
 const parseInstallationIdHeader = (req: Request): number | null => {
   const raw = (req.headers.get("X-GitHub-Installation-Id") ?? "").trim();
@@ -311,7 +319,12 @@ const verifyKernelAttestation = async (
   const jti = payload.jti;
   const nowMs = Date.now();
   const cachedUntilMs = kernelTokenJtiCache.get(jti) ?? 0;
-  if (cachedUntilMs > nowMs) return { ok: true, payload };
+  if (cachedUntilMs > nowMs) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (kernel attestation replayed)", "invalid_kernel_token"),
+    };
+  }
   kernelTokenJtiCache.set(jti, payload.exp * 1000);
 
   return { ok: true, payload };
@@ -475,7 +488,7 @@ const looksLikeDenoDeployToken = (token: string): boolean => {
 
 const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
   if (!config.isDeploy) return false;
-  const deploymentId = (Deno.env.get("DENO_DEPLOYMENT_ID") ?? "").trim();
+  const deploymentId = (getEnv("DENO_DEPLOYMENT_ID") ?? "").trim();
   if (!deploymentId) return false;
 
   const url = `${DENO_API_BASE_URL}/deployments/${deploymentId}`;
