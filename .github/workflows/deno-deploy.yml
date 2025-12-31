@@ -16,6 +16,8 @@ jobs:
       entrypoint: serve.ts
       include: |
         codex_instructions.md
+        favicon-32.png
+        favicon.png
         static/**
         src/**
       env_var_keys: |
