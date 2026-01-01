@@ -91,7 +91,7 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleV1Auth(req));
   }
 
-  if (path === "/v1/agent-messages") {
+  if (path === "/v1/agent-bus") {
     if (req.method === "GET") return withCors(await handleAgentMessagesList(req));
     if (req.method === "POST") return withCors(await handleAgentMessagesPost(req));
     return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));

@@ -4,7 +4,6 @@ import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord } from "./utils.ts";
 
-const MESSAGE_TTL_MS = 12 * 60 * 60_000;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const MAX_AGENT_ID_LENGTH = 120;
@@ -140,7 +139,7 @@ export const handleAgentMessagesPost = async (req: Request, deps: AgentMessagesD
   };
 
   const key = ["agent_messages", record.owner, record.repo, record.state_id, createdAtMs, id] as const;
-  await kv.set(key, record, { expireIn: MESSAGE_TTL_MS });
+  await kv.set(key, record);
 
   return json(200, { ok: true, message: record }, { "Cache-Control": "no-store" });
 };
