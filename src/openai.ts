@@ -1,4 +1,4 @@
-import { buildCodexRequest, fetchCodexResponses } from "./codex.ts";
+import { buildCodexRequest, codexInstructionsPromise, CodexError, fetchCodexResponses } from "./codex.ts";
 import { json, openaiError } from "./http.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord } from "./utils.ts";
@@ -10,6 +10,23 @@ const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set(["none", "minima
 
 const DEFAULT_MODEL = "gpt-5-chat-latest";
 const DEFAULT_REASONING_EFFORT: ReasoningEffort = "xhigh";
+
+const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
+  const raw = error instanceof Error ? error.message : String(error);
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= maxLen) return trimmed;
+  return `${trimmed.slice(0, maxLen)}...`;
+};
+
+const toCodexErrorResponse = (error: unknown): Response => {
+  if (error instanceof CodexError) {
+    return openaiError(error.status, error.message, error.code);
+  }
+  const detail = formatErrorSnippet(error);
+  const message = detail ? `Codex upstream request failed: ${detail}` : "Codex upstream request failed.";
+  return openaiError(502, message, "codex_upstream_unreachable");
+};
 
 const looksLikeReasoningModel = (model: string): boolean => {
   const trimmed = model.trim().toLowerCase();
@@ -59,25 +76,46 @@ const parseReasoningParam = (
   return { ok: true, value };
 };
 
-const extractTextParts = (content: unknown): string => {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const item of content) {
-    if (!isRecord(item)) continue;
-    const type = getString(item.type);
-    if (type === "text") {
-      const text = getString(item.text);
-      if (text) parts.push(text);
-    } else if (type === "input_text") {
-      const text = getString(item.text);
-      if (text) parts.push(text);
-    } else if (type === "output_text") {
-      const text = getString(item.text);
-      if (text) parts.push(text);
+const extractMessageContentItems = (role: ResponseMessageItem["role"], content: unknown): MessageContentItem[] => {
+  const isAssistant = role === "assistant";
+  const textItemType: MessageContentItem["type"] = isAssistant ? "output_text" : "input_text";
+
+  if (typeof content === "string") {
+    return [{ type: textItemType, text: content }];
+  }
+
+  if (!Array.isArray(content)) {
+    return [{ type: textItemType, text: "" }];
+  }
+
+  const items: MessageContentItem[] = [];
+  for (const part of content) {
+    if (!isRecord(part)) continue;
+    const partType = getString(part.type);
+
+    if (partType === "text" || partType === "input_text" || partType === "output_text") {
+      const text = getString(part.text);
+      if (text) items.push({ type: textItemType, text });
+      continue;
+    }
+
+    if (partType === "image_url" || partType === "input_image") {
+      if (isAssistant) continue;
+      let url: string | null = null;
+      if (partType === "image_url") {
+        const image = isRecord(part.image_url) ? part.image_url : null;
+        url = image ? getString(image.url) : null;
+      } else {
+        url = getString(part.image_url);
+      }
+      const trimmed = (url ?? "").trim();
+      if (trimmed) items.push({ type: "input_image", image_url: trimmed });
+      continue;
     }
   }
-  return parts.join("");
+
+  if (items.length > 0) return items;
+  return [{ type: textItemType, text: "" }];
 };
 
 const chatRoleToCodexRole = (role: string): ResponseMessageItem["role"] | null => {
@@ -104,11 +142,15 @@ const toResponseMessageItem = (message: unknown): ResponseMessageItem | null => 
   if (!roleRaw) return null;
   const role = chatRoleToCodexRole(roleRaw);
   if (!role) return null;
-  const text = extractTextParts(message.content);
-  const content: MessageContentItem[] = role === "assistant"
-    ? [{ type: "output_text", text }]
-    : [{ type: "input_text", text }];
+  const content = extractMessageContentItems(role, message.content);
   return { type: "message", role, content };
+};
+
+const normalizeResponseInputItem = (value: unknown): ResponseMessageItem | null => {
+  if (!isRecord(value)) return null;
+  const itemType = getString(value.type);
+  if (itemType && itemType !== "message") return null;
+  return toResponseMessageItem(value);
 };
 
 const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
@@ -120,7 +162,8 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
+      const normalized = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const parts = normalized.split("\n\n");
       buffer = parts.pop() ?? "";
       for (const part of parts) {
         if (!part.trim()) continue;
@@ -130,7 +173,9 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
         if (!data) continue;
         try {
           yield JSON.parse(data);
-        } catch {
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn("[ai.ubq.fi] SSE parse error:", message);
           continue;
         }
       }
@@ -146,7 +191,7 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
 
 const streamChatCompletions = (upstream: Response, model: string): Response => {
   if (!upstream.body) {
-    return openaiError(502, "Upstream response missing body", "bad_gateway");
+    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
   }
 
   const encoder = new TextEncoder();
@@ -228,7 +273,7 @@ const streamChatCompletions = (upstream: Response, model: string): Response => {
 };
 
 const completeChatCompletions = async (upstream: Response, model: string): Promise<Response> => {
-  if (!upstream.body) return openaiError(502, "Upstream response missing body", "bad_gateway");
+  if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
 
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
@@ -311,6 +356,7 @@ export const handleChatCompletions = async (req: Request): Promise<Response> => 
   const model = normalizeModelForCodex(modelRaw);
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
+  if (messagesRaw.length === 0) return openaiError(400, "messages must be a non-empty array", "invalid_request_error");
 
   const reasoningEffort = parseReasoningEffortField(body.reasoning_effort, "reasoning_effort");
   if (!reasoningEffort.ok) return openaiError(400, reasoningEffort.message, "invalid_request_error");
@@ -332,7 +378,7 @@ export const handleChatCompletions = async (req: Request): Promise<Response> => 
     upstream = await fetchCodexResponses(codexBody);
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
-    return openaiError(502, "Upstream request failed", "bad_gateway");
+    return toCodexErrorResponse(error);
   }
 
   if (!upstream.ok) {
@@ -351,41 +397,75 @@ export const handleChatCompletions = async (req: Request): Promise<Response> => 
 };
 
 export const handleResponses = async (req: Request): Promise<Response> => {
-  const body = (await readJsonBody(req)) as ResponsesRequest | null;
-  if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const rawBody = (await readJsonBody(req)) as ResponsesRequest | null;
+  if (!rawBody || !isRecord(rawBody)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-  const modelRaw = (getString(body.model) ?? "").trim() || DEFAULT_MODEL;
+  const clientWantsStream = Boolean(rawBody.stream);
+
+  const modelRaw = (getString(rawBody.model) ?? "").trim() || DEFAULT_MODEL;
   const model = normalizeModelForCodex(modelRaw);
-  const inputRaw = body.input;
 
+  const inputRaw = rawBody.input;
   let input: ResponseMessageItem[];
   if (typeof inputRaw === "string") {
     input = [{ type: "message", role: "user", content: [{ type: "input_text", text: inputRaw }] }];
   } else if (Array.isArray(inputRaw)) {
-    input = [];
-    for (const item of inputRaw) {
-      const converted = toResponseMessageItem(item);
-      if (!converted) return openaiError(400, "Invalid item in input[]", "invalid_request_error");
-      input.push(converted);
+    if (inputRaw.length === 0) return openaiError(400, "input must be a non-empty array", "invalid_request_error");
+    const converted: ResponseMessageItem[] = [];
+    for (const msg of inputRaw) {
+      const mapped = normalizeResponseInputItem(msg);
+      if (!mapped) return openaiError(400, "Invalid message in input[]", "invalid_request_error");
+      converted.push(mapped);
     }
+    input = converted;
   } else {
     return openaiError(400, "input must be a string or an array", "invalid_request_error");
   }
 
-  const reasoning = parseReasoningParam(body.reasoning);
+  const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
 
   const defaultReasoning = looksLikeReasoningModel(model) ? { effort: DEFAULT_REASONING_EFFORT } : undefined;
-  const codexBody = await buildCodexRequest(model, input, {
-    reasoning: reasoning.value === undefined ? defaultReasoning : reasoning.value,
-  });
+  const reasoningValue = reasoning.value !== undefined ? reasoning.value : defaultReasoning;
+
+  const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue });
+  const passthroughKeys = [
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "metadata",
+    "max_output_tokens",
+    "temperature",
+    "top_p",
+    "seed",
+    "truncation",
+    "response_format",
+    "user",
+    "include",
+    "store",
+    "instructions",
+  ];
+  const rawRecord = rawBody as Record<string, unknown>;
+  for (const key of passthroughKeys) {
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
+      codexBody[key] = rawRecord[key];
+    }
+  }
+  codexBody.model = model;
+  codexBody.input = input;
+  codexBody.stream = true;
+
+  const instructions = getString(codexBody.instructions);
+  if (!instructions?.trim()) {
+    codexBody.instructions = await codexInstructionsPromise;
+  }
 
   let upstream: Response;
   try {
     upstream = await fetchCodexResponses(codexBody);
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
-    return openaiError(502, "Upstream request failed", "bad_gateway");
+    return toCodexErrorResponse(error);
   }
 
   if (!upstream.ok) {
@@ -399,7 +479,6 @@ export const handleResponses = async (req: Request): Promise<Response> => {
     });
   }
 
-  const clientWantsStream = Boolean(body.stream);
   if (clientWantsStream) {
     const headers = new Headers(upstream.headers);
     headers.set("x-ubq-upstream", "chatgpt_codex");
@@ -410,7 +489,7 @@ export const handleResponses = async (req: Request): Promise<Response> => {
     });
   }
 
-  if (!upstream.body) return openaiError(502, "Upstream response missing body", "bad_gateway");
+  if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
 
   let finalResponse: unknown | null = null;
   for await (const ev of parseSseEvents(upstream.body)) {
@@ -420,6 +499,6 @@ export const handleResponses = async (req: Request): Promise<Response> => {
       break;
     }
   }
-  if (!finalResponse) return openaiError(502, "Upstream stream ended unexpectedly", "bad_gateway");
+  if (!finalResponse) return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error");
   return json(200, finalResponse, { "x-ubq-upstream": "chatgpt_codex" });
 };

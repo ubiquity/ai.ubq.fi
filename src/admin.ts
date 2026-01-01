@@ -1,6 +1,7 @@
 import {
   cacheCodexAuth,
   CODEX_KV_KEY,
+  CodexError,
   getJwtExpMs,
   parseCodexAuthFromAuthJson,
   validateCodexAuthJson,
@@ -38,7 +39,12 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     validated = await validateCodexAuthJson(seed);
   } catch (error) {
     console.error("[ai.ubq.fi] Codex auth validation failed:", error);
-    return openaiError(502, "Upstream validation request failed", "bad_gateway");
+    if (error instanceof CodexError) {
+      return openaiError(error.status, error.message, error.code);
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = detail ? `Upstream validation request failed: ${detail}` : "Upstream validation request failed.";
+    return openaiError(502, message, "codex_upstream_unreachable");
   }
 
   if (!validated.ok) {

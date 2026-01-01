@@ -4,11 +4,20 @@ import {
   handleAdminApiKeysRevoke,
   handleAdminCodexAuth,
 } from "./admin.ts";
+import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
 import { handleV1Auth, requireAdminAuth, requireClientAuth } from "./auth.ts";
 import { handleHealth } from "./health.ts";
 import { corsHeaders, openaiError, withCors } from "./http.ts";
 import { handleChatCompletions, handleModels, handleResponses } from "./openai.ts";
-import { handleAppJs, handleChatJs, handleChatPage, handleRoot, handleStyleCss } from "./static.ts";
+import {
+  handleAppJs,
+  handleChatJs,
+  handleChatPage,
+  handleFavicon,
+  handleFavicon32,
+  handleRoot,
+  handleStyleCss,
+} from "./static.ts";
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
@@ -36,6 +45,14 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/app.js") {
     return withCors(await handleAppJs());
+  }
+
+  if (req.method === "GET" && path === "/favicon-32.png") {
+    return withCors(await handleFavicon32());
+  }
+
+  if (req.method === "GET" && path === "/favicon.png") {
+    return withCors(await handleFavicon());
   }
 
   if (req.method === "GET" && path === "/health") {
@@ -72,6 +89,12 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/v1/auth") {
     return withCors(await handleV1Auth(req));
+  }
+
+  if (path === "/v1/agent-bus") {
+    if (req.method === "GET") return withCors(await handleAgentMessagesList(req));
+    if (req.method === "POST") return withCors(await handleAgentMessagesPost(req));
+    return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
   }
 
   const authError = await requireClientAuth(req);

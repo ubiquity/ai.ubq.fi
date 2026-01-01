@@ -12,6 +12,14 @@ const githubTokenCache = new Map<string, number>();
 
 const looksLikeGitHubToken = (token: string): boolean => token.trim().startsWith("gh");
 
+const getEnv = (key: string): string | undefined => {
+  try {
+    return Deno.env.get(key);
+  } catch {
+    return undefined;
+  }
+};
+
 const DEFAULT_KERNEL_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs96DOU+JqM8SyNXOB6u3
 uBKIFiyrcST/LZTYN6y7LeJlyCuGPqSDrWCfjU9Ph5PLf9TWiNmeM8DGaOpwEFC7
@@ -39,7 +47,7 @@ const extractPemBlocks = (raw: string, begin: string, end: string): string[] => 
 };
 
 const getKernelPublicKeyPems = (): string[] => {
-  const envRaw = (Deno.env.get("UBIQUITY_AI_KERNEL_PUBLIC_KEY") ?? "").trim();
+  const envRaw = (getEnv("UBIQUITY_AI_KERNEL_PUBLIC_KEY") ?? "").trim();
   if (envRaw) {
     const normalized = normalizePemValue(envRaw);
     const blocks = extractPemBlocks(normalized, "-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----");
@@ -172,7 +180,7 @@ const pruneKernelTokenJtiCache = () => {
 const verifyKernelAttestation = async (
   req: Request,
   { token, owner, repo }: { token: string; owner: string; repo: string },
-): Promise<{ ok: true } | { ok: false; response: Response }> => {
+): Promise<{ ok: true; payload: KernelAttestationPayload } | { ok: false; response: Response }> => {
   const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
   if (!kernelToken) {
     return {
@@ -314,12 +322,12 @@ const verifyKernelAttestation = async (
   if (cachedUntilMs > nowMs) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (kernel attestation replay)", "invalid_kernel_token"),
+      response: openaiError(401, "Unauthorized (kernel attestation replayed)", "invalid_kernel_token"),
     };
   }
   kernelTokenJtiCache.set(jti, payload.exp * 1000);
 
-  return { ok: true };
+  return { ok: true, payload };
 };
 
 const getGitHubRepoHeaders = (req: Request): { owner: string; repo: string } | null => {
@@ -352,7 +360,7 @@ const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: s
 
 type ClientAuthMethod =
   | { kind: "disabled" }
-  | { kind: "github_token"; owner: string; repo: string }
+  | { kind: "github_token"; owner: string; repo: string; state_id: string }
   | { kind: "auth_tokens_allowlist" }
   | { kind: "kv_api_key"; key_id: string }
   | { kind: "admin_allowlist" }
@@ -378,10 +386,13 @@ const authenticateGitHubToken = async (
   const { owner, repo } = repoHeaders;
   const attestation = await verifyKernelAttestation(req, { token, owner, repo });
   if (!attestation.ok) return { ok: false, response: attestation.response };
+  const stateId = attestation.payload.state_id;
 
   const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
   const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
-  if (cachedUntil > Date.now()) return { ok: true, method: { kind: "github_token", owner, repo } };
+  if (cachedUntil > Date.now()) {
+    return { ok: true, method: { kind: "github_token", owner, repo, state_id: stateId } };
+  }
 
   try {
     const hasAccess = await verifyGitHubTokenRepoAccess(token, owner, repo);
@@ -390,7 +401,7 @@ const authenticateGitHubToken = async (
     }
 
     githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
-    return { ok: true, method: { kind: "github_token", owner, repo } };
+    return { ok: true, method: { kind: "github_token", owner, repo, state_id: stateId } };
   } catch (error) {
     console.error("[ai.ubq.fi] GitHub token verification failed:", error);
     return { ok: false, response: openaiError(502, "Failed to verify GitHub token", "bad_gateway") };
@@ -477,7 +488,7 @@ const looksLikeDenoDeployToken = (token: string): boolean => {
 
 const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
   if (!config.isDeploy) return false;
-  const deploymentId = (Deno.env.get("DENO_DEPLOYMENT_ID") ?? "").trim();
+  const deploymentId = (getEnv("DENO_DEPLOYMENT_ID") ?? "").trim();
   if (!deploymentId) return false;
 
   const url = `${DENO_API_BASE_URL}/deployments/${deploymentId}`;
@@ -583,6 +594,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
 
   if (authResult.method.kind === "github_token") {
     method.repo = { owner: authResult.method.owner, repo: authResult.method.repo };
+    method.state_id = authResult.method.state_id;
   }
 
   if (authResult.method.kind === "kv_api_key") {
