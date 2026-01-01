@@ -8,6 +8,28 @@ const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_USER_AGENT = "codex_cli_rs/0.99.0 (ai.ubq.fi)";
 
+export type CodexErrorCode =
+  | "codex_auth_missing"
+  | "codex_auth_invalid"
+  | "codex_auth_refresh_failed"
+  | "codex_auth_refresh_unreachable"
+  | "codex_upstream_unreachable";
+
+export class CodexError extends Error {
+  readonly code: CodexErrorCode;
+  readonly status: number;
+
+  constructor(message: string, code: CodexErrorCode, status: number, cause?: unknown) {
+    super(message);
+    this.name = "CodexError";
+    this.code = code;
+    this.status = status;
+    if (cause !== undefined) {
+      (this as { cause?: unknown }).cause = cause;
+    }
+  }
+}
+
 export const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
 
 const CODEX_INSTRUCTIONS_URL = new URL("../codex_instructions.md", import.meta.url);
@@ -59,13 +81,41 @@ export const cacheCodexAuth = (auth: CodexAuthState): void => {
 
 const loadAuthSeedFromEnv = (): CodexAuthState => {
   if (!config.codexAuthJsonB64) {
-    throw new Error("CODEX_AUTH_JSON_B64 is missing");
+    throw new CodexError(
+      "Codex auth missing: CODEX_AUTH_JSON_B64 unset and no KV entry.",
+      "codex_auth_missing",
+      503,
+    );
   }
-  const decoded = decodeBase64ToString(config.codexAuthJsonB64);
-  const parsed = JSON.parse(decoded) as unknown;
+  let decoded: string;
+  try {
+    decoded = decodeBase64ToString(config.codexAuthJsonB64);
+  } catch (error) {
+    throw new CodexError(
+      "Codex auth invalid: CODEX_AUTH_JSON_B64 is not valid base64.",
+      "codex_auth_invalid",
+      503,
+      error,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded) as unknown;
+  } catch (error) {
+    throw new CodexError(
+      "Codex auth invalid: CODEX_AUTH_JSON_B64 is not valid JSON.",
+      "codex_auth_invalid",
+      503,
+      error,
+    );
+  }
   const tokenData = parseCodexAuthFromAuthJson(parsed);
   if (!tokenData) {
-    throw new Error("CODEX_AUTH_JSON_B64 does not look like a Codex auth.json");
+    throw new CodexError(
+      "Codex auth invalid: CODEX_AUTH_JSON_B64 does not look like a Codex auth.json.",
+      "codex_auth_invalid",
+      503,
+    );
   }
   return { ...tokenData, updated_at_ms: Date.now() };
 };
@@ -94,26 +144,50 @@ const getAuthEntry = async (): Promise<{
   return { kv, entry: null, auth: seed };
 };
 
+const formatFailureSnippet = (raw: string, maxLen = 240): string => {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= maxLen) return trimmed;
+  return `${trimmed.slice(0, maxLen)}...`;
+};
+
+const buildRefreshFailureMessage = async (response: Response): Promise<string> => {
+  const text = await response.text().catch(() => "");
+  const detail = formatFailureSnippet(text || response.statusText);
+  return detail
+    ? `Codex auth refresh failed (status ${response.status}): ${detail}`
+    : `Codex auth refresh failed (status ${response.status}).`;
+};
+
 const refreshAuth = async (
   current: { kv: Deno.Kv | null; entry: Deno.KvEntryMaybe<CodexAuthState> | null; auth: CodexAuthState },
 ): Promise<CodexAuthState> => {
-  const response = await fetch(CODEX_REFRESH_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-    },
-    body: JSON.stringify({
-      client_id: CODEX_REFRESH_CLIENT_ID,
-      grant_type: "refresh_token",
-      refresh_token: current.auth.refresh_token,
-      scope: "openid profile email",
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(CODEX_REFRESH_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({
+        client_id: CODEX_REFRESH_CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: current.auth.refresh_token,
+        scope: "openid profile email",
+      }),
+    });
+  } catch (error) {
+    throw new CodexError(
+      "Codex auth refresh failed: auth server unreachable.",
+      "codex_auth_refresh_unreachable",
+      502,
+      error,
+    );
+  }
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Token refresh failed (${response.status}): ${text || response.statusText}`);
+    throw new CodexError(await buildRefreshFailureMessage(response), "codex_auth_refresh_failed", 503);
   }
 
   const parsed = (await response.json().catch(() => null)) as null | Record<string, unknown>;
@@ -148,30 +222,43 @@ const refreshAuth = async (
 };
 
 const refreshAuthStateless = async (auth: CodexAuthState): Promise<CodexAuthState> => {
-  const response = await fetch(CODEX_REFRESH_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-    },
-    body: JSON.stringify({
-      client_id: CODEX_REFRESH_CLIENT_ID,
-      grant_type: "refresh_token",
-      refresh_token: auth.refresh_token,
-      scope: "openid profile email",
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(CODEX_REFRESH_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({
+        client_id: CODEX_REFRESH_CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: auth.refresh_token,
+        scope: "openid profile email",
+      }),
+    });
+  } catch (error) {
+    throw new CodexError(
+      "Codex auth refresh failed: auth server unreachable.",
+      "codex_auth_refresh_unreachable",
+      502,
+      error,
+    );
+  }
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Token refresh failed (${response.status}): ${text || response.statusText}`);
+    throw new CodexError(await buildRefreshFailureMessage(response), "codex_auth_refresh_failed", 503);
   }
 
   const parsed = (await response.json().catch(() => null)) as null | Record<string, unknown>;
   const access_token = parsed && getString(parsed.access_token);
   const refresh_token = parsed && getString(parsed.refresh_token);
   if (!access_token) {
-    throw new Error("Token refresh response missing access_token");
+    throw new CodexError(
+      "Codex auth refresh failed: upstream response missing access_token.",
+      "codex_auth_refresh_failed",
+      503,
+    );
   }
 
   return {
@@ -229,30 +316,45 @@ export const fetchCodexResponses = async (body: unknown): Promise<Response> => {
   headers.set("Accept", "text/event-stream");
   headers.set("conversation_id", crypto.randomUUID());
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    redirect: "manual",
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      redirect: "manual",
+    });
+  } catch (error) {
+    throw new CodexError(
+      "Codex upstream request failed: upstream unreachable.",
+      "codex_upstream_unreachable",
+      502,
+      error,
+    );
+  }
 
   if (res.status !== 401) return res;
 
-  try {
-    await refreshAuth(await getAuthEntry());
-  } catch {
-    return res;
-  }
+  await refreshAuth(await getAuthEntry());
 
   const auth2 = await getValidAuth();
   headers.set("Authorization", `Bearer ${auth2.access_token}`);
   headers.set("ChatGPT-Account-ID", auth2.account_id);
-  return await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    redirect: "manual",
-  });
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      redirect: "manual",
+    });
+  } catch (error) {
+    throw new CodexError(
+      "Codex upstream request failed: upstream unreachable.",
+      "codex_upstream_unreachable",
+      502,
+      error,
+    );
+  }
 };
 
 export const buildCodexRequest = async (

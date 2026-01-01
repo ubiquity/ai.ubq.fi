@@ -1,4 +1,4 @@
-import { buildCodexRequest, codexInstructionsPromise, fetchCodexResponses } from "./codex.ts";
+import { buildCodexRequest, codexInstructionsPromise, CodexError, fetchCodexResponses } from "./codex.ts";
 import { json, openaiError } from "./http.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord } from "./utils.ts";
@@ -10,6 +10,23 @@ const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set(["none", "minima
 
 const DEFAULT_MODEL = "gpt-5-chat-latest";
 const DEFAULT_REASONING_EFFORT: ReasoningEffort = "xhigh";
+
+const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
+  const raw = error instanceof Error ? error.message : String(error);
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= maxLen) return trimmed;
+  return `${trimmed.slice(0, maxLen)}...`;
+};
+
+const toCodexErrorResponse = (error: unknown): Response => {
+  if (error instanceof CodexError) {
+    return openaiError(error.status, error.message, error.code);
+  }
+  const detail = formatErrorSnippet(error);
+  const message = detail ? `Codex upstream request failed: ${detail}` : "Codex upstream request failed.";
+  return openaiError(502, message, "codex_upstream_unreachable");
+};
 
 const looksLikeReasoningModel = (model: string): boolean => {
   const trimmed = model.trim().toLowerCase();
@@ -174,7 +191,7 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
 
 const streamChatCompletions = (upstream: Response, model: string): Response => {
   if (!upstream.body) {
-    return openaiError(502, "Upstream response missing body", "bad_gateway");
+    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
   }
 
   const encoder = new TextEncoder();
@@ -256,7 +273,7 @@ const streamChatCompletions = (upstream: Response, model: string): Response => {
 };
 
 const completeChatCompletions = async (upstream: Response, model: string): Promise<Response> => {
-  if (!upstream.body) return openaiError(502, "Upstream response missing body", "bad_gateway");
+  if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
 
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
@@ -361,7 +378,7 @@ export const handleChatCompletions = async (req: Request): Promise<Response> => 
     upstream = await fetchCodexResponses(codexBody);
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
-    return openaiError(502, "Upstream request failed", "bad_gateway");
+    return toCodexErrorResponse(error);
   }
 
   if (!upstream.ok) {
@@ -448,7 +465,7 @@ export const handleResponses = async (req: Request): Promise<Response> => {
     upstream = await fetchCodexResponses(codexBody);
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
-    return openaiError(502, "Upstream request failed", "bad_gateway");
+    return toCodexErrorResponse(error);
   }
 
   if (!upstream.ok) {
@@ -472,7 +489,7 @@ export const handleResponses = async (req: Request): Promise<Response> => {
     });
   }
 
-  if (!upstream.body) return openaiError(502, "Upstream response missing body", "bad_gateway");
+  if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
 
   let finalResponse: unknown | null = null;
   for await (const ev of parseSseEvents(upstream.body)) {
@@ -482,6 +499,6 @@ export const handleResponses = async (req: Request): Promise<Response> => {
       break;
     }
   }
-  if (!finalResponse) return openaiError(502, "Upstream stream ended unexpectedly", "bad_gateway");
+  if (!finalResponse) return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error");
   return json(200, finalResponse, { "x-ubq-upstream": "chatgpt_codex" });
 };
