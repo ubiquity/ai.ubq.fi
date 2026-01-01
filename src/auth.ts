@@ -158,7 +158,7 @@ const parseKernelAttestationPayload = (value: unknown): KernelAttestationPayload
 };
 
 const KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS = 60;
-const KERNEL_ATTESTATION_MAX_TTL_SECONDS = 10 * 60;
+const KERNEL_ATTESTATION_MAX_TTL_SECONDS = 60 * 60;
 
 const parseInstallationIdHeader = (req: Request): number | null => {
   const raw = (req.headers.get("X-GitHub-Installation-Id") ?? "").trim();
