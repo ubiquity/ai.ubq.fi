@@ -165,7 +165,7 @@ Deno.test("agent-messages: list returns messages and cursor info", async () => {
   assert.equal(payload.ok, true);
   assert.equal(payload.messages.length, 1);
   assert.equal(payload.messages[0].id, "msg-1");
-  assert.equal(payload.next_since, 1001);
+  assert.equal(payload.next_since, 1000);
   assert.equal(payload.has_more, true);
   assert.equal(payload.next_cursor, "next");
 });

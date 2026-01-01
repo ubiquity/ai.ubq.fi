@@ -185,7 +185,7 @@ export const handleAgentMessagesList = async (req: Request, deps: AgentMessagesD
   }
 
   const last = messages.length > 0 ? messages[messages.length - 1] : null;
-  const nextSince = last ? last.created_at_ms + 1 : null;
+  const nextSince = last ? last.created_at_ms : null;
   const nextCursor = iterator.cursor && iterator.cursor.length > 0 ? iterator.cursor : null;
 
   return json(
