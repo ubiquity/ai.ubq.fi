@@ -6,7 +6,6 @@ on:
 
 jobs:
   deploy:
-    environment: ${{ github.ref == 'refs/heads/main' && 'main' || 'development' }}
     permissions:
       contents: read
       issues: write
