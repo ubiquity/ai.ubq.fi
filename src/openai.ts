@@ -146,6 +146,33 @@ const toResponseMessageItem = (message: unknown): ResponseMessageItem | null => 
   return { type: "message", role, content };
 };
 
+const normalizeResponseContentItem = (value: unknown): MessageContentItem | null => {
+  if (!isRecord(value)) return null;
+  const partType = getString(value.type);
+  if (!partType) return null;
+
+  if (partType === "input_text" || partType === "text") {
+    const text = getString(value.text);
+    if (text === null) return null;
+    return { type: "input_text", text };
+  }
+
+  if (partType === "input_image" || partType === "image_url") {
+    let url: string | null = null;
+    if (partType === "image_url") {
+      const image = isRecord(value.image_url) ? value.image_url : null;
+      url = image ? getString(image.url) : null;
+    } else {
+      url = getString(value.image_url);
+    }
+    const trimmed = (url ?? "").trim();
+    if (!trimmed) return null;
+    return { type: "input_image", image_url: trimmed };
+  }
+
+  return null;
+};
+
 const normalizeResponseInputItem = (value: unknown): ResponseMessageItem | null => {
   if (!isRecord(value)) return null;
   const itemType = getString(value.type);
@@ -412,10 +439,33 @@ export const handleResponses = async (req: Request): Promise<Response> => {
   } else if (Array.isArray(inputRaw)) {
     if (inputRaw.length === 0) return openaiError(400, "input must be a non-empty array", "invalid_request_error");
     const converted: ResponseMessageItem[] = [];
+    let contentBuffer: MessageContentItem[] = [];
+
+    const flushContentBuffer = () => {
+      if (!contentBuffer.length) return;
+      converted.push({ type: "message", role: "user", content: contentBuffer });
+      contentBuffer = [];
+    };
+
+    let sawMessage = false;
     for (const msg of inputRaw) {
       const mapped = normalizeResponseInputItem(msg);
-      if (!mapped) return openaiError(400, "Invalid message in input[]", "invalid_request_error");
-      converted.push(mapped);
+      if (mapped) {
+        flushContentBuffer();
+        converted.push(mapped);
+        sawMessage = true;
+        continue;
+      }
+      const contentItem = normalizeResponseContentItem(msg);
+      if (!contentItem) return openaiError(400, "Invalid message in input[]", "invalid_request_error");
+      if (sawMessage) {
+        converted.push({ type: "message", role: "user", content: [contentItem] });
+      } else {
+        contentBuffer.push(contentItem);
+      }
+    }
+    if (!sawMessage || contentBuffer.length) {
+      flushContentBuffer();
     }
     input = converted;
   } else {
