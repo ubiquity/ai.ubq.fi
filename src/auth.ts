@@ -512,7 +512,7 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   if (config.isDeploy && config.authTokens.size === 0) {
     return {
       ok: false,
-      response: openaiError(500, "Server misconfigured: set UBIQUITY_AI_USER_TOKEN or enable Deno KV", "server_error"),
+      response: openaiError(500, "Server misconfigured: set UBIQUITY_AI_TOKEN or enable Deno KV", "server_error"),
     };
   }
 
