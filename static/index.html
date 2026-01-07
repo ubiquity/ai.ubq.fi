@@ -7,11 +7,8 @@
 
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ai.ubq.fi</title>
-    <meta
-      name="description"
-      content="OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy)."
-    />
+    <title>UbiquityOS — AI Gateway</title>
+    <meta name="description" content="OpenAI API-compatible gateway for the UbiquityOS ecosystem." />
 
     <link rel="stylesheet" href="/style.css" />
   </head>
@@ -19,20 +16,22 @@
     <div class="wrap">
       <header>
         <div class="brand">
-          <span class="dot" aria-hidden="true"></span>
-          <span>ai.ubq.fi</span>
+          <a class="brand-link" href="/">
+            <span class="dot" aria-hidden="true"></span>
+            <span>UbiquityOS</span>
+          </a>
+          <span class="muted" style="margin-left: 4px">/ AI Gateway</span>
         </div>
         <div class="pill" title="This site is an API gateway, not the public OpenAI API.">
           <strong>OpenAI-compatible</strong>
-          <span>gateway</span>
         </div>
       </header>
 
       <main>
-        <h1>OpenAI API-compatible gateway for ubq.fi</h1>
+        <h1>AI Gateway</h1>
         <p class="sub">
-          `ai.ubq.fi` provides an OpenAI-style API surface (`/v1/*`) backed by a Codex upstream. Most endpoints require
-          a gateway token via `Authorization: Bearer …`.
+          OpenAI-style API surface (<code>/v1/*</code>) backed by a Codex upstream. Most endpoints require a gateway
+          token via <code>Authorization: Bearer …</code>.
         </p>
 
         <div class="grid" role="list">
