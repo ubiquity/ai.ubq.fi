@@ -238,8 +238,8 @@ Usage:
 
 Global options:
   --url <url>                 Base URL (default: https://ai.ubq.fi)
-  --token <token>             Client token (or set UBIQUITY_AI_USER_TOKEN; falls back to admin token if unset)
-  --admin-token <token>       Admin token (or set UBIQUITY_AI_ADMIN_TOKEN; fallback DENO_DEPLOY_TOKEN)
+  --token <token>             Client token (or set UBIQUITY_AI_TOKEN; falls back to admin token if unset)
+  --admin-token <token>       Admin token (or set DENO_DEPLOY_TOKEN)
   --json                      Print full JSON (default prints text when possible)
   --stream                    Stream output (when supported)
   --raw                       For streams: print raw SSE bytes (no parsing)
@@ -254,7 +254,7 @@ Commands:
   chat [<prompt>] [--model <id>] [--reasoning-effort <level>] [--system <text>] [--developer <text>] [--messages-json <json>] [--messages-file <path>]
   responses [<input>] [--model <id>] [--reasoning-effort <level>] [--input-json <json>] [--input-file <path>]
   admin upload-auth [--auth-json <path>]
-  admin keys create "<name>" [--token <token>] [--expires <preset>|--expires-at-ms <ms>]
+  admin keys create "<name>" [--token <token>] [--expires <preset>|--expires-at-ms <ms>] [--usage-limit <requests>]
   admin keys list
   admin keys revoke --id <id>
 
@@ -263,12 +263,12 @@ Admin key expiration:
   --expires-at-ms <ms>         Unix epoch ms timestamp; -1 means does not expire
 
 Examples:
-  UBIQUITY_AI_USER_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat \"Tell me a short joke.\"
-  UBIQUITY_AI_USER_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
+  UBIQUITY_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat \"Tell me a short joke.\"
+  UBIQUITY_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"example key\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"tmp key\" --expires week
-  UBIQUITY_AI_USER_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts whoami | jq
+  UBIQUITY_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts whoami | jq
 
 `;
 
@@ -529,7 +529,7 @@ const parseApiKeyExpiresAtMs = (
 
 const resolveClientToken = (flags: Record<string, FlagValue>, runtime: UbqAiRuntime): string | null => {
   const fromFlag = getFlagString(flags, "token");
-  const fromEnv = runtime.envGet("UBIQUITY_AI_USER_TOKEN") ?? "";
+  const fromEnv = runtime.envGet("UBIQUITY_AI_TOKEN") ?? "";
   const token = (fromFlag ?? fromEnv).trim();
   if (token) return token;
   return resolveAdminToken(flags, runtime);
@@ -537,7 +537,7 @@ const resolveClientToken = (flags: Record<string, FlagValue>, runtime: UbqAiRunt
 
 const resolveAdminToken = (flags: Record<string, FlagValue>, runtime: UbqAiRuntime): string | null => {
   const fromFlag = getFlagString(flags, "admin-token");
-  const fromEnv = runtime.envGet("UBIQUITY_AI_ADMIN_TOKEN") ?? runtime.envGet("DENO_DEPLOY_TOKEN") ?? "";
+  const fromEnv = runtime.envGet("DENO_DEPLOY_TOKEN") ?? "";
   const token = (fromFlag ?? fromEnv).trim();
   return token || null;
 };
@@ -565,23 +565,21 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
 
   await debug(`[ubq-ai] url=${baseUrl}\n`);
   await debug(
-    `[ubq-ai] env UBIQUITY_AI_USER_TOKEN=${await describeSecret(runtime.envGet("UBIQUITY_AI_USER_TOKEN"))}\n`,
+    `[ubq-ai] env UBIQUITY_AI_TOKEN=${await describeSecret(runtime.envGet("UBIQUITY_AI_TOKEN"))}\n`,
   );
   await debug(
-    `[ubq-ai] env UBIQUITY_AI_ADMIN_TOKEN=${await describeSecret(runtime.envGet("UBIQUITY_AI_ADMIN_TOKEN"))}\n`,
+    `[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`,
   );
   await debug(`[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`);
   const clientSource = getFlagString(flags, "token")
     ? "--token"
-    : (runtime.envGet("UBIQUITY_AI_USER_TOKEN") ?? "").trim()
-    ? "UBIQUITY_AI_USER_TOKEN"
+    : (runtime.envGet("UBIQUITY_AI_TOKEN") ?? "").trim()
+    ? "UBIQUITY_AI_TOKEN"
     : resolveAdminToken(flags, runtime)
     ? "(admin fallback)"
     : "(unset)";
   const adminSource = getFlagString(flags, "admin-token")
     ? "--admin-token"
-    : (runtime.envGet("UBIQUITY_AI_ADMIN_TOKEN") ?? "").trim()
-    ? "UBIQUITY_AI_ADMIN_TOKEN"
     : (runtime.envGet("DENO_DEPLOY_TOKEN") ?? "").trim()
     ? "DENO_DEPLOY_TOKEN"
     : "(unset)";
@@ -635,7 +633,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or UBIQUITY_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UBIQUITY_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -661,7 +659,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or UBIQUITY_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UBIQUITY_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -687,7 +685,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or UBIQUITY_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UBIQUITY_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -834,7 +832,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or UBIQUITY_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UBIQUITY_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -975,7 +973,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!adminToken) {
       await writeErrText(
         runtime,
-        "Missing admin token. Set UBIQUITY_AI_ADMIN_TOKEN (or DENO_DEPLOY_TOKEN) or pass --admin-token.\n",
+        "Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.\n",
       );
       return 2;
     }
@@ -1042,8 +1040,25 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
           return 2;
         }
 
+        const usageLimitRaw = getFlagString(flags, "usage-limit");
+        let usageLimit: number | undefined;
+        if (usageLimitRaw) {
+          const trimmed = usageLimitRaw.trim();
+          if (trimmed === "unlimited" || trimmed === "-1") {
+            usageLimit = -1;
+          } else {
+            const parsed = Number(trimmed);
+            if (!Number.isFinite(parsed) || parsed < 0) {
+              await writeErrText(runtime, "--usage-limit must be a positive number, -1, or 'unlimited'\n");
+              return 2;
+            }
+            usageLimit = Math.trunc(parsed);
+          }
+        }
+
         const body: Record<string, unknown> = token ? { name, token } : { name };
         if (expiresAt.value !== undefined) body.expires_at_ms = expiresAt.value;
+        if (usageLimit !== undefined) body.usage_limit_requests = usageLimit;
 
         const req = new Request(endpoint("/admin/api-keys"), {
           method: "POST",

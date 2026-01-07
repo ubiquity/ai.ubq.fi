@@ -13,12 +13,34 @@ export type ApiKeyRecord = Readonly<{
   created_at_ms: number;
   expires_at_ms: number;
   revoked_at_ms: number | null;
+  usage_limit_requests: number;
+  usage_requests: number;
+  usage_reset_at_ms: number;
 }>;
 
 export type ApiKeyHashRecord = Readonly<{
   id: string;
   expires_at_ms: number;
   revoked_at_ms: number | null;
+  usage_limit_requests: number;
+  usage_requests: number;
+  usage_reset_at_ms: number;
+}>;
+
+export type ApiKeyUsageRecord = Readonly<{
+  key_id: string;
+  total_requests: number;
+  stream_requests: number;
+  non_stream_requests: number;
+  completed_requests: number;
+  error_requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  first_seen_at_ms: number;
+  last_seen_at_ms: number;
+  last_model: string | null;
+  last_route: string | null;
 }>;
 
 export type ChatCompletionRequest = Readonly<{

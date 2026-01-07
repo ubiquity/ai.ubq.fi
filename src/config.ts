@@ -28,8 +28,8 @@ const getEnv = (key: string): string | undefined => {
 
 const loadConfig = (): Config => {
   const isDeploy = Boolean(getEnv("DENO_DEPLOYMENT_ID") ?? getEnv("DENO_REGION"));
-  const authTokens = parseTokens(getEnv("UBIQUITY_AI_USER_TOKEN"));
-  const adminTokens = parseTokens(getEnv("UBIQUITY_AI_ADMIN_TOKEN"));
+  const authTokens = parseTokens(getEnv("UBIQUITY_AI_TOKEN"));
+  const adminTokens = parseTokens(getEnv("DENO_DEPLOY_TOKEN"));
   const allowOrigin = (getEnv("CORS_ALLOW_ORIGIN") ?? "*").trim() || "*";
 
   const codexBaseUrl = (getEnv("CODEX_BASE_URL") ?? "https://chatgpt.com/backend-api/codex").trim().replace(/\/$/, "");

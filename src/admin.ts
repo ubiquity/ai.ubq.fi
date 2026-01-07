@@ -10,11 +10,16 @@ import { json, openaiError } from "./http.ts";
 import {
   API_KEY_ID_PREFIX,
   API_KEY_NO_EXPIRATION_MS,
+  API_KEY_NO_USAGE_LIMIT,
   apiKeyHashKey,
   apiKeyIdKey,
+  calculateNextResetMs,
   coerceApiKeyExpiresAtMs,
+  DEFAULT_USAGE_LIMIT_REQUESTS,
   generateApiKeyToken,
+  getDefaultExpiryMs,
 } from "./api_keys.ts";
+import { getApiKeyUsage } from "./analytics.ts";
 import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
@@ -96,13 +101,28 @@ const normalizeOptionalApiKeyToken = (value: unknown): string | null => {
 };
 
 const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | null => {
-  if (value === undefined || value === null) return API_KEY_NO_EXPIRATION_MS;
+  if (value === undefined || value === null) return getDefaultExpiryMs(nowMs);
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   const expiresAtMs = Math.trunc(value);
   if (expiresAtMs === API_KEY_NO_EXPIRATION_MS) return API_KEY_NO_EXPIRATION_MS;
   if (expiresAtMs < 0) return null;
   if (expiresAtMs <= nowMs) return null;
   return expiresAtMs;
+};
+
+const shouldIncludeUsage = (value: string | null): boolean => {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+};
+
+const normalizeApiKeyUsageLimit = (value: unknown): number | null => {
+  if (value === undefined || value === null) return DEFAULT_USAGE_LIMIT_REQUESTS;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const limit = Math.trunc(value);
+  if (limit === API_KEY_NO_USAGE_LIMIT) return API_KEY_NO_USAGE_LIMIT;
+  if (limit < 0) return null;
+  return limit;
 };
 
 export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
@@ -130,6 +150,15 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     );
   }
 
+  const usageLimitRequests = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
+  if (usageLimitRequests === null) {
+    return openaiError(
+      400,
+      "usage_limit_requests must be a positive number or -1 for unlimited",
+      "invalid_request_error",
+    );
+  }
+
   const hash = await sha256Base64Url(token);
   const hashKey = apiKeyHashKey(hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
@@ -138,6 +167,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   }
 
   const id = crypto.randomUUID();
+  const usageResetAtMs = calculateNextResetMs(now);
   const record: ApiKeyRecord = {
     id,
     name,
@@ -146,8 +176,18 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     created_at_ms: now,
     expires_at_ms: expiresAtMs,
     revoked_at_ms: null,
+    usage_limit_requests: usageLimitRequests,
+    usage_requests: 0,
+    usage_reset_at_ms: usageResetAtMs,
   };
-  const hashRecord: ApiKeyHashRecord = { id, expires_at_ms: expiresAtMs, revoked_at_ms: null };
+  const hashRecord: ApiKeyHashRecord = {
+    id,
+    expires_at_ms: expiresAtMs,
+    revoked_at_ms: null,
+    usage_limit_requests: usageLimitRequests,
+    usage_requests: 0,
+    usage_reset_at_ms: usageResetAtMs,
+  };
 
   const commit = await kv.atomic()
     .check(hashEntry)
@@ -168,12 +208,15 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
       prefix: record.prefix,
       created_at_ms: record.created_at_ms,
       expires_at_ms: record.expires_at_ms,
+      usage_limit_requests: record.usage_limit_requests,
+      usage_requests: record.usage_requests,
+      usage_reset_at_ms: record.usage_reset_at_ms,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
 };
 
-export const handleAdminApiKeysList = async (): Promise<Response> => {
+export const handleAdminApiKeysList = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
@@ -184,6 +227,14 @@ export const handleAdminApiKeysList = async (): Promise<Response> => {
     if (entry.value) records.push(entry.value);
   }
   records.sort((a, b) => b.created_at_ms - a.created_at_ms);
+
+  const includeUsage = shouldIncludeUsage(new URL(req.url).searchParams.get("include_usage"));
+  const usageById = new Map<string, Awaited<ReturnType<typeof getApiKeyUsage>>>();
+  if (includeUsage) {
+    for (const record of records) {
+      usageById.set(record.id, await getApiKeyUsage(record.id));
+    }
+  }
 
   return json(
     200,
@@ -196,6 +247,10 @@ export const handleAdminApiKeysList = async (): Promise<Response> => {
         created_at_ms: r.created_at_ms,
         expires_at_ms: coerceApiKeyExpiresAtMs(r),
         revoked_at_ms: r.revoked_at_ms,
+        usage_limit_requests: r.usage_limit_requests,
+        usage_requests: r.usage_requests,
+        usage_reset_at_ms: r.usage_reset_at_ms,
+        ...(includeUsage ? { usage: usageById.get(r.id) ?? null } : {}),
       })),
     },
     { "x-ubq-upstream": "chatgpt_codex" },
@@ -250,4 +305,69 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
+};
+
+export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
+  }
+
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const id = getString(raw.id);
+  if (!id) return openaiError(400, "id is required", "invalid_request_error");
+
+  const idKey = apiKeyIdKey(id);
+  const entry = await kv.get<ApiKeyRecord>(idKey);
+  if (!entry.value) return openaiError(404, "Not found", "not_found");
+
+  if (!entry.value.revoked_at_ms) {
+    return openaiError(400, "Only revoked keys can be deleted", "invalid_request_error");
+  }
+
+  const atomic = kv.atomic()
+    .check(entry)
+    .delete(idKey)
+    .delete(apiKeyHashKey(entry.value.hash))
+    .delete(["ubq_ai", "api_keys", "usage", id]);
+
+  const commit = await atomic.commit();
+  if (!commit.ok) {
+    return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
+  }
+
+  return json(200, { ok: true, id }, { "x-ubq-upstream": "chatgpt_codex" });
+};
+
+const REASONING_EFFORTS: ReadonlySet<string> = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+
+const DEFAULT_REASONING_EFFORT_KEY = ["default", "reasoning_effort"];
+
+export const handleAdminReasoningLevel = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot manage reasoning level", "server_error");
+  }
+
+  if (req.method === "GET") {
+    const entry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
+    const effort = entry.value ?? "xhigh";
+    return json(200, { effort }, { "x-ubq-upstream": "chatgpt_codex" });
+  }
+
+  if (req.method === "POST") {
+    const raw = await readJsonBody(req);
+    if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+
+    const effort = getString(raw.effort);
+    if (!effort || !REASONING_EFFORTS.has(effort)) {
+      return openaiError(400, "effort must be one of: none, minimal, low, medium, high, xhigh", "invalid_request_error");
+    }
+
+    await kv.set(DEFAULT_REASONING_EFFORT_KEY, effort);
+    return json(200, { ok: true, effort }, { "x-ubq-upstream": "chatgpt_codex" });
+  }
+
+  return openaiError(405, "Method not allowed", "method_not_allowed");
 };

@@ -126,7 +126,7 @@ Deno.test("ubq-ai: info prints JSON", async () => {
 
 Deno.test("ubq-ai: whoami uses client token and prints JSON", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
-    env: { UBIQUITY_AI_USER_TOKEN: "ubq_ai_test_token_1234567890" },
+    env: { UBIQUITY_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/auth"));
       assert.equal(recorded.method, "GET");
@@ -162,7 +162,7 @@ Deno.test("ubq-ai: whoami falls back to admin token when client token missing", 
 
 Deno.test("ubq-ai: models uses client token and prints JSON", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
-    env: { UBIQUITY_AI_USER_TOKEN: "ubq_ai_test_token_1234567890" },
+    env: { UBIQUITY_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/models"));
       assert.equal(recorded.method, "GET");
@@ -199,7 +199,7 @@ Deno.test("ubq-ai: models falls back to admin token when client token missing", 
 Deno.test("ubq-ai: -v prints debug without leaking secrets", async () => {
   const secret = "ubq_ai_test_token_super_secret_1234567890";
   const { runtime, outText, errText } = makeRuntime({
-    env: { UBIQUITY_AI_USER_TOKEN: secret },
+    env: { UBIQUITY_AI_TOKEN: secret },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/models"));
       return jsonResponse(200, { object: "list", data: [] });
@@ -209,13 +209,13 @@ Deno.test("ubq-ai: -v prints debug without leaking secrets", async () => {
   const code = await runUbqAi(["-v", "models"], runtime);
   assert.equal(code, 0);
   assert.ok(outText().includes('"object": "list"'));
-  assert.ok(errText().includes("env UBIQUITY_AI_USER_TOKEN="));
+  assert.ok(errText().includes("env UBIQUITY_AI_TOKEN="));
   assert.equal(errText().includes(secret), false);
 });
 
 Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", async () => {
   const { runtime, requests, outText, errText } = makeRuntime({
-    env: { UBIQUITY_AI_USER_TOKEN: "ubq_ai_test_token_1234567890" },
+    env: { UBIQUITY_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       if (!recorded.url.endsWith("/v1/chat/completions")) {
         return jsonResponse(404, { error: { message: "not found" } });
@@ -248,7 +248,7 @@ Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", asy
 
 Deno.test("ubq-ai: chat (non-stream) prints assistant content", async () => {
   const { runtime, outText, errText } = makeRuntime({
-    env: { UBIQUITY_AI_USER_TOKEN: "ubq_ai_test_token_1234567890" },
+    env: { UBIQUITY_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/chat/completions"));
       return jsonResponse(200, {
@@ -269,7 +269,7 @@ Deno.test("ubq-ai: chat (non-stream) prints assistant content", async () => {
 
 Deno.test("ubq-ai: chat passes --reasoning-effort through", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
-    env: { UBIQUITY_AI_USER_TOKEN: "ubq_ai_test_token_1234567890" },
+    env: { UBIQUITY_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/chat/completions"));
       const body = JSON.parse(recorded.bodyText ?? "null") as { reasoning_effort?: unknown };
@@ -315,7 +315,7 @@ Deno.test("ubq-ai: chat falls back to admin token when client token missing", as
 
 Deno.test("ubq-ai: responses (non-stream) prints extracted assistant text", async () => {
   const { runtime, outText, errText } = makeRuntime({
-    env: { UBIQUITY_AI_USER_TOKEN: "ubq_ai_test_token_1234567890" },
+    env: { UBIQUITY_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/responses"));
       return jsonResponse(200, {
@@ -339,7 +339,7 @@ Deno.test("ubq-ai: responses (non-stream) prints extracted assistant text", asyn
 
 Deno.test("ubq-ai: responses maps --reasoning-effort to reasoning.effort", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
-    env: { UBIQUITY_AI_USER_TOKEN: "ubq_ai_test_token_1234567890" },
+    env: { UBIQUITY_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/responses"));
       const body = JSON.parse(recorded.bodyText ?? "null") as { reasoning?: unknown };
@@ -562,7 +562,7 @@ Deno.test("ubq-ai: missing admin token returns exit code 2", async () => {
 
 Deno.test("ubq-ai: user token does not grant admin access", async () => {
   const { runtime, outText, errText } = makeRuntime({
-    env: { UBIQUITY_AI_USER_TOKEN: "client_only_token" },
+    env: { UBIQUITY_AI_TOKEN: "client_only_token" },
     fetch: () => {
       throw new Error("fetch should not be called");
     },
