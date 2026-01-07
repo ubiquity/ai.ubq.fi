@@ -55,11 +55,8 @@ header {
   justify-content: space-between;
   gap: 16px;
   padding: 14px 16px;
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  background: var(--surface-2);
   border-radius: 16px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(12px);
 }
 
 .brand {
@@ -74,10 +71,7 @@ header {
   width: 12px;
   height: 12px;
   border-radius: 999px;
-  background:
-    radial-gradient(circle at 30% 30%, #fff, rgba(255, 255, 255, 0.2) 40%, transparent 70%),
-    linear-gradient(90deg, var(--accent), var(--accent-2));
-  box-shadow: 0 0 0 6px rgba(125, 211, 252, 0.12);
+  background: var(--accent);
 }
 
 .pill {
@@ -85,9 +79,8 @@ header {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
   font-size: 13px;
   color: var(--muted);
   white-space: nowrap;
@@ -101,11 +94,8 @@ header {
 main {
   margin-top: 26px;
   padding: 28px 22px;
-  border: 1px solid var(--border);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
+  background: var(--surface);
 }
 
 h1 {
@@ -132,10 +122,9 @@ h1 {
 
 .card {
   grid-column: span 12;
-  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 16px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03));
+  background: var(--surface-2);
 }
 
 @media (min-width: 760px) {
@@ -159,8 +148,7 @@ h1 {
 
 .code {
   margin-top: 12px;
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.35);
   border-radius: 14px;
   padding: 12px 12px;
   overflow: auto;
@@ -187,8 +175,7 @@ h1 {
   gap: 8px;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
   color: var(--text);
   font-weight: 600;
   font-size: 14px;
@@ -202,8 +189,7 @@ h1 {
 }
 
 .btn.primary {
-  border-color: rgba(125, 211, 252, 0.35);
-  /* background: linear-gradient(90deg, rgba(125, 211, 252, 0.18), rgba(167, 139, 250, 0.16)); */
+  background: rgba(125, 211, 252, 0.18);
 }
 
 footer {
@@ -227,23 +213,19 @@ footer {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  /* border-radius: 999px; */
-  /* border: 1px solid var(--border); */
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-2);
   color: var(--muted);
   font-size: 12.5px;
 }
 
 .status-badge[data-state="ok"] {
-  border-color: rgba(34, 197, 94, 0.35);
   color: rgba(209, 250, 229, 0.92);
-  background: rgba(34, 197, 94, 0.12);
+  background: rgba(34, 197, 94, 0.2);
 }
 
 .status-badge[data-state="bad"] {
-  border-color: rgba(248, 113, 113, 0.35);
   color: rgba(254, 226, 226, 0.92);
-  background: rgba(248, 113, 113, 0.12);
+  background: rgba(248, 113, 113, 0.2);
 }
 
 .brand-link {
@@ -273,9 +255,9 @@ select {
   width: 100%;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.25);
   color: var(--text);
+  border: none;
   font-family: var(--sans);
   font-size: 14px;
 }
@@ -288,7 +270,7 @@ input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: rgba(125, 211, 252, 0.45);
+  background: rgba(0, 0, 0, 0.35);
   box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.12);
 }
 
@@ -324,8 +306,7 @@ select:focus {
 
 .chat-messages {
   height: min(52vh, 480px);
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.22);
+  background: rgba(0, 0, 0, 0.28);
   border-radius: 14px;
   padding: 12px;
   overflow: auto;
@@ -338,8 +319,7 @@ select:focus {
   max-width: 100%;
   padding: 10px 12px;
   border-radius: 14px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.45;
@@ -348,8 +328,7 @@ select:focus {
 
 .chat-msg-user {
   align-self: flex-end;
-  border-color: rgba(125, 211, 252, 0.35);
-  background: rgba(125, 211, 252, 0.12);
+  background: rgba(125, 211, 252, 0.18);
 }
 
 .chat-msg-assistant {
@@ -365,8 +344,7 @@ select:focus {
 
 .chat-msg-error {
   align-self: center;
-  border-color: rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
+  background: rgba(248, 113, 113, 0.18);
   color: rgba(254, 226, 226, 0.92);
 }
 
@@ -399,8 +377,7 @@ select:focus {
   display: block;
   padding: 12px 16px 12px 22px;
   border-radius: 16px;
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015));
+  background: var(--surface);
 }
 
 .key-row::before {
@@ -415,21 +392,19 @@ select:focus {
 }
 
 .key-row[data-state="active"] {
-  border-color: rgba(34, 197, 94, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.08);
+  background: rgba(34, 197, 94, 0.08);
 }
 
 .key-row[data-state="active"]::before {
-  background: linear-gradient(180deg, rgba(34, 197, 94, 0.9), rgba(34, 197, 94, 0.2));
+  background: rgba(34, 197, 94, 0.8);
 }
 
 .key-row[data-state="revoked"] {
-  border-color: rgba(248, 113, 113, 0.38);
-  background: linear-gradient(180deg, rgba(248, 113, 113, 0.12), rgba(248, 113, 113, 0.04));
+  background: rgba(248, 113, 113, 0.08);
 }
 
 .key-row[data-state="revoked"]::before {
-  background: linear-gradient(180deg, rgba(248, 113, 113, 0.9), rgba(248, 113, 113, 0.25));
+  background: rgba(248, 113, 113, 0.8);
 }
 
 .key-main {
@@ -467,7 +442,7 @@ select:focus {
   gap: 6px 16px;
   margin-top: 4px;
   padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .key-info-item {
@@ -476,8 +451,7 @@ select:focus {
   gap: 3px;
   padding: 6px 8px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.16);
+  background: rgba(0, 0, 0, 0.25);
   min-width: 0;
   color: var(--muted);
 }
@@ -512,15 +486,14 @@ select:focus {
   gap: 6px 16px;
   margin-top: 6px;
   padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .key-usage {
   margin-top: 12px;
   padding: 8px 10px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.25);
 }
 
 .key-usage[open] {
@@ -574,8 +547,7 @@ select:focus {
   gap: 4px;
   padding: 2px 6px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.15);
   color: rgba(255, 255, 255, 0.75);
   font-size: 9px;
   letter-spacing: 0.08em;
@@ -583,8 +555,7 @@ select:focus {
 }
 
 .key-usage-pill[data-state="bad"] {
-  border-color: rgba(248, 113, 113, 0.4);
-  background: rgba(248, 113, 113, 0.2);
+  background: rgba(248, 113, 113, 0.25);
   color: rgba(254, 226, 226, 0.92);
 }
 
@@ -652,8 +623,7 @@ select:focus {
 }
 
 .btn.danger {
-  border-color: rgba(248, 113, 113, 0.4);
-  background: rgba(248, 113, 113, 0.14);
+  background: rgba(248, 113, 113, 0.2);
 }
 
 .btn.danger:hover {
