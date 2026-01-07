@@ -5,7 +5,7 @@ OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 ## How auth works
 
 - Clients authenticate to `ai.ubq.fi` with a **UBQ gateway token**: `Authorization: Bearer <token>`.
-  - Accepted tokens come from `UBIQUITY_AI_USER_TOKEN` and/or API keys stored in Deno KV (created via
+  - Accepted tokens come from `UBIQUITY_AI_TOKEN` and/or API keys stored in Deno KV (created via
     `/admin/api-keys`).
   - Admin tokens (including Deno Deploy tokens) also grant access to client routes (`/v1/*`).
 - The gateway **does not use or forward your client token upstream**.
@@ -20,7 +20,7 @@ OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 Set a gateway token:
 
 ```bash
-export UBIQUITY_AI_USER_TOKEN="..."
+export UBIQUITY_AI_TOKEN="..."
 ```
 
 Create one (admin):
@@ -43,14 +43,14 @@ List models:
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/models \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN"
+  -H "Authorization: Bearer $UBIQUITY_AI_TOKEN"
 ```
 
 Whoami (debug which auth method was used; never returns raw secrets):
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/auth \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_TOKEN" \
   | jq
 ```
 
@@ -58,7 +58,7 @@ Chat completion (OpenAI-compatible):
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
     "model": "gpt-5.1-codex-mini",
@@ -72,7 +72,7 @@ Just the assistant message text:
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"model":"gpt-5-chat-latest","messages":[{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
   | jq -r '.choices[0].message.content'
@@ -90,7 +90,7 @@ Streaming:
 
 ```bash
 curl -N https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
     "model": "gpt-5.1-codex-mini",
@@ -103,7 +103,7 @@ Responses (OpenAI-compatible):
 
 ```bash
 curl -sS https://ai.ubq.fi/v1/responses \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
+  -H "Authorization: Bearer $UBIQUITY_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
     "model": "gpt-5-chat-latest",
@@ -118,12 +118,12 @@ Run from this repo:
 
 ```bash
 cd lib/ai.ubq.fi
-export UBIQUITY_AI_USER_TOKEN="..."
+export UBIQUITY_AI_TOKEN="..."
 deno task ubq-ai chat "Tell me a short joke."
 ```
 
 Client commands also accept an admin token (`DENO_DEPLOY_TOKEN`) when
-`UBIQUITY_AI_USER_TOKEN` is unset.
+`UBIQUITY_AI_TOKEN` is unset.
 
 Install on your machine:
 
@@ -135,7 +135,7 @@ deno install -g --allow-env --allow-net --allow-read -n ubq-ai scripts/ubq-ai.ts
 Examples:
 
 ```bash
-export UBIQUITY_AI_USER_TOKEN="..."
+export UBIQUITY_AI_TOKEN="..."
 ubq-ai whoami | jq
 ubq-ai models | jq
 ubq-ai chat "Tell me a short joke."
@@ -164,7 +164,7 @@ ubq-ai admin keys list | jq
 ## Runtime env
 
 - `CODEX_AUTH_JSON_B64` (required): base64 of `~/.codex/auth.json` from a machine that ran `codex login`.
-- `UBIQUITY_AI_USER_TOKEN` (optional): Comma- or newline-separated client tokens accepted via
+- `UBIQUITY_AI_TOKEN` (optional): Comma- or newline-separated client tokens accepted via
   `Authorization: Bearer ...`. The gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
@@ -275,7 +275,7 @@ deno task ubq-ai admin keys revoke --id "<id>"
 ## Local dev
 
 ```bash
-export UBIQUITY_AI_USER_TOKEN="dev-token"
+export UBIQUITY_AI_TOKEN="dev-token"
 export CODEX_AUTH_JSON_B64="$(base64 < ~/.codex/auth.json | tr -d '\n')"
 deno task dev
 ```
