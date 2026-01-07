@@ -21,6 +21,22 @@ export type ApiKeyHashRecord = Readonly<{
   revoked_at_ms: number | null;
 }>;
 
+export type ApiKeyUsageRecord = Readonly<{
+  key_id: string;
+  total_requests: number;
+  stream_requests: number;
+  non_stream_requests: number;
+  completed_requests: number;
+  error_requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  first_seen_at_ms: number;
+  last_seen_at_ms: number;
+  last_model: string | null;
+  last_route: string | null;
+}>;
+
 export type ChatCompletionRequest = Readonly<{
   model?: unknown;
   messages?: unknown;
