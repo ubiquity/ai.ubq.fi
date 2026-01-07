@@ -1,5 +1,6 @@
 import {
   handleAdminApiKeysCreate,
+  handleAdminApiKeysDelete,
   handleAdminApiKeysList,
   handleAdminApiKeysRevoke,
   handleAdminCodexAuth,
@@ -92,6 +93,12 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminApiKeysRevoke(req));
+  }
+
+  if (req.method === "DELETE" && path === "/admin/api-keys") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminApiKeysDelete(req));
   }
 
   if ((req.method === "GET" || req.method === "POST") && path === "/admin/reasoning-level") {

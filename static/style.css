@@ -23,11 +23,11 @@ body {
   min-height: 100vh;
   font-family: var(--sans);
   color: var(--text);
-  background:
+  /* background:
     radial-gradient(1100px 700px at 20% 12%, rgba(167, 139, 250, 0.35), transparent 55%),
     radial-gradient(900px 600px at 85% 20%, rgba(125, 211, 252, 0.3), transparent 55%),
     radial-gradient(800px 600px at 50% 90%, rgba(34, 197, 94, 0.1), transparent 60%),
-    var(--bg);
+    var(--bg); */
 }
 
 a {
@@ -43,6 +43,10 @@ a:hover {
   max-width: 980px;
   margin: 0 auto;
   padding: 42px 18px 64px;
+}
+
+body.view-admin .wrap {
+  max-width: unset;
 }
 
 header {
@@ -199,7 +203,7 @@ h1 {
 
 .btn.primary {
   border-color: rgba(125, 211, 252, 0.35);
-  background: linear-gradient(90deg, rgba(125, 211, 252, 0.18), rgba(167, 139, 250, 0.16));
+  /* background: linear-gradient(90deg, rgba(125, 211, 252, 0.18), rgba(167, 139, 250, 0.16)); */
 }
 
 footer {
@@ -223,8 +227,8 @@ footer {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
+  /* border-radius: 999px; */
+  /* border: 1px solid var(--border); */
   background: rgba(255, 255, 255, 0.05);
   color: var(--muted);
   font-size: 12.5px;

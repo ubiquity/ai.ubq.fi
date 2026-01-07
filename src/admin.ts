@@ -307,6 +307,39 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
   );
 };
 
+export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
+  }
+
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const id = getString(raw.id);
+  if (!id) return openaiError(400, "id is required", "invalid_request_error");
+
+  const idKey = apiKeyIdKey(id);
+  const entry = await kv.get<ApiKeyRecord>(idKey);
+  if (!entry.value) return openaiError(404, "Not found", "not_found");
+
+  if (!entry.value.revoked_at_ms) {
+    return openaiError(400, "Only revoked keys can be deleted", "invalid_request_error");
+  }
+
+  const atomic = kv.atomic()
+    .check(entry)
+    .delete(idKey)
+    .delete(apiKeyHashKey(entry.value.hash))
+    .delete(["ubq_ai", "api_keys", "usage", id]);
+
+  const commit = await atomic.commit();
+  if (!commit.ok) {
+    return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
+  }
+
+  return json(200, { ok: true, id }, { "x-ubq-upstream": "chatgpt_codex" });
+};
+
 const REASONING_EFFORTS: ReadonlySet<string> = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 
 const DEFAULT_REASONING_EFFORT_KEY = ["default", "reasoning_effort"];

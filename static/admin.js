@@ -100,7 +100,7 @@ const restoreSettings = () => {
   const remember = storage.get(STORAGE_KEYS.rememberToken) === "1";
   rememberTokenInput.checked = remember;
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
-  keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "forever";
+  keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
   baseSelect.value = storage.get(STORAGE_KEYS.base) ?? "local";
   updateBasePreview();
 };
@@ -272,8 +272,6 @@ const renderKeys = (keys, view = "all") => {
 
     const infoRow = document.createElement("div");
     infoRow.className = "key-info-row";
-    appendKeyInfo(infoRow, "ID", compactId(key.id), { title: key.id, mono: true });
-    appendKeyInfo(infoRow, "Prefix", key.prefix, { title: key.prefix, mono: true });
     appendKeyInfo(infoRow, "Created", formatDate(key.created_at_ms));
     appendKeyInfo(infoRow, "Expires", formatExpires(key.expires_at_ms));
     if (key.revoked_at_ms) {
@@ -308,6 +306,15 @@ const renderKeys = (keys, view = "all") => {
         void revokeKey(key.id, key.name || "this key", revokeBtn);
       });
       controls.appendChild(revokeBtn);
+    } else {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "btn danger";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", () => {
+        void deleteKey(key.id, key.name || "this key", deleteBtn);
+      });
+      controls.appendChild(deleteBtn);
     }
 
     header.appendChild(title);
@@ -553,6 +560,40 @@ const revokeKey = async (id, name, button) => {
   try {
     const res = await fetch(apiUrl("/admin/api-keys/revoke"), {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ id }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setKeysBadge("bad", data?.error?.message ?? "Error");
+      return;
+    }
+    await refreshKeys();
+  } catch {
+    setKeysBadge("bad", "Offline");
+  } finally {
+    if (button) button.disabled = false;
+  }
+};
+
+const deleteKey = async (id, name, button) => {
+  const token = getAdminToken();
+  if (!token) {
+    setKeysBadge("bad", "Missing token");
+    tokenInput.focus();
+    return;
+  }
+  if (!confirm(`Permanently delete ${name}?`)) return;
+
+  setKeysBadge("unknown", "Deleting...");
+  if (button) button.disabled = true;
+
+  try {
+    const res = await fetch(apiUrl("/admin/api-keys"), {
+      method: "DELETE",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
