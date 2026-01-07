@@ -254,7 +254,7 @@ Commands:
   chat [<prompt>] [--model <id>] [--reasoning-effort <level>] [--system <text>] [--developer <text>] [--messages-json <json>] [--messages-file <path>]
   responses [<input>] [--model <id>] [--reasoning-effort <level>] [--input-json <json>] [--input-file <path>]
   admin upload-auth [--auth-json <path>]
-  admin keys create "<name>" [--token <token>] [--expires <preset>|--expires-at-ms <ms>]
+  admin keys create "<name>" [--token <token>] [--expires <preset>|--expires-at-ms <ms>] [--usage-limit <requests>]
   admin keys list
   admin keys revoke --id <id>
 
@@ -1042,8 +1042,25 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
           return 2;
         }
 
+        const usageLimitRaw = getFlagString(flags, "usage-limit");
+        let usageLimit: number | undefined;
+        if (usageLimitRaw) {
+          const trimmed = usageLimitRaw.trim();
+          if (trimmed === "unlimited" || trimmed === "-1") {
+            usageLimit = -1;
+          } else {
+            const parsed = Number(trimmed);
+            if (!Number.isFinite(parsed) || parsed < 0) {
+              await writeErrText(runtime, "--usage-limit must be a positive number, -1, or 'unlimited'\n");
+              return 2;
+            }
+            usageLimit = Math.trunc(parsed);
+          }
+        }
+
         const body: Record<string, unknown> = token ? { name, token } : { name };
         if (expiresAt.value !== undefined) body.expires_at_ms = expiresAt.value;
+        if (usageLimit !== undefined) body.usage_limit_requests = usageLimit;
 
         const req = new Request(endpoint("/admin/api-keys"), {
           method: "POST",

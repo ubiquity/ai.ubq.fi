@@ -1,5 +1,13 @@
 import { config } from "./config.ts";
-import { API_KEY_NO_EXPIRATION_MS, apiKeyHashKey, apiKeyIdKey, coerceApiKeyExpiresAtMs } from "./api_keys.ts";
+import {
+  API_KEY_NO_EXPIRATION_MS,
+  API_KEY_NO_USAGE_LIMIT,
+  apiKeyHashKey,
+  apiKeyIdKey,
+  calculateNextResetMs,
+  coerceApiKeyExpiresAtMs,
+  shouldResetUsage,
+} from "./api_keys.ts";
 import { json, openaiError } from "./http.ts";
 import { getBearerToken } from "./http.ts";
 import { kvPromise } from "./kv.ts";
@@ -439,15 +447,59 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
 
   if (kv) {
     const hash = await sha256Base64Url(token);
-    const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(hash));
-    if (entry.value && entry.value.revoked_at_ms == null) {
-      const expiresAtMs = typeof entry.value.expires_at_ms === "number" && Number.isFinite(entry.value.expires_at_ms)
-        ? Math.trunc(entry.value.expires_at_ms)
+    const hashKey = apiKeyHashKey(hash);
+    const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
+    if (hashEntry.value && hashEntry.value.revoked_at_ms == null) {
+      const now = Date.now();
+      const expiresAtMs = typeof hashEntry.value.expires_at_ms === "number" &&
+          Number.isFinite(hashEntry.value.expires_at_ms)
+        ? Math.trunc(hashEntry.value.expires_at_ms)
         : API_KEY_NO_EXPIRATION_MS;
-      if (expiresAtMs !== API_KEY_NO_EXPIRATION_MS && expiresAtMs <= Date.now()) {
+      if (expiresAtMs !== API_KEY_NO_EXPIRATION_MS && expiresAtMs <= now) {
         return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
       }
-      return { ok: true, token, method: { kind: "kv_api_key", key_id: entry.value.id } };
+
+      const usageLimit = hashEntry.value.usage_limit_requests;
+      const usageRequests = hashEntry.value.usage_requests;
+      const usageResetAtMs = hashEntry.value.usage_reset_at_ms;
+
+      if (shouldResetUsage(usageResetAtMs, now)) {
+        const idKey = apiKeyIdKey(hashEntry.value.id);
+        const idEntry = await kv.get<ApiKeyRecord>(idKey);
+        if (idEntry.value) {
+          const newResetAtMs = calculateNextResetMs(now);
+          const updatedRecord: ApiKeyRecord = {
+            ...idEntry.value,
+            usage_requests: 0,
+            usage_reset_at_ms: newResetAtMs,
+          };
+          const updatedHash: ApiKeyHashRecord = {
+            ...hashEntry.value,
+            usage_requests: 0,
+            usage_reset_at_ms: newResetAtMs,
+          };
+          await kv.atomic()
+            .check(idEntry)
+            .check(hashEntry)
+            .set(idKey, updatedRecord)
+            .set(hashKey, updatedHash)
+            .commit();
+        }
+        return { ok: true, token, method: { kind: "kv_api_key", key_id: hashEntry.value.id } };
+      }
+
+      if (usageLimit !== API_KEY_NO_USAGE_LIMIT && usageRequests >= usageLimit) {
+        return {
+          ok: false,
+          response: openaiError(
+            429,
+            `Usage limit exceeded (${usageRequests}/${usageLimit}). Resets at ${new Date(usageResetAtMs).toISOString()}`,
+            "rate_limit_exceeded",
+          ),
+        };
+      }
+
+      return { ok: true, token, method: { kind: "kv_api_key", key_id: hashEntry.value.id } };
     }
   }
 
@@ -563,6 +615,45 @@ export const requireAdminAuth = async (req: Request): Promise<Response | null> =
   return result.response ?? openaiError(401, "Unauthorized", "invalid_api_key");
 };
 
+export const incrementApiKeyUsage = async (keyId: string): Promise<void> => {
+  const kv = await kvPromise;
+  if (!kv) return;
+
+  const idKey = apiKeyIdKey(keyId);
+  const idEntry = await kv.get<ApiKeyRecord>(idKey);
+  if (!idEntry.value) return;
+
+  const hash = idEntry.value.hash;
+  const hashKey = apiKeyHashKey(hash);
+  const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
+
+  const updatedRecord: ApiKeyRecord = {
+    ...idEntry.value,
+    usage_requests: idEntry.value.usage_requests + 1,
+  };
+  const updatedHash: ApiKeyHashRecord = hashEntry.value
+    ? {
+      ...hashEntry.value,
+      usage_requests: hashEntry.value.usage_requests + 1,
+    }
+    : {
+      id: keyId,
+      expires_at_ms: idEntry.value.expires_at_ms,
+      revoked_at_ms: idEntry.value.revoked_at_ms,
+      usage_limit_requests: idEntry.value.usage_limit_requests,
+      usage_requests: idEntry.value.usage_requests + 1,
+      usage_reset_at_ms: idEntry.value.usage_reset_at_ms,
+    };
+
+  const atomic = kv.atomic()
+    .check(idEntry)
+    .set(idKey, updatedRecord)
+    .set(hashKey, updatedHash);
+  if (hashEntry.versionstamp) atomic.check(hashEntry);
+
+  await atomic.commit();
+};
+
 export const handleV1Auth = async (req: Request): Promise<Response> => {
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return authResult.response;
@@ -610,6 +701,9 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
           created_at_ms: entry.value.created_at_ms,
           expires_at_ms: coerceApiKeyExpiresAtMs(entry.value),
           revoked_at_ms: entry.value.revoked_at_ms,
+          usage_limit_requests: entry.value.usage_limit_requests,
+          usage_requests: entry.value.usage_requests,
+          usage_reset_at_ms: entry.value.usage_reset_at_ms,
         };
       }
     }

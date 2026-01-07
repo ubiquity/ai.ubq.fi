@@ -10,10 +10,14 @@ import { json, openaiError } from "./http.ts";
 import {
   API_KEY_ID_PREFIX,
   API_KEY_NO_EXPIRATION_MS,
+  API_KEY_NO_USAGE_LIMIT,
   apiKeyHashKey,
   apiKeyIdKey,
+  calculateNextResetMs,
   coerceApiKeyExpiresAtMs,
+  DEFAULT_USAGE_LIMIT_REQUESTS,
   generateApiKeyToken,
+  getDefaultExpiryMs,
 } from "./api_keys.ts";
 import { getApiKeyUsage } from "./analytics.ts";
 import { kvPromise } from "./kv.ts";
@@ -97,7 +101,7 @@ const normalizeOptionalApiKeyToken = (value: unknown): string | null => {
 };
 
 const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | null => {
-  if (value === undefined || value === null) return API_KEY_NO_EXPIRATION_MS;
+  if (value === undefined || value === null) return getDefaultExpiryMs(nowMs);
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   const expiresAtMs = Math.trunc(value);
   if (expiresAtMs === API_KEY_NO_EXPIRATION_MS) return API_KEY_NO_EXPIRATION_MS;
@@ -110,6 +114,15 @@ const shouldIncludeUsage = (value: string | null): boolean => {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
+};
+
+const normalizeApiKeyUsageLimit = (value: unknown): number | null => {
+  if (value === undefined || value === null) return DEFAULT_USAGE_LIMIT_REQUESTS;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const limit = Math.trunc(value);
+  if (limit === API_KEY_NO_USAGE_LIMIT) return API_KEY_NO_USAGE_LIMIT;
+  if (limit < 0) return null;
+  return limit;
 };
 
 export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
@@ -137,6 +150,15 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     );
   }
 
+  const usageLimitRequests = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
+  if (usageLimitRequests === null) {
+    return openaiError(
+      400,
+      "usage_limit_requests must be a positive number or -1 for unlimited",
+      "invalid_request_error",
+    );
+  }
+
   const hash = await sha256Base64Url(token);
   const hashKey = apiKeyHashKey(hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
@@ -145,6 +167,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   }
 
   const id = crypto.randomUUID();
+  const usageResetAtMs = calculateNextResetMs(now);
   const record: ApiKeyRecord = {
     id,
     name,
@@ -153,8 +176,18 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     created_at_ms: now,
     expires_at_ms: expiresAtMs,
     revoked_at_ms: null,
+    usage_limit_requests: usageLimitRequests,
+    usage_requests: 0,
+    usage_reset_at_ms: usageResetAtMs,
   };
-  const hashRecord: ApiKeyHashRecord = { id, expires_at_ms: expiresAtMs, revoked_at_ms: null };
+  const hashRecord: ApiKeyHashRecord = {
+    id,
+    expires_at_ms: expiresAtMs,
+    revoked_at_ms: null,
+    usage_limit_requests: usageLimitRequests,
+    usage_requests: 0,
+    usage_reset_at_ms: usageResetAtMs,
+  };
 
   const commit = await kv.atomic()
     .check(hashEntry)
@@ -175,6 +208,9 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
       prefix: record.prefix,
       created_at_ms: record.created_at_ms,
       expires_at_ms: record.expires_at_ms,
+      usage_limit_requests: record.usage_limit_requests,
+      usage_requests: record.usage_requests,
+      usage_reset_at_ms: record.usage_reset_at_ms,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
@@ -211,6 +247,9 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
         created_at_ms: r.created_at_ms,
         expires_at_ms: coerceApiKeyExpiresAtMs(r),
         revoked_at_ms: r.revoked_at_ms,
+        usage_limit_requests: r.usage_limit_requests,
+        usage_requests: r.usage_requests,
+        usage_reset_at_ms: r.usage_reset_at_ms,
         ...(includeUsage ? { usage: usageById.get(r.id) ?? null } : {}),
       })),
     },

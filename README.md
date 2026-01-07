@@ -172,6 +172,8 @@ ubq-ai admin keys list | jq
 - `CODEX_INSTRUCTIONS_B64` (optional): base64 override for the upstream `instructions` string (defaults to
   `codex_instructions.md`).
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
+- `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
+- `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.
 
 ## Admin: upload/validate Codex auth.json
 
@@ -201,12 +203,25 @@ The helper CLI also accepts `DENO_DEPLOY_TOKEN` (if `UBIQUITY_AI_ADMIN_TOKEN` is
 
 ## Admin: create/manage UBQ API keys
 
-API keys are stored in Deno KV (hashed) and are only returned once on creation.
+API keys are stored in Deno KV (hashed) and are only returned once on creation. Keys are prefixed with `u_` for easy identification.
+
+**Default Limits:**
+
+- **Expiration**: 90 days (can be overridden with `--expires` or `--expires-at-ms`)
+- **Usage Limit**: 50 requests/week (can be overridden with `--usage-limit`)
+- **Reset Period**: Weekly (7 days, automatic)
 
 Expiration:
 
 - `expires_at_ms` is a Unix epoch millisecond timestamp; `-1` means "does not expire".
 - Expired keys are rejected like revoked keys.
+
+Usage Limits:
+
+- `usage_limit_requests` sets maximum requests per week; `-1` means unlimited.
+- `usage_requests` tracks current usage; resets automatically every 7 days.
+- `usage_reset_at_ms` is the next reset timestamp.
+- Rate limit errors (429) include reset time in the message.
 
 Create (token only):
 
@@ -220,6 +235,18 @@ Create (expires in a week):
 
 ```bash
 deno task ubq-ai admin keys create "tmp key" --expires week
+```
+
+Create (with custom usage limit):
+
+```bash
+deno task ubq-ai admin keys create "high-volume key" --usage-limit 1000
+```
+
+Create (unlimited usage):
+
+```bash
+deno task ubq-ai admin keys create "unlimited key" --usage-limit unlimited
 ```
 
 List (admin):

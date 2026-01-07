@@ -13,12 +13,18 @@ export type ApiKeyRecord = Readonly<{
   created_at_ms: number;
   expires_at_ms: number;
   revoked_at_ms: number | null;
+  usage_limit_requests: number;
+  usage_requests: number;
+  usage_reset_at_ms: number;
 }>;
 
 export type ApiKeyHashRecord = Readonly<{
   id: string;
   expires_at_ms: number;
   revoked_at_ms: number | null;
+  usage_limit_requests: number;
+  usage_requests: number;
+  usage_reset_at_ms: number;
 }>;
 
 export type ApiKeyUsageRecord = Readonly<{

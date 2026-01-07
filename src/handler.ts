@@ -6,7 +6,7 @@ import {
   handleAdminReasoningLevel,
 } from "./admin.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
-import { authenticateClient, handleV1Auth, requireAdminAuth } from "./auth.ts";
+import { authenticateClient, handleV1Auth, incrementApiKeyUsage, requireAdminAuth } from "./auth.ts";
 import { handleHealth } from "./health.ts";
 import { corsHeaders, openaiError, withCors } from "./http.ts";
 import { handleChatCompletions, handleModels, handleResponses } from "./openai.ts";
@@ -123,11 +123,19 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
-    return withCors(await handleChatCompletions(req, { keyId: usageKeyId }));
+    const response = await handleChatCompletions(req, { keyId: usageKeyId });
+    if (response.ok && usageKeyId) {
+      await incrementApiKeyUsage(usageKeyId);
+    }
+    return withCors(response);
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
-    return withCors(await handleResponses(req, { keyId: usageKeyId }));
+    const response = await handleResponses(req, { keyId: usageKeyId });
+    if (response.ok && usageKeyId) {
+      await incrementApiKeyUsage(usageKeyId);
+    }
+    return withCors(response);
   }
 
   return withCors(openaiError(404, "Not found", "not_found"));
