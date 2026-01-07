@@ -54,6 +54,13 @@ const refreshKeysBtn = mustGet("refresh-keys");
 const keysBadge = mustGet("keys-badge");
 const keysList = mustGet("keys-list");
 
+const keysTabAll = mustGet("keys-tab-all");
+const keysTabActive = mustGet("keys-tab-active");
+const keysTabRevoked = mustGet("keys-tab-revoked");
+
+let currentView = "all";
+let allKeys = [];
+
 const reasoningLevelSelect = mustGet("reasoning-level");
 const getReasoningBtn = mustGet("get-reasoning-level");
 const setReasoningBtn = mustGet("set-reasoning-level");
@@ -231,14 +238,20 @@ const buildUsageSummary = (usage) => {
   return summary;
 };
 
-const renderKeys = (keys) => {
+const renderKeys = (keys, view = "all") => {
   keysList.textContent = "";
-  if (!keys.length) {
-    setKeyListMessage("No keys yet.");
+  let filteredKeys = keys;
+  if (view === "active") {
+    filteredKeys = keys.filter(k => !k.revoked_at_ms);
+  } else if (view === "revoked") {
+    filteredKeys = keys.filter(k => k.revoked_at_ms);
+  }
+  if (!filteredKeys.length) {
+    setKeyListMessage(view === "all" ? "No keys yet." : `No ${view} keys.`);
     return;
   }
 
-  for (const key of keys) {
+  for (const key of filteredKeys) {
     const row = document.createElement("div");
     row.className = "key-row";
     row.dataset.state = key.revoked_at_ms ? "revoked" : "active";
@@ -341,6 +354,20 @@ const renderKeys = (keys) => {
 
     row.appendChild(main);
     keysList.appendChild(row);
+  }
+  setKeysBadge("ok", `${filteredKeys.length} keys`);
+};
+
+const switchKeysView = (view) => {
+  currentView = view;
+  keysTabAll.classList.toggle("tab-active", view === "all");
+  keysTabActive.classList.toggle("tab-active", view === "active");
+  keysTabRevoked.classList.toggle("tab-active", view === "revoked");
+  if (allKeys.length) {
+    renderKeys(allKeys, view);
+  } else {
+    setKeyListMessage("Paste an admin token to load keys.");
+    setKeysBadge("unknown", "Not loaded");
   }
 };
 
@@ -480,9 +507,10 @@ const refreshKeys = async () => {
       return;
     }
     const keys = Array.isArray(data?.data) ? data.data : [];
-    renderKeys(keys);
-    setKeysBadge("ok", `${keys.length} keys`);
+    allKeys = keys;
+    renderKeys(allKeys, currentView);
   } catch {
+    allKeys = [];
     setKeysBadge("bad", "Offline");
     setKeyListMessage("Failed to load keys.");
   } finally {
@@ -586,6 +614,7 @@ setCreateBadge("unknown", "Idle");
 setKeysBadge("unknown", "Not loaded");
 setReasoningBadge("unknown", "Idle");
 setKeyListMessage("Paste an admin token to load keys.");
+switchKeysView("all");
 
 showTokenInput.addEventListener("change", () => {
   tokenInput.type = showTokenInput.checked ? "text" : "password";
@@ -617,6 +646,8 @@ clearTokenBtn.addEventListener("click", () => {
   setKeysBadge("unknown", "Not loaded");
   setReasoningBadge("unknown", "Idle");
   setKeyListMessage("Paste an admin token to load keys.");
+  allKeys = [];
+  currentView = "all";
   tokenInput.focus();
 });
 
@@ -629,6 +660,7 @@ baseSelect.addEventListener("change", () => {
   setReasoningBadge("unknown", "Idle");
   setKeyListMessage("Target changed. Refresh keys.");
   clearCreateResult();
+  allKeys = [];
 });
 
 keyExpiresSelect.addEventListener("change", () => {
@@ -654,3 +686,7 @@ getReasoningBtn.addEventListener("click", () => {
 setReasoningBtn.addEventListener("click", () => {
   void setReasoningLevel();
 });
+
+keysTabAll.addEventListener("click", () => switchKeysView("all"));
+keysTabActive.addEventListener("click", () => switchKeysView("active"));
+keysTabRevoked.addEventListener("click", () => switchKeysView("revoked"));

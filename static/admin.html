@@ -101,6 +101,11 @@
 
           <section class="card" role="listitem" aria-labelledby="card-keys">
             <h2 id="card-keys">Keys</h2>
+            <div class="keys-tabs">
+              <button id="keys-tab-all" class="btn tab-active" type="button" data-view="all">All</button>
+              <button id="keys-tab-active" class="btn" type="button" data-view="active">Active</button>
+              <button id="keys-tab-revoked" class="btn" type="button" data-view="revoked">Revoked</button>
+            </div>
             <div class="row row-spaced">
               <button id="refresh-keys" class="btn" type="button">Refresh</button>
               <span id="keys-badge" class="status-badge" data-state="unknown">Not loaded</span>
