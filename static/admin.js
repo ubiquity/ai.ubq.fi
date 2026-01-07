@@ -279,6 +279,19 @@ const renderKeys = (keys, view = "all") => {
       appendKeyInfo(infoRow, "Revoked", formatDate(key.revoked_at_ms), { state: "bad" });
     }
 
+    // Display usage limit information
+    if (typeof key.usage_limit_requests === "number") {
+      const limit = key.usage_limit_requests === -1 ? "Unlimited" : formatNumber(key.usage_limit_requests);
+      const current = typeof key.usage_requests === "number" ? key.usage_requests : 0;
+      const usageText = key.usage_limit_requests === -1 ? `${current}` : `${current}/${limit}`;
+      const isNearLimit = key.usage_limit_requests !== -1 && current / key.usage_limit_requests >= 0.8;
+      const isAtLimit = key.usage_limit_requests !== -1 && current >= key.usage_limit_requests;
+      appendKeyInfo(infoRow, "Usage", usageText, {
+        state: isAtLimit ? "bad" : (isNearLimit ? "warning" : ""),
+        title: `${formatNumber(current)} requests${key.usage_limit_requests !== -1 ? ` of ${formatNumber(key.usage_limit_requests)} limit` : ""} (resets ${formatDate(key.usage_reset_at_ms)})`
+      });
+    }
+
     const status = document.createElement("span");
     status.className = "status-badge";
     status.dataset.state = key.revoked_at_ms ? "bad" : "ok";
