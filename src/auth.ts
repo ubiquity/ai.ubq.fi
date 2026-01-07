@@ -586,8 +586,8 @@ const verifyDenoDeployTokenCached = async (token: string): Promise<
 };
 
 const checkAdminToken = async (token: string): Promise<CheckAdminTokenResult> => {
-  if (config.adminTokens.size > 0) {
-    return config.adminTokens.has(token) ? { ok: true, kind: "admin_allowlist" } : { ok: false, response: null };
+  if (config.adminTokens.has(token)) {
+    return { ok: true, kind: "admin_allowlist" };
   }
 
   if (!looksLikeDenoDeployToken(token)) return { ok: false, response: null };

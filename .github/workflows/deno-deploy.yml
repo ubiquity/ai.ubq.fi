@@ -24,6 +24,7 @@ jobs:
         src/**
       env_var_keys: |
         CODEX_AUTH_JSON_B64
+        UBIQUITY_AI_TOKEN
         DENO_DEPLOY_TOKEN
       runtime_env: |
         UBIQUITY_AI_KERNEL_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuC/ZorwZOh7J5kZXe0ry\nCxxDUtr1KzUg0vVR1Mq9yBZzD9Af6frcd8L2JDD85MpHpbJgpm1msBuvsKq6qvyr\nbcjtxlzEoOLAWVHQfnkvmUD8qNSz5sG3DOtC8SxRgsV14x5BSzGDu/IGm0hLh7mj\naiQAWZMUZwzZ4x0o5+y6rRTtpnAEWjf8Jr+/VCazi/r/z0I//cBb+ngX0GrGlOi8\n7IldB2Opku7FtaeUvZ5CQNy/xu/eSxFydF+oQd9KHR3DOvxdBPwBVFeZMG4j0jsR\nU3jNqJMPbbO7T1EFaJcolijsssT4LgK91APjHGiZzYn8Ws3XsWLWlemFajCNjzH0\nMwIDAQAB\n-----END PUBLIC KEY-----
