@@ -3,14 +3,17 @@ import {
   handleAdminApiKeysList,
   handleAdminApiKeysRevoke,
   handleAdminCodexAuth,
+  handleAdminReasoningLevel,
 } from "./admin.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
-import { handleV1Auth, requireAdminAuth, requireClientAuth } from "./auth.ts";
+import { authenticateClient, handleV1Auth, requireAdminAuth } from "./auth.ts";
 import { handleHealth } from "./health.ts";
 import { corsHeaders, openaiError, withCors } from "./http.ts";
 import { handleChatCompletions, handleModels, handleResponses } from "./openai.ts";
 import {
   handleAppJs,
+  handleAdminJs,
+  handleAdminPage,
   handleChatJs,
   handleChatPage,
   handleFavicon,
@@ -35,8 +38,16 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleChatPage());
   }
 
+  if (req.method === "GET" && (path === "/admin" || path === "/admin.html")) {
+    return withCors(await handleAdminPage());
+  }
+
   if (req.method === "GET" && path === "/chat.js") {
     return withCors(await handleChatJs());
+  }
+
+  if (req.method === "GET" && path === "/admin.js") {
+    return withCors(await handleAdminJs());
   }
 
   if (req.method === "GET" && path === "/style.css") {
@@ -74,13 +85,19 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method === "GET" && path === "/admin/api-keys") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysList());
+    return withCors(await handleAdminApiKeysList(req));
   }
 
   if (req.method === "POST" && path === "/admin/api-keys/revoke") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminApiKeysRevoke(req));
+  }
+
+  if ((req.method === "GET" || req.method === "POST") && path === "/admin/reasoning-level") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminReasoningLevel(req));
   }
 
   if (!path.startsWith("/v1/")) {
@@ -97,19 +114,20 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
   }
 
-  const authError = await requireClientAuth(req);
-  if (authError) return withCors(authError);
+  const authResult = await authenticateClient(req);
+  if (!authResult.ok) return withCors(authResult.response);
+  const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(handleModels());
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
-    return withCors(await handleChatCompletions(req));
+    return withCors(await handleChatCompletions(req, { keyId: usageKeyId }));
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
-    return withCors(await handleResponses(req));
+    return withCors(await handleResponses(req, { keyId: usageKeyId }));
   }
 
   return withCors(openaiError(404, "Not found", "not_found"));

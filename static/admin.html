@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ai.ubq.fi - Admin</title>
+    <meta
+      name="description"
+      content="Admin console for ai.ubq.fi. Manage gateway API keys with an admin token."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs/%3E%3Crect width='64' height='64' rx='14' fill='%2310182a'/%3E%3Cpath d='M20 43V21h10.8c7.6 0 12.2 4 12.2 11s-4.6 11-12.2 11H20zm7-6h3.5c3.7 0 5.9-1.9 5.9-5s-2.2-5-5.9-5H27v10z' fill='%23ffffff'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand">
+          <span class="dot" aria-hidden="true"></span>
+          <a class="brand-link" href="/">ai.ubq.fi</a>
+        </div>
+        <div class="row">
+          <a class="btn" href="/">Docs</a>
+          <a class="btn" href="/chat">Chat playground</a>
+          <a class="btn primary" href="/admin">Admin</a>
+        </div>
+      </header>
+
+      <main>
+        <h1>Admin console</h1>
+        <p class="sub">
+          Paste an admin token to manage gateway API keys. Tokens are sent as
+          <code>Authorization: Bearer ...</code>.
+        </p>
+
+        <div class="grid" role="list">
+          <section class="card half" role="listitem" aria-labelledby="card-admin-auth">
+            <h2 id="card-admin-auth">Admin auth</h2>
+            <label class="field">
+              <span class="label">Target</span>
+              <select id="admin-base">
+                <option value="local">Local (this origin)</option>
+                <option value="ai">ai.ubq.fi</option>
+              </select>
+            </label>
+            <p class="help">Requests go to <code id="base-preview"></code>.</p>
+            <label class="field">
+              <span class="label">Admin token</span>
+              <input
+                id="admin-token"
+                type="password"
+                inputmode="text"
+                autocomplete="off"
+                placeholder="Paste admin token"
+              />
+            </label>
+            <div class="row row-spaced">
+              <label class="check">
+                <input id="remember-admin-token" type="checkbox" />
+                <span>Remember</span>
+              </label>
+              <label class="check">
+                <input id="show-admin-token" type="checkbox" />
+                <span>Show</span>
+              </label>
+              <button id="clear-admin-token" class="btn" type="button">Clear</button>
+            </div>
+            <div class="row row-spaced">
+              <button id="test-admin-token" class="btn" type="button">Test token</button>
+              <span id="admin-auth-badge" class="status-badge" data-state="unknown">Not checked</span>
+            </div>
+            <p class="help warning">Remember stores the token in this browser's localStorage in cleartext.</p>
+          </section>
+
+          <section class="card half" role="listitem" aria-labelledby="card-create-key">
+            <h2 id="card-create-key">Create key</h2>
+            <label class="field">
+              <span class="label">Name</span>
+              <input id="key-name" type="text" inputmode="text" autocomplete="off" placeholder="example key" />
+            </label>
+            <label class="field">
+              <span class="label">Expires</span>
+              <select id="key-expires">
+                <option value="forever">Forever</option>
+                <option value="day">1 day</option>
+                <option value="week">1 week</option>
+                <option value="month">1 month</option>
+                <option value="quarter">1 quarter</option>
+                <option value="year">1 year</option>
+              </select>
+            </label>
+            <div class="row row-spaced">
+              <button id="create-key" class="btn primary" type="button">Create key</button>
+              <span id="create-badge" class="status-badge" data-state="unknown">Idle</span>
+            </div>
+            <pre id="create-result" class="code" hidden></pre>
+            <p class="help">Created tokens are only shown once. Store them safely.</p>
+          </section>
+
+          <section class="card" role="listitem" aria-labelledby="card-keys">
+            <h2 id="card-keys">Keys</h2>
+            <div class="row row-spaced">
+              <button id="refresh-keys" class="btn" type="button">Refresh</button>
+              <span id="keys-badge" class="status-badge" data-state="unknown">Not loaded</span>
+            </div>
+            <div id="keys-list" class="key-list" role="list"></div>
+            <p class="help">Revoke keys to invalidate them immediately. Usage totals update when responses complete.</p>
+          </section>
+
+          <section class="card" role="listitem" aria-labelledby="card-reasoning-level">
+            <h2 id="card-reasoning-level">Default Reasoning Level</h2>
+            <label class="field">
+              <span class="label">Level</span>
+              <select id="reasoning-level">
+                <option value="none">None</option>
+                <option value="minimal">Minimal</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">XHigh</option>
+              </select>
+            </label>
+            <div class="row row-spaced">
+              <button id="get-reasoning-level" class="btn" type="button">Get Current</button>
+              <button id="set-reasoning-level" class="btn primary" type="button">Set</button>
+              <span id="reasoning-badge" class="status-badge" data-state="unknown">Idle</span>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/admin.js"></script>
+  </body>
+</html>

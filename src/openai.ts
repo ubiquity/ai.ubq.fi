@@ -1,5 +1,7 @@
 import { buildCodexRequest, codexInstructionsPromise, CodexError, fetchCodexResponses } from "./codex.ts";
+import { recordApiKeyUsage } from "./analytics.ts";
 import { json, openaiError } from "./http.ts";
+import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord } from "./utils.ts";
 import type { ChatCompletionRequest, MessageContentItem, ResponseMessageItem, ResponsesRequest } from "./types.ts";
@@ -10,6 +12,74 @@ const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set(["none", "minima
 
 const DEFAULT_MODEL = "gpt-5-chat-latest";
 const DEFAULT_REASONING_EFFORT: ReasoningEffort = "xhigh";
+
+const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
+  const kv = await kvPromise;
+  if (!kv) return DEFAULT_REASONING_EFFORT;
+  const entry = await kv.get<string>(["default", "reasoning_effort"]);
+  const effort = entry.value;
+  if (effort && REASONING_EFFORTS.has(effort as ReasoningEffort)) return effort as ReasoningEffort;
+  return DEFAULT_REASONING_EFFORT;
+};
+
+type UsageContext = Readonly<{
+  keyId: string | null;
+}>;
+
+type UsageTokens = Readonly<{
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}>;
+
+const normalizeTokenCount = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const count = Math.trunc(value);
+  if (count < 0) return null;
+  return count;
+};
+
+const extractUsageTokens = (value: unknown): UsageTokens | null => {
+  if (!isRecord(value)) return null;
+  const inputTokens = normalizeTokenCount(value.input_tokens);
+  const outputTokens = normalizeTokenCount(value.output_tokens);
+  const totalTokens = normalizeTokenCount(value.total_tokens);
+  if (inputTokens === null || outputTokens === null || totalTokens === null) return null;
+  return { inputTokens, outputTokens, totalTokens };
+};
+
+const recordRequestUsage = async (
+  context: UsageContext | undefined,
+  details: { model: string; route: string; stream: boolean },
+): Promise<void> => {
+  if (!context?.keyId) return;
+  await recordApiKeyUsage(context.keyId, {
+    request_count: 1,
+    stream_request_count: details.stream ? 1 : 0,
+    non_stream_request_count: details.stream ? 0 : 1,
+    model: details.model,
+    route: details.route,
+    seen_at_ms: Date.now(),
+  });
+};
+
+const recordCompletionUsage = async (
+  context: UsageContext | undefined,
+  usage: UsageTokens | null,
+): Promise<void> => {
+  if (!context?.keyId) return;
+  await recordApiKeyUsage(context.keyId, {
+    completed_request_count: 1,
+    input_tokens: usage?.inputTokens,
+    output_tokens: usage?.outputTokens,
+    total_tokens: usage?.totalTokens,
+  });
+};
+
+const recordErrorUsage = async (context: UsageContext | undefined): Promise<void> => {
+  if (!context?.keyId) return;
+  await recordApiKeyUsage(context.keyId, { error_request_count: 1 });
+};
 
 const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   const raw = error instanceof Error ? error.message : String(error);
@@ -189,7 +259,26 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
   }
 };
 
-const streamChatCompletions = (upstream: Response, model: string): Response => {
+const collectResponsesStreamUsage = async (
+  stream: ReadableStream<Uint8Array>,
+  usageContext?: UsageContext,
+): Promise<void> => {
+  if (!usageContext?.keyId) return;
+  try {
+    for await (const ev of parseSseEvents(stream)) {
+      if (!isRecord(ev)) continue;
+      if (getString(ev.type) === "response.completed" && isRecord(ev.response)) {
+        const usageTokens = extractUsageTokens(ev.response.usage);
+        await recordCompletionUsage(usageContext, usageTokens);
+        return;
+      }
+    }
+  } catch (error) {
+    console.warn("[ai.ubq.fi] Failed to parse responses usage stream:", error);
+  }
+};
+
+const streamChatCompletions = (upstream: Response, model: string, usageContext?: UsageContext): Response => {
   if (!upstream.body) {
     return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
   }
@@ -234,6 +323,8 @@ const streamChatCompletions = (upstream: Response, model: string): Response => {
           }
 
           if (type === "response.completed") {
+            const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
+            await recordCompletionUsage(usageContext, usageTokens);
             const chunk: Record<string, unknown> = {
               id,
               object: "chat.completion.chunk",
@@ -272,7 +363,11 @@ const streamChatCompletions = (upstream: Response, model: string): Response => {
   });
 };
 
-const completeChatCompletions = async (upstream: Response, model: string): Promise<Response> => {
+const completeChatCompletions = async (
+  upstream: Response,
+  model: string,
+  usageContext?: UsageContext,
+): Promise<Response> => {
   if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
 
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -295,19 +390,15 @@ const completeChatCompletions = async (upstream: Response, model: string): Promi
       continue;
     }
     if (type === "response.completed" && isRecord(ev.response)) {
-      const u = isRecord(ev.response.usage) ? ev.response.usage : null;
-      if (u) {
-        const promptTokens = typeof u.input_tokens === "number" ? u.input_tokens : null;
-        const completionTokens = typeof u.output_tokens === "number" ? u.output_tokens : null;
-        const totalTokens = typeof u.total_tokens === "number" ? u.total_tokens : null;
-        if (promptTokens !== null && completionTokens !== null && totalTokens !== null) {
-          usage = {
-            prompt_tokens: promptTokens,
-            completion_tokens: completionTokens,
-            total_tokens: totalTokens,
-          };
-        }
+      const usageTokens = extractUsageTokens(ev.response.usage);
+      if (usageTokens) {
+        usage = {
+          prompt_tokens: usageTokens.inputTokens,
+          completion_tokens: usageTokens.outputTokens,
+          total_tokens: usageTokens.totalTokens,
+        };
       }
+      await recordCompletionUsage(usageContext, usageTokens);
       break;
     }
   }
@@ -348,7 +439,7 @@ export const handleModels = (): Response =>
     { "x-ubq-upstream": "chatgpt_codex" },
   );
 
-export const handleChatCompletions = async (req: Request): Promise<Response> => {
+export const handleChatCompletions = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;
   if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
@@ -368,20 +459,25 @@ export const handleChatCompletions = async (req: Request): Promise<Response> => 
     input.push(converted);
   }
 
-  const defaultReasoning = looksLikeReasoningModel(model) ? { effort: DEFAULT_REASONING_EFFORT } : undefined;
+  const defaultReasoning = looksLikeReasoningModel(model) ? { effort: await getDefaultReasoningEffort() } : undefined;
   const codexBody = await buildCodexRequest(model, input, {
     reasoning: reasoningEffort.value === undefined ? defaultReasoning : { effort: reasoningEffort.value },
   });
+
+  const stream = Boolean(body.stream);
+  await recordRequestUsage(usageContext, { model: modelRaw, route: "chat.completions", stream });
 
   let upstream: Response;
   try {
     upstream = await fetchCodexResponses(codexBody);
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
+    await recordErrorUsage(usageContext);
     return toCodexErrorResponse(error);
   }
 
   if (!upstream.ok) {
+    await recordErrorUsage(usageContext);
     const text = await upstream.text().catch(() => "");
     return new Response(text || upstream.statusText, {
       status: upstream.status,
@@ -392,11 +488,19 @@ export const handleChatCompletions = async (req: Request): Promise<Response> => 
     });
   }
 
-  const stream = Boolean(body.stream);
-  return stream ? streamChatCompletions(upstream, model) : await completeChatCompletions(upstream, model);
+  if (!upstream.body) {
+    await recordErrorUsage(usageContext);
+    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
+  }
+
+  return stream ? streamChatCompletions(upstream, model, usageContext) : await completeChatCompletions(
+    upstream,
+    model,
+    usageContext,
+  );
 };
 
-export const handleResponses = async (req: Request): Promise<Response> => {
+export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const rawBody = (await readJsonBody(req)) as ResponsesRequest | null;
   if (!rawBody || !isRecord(rawBody)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
@@ -425,7 +529,7 @@ export const handleResponses = async (req: Request): Promise<Response> => {
   const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
 
-  const defaultReasoning = looksLikeReasoningModel(model) ? { effort: DEFAULT_REASONING_EFFORT } : undefined;
+  const defaultReasoning = looksLikeReasoningModel(model) ? { effort: await getDefaultReasoningEffort() } : undefined;
   const reasoningValue = reasoning.value !== undefined ? reasoning.value : defaultReasoning;
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue });
@@ -460,15 +564,19 @@ export const handleResponses = async (req: Request): Promise<Response> => {
     codexBody.instructions = await codexInstructionsPromise;
   }
 
+  await recordRequestUsage(usageContext, { model: modelRaw, route: "responses", stream: clientWantsStream });
+
   let upstream: Response;
   try {
     upstream = await fetchCodexResponses(codexBody);
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
+    await recordErrorUsage(usageContext);
     return toCodexErrorResponse(error);
   }
 
   if (!upstream.ok) {
+    await recordErrorUsage(usageContext);
     const text = await upstream.text().catch(() => "");
     return new Response(text || upstream.statusText, {
       status: upstream.status,
@@ -480,8 +588,21 @@ export const handleResponses = async (req: Request): Promise<Response> => {
   }
 
   if (clientWantsStream) {
+    if (!upstream.body) {
+      await recordErrorUsage(usageContext);
+      return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
+    }
     const headers = new Headers(upstream.headers);
     headers.set("x-ubq-upstream", "chatgpt_codex");
+    if (usageContext?.keyId) {
+      const [clientStream, analyticsStream] = upstream.body.tee();
+      void collectResponsesStreamUsage(analyticsStream, usageContext);
+      return new Response(clientStream, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers,
+      });
+    }
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
@@ -489,9 +610,12 @@ export const handleResponses = async (req: Request): Promise<Response> => {
     });
   }
 
-  if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
+  if (!upstream.body) {
+    await recordErrorUsage(usageContext);
+    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
+  }
 
-  let finalResponse: unknown | null = null;
+  let finalResponse: Record<string, unknown> | null = null;
   for await (const ev of parseSseEvents(upstream.body)) {
     if (!isRecord(ev)) continue;
     if (getString(ev.type) === "response.completed" && isRecord(ev.response)) {
@@ -499,6 +623,11 @@ export const handleResponses = async (req: Request): Promise<Response> => {
       break;
     }
   }
-  if (!finalResponse) return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error");
+  if (!finalResponse) {
+    await recordErrorUsage(usageContext);
+    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error");
+  }
+  const usageTokens = extractUsageTokens(finalResponse.usage);
+  await recordCompletionUsage(usageContext, usageTokens);
   return json(200, finalResponse, { "x-ubq-upstream": "chatgpt_codex" });
 };

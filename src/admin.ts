@@ -15,6 +15,7 @@ import {
   coerceApiKeyExpiresAtMs,
   generateApiKeyToken,
 } from "./api_keys.ts";
+import { getApiKeyUsage } from "./analytics.ts";
 import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
@@ -105,6 +106,12 @@ const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | nul
   return expiresAtMs;
 };
 
+const shouldIncludeUsage = (value: string | null): boolean => {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+};
+
 export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
   if (!kv) {
@@ -173,7 +180,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   );
 };
 
-export const handleAdminApiKeysList = async (): Promise<Response> => {
+export const handleAdminApiKeysList = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
@@ -184,6 +191,14 @@ export const handleAdminApiKeysList = async (): Promise<Response> => {
     if (entry.value) records.push(entry.value);
   }
   records.sort((a, b) => b.created_at_ms - a.created_at_ms);
+
+  const includeUsage = shouldIncludeUsage(new URL(req.url).searchParams.get("include_usage"));
+  const usageById = new Map<string, Awaited<ReturnType<typeof getApiKeyUsage>>>();
+  if (includeUsage) {
+    for (const record of records) {
+      usageById.set(record.id, await getApiKeyUsage(record.id));
+    }
+  }
 
   return json(
     200,
@@ -196,6 +211,7 @@ export const handleAdminApiKeysList = async (): Promise<Response> => {
         created_at_ms: r.created_at_ms,
         expires_at_ms: coerceApiKeyExpiresAtMs(r),
         revoked_at_ms: r.revoked_at_ms,
+        ...(includeUsage ? { usage: usageById.get(r.id) ?? null } : {}),
       })),
     },
     { "x-ubq-upstream": "chatgpt_codex" },
@@ -250,4 +266,36 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
+};
+
+const REASONING_EFFORTS: ReadonlySet<string> = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+
+const DEFAULT_REASONING_EFFORT_KEY = ["default", "reasoning_effort"];
+
+export const handleAdminReasoningLevel = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot manage reasoning level", "server_error");
+  }
+
+  if (req.method === "GET") {
+    const entry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
+    const effort = entry.value ?? "xhigh";
+    return json(200, { effort }, { "x-ubq-upstream": "chatgpt_codex" });
+  }
+
+  if (req.method === "POST") {
+    const raw = await readJsonBody(req);
+    if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+
+    const effort = getString(raw.effort);
+    if (!effort || !REASONING_EFFORTS.has(effort)) {
+      return openaiError(400, "effort must be one of: none, minimal, low, medium, high, xhigh", "invalid_request_error");
+    }
+
+    await kv.set(DEFAULT_REASONING_EFFORT_KEY, effort);
+    return json(200, { ok: true, effort }, { "x-ubq-upstream": "chatgpt_codex" });
+  }
+
+  return openaiError(405, "Method not allowed", "method_not_allowed");
 };
