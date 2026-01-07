@@ -607,7 +607,7 @@ export const requireAdminAuth = async (req: Request): Promise<Response | null> =
   if (!token) return openaiError(401, "Unauthorized", "invalid_api_key");
 
   if (config.adminTokens.size === 0 && !looksLikeDenoDeployToken(token)) {
-    return openaiError(404, "Not found", "not_found");
+    return openaiError(401, "Unauthorized", "invalid_api_key");
   }
 
   const result = await isAdminToken(token);

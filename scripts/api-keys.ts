@@ -35,7 +35,7 @@ Commands:
 
 Options:
   --url https://ai.ubq.fi          Base URL (default: https://ai.ubq.fi)
-  --admin-token "<token>"         Admin token (or set UBIQUITY_AI_ADMIN_TOKEN or DENO_DEPLOY_TOKEN)
+  --admin-token "<token>"         Admin token (or set DENO_DEPLOY_TOKEN)
   --expires <preset>              day|week|month|quarter|year|forever (sets expires_at_ms)
   --expires-at-ms <ms>            Unix epoch ms timestamp; -1 means does not expire
 `);
@@ -55,11 +55,10 @@ if (!command || command.startsWith("--")) {
 
 const parsed = parseArgs(rest);
 const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
-const adminToken = (parsed["admin-token"] as string | undefined) ?? Deno.env.get("UBIQUITY_AI_ADMIN_TOKEN") ??
-  Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
+const adminToken = (parsed["admin-token"] as string | undefined) ?? Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
 
 if (!adminToken) {
-  console.error("Missing admin token. Set UBIQUITY_AI_ADMIN_TOKEN (or DENO_DEPLOY_TOKEN) or pass --admin-token.");
+  console.error("Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.");
   Deno.exit(2);
 }
 

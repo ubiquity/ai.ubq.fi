@@ -27,7 +27,7 @@ Create one (admin):
 
 ```bash
 curl -sS https://ai.ubq.fi/admin/api-keys \
-  -H "Authorization: Bearer $UBIQUITY_AI_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"name":"example key","expires_at_ms":-1}' \
   | jq -r .token
@@ -122,7 +122,7 @@ export UBIQUITY_AI_USER_TOKEN="..."
 deno task ubq-ai chat "Tell me a short joke."
 ```
 
-Client commands also accept an admin token (`UBIQUITY_AI_ADMIN_TOKEN` or `DENO_DEPLOY_TOKEN`) when
+Client commands also accept an admin token (`DENO_DEPLOY_TOKEN`) when
 `UBIQUITY_AI_USER_TOKEN` is unset.
 
 Install on your machine:
@@ -151,7 +151,7 @@ Debug (prints useful env/token fingerprints to stderr, never raw secrets):
 ubq-ai -v models
 ```
 
-Admin examples (uses `UBIQUITY_AI_ADMIN_TOKEN` or falls back to `DENO_DEPLOY_TOKEN`):
+Admin examples (uses `DENO_DEPLOY_TOKEN`):
 
 ```bash
 export DENO_DEPLOY_TOKEN="..."
@@ -166,8 +166,7 @@ ubq-ai admin keys list | jq
 - `CODEX_AUTH_JSON_B64` (required): base64 of `~/.codex/auth.json` from a machine that ran `codex login`.
 - `UBIQUITY_AI_USER_TOKEN` (optional): Comma- or newline-separated client tokens accepted via
   `Authorization: Bearer ...`. The gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
-- `UBIQUITY_AI_ADMIN_TOKEN` (optional, recommended): Tokens accepted for admin endpoints. If unset on Deno Deploy, the
-  admin endpoints accept a Deno Deploy token (`DENO_DEPLOY_TOKEN`) after verification against the Deno API.
+- `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
 - `CODEX_INSTRUCTIONS_B64` (optional): base64 override for the upstream `instructions` string (defaults to
   `codex_instructions.md`).
@@ -183,9 +182,9 @@ This validates your posted `auth.json` against the upstream Codex endpoint and, 
 Treat `auth.json` as a secret (it contains refresh tokens).
 
 ```bash
-export UBIQUITY_AI_ADMIN_TOKEN="..."
+export DENO_DEPLOY_TOKEN="..."
 curl -sS https://ai.ubq.fi/admin/codex/auth \
-  -H "Authorization: Bearer $UBIQUITY_AI_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
   -H "Content-Type: application/json" \
   --data-binary @~/.codex/auth.json \
   | jq
@@ -195,11 +194,11 @@ Or use the repo helper CLI:
 
 ```bash
 cd lib/ai.ubq.fi
-export UBIQUITY_AI_ADMIN_TOKEN="..."
+export DENO_DEPLOY_TOKEN="..."
 deno task upload:auth --url https://ai.ubq.fi
 ```
 
-The helper CLI also accepts `DENO_DEPLOY_TOKEN` (if `UBIQUITY_AI_ADMIN_TOKEN` is unset).
+The helper CLI uses `DENO_DEPLOY_TOKEN`.
 
 ## Admin: create/manage UBQ API keys
 
@@ -227,7 +226,7 @@ Create (token only):
 
 ```bash
 cd lib/ai.ubq.fi
-export UBIQUITY_AI_ADMIN_TOKEN="..."
+export DENO_DEPLOY_TOKEN="..."
 deno task ubq-ai admin keys create "example key"
 ```
 

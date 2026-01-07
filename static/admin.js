@@ -45,6 +45,7 @@ const baseSelect = mustGet("admin-base");
 const basePreview = mustGet("base-preview");
 
 const keyNameInput = mustGet("key-name");
+const keyUsageLimitInput = mustGet("key-usage-limit");
 const keyExpiresSelect = mustGet("key-expires");
 const createKeyBtn = mustGet("create-key");
 const createBadge = mustGet("create-badge");
@@ -452,7 +453,12 @@ const createKey = async () => {
 
   const expiresPreset = keyExpiresSelect.value;
   const expiresAtMs = computeExpiresAtMs(expiresPreset);
-  const payload = { name, expires_at_ms: expiresAtMs };
+  const usageLimit = parseInt(keyUsageLimitInput.value, 10);
+  const payload = {
+    name,
+    expires_at_ms: expiresAtMs,
+    usage_limit_requests: isNaN(usageLimit) ? 50 : usageLimit,
+  };
 
   clearCreateResult();
   setCreateBadge("unknown", "Creating...");
@@ -480,6 +486,7 @@ const createKey = async () => {
       `id: ${data?.id ?? ""}`,
       `name: ${data?.name ?? name}`,
       `prefix: ${data?.prefix ?? ""}`,
+      `usage_limit: ${data?.usage_limit_requests === -1 ? "unlimited" : (data?.usage_limit_requests ?? "")}`,
       `created_at: ${formatDate(data?.created_at_ms)}`,
       `expires_at: ${formatExpires(data?.expires_at_ms)}`,
     ];

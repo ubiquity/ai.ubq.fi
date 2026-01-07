@@ -1,12 +1,12 @@
 {
   "tasks": {
-    "dev": "deno serve --allow-env --allow-net --allow-read --unstable-kv serve.ts",
-    "ubq-ai": "deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts",
-    "upload:auth": "deno run --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts",
-    "keys:create": "deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys create",
-    "keys:list": "deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys list",
-    "keys:revoke": "deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys revoke",
-    "test": "deno test",
+    "dev": "deno serve --env --allow-env --allow-net --allow-read --unstable-kv serve.ts",
+    "ubq-ai": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts",
+    "upload:auth": "deno run --env --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts",
+    "keys:create": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys create",
+    "keys:list": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys list",
+    "keys:revoke": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys revoke",
+    "test": "deno test --env",
     "fmt": "deno fmt",
     "lint": "deno lint"
   },

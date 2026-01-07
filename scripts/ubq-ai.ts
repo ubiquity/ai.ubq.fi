@@ -239,7 +239,7 @@ Usage:
 Global options:
   --url <url>                 Base URL (default: https://ai.ubq.fi)
   --token <token>             Client token (or set UBIQUITY_AI_USER_TOKEN; falls back to admin token if unset)
-  --admin-token <token>       Admin token (or set UBIQUITY_AI_ADMIN_TOKEN; fallback DENO_DEPLOY_TOKEN)
+  --admin-token <token>       Admin token (or set DENO_DEPLOY_TOKEN)
   --json                      Print full JSON (default prints text when possible)
   --stream                    Stream output (when supported)
   --raw                       For streams: print raw SSE bytes (no parsing)
@@ -537,7 +537,7 @@ const resolveClientToken = (flags: Record<string, FlagValue>, runtime: UbqAiRunt
 
 const resolveAdminToken = (flags: Record<string, FlagValue>, runtime: UbqAiRuntime): string | null => {
   const fromFlag = getFlagString(flags, "admin-token");
-  const fromEnv = runtime.envGet("UBIQUITY_AI_ADMIN_TOKEN") ?? runtime.envGet("DENO_DEPLOY_TOKEN") ?? "";
+  const fromEnv = runtime.envGet("DENO_DEPLOY_TOKEN") ?? "";
   const token = (fromFlag ?? fromEnv).trim();
   return token || null;
 };
@@ -568,7 +568,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     `[ubq-ai] env UBIQUITY_AI_USER_TOKEN=${await describeSecret(runtime.envGet("UBIQUITY_AI_USER_TOKEN"))}\n`,
   );
   await debug(
-    `[ubq-ai] env UBIQUITY_AI_ADMIN_TOKEN=${await describeSecret(runtime.envGet("UBIQUITY_AI_ADMIN_TOKEN"))}\n`,
+    `[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`,
   );
   await debug(`[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`);
   const clientSource = getFlagString(flags, "token")
@@ -580,8 +580,6 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     : "(unset)";
   const adminSource = getFlagString(flags, "admin-token")
     ? "--admin-token"
-    : (runtime.envGet("UBIQUITY_AI_ADMIN_TOKEN") ?? "").trim()
-    ? "UBIQUITY_AI_ADMIN_TOKEN"
     : (runtime.envGet("DENO_DEPLOY_TOKEN") ?? "").trim()
     ? "DENO_DEPLOY_TOKEN"
     : "(unset)";
@@ -635,7 +633,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or UBIQUITY_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -661,7 +659,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or UBIQUITY_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -687,7 +685,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or UBIQUITY_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -834,7 +832,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or UBIQUITY_AI_ADMIN_TOKEN/DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UBIQUITY_AI_USER_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -975,7 +973,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!adminToken) {
       await writeErrText(
         runtime,
-        "Missing admin token. Set UBIQUITY_AI_ADMIN_TOKEN (or DENO_DEPLOY_TOKEN) or pass --admin-token.\n",
+        "Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.\n",
       );
       return 2;
     }
