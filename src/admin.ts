@@ -110,12 +110,15 @@ const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | nul
   return expiresAtMs;
 };
 
+<<<<<<< Updated upstream
 const shouldIncludeUsage = (value: string | null): boolean => {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
 };
 
+=======
+>>>>>>> Stashed changes
 const normalizeApiKeyUsageLimit = (value: unknown): number | null => {
   if (value === undefined || value === null) return DEFAULT_USAGE_LIMIT_REQUESTS;
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -250,7 +253,10 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
         usage_limit_requests: r.usage_limit_requests,
         usage_requests: r.usage_requests,
         usage_reset_at_ms: r.usage_reset_at_ms,
+<<<<<<< Updated upstream
         ...(includeUsage ? { usage: usageById.get(r.id) ?? null } : {}),
+=======
+>>>>>>> Stashed changes
       })),
     },
     { "x-ubq-upstream": "chatgpt_codex" },

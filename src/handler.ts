@@ -7,7 +7,11 @@ import {
   handleAdminReasoningLevel,
 } from "./admin.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
+<<<<<<< Updated upstream
 import { authenticateClient, handleV1Auth, incrementApiKeyUsage, requireAdminAuth } from "./auth.ts";
+=======
+import { authenticateClient, handleV1Auth, incrementApiKeyUsage, requireAdminAuth, requireClientAuth } from "./auth.ts";
+>>>>>>> Stashed changes
 import { handleHealth } from "./health.ts";
 import { corsHeaders, openaiError, withCors } from "./http.ts";
 import { handleChatCompletions, handleModels, handleResponses } from "./openai.ts";
@@ -123,24 +127,39 @@ export default async function handler(req: Request): Promise<Response> {
 
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return withCors(authResult.response);
+<<<<<<< Updated upstream
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
+=======
+>>>>>>> Stashed changes
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(handleModels());
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
+<<<<<<< Updated upstream
     const response = await handleChatCompletions(req, { keyId: usageKeyId });
     if (response.ok && usageKeyId) {
       await incrementApiKeyUsage(usageKeyId);
+=======
+    const response = await handleChatCompletions(req);
+    if (response.ok && authResult.method.kind === "kv_api_key") {
+      await incrementApiKeyUsage(authResult.method.key_id);
+>>>>>>> Stashed changes
     }
     return withCors(response);
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
+<<<<<<< Updated upstream
     const response = await handleResponses(req, { keyId: usageKeyId });
     if (response.ok && usageKeyId) {
       await incrementApiKeyUsage(usageKeyId);
+=======
+    const response = await handleResponses(req);
+    if (response.ok && authResult.method.kind === "kv_api_key") {
+      await incrementApiKeyUsage(authResult.method.key_id);
+>>>>>>> Stashed changes
     }
     return withCors(response);
   }

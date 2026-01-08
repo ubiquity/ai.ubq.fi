@@ -25,6 +25,7 @@ export type ApiKeyHashRecord = Readonly<{
   usage_limit_requests: number;
   usage_requests: number;
   usage_reset_at_ms: number;
+<<<<<<< Updated upstream
 }>;
 
 export type ApiKeyUsageRecord = Readonly<{
@@ -41,6 +42,8 @@ export type ApiKeyUsageRecord = Readonly<{
   last_seen_at_ms: number;
   last_model: string | null;
   last_route: string | null;
+=======
+>>>>>>> Stashed changes
 }>;
 
 export type ChatCompletionRequest = Readonly<{
