@@ -10,7 +10,7 @@ type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 
-const DEFAULT_MODEL = "gpt-5-chat-latest";
+const DEFAULT_MODEL = "gpt-5.2-chat-latest";
 const DEFAULT_REASONING_EFFORT: ReasoningEffort = "xhigh";
 
 const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {

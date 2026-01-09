@@ -77,7 +77,7 @@ const restoreSettings = () => {
   rememberTokenInput.checked = remember;
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
 
-  modelInput.value = storage.get(STORAGE_KEYS.model) ?? "gpt-5-chat-latest";
+  modelInput.value = storage.get(STORAGE_KEYS.model) ?? "gpt-5.2-chat-latest";
   reasoningSelect.value = storage.get(STORAGE_KEYS.reasoningEffort) ?? "";
   systemInput.value = storage.get(STORAGE_KEYS.systemPrompt) ?? "";
   streamInput.checked = storage.get(STORAGE_KEYS.stream) === "1";
