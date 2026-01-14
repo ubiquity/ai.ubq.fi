@@ -37,6 +37,8 @@ Health:
 
 ```bash
 curl -sS https://ai.ubq.fi/health
+curl -sS https://ai.ubq.fi/health/upstream
+curl -sS https://ai.ubq.fi/health/auth
 ```
 
 List models:
@@ -151,6 +153,15 @@ Debug (prints useful env/token fingerprints to stderr, never raw secrets):
 ubq-ai -v models
 ```
 
+Health probe (cron-friendly):
+
+```bash
+deno task health:check --url https://ai.ubq.fi
+# auth-only (does not consume chat tokens):
+deno task health:check --url https://ai.ubq.fi --auth
+# or: deno run --allow-net scripts/health-check.ts --url https://ai.ubq.fi --json --auth
+```
+
 Admin examples (uses `DENO_DEPLOY_TOKEN`):
 
 ```bash
@@ -263,6 +274,8 @@ deno task ubq-ai admin keys revoke --id "<id>"
 ## Supported routes
 
 - `GET /` and `GET /health`
+- `GET /health/auth` (Codex auth refresh check; no chat tokens used)
+- `GET /health/upstream` (Codex chat probe)
 - `POST /admin/codex/auth` (admin only)
 - `POST /admin/api-keys` (admin only)
 - `GET /admin/api-keys` (admin only)

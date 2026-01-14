@@ -6,6 +6,7 @@
     "keys:create": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys create",
     "keys:list": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys list",
     "keys:revoke": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys revoke",
+    "health:check": "deno run --allow-net --allow-env scripts/health-check.ts",
     "test": "deno test --env",
     "fmt": "deno fmt",
     "lint": "deno lint"

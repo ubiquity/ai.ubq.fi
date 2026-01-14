@@ -269,6 +269,24 @@ const refreshAuthStateless = async (auth: CodexAuthState): Promise<CodexAuthStat
   };
 };
 
+type CodexAuthRefreshResult =
+  | { ok: true; auth: CodexAuthState }
+  | { ok: false; status: number; code: CodexErrorCode; error: string };
+
+export const checkCodexAuthRefresh = async (): Promise<CodexAuthRefreshResult> => {
+  const current = await getAuthEntry();
+  try {
+    const auth = await refreshAuth(current);
+    return { ok: true, auth };
+  } catch (error) {
+    if (error instanceof CodexError) {
+      return { ok: false, status: error.status, code: error.code, error: error.message };
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, status: 503, code: "codex_auth_refresh_failed", error: detail };
+  }
+};
+
 const getValidAuth = async (): Promise<CodexAuthState> => {
   const current = await getAuthEntry();
   if (!needsRefresh(current.auth)) return current.auth;
