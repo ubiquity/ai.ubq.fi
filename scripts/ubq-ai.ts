@@ -116,7 +116,13 @@ export const parseArgs = (args: string[]): ParsedArgs => {
       continue;
     }
     const next = args[i + 1];
-    if (!next || next.startsWith("-")) {
+
+    // Smarter flag detection: "next" is only a new flag if it starts with "--"
+    // OR it's a known short flag (like -h, -v).
+    // This avoids misinterpreting PEM content (starts with "-----") as a flag.
+    const isNextFlag = !!next && (next.startsWith("--") || next === "-h" || next === "-v");
+
+    if (!next || isNextFlag) {
       if (key) pushFlag(flags, key, true);
       continue;
     }
@@ -238,7 +244,7 @@ Usage:
 
 Global options:
   --url <url>                 Base URL (default: https://ai.ubq.fi)
-  --token <token>             Client token (or set UBIQUITY_AI_TOKEN; falls back to admin token if unset)
+  --token <token>             Client token (or set UOS_AI_TOKEN; falls back to admin token if unset)
   --admin-token <token>       Admin token (or set DENO_DEPLOY_TOKEN)
   --json                      Print full JSON (default prints text when possible)
   --stream                    Stream output (when supported)
@@ -257,18 +263,21 @@ Commands:
   admin keys create "<name>" [--token <token>] [--expires <preset>|--expires-at-ms <ms>] [--usage-limit <requests>]
   admin keys list
   admin keys revoke --id <id>
+  admin kernel-pubkeys list
+  admin kernel-pubkeys add --app-id <id> --pem "<pem>" [--owner <name>]
+  admin kernel-pubkeys remove --app-id <id>
 
 Admin key expiration:
   --expires <preset>           day|week|month|quarter|year|forever (sets expires_at_ms)
   --expires-at-ms <ms>         Unix epoch ms timestamp; -1 means does not expire
 
 Examples:
-  UBIQUITY_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat \"Tell me a short joke.\"
-  UBIQUITY_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
+  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat \"Tell me a short joke.\"
+  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"example key\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"tmp key\" --expires week
-  UBIQUITY_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts whoami | jq
+  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts whoami | jq
 
 `;
 
@@ -529,7 +538,7 @@ const parseApiKeyExpiresAtMs = (
 
 const resolveClientToken = (flags: Record<string, FlagValue>, runtime: UbqAiRuntime): string | null => {
   const fromFlag = getFlagString(flags, "token");
-  const fromEnv = runtime.envGet("UBIQUITY_AI_TOKEN") ?? "";
+  const fromEnv = runtime.envGet("UOS_AI_TOKEN") ?? "";
   const token = (fromFlag ?? fromEnv).trim();
   if (token) return token;
   return resolveAdminToken(flags, runtime);
@@ -565,7 +574,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
 
   await debug(`[ubq-ai] url=${baseUrl}\n`);
   await debug(
-    `[ubq-ai] env UBIQUITY_AI_TOKEN=${await describeSecret(runtime.envGet("UBIQUITY_AI_TOKEN"))}\n`,
+    `[ubq-ai] env UOS_AI_TOKEN=${await describeSecret(runtime.envGet("UOS_AI_TOKEN"))}\n`,
   );
   await debug(
     `[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`,
@@ -573,8 +582,8 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   await debug(`[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`);
   const clientSource = getFlagString(flags, "token")
     ? "--token"
-    : (runtime.envGet("UBIQUITY_AI_TOKEN") ?? "").trim()
-    ? "UBIQUITY_AI_TOKEN"
+    : (runtime.envGet("UOS_AI_TOKEN") ?? "").trim()
+    ? "UOS_AI_TOKEN"
     : resolveAdminToken(flags, runtime)
     ? "(admin fallback)"
     : "(unset)";
@@ -633,7 +642,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -659,7 +668,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -685,7 +694,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -832,7 +841,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     if (!token) {
       await writeErrText(
         runtime,
-        "Missing client token. Set UBIQUITY_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
+        "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
       );
       return 2;
     }
@@ -1137,6 +1146,106 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       }
 
       await writeErrText(runtime, `Unknown admin keys command: ${action || "(missing)"}\n`);
+      await writeOutText(runtime, await usageText(runtime));
+      return 2;
+    }
+
+    if (sub === "kernel-pubkeys") {
+      const action = subRest[0] ?? "";
+
+      if (action === "list") {
+        const req = new Request(endpoint("/admin/kernel-pubkeys"), {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${adminToken}`,
+            "Accept": "application/json",
+          },
+        });
+        const result = await doFetchWithDebug(req);
+        if (!result.ok) {
+          await writeErrText(runtime, `Request failed (${result.status}).\n`);
+          await writeErrText(runtime, `${result.body}\n`);
+          return 1;
+        }
+        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+        return 0;
+      }
+
+      if (action === "add") {
+        const appIdRaw = getFlagString(flags, "app-id");
+        if (!appIdRaw) {
+          await writeErrText(runtime, "Missing --app-id\n");
+          return 2;
+        }
+        const appId = parseInt(appIdRaw, 10);
+        if (isNaN(appId)) {
+          await writeErrText(runtime, "--app-id must be a number\n");
+          return 2;
+        }
+
+        let pem = getFlagString(flags, "pem");
+        if (!pem && !runtime.stdinIsTerminal) {
+          pem = (await runtime.readStdin()).trim();
+        }
+        if (!pem) {
+          await writeErrText(runtime, "Missing --pem. Pass it as a flag or pipe via stdin.\n");
+          return 2;
+        }
+
+        const owner = getFlagString(flags, "owner") ?? "cli";
+
+        const req = new Request(endpoint("/admin/kernel-pubkeys"), {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${adminToken}`,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+          },
+          body: JSON.stringify({ app_id: appId, pem, owner }),
+        });
+        const result = await doFetchWithDebug(req);
+        if (!result.ok) {
+          await writeErrText(runtime, `Request failed (${result.status}).\n`);
+          await writeErrText(runtime, `${result.body}\n`);
+          return 1;
+        }
+        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+        return 0;
+      }
+
+      if (action === "remove") {
+        const appIdRaw = getFlagString(flags, "app-id");
+        if (!appIdRaw) {
+          await writeErrText(runtime, "Missing --app-id\n");
+          return 2;
+        }
+        const appId = parseInt(appIdRaw, 10);
+        if (isNaN(appId)) {
+          await writeErrText(runtime, "--app-id must be a number\n");
+          return 2;
+        }
+
+        const url = endpoint("/admin/kernel-pubkeys");
+        url.searchParams.set("app_id", String(appId));
+
+        const req = new Request(url, {
+          method: "DELETE",
+          headers: {
+            "Authorization": `Bearer ${adminToken}`,
+            "Accept": "application/json",
+          },
+        });
+        const result = await doFetchWithDebug(req);
+        if (!result.ok) {
+          await writeErrText(runtime, `Request failed (${result.status}).\n`);
+          await writeErrText(runtime, `${result.body}\n`);
+          return 1;
+        }
+        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+        return 0;
+      }
+
+      await writeErrText(runtime, `Unknown admin kernel-pubkeys command: ${action || "(missing)"}\n`);
       await writeOutText(runtime, await usageText(runtime));
       return 2;
     }

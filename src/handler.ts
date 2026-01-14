@@ -4,6 +4,9 @@ import {
   handleAdminApiKeysList,
   handleAdminApiKeysRevoke,
   handleAdminCodexAuth,
+  handleAdminKernelPubKeysCreate,
+  handleAdminKernelPubKeysDelete,
+  handleAdminKernelPubKeysList,
   handleAdminReasoningLevel,
 } from "./admin.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
@@ -113,6 +116,24 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminReasoningLevel(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/kernel-pubkeys") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKernelPubKeysList());
+  }
+
+  if (req.method === "POST" && path === "/admin/kernel-pubkeys") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKernelPubKeysCreate(req));
+  }
+
+  if (req.method === "DELETE" && path === "/admin/kernel-pubkeys") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKernelPubKeysDelete(req));
   }
 
   if (!path.startsWith("/v1/")) {

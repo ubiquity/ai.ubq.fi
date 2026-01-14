@@ -63,12 +63,12 @@
 
           <section class="card" role="listitem" aria-labelledby="card-curl">
             <h2 id="card-curl">Quickstart (curl)</h2>
-            <p><strong>Try it now:</strong> (assumes <code>$UBIQUITY_AI_TOKEN</code> is set)</p>
+            <p><strong>Try it now:</strong> (assumes <code>$UOS_AI_TOKEN</code> is set)</p>
             <pre
               class="code"
             >
 <code>curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBIQUITY_AI_TOKEN" \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"messages":[{"role":"user","content":"Tell me a short joke."}]}'</code></pre>
 
@@ -79,15 +79,15 @@
             <pre
               class="code"
             >
-<code>export UBIQUITY_AI_TOKEN="..."
+<code>export UOS_AI_TOKEN="..."
 
 curl -sS https://ai.ubq.fi/health
 
 curl -sS https://ai.ubq.fi/v1/models \
-  -H "Authorization: Bearer $UBIQUITY_AI_TOKEN"
+  -H "Authorization: Bearer $UOS_AI_TOKEN"
 
 curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBIQUITY_AI_TOKEN" \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"model":"gpt-5.2-chat-latest","reasoning_effort":"high","messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"developer","content":"Keep it concise."},{"role":"user","content":"Tell me a short joke."}],"stream":false}'</code></pre>
           </section>

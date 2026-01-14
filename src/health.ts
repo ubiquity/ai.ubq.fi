@@ -23,7 +23,7 @@ export const handleHealth = async (): Promise<Response> => {
   }
   if (!hasCodexAuth) problems.push("CODEX_AUTH_JSON_B64 missing");
   if (config.isDeploy && config.authTokens.size === 0 && !kv) {
-    problems.push("No UBIQUITY_AI_TOKEN and Deno KV unavailable");
+    problems.push("No UOS_AI_TOKEN and Deno KV unavailable");
   }
   try {
     await codexInstructionsPromise;

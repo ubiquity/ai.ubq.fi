@@ -28,16 +28,6 @@ const getEnv = (key: string): string | undefined => {
   }
 };
 
-const DEFAULT_KERNEL_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs96DOU+JqM8SyNXOB6u3
-uBKIFiyrcST/LZTYN6y7LeJlyCuGPqSDrWCfjU9Ph5PLf9TWiNmeM8DGaOpwEFC7
-U3NRxOSglo4plnQ5zRwIHHXvxyK400sQP2oISXymISuBQWjEIqkC9DybQrKwNzf+
-I0JHWPqmwMIw26UvVOtXGOOWBqTkk+N2+/9f8eDIJP5QQVwwszc8s1rXOsLMlVIf
-wShw7GO4E2jyK8TSJKpyjV8eb1JJMDwFhPiRrtZfQJUtDf2mV/67shQww61BH2Y/
-Plnalo58kWIbkqZoq1yJrL5sFb73osM5+vADTXVn79bkvea7W19nSkdMiarYt4Hq
-JQIDAQAB
------END PUBLIC KEY-----`;
-
 const normalizePemValue = (raw: string): string => raw.trim().replace(/\\n/g, "\n");
 
 const extractPemBlocks = (raw: string, begin: string, end: string): string[] => {
@@ -54,14 +44,44 @@ const extractPemBlocks = (raw: string, begin: string, end: string): string[] => 
   return blocks;
 };
 
-const getKernelPublicKeyPems = (): string[] => {
-  const envRaw = (getEnv("UBIQUITY_AI_KERNEL_PUBLIC_KEY") ?? "").trim();
+const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
+
+const getKernelPublicKeyPems = async (): Promise<string[]> => {
+  const envRaw = (getEnv("UOS_AI_KERNEL_PUBLIC_KEY") ?? "").trim();
+  const tokens: string[] = [];
+
   if (envRaw) {
     const normalized = normalizePemValue(envRaw);
     const blocks = extractPemBlocks(normalized, "-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----");
-    return blocks.length > 0 ? blocks : [normalized];
+    if (blocks.length > 0) {
+      tokens.push(...blocks);
+    } else {
+      tokens.push(normalized);
+    }
   }
-  return [DEFAULT_KERNEL_PUBLIC_KEY_PEM];
+
+  const kv = await kvPromise;
+  if (kv) {
+    const kvEntry = await kv.get<Array<{ pem: string }>>(UOS_KERNEL_PUBKEYS_KEY);
+    if (kvEntry.value) {
+      tokens.push(...kvEntry.value.map((p) => p.pem));
+    }
+  }
+
+  return tokens;
+};
+
+export const reloadKernelPublicKeys = async () => {
+  const pems = await getKernelPublicKeyPems();
+  const keys: CryptoKey[] = [];
+  for (const pem of pems) {
+    try {
+      keys.push(await importRsaPublicKey(pem));
+    } catch (error) {
+      console.error("[ai.ubq.fi] Failed to import kernel public key:", error);
+    }
+  }
+  kernelPublicKeysPromise = Promise.resolve(keys);
 };
 
 const importRsaPublicKey = async (publicKeyPem: string): Promise<CryptoKey> => {
@@ -83,8 +103,8 @@ const importRsaPublicKey = async (publicKeyPem: string): Promise<CryptoKey> => {
   );
 };
 
-const kernelPublicKeysPromise: Promise<ReadonlyArray<CryptoKey>> = (async () => {
-  const pems = getKernelPublicKeyPems();
+let kernelPublicKeysPromise: Promise<ReadonlyArray<CryptoKey>> = (async () => {
+  const pems = await getKernelPublicKeyPems();
   const keys: CryptoKey[] = [];
   for (const pem of pems) {
     try {
@@ -193,20 +213,23 @@ const verifyKernelAttestation = async (
   if (!kernelToken) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (missing kernel attestation)", "missing_kernel_token"),
+      response: openaiError(401, "Unauthorized: missing 'X-Ubiquity-Kernel-Token' header for kernel attestation", "missing_kernel_token"),
     };
   }
 
   const keys = await kernelPublicKeysPromise;
   if (keys.length === 0) {
-    return { ok: false, response: openaiError(500, "Server misconfigured: kernel public key missing", "server_error") };
+    return {
+      ok: false,
+      response: openaiError(500, "Server misconfigured: No kernel public keys loaded. Set 'UOS_AI_KERNEL_PUBLIC_KEY' or use admin endpoints to add pubkeys.", "server_error"),
+    };
   }
 
   const parts = kernelToken.split(".");
   if (parts.length !== 3) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+      response: openaiError(401, "Unauthorized: kernel attestation JWT MUST have 3 parts (header, payload, signature)", "invalid_kernel_token"),
     };
   }
 
@@ -216,24 +239,24 @@ const verifyKernelAttestation = async (
   try {
     header = decodeBase64UrlToJson(parts[0]);
     payload = parseKernelAttestationPayload(decodeBase64UrlToJson(parts[1]));
-  } catch {
+  } catch (err) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: failed to parse kernel attestation JWT parts: ${err instanceof Error ? err.message : String(err)}`, "invalid_kernel_token"),
     };
   }
 
   if (!isRecord(header) || getString(header.alg) !== "RS256") {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: kernel attestation JWT 'alg' MUST be 'RS256', got '${isRecord(header) ? header.alg : "undefined"}'`, "invalid_kernel_token"),
     };
   }
 
   if (!payload) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+      response: openaiError(401, "Unauthorized: kernel attestation JWT payload is invalid or fields are missing/type-mismatched", "invalid_kernel_token"),
     };
   }
 
@@ -241,32 +264,32 @@ const verifyKernelAttestation = async (
   if (payload.exp < payload.iat) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: kernel attestation 'exp' (${payload.exp}) is before 'iat' (${payload.iat})`, "invalid_kernel_token"),
     };
   }
   if (payload.exp - payload.iat > KERNEL_ATTESTATION_MAX_TTL_SECONDS) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (kernel attestation too long-lived)", "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: kernel attestation TTL is too long (${payload.exp - payload.iat}s > ${KERNEL_ATTESTATION_MAX_TTL_SECONDS}s)`, "invalid_kernel_token"),
     };
   }
   if (payload.iat > now + KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (kernel attestation not yet valid)", "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: kernel attestation 'iat' (${payload.iat}) is in the future (server now: ${now})`, "invalid_kernel_token"),
     };
   }
   if (payload.exp < now - KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (kernel attestation expired)", "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: kernel attestation 'exp' (${payload.exp}) is in the past (server now: ${now})`, "invalid_kernel_token"),
     };
   }
 
   if (payload.owner !== owner || payload.repo !== repo) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (kernel attestation repo mismatch)", "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: kernel attestation repo mismatch. Expected '${owner}/${repo}', got '${payload.owner}/${payload.repo}'`, "invalid_kernel_token"),
     };
   }
 
@@ -274,13 +297,13 @@ const verifyKernelAttestation = async (
   if (installationId === null) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (missing X-GitHub-Installation-Id)", "missing_installation_id"),
+      response: openaiError(401, "Unauthorized: missing 'X-GitHub-Installation-Id' header, required for kernel attestation verification", "missing_installation_id"),
     };
   }
   if (payload.installation_id !== installationId) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (kernel attestation installation mismatch)", "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: kernel attestation installation_id mismatch. Expected '${installationId}', got '${payload.installation_id}'`, "invalid_kernel_token"),
     };
   }
 
@@ -288,7 +311,7 @@ const verifyKernelAttestation = async (
   if (payload.auth_token_sha256 !== expectedTokenSha) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (kernel attestation token mismatch)", "invalid_kernel_token"),
+      response: openaiError(401, "Unauthorized: kernel attestation 'auth_token_sha256' mismatch. Verify kernel is hashing the current 'authToken'.", "invalid_kernel_token"),
     };
   }
 
@@ -297,10 +320,10 @@ const verifyKernelAttestation = async (
   let signatureBytes: Uint8Array<ArrayBuffer>;
   try {
     signatureBytes = decodeBase64UrlToBytes(parts[2]);
-  } catch {
+  } catch (err) {
     return {
       ok: false,
-      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: failed to decode kernel attestation signature: ${err instanceof Error ? err.message : String(err)}`, "invalid_kernel_token"),
     };
   }
 
@@ -512,7 +535,7 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   if (config.isDeploy && config.authTokens.size === 0) {
     return {
       ok: false,
-      response: openaiError(500, "Server misconfigured: set UBIQUITY_AI_TOKEN or enable Deno KV", "server_error"),
+      response: openaiError(500, "Server misconfigured: set UOS_AI_TOKEN or enable Deno KV", "server_error"),
     };
   }
 

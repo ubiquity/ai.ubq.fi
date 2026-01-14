@@ -14,5 +14,13 @@
   "fmt": {
     "lineWidth": 120,
     "semiColons": true
+  },
+  "deploy": {
+    "project": "40db2c10-0700-4d98-8f29-11f04743ff86",
+    "exclude": [
+      "**/node_modules"
+    ],
+    "include": [],
+    "entrypoint": "serve.ts"
   }
 }

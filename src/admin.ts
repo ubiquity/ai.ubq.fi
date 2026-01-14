@@ -20,10 +20,13 @@ import {
   getDefaultExpiryMs,
 } from "./api_keys.ts";
 import { getApiKeyUsage } from "./analytics.ts";
+import { reloadKernelPublicKeys } from "./auth.ts";
 import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "./types.ts";
+
+const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
 
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
@@ -110,15 +113,12 @@ const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | nul
   return expiresAtMs;
 };
 
-<<<<<<< Updated upstream
 const shouldIncludeUsage = (value: string | null): boolean => {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
 };
 
-=======
->>>>>>> Stashed changes
 const normalizeApiKeyUsageLimit = (value: unknown): number | null => {
   if (value === undefined || value === null) return DEFAULT_USAGE_LIMIT_REQUESTS;
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -253,10 +253,7 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
         usage_limit_requests: r.usage_limit_requests,
         usage_requests: r.usage_requests,
         usage_reset_at_ms: r.usage_reset_at_ms,
-<<<<<<< Updated upstream
         ...(includeUsage ? { usage: usageById.get(r.id) ?? null } : {}),
-=======
->>>>>>> Stashed changes
       })),
     },
     { "x-ubq-upstream": "chatgpt_codex" },
@@ -376,4 +373,79 @@ export const handleAdminReasoningLevel = async (req: Request): Promise<Response>
   }
 
   return openaiError(405, "Method not allowed", "method_not_allowed");
+};
+
+const normalizePem = (raw: unknown): string | null => {
+  if (typeof raw !== "string") return null;
+  const pem = raw.trim();
+  if (!pem.startsWith("-----BEGIN PUBLIC KEY-----") || !pem.endsWith("-----END PUBLIC KEY-----")) return null;
+  return pem;
+};
+
+export const handleAdminKernelPubKeysList = async (): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
+  const kvEntry = await kv.get<Array<{ app_id: number; pem: string; owner: string; added_at_ms: number }>>(
+    UOS_KERNEL_PUBKEYS_KEY,
+  );
+  return json(200, { data: kvEntry.value ?? [] });
+};
+
+export const handleAdminKernelPubKeysCreate = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
+
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+
+  const appId = typeof raw.app_id === "number" ? raw.app_id : null;
+  if (appId === null) return openaiError(400, "app_id is required and must be a number", "invalid_request_error");
+
+  const pem = normalizePem(raw.pem);
+  if (!pem) return openaiError(400, "pem must be a valid RS256 public PEM", "invalid_request_error");
+
+  const owner = getString(raw.owner) ?? "unknown";
+
+  const entry = await kv.get<Array<{ app_id: number; pem: string; owner: string; added_at_ms: number }>>(
+    UOS_KERNEL_PUBKEYS_KEY,
+  );
+  const existing = entry.value ?? [];
+  if (existing.some((p) => p.app_id === appId)) {
+    return openaiError(409, `Public key for App ID ${appId} already exists`, "invalid_request_error");
+  }
+
+  const record = { app_id: appId, pem, owner, added_at_ms: Date.now() };
+  const updated = [...existing, record];
+
+  const commit = await kv.atomic().check(entry).set(UOS_KERNEL_PUBKEYS_KEY, updated).commit();
+  if (!commit.ok) return openaiError(409, "Concurrent modification; retry", "invalid_request_error");
+
+  await reloadKernelPublicKeys();
+  return json(200, { ok: true, data: record });
+};
+
+export const handleAdminKernelPubKeysDelete = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
+
+  const url = new URL(req.url);
+  const appIdStr = url.searchParams.get("app_id");
+  const appId = appIdStr ? parseInt(appIdStr, 10) : null;
+  if (appId === null || isNaN(appId)) {
+    return openaiError(400, "app_id query parameter is required and must be a number", "invalid_request_error");
+  }
+
+  const entry = await kv.get<Array<{ app_id: number; pem: string; owner: string; added_at_ms: number }>>(
+    UOS_KERNEL_PUBKEYS_KEY,
+  );
+  const existing = entry.value ?? [];
+  const updated = existing.filter((p) => p.app_id !== appId);
+
+  if (updated.length === existing.length) return openaiError(404, "Not found", "not_found");
+
+  const commit = await kv.atomic().check(entry).set(UOS_KERNEL_PUBKEYS_KEY, updated).commit();
+  if (!commit.ok) return openaiError(409, "Concurrent modification; retry", "invalid_request_error");
+
+  await reloadKernelPublicKeys();
+  return json(200, { ok: true, deleted_app_id: appId });
 };
