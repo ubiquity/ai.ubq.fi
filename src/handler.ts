@@ -15,9 +15,9 @@ import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.t
 import { corsHeaders, openaiError, withCors } from "./http.ts";
 import { handleChatCompletions, handleModels, handleResponses } from "./openai.ts";
 import {
-  handleAppJs,
   handleAdminJs,
   handleAdminPage,
+  handleAppJs,
   handleChatJs,
   handleChatPage,
   handleFavicon,
@@ -155,7 +155,7 @@ export default async function handler(req: Request): Promise<Response> {
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
 
   if (req.method === "GET" && path === "/v1/models") {
-    return withCors(handleModels());
+    return withCors(await handleModels());
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {

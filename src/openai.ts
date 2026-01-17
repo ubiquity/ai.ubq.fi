@@ -1,4 +1,10 @@
-import { buildCodexRequest, codexInstructionsPromise, CodexError, fetchCodexResponses } from "./codex.ts";
+import {
+  buildCodexRequest,
+  CodexError,
+  codexInstructionsPromise,
+  fetchCodexModels,
+  fetchCodexResponses,
+} from "./codex.ts";
 import { recordApiKeyUsage } from "./analytics.ts";
 import { json, openaiError } from "./http.ts";
 import { kvPromise } from "./kv.ts";
@@ -204,6 +210,33 @@ const normalizeModelForCodex = (model: string): string => {
   if (trimmed === "gpt-5.1-chat-latest") return "gpt-5.1";
   if (trimmed === "gpt-5-chat-latest") return "gpt-5.2";
   return trimmed;
+};
+
+const normalizeModelEntry = (value: unknown): Record<string, unknown> | null => {
+  if (!isRecord(value)) return null;
+  const id = getString(value.id) ?? getString(value.slug) ?? getString(value.model) ?? getString(value.name);
+  if (!id) return null;
+  const normalized: Record<string, unknown> = { ...value, id };
+  const object = getString(value.object);
+  const ownedBy = getString(value.owned_by);
+  normalized.object = object ?? "model";
+  normalized.owned_by = ownedBy ?? "openai";
+  return normalized;
+};
+
+const normalizeModelList = (payload: unknown): { object: "list"; data: Record<string, unknown>[] } | null => {
+  if (!isRecord(payload)) return null;
+  const data = Array.isArray(payload.data) ? payload.data : null;
+  if (data) {
+    const normalized = data.map(normalizeModelEntry).filter(Boolean) as Record<string, unknown>[];
+    return { object: "list", data: normalized };
+  }
+  const models = Array.isArray(payload.models) ? payload.models : null;
+  if (models) {
+    const normalized = models.map(normalizeModelEntry).filter(Boolean) as Record<string, unknown>[];
+    return { object: "list", data: normalized };
+  }
+  return null;
 };
 
 const toResponseMessageItem = (message: unknown): ResponseMessageItem | null => {
@@ -447,24 +480,41 @@ const completeChatCompletions = async (
   return json(200, body, { "x-ubq-upstream": "chatgpt_codex" });
 };
 
-export const handleModels = (): Response =>
-  json(
-    200,
-    {
-      object: "list",
-      data: [
-        { id: "gpt-5-chat-latest", object: "model", owned_by: "openai" },
-        { id: "gpt-5.2-chat-latest", object: "model", owned_by: "openai" },
-        { id: "gpt-5.1-chat-latest", object: "model", owned_by: "openai" },
-        { id: "gpt-5.1-codex-max", object: "model", owned_by: "openai" },
-        { id: "gpt-5.1-codex", object: "model", owned_by: "openai" },
-        { id: "gpt-5.1-codex-mini", object: "model", owned_by: "openai" },
-        { id: "gpt-5.2", object: "model", owned_by: "openai" },
-        { id: "gpt-5.1", object: "model", owned_by: "openai" },
-      ],
-    },
-    { "x-ubq-upstream": "chatgpt_codex" },
-  );
+export const handleModels = async (): Promise<Response> => {
+  let upstream: Response;
+  try {
+    upstream = await fetchCodexModels();
+  } catch (error) {
+    console.error("[ai.ubq.fi] Upstream models fetch failed:", error);
+    return toCodexErrorResponse(error);
+  }
+
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    return new Response(text || upstream.statusText, {
+      status: upstream.status,
+      headers: {
+        "Content-Type": upstream.headers.get("Content-Type") ?? "text/plain",
+        "x-ubq-upstream": "chatgpt_codex",
+      },
+    });
+  }
+
+  const payloadText = await upstream.text().catch(() => "");
+  let parsed: unknown = null;
+  try {
+    parsed = payloadText ? JSON.parse(payloadText) : null;
+  } catch {
+    parsed = null;
+  }
+
+  const normalized = normalizeModelList(parsed);
+  if (!normalized) {
+    return openaiError(502, "Upstream models response did not include a model list.", "codex_upstream_invalid");
+  }
+
+  return json(200, normalized, { "x-ubq-upstream": "chatgpt_codex" });
+};
 
 export const handleChatCompletions = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;

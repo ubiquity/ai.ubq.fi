@@ -321,6 +321,40 @@ const fetchCodexResponsesWithAuth = async (auth: CodexAuthState, body: unknown):
   });
 };
 
+const codexModelsBaseUrls = (): string[] => {
+  const base = config.codexBaseUrl.replace(/\/+$/, "");
+  const urls = new Set<string>();
+  if (base.endsWith("/codex")) {
+    urls.add(`${base.slice(0, -"/codex".length)}/models`);
+  }
+  urls.add(`${base}/models`);
+  return Array.from(urls);
+};
+
+const fetchCodexModelsWithAuth = async (auth: CodexAuthState, url: string): Promise<Response> => {
+  const headers = new Headers();
+  headers.set("Authorization", `Bearer ${auth.access_token}`);
+  headers.set("ChatGPT-Account-ID", auth.account_id);
+  headers.set("originator", CODEX_ORIGINATOR);
+  headers.set("user-agent", CODEX_USER_AGENT);
+  headers.set("Accept", "application/json");
+
+  try {
+    return await fetch(url, {
+      method: "GET",
+      headers,
+      redirect: "manual",
+    });
+  } catch (error) {
+    throw new CodexError(
+      "Codex upstream request failed: upstream unreachable.",
+      "codex_upstream_unreachable",
+      502,
+      error,
+    );
+  }
+};
+
 export const fetchCodexResponses = async (body: unknown): Promise<Response> => {
   const auth = await getValidAuth();
   const url = `${config.codexBaseUrl}/responses`;
@@ -373,6 +407,28 @@ export const fetchCodexResponses = async (body: unknown): Promise<Response> => {
       error,
     );
   }
+};
+
+export const fetchCodexModels = async (): Promise<Response> => {
+  const auth = await getValidAuth();
+  const urls = codexModelsBaseUrls();
+  let lastResponse: Response | null = null;
+
+  for (const url of urls) {
+    let res = await fetchCodexModelsWithAuth(auth, url);
+    if (res.status === 401) {
+      await refreshAuth(await getAuthEntry());
+      const auth2 = await getValidAuth();
+      res = await fetchCodexModelsWithAuth(auth2, url);
+    }
+    if (res.status === 404 && urls.length > 1) {
+      lastResponse = res;
+      continue;
+    }
+    return res;
+  }
+
+  return lastResponse ?? new Response("Codex upstream models endpoint not found.", { status: 404 });
 };
 
 export const buildCodexRequest = async (
