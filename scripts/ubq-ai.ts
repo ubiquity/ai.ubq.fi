@@ -51,6 +51,55 @@ const expandTilde = (path: string, homeDir: string | undefined): string => {
   return path;
 };
 
+const normalizeVersion = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const readCodexVersionFile = async (runtime: UbqAiRuntime, homeDir: string | undefined): Promise<string | null> => {
+  if (!homeDir) return null;
+  try {
+    const text = await runtime.readTextFile(`${homeDir}/.codex/version.json`);
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return normalizeVersion(parsed.latest_version ?? parsed.version ?? parsed.current_version);
+  } catch {
+    return null;
+  }
+};
+
+const readCodexPackageVersion = async (runtime: UbqAiRuntime, codexPath: string | null): Promise<string | null> => {
+  if (!codexPath) return null;
+  let realPath = codexPath;
+  try {
+    realPath = await Deno.realPath(codexPath);
+  } catch {
+    realPath = codexPath;
+  }
+  const normalized = realPath.replace(/\\/g, "/");
+  const marker = "/node_modules/@openai/codex/";
+  const index = normalized.lastIndexOf(marker);
+  if (index === -1) return null;
+  const pkgPath = `${normalized.slice(0, index + marker.length)}package.json`;
+  try {
+    const text = await runtime.readTextFile(pkgPath);
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return normalizeVersion(parsed.version);
+  } catch {
+    return null;
+  }
+};
+
+const resolveCodexClientVersion = async (
+  runtime: UbqAiRuntime,
+  codexPath: string | null,
+  homeDir: string | undefined,
+): Promise<string | null> => {
+  const pkgVersion = await readCodexPackageVersion(runtime, codexPath);
+  if (pkgVersion) return pkgVersion;
+  return await readCodexVersionFile(runtime, homeDir);
+};
+
 const loadCodexBinaryText = async (
   runtime: UbqAiRuntime,
   codexBinFlag: string | null,
@@ -1060,9 +1109,10 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
           if (!extracted) {
             await writeErrText(runtime, "Failed to extract Codex models from the CLI binary; skipping model upload.\n");
           } else {
+            const fallbackVersion = await resolveCodexClientVersion(runtime, binary.path, homeDir);
             modelsPayload = {
               source: "codex_cli",
-              client_version: extracted.clientVersion ?? undefined,
+              client_version: extracted.clientVersion ?? fallbackVersion ?? undefined,
               updated_at_ms: Date.now(),
               models: extracted.models,
             };

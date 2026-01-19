@@ -597,6 +597,47 @@ Deno.test("ubq-ai: admin upload-auth includes codex model snapshot", async () =>
   assert.equal(requests.length, 1);
 });
 
+Deno.test("ubq-ai: admin upload-auth falls back to local version file", async () => {
+  const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
+  const authJson = JSON.stringify(authObject);
+  const codexText = '{"slug":"gpt-5.2-codex","supported_reasoning_levels":["low","high"]}';
+  const versionJson = JSON.stringify({ latest_version: "0.88.1" });
+  const { runtime, outText, errText, requests } = makeRuntime({
+    env: {
+      DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz",
+      HOME: "/home/test",
+      PATH: "/opt/bin",
+    },
+    readTextFile: (path: string) => {
+      if (path === "/home/test/.codex/auth.json") return Promise.resolve(authJson);
+      if (path === "/home/test/.codex/version.json") return Promise.resolve(versionJson);
+      if (path === "/opt/bin/codex") return Promise.resolve(codexText);
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    },
+    fetch: (_req, recorded) => {
+      assert.ok(recorded.url.endsWith("/admin/codex/auth"));
+      assert.equal(recorded.method, "POST");
+      const parsed = JSON.parse(recorded.bodyText ?? "null") as {
+        auth?: unknown;
+        models?: unknown;
+      };
+      assert.deepEqual(parsed.auth, authObject);
+      assert.equal(isRecord(parsed.models), true);
+      const models = parsed.models as Record<string, unknown>;
+      assert.equal(models.source, "codex_cli");
+      assert.equal(models.client_version, "0.88.1");
+      assert.ok(typeof models.updated_at_ms === "number");
+      return jsonResponse(200, { ok: true, models: { count: 1 } });
+    },
+  });
+
+  const code = await runUbqAi(["admin", "upload-auth"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.ok(outText().includes('"ok": true'));
+  assert.equal(requests.length, 1);
+});
+
 Deno.test("ubq-ai: missing admin token returns exit code 2", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: {},
