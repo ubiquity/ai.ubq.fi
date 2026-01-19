@@ -1,3 +1,5 @@
+import "./network.js";
+
 const badge = document.getElementById("status-badge");
 
 const setBadge = (state, text) => {

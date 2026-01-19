@@ -68,6 +68,7 @@ const BOOLEAN_FLAGS = new Set([
   "help",
   "json",
   "raw",
+  "reset-usage",
   "stream",
   "token-only",
   "verbose",
@@ -266,6 +267,8 @@ Commands:
   admin kernel-pubkeys list
   admin kernel-pubkeys add --app-id <id> --pem "<pem>" [--owner <name>]
   admin kernel-pubkeys remove --app-id <id>
+  admin kernel-usage get --owner <name> [--repo <name>] [--scope repo|org]
+  admin kernel-usage set --owner <name> [--repo <name>] --usage-limit <requests> [--window-ms <ms>] [--scope repo|org] [--reset-usage]
 
 Admin key expiration:
   --expires <preset>           day|week|month|quarter|year|forever (sets expires_at_ms)
@@ -1246,6 +1249,130 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       }
 
       await writeErrText(runtime, `Unknown admin kernel-pubkeys command: ${action || "(missing)"}\n`);
+      await writeOutText(runtime, await usageText(runtime));
+      return 2;
+    }
+
+    if (sub === "kernel-usage") {
+      const action = subRest[0] ?? "";
+
+      if (action === "get") {
+        const owner = (getFlagString(flags, "owner") ?? "").trim();
+        const repo = (getFlagString(flags, "repo") ?? "").trim();
+        const scopeRaw = (getFlagString(flags, "scope") ?? "repo").trim().toLowerCase();
+        const scope = scopeRaw === "org" ? "org" : "repo";
+        if (!owner) {
+          await writeErrText(runtime, "Missing --owner\n");
+          return 2;
+        }
+        if (scope === "repo" && !repo) {
+          await writeErrText(runtime, "Missing --repo for scope=repo\n");
+          return 2;
+        }
+        if (scope === "org" && repo) {
+          await writeErrText(runtime, "--repo must be omitted for scope=org\n");
+          return 2;
+        }
+
+        const url = endpoint("/admin/kernel-usage");
+        url.searchParams.set("owner", owner);
+        url.searchParams.set("scope", scope);
+        if (scope === "repo") url.searchParams.set("repo", repo);
+
+        const req = new Request(url, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${adminToken}`,
+            "Accept": "application/json",
+          },
+        });
+        const result = await doFetchWithDebug(req);
+        if (!result.ok) {
+          await writeErrText(runtime, `Request failed (${result.status}).\n`);
+          await writeErrText(runtime, `${result.body}\n`);
+          return 1;
+        }
+        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+        return 0;
+      }
+
+      if (action === "set") {
+        const owner = (getFlagString(flags, "owner") ?? "").trim();
+        const repo = (getFlagString(flags, "repo") ?? "").trim();
+        const scopeRaw = (getFlagString(flags, "scope") ?? (repo ? "repo" : "org")).trim().toLowerCase();
+        const scope = scopeRaw === "org" ? "org" : "repo";
+        if (!owner) {
+          await writeErrText(runtime, "Missing --owner\n");
+          return 2;
+        }
+        if (scope === "repo" && !repo) {
+          await writeErrText(runtime, "Missing --repo for scope=repo\n");
+          return 2;
+        }
+        if (scope === "org" && repo) {
+          await writeErrText(runtime, "--repo must be omitted for scope=org\n");
+          return 2;
+        }
+
+        const usageLimitRaw = getFlagString(flags, "usage-limit");
+        if (!usageLimitRaw) {
+          await writeErrText(runtime, "Missing --usage-limit\n");
+          return 2;
+        }
+        const trimmed = usageLimitRaw.trim();
+        let usageLimit: number;
+        if (trimmed === "unlimited" || trimmed === "-1") {
+          usageLimit = -1;
+        } else {
+          const parsed = Number(trimmed);
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            await writeErrText(runtime, "--usage-limit must be a non-negative number, -1, or 'unlimited'\n");
+            return 2;
+          }
+          usageLimit = Math.trunc(parsed);
+        }
+
+        const resetUsage = flags["reset-usage"] === true;
+        const windowMsRaw = getFlagString(flags, "window-ms");
+        let windowMs: number | undefined;
+        if (windowMsRaw) {
+          const parsed = Number(windowMsRaw.trim());
+          if (!Number.isFinite(parsed) || parsed <= 0) {
+            await writeErrText(runtime, "--window-ms must be a positive number\n");
+            return 2;
+          }
+          windowMs = Math.trunc(parsed);
+        }
+
+        const body: Record<string, unknown> = {
+          owner,
+          usage_limit_requests: usageLimit,
+          reset_usage: resetUsage,
+          scope,
+        };
+        if (scope === "repo") body.repo = repo;
+        if (windowMs !== undefined) body.window_ms = windowMs;
+
+        const req = new Request(endpoint("/admin/kernel-usage"), {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${adminToken}`,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+        const result = await doFetchWithDebug(req);
+        if (!result.ok) {
+          await writeErrText(runtime, `Request failed (${result.status}).\n`);
+          await writeErrText(runtime, `${result.body}\n`);
+          return 1;
+        }
+        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+        return 0;
+      }
+
+      await writeErrText(runtime, `Unknown admin kernel-usage command: ${action || "(missing)"}\n`);
       await writeOutText(runtime, await usageText(runtime));
       return 2;
     }

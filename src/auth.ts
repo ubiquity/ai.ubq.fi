@@ -10,6 +10,7 @@ import {
 } from "./api_keys.ts";
 import { json, openaiError } from "./http.ts";
 import { getBearerToken } from "./http.ts";
+import { checkKernelOrgUsageLimit, checkKernelUsageLimit } from "./kernel_usage.ts";
 import { kvPromise } from "./kv.ts";
 import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
@@ -422,6 +423,10 @@ const authenticateGitHubToken = async (
   const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
   const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
   if (cachedUntil > Date.now()) {
+    const orgLimitResult = await checkKernelOrgUsageLimit(owner);
+    if (!orgLimitResult.ok) return { ok: false, response: orgLimitResult.response };
+    const repoLimitResult = await checkKernelUsageLimit(owner, repo);
+    if (!repoLimitResult.ok) return { ok: false, response: repoLimitResult.response };
     return { ok: true, method: { kind: "github_token", owner, repo, state_id: stateId } };
   }
 
@@ -432,6 +437,10 @@ const authenticateGitHubToken = async (
     }
 
     githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
+    const orgLimitResult = await checkKernelOrgUsageLimit(owner);
+    if (!orgLimitResult.ok) return { ok: false, response: orgLimitResult.response };
+    const repoLimitResult = await checkKernelUsageLimit(owner, repo);
+    if (!repoLimitResult.ok) return { ok: false, response: repoLimitResult.response };
     return { ok: true, method: { kind: "github_token", owner, repo, state_id: stateId } };
   } catch (error) {
     console.error("[ai.ubq.fi] GitHub token verification failed:", error);

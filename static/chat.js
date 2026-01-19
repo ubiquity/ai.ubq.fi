@@ -1,3 +1,5 @@
+import "./network.js";
+
 const STORAGE_KEYS = {
   rememberToken: "ubq_ai.playground.remember_token",
   token: "ubq_ai.playground.token",
@@ -31,6 +33,17 @@ const storage = {
   },
 };
 
+const debounce = (fn, wait = 450) => {
+  let timer = null;
+  return (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, wait);
+  };
+};
+
 const mustGet = (id) => {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing element: #${id}`);
@@ -40,12 +53,10 @@ const mustGet = (id) => {
 const tokenInput = mustGet("token");
 const rememberTokenInput = mustGet("remember-token");
 const showTokenInput = mustGet("show-token");
-const clearTokenBtn = mustGet("clear-token");
 const modelInput = mustGet("model");
 const reasoningSelect = mustGet("reasoning-effort");
 const systemInput = mustGet("system");
 const streamInput = mustGet("stream");
-const testAuthBtn = mustGet("test-auth");
 const authBadge = mustGet("auth-badge");
 const messagesEl = mustGet("messages");
 const resetChatBtn = mustGet("reset-chat");
@@ -58,6 +69,36 @@ const setAuthBadge = (state, text) => {
   authBadge.dataset.state = state;
   authBadge.textContent = text;
 };
+
+let authCheckId = 0;
+const checkAuthToken = async () => {
+  const token = tokenInput.value.trim();
+  if (!token) {
+    setAuthBadge("bad", "Missing token");
+    return;
+  }
+
+  const requestId = ++authCheckId;
+  setAuthBadge("unknown", "Checking...");
+  try {
+    const res = await fetch("/v1/auth", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+    const data = await res.json().catch(() => null);
+    if (requestId !== authCheckId) return;
+    if (!res.ok) {
+      setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
+      return;
+    }
+    const mode = data?.auth?.mode;
+    setAuthBadge("ok", mode ? `OK (${mode})` : "OK");
+  } catch {
+    if (requestId !== authCheckId) return;
+    setAuthBadge("bad", "Offline");
+  }
+};
+
+const scheduleAuthCheck = debounce(() => {
+  void checkAuthToken();
+}, 500);
 
 const persistTokenIfEnabled = () => {
   if (!rememberTokenInput.checked) return;
@@ -72,6 +113,18 @@ const persistSetting = (key, value) => {
   else storage.remove(key);
 };
 
+const scheduleTokenPersist = debounce(() => {
+  persistTokenIfEnabled();
+}, 500);
+
+const scheduleModelPersist = debounce(() => {
+  persistSetting(STORAGE_KEYS.model, modelInput.value);
+}, 500);
+
+const scheduleSystemPersist = debounce(() => {
+  persistSetting(STORAGE_KEYS.systemPrompt, systemInput.value);
+}, 500);
+
 const restoreSettings = () => {
   const remember = storage.get(STORAGE_KEYS.rememberToken) === "1";
   rememberTokenInput.checked = remember;
@@ -84,15 +137,27 @@ const restoreSettings = () => {
 };
 
 restoreSettings();
-setAuthBadge("unknown", "Not checked");
+if (tokenInput.value.trim()) {
+  setAuthBadge("unknown", "Checking...");
+  void checkAuthToken();
+} else {
+  setAuthBadge("bad", "Missing token");
+}
 
 showTokenInput.addEventListener("change", () => {
   tokenInput.type = showTokenInput.checked ? "text" : "password";
 });
 
 tokenInput.addEventListener("input", () => {
-  persistTokenIfEnabled();
-  setAuthBadge("unknown", "Not checked");
+  authCheckId += 1;
+  scheduleTokenPersist();
+  const token = tokenInput.value.trim();
+  if (!token) {
+    setAuthBadge("bad", "Missing token");
+    return;
+  }
+  setAuthBadge("unknown", "Checking...");
+  scheduleAuthCheck();
 });
 
 rememberTokenInput.addEventListener("change", () => {
@@ -105,25 +170,14 @@ rememberTokenInput.addEventListener("change", () => {
   storage.remove(STORAGE_KEYS.token);
 });
 
-clearTokenBtn.addEventListener("click", () => {
-  tokenInput.value = "";
-  rememberTokenInput.checked = false;
-  showTokenInput.checked = false;
-  tokenInput.type = "password";
-  storage.remove(STORAGE_KEYS.rememberToken);
-  storage.remove(STORAGE_KEYS.token);
-  setAuthBadge("unknown", "Not checked");
-  tokenInput.focus();
-});
-
-modelInput.addEventListener("input", () => persistSetting(STORAGE_KEYS.model, modelInput.value));
-systemInput.addEventListener("input", () => persistSetting(STORAGE_KEYS.systemPrompt, systemInput.value));
+modelInput.addEventListener("input", () => scheduleModelPersist());
+systemInput.addEventListener("input", () => scheduleSystemPersist());
 reasoningSelect.addEventListener("change", () => persistSetting(STORAGE_KEYS.reasoningEffort, reasoningSelect.value));
 streamInput.addEventListener("change", () => storage.set(STORAGE_KEYS.stream, streamInput.checked ? "1" : "0"));
 
 const appendMessage = (role, text) => {
   const el = document.createElement("div");
-  el.className = `chat-msg chat-msg-${role}`;
+  el.dataset.message = role;
   el.textContent = text;
   messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -152,29 +206,6 @@ resetChatBtn.addEventListener("click", () => {
 stopBtn.addEventListener("click", () => {
   if (!abortController) return;
   abortController.abort();
-});
-
-testAuthBtn.addEventListener("click", async () => {
-  const token = tokenInput.value.trim();
-  if (!token) {
-    setAuthBadge("bad", "Missing token");
-    tokenInput.focus();
-    return;
-  }
-
-  setAuthBadge("unknown", "Checking…");
-  try {
-    const res = await fetch("/v1/auth", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
-      return;
-    }
-    const mode = data?.auth?.mode;
-    setAuthBadge("ok", mode ? `OK (${mode})` : "OK");
-  } catch {
-    setAuthBadge("bad", "Offline");
-  }
 });
 
 const streamSse = async (response, onEvent) => {
@@ -254,7 +285,7 @@ const sendPrompt = async () => {
 
     if (!res.ok) {
       const errorPayload = await res.json().catch(() => null);
-      assistantEl.className = "chat-msg chat-msg-error";
+      assistantEl.dataset.message = "error";
       assistantEl.textContent = errorPayload?.error?.message ?? `${res.status} ${res.statusText}`;
       return;
     }
@@ -298,11 +329,11 @@ const sendPrompt = async () => {
     if (assistantText.trim()) conversation.push({ role: "assistant", content: assistantText });
   } catch (error) {
     if (error?.name === "AbortError") {
-      assistantEl.className = "chat-msg chat-msg-system";
+      assistantEl.dataset.message = "system";
       assistantEl.textContent = "[stopped]";
       return;
     }
-    assistantEl.className = "chat-msg chat-msg-error";
+    assistantEl.dataset.message = "error";
     assistantEl.textContent = "Request failed.";
   } finally {
     abortController = null;

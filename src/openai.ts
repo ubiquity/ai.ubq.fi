@@ -6,6 +6,7 @@ import {
   fetchCodexResponses,
 } from "./codex.ts";
 import { recordApiKeyUsage } from "./analytics.ts";
+import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
 import { json, openaiError } from "./http.ts";
 import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
@@ -30,6 +31,8 @@ const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
 
 type UsageContext = Readonly<{
   keyId: string | null;
+  kernelRepo: { owner: string; repo: string } | null;
+  kernelOrg: { owner: string } | null;
 }>;
 
 type UsageTokens = Readonly<{
@@ -37,6 +40,34 @@ type UsageTokens = Readonly<{
   outputTokens: number;
   totalTokens: number;
 }>;
+
+type UsageDelta = Readonly<{
+  request_count?: number;
+  stream_request_count?: number;
+  non_stream_request_count?: number;
+  completed_request_count?: number;
+  error_request_count?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  model?: string | null;
+  route?: string | null;
+  seen_at_ms?: number;
+}>;
+
+const recordUsageDelta = async (context: UsageContext | undefined, delta: UsageDelta): Promise<void> => {
+  if (!context) return;
+  const tasks: Promise<void>[] = [];
+  if (context.keyId) tasks.push(recordApiKeyUsage(context.keyId, delta));
+  if (context.kernelRepo) tasks.push(recordKernelUsage(context.kernelRepo.owner, context.kernelRepo.repo, delta));
+  if (context.kernelOrg) tasks.push(recordKernelOrgUsage(context.kernelOrg.owner, delta));
+  if (!tasks.length) return;
+  if (tasks.length === 1) {
+    await tasks[0];
+    return;
+  }
+  await Promise.all(tasks);
+};
 
 const normalizeTokenCount = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -58,8 +89,7 @@ const recordRequestUsage = async (
   context: UsageContext | undefined,
   details: { model: string; route: string; stream: boolean },
 ): Promise<void> => {
-  if (!context?.keyId) return;
-  await recordApiKeyUsage(context.keyId, {
+  await recordUsageDelta(context, {
     request_count: 1,
     stream_request_count: details.stream ? 1 : 0,
     non_stream_request_count: details.stream ? 0 : 1,
@@ -73,8 +103,7 @@ const recordCompletionUsage = async (
   context: UsageContext | undefined,
   usage: UsageTokens | null,
 ): Promise<void> => {
-  if (!context?.keyId) return;
-  await recordApiKeyUsage(context.keyId, {
+  await recordUsageDelta(context, {
     completed_request_count: 1,
     input_tokens: usage?.inputTokens,
     output_tokens: usage?.outputTokens,
@@ -83,8 +112,7 @@ const recordCompletionUsage = async (
 };
 
 const recordErrorUsage = async (context: UsageContext | undefined): Promise<void> => {
-  if (!context?.keyId) return;
-  await recordApiKeyUsage(context.keyId, { error_request_count: 1 });
+  await recordUsageDelta(context, { error_request_count: 1 });
 };
 
 const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
@@ -323,7 +351,7 @@ const collectResponsesStreamUsage = async (
   stream: ReadableStream<Uint8Array>,
   usageContext?: UsageContext,
 ): Promise<void> => {
-  if (!usageContext?.keyId) return;
+  if (!usageContext?.keyId && !usageContext?.kernelRepo && !usageContext?.kernelOrg) return;
   try {
     for await (const ev of parseSseEvents(stream)) {
       if (!isRecord(ev)) continue;
@@ -694,7 +722,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     }
     const headers = new Headers(upstream.headers);
     headers.set("x-ubq-upstream", "chatgpt_codex");
-    if (usageContext?.keyId) {
+    if (usageContext?.keyId || usageContext?.kernelRepo || usageContext?.kernelOrg) {
       const [clientStream, analyticsStream] = upstream.body.tee();
       void collectResponsesStreamUsage(analyticsStream, usageContext);
       return new Response(clientStream, {

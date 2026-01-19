@@ -2,8 +2,12 @@ import {
   handleAdminApiKeysCreate,
   handleAdminApiKeysDelete,
   handleAdminApiKeysList,
+  handleAdminApiKeysUpdate,
   handleAdminApiKeysRevoke,
   handleAdminCodexAuth,
+  handleAdminKernelUsageDelete,
+  handleAdminKernelUsageGet,
+  handleAdminKernelUsageSet,
   handleAdminKernelPubKeysCreate,
   handleAdminKernelPubKeysDelete,
   handleAdminKernelPubKeysList,
@@ -13,6 +17,7 @@ import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messag
 import { authenticateClient, handleV1Auth, incrementApiKeyUsage, requireAdminAuth } from "./auth.ts";
 import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, openaiError, withCors } from "./http.ts";
+import { incrementKernelOrgUsageLimit, incrementKernelUsageLimit } from "./kernel_usage.ts";
 import { handleChatCompletions, handleModels, handleResponses } from "./openai.ts";
 import {
   handleAdminJs,
@@ -22,6 +27,7 @@ import {
   handleChatPage,
   handleFavicon,
   handleFavicon32,
+  handleNetworkJs,
   handleRoot,
   handleStyleCss,
 } from "./static.ts";
@@ -52,6 +58,10 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/admin.js") {
     return withCors(await handleAdminJs());
+  }
+
+  if (req.method === "GET" && path === "/network.js") {
+    return withCors(await handleNetworkJs());
   }
 
   if (req.method === "GET" && path === "/style.css") {
@@ -100,6 +110,12 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleAdminApiKeysList(req));
   }
 
+  if (req.method === "PATCH" && path === "/admin/api-keys") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminApiKeysUpdate(req));
+  }
+
   if (req.method === "POST" && path === "/admin/api-keys/revoke") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
@@ -110,6 +126,24 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminApiKeysDelete(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/kernel-usage") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKernelUsageGet(req));
+  }
+
+  if (req.method === "POST" && path === "/admin/kernel-usage") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKernelUsageSet(req));
+  }
+
+  if (req.method === "DELETE" && path === "/admin/kernel-usage") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKernelUsageDelete(req));
   }
 
   if ((req.method === "GET" || req.method === "POST") && path === "/admin/reasoning-level") {
@@ -153,23 +187,32 @@ export default async function handler(req: Request): Promise<Response> {
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return withCors(authResult.response);
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
+  const kernelRepo = authResult.method.kind === "github_token"
+    ? { owner: authResult.method.owner, repo: authResult.method.repo }
+    : null;
+  const kernelOrg = kernelRepo ? { owner: kernelRepo.owner } : null;
+  const usageContext = { keyId: usageKeyId, kernelRepo, kernelOrg };
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(await handleModels());
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
-    const response = await handleChatCompletions(req, { keyId: usageKeyId });
-    if (response.ok && usageKeyId) {
-      await incrementApiKeyUsage(usageKeyId);
+    const response = await handleChatCompletions(req, usageContext);
+    if (response.ok) {
+      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
+      if (kernelRepo) await incrementKernelUsageLimit(kernelRepo.owner, kernelRepo.repo);
+      if (kernelOrg) await incrementKernelOrgUsageLimit(kernelOrg.owner);
     }
     return withCors(response);
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
-    const response = await handleResponses(req, { keyId: usageKeyId });
-    if (response.ok && usageKeyId) {
-      await incrementApiKeyUsage(usageKeyId);
+    const response = await handleResponses(req, usageContext);
+    if (response.ok) {
+      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
+      if (kernelRepo) await incrementKernelUsageLimit(kernelRepo.owner, kernelRepo.repo);
+      if (kernelOrg) await incrementKernelOrgUsageLimit(kernelOrg.owner);
     }
     return withCors(response);
   }

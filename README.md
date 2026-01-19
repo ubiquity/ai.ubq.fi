@@ -259,6 +259,61 @@ Create (unlimited usage):
 deno task ubq-ai admin keys create "unlimited key" --usage-limit unlimited
 ```
 
+## Admin: kernel auth usage limits (GitHub token)
+
+Kernel-attested GitHub token auth is tracked per `owner/repo` and can also be limited per org (`owner`).
+The default limit is unlimited until an admin sets a per-repo or per-org limit. Limits reset weekly by default,
+unless `window_ms` is provided.
+
+Get repo usage/limit (admin):
+
+```bash
+export DENO_DEPLOY_TOKEN="..."
+curl -sS "https://ai.ubq.fi/admin/kernel-usage?owner=acme&repo=demo" \
+  -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+  | jq
+```
+
+Get org usage/limit (admin):
+
+```bash
+export DENO_DEPLOY_TOKEN="..."
+curl -sS "https://ai.ubq.fi/admin/kernel-usage?owner=acme&scope=org" \
+  -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+  | jq
+```
+
+Set repo limit (admin):
+
+```bash
+export DENO_DEPLOY_TOKEN="..."
+curl -sS https://ai.ubq.fi/admin/kernel-usage \
+  -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary '{"owner":"acme","repo":"demo","usage_limit_requests":500,"reset_usage":true}' \
+  | jq
+```
+
+Set org limit (admin) with 1 request per minute:
+
+```bash
+export DENO_DEPLOY_TOKEN="..."
+curl -sS https://ai.ubq.fi/admin/kernel-usage \
+  -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary '{"owner":"acme","scope":"org","usage_limit_requests":1,"window_ms":60000,"reset_usage":true}' \
+  | jq
+```
+
+CLI:
+
+```bash
+deno task ubq-ai admin kernel-usage get --owner acme --repo demo
+deno task ubq-ai admin kernel-usage get --owner acme --scope org
+deno task ubq-ai admin kernel-usage set --owner acme --repo demo --usage-limit 500 --reset-usage
+deno task ubq-ai admin kernel-usage set --owner acme --scope org --usage-limit 1 --window-ms 60000 --reset-usage
+```
+
 List (admin):
 
 ```bash
@@ -280,6 +335,8 @@ deno task ubq-ai admin keys revoke --id "<id>"
 - `POST /admin/api-keys` (admin only)
 - `GET /admin/api-keys` (admin only)
 - `POST /admin/api-keys/revoke` (admin only)
+- `GET /admin/kernel-usage` (admin only)
+- `POST /admin/kernel-usage` (admin only)
 - `GET /v1/auth`
 - `GET /v1/models`
 - `POST /v1/chat/completions` (streaming and non-streaming)

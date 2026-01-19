@@ -2,7 +2,6 @@
 <html lang="en">
   <head>
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
-
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
 
     <meta charset="utf-8" />
@@ -12,74 +11,81 @@
 
     <link rel="stylesheet" href="/style.css" />
   </head>
-  <body>
-    <div class="wrap">
-      <header>
-        <div class="brand">
-          <a class="brand-link" href="/">
-            <span class="dot" aria-hidden="true"></span>
+  <body data-page="home" data-role="public">
+    <div data-shell>
+      <header data-shared-header>
+        <div data-brand>
+          <a data-brand-link href="/">
+            <span data-dot aria-hidden="true"></span>
             <span>UbiquityOS</span>
           </a>
-          <span class="muted" style="margin-left: 4px">/ AI Gateway</span>
+          <span data-muted>/ AI Gateway</span>
         </div>
-        <div class="pill" title="This site is an API gateway, not the public OpenAI API.">
+        <div data-pill title="This site is an API gateway, not the public OpenAI API.">
           <strong>OpenAI-compatible</strong>
         </div>
       </header>
 
       <main>
-        <h1>AI Gateway</h1>
-        <p class="sub">
-          OpenAI-style API surface (<code>/v1/*</code>) backed by a Codex upstream. Most endpoints require a gateway
-          token via <code>Authorization: Bearer …</code>.
-        </p>
+        <section data-hero>
+          <h1>AI Gateway</h1>
+          <p data-lead>
+            OpenAI-style API surface (<code>/v1/*</code>) backed by a Codex upstream. Most endpoints require a gateway
+            token via <code>Authorization: Bearer …</code>.
+          </p>
+        </section>
 
-        <div class="grid" role="list">
-          <section class="card half" role="listitem" aria-labelledby="card-status">
-            <h2 id="card-status">Status</h2>
-            <p>
-              Health endpoint:
-              <a href="/health">/health</a>
-            </p>
-            <div class="row row-spaced">
-              <span id="status-badge" class="status-badge" data-state="unknown">Checking…</span>
-              <a class="btn" href="/health">View JSON</a>
+        <section data-layout="grid" role="list">
+          <article data-card data-span="half" role="listitem" aria-labelledby="card-status">
+            <header>
+              <h2 id="card-status">Status</h2>
+              <p>
+                Health endpoint:
+                <a href="/health">/health</a>
+              </p>
+            </header>
+            <div data-card-body>
+              <div data-layout="row">
+                <span id="status-badge" data-badge data-state="unknown">Checking...</span>
+                <a data-button href="/health">View JSON</a>
+              </div>
             </div>
-          </section>
+          </article>
 
-          <section class="card half" role="listitem" aria-labelledby="card-endpoints">
-            <h2 id="card-endpoints">Endpoints</h2>
-            <p>
-              OpenAI-compatible endpoints live under
-              <code>/v1/</code>
-              (for example:
-              <code>/v1/models</code>
-              ). Most endpoints require a gateway token via <code>Authorization: Bearer …</code>.
-            </p>
-            <div class="row row-spaced">
-              <a class="btn primary" href="/chat">Open chat playground</a>
+          <article data-card data-span="half" role="listitem" aria-labelledby="card-endpoints">
+            <header>
+              <h2 id="card-endpoints">Endpoints</h2>
+              <p>
+                OpenAI-compatible endpoints live under
+                <code>/v1/</code>
+                (for example:
+                <code>/v1/models</code>
+                ). Most endpoints require a gateway token via <code>Authorization: Bearer …</code>.
+              </p>
+            </header>
+            <div data-card-body>
+              <div data-layout="row">
+                <a data-button data-variant="primary" href="/chat">Open chat playground</a>
+              </div>
             </div>
-          </section>
+          </article>
 
-          <section class="card" role="listitem" aria-labelledby="card-curl">
-            <h2 id="card-curl">Quickstart (curl)</h2>
-            <p><strong>Try it now:</strong> (assumes <code>$UOS_AI_TOKEN</code> is set)</p>
-            <pre
-              class="code"
-            >
-<code>curl -sS https://ai.ubq.fi/v1/chat/completions \
+          <article data-card role="listitem" aria-labelledby="card-curl">
+            <header>
+              <h2 id="card-curl">Quickstart (curl)</h2>
+              <p><strong>Try it now:</strong> (assumes <code>$UOS_AI_TOKEN</code> is set)</p>
+            </header>
+            <div data-card-body>
+              <pre data-code><code>curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"messages":[{"role":"user","content":"Tell me a short joke."}]}'</code></pre>
 
-            <p>
-              More parameters are supported (for example <code>model</code>, <code>reasoning_effort</code>,
-              <code>stream</code>, and system/developer messages). Full example:
-            </p>
-            <pre
-              class="code"
-            >
-<code>export UOS_AI_TOKEN="..."
+              <p>
+                More parameters are supported (for example <code>model</code>, <code>reasoning_effort</code>,
+                <code>stream</code>, and system/developer messages). Full example:
+              </p>
+              <pre data-code><code>export UOS_AI_TOKEN="..."
 
 curl -sS https://ai.ubq.fi/health
 
@@ -90,8 +96,9 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"model":"gpt-5.2-chat-latest","reasoning_effort":"high","messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"developer","content":"Keep it concise."},{"role":"user","content":"Tell me a short joke."}],"stream":false}'</code></pre>
-          </section>
-        </div>
+            </div>
+          </article>
+        </section>
       </main>
     </div>
     <script type="module" src="/app.js"></script>

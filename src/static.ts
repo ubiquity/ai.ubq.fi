@@ -9,6 +9,7 @@ const STYLE_CSS_URL = new URL("../static/style.css", import.meta.url);
 const APP_JS_URL = new URL("../static/app.js", import.meta.url);
 const CHAT_JS_URL = new URL("../static/chat.js", import.meta.url);
 const ADMIN_JS_URL = new URL("../static/admin.js", import.meta.url);
+const NETWORK_JS_URL = new URL("../static/network.js", import.meta.url);
 const FAVICON_32_URL = new URL("../favicon-32.png", import.meta.url);
 const FAVICON_URL = new URL("../favicon.png", import.meta.url);
 
@@ -37,6 +38,7 @@ const styleCssPromise = readTextFile(STYLE_CSS_URL, "static/style.css");
 const appJsPromise = readTextFile(APP_JS_URL, "static/app.js");
 const chatJsPromise = readTextFile(CHAT_JS_URL, "static/chat.js");
 const adminJsPromise = readTextFile(ADMIN_JS_URL, "static/admin.js");
+const networkJsPromise = readTextFile(NETWORK_JS_URL, "static/network.js");
 
 const favicon32Promise = readBytesFile(FAVICON_32_URL, "favicon-32.png");
 const faviconPromise = readBytesFile(FAVICON_URL, "favicon.png");
@@ -193,6 +195,24 @@ export const handleChatJs = async (): Promise<Response> => {
 
 export const handleAdminJs = async (): Promise<Response> => {
   const js = await loadText(ADMIN_JS_URL, "static/admin.js", adminJsPromise);
+  if (!js) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(js, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": staticCacheControl,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
+export const handleNetworkJs = async (): Promise<Response> => {
+  const js = await loadText(NETWORK_JS_URL, "static/network.js", networkJsPromise);
   if (!js) {
     return new Response("Not found", {
       status: 404,

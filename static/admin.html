@@ -12,134 +12,230 @@
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
     <link rel="stylesheet" href="/style.css" />
   </head>
-  <body class="view-admin">
-    <div class="wrap">
-      <header>
-        <div class="brand">
-          <a class="brand-link" href="/">
-            <span class="dot" aria-hidden="true"></span>
+  <body data-page="admin" data-role="admin">
+    <div data-shell>
+      <header data-shared-header>
+        <div data-brand>
+          <a data-brand-link href="/">
+            <span data-dot aria-hidden="true"></span>
             <span>UbiquityOS</span>
           </a>
-          <span class="muted" style="margin-left: 4px">/ AI Gateway</span>
+          <span data-muted>/ AI Gateway</span>
         </div>
-        <div class="row">
-          <a class="btn" href="/">Docs</a>
-          <a class="btn" href="/chat">Chat playground</a>
-          <a class="btn primary" href="/admin">Admin</a>
-        </div>
+        <nav data-actions aria-label="Primary">
+          <a data-button href="/">Docs</a>
+          <a data-button href="/chat">Chat playground</a>
+          <a data-button data-variant="primary" aria-current="page" href="/admin">Admin</a>
+        </nav>
       </header>
 
       <main>
-        <h1>AI Admin Console</h1>
-        <p class="sub">
-          Paste an admin token to manage gateway API keys. Tokens are sent as
-          <code>Authorization: Bearer ...</code>.
-        </p>
+        <section data-hero>
+          <h1>AI Admin Console</h1>
+          <p data-lead>
+            Paste an admin token to manage gateway API keys. Tokens are sent as
+            <code>Authorization: Bearer ...</code>.
+          </p>
+          <div data-tabs role="tablist" aria-label="Admin views">
+            <button id="view-tab-session" type="button" role="tab" aria-controls="view-session" aria-selected="true">
+              Session
+            </button>
+            <button id="view-tab-keys" type="button" role="tab" aria-controls="view-keys" aria-selected="false">
+              Keys
+            </button>
+            <button id="view-tab-kernel" type="button" role="tab" aria-controls="view-kernel" aria-selected="false">
+              Kernel limits
+            </button>
+            <button id="view-tab-reasoning" type="button" role="tab" aria-controls="view-reasoning" aria-selected="false">
+              Reasoning
+            </button>
+          </div>
+        </section>
 
-        <div class="grid" role="list">
-          <section class="card half" role="listitem" aria-labelledby="card-admin-auth">
-            <h2 id="card-admin-auth">Admin auth</h2>
-            <label class="field">
-              <span class="label">Target</span>
-              <select id="admin-base">
-                <option value="local">Local (this origin)</option>
-                <option value="ai">ai.ubq.fi</option>
-              </select>
-            </label>
-            <p class="help">Requests go to <code id="base-preview"></code>.</p>
-            <label class="field">
-              <span class="label">Admin token</span>
-              <input
-                id="admin-token"
-                type="password"
-                inputmode="text"
-                autocomplete="off"
-                placeholder="Paste admin token"
-              />
-            </label>
-            <div class="row row-spaced">
-              <label class="check">
-                <input id="remember-admin-token" type="checkbox" />
-                <span>Remember</span>
+        <section id="view-session" data-view="session" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-session">
+          <article data-card aria-labelledby="card-admin-auth">
+            <header>
+              <h2 id="card-admin-auth">Admin auth</h2>
+            </header>
+            <div data-card-body>
+              <label data-field>
+                <span data-label>Target</span>
+                <select id="admin-base">
+                  <option value="local">Local (this origin)</option>
+                  <option value="ai">ai.ubq.fi</option>
+                </select>
               </label>
-              <label class="check">
-                <input id="show-admin-token" type="checkbox" />
-                <span>Show</span>
+              <p data-help>Requests go to <code id="base-preview"></code>.</p>
+              <label data-field>
+                <span data-label>Admin token</span>
+                <input
+                  id="admin-token"
+                  type="password"
+                  inputmode="text"
+                  autocomplete="off"
+                  placeholder="Paste admin token"
+                />
               </label>
-              <button id="clear-admin-token" class="btn" type="button">Clear</button>
+              <div data-layout="row">
+                <label data-check>
+                  <input id="remember-admin-token" type="checkbox" />
+                  <span>Remember</span>
+                </label>
+                <label data-check>
+                  <input id="show-admin-token" type="checkbox" />
+                  <span>Show</span>
+                </label>
+              </div>
+              <span id="admin-auth-badge" data-badge data-state="unknown">Not checked</span>
+              <p data-help data-tone="warning">Remember stores the token in this browser's localStorage in cleartext.</p>
             </div>
-            <div class="row row-spaced">
-              <button id="test-admin-token" class="btn" type="button">Test token</button>
-              <span id="admin-auth-badge" class="status-badge" data-state="unknown">Not checked</span>
-            </div>
-            <p class="help warning">Remember stores the token in this browser's localStorage in cleartext.</p>
-          </section>
+          </article>
+        </section>
 
-          <section class="card half" role="listitem" aria-labelledby="card-create-key">
-            <h2 id="card-create-key">Create key</h2>
-            <label class="field">
-              <span class="label">Name</span>
-              <input id="key-name" type="text" inputmode="text" autocomplete="off" placeholder="example key" />
-            </label>
-            <label class="field">
-              <span class="label">Expires</span>
-              <select id="key-expires">
-                <option value="forever">Forever</option>
-                <option value="day">1 day</option>
-                <option value="week">1 week</option>
-                <option value="month">1 month</option>
-                <option value="quarter" selected>1 quarter</option>
-                <option value="year">1 year</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="label">Usage Limit (req/week)</span>
-              <input id="key-usage-limit" type="number" inputmode="numeric" placeholder="50" value="50" />
-              <p class="help">Default is 50. Use -1 for unlimited.</p>
-            </label>
-            <div class="row row-spaced">
-              <button id="create-key" class="btn primary" type="button">Create key</button>
-              <span id="create-badge" class="status-badge" data-state="unknown">Idle</span>
+        <section id="view-keys" data-view="keys" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-keys" hidden>
+          <article data-card data-span="half" aria-labelledby="card-create-key">
+            <header>
+              <h2 id="card-create-key">Create key</h2>
+            </header>
+            <div data-card-body>
+              <label data-field>
+                <span data-label>Name</span>
+                <input id="key-name" type="text" inputmode="text" autocomplete="off" placeholder="example key" />
+              </label>
+              <label data-field>
+                <span data-label>Expires</span>
+                <select id="key-expires">
+                  <option value="forever">Forever</option>
+                  <option value="day">1 day</option>
+                  <option value="week">1 week</option>
+                  <option value="month">1 month</option>
+                  <option value="quarter" selected>1 quarter</option>
+                  <option value="year">1 year</option>
+                </select>
+              </label>
+              <label data-field>
+                <span data-label>Usage Limit (req/week)</span>
+                <input id="key-usage-limit" type="number" inputmode="numeric" placeholder="50" value="50" />
+              </label>
+              <p data-help>Default is 50. Use -1 for unlimited.</p>
+              <div data-layout="row">
+                <button
+                  id="create-key"
+                  type="button"
+                  data-variant="primary"
+                  data-icon-button
+                  aria-label="Create key"
+                  title="Create key"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <circle cx="12" cy="12" r="8" />
+                    <line x1="12" y1="8" x2="12" y2="16" />
+                    <line x1="8" y1="12" x2="16" y2="12" />
+                  </svg>
+                </button>
+                <span id="create-badge" data-badge data-state="unknown">Idle</span>
+              </div>
+              <pre id="create-result" data-code hidden></pre>
+              <p data-help>Created tokens are only shown once. Store them safely.</p>
             </div>
-            <pre id="create-result" class="code" hidden></pre>
-            <p class="help">Created tokens are only shown once. Store them safely.</p>
-          </section>
+          </article>
 
-          <section class="card" role="listitem" aria-labelledby="card-keys">
-            <h2 id="card-keys">Keys</h2>
-            <div class="keys-tabs">
-              <button id="keys-tab-all" class="btn tab-active" type="button" data-view="all">All</button>
-              <button id="keys-tab-active" class="btn" type="button" data-view="active">Active</button>
-              <button id="keys-tab-revoked" class="btn" type="button" data-view="revoked">Revoked</button>
+          <article data-card aria-labelledby="card-keys">
+            <header>
+              <h2 id="card-keys">Keys</h2>
+            </header>
+            <div data-card-body>
+              <div data-tabs role="tablist" aria-label="Keys view">
+                <button id="keys-tab-all" type="button" role="tab" aria-selected="true">All</button>
+                <button id="keys-tab-active" type="button" role="tab" aria-selected="false">Active</button>
+                <button id="keys-tab-revoked" type="button" role="tab" aria-selected="false">Revoked</button>
+              </div>
+              <span id="keys-badge" data-badge data-state="unknown">Not loaded</span>
+              <div id="keys-list" data-key-list role="list"></div>
+              <p data-help>Revoke keys to invalidate them immediately. Usage totals update when responses complete.</p>
             </div>
-            <div class="row row-spaced">
-              <button id="refresh-keys" class="btn" type="button">Refresh</button>
-              <span id="keys-badge" class="status-badge" data-state="unknown">Not loaded</span>
-            </div>
-            <div id="keys-list" class="key-list" role="list"></div>
-            <p class="help">Revoke keys to invalidate them immediately. Usage totals update when responses complete.</p>
-          </section>
+          </article>
+        </section>
 
-          <section class="card" role="listitem" aria-labelledby="card-reasoning-level">
-            <h2 id="card-reasoning-level">Default Reasoning Level</h2>
-            <label class="field">
-              <span class="label">Level</span>
-              <select id="reasoning-level">
-                <option value="none">None</option>
-                <option value="minimal">Minimal</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="xhigh" selected>XHigh</option>
-              </select>
-            </label>
-            <div class="row row-spaced">
-              <button id="get-reasoning-level" class="btn" type="button">Get Current</button>
-              <button id="set-reasoning-level" class="btn primary" type="button">Set</button>
-              <span id="reasoning-badge" class="status-badge" data-state="unknown">Idle</span>
+        <section id="view-kernel" data-view="kernel" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-kernel" hidden>
+          <article data-card aria-labelledby="card-kernel-limits">
+            <header>
+              <h2 id="card-kernel-limits">Kernel limits</h2>
+            </header>
+            <div data-card-body>
+              <div data-tabs role="tablist" aria-label="Kernel limit scope">
+                <button id="kernel-scope-repo" type="button" role="tab" aria-selected="true">Repo</button>
+                <button id="kernel-scope-org" type="button" role="tab" aria-selected="false">Org</button>
+              </div>
+              <div data-layout="row">
+                <button id="kernel-new-toggle" type="button">New limit</button>
+                <span id="kernel-list-badge" data-badge data-state="unknown">Not loaded</span>
+              </div>
+              <div id="kernel-new-panel" data-edit-panel hidden>
+                <div data-edit-fields>
+                  <label data-field>
+                    <span data-label>Owner</span>
+                    <input id="kernel-new-owner" type="text" inputmode="text" autocomplete="off" placeholder="acme" />
+                  </label>
+                  <label data-field id="kernel-new-repo-field">
+                    <span data-label>Repo</span>
+                    <input id="kernel-new-repo" type="text" inputmode="text" autocomplete="off" placeholder="demo" />
+                  </label>
+                  <label data-field>
+                    <span data-label>Usage Limit (requests)</span>
+                    <input id="kernel-new-limit" type="number" inputmode="numeric" placeholder="-1" value="-1" />
+                  </label>
+                  <label data-field>
+                    <span data-label>Window (ms)</span>
+                    <input id="kernel-new-window" type="number" inputmode="numeric" placeholder="604800000" />
+                  </label>
+                </div>
+                <p data-help>Use -1 for unlimited. Org + repo limits are enforced together.</p>
+                <div data-layout="row">
+                  <button id="kernel-new-window-1m" type="button">1m</button>
+                  <button id="kernel-new-window-1h" type="button">1h</button>
+                  <button id="kernel-new-window-1d" type="button">1d</button>
+                  <button id="kernel-new-window-1w" type="button">1w</button>
+                </div>
+                <label data-check>
+                  <input id="kernel-new-reset" type="checkbox" />
+                  <span>Reset usage on update</span>
+                </label>
+                <div data-action-row>
+                  <button id="kernel-new-save" type="button" data-variant="primary">Save</button>
+                  <button id="kernel-new-cancel" type="button">Cancel</button>
+                </div>
+                <span id="kernel-new-badge" data-badge data-state="unknown">Idle</span>
+                <p data-help>Leave window blank for default weekly (604800000 ms).</p>
+              </div>
+              <div id="kernel-list" data-key-list role="list"></div>
+              <p data-help>Edits require Save/Cancel. Delete removes the record.</p>
             </div>
-          </section>
-        </div>
+          </article>
+        </section>
+
+        <section id="view-reasoning" data-view="reasoning" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-reasoning" hidden>
+          <article data-card aria-labelledby="card-reasoning-level">
+            <header>
+              <h2 id="card-reasoning-level">Default Reasoning Level</h2>
+            </header>
+            <div data-card-body>
+              <label data-field>
+                <span data-label>Level</span>
+                <select id="reasoning-level">
+                  <option value="none">None</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="xhigh" selected>XHigh</option>
+                </select>
+              </label>
+              <span id="reasoning-badge" data-badge data-state="unknown">Idle</span>
+              <p data-help>Changes save automatically.</p>
+            </div>
+          </article>
+        </section>
       </main>
     </div>
     <script type="module" src="/admin.js"></script>
