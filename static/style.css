@@ -1,11 +1,4 @@
-@font-face {
-  font-family: "Ubiquity Nova";
-  src: url("https://pay.ubq.fi/assets/ubiquity-nova-standard-CAJFJNLZ.eot");
-  src: url("https://pay.ubq.fi/assets/ubiquity-nova-standard-BnSQxcoR.woff") format("woff"),
-    url("https://pay.ubq.fi/assets/ubiquity-nova-standard-BLFz1m8x.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-}
+
 
 :root {
   color-scheme: dark;

@@ -1,3 +1,5 @@
+import { extractCodexModelsFromText, resolveCodexBinaryPath } from "./codex-models.ts";
+
 export type FlagValue = string | boolean | string[];
 
 export type ParsedArgs = Readonly<{
@@ -49,6 +51,37 @@ const expandTilde = (path: string, homeDir: string | undefined): string => {
   return path;
 };
 
+const loadCodexBinaryText = async (
+  runtime: UbqAiRuntime,
+  codexBinFlag: string | null,
+  homeDir: string | undefined,
+): Promise<{ path: string; text: string } | null> => {
+  const candidates: string[] = [];
+  if (codexBinFlag) candidates.push(expandTilde(codexBinFlag, homeDir));
+  const pathValue = runtime.envGet("PATH") ?? "";
+  const separator = Deno.build.os === "windows" ? ";" : ":";
+  for (const segment of pathValue.split(separator).filter(Boolean)) {
+    candidates.push(`${segment.replace(/\/$/, "")}/codex`);
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const resolved = await resolveCodexBinaryPath(
+        candidate,
+        runtime.readTextFile,
+        Deno.build.os,
+        Deno.build.arch,
+        Deno.realPath,
+      );
+      const text = await runtime.readTextFile(resolved);
+      return { path: resolved, text };
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+};
+
 const pushFlag = (flags: Record<string, FlagValue>, key: string, value: string | boolean): void => {
   const existing = flags[key];
   if (existing === undefined) {
@@ -69,6 +102,8 @@ const BOOLEAN_FLAGS = new Set([
   "json",
   "raw",
   "reset-usage",
+  "skip-models",
+  "no-models",
   "stream",
   "token-only",
   "verbose",
@@ -260,7 +295,7 @@ Commands:
   models
   chat [<prompt>] [--model <id>] [--reasoning-effort <level>] [--system <text>] [--developer <text>] [--messages-json <json>] [--messages-file <path>]
   responses [<input>] [--model <id>] [--reasoning-effort <level>] [--input-json <json>] [--input-file <path>]
-  admin upload-auth [--auth-json <path>]
+  admin upload-auth [--auth-json <path>] [--codex-bin <path>] [--skip-models]
   admin keys create "<name>" [--token <token>] [--expires <preset>|--expires-at-ms <ms>] [--usage-limit <requests>]
   admin keys list
   admin keys revoke --id <id>
@@ -1004,12 +1039,35 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         return 2;
       }
 
+      let authJson: unknown;
       try {
-        JSON.parse(authJsonText);
+        authJson = JSON.parse(authJsonText) as unknown;
       } catch (error) {
         await writeErrText(runtime, `auth.json at ${authJsonPath} is not valid JSON:\n`);
         await writeErrText(runtime, `${error}\n`);
         return 2;
+      }
+
+      const skipModels = flags["skip-models"] === true || flags["no-models"] === true;
+      const codexBinFlag = getFlagString(flags, "codex-bin");
+      let modelsPayload: Record<string, unknown> | null = null;
+      if (!skipModels) {
+        const binary = await loadCodexBinaryText(runtime, codexBinFlag, homeDir);
+        if (!binary) {
+          await writeErrText(runtime, "Codex binary not found on PATH; skipping model extraction.\n");
+        } else {
+          const extracted = extractCodexModelsFromText(binary.text);
+          if (!extracted) {
+            await writeErrText(runtime, "Failed to extract Codex models from the CLI binary; skipping model upload.\n");
+          } else {
+            modelsPayload = {
+              source: "codex_cli",
+              client_version: extracted.clientVersion ?? undefined,
+              updated_at_ms: Date.now(),
+              models: extracted.models,
+            };
+          }
+        }
       }
 
       const req = new Request(endpoint("/admin/codex/auth"), {
@@ -1019,7 +1077,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
           "Content-Type": "application/json",
           "Accept": "application/json",
         },
-        body: authJsonText,
+        body: JSON.stringify(modelsPayload ? { auth: authJson, models: modelsPayload } : authJson),
       });
 
       const result = await doFetchWithDebug(req);

@@ -6,6 +6,9 @@ import {
   handleAdminApiKeysUpdate,
   handleAdminApiKeysRevoke,
   handleAdminCodexAuth,
+  handleAdminCodexModelsGet,
+  handleAdminCodexModelsSet,
+  handleAdminDefaults,
   handleAdminKernelUsageDelete,
   handleAdminKernelUsageGet,
   handleAdminKernelUsageSet,
@@ -97,6 +100,24 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminCodexAuth(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/codex/models") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminCodexModelsGet());
+  }
+
+  if (req.method === "POST" && path === "/admin/codex/models") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminCodexModelsSet(req));
+  }
+
+  if ((req.method === "GET" || req.method === "POST") && path === "/admin/defaults") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminDefaults(req));
   }
 
   if (req.method === "POST" && path === "/admin/api-keys") {

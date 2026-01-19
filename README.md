@@ -209,7 +209,9 @@ export DENO_DEPLOY_TOKEN="..."
 deno task upload:auth --url https://ai.ubq.fi
 ```
 
-The helper CLI uses `DENO_DEPLOY_TOKEN`.
+The helper CLI uses `DENO_DEPLOY_TOKEN` and attempts to extract the Codex CLI model list from your local `codex`
+binary (so `/v1/models` reflects Codex-native IDs). Use `--codex-bin` to point at a specific binary or `--skip-models`
+to disable model extraction.
 
 ## Admin: create/manage UBQ API keys
 

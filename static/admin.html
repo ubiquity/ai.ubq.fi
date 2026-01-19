@@ -46,8 +46,8 @@
             <button id="view-tab-kernel" type="button" role="tab" aria-controls="view-kernel" aria-selected="false">
               Kernel limits
             </button>
-            <button id="view-tab-reasoning" type="button" role="tab" aria-controls="view-reasoning" aria-selected="false">
-              Reasoning
+            <button id="view-tab-defaults" type="button" role="tab" aria-controls="view-defaults" aria-selected="false">
+              Defaults
             </button>
           </div>
         </section>
@@ -209,25 +209,23 @@
           </article>
         </section>
 
-        <section id="view-reasoning" data-view="reasoning" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-reasoning" hidden>
-          <article data-card aria-labelledby="card-reasoning-level">
+        <section id="view-defaults" data-view="defaults" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-defaults" hidden>
+          <article data-card aria-labelledby="card-defaults">
             <header>
-              <h2 id="card-reasoning-level">Default Reasoning Level</h2>
+              <h2 id="card-defaults">Defaults</h2>
             </header>
             <div data-card-body>
               <label data-field>
-                <span data-label>Level</span>
-                <select id="reasoning-level">
-                  <option value="none">None</option>
-                  <option value="minimal">Minimal</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="xhigh" selected>XHigh</option>
-                </select>
+                <span data-label>Model</span>
+                <select id="defaults-model"></select>
               </label>
-              <span id="reasoning-badge" data-badge data-state="unknown">Idle</span>
-              <p data-help>Changes save automatically.</p>
+              <label data-field>
+                <span data-label>Reasoning</span>
+                <select id="defaults-reasoning"></select>
+              </label>
+              <span id="defaults-badge" data-badge data-state="unknown">Idle</span>
+              <p id="defaults-meta" data-help>Models load automatically.</p>
+              <p data-help>Changes save automatically. Reasoning options depend on the selected model.</p>
             </div>
           </article>
         </section>

@@ -4,7 +4,16 @@ import {
   codexInstructionsPromise,
   fetchCodexModels,
   fetchCodexResponses,
+  loadCodexModelsSnapshot,
 } from "./codex.ts";
+import {
+  DEFAULT_MODEL,
+  DEFAULT_MODEL_KEY,
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_REASONING_EFFORT_KEY,
+  type ReasoningEffort,
+  REASONING_EFFORTS,
+} from "./defaults.ts";
 import { recordApiKeyUsage } from "./analytics.ts";
 import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
 import { json, openaiError } from "./http.ts";
@@ -13,17 +22,18 @@ import { readJsonBody } from "./request.ts";
 import { getString, isRecord } from "./utils.ts";
 import type { ChatCompletionRequest, MessageContentItem, ResponseMessageItem, ResponsesRequest } from "./types.ts";
 
-type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
-
-const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-
-const DEFAULT_MODEL = "gpt-5.2-chat-latest";
-const DEFAULT_REASONING_EFFORT: ReasoningEffort = "xhigh";
+const getDefaultModel = async (): Promise<string> => {
+  const kv = await kvPromise;
+  if (!kv) return DEFAULT_MODEL;
+  const entry = await kv.get<string>(DEFAULT_MODEL_KEY);
+  const model = typeof entry.value === "string" ? entry.value.trim() : "";
+  return model || DEFAULT_MODEL;
+};
 
 const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
   const kv = await kvPromise;
   if (!kv) return DEFAULT_REASONING_EFFORT;
-  const entry = await kv.get<string>(["default", "reasoning_effort"]);
+  const entry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
   const effort = entry.value;
   if (effort && REASONING_EFFORTS.has(effort as ReasoningEffort)) return effort as ReasoningEffort;
   return DEFAULT_REASONING_EFFORT;
@@ -509,6 +519,14 @@ const completeChatCompletions = async (
 };
 
 export const handleModels = async (): Promise<Response> => {
+  const snapshot = await loadCodexModelsSnapshot();
+  if (snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0) {
+    const normalized = normalizeModelList({ models: snapshot.models });
+    if (normalized) {
+      return json(200, normalized, { "x-ubq-upstream": snapshot.source || "codex_cli" });
+    }
+  }
+
   let upstream: Response;
   try {
     upstream = await fetchCodexModels();
@@ -548,7 +566,7 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;
   if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-  const modelRaw = (getString(body.model) ?? "").trim() || DEFAULT_MODEL;
+  const modelRaw = (getString(body.model) ?? "").trim() || await getDefaultModel();
   const model = normalizeModelForCodex(modelRaw);
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
@@ -564,7 +582,10 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     input.push(converted);
   }
 
-  const defaultReasoning = looksLikeReasoningModel(model) ? { effort: await getDefaultReasoningEffort() } : undefined;
+  const defaultEffort = await getDefaultReasoningEffort();
+  const defaultReasoning = looksLikeReasoningModel(model) && defaultEffort !== "none"
+    ? { effort: defaultEffort }
+    : undefined;
   const codexBody = await buildCodexRequest(model, input, {
     reasoning: reasoningEffort.value === undefined ? defaultReasoning : { effort: reasoningEffort.value },
   });
@@ -611,7 +632,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
 
   const clientWantsStream = Boolean(rawBody.stream);
 
-  const modelRaw = (getString(rawBody.model) ?? "").trim() || DEFAULT_MODEL;
+  const modelRaw = (getString(rawBody.model) ?? "").trim() || await getDefaultModel();
   const model = normalizeModelForCodex(modelRaw);
 
   const inputRaw = rawBody.input;
@@ -657,7 +678,10 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
 
-  const defaultReasoning = looksLikeReasoningModel(model) ? { effort: await getDefaultReasoningEffort() } : undefined;
+  const defaultEffort = await getDefaultReasoningEffort();
+  const defaultReasoning = looksLikeReasoningModel(model) && defaultEffort !== "none"
+    ? { effort: defaultEffort }
+    : undefined;
   const reasoningValue = reasoning.value !== undefined ? reasoning.value : defaultReasoning;
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue });

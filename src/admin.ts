@@ -2,10 +2,21 @@ import {
   cacheCodexAuth,
   CODEX_KV_KEY,
   CodexError,
+  type CodexModelsSnapshot,
   getJwtExpMs,
+  loadCodexModelsSnapshot,
   parseCodexAuthFromAuthJson,
+  storeCodexModelsSnapshot,
   validateCodexAuthJson,
 } from "./codex.ts";
+import {
+  DEFAULT_MODEL,
+  DEFAULT_MODEL_KEY,
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_REASONING_EFFORT_KEY,
+  type ReasoningEffort,
+  normalizeReasoningEffort,
+} from "./defaults.ts";
 import { json, openaiError } from "./http.ts";
 import {
   API_KEY_ID_PREFIX,
@@ -47,7 +58,9 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   }
 
   const body = await readJsonBody(req);
-  const tokenData = parseCodexAuthFromAuthJson(body);
+  const authPayload = isRecord(body) && "auth" in body ? (body.auth as unknown) : body;
+  const modelsPayload = isRecord(body) && "models" in body ? (body.models as unknown) : undefined;
+  const tokenData = parseCodexAuthFromAuthJson(authPayload);
   if (!tokenData) {
     return openaiError(400, "Body does not look like a Codex auth.json", "invalid_request_error");
   }
@@ -78,6 +91,37 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   await kv.set(CODEX_KV_KEY, validated.auth);
   cacheCodexAuth(validated.auth);
 
+  let modelsStored:
+    | { count: number; source: string; updated_at_ms: number; client_version: string | null }
+    | null = null;
+  if (modelsPayload !== undefined) {
+    const snapshot = normalizeCodexModelsPayload(modelsPayload);
+    if (!snapshot) {
+      return openaiError(400, "models must include a non-empty models array", "invalid_request_error");
+    }
+    const size = estimateJsonSize(snapshot);
+    if (size === null) {
+      return openaiError(400, "models payload could not be serialized", "invalid_request_error");
+    }
+    if (size > SAFE_KV_BYTES) {
+      return openaiError(
+        413,
+        `models snapshot too large (${size} bytes; max ${MAX_KV_BYTES}).`,
+        "invalid_request_error",
+      );
+    }
+    const stored = await storeCodexModelsSnapshot(snapshot);
+    if (!stored) {
+      return openaiError(500, "Deno KV is not available; cannot persist Codex models", "server_error");
+    }
+    modelsStored = {
+      count: snapshot.models.length,
+      source: snapshot.source,
+      updated_at_ms: snapshot.updated_at_ms,
+      client_version: snapshot.client_version ?? null,
+    };
+  }
+
   const expMs = getJwtExpMs(validated.auth.access_token);
   return json(
     200,
@@ -90,9 +134,108 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       updated_at_ms: validated.auth.updated_at_ms,
       upstream_status: validated.status,
       upstream_content_type: validated.contentType,
+      models: modelsStored,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
+};
+
+export const handleAdminCodexModelsGet = async (): Promise<Response> => {
+  const snapshot = await loadCodexModelsSnapshot();
+  if (!snapshot) return json(200, { ok: true, data: null });
+  return json(200, { ok: true, data: snapshot });
+};
+
+export const handleAdminCodexModelsSet = async (req: Request): Promise<Response> => {
+  const raw = await readJsonBody(req);
+  if (!raw) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+
+  const snapshot = normalizeCodexModelsPayload(raw);
+  if (!snapshot) {
+    return openaiError(400, "models must include a non-empty models array", "invalid_request_error");
+  }
+  const size = estimateJsonSize(snapshot);
+  if (size === null) {
+    return openaiError(400, "models payload could not be serialized", "invalid_request_error");
+  }
+  if (size > SAFE_KV_BYTES) {
+    return openaiError(
+      413,
+      `models snapshot too large (${size} bytes; max ${MAX_KV_BYTES}).`,
+      "invalid_request_error",
+    );
+  }
+
+  const stored = await storeCodexModelsSnapshot(snapshot);
+  if (!stored) {
+    return openaiError(500, "Deno KV is not available; cannot persist Codex models", "server_error");
+  }
+
+  return json(200, {
+    ok: true,
+    stored: true,
+    count: snapshot.models.length,
+    source: snapshot.source,
+    updated_at_ms: snapshot.updated_at_ms,
+    client_version: snapshot.client_version ?? null,
+  });
+};
+
+export const handleAdminDefaults = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot manage defaults", "server_error");
+  }
+
+  if (req.method === "GET") {
+    const modelEntry = await kv.get<string>(DEFAULT_MODEL_KEY);
+    const reasoningEntry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
+    const model = typeof modelEntry.value === "string" && modelEntry.value.trim() ? modelEntry.value : DEFAULT_MODEL;
+    const reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
+    return json(200, { ok: true, defaults: { model, reasoning_effort: reasoningEffort } });
+  }
+
+  if (req.method === "POST") {
+    const raw = await readJsonBody(req);
+    if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+
+    const model = normalizeDefaultModel(raw.model);
+    if (!model) return openaiError(400, "model must be a non-empty string", "invalid_request_error");
+
+    const snapshot = await loadCodexModelsSnapshot();
+    if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) {
+      return openaiError(409, "No Codex model snapshot stored", "invalid_request_error");
+    }
+
+    const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === model) ?? null;
+    if (!modelRecord) {
+      return openaiError(400, "model is not in the stored Codex model list", "invalid_request_error");
+    }
+
+    let reasoningEffort = normalizeReasoningEffort(raw.reasoning_effort);
+    const modelDefault = normalizeReasoningEffort(modelRecord.default_reasoning_level);
+    if (!reasoningEffort) {
+      reasoningEffort = modelDefault ?? DEFAULT_REASONING_EFFORT;
+    }
+
+    const levels = extractModelReasoningLevels(modelRecord);
+    if (levels.length > 0 && !levels.includes(reasoningEffort)) {
+      return openaiError(
+        400,
+        `reasoning_effort must be one of: ${levels.join(", ")}`,
+        "invalid_request_error",
+      );
+    }
+    if (levels.length === 0) {
+      reasoningEffort = "none";
+    }
+
+    await kv.set(DEFAULT_MODEL_KEY, model);
+    await kv.set(DEFAULT_REASONING_EFFORT_KEY, reasoningEffort);
+    return json(200, { ok: true, defaults: { model, reasoning_effort: reasoningEffort } });
+  }
+
+  return openaiError(405, "Method not allowed", "method_not_allowed");
 };
 
 const normalizeApiKeyName = (value: unknown): string | null => {
@@ -195,6 +338,105 @@ const normalizeOptionalBoolean = (value: unknown): boolean => {
   const trimmed = value.trim().toLowerCase();
   return trimmed === "true" || trimmed === "1" || trimmed === "yes";
 };
+
+const normalizeDefaultModel = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const model = value.trim();
+  if (!model) return null;
+  if (/\s/.test(model)) return null;
+  return model;
+};
+
+const extractModelReasoningLevels = (model: Record<string, unknown> | null): ReasoningEffort[] => {
+  if (!model) return [];
+  const raw = Array.isArray(model.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
+  const levels = raw
+    .map((entry) => {
+      if (typeof entry === "string") return normalizeReasoningEffort(entry);
+      if (isRecord(entry)) return normalizeReasoningEffort(entry.effort);
+      return null;
+    })
+    .filter((entry): entry is ReasoningEffort => Boolean(entry));
+  return Array.from(new Set(levels));
+};
+
+const normalizeCodexModelsPayload = (value: unknown): CodexModelsSnapshot | null => {
+  let modelsRaw: unknown = null;
+  let source = "codex_cli";
+  let clientVersion: string | null = null;
+  let updatedAtMs: number | null = null;
+
+  if (Array.isArray(value)) {
+    modelsRaw = value;
+  } else if (isRecord(value)) {
+    if (Array.isArray(value.models)) modelsRaw = value.models;
+    else if (Array.isArray(value.data)) modelsRaw = value.data;
+    const sourceValue = getString(value.source);
+    if (sourceValue) source = sourceValue;
+    clientVersion = getString(value.client_version) ?? getString(value.clientVersion);
+    if (typeof value.updated_at_ms === "number" && Number.isFinite(value.updated_at_ms)) {
+      updatedAtMs = Math.trunc(value.updated_at_ms);
+    }
+  }
+
+  if (!modelsRaw || !Array.isArray(modelsRaw)) return null;
+
+  const normalizeModel = (item: Record<string, unknown>): Record<string, unknown> | null => {
+    const slug = getString(item.slug) ?? getString(item.id) ?? getString(item.model) ?? getString(item.name);
+    if (!slug) return null;
+    const normalized: Record<string, unknown> = { slug };
+    const displayName = getString(item.display_name) ?? getString(item.displayName) ?? getString(item.name);
+    if (displayName) normalized.display_name = displayName;
+    const description = getString(item.description);
+    if (description) normalized.description = description;
+    const defaultReasoning = getString(item.default_reasoning_level);
+    if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
+    if (Array.isArray(item.supported_reasoning_levels)) {
+      const levels = item.supported_reasoning_levels
+        .map((entry) => {
+          if (typeof entry === "string") return entry;
+          if (isRecord(entry)) return getString(entry.effort);
+          return null;
+        })
+        .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+      if (levels.length) normalized.supported_reasoning_levels = levels;
+    }
+    return normalized;
+  };
+
+  const models: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  for (const item of modelsRaw) {
+    if (!isRecord(item)) continue;
+    const normalized = normalizeModel(item);
+    if (!normalized) continue;
+    const slug = getString(normalized.slug);
+    if (!slug || seen.has(slug)) continue;
+    models.push(normalized);
+    seen.add(slug);
+  }
+
+  if (!models.length) return null;
+
+  return {
+    models,
+    source,
+    updated_at_ms: updatedAtMs ?? Date.now(),
+    client_version: clientVersion ?? undefined,
+  };
+};
+
+const estimateJsonSize = (value: unknown): number | null => {
+  try {
+    const text = JSON.stringify(value);
+    return new TextEncoder().encode(text).length;
+  } catch {
+    return null;
+  }
+};
+
+const MAX_KV_BYTES = 65_536;
+const SAFE_KV_BYTES = 60_000;
 
 export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
@@ -595,10 +837,6 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
   return json(200, { ok: true, id }, { "x-ubq-upstream": "chatgpt_codex" });
 };
 
-const REASONING_EFFORTS: ReadonlySet<string> = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-
-const DEFAULT_REASONING_EFFORT_KEY = ["default", "reasoning_effort"];
-
 export const handleAdminReasoningLevel = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
   if (!kv) {
@@ -615,8 +853,8 @@ export const handleAdminReasoningLevel = async (req: Request): Promise<Response>
     const raw = await readJsonBody(req);
     if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-    const effort = getString(raw.effort);
-    if (!effort || !REASONING_EFFORTS.has(effort)) {
+    const effort = normalizeReasoningEffort(raw.effort);
+    if (!effort) {
       return openaiError(400, "effort must be one of: none, minimal, low, medium, high, xhigh", "invalid_request_error");
     }
 

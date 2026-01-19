@@ -31,6 +31,14 @@ export class CodexError extends Error {
 }
 
 export const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
+export const CODEX_MODELS_KV_KEY = ["ubq_ai", "codex_models"] as const;
+
+export type CodexModelsSnapshot = Readonly<{
+  models: Record<string, unknown>[];
+  source: string;
+  updated_at_ms: number;
+  client_version?: string | null;
+}>;
 
 const CODEX_INSTRUCTIONS_URL = new URL("../codex_instructions.md", import.meta.url);
 
@@ -429,6 +437,20 @@ export const fetchCodexModels = async (): Promise<Response> => {
   }
 
   return lastResponse ?? new Response("Codex upstream models endpoint not found.", { status: 404 });
+};
+
+export const loadCodexModelsSnapshot = async (): Promise<CodexModelsSnapshot | null> => {
+  const kv = await kvPromise;
+  if (!kv) return null;
+  const entry = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
+  return entry.value ?? null;
+};
+
+export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): Promise<boolean> => {
+  const kv = await kvPromise;
+  if (!kv) return false;
+  await kv.set(CODEX_MODELS_KV_KEY, snapshot);
+  return true;
 };
 
 export const buildCodexRequest = async (

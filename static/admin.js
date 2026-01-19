@@ -73,12 +73,12 @@ const keysTabRevoked = mustGet("keys-tab-revoked");
 const viewTabSession = mustGet("view-tab-session");
 const viewTabKeys = mustGet("view-tab-keys");
 const viewTabKernel = mustGet("view-tab-kernel");
-const viewTabReasoning = mustGet("view-tab-reasoning");
+const viewTabDefaults = mustGet("view-tab-defaults");
 
 const viewSession = mustGet("view-session");
 const viewKeys = mustGet("view-keys");
 const viewKernel = mustGet("view-kernel");
-const viewReasoning = mustGet("view-reasoning");
+const viewDefaults = mustGet("view-defaults");
 
 let currentKeyView = "all";
 let currentAdminView = "session";
@@ -86,10 +86,14 @@ let allKeys = [];
 let keysLoading = false;
 let keysLoadedAt = 0;
 
-const reasoningLevelSelect = mustGet("reasoning-level");
-const reasoningBadge = mustGet("reasoning-badge");
-let reasoningLoaded = false;
-let reasoningSaving = false;
+const defaultsModelSelect = mustGet("defaults-model");
+const defaultsReasoningSelect = mustGet("defaults-reasoning");
+const defaultsBadge = mustGet("defaults-badge");
+const defaultsMeta = mustGet("defaults-meta");
+let defaultsLoaded = false;
+let defaultsSaving = false;
+let defaultsModels = [];
+let defaultsModelMap = new Map();
 
 const kernelScopeRepo = mustGet("kernel-scope-repo");
 const kernelScopeOrg = mustGet("kernel-scope-org");
@@ -120,7 +124,7 @@ const setBadge = (badge, state, text) => {
 const setAuthBadge = (state, text) => setBadge(authBadge, state, text);
 const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
 const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
-const setReasoningBadge = (state, text) => setBadge(reasoningBadge, state, text);
+const setDefaultsBadge = (state, text) => setBadge(defaultsBadge, state, text);
 const setKernelListBadge = (state, text) => setBadge(kernelListBadge, state, text);
 const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text);
 
@@ -1396,18 +1400,19 @@ const viewTabs = {
   session: viewTabSession,
   keys: viewTabKeys,
   kernel: viewTabKernel,
-  reasoning: viewTabReasoning,
+  defaults: viewTabDefaults,
 };
 
 const viewSections = {
   session: viewSession,
   keys: viewKeys,
   kernel: viewKernel,
-  reasoning: viewReasoning,
+  defaults: viewDefaults,
 };
 
 const setAdminView = (view) => {
-  const nextView = viewSections[view] ? view : "session";
+  const normalized = view === "reasoning" ? "defaults" : view;
+  const nextView = viewSections[normalized] ? normalized : "session";
   currentAdminView = nextView;
   Object.entries(viewSections).forEach(([key, section]) => {
     section.hidden = key !== nextView;
@@ -1419,8 +1424,8 @@ const setAdminView = (view) => {
   if (nextView === "keys") {
     void ensureKeysLoaded();
   }
-  if (nextView === "reasoning") {
-    void loadReasoningLevel();
+  if (nextView === "defaults") {
+    void loadDefaults();
   }
   if (nextView === "kernel") {
     void loadKernelList();
@@ -1721,77 +1726,169 @@ const deleteKey = async (id, name, button) => {
   }
 };
 
-const loadReasoningLevel = async () => {
+const formatModelLabel = (model) => {
+  const label = typeof model?.display_name === "string" ? model.display_name : model?.slug;
+  return label && label.trim() ? label : "unknown";
+};
+
+const setSelectOptions = (select, options, selected, emptyLabel) => {
+  select.textContent = "";
+  if (!options.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = emptyLabel;
+    select.appendChild(opt);
+    select.disabled = true;
+    return "";
+  }
+  select.disabled = false;
+  options.forEach((option) => {
+    const opt = document.createElement("option");
+    opt.value = option.value;
+    opt.textContent = option.label;
+    select.appendChild(opt);
+  });
+  const next = options.some((option) => option.value === selected) ? selected : options[0].value;
+  select.value = next;
+  return next;
+};
+
+const getModelReasoningLevels = (model) => {
+  const levels = Array.isArray(model?.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
+  return levels.filter((level) => typeof level === "string" && level.trim().length > 0);
+};
+
+const updateDefaultsMeta = (snapshot, models) => {
+  if (!snapshot) {
+    defaultsMeta.textContent = "No model snapshot available.";
+    return;
+  }
+  const updatedAt = typeof snapshot.updated_at_ms === "number" ? formatDate(snapshot.updated_at_ms) : "unknown";
+  const source = typeof snapshot.source === "string" ? snapshot.source : "unknown";
+  defaultsMeta.textContent = `Models: ${models.length} · Source: ${source} · Updated: ${updatedAt}`;
+};
+
+const updateReasoningOptions = (modelSlug, preferred) => {
+  const model = defaultsModelMap.get(modelSlug);
+  const levels = getModelReasoningLevels(model);
+  const options = levels.length ? levels.map((level) => ({ value: level, label: level })) : [
+    { value: "none", label: "none" },
+  ];
+  const fallback = typeof model?.default_reasoning_level === "string" ? model.default_reasoning_level : "";
+  const nextPreferred = levels.includes(preferred) ? preferred : levels.includes(fallback) ? fallback : options[0].value;
+  const selected = setSelectOptions(defaultsReasoningSelect, options, nextPreferred, "No reasoning levels");
+  defaultsReasoningSelect.disabled = levels.length === 0;
+  return selected;
+};
+
+const loadDefaults = async () => {
   const token = getAdminToken();
   if (!token) {
-    setReasoningBadge("bad", "Missing token");
+    setDefaultsBadge("bad", "Missing token");
     return;
   }
 
-  setReasoningBadge("unknown", "Loading...");
+  defaultsLoaded = false;
+  setDefaultsBadge("unknown", "Loading...");
+  defaultsMeta.textContent = "Loading model list...";
 
   try {
-    const res = await fetch(apiUrl("/admin/reasoning-level"), {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      setReasoningBadge("bad", data?.error?.message ?? "Error");
+    const [modelsRes, defaultsRes] = await Promise.all([
+      fetch(apiUrl("/admin/codex/models"), {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      }),
+      fetch(apiUrl("/admin/defaults"), {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      }),
+    ]);
+    const modelsPayload = await modelsRes.json().catch(() => null);
+    if (!modelsRes.ok) {
+      setDefaultsBadge("bad", modelsPayload?.error?.message ?? "Error");
+      defaultsMeta.textContent = "Failed to load models.";
       return;
     }
-    reasoningLevelSelect.value = data.effort;
-    reasoningLoaded = true;
-    setReasoningBadge("ok", data.effort);
+    const snapshot = modelsPayload?.data ?? null;
+    const models = Array.isArray(snapshot?.models) ? snapshot.models.filter((model) => typeof model?.slug === "string") : [];
+    defaultsModels = models;
+    defaultsModelMap = new Map(models.map((model) => [model.slug, model]));
+    updateDefaultsMeta(snapshot, models);
+
+    const defaultsPayload = await defaultsRes.json().catch(() => null);
+    if (!defaultsRes.ok) {
+      setDefaultsBadge("bad", defaultsPayload?.error?.message ?? "Error");
+      return;
+    }
+
+    if (!models.length) {
+      setDefaultsBadge("bad", "No models");
+      setSelectOptions(defaultsModelSelect, [], "", "No models available");
+      setSelectOptions(defaultsReasoningSelect, [], "", "No reasoning levels");
+      return;
+    }
+
+    const currentModel = typeof defaultsPayload?.defaults?.model === "string" ? defaultsPayload.defaults.model : "";
+    const currentReasoning =
+      typeof defaultsPayload?.defaults?.reasoning_effort === "string" ? defaultsPayload.defaults.reasoning_effort : "";
+    const modelOptions = models.map((model) => ({ value: model.slug, label: formatModelLabel(model) }));
+    const selectedModel = setSelectOptions(defaultsModelSelect, modelOptions, currentModel, "No models available");
+    const selectedReasoning = updateReasoningOptions(selectedModel, currentReasoning);
+    defaultsLoaded = true;
+    setDefaultsBadge("ok", `${selectedModel} · ${selectedReasoning}`);
   } catch {
-    setReasoningBadge("bad", "Offline");
+    setDefaultsBadge("bad", "Offline");
+    defaultsMeta.textContent = "Offline.";
   }
 };
 
-const saveReasoningLevel = async () => {
+const saveDefaults = async () => {
+  if (!defaultsLoaded) return;
   const token = getAdminToken();
   if (!token) {
-    setReasoningBadge("bad", "Missing token");
+    setDefaultsBadge("bad", "Missing token");
     return;
   }
 
-  if (reasoningSaving) return;
-  reasoningSaving = true;
-  const effort = reasoningLevelSelect.value;
-  setReasoningBadge("unknown", "Setting...");
+  if (defaultsSaving) return;
+  defaultsSaving = true;
+  const model = defaultsModelSelect.value;
+  const reasoning = defaultsReasoningSelect.value;
+  setDefaultsBadge("unknown", "Saving...");
 
   try {
-    const res = await fetch(apiUrl("/admin/reasoning-level"), {
+    const res = await fetch(apiUrl("/admin/defaults"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ effort }),
+      body: JSON.stringify({ model, reasoning_effort: reasoning }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-      setReasoningBadge("bad", data?.error?.message ?? "Error");
+      setDefaultsBadge("bad", data?.error?.message ?? "Error");
       return;
     }
-    reasoningLoaded = true;
-    setReasoningBadge("ok", data.effort);
+    const saved = data?.defaults;
+    const summary = saved?.model && saved?.reasoning_effort ? `${saved.model} · ${saved.reasoning_effort}` : "Saved";
+    setDefaultsBadge("ok", summary);
   } catch {
-    setReasoningBadge("bad", "Offline");
+    setDefaultsBadge("bad", "Offline");
   } finally {
-    reasoningSaving = false;
+    defaultsSaving = false;
   }
 };
 
-const scheduleReasoningSave = debounce(() => {
-  void saveReasoningLevel();
+const scheduleDefaultsSave = debounce(() => {
+  void saveDefaults();
 }, 500);
 
 restoreSettings();
 setAuthBadge("unknown", "Not checked");
 setCreateBadge("unknown", "Idle");
 setKeysBadge("unknown", "Not loaded");
-setReasoningBadge("unknown", "Idle");
+setDefaultsBadge("unknown", "Idle");
 setKernelListBadge("unknown", "Not loaded");
 setKernelNewBadge("unknown", "Idle");
 setKeyListMessage("Paste an admin token to load keys.");
@@ -1809,7 +1906,7 @@ showTokenInput.addEventListener("change", () => {
 tokenInput.addEventListener("input", () => {
   persistTokenIfEnabled();
   keysLoadedAt = 0;
-  reasoningLoaded = false;
+  defaultsLoaded = false;
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
     setKeysBadge("unknown", "Not loaded");
@@ -1824,8 +1921,8 @@ tokenInput.addEventListener("input", () => {
   if (currentAdminView === "keys") {
     void ensureKeysLoaded();
   }
-  if (currentAdminView === "reasoning") {
-    void loadReasoningLevel();
+  if (currentAdminView === "defaults") {
+    void loadDefaults();
   }
   if (currentAdminView === "kernel") {
     void loadKernelList();
@@ -1848,7 +1945,7 @@ baseSelect.addEventListener("change", () => {
   setAuthBadge("unknown", "Not checked");
   setCreateBadge("unknown", "Idle");
   setKeysBadge("unknown", "Not loaded");
-  setReasoningBadge("unknown", "Idle");
+  setDefaultsBadge("unknown", "Idle");
   setKernelListBadge("unknown", "Not loaded");
   setKernelNewBadge("unknown", "Idle");
   setKeyListMessage("Target changed. Loading keys...");
@@ -1857,13 +1954,13 @@ baseSelect.addEventListener("change", () => {
   setKernelNewPanelOpen(false);
   allKeys = [];
   keysLoadedAt = 0;
-  reasoningLoaded = false;
+  defaultsLoaded = false;
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
     void ensureKeysLoaded();
   }
-  if (currentAdminView === "reasoning") {
-    void loadReasoningLevel();
+  if (currentAdminView === "defaults") {
+    void loadDefaults();
   }
   if (currentAdminView === "kernel") {
     void loadKernelList();
@@ -1877,7 +1974,7 @@ keyExpiresSelect.addEventListener("change", () => {
 viewTabSession.addEventListener("click", () => setAdminView("session"));
 viewTabKeys.addEventListener("click", () => setAdminView("keys"));
 viewTabKernel.addEventListener("click", () => setAdminView("kernel"));
-viewTabReasoning.addEventListener("click", () => setAdminView("reasoning"));
+viewTabDefaults.addEventListener("click", () => setAdminView("defaults"));
 
 createKeyBtn.addEventListener("click", () => {
   void createKey();
@@ -1933,6 +2030,14 @@ keysTabAll.addEventListener("click", () => switchKeysView("all"));
 keysTabActive.addEventListener("click", () => switchKeysView("active"));
 keysTabRevoked.addEventListener("click", () => switchKeysView("revoked"));
 
-reasoningLevelSelect.addEventListener("change", () => {
-  scheduleReasoningSave();
+defaultsModelSelect.addEventListener("change", () => {
+  if (!defaultsLoaded) return;
+  const model = defaultsModelSelect.value;
+  updateReasoningOptions(model, defaultsReasoningSelect.value);
+  scheduleDefaultsSave();
+});
+
+defaultsReasoningSelect.addEventListener("change", () => {
+  if (!defaultsLoaded) return;
+  scheduleDefaultsSave();
 });

@@ -524,8 +524,12 @@ Deno.test("ubq-ai: admin keys revoke posts id", async () => {
   assert.equal(requests.length, 1);
 });
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
-  const authJson = JSON.stringify({ tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } });
+  const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
+  const authJson = JSON.stringify(authObject);
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz", HOME: "/home/test" },
     readTextFile: (path: string) => {
@@ -536,8 +540,53 @@ Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
       assert.ok(recorded.url.endsWith("/admin/codex/auth"));
       assert.equal(recorded.method, "POST");
       assert.equal(recorded.headers.authorization, `Bearer deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz`);
-      assert.equal(recorded.bodyText, authJson);
+      const parsed = JSON.parse(recorded.bodyText ?? "null") as { tokens?: unknown };
+      assert.deepEqual(parsed.tokens, authObject.tokens);
       return jsonResponse(200, { ok: true });
+    },
+  });
+
+  const code = await runUbqAi(["admin", "upload-auth", "--skip-models"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.ok(outText().includes('"ok": true'));
+  assert.equal(requests.length, 1);
+});
+
+Deno.test("ubq-ai: admin upload-auth includes codex model snapshot", async () => {
+  const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
+  const authJson = JSON.stringify(authObject);
+  const codexText = 'codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","supported_reasoning_levels":["low","high"]}';
+  const { runtime, outText, errText, requests } = makeRuntime({
+    env: {
+      DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz",
+      HOME: "/home/test",
+      PATH: "/opt/bin",
+    },
+    readTextFile: (path: string) => {
+      if (path === "/home/test/.codex/auth.json") return Promise.resolve(authJson);
+      if (path === "/opt/bin/codex") return Promise.resolve(codexText);
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    },
+    fetch: (_req, recorded) => {
+      assert.ok(recorded.url.endsWith("/admin/codex/auth"));
+      assert.equal(recorded.method, "POST");
+      assert.equal(recorded.headers.authorization, `Bearer deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz`);
+      const parsed = JSON.parse(recorded.bodyText ?? "null") as {
+        auth?: unknown;
+        models?: unknown;
+      };
+      assert.deepEqual(parsed.auth, authObject);
+      assert.equal(isRecord(parsed.models), true);
+      const models = parsed.models as Record<string, unknown>;
+      assert.equal(models.source, "codex_cli");
+      assert.equal(models.client_version, "0.99.0");
+      assert.ok(typeof models.updated_at_ms === "number");
+      assert.ok(Array.isArray(models.models));
+      const first = (models.models as Record<string, unknown>[])[0] ?? {};
+      assert.equal(first.slug, "gpt-5.2-codex");
+      assert.deepEqual(first.supported_reasoning_levels, ["low", "high"]);
+      return jsonResponse(200, { ok: true, models: { count: 1 } });
     },
   });
 
