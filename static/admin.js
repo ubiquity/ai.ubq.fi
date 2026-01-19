@@ -176,10 +176,22 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "2-digit",
   minute: "2-digit",
 });
+const dateFormatterWithZone = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZoneName: "short",
+});
 
 const formatDate = (ms) => {
   if (typeof ms !== "number" || !Number.isFinite(ms)) return "unknown";
   return dateFormatter.format(new Date(ms));
+};
+const formatDateWithZone = (ms) => {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return "unknown";
+  return dateFormatterWithZone.format(new Date(ms));
 };
 
 const formatExpires = (ms) => (ms === -1 ? "Never" : formatDate(ms));
@@ -1763,9 +1775,12 @@ const updateDefaultsMeta = (snapshot, models) => {
     defaultsMeta.textContent = "No model snapshot available.";
     return;
   }
-  const updatedAt = typeof snapshot.updated_at_ms === "number" ? formatDate(snapshot.updated_at_ms) : "unknown";
+  const updatedAt = typeof snapshot.updated_at_ms === "number" ? formatDateWithZone(snapshot.updated_at_ms) : "unknown";
   const source = typeof snapshot.source === "string" ? snapshot.source : "unknown";
-  defaultsMeta.textContent = `Models: ${models.length} · Source: ${source} · Updated: ${updatedAt}`;
+  const version =
+    typeof snapshot.client_version === "string" && snapshot.client_version.trim() ? snapshot.client_version.trim() : "";
+  const sourceLabel = version ? `${source} v${version}` : source;
+  defaultsMeta.textContent = `Models: ${models.length} · Source: ${sourceLabel} · Updated: ${updatedAt}`;
 };
 
 const updateReasoningOptions = (modelSlug, preferred) => {
