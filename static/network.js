@@ -83,8 +83,8 @@ const ensureTraceLayer = (side) => {
 };
 
 const renderNetworkTrace = (originKey) => {
-  const upLayer = ensureTraceLayer("right");
-  const downLayer = ensureTraceLayer("left");
+  const upLayer = ensureTraceLayer("left");
+  const downLayer = ensureTraceLayer("right");
   if (!upLayer || !downLayer) return;
   const durationMs = getAverageDurationMs(originKey);
   const halfDurationMs = Math.max(1, durationMs / 2);
