@@ -107,7 +107,6 @@ const kernelNewPreset1h = mustGet("kernel-new-window-1h");
 const kernelNewPreset1d = mustGet("kernel-new-window-1d");
 const kernelNewPreset1w = mustGet("kernel-new-window-1w");
 const kernelNewSaveBtn = mustGet("kernel-new-save");
-const kernelNewCancelBtn = mustGet("kernel-new-cancel");
 const kernelNewBadge = mustGet("kernel-new-badge");
 let kernelScope = "org";
 let kernelListLoadId = 0;
@@ -243,6 +242,58 @@ const parseDateTimeLocalValue = (value) => {
   return Math.trunc(ms);
 };
 
+const ICON_PATHS = {
+  edit: `
+    <path d="M3 17.25V21h3.75L18.37 9.38l-3.75-3.75L3 17.25z"></path>
+    <path d="M14.62 5.63l3.75 3.75"></path>
+  `,
+  close: `
+    <line x1="6" y1="6" x2="18" y2="18"></line>
+    <line x1="6" y1="18" x2="18" y2="6"></line>
+  `,
+  trash: `
+    <path d="M4 7h16"></path>
+    <path d="M9 7V5h6v2"></path>
+    <rect x="7" y="7" width="10" height="12" rx="1"></rect>
+  `,
+  revoke: `
+    <circle cx="12" cy="12" r="8"></circle>
+    <line x1="8" y1="16" x2="16" y2="8"></line>
+  `,
+  restore: `
+    <path d="M9 14l-4-4 4-4"></path>
+    <path d="M5 10h7a6 6 0 1 1 0 12h-1"></path>
+  `,
+  save: `
+    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+    <polyline points="7 3 7 8 15 8"></polyline>
+  `,
+  plus: `
+    <line x1="12" y1="5" x2="12" y2="19"></line>
+    <line x1="5" y1="12" x2="19" y2="12"></line>
+  `,
+};
+
+const buildIconSvg = (name) => {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.innerHTML = ICON_PATHS[name] ?? "";
+  return svg;
+};
+
+const applyIconButton = (button, name, label) => {
+  button.dataset.iconButton = "true";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.textContent = "";
+  button.appendChild(buildIconSvg(name));
+};
+
+applyIconButton(kernelNewSaveBtn, "save", "Save limit");
+
 const setKernelListMessage = (text) => {
   kernelList.textContent = "";
   const message = document.createElement("p");
@@ -263,7 +314,7 @@ const setKernelScope = (scope) => {
 
 const setKernelNewPanelOpen = (open) => {
   kernelNewPanel.hidden = !open;
-  kernelNewToggle.textContent = open ? "Close" : "New limit";
+  applyIconButton(kernelNewToggle, open ? "close" : "plus", open ? "Close new limit" : "New limit");
   if (!open) {
     resetKernelNewForm();
   }
@@ -458,12 +509,12 @@ const renderKernelList = (limits, scope) => {
 
     const editBtn = document.createElement("button");
     editBtn.type = "button";
-    editBtn.textContent = "Edit";
+    applyIconButton(editBtn, "edit", "Edit limit");
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
-    deleteBtn.textContent = "Delete";
     deleteBtn.dataset.variant = "danger";
+    applyIconButton(deleteBtn, "trash", "Delete limit");
 
     actionRow.appendChild(editBtn);
     actionRow.appendChild(deleteBtn);
@@ -523,12 +574,31 @@ const renderKernelList = (limits, scope) => {
     editFields.appendChild(limitField);
     editFields.appendChild(windowField);
 
+    const presetRow = document.createElement("div");
+    presetRow.dataset.layout = "row";
+    const preset1m = document.createElement("button");
+    preset1m.type = "button";
+    preset1m.textContent = "1m";
+    const preset1h = document.createElement("button");
+    preset1h.type = "button";
+    preset1h.textContent = "1h";
+    const preset1d = document.createElement("button");
+    preset1d.type = "button";
+    preset1d.textContent = "1d";
+    const preset1w = document.createElement("button");
+    preset1w.type = "button";
+    preset1w.textContent = "1w";
+    presetRow.appendChild(preset1m);
+    presetRow.appendChild(preset1h);
+    presetRow.appendChild(preset1d);
+    presetRow.appendChild(preset1w);
+
     const editActions = document.createElement("div");
     editActions.dataset.actionRow = "actions";
     const saveBtn = document.createElement("button");
     saveBtn.type = "button";
-    saveBtn.textContent = "Save";
     saveBtn.dataset.variant = "primary";
+    applyIconButton(saveBtn, "save", "Save changes");
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
     cancelBtn.textContent = "Cancel";
@@ -545,6 +615,7 @@ const renderKernelList = (limits, scope) => {
     editHelp.textContent = "Leave blank to keep the current interval. Updates reset usage.";
 
     editPanel.appendChild(editFields);
+    editPanel.appendChild(presetRow);
     editPanel.appendChild(editActions);
     editPanel.appendChild(editBadge);
     editPanel.appendChild(editHelp);
@@ -669,20 +740,40 @@ const renderKernelList = (limits, scope) => {
     };
 
     editBtn.addEventListener("click", () => {
-      const isOpen = !editPanel.hidden;
-      editPanel.hidden = isOpen;
-      editBtn.textContent = isOpen ? "Edit" : "Close";
-      if (!isOpen) resetEditInputs();
+      if (!editPanel.hidden) {
+        limitInput.focus();
+        return;
+      }
+      editPanel.hidden = false;
+      editBtn.disabled = true;
+      limitInput.focus();
     });
 
     cancelBtn.addEventListener("click", () => {
       editPanel.hidden = true;
-      editBtn.textContent = "Edit";
+      editBtn.disabled = false;
       resetEditInputs();
     });
 
     saveBtn.addEventListener("click", () => {
       void saveEdits();
+    });
+
+    preset1m.addEventListener("click", () => {
+      windowInput.value = "60000";
+      setEditBadge("unknown", "Editing...");
+    });
+    preset1h.addEventListener("click", () => {
+      windowInput.value = "3600000";
+      setEditBadge("unknown", "Editing...");
+    });
+    preset1d.addEventListener("click", () => {
+      windowInput.value = "86400000";
+      setEditBadge("unknown", "Editing...");
+    });
+    preset1w.addEventListener("click", () => {
+      windowInput.value = "604800000";
+      setEditBadge("unknown", "Editing...");
     });
 
     deleteBtn.addEventListener("click", () => {
@@ -935,23 +1026,31 @@ const renderKeys = (keys, view = "all") => {
 
     const editBtn = document.createElement("button");
     editBtn.type = "button";
-    editBtn.textContent = "Edit";
+    applyIconButton(editBtn, "edit", "Edit key");
     actionRow.appendChild(editBtn);
 
     if (!key.revoked_at_ms) {
       const revokeBtn = document.createElement("button");
       revokeBtn.type = "button";
       revokeBtn.dataset.variant = "danger";
-      revokeBtn.textContent = "Revoke";
+      applyIconButton(revokeBtn, "revoke", "Revoke key");
       revokeBtn.addEventListener("click", () => {
         void revokeKey(key.id, key.name || "this key", revokeBtn);
       });
       actionRow.appendChild(revokeBtn);
     } else {
+      const restoreBtn = document.createElement("button");
+      restoreBtn.type = "button";
+      applyIconButton(restoreBtn, "restore", "Unrevoke key");
+      restoreBtn.addEventListener("click", () => {
+        void unrevokeKey(key.id, key.name || "this key", restoreBtn);
+      });
+      actionRow.appendChild(restoreBtn);
+
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.dataset.variant = "danger";
-      deleteBtn.textContent = "Delete";
+      applyIconButton(deleteBtn, "trash", "Delete key");
       deleteBtn.addEventListener("click", () => {
         void deleteKey(key.id, key.name || "this key", deleteBtn);
       });
@@ -1207,8 +1306,9 @@ const renderKeys = (keys, view = "all") => {
     };
 
     editBtn.addEventListener("click", () => {
-      editPanel.hidden = !editPanel.hidden;
-      editBtn.textContent = editPanel.hidden ? "Edit" : "Close";
+      const willOpen = editPanel.hidden;
+      editPanel.hidden = !willOpen;
+      applyIconButton(editBtn, willOpen ? "close" : "edit", willOpen ? "Close editor" : "Edit key");
     });
 
     nameInput.addEventListener("input", () => {
@@ -1553,6 +1653,40 @@ const revokeKey = async (id, name, button) => {
   }
 };
 
+const unrevokeKey = async (id, name, button) => {
+  const token = getAdminToken();
+  if (!token) {
+    setKeysBadge("bad", "Missing token");
+    tokenInput.focus();
+    return;
+  }
+  if (!confirm(`Unrevoke ${name}?`)) return;
+
+  setKeysBadge("unknown", "Unrevoking...");
+  if (button) button.disabled = true;
+
+  try {
+    const res = await fetch(apiUrl("/admin/api-keys/unrevoke"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ id }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setKeysBadge("bad", data?.error?.message ?? "Error");
+      return;
+    }
+    await refreshKeys();
+  } catch {
+    setKeysBadge("bad", "Offline");
+  } finally {
+    if (button) button.disabled = false;
+  }
+};
+
 const deleteKey = async (id, name, button) => {
   const token = getAdminToken();
   if (!token) {
@@ -1788,10 +1922,6 @@ kernelNewPreset1w.addEventListener("click", () => {
 
 kernelNewSaveBtn.addEventListener("click", () => {
   void saveNewKernelLimit();
-});
-
-kernelNewCancelBtn.addEventListener("click", () => {
-  setKernelNewPanelOpen(false);
 });
 
 kernelNewOwnerInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));

@@ -511,6 +511,57 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
   );
 };
 
+export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
+  }
+
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const id = getString(raw.id);
+  if (!id) return openaiError(400, "id is required", "invalid_request_error");
+
+  const idKey = apiKeyIdKey(id);
+  const entry = await kv.get<ApiKeyRecord>(idKey);
+  if (!entry.value) return openaiError(404, "Not found", "not_found");
+
+  if (!entry.value.revoked_at_ms) {
+    return json(200, { ok: true, id, revoked_at_ms: null }, { "x-ubq-upstream": "chatgpt_codex" });
+  }
+
+  const expiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
+  const updated: ApiKeyRecord = { ...entry.value, expires_at_ms: expiresAtMs, revoked_at_ms: null };
+  const hashKey = apiKeyHashKey(entry.value.hash);
+  const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
+  const updatedHash: ApiKeyHashRecord = {
+    id,
+    expires_at_ms: updated.expires_at_ms,
+    revoked_at_ms: updated.revoked_at_ms,
+  };
+
+  const atomic = kv.atomic()
+    .check(entry)
+    .set(idKey, updated)
+    .set(hashKey, updatedHash);
+  if (hashEntry.versionstamp) atomic.check(hashEntry);
+
+  const commit = await atomic.commit();
+  if (!commit.ok) {
+    return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
+  }
+
+  return json(
+    200,
+    {
+      ok: true,
+      id: updated.id,
+      revoked_at_ms: updated.revoked_at_ms,
+    },
+    { "x-ubq-upstream": "chatgpt_codex" },
+  );
+};
+
 export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
   if (!kv) {
