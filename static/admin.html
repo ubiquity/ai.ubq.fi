@@ -164,8 +164,8 @@
             </header>
             <div data-card-body>
               <div data-tabs role="tablist" aria-label="Kernel limit scope">
-                <button id="kernel-scope-repo" type="button" role="tab" aria-selected="true">Repo</button>
-                <button id="kernel-scope-org" type="button" role="tab" aria-selected="false">Org</button>
+                <button id="kernel-scope-org" type="button" role="tab" aria-selected="true">Org</button>
+                <button id="kernel-scope-repo" type="button" role="tab" aria-selected="false">Repo</button>
               </div>
               <div data-layout="row">
                 <button id="kernel-new-toggle" type="button">New limit</button>
@@ -197,16 +197,12 @@
                   <button id="kernel-new-window-1d" type="button">1d</button>
                   <button id="kernel-new-window-1w" type="button">1w</button>
                 </div>
-                <label data-check>
-                  <input id="kernel-new-reset" type="checkbox" />
-                  <span>Reset usage on update</span>
-                </label>
                 <div data-action-row>
                   <button id="kernel-new-save" type="button" data-variant="primary">Save</button>
                   <button id="kernel-new-cancel" type="button">Cancel</button>
                 </div>
                 <span id="kernel-new-badge" data-badge data-state="unknown">Idle</span>
-                <p data-help>Leave window blank for default weekly (604800000 ms).</p>
+                <p data-help>Leave blank for the default weekly interval (604800000 ms). Updates reset usage.</p>
               </div>
               <div id="kernel-list" data-key-list role="list"></div>
               <p data-help>Edits require Save/Cancel. Delete removes the record.</p>

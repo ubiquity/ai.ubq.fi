@@ -385,10 +385,8 @@ export const setKernelUsageLimit = async (
     const windowMs = options.windowMs === undefined
       ? current.window_ms
       : normalizeWindowMs(options.windowMs, current.window_ms);
-    const nextResetAtMs = options.resetUsage
-      ? calculateNextResetMsForWindow(nowMs, windowMs)
-      : current.usage_reset_at_ms;
-    const nextUsageRequests = options.resetUsage ? 0 : current.usage_requests;
+    const nextResetAtMs = calculateNextResetMsForWindow(nowMs, windowMs);
+    const nextUsageRequests = 0;
     const updated: KernelAuthLimitRecord = {
       ...current,
       usage_limit_requests: normalizeUsageLimitRequests(usageLimitRequests, current.usage_limit_requests),
@@ -606,10 +604,8 @@ export const setKernelOrgUsageLimit = async (
     const windowMs = options.windowMs === undefined
       ? current.window_ms
       : normalizeWindowMs(options.windowMs, current.window_ms);
-    const nextResetAtMs = options.resetUsage
-      ? calculateNextResetMsForWindow(nowMs, windowMs)
-      : current.usage_reset_at_ms;
-    const nextUsageRequests = options.resetUsage ? 0 : current.usage_requests;
+    const nextResetAtMs = calculateNextResetMsForWindow(nowMs, windowMs);
+    const nextUsageRequests = 0;
     const updated: KernelOrgLimitRecord = {
       ...current,
       usage_limit_requests: normalizeUsageLimitRequests(usageLimitRequests, current.usage_limit_requests),

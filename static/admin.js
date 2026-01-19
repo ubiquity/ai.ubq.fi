@@ -106,11 +106,10 @@ const kernelNewPreset1m = mustGet("kernel-new-window-1m");
 const kernelNewPreset1h = mustGet("kernel-new-window-1h");
 const kernelNewPreset1d = mustGet("kernel-new-window-1d");
 const kernelNewPreset1w = mustGet("kernel-new-window-1w");
-const kernelNewResetInput = mustGet("kernel-new-reset");
 const kernelNewSaveBtn = mustGet("kernel-new-save");
 const kernelNewCancelBtn = mustGet("kernel-new-cancel");
 const kernelNewBadge = mustGet("kernel-new-badge");
-let kernelScope = "repo";
+let kernelScope = "org";
 let kernelListLoadId = 0;
 let kernelNewSaving = false;
 
@@ -275,7 +274,6 @@ const resetKernelNewForm = () => {
   kernelNewRepoInput.value = "";
   kernelNewLimitInput.value = "-1";
   kernelNewWindowInput.value = "";
-  kernelNewResetInput.checked = false;
   setKernelNewBadge("unknown", "Idle");
 };
 
@@ -352,7 +350,6 @@ const saveNewKernelLimit = async () => {
       owner,
       scope: kernelScope,
       usage_limit_requests: limitValue,
-      reset_usage: kernelNewResetInput.checked,
     };
     if (kernelScope === "repo") payload.repo = repo;
     if (windowResult.value !== null) payload.window_ms = windowResult.value;
@@ -526,16 +523,6 @@ const renderKernelList = (limits, scope) => {
     editFields.appendChild(limitField);
     editFields.appendChild(windowField);
 
-    const resetLabel = document.createElement("label");
-    resetLabel.dataset.check = "true";
-    const resetInput = document.createElement("input");
-    resetInput.type = "checkbox";
-    resetInput.checked = false;
-    const resetText = document.createElement("span");
-    resetText.textContent = "Reset usage on update";
-    resetLabel.appendChild(resetInput);
-    resetLabel.appendChild(resetText);
-
     const editActions = document.createElement("div");
     editActions.dataset.actionRow = "actions";
     const saveBtn = document.createElement("button");
@@ -555,10 +542,9 @@ const renderKernelList = (limits, scope) => {
 
     const editHelp = document.createElement("p");
     editHelp.dataset.help = "true";
-    editHelp.textContent = "Leave window blank to keep the current window.";
+    editHelp.textContent = "Leave blank to keep the current interval. Updates reset usage.";
 
     editPanel.appendChild(editFields);
-    editPanel.appendChild(resetLabel);
     editPanel.appendChild(editActions);
     editPanel.appendChild(editBadge);
     editPanel.appendChild(editHelp);
@@ -572,7 +558,6 @@ const renderKernelList = (limits, scope) => {
     const resetEditInputs = () => {
       limitInput.value = typeof record.usage_limit_requests === "number" ? String(record.usage_limit_requests) : "-1";
       windowInput.value = typeof record.window_ms === "number" ? String(Math.trunc(record.window_ms)) : "";
-      resetInput.checked = false;
       setEditBadge("unknown", "Idle");
     };
 
@@ -614,7 +599,6 @@ const renderKernelList = (limits, scope) => {
           owner,
           scope,
           usage_limit_requests: limitValue,
-          reset_usage: resetInput.checked,
         };
         if (scope === "repo") payload.repo = repo;
         if (windowResult.value !== null) payload.window_ms = windowResult.value;
@@ -707,7 +691,6 @@ const renderKernelList = (limits, scope) => {
 
     limitInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
     windowInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
-    resetInput.addEventListener("change", () => setEditBadge("unknown", "Editing..."));
   });
 };
 
@@ -1680,7 +1663,7 @@ setKernelNewBadge("unknown", "Idle");
 setKeyListMessage("Paste an admin token to load keys.");
 setKernelListMessage("Paste an admin token to load limits.");
 switchKeysView("all");
-setKernelScope("repo");
+setKernelScope("org");
 setKernelNewPanelOpen(false);
 setAdminView(storage.get(STORAGE_KEYS.view) ?? "session");
 if (getAdminToken()) scheduleTokenCheck();
@@ -1815,7 +1798,6 @@ kernelNewOwnerInput.addEventListener("input", () => setKernelNewBadge("unknown",
 kernelNewRepoInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
 kernelNewLimitInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
 kernelNewWindowInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
-kernelNewResetInput.addEventListener("change", () => setKernelNewBadge("unknown", "Editing..."));
 
 keysTabAll.addEventListener("click", () => switchKeysView("all"));
 keysTabActive.addEventListener("click", () => switchKeysView("active"));

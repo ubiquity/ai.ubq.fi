@@ -744,11 +744,8 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
     return openaiError(400, "window_ms must be a positive number", "invalid_request_error");
   }
 
-  const resetUsage = normalizeOptionalBoolean(raw.reset_usage);
-
   if (scope === "org") {
     const updated = await setKernelOrgUsageLimit(owner, usageLimitRequests, {
-      resetUsage,
       windowMs: windowMs ?? undefined,
     });
     if (!updated) {
@@ -758,7 +755,6 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
   }
 
   const updated = await setKernelUsageLimit(owner, repo!, usageLimitRequests, {
-    resetUsage,
     windowMs: windowMs ?? undefined,
   });
   if (!updated) {
