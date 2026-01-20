@@ -6,7 +6,6 @@ const STORAGE_KEYS = {
   model: "ubq_ai.playground.model",
   reasoningEffort: "ubq_ai.playground.reasoning_effort",
   systemPrompt: "ubq_ai.playground.system_prompt",
-  stream: "ubq_ai.playground.stream",
 };
 
 const storage = {
@@ -33,6 +32,8 @@ const storage = {
   },
 };
 
+const PANEL_STATE_PREFIX = "ubq_ai.playground.panel.";
+
 const debounce = (fn, wait = 450) => {
   let timer = null;
   return (...args) => {
@@ -56,7 +57,6 @@ const showTokenInput = mustGet("show-token");
 const modelInput = mustGet("model");
 const reasoningSelect = mustGet("reasoning-effort");
 const systemInput = mustGet("system");
-const streamInput = mustGet("stream");
 const authBadge = mustGet("auth-badge");
 const messagesEl = mustGet("messages");
 const resetChatBtn = mustGet("reset-chat");
@@ -64,10 +64,148 @@ const stopBtn = mustGet("stop");
 const chatForm = mustGet("chat-form");
 const promptInput = mustGet("prompt");
 const sendBtn = mustGet("send");
+const panels = Array.from(document.querySelectorAll('details[data-chat-panel][data-panel-key]'));
+
+const DEFAULT_MODEL = "gpt-5.2-chat-latest";
+const DEFAULT_REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
 
 const setAuthBadge = (state, text) => {
   authBadge.dataset.state = state;
   authBadge.textContent = text;
+};
+
+let modelsRequestId = 0;
+let modelsLoadedToken = "";
+let modelCatalog = new Map();
+let preferredModel = DEFAULT_MODEL;
+
+const normalizeModelId = (model) => {
+  if (!model || typeof model !== "object") return "";
+  const id = typeof model.id === "string" ? model.id : typeof model.slug === "string" ? model.slug : "";
+  return id.trim();
+};
+
+const formatModelLabel = (model, fallback) => {
+  const display = typeof model?.display_name === "string" ? model.display_name.trim() : "";
+  if (display) return display;
+  const name = typeof model?.name === "string" ? model.name.trim() : "";
+  if (name) return name;
+  return fallback;
+};
+
+const setModelPlaceholder = (label) => {
+  modelInput.textContent = "";
+  const option = document.createElement("option");
+  option.value = "";
+  option.textContent = label;
+  option.disabled = true;
+  modelInput.appendChild(option);
+  modelInput.disabled = true;
+};
+
+const setModelOptions = (models, preferred) => {
+  modelInput.textContent = "";
+  const options = [];
+  models.forEach((model) => {
+    const id = normalizeModelId(model);
+    if (!id) return;
+    options.push({ value: id, label: formatModelLabel(model, id) });
+  });
+
+  if (!options.length) {
+    setModelPlaceholder("No models available");
+    return "";
+  }
+
+  modelInput.disabled = false;
+  options.forEach((option) => {
+    const opt = document.createElement("option");
+    opt.value = option.value;
+    opt.textContent = option.label;
+    modelInput.appendChild(opt);
+  });
+
+  const preferredValue = typeof preferred === "string" ? preferred.trim() : "";
+  const next = options.some((option) => option.value === preferredValue) ? preferredValue : options[0].value;
+  modelInput.value = next;
+  return next;
+};
+
+const setReasoningOptions = (levels, preferred) => {
+  const trimmedPreferred = (preferred ?? "").trim();
+  const uniqueLevels = Array.from(
+    new Set(
+      levels
+        .filter((level) => typeof level === "string")
+        .map((level) => level.trim())
+        .filter(Boolean),
+    ),
+  );
+
+  reasoningSelect.textContent = "";
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "Default";
+  reasoningSelect.appendChild(defaultOption);
+
+  uniqueLevels.forEach((level) => {
+    const option = document.createElement("option");
+    option.value = level;
+    option.textContent = level;
+    reasoningSelect.appendChild(option);
+  });
+
+  reasoningSelect.value = uniqueLevels.includes(trimmedPreferred) ? trimmedPreferred : "";
+};
+
+const getReasoningLevelsForModel = (modelId) => {
+  const model = modelCatalog.get(modelId);
+  const levels = Array.isArray(model?.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
+  const normalized = levels.filter((level) => typeof level === "string" && level.trim().length > 0);
+  return normalized.length ? normalized : DEFAULT_REASONING_LEVELS;
+};
+
+const updateReasoningForModel = (modelId, preferred) => {
+  const levels = getReasoningLevelsForModel(modelId);
+  setReasoningOptions(levels, preferred);
+};
+
+const resetModelCatalog = (label = "Authenticate to load models") => {
+  modelCatalog = new Map();
+  modelsLoadedToken = "";
+  setModelPlaceholder(label);
+};
+
+const loadModels = async (token) => {
+  const trimmed = token.trim();
+  if (!trimmed) return;
+  if (trimmed === modelsLoadedToken) return;
+  const requestId = ++modelsRequestId;
+  try {
+    const res = await fetch("/v1/models", { headers: { Authorization: `Bearer ${trimmed}` }, cache: "no-store" });
+    const data = await res.json().catch(() => null);
+    if (requestId !== modelsRequestId) return;
+    if (trimmed !== tokenInput.value.trim()) return;
+    if (!res.ok) return;
+    const models = Array.isArray(data?.data) ? data.data : [];
+    modelCatalog = new Map(
+      models
+        .map((model) => ({ id: normalizeModelId(model), model }))
+        .filter((entry) => entry.id)
+        .map((entry) => [entry.id, entry.model]),
+    );
+    const selected = setModelOptions(models, preferredModel);
+    if (selected && selected !== preferredModel) {
+      preferredModel = selected;
+      persistSetting(STORAGE_KEYS.model, selected);
+    } else if (selected) {
+      preferredModel = selected;
+    }
+    modelsLoadedToken = trimmed;
+    updateReasoningForModel(selected || modelInput.value.trim(), reasoningSelect.value);
+  } catch {
+    if (requestId !== modelsRequestId) return;
+  }
 };
 
 let authCheckId = 0;
@@ -75,6 +213,8 @@ const checkAuthToken = async () => {
   const token = tokenInput.value.trim();
   if (!token) {
     setAuthBadge("bad", "Missing token");
+    resetModelCatalog();
+    setReasoningOptions(DEFAULT_REASONING_LEVELS, reasoningSelect.value);
     return;
   }
 
@@ -86,10 +226,13 @@ const checkAuthToken = async () => {
     if (requestId !== authCheckId) return;
     if (!res.ok) {
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
+      resetModelCatalog();
+      setReasoningOptions(DEFAULT_REASONING_LEVELS, reasoningSelect.value);
       return;
     }
     const mode = data?.auth?.mode;
     setAuthBadge("ok", mode ? `OK (${mode})` : "OK");
+    void loadModels(token);
   } catch {
     if (requestId !== authCheckId) return;
     setAuthBadge("bad", "Offline");
@@ -130,18 +273,41 @@ const restoreSettings = () => {
   rememberTokenInput.checked = remember;
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
 
-  modelInput.value = storage.get(STORAGE_KEYS.model) ?? "gpt-5.2-chat-latest";
-  reasoningSelect.value = storage.get(STORAGE_KEYS.reasoningEffort) ?? "";
+  preferredModel = storage.get(STORAGE_KEYS.model) ?? DEFAULT_MODEL;
+  setModelPlaceholder("Loading models...");
+  setReasoningOptions(DEFAULT_REASONING_LEVELS, storage.get(STORAGE_KEYS.reasoningEffort) ?? "");
   systemInput.value = storage.get(STORAGE_KEYS.systemPrompt) ?? "";
-  streamInput.checked = storage.get(STORAGE_KEYS.stream) === "1";
+};
+
+const restorePanelStates = () => {
+  panels.forEach((panel) => {
+    const key = panel.dataset.panelKey;
+    if (!key) return;
+    const stored = storage.get(`${PANEL_STATE_PREFIX}${key}`);
+    if (stored === "open") panel.open = true;
+    if (stored === "closed") panel.open = false;
+  });
+};
+
+const bindPanelPersistence = () => {
+  panels.forEach((panel) => {
+    const key = panel.dataset.panelKey;
+    if (!key) return;
+    panel.addEventListener("toggle", () => {
+      storage.set(`${PANEL_STATE_PREFIX}${key}`, panel.open ? "open" : "closed");
+    });
+  });
 };
 
 restoreSettings();
+restorePanelStates();
+bindPanelPersistence();
 if (tokenInput.value.trim()) {
   setAuthBadge("unknown", "Checking...");
   void checkAuthToken();
 } else {
   setAuthBadge("bad", "Missing token");
+  resetModelCatalog();
 }
 
 showTokenInput.addEventListener("change", () => {
@@ -150,12 +316,16 @@ showTokenInput.addEventListener("change", () => {
 
 tokenInput.addEventListener("input", () => {
   authCheckId += 1;
+  modelsRequestId += 1;
   scheduleTokenPersist();
   const token = tokenInput.value.trim();
   if (!token) {
     setAuthBadge("bad", "Missing token");
+    resetModelCatalog();
+    setReasoningOptions(DEFAULT_REASONING_LEVELS, reasoningSelect.value);
     return;
   }
+  if (token !== modelsLoadedToken) resetModelCatalog("Checking token...");
   setAuthBadge("unknown", "Checking...");
   scheduleAuthCheck();
 });
@@ -170,10 +340,17 @@ rememberTokenInput.addEventListener("change", () => {
   storage.remove(STORAGE_KEYS.token);
 });
 
-modelInput.addEventListener("input", () => scheduleModelPersist());
+const handleModelChange = () => {
+  const nextModel = modelInput.value.trim();
+  if (nextModel) preferredModel = nextModel;
+  scheduleModelPersist();
+  updateReasoningForModel(nextModel, reasoningSelect.value);
+};
+
+modelInput.addEventListener("input", handleModelChange);
+modelInput.addEventListener("change", handleModelChange);
 systemInput.addEventListener("input", () => scheduleSystemPersist());
 reasoningSelect.addEventListener("change", () => persistSetting(STORAGE_KEYS.reasoningEffort, reasoningSelect.value));
-streamInput.addEventListener("change", () => storage.set(STORAGE_KEYS.stream, streamInput.checked ? "1" : "0"));
 
 const appendMessage = (role, text) => {
   const el = document.createElement("div");
@@ -261,14 +438,14 @@ const sendPrompt = async () => {
   const payload = {
     model: modelInput.value.trim() || undefined,
     messages: requestMessages,
-    stream: streamInput.checked,
+    stream: true,
   };
 
   const reasoningEffort = reasoningSelect.value.trim();
   if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
   if (!payload.model) delete payload.model;
 
-  const assistantEl = appendMessage("assistant", streamInput.checked ? "" : "…");
+  const assistantEl = appendMessage("assistant", "");
   setBusy(true);
 
   abortController = new AbortController();
@@ -290,7 +467,7 @@ const sendPrompt = async () => {
       return;
     }
 
-    if (!streamInput.checked || !res.headers.get("content-type")?.includes("text/event-stream")) {
+    if (!res.headers.get("content-type")?.includes("text/event-stream")) {
       const data = await res.json().catch(() => null);
       const content = data?.choices?.[0]?.message?.content;
       if (typeof content === "string" && content.length > 0) {

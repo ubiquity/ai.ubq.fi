@@ -15,20 +15,23 @@ import {
   handleAdminKernelPubKeysCreate,
   handleAdminKernelPubKeysDelete,
   handleAdminKernelPubKeysList,
-  handleAdminReasoningLevel,
 } from "./admin.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
-import { authenticateClient, handleV1Auth, incrementApiKeyUsage, requireAdminAuth } from "./auth.ts";
+import { authenticateClient, getKernelAttestationContext, handleV1Auth, incrementApiKeyUsage, requireAdminAuth } from "./auth.ts";
 import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, openaiError, withCors } from "./http.ts";
-import { incrementKernelOrgUsageLimit, incrementKernelUsageLimit } from "./kernel_usage.ts";
+import { getKernelUsageLimitSnapshot, incrementKernelOrgUsageLimit, incrementKernelUsageLimit } from "./kernel_usage.ts";
 import { handleChatCompletions, handleModels, handleResponses } from "./openai.ts";
 import {
+  handleAdminCss,
   handleAdminJs,
   handleAdminPage,
   handleAppJs,
+  handleChatCss,
   handleChatJs,
   handleChatPage,
+  handleHomeCss,
+  handleCompanyLogo,
   handleFavicon,
   handleFavicon32,
   handleNetworkJs,
@@ -36,13 +39,18 @@ import {
   handleStyleCss,
 } from "./static.ts";
 
+const normalizePath = (path: string): string => {
+  if (path === "/") return path;
+  return path.replace(/\/+$/, "");
+};
+
 export default async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return withCors(new Response(null, { status: 204, headers: corsHeaders() }));
   }
 
   const url = new URL(req.url);
-  const path = url.pathname;
+  const path = normalizePath(url.pathname);
 
   if (req.method === "GET" && (path === "/" || path === "/index.html")) {
     return withCors(await handleRoot(req));
@@ -72,8 +80,24 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleStyleCss());
   }
 
+  if (req.method === "GET" && path === "/chat.css") {
+    return withCors(await handleChatCss());
+  }
+
+  if (req.method === "GET" && path === "/home.css") {
+    return withCors(await handleHomeCss());
+  }
+
+  if (req.method === "GET" && path === "/admin.css") {
+    return withCors(await handleAdminCss());
+  }
+
   if (req.method === "GET" && path === "/app.js") {
     return withCors(await handleAppJs());
+  }
+
+  if (req.method === "GET" && path === "/company-logo.svg") {
+    return withCors(await handleCompanyLogo());
   }
 
   if (req.method === "GET" && path === "/favicon-32.png") {
@@ -174,12 +198,6 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleAdminKernelUsageDelete(req));
   }
 
-  if ((req.method === "GET" || req.method === "POST") && path === "/admin/reasoning-level") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminReasoningLevel(req));
-  }
-
   if (req.method === "GET" && path === "/admin/kernel-pubkeys") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
@@ -215,11 +233,34 @@ export default async function handler(req: Request): Promise<Response> {
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return withCors(authResult.response);
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
-  const kernelRepo = authResult.method.kind === "github_token"
+  const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
+  let kernelRepo = authResult.method.kind === "github_token"
     ? { owner: authResult.method.owner, repo: authResult.method.repo }
     : null;
+  if (!kernelRepo) {
+    const attestation = await getKernelAttestationContext(req, authResult.token);
+    if (attestation) {
+      kernelRepo = { owner: attestation.owner, repo: attestation.repo };
+    }
+  }
   const kernelOrg = kernelRepo ? { owner: kernelRepo.owner } : null;
   const usageContext = { keyId: usageKeyId, kernelRepo, kernelOrg };
+  const resolveKernelLimitScope = async (): Promise<"org" | "repo" | null> => {
+    if (!kernelRepo) return null;
+    if (kernelLimitScope) return kernelLimitScope;
+    const snapshot = await getKernelUsageLimitSnapshot(kernelRepo.owner, kernelRepo.repo);
+    if (snapshot?.source === "kv") return "repo";
+    return "org";
+  };
+  const incrementKernelLimitUsage = async (): Promise<void> => {
+    const limitScope = await resolveKernelLimitScope();
+    if (!kernelRepo || !limitScope) return;
+    if (limitScope === "repo") {
+      await incrementKernelUsageLimit(kernelRepo.owner, kernelRepo.repo);
+      return;
+    }
+    if (kernelOrg) await incrementKernelOrgUsageLimit(kernelOrg.owner);
+  };
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(await handleModels());
@@ -229,8 +270,7 @@ export default async function handler(req: Request): Promise<Response> {
     const response = await handleChatCompletions(req, usageContext);
     if (response.ok) {
       if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
-      if (kernelRepo) await incrementKernelUsageLimit(kernelRepo.owner, kernelRepo.repo);
-      if (kernelOrg) await incrementKernelOrgUsageLimit(kernelOrg.owner);
+      await incrementKernelLimitUsage();
     }
     return withCors(response);
   }
@@ -239,8 +279,7 @@ export default async function handler(req: Request): Promise<Response> {
     const response = await handleResponses(req, usageContext);
     if (response.ok) {
       if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
-      if (kernelRepo) await incrementKernelUsageLimit(kernelRepo.owner, kernelRepo.repo);
-      if (kernelOrg) await incrementKernelOrgUsageLimit(kernelOrg.owner);
+      await incrementKernelLimitUsage();
     }
     return withCors(response);
   }

@@ -22,11 +22,12 @@ const jsonRequest = (url: string, body: unknown): Request =>
   });
 
 const makeAuth = (owner = "acme", repo = "demo", stateId = "state-1") =>
-  async (_req: Request) => ({
-    ok: true as const,
-    token: "ghs_test_token",
-    method: { kind: "github_token" as const, owner, repo, state_id: stateId },
-  });
+  (_req: Request) =>
+    Promise.resolve({
+      ok: true as const,
+      token: "ghs_test_token",
+      method: { kind: "github_token" as const, owner, repo, state_id: stateId, limit_scope: "org" as const },
+    });
 
 const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   if (left === right) return 0;
@@ -56,10 +57,10 @@ class MemoryKv {
   #counter = 0;
   entries: Array<Deno.KvEntry<unknown>> = [];
 
-  async set(key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }): Promise<{ ok: true }> {
+  set(key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }): Promise<{ ok: true }> {
     this.#counter += 1;
     this.entries.push({ key, value, versionstamp: String(this.#counter) });
-    return { ok: true };
+    return Promise.resolve({ ok: true });
   }
 
   list<T>(selector: Deno.KvListSelector, options: Deno.KvListOptions = {}): MemoryKvListIterator<T> {
@@ -92,11 +93,13 @@ class MemoryKvListIterator<T> implements Deno.KvListIterator<T> {
     return this.#cursor;
   }
 
-  async next(): Promise<IteratorResult<Deno.KvEntry<T>>> {
-    if (this.#index >= this.#entries.length) return { done: true, value: undefined };
+  next(): Promise<IteratorResult<Deno.KvEntry<T>>> {
+    if (this.#index >= this.#entries.length) {
+      return Promise.resolve({ done: true, value: undefined });
+    }
     const value = this.#entries[this.#index];
     this.#index += 1;
-    return { done: false, value };
+    return Promise.resolve({ done: false, value });
   }
 
   [Symbol.asyncIterator](): AsyncIterableIterator<Deno.KvEntry<T>> {

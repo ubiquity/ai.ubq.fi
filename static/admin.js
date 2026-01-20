@@ -92,13 +92,20 @@ const defaultsBadge = mustGet("defaults-badge");
 const defaultsMeta = mustGet("defaults-meta");
 let defaultsLoaded = false;
 let defaultsSaving = false;
-let defaultsModels = [];
 let defaultsModelMap = new Map();
 
+const kernelModeUsage = mustGet("kernel-mode-usage");
+const kernelModeLimits = mustGet("kernel-mode-limits");
 const kernelScopeRepo = mustGet("kernel-scope-repo");
 const kernelScopeOrg = mustGet("kernel-scope-org");
 const kernelListBadge = mustGet("kernel-list-badge");
 const kernelList = mustGet("kernel-list");
+const kernelFilterInput = mustGet("kernel-filter");
+const kernelShowSelect = mustGet("kernel-show");
+const kernelSortSelect = mustGet("kernel-sort");
+const kernelHelpLimits = mustGet("kernel-help-limits");
+const kernelHelpUsage = mustGet("kernel-help-usage");
+const kernelAttention = mustGet("kernel-attention");
 const kernelNewToggle = mustGet("kernel-new-toggle");
 const kernelNewPanel = mustGet("kernel-new-panel");
 const kernelNewOwnerInput = mustGet("kernel-new-owner");
@@ -112,9 +119,32 @@ const kernelNewPreset1d = mustGet("kernel-new-window-1d");
 const kernelNewPreset1w = mustGet("kernel-new-window-1w");
 const kernelNewSaveBtn = mustGet("kernel-new-save");
 const kernelNewBadge = mustGet("kernel-new-badge");
+const kernelPubKeysBadge = mustGet("kernel-pubkeys-badge");
+const kernelPubKeysList = mustGet("kernel-pubkeys-list");
+const kernelPubKeyNewToggle = mustGet("kernel-pubkey-new-toggle");
+const kernelPubKeyNewPanel = mustGet("kernel-pubkey-new-panel");
+const kernelPubKeyAppIdInput = mustGet("kernel-pubkey-app-id");
+const kernelPubKeyOwnerInput = mustGet("kernel-pubkey-owner");
+const kernelPubKeyPemInput = mustGet("kernel-pubkey-pem");
+const kernelPubKeyCreateBtn = mustGet("kernel-pubkey-create");
+const kernelPubKeyCreateBadge = mustGet("kernel-pubkey-create-badge");
 let kernelScope = "org";
+let kernelMode = "usage";
 let kernelListLoadId = 0;
 let kernelNewSaving = false;
+let kernelListRecords = [];
+let kernelListScope = "org";
+let kernelListMode = "usage";
+let kernelPubKeys = [];
+let kernelPubKeysLoading = false;
+let kernelPubKeysLoadedAt = 0;
+let kernelPubKeysSaving = false;
+let kernelPolicyState = {
+  available: false,
+  message: "",
+  orgLimits: new Map(),
+  repoLimits: new Map(),
+};
 
 const setBadge = (badge, state, text) => {
   badge.dataset.state = state;
@@ -127,10 +157,31 @@ const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
 const setDefaultsBadge = (state, text) => setBadge(defaultsBadge, state, text);
 const setKernelListBadge = (state, text) => setBadge(kernelListBadge, state, text);
 const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text);
+const setKernelPubKeysBadge = (state, text) => setBadge(kernelPubKeysBadge, state, text);
+const setKernelPubKeyCreateBadge = (state, text) => setBadge(kernelPubKeyCreateBadge, state, text);
+const setKernelAttention = (text) => {
+  if (!text) {
+    kernelAttention.textContent = "";
+    kernelAttention.hidden = true;
+    return;
+  }
+  kernelAttention.textContent = text;
+  kernelAttention.hidden = false;
+};
+
+const resetKernelPolicyState = () => {
+  kernelPolicyState = {
+    available: false,
+    message: "",
+    orgLimits: new Map(),
+    repoLimits: new Map(),
+  };
+};
 
 const getBaseChoice = () => (baseSelect.value === "ai" ? "ai" : "local");
 
-const resolveBaseUrl = () => (getBaseChoice() === "ai" ? "https://ai.ubq.fi" : window.location.origin);
+const resolveBaseUrl = () =>
+  (getBaseChoice() === "ai" ? "https://ai.ubq.fi" : globalThis.location?.origin ?? "http://localhost");
 
 const apiUrl = (path) => new URL(path, resolveBaseUrl()).toString();
 
@@ -213,11 +264,13 @@ const formatOptionalText = (value) => {
   return trimmed ? trimmed : "unknown";
 };
 
-const compactId = (value) => {
+const formatPemPreview = (value) => {
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
-  if (trimmed.length <= 16) return trimmed;
-  return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
+  if (!trimmed) return "";
+  const flattened = trimmed.replace(/\s+/g, "");
+  if (flattened.length <= 20) return flattened;
+  return `${flattened.slice(0, 10)}...${flattened.slice(-6)}`;
 };
 
 const formatLimitValue = (value) => {
@@ -238,6 +291,18 @@ const formatWindowMs = (value) => {
   const label = presets[ms];
   if (label) return `${label} (${formatNumber(ms)} ms)`;
   return `${formatNumber(ms)} ms`;
+};
+
+const formatWindowShort = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
+  const ms = Math.trunc(value);
+  const presets = {
+    60000: "1m",
+    3600000: "1h",
+    86400000: "1d",
+    604800000: "1w",
+  };
+  return presets[ms] ?? `${formatNumber(ms)} ms`;
 };
 
 const pad2 = (value) => String(value).padStart(2, "0");
@@ -308,7 +373,23 @@ const applyIconButton = (button, name, label) => {
   button.appendChild(buildIconSvg(name));
 };
 
+const KERNEL_ACTIVITY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const KERNEL_NEAR_LIMIT_RATIO = 0.8;
+const KERNEL_SHOW_OPTIONS_LIMITS = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Active (30d)" },
+  { value: "near-limit", label: "Near limit" },
+  { value: "no-usage", label: "No usage" },
+];
+const KERNEL_SHOW_OPTIONS_USAGE = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Active (30d)" },
+  { value: "no-usage", label: "No usage" },
+];
+
 applyIconButton(kernelNewSaveBtn, "save", "Save limit");
+applyIconButton(kernelPubKeyNewToggle, "plus", "New key");
+applyIconButton(kernelPubKeyCreateBtn, "save", "Save key");
 
 const setKernelListMessage = (text) => {
   kernelList.textContent = "";
@@ -316,6 +397,296 @@ const setKernelListMessage = (text) => {
   message.dataset.empty = "kernel";
   message.textContent = text;
   kernelList.appendChild(message);
+};
+
+const getKernelListMissingTokenMessage = () =>
+  kernelMode === "usage" ? "Paste an admin token to load usage." : "Paste an admin token to load limits.";
+
+const getKernelListTargetChangedMessage = () =>
+  kernelMode === "usage" ? "Target changed. Loading usage..." : "Target changed. Loading limits...";
+
+const setKernelShowOptions = (options) => {
+  const current = kernelShowSelect.value;
+  kernelShowSelect.textContent = "";
+  options.forEach((option) => {
+    const opt = document.createElement("option");
+    opt.value = option.value;
+    opt.textContent = option.label;
+    kernelShowSelect.appendChild(opt);
+  });
+  const next = options.some((option) => option.value === current) ? current : options[0]?.value ?? "";
+  kernelShowSelect.value = next;
+};
+
+const setKernelMode = (mode) => {
+  kernelMode = mode === "limits" ? "limits" : "usage";
+  setTabState(kernelModeUsage, kernelMode === "usage");
+  setTabState(kernelModeLimits, kernelMode === "limits");
+  kernelHelpUsage.hidden = kernelMode !== "usage";
+  kernelHelpLimits.hidden = kernelMode !== "limits";
+  kernelNewToggle.hidden = kernelMode !== "limits";
+  if (kernelMode !== "usage") {
+    setKernelAttention("");
+  }
+  if (kernelMode !== "limits") {
+    setKernelNewPanelOpen(false);
+  }
+  setKernelShowOptions(kernelMode === "limits" ? KERNEL_SHOW_OPTIONS_LIMITS : KERNEL_SHOW_OPTIONS_USAGE);
+  if (currentAdminView === "kernel") {
+    void loadKernelList();
+  }
+};
+
+const normalizeKernelFilterText = (value) => value.trim().toLowerCase();
+
+const getKernelRecordLabel = (record, scope) => {
+  const owner = typeof record.owner === "string" ? record.owner : "";
+  const repo = typeof record.repo === "string" ? record.repo : "";
+  return scope === "org" ? owner : `${owner}/${repo}`;
+};
+
+const getKernelRecordUsage = (record) => {
+  if (!record || typeof record !== "object") return null;
+  if (Object.prototype.hasOwnProperty.call(record, "usage")) return record.usage;
+  if (Object.prototype.hasOwnProperty.call(record, "total_requests")) return record;
+  return null;
+};
+
+const getKernelUsageLastSeen = (usage) => {
+  if (!usage || typeof usage !== "object") return null;
+  if (typeof usage.last_seen_at_ms !== "number" || !Number.isFinite(usage.last_seen_at_ms)) return null;
+  return Math.trunc(usage.last_seen_at_ms);
+};
+
+const getKernelUsageRequests = (record) => {
+  if (typeof record?.usage_requests === "number" && Number.isFinite(record.usage_requests)) {
+    return Math.trunc(record.usage_requests);
+  }
+  const usage = getKernelRecordUsage(record);
+  if (!usage || typeof usage !== "object") return 0;
+  return toNumber(usage.total_requests);
+};
+
+const isKernelUsageEmpty = (usage) => {
+  if (usage === null) return true;
+  if (!usage || typeof usage !== "object") return false;
+  return toNumber(usage.total_requests) <= 0;
+};
+
+const getKernelLimitValue = (record) => {
+  if (!record || typeof record !== "object") return null;
+  const limit = record.usage_limit_requests;
+  if (typeof limit !== "number" || !Number.isFinite(limit)) return null;
+  return Math.trunc(limit);
+};
+
+const buildKernelPolicySummary = (record, options = {}) => {
+  const warnWhenMissing = options.warnWhenMissing === true;
+  const warnWhenUnlimited = options.warnWhenUnlimited === true;
+  if (!record || typeof record !== "object") {
+    return {
+      text: "Not set",
+      state: warnWhenMissing ? "warning" : "",
+      title: "No limit policy set. Defaults to unlimited.",
+    };
+  }
+  const limitValue = getKernelLimitValue(record);
+  if (limitValue === null) {
+    return {
+      text: "Unknown",
+      state: warnWhenMissing ? "warning" : "",
+      title: "Limit data unavailable.",
+    };
+  }
+  if (limitValue === 0) {
+    return {
+      text: "Blocked",
+      state: "bad",
+      title: "Limit set to 0. Requests blocked.",
+    };
+  }
+  if (limitValue === -1) {
+    return {
+      text: "Unlimited",
+      state: warnWhenUnlimited ? "warning" : "",
+      title: `Unlimited (window ${formatWindowMs(record.window_ms)})`,
+    };
+  }
+  const windowLabel = formatWindowShort(record.window_ms);
+  return {
+    text: `${formatNumber(limitValue)} / ${windowLabel}`,
+    state: "",
+    title: `${formatNumber(limitValue)} requests per ${formatWindowMs(record.window_ms)}`,
+  };
+};
+
+const resolveKernelPolicyStatus = (record, scope, policyState) => {
+  if (!policyState?.available) {
+    return { org: null, repo: null, hasCap: false };
+  }
+  const owner = typeof record?.owner === "string" ? record.owner : "";
+  const repo = typeof record?.repo === "string" ? record.repo : "";
+  const orgLimit = owner ? policyState.orgLimits.get(owner) ?? null : null;
+  const repoLimit = scope === "repo" && owner && repo ? policyState.repoLimits.get(`${owner}/${repo}`) ?? null : null;
+
+  const orgLimitValue = getKernelLimitValue(orgLimit);
+  const repoLimitValue = getKernelLimitValue(repoLimit);
+  const orgHasCap = orgLimitValue !== null && orgLimitValue !== -1;
+  const repoHasCap = repoLimitValue !== null && repoLimitValue !== -1;
+  const hasCap = orgHasCap || repoHasCap;
+
+  const summaryOptions = { warnWhenMissing: !hasCap, warnWhenUnlimited: !hasCap };
+  return {
+    org: buildKernelPolicySummary(orgLimit, summaryOptions),
+    repo: scope === "repo" ? buildKernelPolicySummary(repoLimit, summaryOptions) : null,
+    hasCap,
+  };
+};
+
+const buildKernelPolicyRow = (record, scope, policyState) => {
+  const policyRow = document.createElement("div");
+  policyRow.dataset.keyInfo = "info";
+
+  if (!policyState?.available) {
+    appendKeyInfo(policyRow, "Policy", "Unavailable", { state: "warning" });
+    return policyRow;
+  }
+
+  const policy = resolveKernelPolicyStatus(record, scope, policyState);
+  if (policy.org) {
+    appendKeyInfo(policyRow, "Org limit", policy.org.text, {
+      state: policy.org.state,
+      title: policy.org.title,
+    });
+  }
+  if (scope === "repo") {
+    const repoSummary = policy.repo;
+    appendKeyInfo(policyRow, "Repo limit", repoSummary?.text ?? "Not set", {
+      state: repoSummary?.state ?? "",
+      title: repoSummary?.title,
+    });
+  }
+
+  return policyRow;
+};
+
+const summarizeKernelPolicyCoverage = (records, scope, policyState) => {
+  let total = 0;
+  let unbounded = 0;
+
+  records.forEach((record) => {
+    if (getKernelUsageRequests(record) <= 0) return;
+    total += 1;
+    if (policyState?.available) {
+      const policy = resolveKernelPolicyStatus(record, scope, policyState);
+      if (!policy.hasCap) unbounded += 1;
+    }
+  });
+
+  return { total, unbounded };
+};
+
+const updateKernelAttention = (summary, scope, listMode, policyState) => {
+  if (listMode !== "usage") {
+    setKernelAttention("");
+    return;
+  }
+  const hasUsage = summary?.total > 0;
+  if (!policyState?.available) {
+    if (!hasUsage) {
+      setKernelAttention("");
+      return;
+    }
+    const message = policyState?.message ? `Policy data unavailable: ${policyState.message}` : "Policy data unavailable.";
+    setKernelAttention(message);
+    return;
+  }
+  if (!summary || summary.total === 0 || summary.unbounded === 0) {
+    setKernelAttention("");
+    return;
+  }
+  const label = scope === "org" ? "orgs" : "repos";
+  const countText = `${summary.unbounded} of ${summary.total}`;
+  setKernelAttention(`Attention: ${countText} ${label} with usage have no caps (limits unset or unlimited).`);
+};
+
+const applyKernelFilters = (records, scope, listMode) => {
+  const filterText = normalizeKernelFilterText(kernelFilterInput.value);
+  const filterMode = kernelShowSelect.value;
+  const nowMs = Date.now();
+
+  return records.filter((record) => {
+    const label = getKernelRecordLabel(record, scope).toLowerCase();
+    if (filterText && !label.includes(filterText)) return false;
+
+    const usage = getKernelRecordUsage(record);
+    if (filterMode === "active") {
+      const lastSeen = getKernelUsageLastSeen(usage);
+      return lastSeen !== null && lastSeen >= nowMs - KERNEL_ACTIVITY_WINDOW_MS;
+    }
+    if (filterMode === "near-limit") {
+      if (listMode !== "limits") return false;
+      const limit = typeof record.usage_limit_requests === "number" ? record.usage_limit_requests : null;
+      if (limit === null || limit <= 0 || limit === -1) return false;
+      const current = getKernelUsageRequests(record);
+      return current / limit >= KERNEL_NEAR_LIMIT_RATIO;
+    }
+    if (filterMode === "no-usage") {
+      return isKernelUsageEmpty(usage);
+    }
+    return true;
+  });
+};
+
+const sortKernelRecords = (records, scope) => {
+  const mode = kernelSortSelect.value;
+  const sorted = [...records];
+  sorted.sort((a, b) => {
+    if (mode === "recent") {
+      const aSeen = getKernelUsageLastSeen(getKernelRecordUsage(a)) ?? 0;
+      const bSeen = getKernelUsageLastSeen(getKernelRecordUsage(b)) ?? 0;
+      if (aSeen !== bSeen) return bSeen - aSeen;
+    } else if (mode === "usage") {
+      const aUsage = getKernelUsageRequests(a);
+      const bUsage = getKernelUsageRequests(b);
+      if (aUsage !== bUsage) return bUsage - aUsage;
+    }
+    const ownerCmp = (typeof a.owner === "string" ? a.owner : "").localeCompare(
+      typeof b.owner === "string" ? b.owner : "",
+    );
+    if (ownerCmp !== 0) return ownerCmp;
+    if (scope === "org") return 0;
+    return (typeof a.repo === "string" ? a.repo : "").localeCompare(typeof b.repo === "string" ? b.repo : "");
+  });
+  return sorted;
+};
+
+const formatKernelListBadge = (visible, total, listMode) => {
+  const label = listMode === "usage" ? "entry" : "limit";
+  const plural = listMode === "usage" ? "entries" : "limits";
+  if (total === 0) return `No ${plural}`;
+  if (visible === total) return `${total} ${total === 1 ? label : plural}`;
+  return `${visible}/${total} shown`;
+};
+
+const refreshKernelList = () => {
+  if (!Array.isArray(kernelListRecords)) {
+    setKernelListMessage(kernelListMode === "usage" ? "No usage yet." : "No limits yet.");
+    setKernelListBadge("ok", formatKernelListBadge(0, 0, kernelListMode));
+    return;
+  }
+  const result = renderKernelList(kernelListRecords, kernelListScope, kernelListMode, kernelPolicyState);
+  setKernelListBadge("ok", formatKernelListBadge(result.visible, result.total, kernelListMode));
+};
+
+const refreshKernelListDebounced = debounce(refreshKernelList, 250);
+
+const setKernelPubKeysMessage = (text) => {
+  kernelPubKeysList.textContent = "";
+  const message = document.createElement("p");
+  message.dataset.empty = "kernel-pubkeys";
+  message.textContent = text;
+  kernelPubKeysList.appendChild(message);
 };
 
 const setKernelScope = (scope) => {
@@ -342,6 +713,21 @@ const resetKernelNewForm = () => {
   kernelNewLimitInput.value = "-1";
   kernelNewWindowInput.value = "";
   setKernelNewBadge("unknown", "Idle");
+};
+
+const resetKernelPubKeyForm = () => {
+  kernelPubKeyAppIdInput.value = "";
+  kernelPubKeyOwnerInput.value = "";
+  kernelPubKeyPemInput.value = "";
+  setKernelPubKeyCreateBadge("unknown", "Idle");
+};
+
+const setKernelPubKeyNewPanelOpen = (open) => {
+  kernelPubKeyNewPanel.hidden = !open;
+  applyIconButton(kernelPubKeyNewToggle, open ? "close" : "plus", open ? "Close new key" : "New key");
+  if (!open) {
+    resetKernelPubKeyForm();
+  }
 };
 
 const setKernelNewWindowPreset = (ms) => {
@@ -446,22 +832,78 @@ const saveNewKernelLimit = async () => {
   }
 };
 
+const fetchKernelLimitList = async (token, scope) => {
+  try {
+    const url = new URL(apiUrl("/admin/kernel-usage"));
+    url.searchParams.set("scope", scope);
+    url.searchParams.set("list", "1");
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      return { ok: false, message: data?.error?.message ?? "Error", limits: [] };
+    }
+    return { ok: true, message: "", limits: Array.isArray(data?.limits) ? data.limits : [] };
+  } catch {
+    return { ok: false, message: "Offline", limits: [] };
+  }
+};
+
+const loadKernelPolicyState = async (token, scope) => {
+  const orgResult = await fetchKernelLimitList(token, "org");
+  if (!orgResult.ok) {
+    return { available: false, message: orgResult.message, orgLimits: new Map(), repoLimits: new Map() };
+  }
+  const orgLimits = new Map();
+  orgResult.limits.forEach((record) => {
+    const owner = typeof record?.owner === "string" ? record.owner : "";
+    if (owner) orgLimits.set(owner, record);
+  });
+
+  const repoLimits = new Map();
+  if (scope === "repo") {
+    const repoResult = await fetchKernelLimitList(token, "repo");
+    if (!repoResult.ok) {
+      return { available: false, message: repoResult.message, orgLimits: new Map(), repoLimits: new Map() };
+    }
+    repoResult.limits.forEach((record) => {
+      const owner = typeof record?.owner === "string" ? record.owner : "";
+      const repo = typeof record?.repo === "string" ? record.repo : "";
+      if (owner && repo) repoLimits.set(`${owner}/${repo}`, record);
+    });
+  }
+
+  return { available: true, message: "", orgLimits, repoLimits };
+};
+
 const loadKernelList = async () => {
   const token = getAdminToken();
   if (!token) {
     setKernelListBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
-    setKernelListMessage("Paste an admin token to load limits.");
+    setKernelListMessage(getKernelListMissingTokenMessage());
+    resetKernelPolicyState();
+    setKernelAttention("");
     return;
   }
 
   const loadId = ++kernelListLoadId;
   setKernelListBadge("unknown", "Loading...");
+  resetKernelPolicyState();
+  setKernelAttention("");
 
   try {
     const url = new URL(apiUrl("/admin/kernel-usage"));
     url.searchParams.set("scope", kernelScope);
     url.searchParams.set("list", "1");
+    if (kernelMode === "usage") {
+      url.searchParams.set("inventory", "1");
+    } else {
+      url.searchParams.set("include_usage", "1");
+    }
 
     const res = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${token}` },
@@ -477,9 +919,19 @@ const loadKernelList = async () => {
     }
 
     const scope = data?.scope === "org" ? "org" : "repo";
-    const limits = Array.isArray(data?.limits) ? data.limits : [];
-    renderKernelList(limits, scope);
-    setKernelListBadge("ok", `${limits.length} limit${limits.length === 1 ? "" : "s"}`);
+    if (kernelMode === "usage") {
+      const policyState = await loadKernelPolicyState(token, scope);
+      if (loadId !== kernelListLoadId) return;
+      kernelPolicyState = policyState;
+    }
+    const records = kernelMode === "usage"
+      ? (Array.isArray(data?.usage) ? data.usage : [])
+      : (Array.isArray(data?.limits) ? data.limits : []);
+    kernelListRecords = records;
+    kernelListScope = scope;
+    kernelListMode = kernelMode;
+    const result = renderKernelList(records, scope, kernelMode, kernelPolicyState);
+    setKernelListBadge("ok", formatKernelListBadge(result.visible, result.total, kernelMode));
   } catch {
     if (loadId !== kernelListLoadId) return;
     setKernelListBadge("bad", "Offline");
@@ -487,14 +939,76 @@ const loadKernelList = async () => {
   }
 };
 
-const renderKernelList = (limits, scope) => {
-  kernelList.textContent = "";
-  if (!Array.isArray(limits) || limits.length === 0) {
-    setKernelListMessage("No limits yet.");
-    return;
+const renderKernelUsageRow = (record, scope, policyState) => {
+  if (!record || typeof record !== "object") return;
+  const owner = typeof record.owner === "string" ? record.owner : "";
+  const repo = typeof record.repo === "string" ? record.repo : "";
+  const displayOwner = owner || "unknown";
+  const displayRepo = repo || "unknown";
+  const titleText = scope === "org" ? displayOwner : `${displayOwner}/${displayRepo}`;
+
+  const row = document.createElement("article");
+  row.dataset.key = "kernel-usage";
+
+  const usage = getKernelRecordUsage(record);
+  const lastSeen = getKernelUsageLastSeen(usage);
+  if (lastSeen && lastSeen >= Date.now() - KERNEL_ACTIVITY_WINDOW_MS) {
+    row.dataset.state = "active";
   }
 
-  limits.forEach((limit) => {
+  const main = document.createElement("div");
+  main.dataset.keyMain = "main";
+
+  const header = document.createElement("div");
+  header.dataset.keyHeader = "header";
+
+  const title = document.createElement("div");
+  title.dataset.keyTitle = "title";
+  title.textContent = titleText;
+
+  header.appendChild(title);
+  main.appendChild(header);
+
+  const infoRow = document.createElement("div");
+  infoRow.dataset.keyInfo = "info";
+  appendKeyInfo(infoRow, "Requests", formatNumber(usage?.total_requests));
+  appendKeyInfo(infoRow, "Tokens", formatNumber(usage?.total_tokens));
+  const errorCount = toNumber(usage?.error_requests);
+  appendKeyInfo(infoRow, "Errors", formatNumber(errorCount), { state: errorCount > 0 ? "bad" : "" });
+  appendKeyInfo(infoRow, "Last seen", formatDate(usage?.last_seen_at_ms));
+  main.appendChild(infoRow);
+  main.appendChild(buildKernelPolicyRow(record, scope, policyState));
+
+  main.appendChild(buildUsageDetails(usage));
+  row.appendChild(main);
+  kernelList.appendChild(row);
+};
+
+const renderKernelList = (records, scope, listMode, policyState = kernelPolicyState) => {
+  kernelList.textContent = "";
+  if (!Array.isArray(records) || records.length === 0) {
+    setKernelListMessage(listMode === "usage" ? "No usage yet." : "No limits yet.");
+    updateKernelAttention({ total: 0, unbounded: 0 }, scope, listMode, policyState);
+    return { total: 0, visible: 0 };
+  }
+
+  const filtered = sortKernelRecords(applyKernelFilters(records, scope, listMode), scope);
+  if (!filtered.length) {
+    setKernelListMessage("No matches.");
+    updateKernelAttention({ total: 0, unbounded: 0 }, scope, listMode, policyState);
+    return { total: records.length, visible: 0 };
+  }
+
+  if (listMode === "usage") {
+    filtered.forEach((record) => {
+      renderKernelUsageRow(record, scope, policyState);
+    });
+    const summary = summarizeKernelPolicyCoverage(filtered, scope, policyState);
+    updateKernelAttention(summary, scope, listMode, policyState);
+    return { total: records.length, visible: filtered.length };
+  }
+
+  filtered.forEach((limit) => {
     if (!limit || typeof limit !== "object") return;
     const record = { ...limit };
     const owner = typeof record.owner === "string" ? record.owner : "";
@@ -637,6 +1151,11 @@ const renderKernelList = (limits, scope) => {
     editPanel.appendChild(editHelp);
 
     main.appendChild(editPanel);
+    const hasUsageField = Object.prototype.hasOwnProperty.call(record, "usage");
+    const usage = hasUsageField ? record.usage : undefined;
+    if (hasUsageField) {
+      main.appendChild(buildUsageDetails(usage));
+    }
     row.appendChild(main);
     kernelList.appendChild(row);
 
@@ -799,6 +1318,9 @@ const renderKernelList = (limits, scope) => {
     limitInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
     windowInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
   });
+
+  updateKernelAttention(null, scope, listMode, policyState);
+  return { total: records.length, visible: filtered.length };
 };
 
 const appendMetaItem = (container, label, value, options = {}) => {
@@ -842,6 +1364,281 @@ const appendKeyInfo = (container, label, value, options = {}) => {
   item.appendChild(valueEl);
   container.appendChild(item);
   return { item, valueEl };
+};
+
+const normalizeKernelPubKeyAppId = (value) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+};
+
+const normalizeKernelPubKeyOwner = (value) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const normalizeKernelPubKeyPem = (value) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!trimmed.startsWith("-----BEGIN PUBLIC KEY-----") || !trimmed.endsWith("-----END PUBLIC KEY-----")) return null;
+  return trimmed;
+};
+
+const renderKernelPubKeys = (records) => {
+  kernelPubKeysList.textContent = "";
+  if (!Array.isArray(records) || records.length === 0) {
+    setKernelPubKeysMessage("No public keys yet.");
+    return;
+  }
+
+  const sorted = [...records].sort((a, b) => {
+    const aId = typeof a?.app_id === "number" ? a.app_id : 0;
+    const bId = typeof b?.app_id === "number" ? b.app_id : 0;
+    return aId - bId;
+  });
+
+  sorted.forEach((record) => {
+    if (!record || typeof record !== "object") return;
+    const appId = typeof record.app_id === "number" ? Math.trunc(record.app_id) : null;
+    const owner = typeof record.owner === "string" ? record.owner : "";
+    const pem = typeof record.pem === "string" ? record.pem : "";
+    const addedAt = typeof record.added_at_ms === "number" ? record.added_at_ms : null;
+
+    const row = document.createElement("article");
+    row.dataset.key = "kernel-pubkey";
+    row.dataset.state = "active";
+
+    const main = document.createElement("div");
+    main.dataset.keyMain = "main";
+
+    const header = document.createElement("div");
+    header.dataset.keyHeader = "header";
+
+    const title = document.createElement("div");
+    title.dataset.keyTitle = "title";
+    title.textContent = appId ? `App ${appId}` : "App ID unknown";
+
+    const controls = document.createElement("div");
+    controls.dataset.keyControls = "controls";
+
+    const actionRow = document.createElement("div");
+    actionRow.dataset.actionRow = "actions";
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.dataset.variant = "danger";
+    applyIconButton(deleteBtn, "trash", appId ? `Delete App ${appId}` : "Delete public key");
+
+    actionRow.appendChild(deleteBtn);
+    controls.appendChild(actionRow);
+    header.appendChild(title);
+    header.appendChild(controls);
+
+    const infoRow = document.createElement("div");
+    infoRow.dataset.keyInfo = "info";
+    appendKeyInfo(infoRow, "App ID", appId ? String(appId) : "unknown", { mono: true });
+    appendKeyInfo(infoRow, "Owner", formatOptionalText(owner));
+    appendKeyInfo(infoRow, "Added", formatDate(addedAt));
+
+    main.appendChild(header);
+    main.appendChild(infoRow);
+
+    if (pem) {
+      const details = document.createElement("details");
+      details.dataset.usage = "details";
+
+      const summary = document.createElement("summary");
+      summary.dataset.usageTitle = "title";
+
+      const label = document.createElement("span");
+      label.dataset.usageLabel = "label";
+      label.textContent = "Public key";
+
+      const summaryMeta = document.createElement("span");
+      summaryMeta.dataset.usageSummary = "summary";
+      summaryMeta.textContent = formatPemPreview(pem) || "PEM";
+
+      summary.appendChild(label);
+      summary.appendChild(summaryMeta);
+      details.appendChild(summary);
+
+      const pre = document.createElement("pre");
+      pre.dataset.code = "pem";
+      pre.textContent = pem;
+      details.appendChild(pre);
+
+      main.appendChild(details);
+    }
+
+    row.appendChild(main);
+    kernelPubKeysList.appendChild(row);
+
+    if (appId) {
+      deleteBtn.addEventListener("click", () => {
+        void deleteKernelPubKey(appId, deleteBtn);
+      });
+    } else {
+      deleteBtn.disabled = true;
+    }
+  });
+};
+
+const refreshKernelPubKeys = async () => {
+  const token = getAdminToken();
+  if (!token) {
+    setKernelPubKeysBadge("bad", "Missing token");
+    setKernelPubKeysMessage("Paste an admin token to load public keys.");
+    return;
+  }
+
+  if (kernelPubKeysLoading) return;
+  kernelPubKeysLoading = true;
+  setKernelPubKeysBadge("unknown", "Loading...");
+
+  try {
+    const res = await fetch(apiUrl("/admin/kernel-pubkeys"), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setKernelPubKeysBadge("bad", data?.error?.message ?? "Error");
+      setKernelPubKeysMessage("Failed to load public keys.");
+      return;
+    }
+
+    const records = Array.isArray(data?.data) ? data.data : [];
+    kernelPubKeys = records;
+    kernelPubKeysLoadedAt = Date.now();
+    renderKernelPubKeys(records);
+    setKernelPubKeysBadge("ok", `${records.length} key${records.length === 1 ? "" : "s"}`);
+  } catch {
+    kernelPubKeys = [];
+    setKernelPubKeysBadge("bad", "Offline");
+    setKernelPubKeysMessage("Failed to load public keys.");
+  } finally {
+    kernelPubKeysLoading = false;
+  }
+};
+
+const ensureKernelPubKeysLoaded = async () => {
+  if (currentAdminView !== "kernel") return;
+  if (kernelPubKeysLoading) return;
+  const token = getAdminToken();
+  if (!token) {
+    setKernelPubKeysBadge("bad", "Missing token");
+    setKernelPubKeysMessage("Paste an admin token to load public keys.");
+    return;
+  }
+  if (kernelPubKeysLoadedAt && Date.now() - kernelPubKeysLoadedAt < 10_000) {
+    setKernelPubKeysBadge("ok", `${kernelPubKeys.length} key${kernelPubKeys.length === 1 ? "" : "s"}`);
+    return;
+  }
+  await refreshKernelPubKeys();
+};
+
+const createKernelPubKey = async () => {
+  if (kernelPubKeysSaving) return;
+  const token = getAdminToken();
+  if (!token) {
+    setKernelPubKeyCreateBadge("bad", "Missing token");
+    setAuthBadge("bad", "Missing token");
+    tokenInput.focus();
+    return;
+  }
+
+  const appIdRaw = kernelPubKeyAppIdInput.value;
+  const appId = normalizeKernelPubKeyAppId(appIdRaw);
+  if (!appId) {
+    setKernelPubKeyCreateBadge("bad", appIdRaw.trim() ? "App ID must be a number" : "App ID required");
+    kernelPubKeyAppIdInput.focus();
+    return;
+  }
+
+  const pemRaw = kernelPubKeyPemInput.value;
+  const pem = normalizeKernelPubKeyPem(pemRaw);
+  if (!pem) {
+    setKernelPubKeyCreateBadge("bad", pemRaw.trim() ? "Invalid PEM" : "PEM required");
+    kernelPubKeyPemInput.focus();
+    return;
+  }
+
+  const owner = normalizeKernelPubKeyOwner(kernelPubKeyOwnerInput.value);
+
+  kernelPubKeysSaving = true;
+  kernelPubKeyCreateBtn.disabled = true;
+  setKernelPubKeyCreateBadge("unknown", "Saving...");
+
+  try {
+    const payload = { app_id: appId, pem };
+    if (owner) payload.owner = owner;
+
+    const res = await fetch(apiUrl("/admin/kernel-pubkeys"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setKernelPubKeyCreateBadge("bad", data?.error?.message ?? "Error");
+      return;
+    }
+
+    kernelPubKeyAppIdInput.value = "";
+    kernelPubKeyOwnerInput.value = "";
+    kernelPubKeyPemInput.value = "";
+    setKernelPubKeyCreateBadge("ok", "Saved");
+    setKernelPubKeyNewPanelOpen(false);
+    await refreshKernelPubKeys();
+  } catch {
+    setKernelPubKeyCreateBadge("bad", "Offline");
+  } finally {
+    kernelPubKeysSaving = false;
+    kernelPubKeyCreateBtn.disabled = false;
+  }
+};
+
+const deleteKernelPubKey = async (appId, button) => {
+  const token = getAdminToken();
+  if (!token) {
+    setKernelPubKeysBadge("bad", "Missing token");
+    setAuthBadge("bad", "Missing token");
+    tokenInput.focus();
+    return;
+  }
+  if (!confirm(`Delete public key for App ${appId}?`)) return;
+
+  setKernelPubKeysBadge("unknown", "Deleting...");
+  if (button) button.disabled = true;
+
+  try {
+    const url = new URL(apiUrl("/admin/kernel-pubkeys"));
+    url.searchParams.set("app_id", String(appId));
+    const res = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setKernelPubKeysBadge("bad", data?.error?.message ?? "Error");
+      return;
+    }
+    await refreshKernelPubKeys();
+  } catch {
+    setKernelPubKeysBadge("bad", "Offline");
+  } finally {
+    if (button) button.disabled = false;
+  }
 };
 
 const appendUsagePill = (container, label, value = "", options = {}) => {
@@ -937,7 +1734,15 @@ const buildUsageSummary = (usage) => {
   const summary = document.createElement("div");
   summary.dataset.usageSummary = "summary";
 
-  if (!usage || typeof usage !== "object") {
+  if (usage === undefined) {
+    appendUsagePill(summary, "Unavailable");
+    return summary;
+  }
+  if (usage === null) {
+    appendUsagePill(summary, "No data");
+    return summary;
+  }
+  if (typeof usage !== "object") {
     appendUsagePill(summary, "Unavailable");
     return summary;
   }
@@ -964,6 +1769,66 @@ const buildUsageSummary = (usage) => {
   }
 
   return summary;
+};
+
+const buildUsageDetails = (usage) => {
+  const usageSection = document.createElement("details");
+  usageSection.dataset.usage = "details";
+
+  const usageTitle = document.createElement("summary");
+  usageTitle.dataset.usageTitle = "title";
+
+  const usageLabel = document.createElement("span");
+  usageLabel.dataset.usageLabel = "label";
+  usageLabel.textContent = "Usage";
+
+  usageTitle.appendChild(usageLabel);
+  usageTitle.appendChild(buildUsageSummary(usage));
+  usageSection.appendChild(usageTitle);
+
+  const sparkline = buildUsageSparkline(usage);
+  if (sparkline) usageSection.appendChild(sparkline);
+
+  if (usage === undefined) {
+    const empty = document.createElement("div");
+    empty.dataset.usageEmpty = "empty";
+    empty.textContent = "Usage unavailable.";
+    usageSection.appendChild(empty);
+  } else if (usage === null) {
+    const empty = document.createElement("div");
+    empty.dataset.usageEmpty = "empty";
+    empty.textContent = "No usage yet.";
+    usageSection.appendChild(empty);
+  } else if (typeof usage !== "object") {
+    const empty = document.createElement("div");
+    empty.dataset.usageEmpty = "empty";
+    empty.textContent = "Usage unavailable.";
+    usageSection.appendChild(empty);
+  } else if (Object.keys(usage).length === 0) {
+    const empty = document.createElement("div");
+    empty.dataset.usageEmpty = "empty";
+    empty.textContent = "No usage yet.";
+    usageSection.appendChild(empty);
+  } else {
+    const usageList = document.createElement("div");
+    usageList.dataset.usageList = "list";
+    appendMetaItem(usageList, "Requests", formatNumber(usage.total_requests));
+    appendMetaItem(usageList, "Completed", formatNumber(usage.completed_requests));
+    const errorCount = toNumber(usage.error_requests);
+    appendMetaItem(usageList, "Errors", formatNumber(errorCount), { state: errorCount > 0 ? "bad" : "" });
+    appendMetaItem(usageList, "Stream", formatNumber(usage.stream_requests));
+    appendMetaItem(usageList, "Non-stream", formatNumber(usage.non_stream_requests));
+    appendMetaItem(usageList, "Tokens in", formatNumber(usage.input_tokens));
+    appendMetaItem(usageList, "Tokens out", formatNumber(usage.output_tokens));
+    appendMetaItem(usageList, "Tokens total", formatNumber(usage.total_tokens));
+    appendMetaItem(usageList, "First seen", formatDate(usage.first_seen_at_ms));
+    appendMetaItem(usageList, "Last seen", formatDate(usage.last_seen_at_ms));
+    appendMetaItem(usageList, "Last model", formatOptionalText(usage.last_model), { mono: true });
+    appendMetaItem(usageList, "Last route", formatOptionalText(usage.last_route));
+    usageSection.appendChild(usageList);
+  }
+
+  return usageSection;
 };
 
 const renderKeys = (keys, view = "all") => {
@@ -1348,53 +2213,7 @@ const renderKeys = (keys, view = "all") => {
     const usage = hasUsageField ? key.usage : undefined;
 
     if (hasUsageField) {
-      const usageSection = document.createElement("details");
-      usageSection.dataset.usage = "details";
-
-      const usageTitle = document.createElement("summary");
-      usageTitle.dataset.usageTitle = "title";
-
-      const usageLabel = document.createElement("span");
-      usageLabel.dataset.usageLabel = "label";
-      usageLabel.textContent = "Usage";
-
-      usageTitle.appendChild(usageLabel);
-      usageTitle.appendChild(buildUsageSummary(usage));
-      usageSection.appendChild(usageTitle);
-
-      const sparkline = buildUsageSparkline(usage);
-      if (sparkline) usageSection.appendChild(sparkline);
-
-      if (!usage || typeof usage !== "object") {
-        const empty = document.createElement("div");
-        empty.dataset.usageEmpty = "empty";
-        empty.textContent = "Usage unavailable.";
-        usageSection.appendChild(empty);
-      } else if (Object.keys(usage).length === 0) {
-        const empty = document.createElement("div");
-        empty.dataset.usageEmpty = "empty";
-        empty.textContent = "No usage yet.";
-        usageSection.appendChild(empty);
-      } else {
-        const usageList = document.createElement("div");
-        usageList.dataset.usageList = "list";
-        appendMetaItem(usageList, "Requests", formatNumber(usage.total_requests));
-        appendMetaItem(usageList, "Completed", formatNumber(usage.completed_requests));
-        const errorCount = toNumber(usage.error_requests);
-        appendMetaItem(usageList, "Errors", formatNumber(errorCount), { state: errorCount > 0 ? "bad" : "" });
-        appendMetaItem(usageList, "Stream", formatNumber(usage.stream_requests));
-        appendMetaItem(usageList, "Non-stream", formatNumber(usage.non_stream_requests));
-        appendMetaItem(usageList, "Tokens in", formatNumber(usage.input_tokens));
-        appendMetaItem(usageList, "Tokens out", formatNumber(usage.output_tokens));
-        appendMetaItem(usageList, "Tokens total", formatNumber(usage.total_tokens));
-        appendMetaItem(usageList, "First seen", formatDate(usage.first_seen_at_ms));
-        appendMetaItem(usageList, "Last seen", formatDate(usage.last_seen_at_ms));
-        appendMetaItem(usageList, "Last model", formatOptionalText(usage.last_model), { mono: true });
-        appendMetaItem(usageList, "Last route", formatOptionalText(usage.last_route));
-        usageSection.appendChild(usageList);
-      }
-
-      main.appendChild(usageSection);
+      main.appendChild(buildUsageDetails(usage));
     }
 
     row.appendChild(main);
@@ -1423,8 +2242,7 @@ const viewSections = {
 };
 
 const setAdminView = (view) => {
-  const normalized = view === "reasoning" ? "defaults" : view;
-  const nextView = viewSections[normalized] ? normalized : "session";
+  const nextView = viewSections[view] ? view : "session";
   currentAdminView = nextView;
   Object.entries(viewSections).forEach(([key, section]) => {
     section.hidden = key !== nextView;
@@ -1441,6 +2259,7 @@ const setAdminView = (view) => {
   }
   if (nextView === "kernel") {
     void loadKernelList();
+    void ensureKernelPubKeysLoaded();
   }
 };
 
@@ -1826,7 +2645,6 @@ const loadDefaults = async () => {
     }
     const snapshot = modelsPayload?.data ?? null;
     const models = Array.isArray(snapshot?.models) ? snapshot.models.filter((model) => typeof model?.slug === "string") : [];
-    defaultsModels = models;
     defaultsModelMap = new Map(models.map((model) => [model.slug, model]));
     updateDefaultsMeta(snapshot, models);
 
@@ -1906,11 +2724,18 @@ setKeysBadge("unknown", "Not loaded");
 setDefaultsBadge("unknown", "Idle");
 setKernelListBadge("unknown", "Not loaded");
 setKernelNewBadge("unknown", "Idle");
+setKernelPubKeysBadge("unknown", "Not loaded");
+setKernelPubKeyCreateBadge("unknown", "Idle");
 setKeyListMessage("Paste an admin token to load keys.");
-setKernelListMessage("Paste an admin token to load limits.");
+setKernelListMessage(getKernelListMissingTokenMessage());
+setKernelPubKeysMessage("Paste an admin token to load public keys.");
+kernelFilterInput.value = "";
+kernelShowSelect.value = "all";
 switchKeysView("all");
+setKernelMode("usage");
 setKernelScope("org");
 setKernelNewPanelOpen(false);
+setKernelPubKeyNewPanelOpen(false);
 setAdminView(storage.get(STORAGE_KEYS.view) ?? "session");
 if (getAdminToken()) scheduleTokenCheck();
 
@@ -1922,13 +2747,18 @@ tokenInput.addEventListener("input", () => {
   persistTokenIfEnabled();
   keysLoadedAt = 0;
   defaultsLoaded = false;
+  kernelPubKeysLoadedAt = 0;
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
     setKeysBadge("unknown", "Not loaded");
     setKeyListMessage("Paste an admin token to load keys.");
     setKernelListBadge("unknown", "Not loaded");
-    setKernelListMessage("Paste an admin token to load limits.");
+    setKernelListMessage(getKernelListMissingTokenMessage());
+    setKernelPubKeysBadge("unknown", "Not loaded");
+    setKernelPubKeysMessage("Paste an admin token to load public keys.");
     allKeys = [];
+    kernelPubKeys = [];
+    kernelPubKeysLoadedAt = 0;
   } else {
     setAuthBadge("unknown", "Checking...");
   }
@@ -1941,6 +2771,7 @@ tokenInput.addEventListener("input", () => {
   }
   if (currentAdminView === "kernel") {
     void loadKernelList();
+    void ensureKernelPubKeysLoaded();
   }
 });
 
@@ -1963,13 +2794,19 @@ baseSelect.addEventListener("change", () => {
   setDefaultsBadge("unknown", "Idle");
   setKernelListBadge("unknown", "Not loaded");
   setKernelNewBadge("unknown", "Idle");
+  setKernelPubKeysBadge("unknown", "Not loaded");
+  setKernelPubKeyCreateBadge("unknown", "Idle");
   setKeyListMessage("Target changed. Loading keys...");
-  setKernelListMessage("Target changed. Loading limits...");
+  setKernelListMessage(getKernelListTargetChangedMessage());
+  setKernelPubKeysMessage("Target changed. Loading public keys...");
   clearCreateResult();
   setKernelNewPanelOpen(false);
+  setKernelPubKeyNewPanelOpen(false);
   allKeys = [];
   keysLoadedAt = 0;
   defaultsLoaded = false;
+  kernelPubKeys = [];
+  kernelPubKeysLoadedAt = 0;
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
     void ensureKeysLoaded();
@@ -1979,6 +2816,7 @@ baseSelect.addEventListener("change", () => {
   }
   if (currentAdminView === "kernel") {
     void loadKernelList();
+    void ensureKernelPubKeysLoaded();
   }
 });
 
@@ -1990,6 +2828,9 @@ viewTabSession.addEventListener("click", () => setAdminView("session"));
 viewTabKeys.addEventListener("click", () => setAdminView("keys"));
 viewTabKernel.addEventListener("click", () => setAdminView("kernel"));
 viewTabDefaults.addEventListener("click", () => setAdminView("defaults"));
+
+kernelModeUsage.addEventListener("click", () => setKernelMode("usage"));
+kernelModeLimits.addEventListener("click", () => setKernelMode("limits"));
 
 createKeyBtn.addEventListener("click", () => {
   void createKey();
@@ -2013,6 +2854,12 @@ kernelNewToggle.addEventListener("click", () => {
   const nextOpen = kernelNewPanel.hidden;
   setKernelNewPanelOpen(nextOpen);
   if (nextOpen) kernelNewOwnerInput.focus();
+});
+
+kernelPubKeyNewToggle.addEventListener("click", () => {
+  const nextOpen = kernelPubKeyNewPanel.hidden;
+  setKernelPubKeyNewPanelOpen(nextOpen);
+  if (nextOpen) kernelPubKeyAppIdInput.focus();
 });
 
 kernelNewPreset1m.addEventListener("click", () => {
@@ -2040,6 +2887,23 @@ kernelNewOwnerInput.addEventListener("input", () => setKernelNewBadge("unknown",
 kernelNewRepoInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
 kernelNewLimitInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
 kernelNewWindowInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
+
+kernelFilterInput.addEventListener("input", () => {
+  refreshKernelListDebounced();
+});
+kernelShowSelect.addEventListener("change", () => {
+  refreshKernelList();
+});
+kernelSortSelect.addEventListener("change", () => {
+  refreshKernelList();
+});
+
+kernelPubKeyCreateBtn.addEventListener("click", () => {
+  void createKernelPubKey();
+});
+kernelPubKeyAppIdInput.addEventListener("input", () => setKernelPubKeyCreateBadge("unknown", "Editing..."));
+kernelPubKeyOwnerInput.addEventListener("input", () => setKernelPubKeyCreateBadge("unknown", "Editing..."));
+kernelPubKeyPemInput.addEventListener("input", () => setKernelPubKeyCreateBadge("unknown", "Editing..."));
 
 keysTabAll.addEventListener("click", () => switchKeysView("all"));
 keysTabActive.addEventListener("click", () => switchKeysView("active"));

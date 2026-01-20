@@ -25,7 +25,7 @@ const parseDurationMs = (value) => {
 
 const resolveDefaultDurationMs = () => {
   if (cachedDefaultDurationMs !== null) return cachedDefaultDurationMs;
-  if (typeof window === "undefined" || typeof getComputedStyle !== "function") {
+  if (typeof document === "undefined" || typeof getComputedStyle !== "function") {
     cachedDefaultDurationMs = DEFAULT_DURATION_MS;
     return cachedDefaultDurationMs;
   }
@@ -61,7 +61,8 @@ const resolveOriginKey = (input) => {
   try {
     if (input instanceof Request) return new URL(input.url).origin;
     if (input instanceof URL) return input.origin;
-    const url = new URL(typeof input === "string" ? input : String(input), window.location.href);
+    const baseUrl = globalThis.location?.href ?? "http://localhost";
+    const url = new URL(typeof input === "string" ? input : String(input), baseUrl);
     return url.origin;
   } catch {
     return DEFAULT_ORIGIN_KEY;
@@ -109,11 +110,11 @@ const renderNetworkTrace = (originKey) => {
 };
 
 const installNetworkTrace = () => {
-  if (window[INSTALL_FLAG]) return;
-  window[INSTALL_FLAG] = true;
-  if (typeof window.fetch !== "function") return;
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = (...args) => {
+  if (globalThis[INSTALL_FLAG]) return;
+  globalThis[INSTALL_FLAG] = true;
+  if (typeof globalThis.fetch !== "function") return;
+  const nativeFetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (...args) => {
     const startMs = performance.now();
     const originKey = resolveOriginKey(args[0]);
     renderNetworkTrace(originKey);

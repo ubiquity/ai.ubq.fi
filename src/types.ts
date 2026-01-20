@@ -71,6 +71,18 @@ export type KernelAuthUsageRecord = Readonly<{
   last_route: string | null;
 }>;
 
+export type KernelAuthUsageDay = Readonly<{
+  day: string;
+  request_count: number;
+}>;
+
+export type KernelAuthUsageDailyRecord = Readonly<{
+  owner: string;
+  repo: string;
+  days: KernelAuthUsageDay[];
+  updated_at_ms: number;
+}>;
+
 export type KernelAuthLimitRecord = Readonly<{
   owner: string;
   repo: string;
@@ -96,6 +108,17 @@ export type KernelOrgUsageRecord = Readonly<{
   last_seen_at_ms: number;
   last_model: string | null;
   last_route: string | null;
+}>;
+
+export type KernelOrgUsageDay = Readonly<{
+  day: string;
+  request_count: number;
+}>;
+
+export type KernelOrgUsageDailyRecord = Readonly<{
+  owner: string;
+  days: KernelOrgUsageDay[];
+  updated_at_ms: number;
 }>;
 
 export type KernelOrgLimitRecord = Readonly<{

@@ -2,9 +2,9 @@ import { config } from "./config.ts";
 import {
   CODEX_KV_KEY,
   buildCodexRequest,
-  codexInstructionsPromise,
   checkCodexAuthRefresh,
   fetchCodexResponses,
+  getCodexInstructions,
   getJwtExpMs,
   parseCodexAuthFromAuthJson,
 } from "./codex.ts";
@@ -26,9 +26,9 @@ export const handleHealth = async (): Promise<Response> => {
     problems.push("No UOS_AI_TOKEN and Deno KV unavailable");
   }
   try {
-    await codexInstructionsPromise;
+    await getCodexInstructions();
   } catch {
-    problems.push("CODEX instructions missing (codex_instructions.md)");
+    problems.push("CODEX instructions missing (env/KV or codex_instructions.md)");
   }
   return json(problems.length === 0 ? 200 : 500, {
     ok: problems.length === 0,

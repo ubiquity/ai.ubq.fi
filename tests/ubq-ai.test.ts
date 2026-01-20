@@ -527,6 +527,22 @@ Deno.test("ubq-ai: admin keys revoke posts id", async () => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const codexInstructionsFixture = [
+  "You are Codex, based on GPT-5.",
+  "",
+  "## General",
+  "",
+  "- Use rg for search.",
+  "",
+  "## Plan tool",
+  "",
+  "- Avoid single-step plans.",
+  "",
+  "### Final answer structure and style guidelines",
+  "",
+  "- Examples: src/app.ts:42",
+].join("\n");
+
 Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
@@ -556,7 +572,8 @@ Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
 Deno.test("ubq-ai: admin upload-auth includes codex model snapshot", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
-  const codexText = 'codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","supported_reasoning_levels":["low","high"]}';
+  const codexText =
+    `codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","supported_reasoning_levels":["low","high"]} ${codexInstructionsFixture}\nnext`;
   const { runtime, outText, errText, requests } = makeRuntime({
     env: {
       DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz",
@@ -575,9 +592,11 @@ Deno.test("ubq-ai: admin upload-auth includes codex model snapshot", async () =>
       const parsed = JSON.parse(recorded.bodyText ?? "null") as {
         auth?: unknown;
         models?: unknown;
+        instructions?: unknown;
       };
       assert.deepEqual(parsed.auth, authObject);
       assert.equal(isRecord(parsed.models), true);
+      assert.equal(isRecord(parsed.instructions), true);
       const models = parsed.models as Record<string, unknown>;
       assert.equal(models.source, "codex_cli");
       assert.equal(models.client_version, "0.99.0");
@@ -586,6 +605,12 @@ Deno.test("ubq-ai: admin upload-auth includes codex model snapshot", async () =>
       const first = (models.models as Record<string, unknown>[])[0] ?? {};
       assert.equal(first.slug, "gpt-5.2-codex");
       assert.deepEqual(first.supported_reasoning_levels, ["low", "high"]);
+      const instructions = parsed.instructions as Record<string, unknown>;
+      assert.equal(instructions.source, "codex_cli");
+      assert.equal(instructions.client_version, "0.99.0");
+      assert.ok(typeof instructions.updated_at_ms === "number");
+      assert.equal(typeof instructions.instructions, "string");
+      assert.ok((instructions.instructions as string).includes("You are Codex"));
       return jsonResponse(200, { ok: true, models: { count: 1 } });
     },
   });
@@ -600,7 +625,8 @@ Deno.test("ubq-ai: admin upload-auth includes codex model snapshot", async () =>
 Deno.test("ubq-ai: admin upload-auth falls back to local version file", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
-  const codexText = '{"slug":"gpt-5.2-codex","supported_reasoning_levels":["low","high"]}';
+  const codexText =
+    `{"slug":"gpt-5.2-codex","supported_reasoning_levels":["low","high"]} ${codexInstructionsFixture}\nnext`;
   const versionJson = JSON.stringify({ latest_version: "0.88.1" });
   const { runtime, outText, errText, requests } = makeRuntime({
     env: {
@@ -620,13 +646,18 @@ Deno.test("ubq-ai: admin upload-auth falls back to local version file", async ()
       const parsed = JSON.parse(recorded.bodyText ?? "null") as {
         auth?: unknown;
         models?: unknown;
+        instructions?: unknown;
       };
       assert.deepEqual(parsed.auth, authObject);
       assert.equal(isRecord(parsed.models), true);
+      assert.equal(isRecord(parsed.instructions), true);
       const models = parsed.models as Record<string, unknown>;
       assert.equal(models.source, "codex_cli");
       assert.equal(models.client_version, "0.88.1");
       assert.ok(typeof models.updated_at_ms === "number");
+      const instructions = parsed.instructions as Record<string, unknown>;
+      assert.equal(instructions.source, "codex_cli");
+      assert.equal(instructions.client_version, "0.88.1");
       return jsonResponse(200, { ok: true, models: { count: 1 } });
     },
   });

@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { extractCodexModelsFromText, resolveCodexBinaryPath } from "../scripts/codex-models.ts";
+import {
+  extractCodexInstructionsFromText,
+  extractCodexModelsFromText,
+  resolveCodexBinaryPath,
+} from "../scripts/codex-models.ts";
 
 Deno.test("resolveCodexBinaryPath uses vendor binary for wrapper script", async () => {
   const wrapper = `#!/usr/bin/env node
@@ -9,7 +13,7 @@ const codexBinaryName = "codex";
 `;
   const resolved = await resolveCodexBinaryPath(
     "/opt/bin/codex",
-    async () => wrapper,
+    () => Promise.resolve(wrapper),
     "darwin",
     "aarch64",
   );
@@ -19,7 +23,7 @@ const codexBinaryName = "codex";
 Deno.test("resolveCodexBinaryPath falls back for non-wrapper input", async () => {
   const resolved = await resolveCodexBinaryPath(
     "/usr/local/bin/codex",
-    async () => "binary",
+    () => Promise.resolve("binary"),
     "darwin",
     "aarch64",
   );
@@ -35,13 +39,13 @@ const codexBinaryName = "codex";
   let readPath = "";
   const resolved = await resolveCodexBinaryPath(
     "/usr/local/bin/codex",
-    async (path) => {
+    (path) => {
       readPath = path;
-      return wrapper;
+      return Promise.resolve(wrapper);
     },
     "darwin",
     "aarch64",
-    async () => "/opt/lib/node_modules/@openai/codex/bin/codex.js",
+    () => Promise.resolve("/opt/lib/node_modules/@openai/codex/bin/codex.js"),
   );
   assert.equal(readPath, "/opt/lib/node_modules/@openai/codex/bin/codex.js");
   assert.equal(resolved, "/opt/lib/node_modules/@openai/codex/vendor/aarch64-apple-darwin/codex/codex");
@@ -66,4 +70,30 @@ Deno.test("extractCodexModelsFromText trims large fields", () => {
   assert.equal(model?.display_name, "Codex");
   assert.equal(model?.description, "desc");
   assert.equal("base_instructions" in model, false);
+});
+
+Deno.test("extractCodexInstructionsFromText extracts instruction block", () => {
+  const instructions = [
+    "You are Codex, based on GPT-5.",
+    "",
+    "## General",
+    "",
+    "- Use rg for search.",
+    "",
+    "## Plan tool",
+    "",
+    "- Avoid single-step plans.",
+    "",
+    "### Final answer structure and style guidelines",
+    "",
+    "- Examples: src/app.ts:42",
+  ].join("\n");
+  const text = `noise ${instructions}\nnext`;
+  const extracted = extractCodexInstructionsFromText(text);
+  assert.ok(extracted);
+  assert.ok(extracted?.startsWith("You are Codex, based on GPT-5."));
+  assert.ok(extracted?.includes("## General"));
+  assert.ok(extracted?.includes("## Plan tool"));
+  assert.ok(extracted?.trimEnd().endsWith("Examples: src/app.ts:42"));
+  assert.equal(extracted?.includes("next"), false);
 });

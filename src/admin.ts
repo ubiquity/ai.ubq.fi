@@ -2,10 +2,13 @@ import {
   cacheCodexAuth,
   CODEX_KV_KEY,
   CodexError,
+  type CodexInstructionsSnapshot,
   type CodexModelsSnapshot,
   getJwtExpMs,
+  loadCodexInstructionsSnapshot,
   loadCodexModelsSnapshot,
   parseCodexAuthFromAuthJson,
+  storeCodexInstructionsSnapshot,
   storeCodexModelsSnapshot,
   validateCodexAuthJson,
 } from "./codex.ts";
@@ -39,7 +42,9 @@ import {
   getKernelOrgUsageLimitSnapshot,
   getKernelUsage,
   getKernelUsageLimitSnapshot,
+  listKernelOrgUsageRecords,
   listKernelOrgUsageLimits,
+  listKernelUsageRecords,
   listKernelUsageLimits,
   setKernelOrgUsageLimit,
   setKernelUsageLimit,
@@ -60,6 +65,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   const body = await readJsonBody(req);
   const authPayload = isRecord(body) && "auth" in body ? (body.auth as unknown) : body;
   const modelsPayload = isRecord(body) && "models" in body ? (body.models as unknown) : undefined;
+  const instructionsPayload = isRecord(body) && "instructions" in body ? (body.instructions as unknown) : undefined;
   const tokenData = parseCodexAuthFromAuthJson(authPayload);
   if (!tokenData) {
     return openaiError(400, "Body does not look like a Codex auth.json", "invalid_request_error");
@@ -122,6 +128,54 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     };
   }
 
+  let instructionsStored:
+    | { id: string; bytes: number; source: string; updated_at_ms: number; client_version: string | null }
+    | null = null;
+  if (instructionsPayload !== undefined) {
+    const snapshot = await normalizeCodexInstructionsPayload(instructionsPayload);
+    if (!snapshot) {
+      return openaiError(400, "instructions must include a non-empty instructions string", "invalid_request_error");
+    }
+
+    const existing = await loadCodexInstructionsSnapshot();
+    const existingId = typeof existing?.id === "string" ? existing.id : null;
+    const shouldStore = !existingId || existingId !== snapshot.id;
+
+    if (shouldStore) {
+      const size = estimateJsonSize(snapshot);
+      if (size === null) {
+        return openaiError(400, "instructions payload could not be serialized", "invalid_request_error");
+      }
+      if (size > SAFE_KV_BYTES) {
+        return openaiError(
+          413,
+          `instructions snapshot too large (${size} bytes; max ${MAX_KV_BYTES}).`,
+          "invalid_request_error",
+        );
+      }
+      const stored = await storeCodexInstructionsSnapshot(snapshot);
+      if (!stored) {
+        return openaiError(500, "Deno KV is not available; cannot persist Codex instructions", "server_error");
+      }
+      instructionsStored = {
+        id: snapshot.id,
+        bytes: size,
+        source: snapshot.source,
+        updated_at_ms: snapshot.updated_at_ms,
+        client_version: snapshot.client_version ?? null,
+      };
+    } else {
+      const size = estimateJsonSize(snapshot);
+      instructionsStored = {
+        id: existingId ?? snapshot.id,
+        bytes: size ?? 0,
+        source: existing?.source ?? snapshot.source,
+        updated_at_ms: existing?.updated_at_ms ?? snapshot.updated_at_ms,
+        client_version: existing?.client_version ?? snapshot.client_version ?? null,
+      };
+    }
+  }
+
   const expMs = getJwtExpMs(validated.auth.access_token);
   return json(
     200,
@@ -135,6 +189,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       upstream_status: validated.status,
       upstream_content_type: validated.contentType,
       models: modelsStored,
+      instructions: instructionsStored,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
@@ -420,6 +475,41 @@ const normalizeCodexModelsPayload = (value: unknown): CodexModelsSnapshot | null
 
   return {
     models,
+    source,
+    updated_at_ms: updatedAtMs ?? Date.now(),
+    client_version: clientVersion ?? undefined,
+  };
+};
+
+const normalizeCodexInstructionsPayload = async (
+  value: unknown,
+): Promise<CodexInstructionsSnapshot | null> => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const instructions = value.trimEnd();
+    return {
+      id: await sha256Base64Url(instructions),
+      instructions,
+      source: "manual",
+      updated_at_ms: Date.now(),
+    };
+  }
+  if (!isRecord(value)) return null;
+  const rawInstructions = getString(value.instructions);
+  if (!rawInstructions || !rawInstructions.trim()) return null;
+  let source = "codex_cli";
+  const sourceValue = getString(value.source);
+  if (sourceValue) source = sourceValue;
+  let updatedAtMs: number | null = null;
+  if (typeof value.updated_at_ms === "number" && Number.isFinite(value.updated_at_ms)) {
+    updatedAtMs = Math.trunc(value.updated_at_ms);
+  }
+  const clientVersion = getString(value.client_version) ?? getString(value.clientVersion);
+  const instructions = rawInstructions.trimEnd();
+  return {
+    id: await sha256Base64Url(instructions),
+    instructions,
     source,
     updated_at_ms: updatedAtMs ?? Date.now(),
     client_version: clientVersion ?? undefined,
@@ -837,34 +927,6 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
   return json(200, { ok: true, id }, { "x-ubq-upstream": "chatgpt_codex" });
 };
 
-export const handleAdminReasoningLevel = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
-  if (!kv) {
-    return openaiError(500, "Deno KV is not available; cannot manage reasoning level", "server_error");
-  }
-
-  if (req.method === "GET") {
-    const entry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
-    const effort = entry.value ?? "xhigh";
-    return json(200, { effort }, { "x-ubq-upstream": "chatgpt_codex" });
-  }
-
-  if (req.method === "POST") {
-    const raw = await readJsonBody(req);
-    if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
-
-    const effort = normalizeReasoningEffort(raw.effort);
-    if (!effort) {
-      return openaiError(400, "effort must be one of: none, minimal, low, medium, high, xhigh", "invalid_request_error");
-    }
-
-    await kv.set(DEFAULT_REASONING_EFFORT_KEY, effort);
-    return json(200, { ok: true, effort }, { "x-ubq-upstream": "chatgpt_codex" });
-  }
-
-  return openaiError(405, "Method not allowed", "method_not_allowed");
-};
-
 const normalizePem = (raw: unknown): string | null => {
   if (typeof raw !== "string") return null;
   const pem = raw.trim();
@@ -947,20 +1009,75 @@ export const handleAdminKernelUsageGet = async (req: Request): Promise<Response>
   const url = new URL(req.url);
   const scope = normalizeKernelScope(url.searchParams.get("scope"));
   const listRequested = shouldIncludeUsage(url.searchParams.get("list"));
+  const inventoryRequested = shouldIncludeUsage(url.searchParams.get("inventory"));
+  const includeUsage = shouldIncludeUsage(url.searchParams.get("include_usage"));
+  const dailyDays = 30;
+  if (inventoryRequested) {
+    if (scope === "org") {
+      const records = await listKernelOrgUsageRecords({ includeDaily: true, dailyDays });
+      if (!records) {
+        return openaiError(500, "Failed to load kernel org usage inventory", "server_error");
+      }
+      return json(200, { ok: true, scope, usage: records });
+    }
+
+    const records = await listKernelUsageRecords({ includeDaily: true, dailyDays });
+    if (!records) {
+      return openaiError(500, "Failed to load kernel usage inventory", "server_error");
+    }
+    return json(200, { ok: true, scope, usage: records });
+  }
   if (listRequested) {
     if (scope === "org") {
       const limits = await listKernelOrgUsageLimits();
       if (!limits) {
         return openaiError(500, "Failed to load kernel org usage limits", "server_error");
       }
-      return json(200, { ok: true, scope, limits });
+      const usageByOwner = new Map<string, Awaited<ReturnType<typeof getKernelOrgUsage>>>();
+      if (includeUsage) {
+        await Promise.all(
+          limits.map(async (record) => {
+            usageByOwner.set(
+              record.owner,
+              await getKernelOrgUsage(record.owner, { includeDaily: true, dailyDays }),
+            );
+          }),
+        );
+      }
+      return json(200, {
+        ok: true,
+        scope,
+        limits: limits.map((record) => ({
+          ...record,
+          ...(includeUsage ? { usage: usageByOwner.get(record.owner) ?? null } : {}),
+        })),
+      });
     }
 
     const limits = await listKernelUsageLimits();
     if (!limits) {
       return openaiError(500, "Failed to load kernel usage limits", "server_error");
     }
-    return json(200, { ok: true, scope, limits });
+    const usageByRepo = new Map<string, Awaited<ReturnType<typeof getKernelUsage>>>();
+    if (includeUsage) {
+      await Promise.all(
+        limits.map(async (record) => {
+          const key = `${record.owner}/${record.repo}`;
+          usageByRepo.set(
+            key,
+            await getKernelUsage(record.owner, record.repo, { includeDaily: true, dailyDays }),
+          );
+        }),
+      );
+    }
+    return json(200, {
+      ok: true,
+      scope,
+      limits: limits.map((record) => ({
+        ...record,
+        ...(includeUsage ? { usage: usageByRepo.get(`${record.owner}/${record.repo}`) ?? null } : {}),
+      })),
+    });
   }
 
   const owner = normalizeKernelRepoPart(url.searchParams.get("owner"));
@@ -973,7 +1090,7 @@ export const handleAdminKernelUsageGet = async (req: Request): Promise<Response>
     if (!limitSnapshot) {
       return openaiError(500, "Failed to load kernel org usage limit", "server_error");
     }
-    const usage = await getKernelOrgUsage(owner);
+    const usage = await getKernelOrgUsage(owner, { includeDaily: includeUsage, dailyDays });
     return json(200, {
       ok: true,
       org: { owner },
@@ -991,7 +1108,7 @@ export const handleAdminKernelUsageGet = async (req: Request): Promise<Response>
   if (!limitSnapshot) {
     return openaiError(500, "Failed to load kernel usage limit", "server_error");
   }
-  const usage = await getKernelUsage(owner, repo);
+  const usage = await getKernelUsage(owner, repo, { includeDaily: includeUsage, dailyDays });
 
   return json(200, {
     ok: true,

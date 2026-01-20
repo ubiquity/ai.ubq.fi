@@ -32,6 +32,7 @@ export class CodexError extends Error {
 
 export const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
 export const CODEX_MODELS_KV_KEY = ["ubq_ai", "codex_models"] as const;
+export const CODEX_INSTRUCTIONS_KV_KEY = ["uos_ai", "codex_instructions"] as const;
 
 export type CodexModelsSnapshot = Readonly<{
   models: Record<string, unknown>[];
@@ -40,12 +41,26 @@ export type CodexModelsSnapshot = Readonly<{
   client_version?: string | null;
 }>;
 
+export type CodexInstructionsSnapshot = Readonly<{
+  id: string;
+  instructions: string;
+  source: string;
+  updated_at_ms: number;
+  client_version?: string | null;
+}>;
+
 const CODEX_INSTRUCTIONS_URL = new URL("../codex_instructions.md", import.meta.url);
 
-export const codexInstructionsPromise: Promise<string> = (async () => {
+export const getCodexInstructions = async (): Promise<string> => {
   if (config.codexInstructionsB64) return decodeBase64ToString(config.codexInstructionsB64);
+  const kv = await kvPromise;
+  if (kv) {
+    const entry = await kv.get<CodexInstructionsSnapshot>(CODEX_INSTRUCTIONS_KV_KEY);
+    const instructions = entry.value?.instructions;
+    if (typeof instructions === "string" && instructions.trim()) return instructions;
+  }
   return await Deno.readTextFile(CODEX_INSTRUCTIONS_URL);
-})();
+};
 
 export const parseCodexAuthFromAuthJson = (value: unknown): Omit<CodexAuthState, "updated_at_ms"> | null => {
   if (!isRecord(value)) return null;
@@ -453,6 +468,20 @@ export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): P
   return true;
 };
 
+export const loadCodexInstructionsSnapshot = async (): Promise<CodexInstructionsSnapshot | null> => {
+  const kv = await kvPromise;
+  if (!kv) return null;
+  const entry = await kv.get<CodexInstructionsSnapshot>(CODEX_INSTRUCTIONS_KV_KEY);
+  return entry.value ?? null;
+};
+
+export const storeCodexInstructionsSnapshot = async (snapshot: CodexInstructionsSnapshot): Promise<boolean> => {
+  const kv = await kvPromise;
+  if (!kv) return false;
+  await kv.set(CODEX_INSTRUCTIONS_KV_KEY, snapshot);
+  return true;
+};
+
 export const buildCodexRequest = async (
   model: string,
   input: ResponseMessageItem[],
@@ -460,7 +489,7 @@ export const buildCodexRequest = async (
 ): Promise<Record<string, unknown>> => {
   const body: Record<string, unknown> = {
     model,
-    instructions: await codexInstructionsPromise,
+    instructions: await getCodexInstructions(),
     input,
     tools: [],
     tool_choice: "auto",

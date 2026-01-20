@@ -1,9 +1,9 @@
 import {
   buildCodexRequest,
   CodexError,
-  codexInstructionsPromise,
   fetchCodexModels,
   fetchCodexResponses,
+  getCodexInstructions,
   loadCodexModelsSnapshot,
 } from "./codex.ts";
 import {
@@ -713,7 +713,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
 
   const instructions = getString(codexBody.instructions);
   if (!instructions?.trim()) {
-    codexBody.instructions = await codexInstructionsPromise;
+    codexBody.instructions = await getCodexInstructions();
   }
 
   await recordRequestUsage(usageContext, { model: modelRaw, route: "responses", stream: clientWantsStream });

@@ -1,0 +1,42 @@
+body[data-page="admin"] [data-shell] {
+  padding: calc(24px + env(safe-area-inset-top)) 28px calc(64px + env(safe-area-inset-bottom));
+  gap: 20px;
+}
+
+body[data-page="admin"] header[data-shared-header] {
+  padding: 12px 14px;
+}
+
+body[data-page="admin"] [data-actions] {
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+body[data-page="admin"] [data-actions] a[data-button] {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+body[data-page="admin"] h1 {
+  font-size: clamp(24px, 2.6vw, 34px);
+}
+
+body[data-page="admin"] [data-card] {
+  padding: 16px 18px 18px;
+}
+
+body[data-page="admin"] [data-edit-panel],
+body[data-page="admin"] [data-key-edit],
+body[data-page="admin"] [data-key-info] {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+@media (max-width: 760px) {
+  body[data-page="admin"] [data-shell] {
+    padding: calc(24px + env(safe-area-inset-top)) 16px calc(48px + env(safe-area-inset-bottom));
+  }
+}

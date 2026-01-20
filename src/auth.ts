@@ -10,7 +10,7 @@ import {
 } from "./api_keys.ts";
 import { json, openaiError } from "./http.ts";
 import { getBearerToken } from "./http.ts";
-import { checkKernelOrgUsageLimit, checkKernelUsageLimit } from "./kernel_usage.ts";
+import { checkKernelOrgUsageLimit, checkKernelUsageLimit, getKernelUsageLimitSnapshot } from "./kernel_usage.ts";
 import { kvPromise } from "./kv.ts";
 import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
@@ -19,7 +19,10 @@ const GITHUB_API_BASE_URL = "https://api.github.com";
 const GITHUB_TOKEN_CACHE_TTL_MS = 5 * 60_000;
 const githubTokenCache = new Map<string, number>();
 
-const looksLikeGitHubToken = (token: string): boolean => token.trim().startsWith("gh");
+const looksLikeGitHubToken = (token: string): boolean => {
+  const trimmed = token.trim();
+  return trimmed.startsWith("gh") || trimmed.startsWith("github_pat_");
+};
 
 const getEnv = (key: string): string | undefined => {
   try {
@@ -369,6 +372,24 @@ const getGitHubRepoHeaders = (req: Request): { owner: string; repo: string } | n
   return { owner, repo };
 };
 
+export const getKernelAttestationContext = async (
+  req: Request,
+  token: string | null,
+): Promise<{ owner: string; repo: string } | null> => {
+  if (!token) return null;
+  const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
+  if (!kernelToken) return null;
+  const repoHeaders = getGitHubRepoHeaders(req);
+  if (!repoHeaders) return null;
+  const attestation = await verifyKernelAttestation(req, {
+    token,
+    owner: repoHeaders.owner,
+    repo: repoHeaders.repo,
+  });
+  if (!attestation.ok) return null;
+  return { owner: repoHeaders.owner, repo: repoHeaders.repo };
+};
+
 const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: string): Promise<boolean> => {
   const res = await fetch(`${GITHUB_API_BASE_URL}/repos/${owner}/${repo}`, {
     method: "GET",
@@ -392,7 +413,7 @@ const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: s
 
 type ClientAuthMethod =
   | { kind: "disabled" }
-  | { kind: "github_token"; owner: string; repo: string; state_id: string }
+  | { kind: "github_token"; owner: string; repo: string; state_id: string; limit_scope: "org" | "repo" }
   | { kind: "auth_tokens_allowlist" }
   | { kind: "kv_api_key"; key_id: string }
   | { kind: "admin_allowlist" }
@@ -420,14 +441,36 @@ const authenticateGitHubToken = async (
   if (!attestation.ok) return { ok: false, response: attestation.response };
   const stateId = attestation.payload.state_id;
 
+  const resolveKernelLimitScope = async (): Promise<"org" | "repo"> => {
+    const snapshot = await getKernelUsageLimitSnapshot(owner, repo);
+    if (snapshot?.source === "kv") return "repo";
+    return "org";
+  };
+
+  const enforceKernelLimit = async (): Promise<
+    { ok: true; limit_scope: "org" | "repo" } | { ok: false; response: Response }
+  > => {
+    const limitScope = await resolveKernelLimitScope();
+    if (limitScope === "repo") {
+      const repoLimitResult = await checkKernelUsageLimit(owner, repo);
+      if (!repoLimitResult.ok) return { ok: false, response: repoLimitResult.response };
+      return { ok: true, limit_scope: "repo" };
+    }
+
+    const orgLimitResult = await checkKernelOrgUsageLimit(owner);
+    if (!orgLimitResult.ok) return { ok: false, response: orgLimitResult.response };
+    return { ok: true, limit_scope: "org" };
+  };
+
   const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
   const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
   if (cachedUntil > Date.now()) {
-    const orgLimitResult = await checkKernelOrgUsageLimit(owner);
-    if (!orgLimitResult.ok) return { ok: false, response: orgLimitResult.response };
-    const repoLimitResult = await checkKernelUsageLimit(owner, repo);
-    if (!repoLimitResult.ok) return { ok: false, response: repoLimitResult.response };
-    return { ok: true, method: { kind: "github_token", owner, repo, state_id: stateId } };
+    const limitResult = await enforceKernelLimit();
+    if (!limitResult.ok) return { ok: false, response: limitResult.response };
+    return {
+      ok: true,
+      method: { kind: "github_token", owner, repo, state_id: stateId, limit_scope: limitResult.limit_scope },
+    };
   }
 
   try {
@@ -437,11 +480,12 @@ const authenticateGitHubToken = async (
     }
 
     githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
-    const orgLimitResult = await checkKernelOrgUsageLimit(owner);
-    if (!orgLimitResult.ok) return { ok: false, response: orgLimitResult.response };
-    const repoLimitResult = await checkKernelUsageLimit(owner, repo);
-    if (!repoLimitResult.ok) return { ok: false, response: repoLimitResult.response };
-    return { ok: true, method: { kind: "github_token", owner, repo, state_id: stateId } };
+    const limitResult = await enforceKernelLimit();
+    if (!limitResult.ok) return { ok: false, response: limitResult.response };
+    return {
+      ok: true,
+      method: { kind: "github_token", owner, repo, state_id: stateId, limit_scope: limitResult.limit_scope },
+    };
   } catch (error) {
     console.error("[ai.ubq.fi] GitHub token verification failed:", error);
     return { ok: false, response: openaiError(502, "Failed to verify GitHub token", "bad_gateway") };
@@ -454,27 +498,101 @@ const classifyToken = (token: string): string => {
   const trimmed = token.trim();
   if (!trimmed) return "unset";
   if (trimmed.startsWith("ddw_")) return "deno_deploy_like(ddw_)";
+  if (looksLikeGitHubToken(trimmed)) return "github_prefix";
   if (trimmed.startsWith("ubq_ai_")) return "ubq_ai_prefix";
   if (/^[0-9a-fA-F]{64}$/.test(trimmed)) return "hex64";
   if (trimmed.includes("_")) return "has_underscore";
   return "other";
 };
 
+const getRequestPath = (req: Request): string => {
+  try {
+    return new URL(req.url).pathname;
+  } catch {
+    return "unknown";
+  }
+};
+
+type AuthLogEntry = Readonly<{
+  scope: "client" | "admin";
+  ok: boolean;
+  method: string;
+  status?: number;
+  reason?: string;
+  token_present: boolean;
+  token_shape: string | null;
+}>;
+
+const getAuthHeaderSnapshot = (req: Request): Record<string, string | null> => {
+  const owner = (req.headers.get("X-GitHub-Owner") ?? "").trim();
+  const repo = (req.headers.get("X-GitHub-Repo") ?? "").trim();
+  const installationId = (req.headers.get("X-GitHub-Installation-Id") ?? "").trim();
+  const kernelTokenPresent = Boolean((req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim());
+  return {
+    "x-github-owner": owner || null,
+    "x-github-repo": repo || null,
+    "x-github-installation-id": installationId || null,
+    "x-ubiquity-kernel-token": kernelTokenPresent ? "present" : "missing",
+  };
+};
+
+const logAuthDecision = (req: Request, entry: AuthLogEntry): void => {
+  const payload = {
+    ...entry,
+    path: getRequestPath(req),
+    headers: getAuthHeaderSnapshot(req),
+  };
+  const line = JSON.stringify(payload);
+  if (entry.ok) {
+    console.info("[ai.ubq.fi] auth", line);
+  } else {
+    console.warn("[ai.ubq.fi] auth", line);
+  }
+};
+
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
   const kv = await kvPromise;
   const localAuthDisabled = !config.isDeploy && config.authTokens.size === 0 && !kv;
   const token = getBearerToken(req);
-  if (localAuthDisabled) return { ok: true, token, method: { kind: "disabled" } };
+  const tokenPresent = Boolean(token);
+  const tokenShape = token ? classifyToken(token) : null;
+  const githubHeaders = token ? getGitHubRepoHeaders(req) : null;
+  const githubCandidate = token ? looksLikeGitHubToken(token) : false;
+  const logClientAuth = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) =>
+    logAuthDecision(req, {
+      scope: "client",
+      token_present: tokenPresent,
+      token_shape: tokenShape,
+      ...entry,
+    });
+  if (localAuthDisabled) {
+    logClientAuth({ ok: true, method: "disabled" });
+    return { ok: true, token, method: { kind: "disabled" } };
+  }
 
-  if (!token) return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  if (!token) {
+    logClientAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  }
 
-  if (config.authTokens.has(token)) return { ok: true, token, method: { kind: "auth_tokens_allowlist" } };
+  if (config.authTokens.has(token)) {
+    logClientAuth({ ok: true, method: "auth_tokens_allowlist" });
+    return { ok: true, token, method: { kind: "auth_tokens_allowlist" } };
+  }
 
   const githubResult = await authenticateGitHubToken(req, token);
   if (githubResult) {
-    return githubResult.ok
-      ? { ok: true, token, method: githubResult.method }
-      : { ok: false, response: githubResult.response };
+    if (githubResult.ok) {
+      logClientAuth({ ok: true, method: "github_token" });
+      return { ok: true, token, method: githubResult.method };
+    }
+    logClientAuth({
+      ok: false,
+      method: "github_token",
+      status: githubResult.response.status,
+      reason: "github_token_rejected",
+    });
+    return { ok: false, response: githubResult.response };
   }
 
   if (kv) {
@@ -488,6 +606,7 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
         ? Math.trunc(hashEntry.value.expires_at_ms)
         : API_KEY_NO_EXPIRATION_MS;
       if (expiresAtMs !== API_KEY_NO_EXPIRATION_MS && expiresAtMs <= now) {
+        logClientAuth({ ok: false, method: "kv_api_key", status: 401, reason: "expired" });
         return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
       }
 
@@ -517,10 +636,12 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
             .set(hashKey, updatedHash)
             .commit();
         }
+        logClientAuth({ ok: true, method: "kv_api_key" });
         return { ok: true, token, method: { kind: "kv_api_key", key_id: hashEntry.value.id } };
       }
 
       if (usageLimit !== API_KEY_NO_USAGE_LIMIT && usageRequests >= usageLimit) {
+        logClientAuth({ ok: false, method: "kv_api_key", status: 429, reason: "usage_limit_exceeded" });
         return {
           ok: false,
           response: openaiError(
@@ -531,23 +652,45 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
         };
       }
 
+      logClientAuth({ ok: true, method: "kv_api_key" });
       return { ok: true, token, method: { kind: "kv_api_key", key_id: hashEntry.value.id } };
     }
   }
 
   const adminResult = await checkAdminToken(token);
-  if (adminResult.ok) return { ok: true, token, method: { kind: adminResult.kind } };
-  if (adminResult.response) return { ok: false, response: adminResult.response };
+  if (adminResult.ok) {
+    logClientAuth({ ok: true, method: adminResult.kind });
+    return { ok: true, token, method: { kind: adminResult.kind } };
+  }
+  if (adminResult.response) {
+    logClientAuth({
+      ok: false,
+      method: "deno_deploy_token",
+      status: adminResult.response.status,
+      reason: "admin_token_verification_failed",
+    });
+    return { ok: false, response: adminResult.response };
+  }
 
-  if (kv) return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  if (kv) {
+    logClientAuth({
+      ok: false,
+      method: githubCandidate && !githubHeaders ? "github_token" : "unknown",
+      status: 401,
+      reason: githubCandidate && !githubHeaders ? "missing_repo_headers" : "invalid_api_key",
+    });
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  }
 
   if (config.isDeploy && config.authTokens.size === 0) {
+    logClientAuth({ ok: false, method: "server", status: 500, reason: "misconfigured" });
     return {
       ok: false,
       response: openaiError(500, "Server misconfigured: set UOS_AI_TOKEN or enable Deno KV", "server_error"),
     };
   }
 
+  logClientAuth({ ok: false, method: "unknown", status: 401, reason: "invalid_api_key" });
   return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
 };
 
@@ -629,22 +772,43 @@ const checkAdminToken = async (token: string): Promise<CheckAdminTokenResult> =>
   return verified;
 };
 
-const isAdminToken = async (token: string): Promise<{ ok: true } | { ok: false; response: Response | null }> => {
-  const result = await checkAdminToken(token);
-  return result.ok ? { ok: true } : result;
-};
-
 export const requireAdminAuth = async (req: Request): Promise<Response | null> => {
   const token = getBearerToken(req);
-  if (!token) return openaiError(401, "Unauthorized", "invalid_api_key");
-
-  if (config.adminTokens.size === 0 && !looksLikeDenoDeployToken(token)) {
+  const tokenPresent = Boolean(token);
+  const tokenShape = token ? classifyToken(token) : null;
+  const logAdminAuth = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) =>
+    logAuthDecision(req, {
+      scope: "admin",
+      token_present: tokenPresent,
+      token_shape: tokenShape,
+      ...entry,
+    });
+  if (!token) {
+    logAdminAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
     return openaiError(401, "Unauthorized", "invalid_api_key");
   }
 
-  const result = await isAdminToken(token);
-  if (result.ok) return null;
-  return result.response ?? openaiError(401, "Unauthorized", "invalid_api_key");
+  if (config.adminTokens.size === 0 && !looksLikeDenoDeployToken(token)) {
+    logAdminAuth({ ok: false, method: "admin_allowlist", status: 401, reason: "admin_tokens_unconfigured" });
+    return openaiError(401, "Unauthorized", "invalid_api_key");
+  }
+
+  const result = await checkAdminToken(token);
+  if (result.ok) {
+    logAdminAuth({ ok: true, method: result.kind });
+    return null;
+  }
+  if (result.response) {
+    logAdminAuth({
+      ok: false,
+      method: "deno_deploy_token",
+      status: result.response.status,
+      reason: "admin_token_verification_failed",
+    });
+    return result.response;
+  }
+  logAdminAuth({ ok: false, method: "admin_allowlist", status: 401, reason: "invalid_admin_token" });
+  return openaiError(401, "Unauthorized", "invalid_api_key");
 };
 
 export const incrementApiKeyUsage = async (keyId: string): Promise<void> => {
@@ -718,6 +882,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   if (authResult.method.kind === "github_token") {
     method.repo = { owner: authResult.method.owner, repo: authResult.method.repo };
     method.state_id = authResult.method.state_id;
+    method.limit_scope = authResult.method.limit_scope;
   }
 
   if (authResult.method.kind === "kv_api_key") {

@@ -1,4 +1,8 @@
-import { extractCodexModelsFromText, resolveCodexBinaryPath } from "./codex-models.ts";
+import {
+  extractCodexInstructionsFromText,
+  extractCodexModelsFromText,
+  resolveCodexBinaryPath,
+} from "./codex-models.ts";
 
 export type FlagValue = string | boolean | string[];
 
@@ -353,6 +357,9 @@ Commands:
   admin kernel-pubkeys remove --app-id <id>
   admin kernel-usage get --owner <name> [--repo <name>] [--scope repo|org]
   admin kernel-usage set --owner <name> [--repo <name>] --usage-limit <requests> [--window-ms <ms>] [--scope repo|org] [--reset-usage]
+
+Admin notes:
+  upload-auth extracts Codex models + instructions from the local codex binary unless --skip-models.
 
 Admin key expiration:
   --expires <preset>           day|week|month|quarter|year|forever (sets expires_at_ms)
@@ -1100,26 +1107,49 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       const skipModels = flags["skip-models"] === true || flags["no-models"] === true;
       const codexBinFlag = getFlagString(flags, "codex-bin");
       let modelsPayload: Record<string, unknown> | null = null;
+      let instructionsPayload: Record<string, unknown> | null = null;
       if (!skipModels) {
         const binary = await loadCodexBinaryText(runtime, codexBinFlag, homeDir);
         if (!binary) {
-          await writeErrText(runtime, "Codex binary not found on PATH; skipping model extraction.\n");
+          await writeErrText(runtime, "Codex binary not found on PATH; skipping model + instructions extraction.\n");
         } else {
-          const extracted = extractCodexModelsFromText(binary.text);
-          if (!extracted) {
+          const extractedModels = extractCodexModelsFromText(binary.text);
+          const extractedInstructions = extractCodexInstructionsFromText(binary.text);
+          if (!extractedModels) {
             await writeErrText(runtime, "Failed to extract Codex models from the CLI binary; skipping model upload.\n");
-          } else {
+          }
+          if (!extractedInstructions) {
+            await writeErrText(
+              runtime,
+              "Failed to extract Codex instructions from the CLI binary; skipping instructions upload.\n",
+            );
+          }
+          if (extractedModels || extractedInstructions) {
             const fallbackVersion = await resolveCodexClientVersion(runtime, binary.path, homeDir);
-            modelsPayload = {
-              source: "codex_cli",
-              client_version: extracted.clientVersion ?? fallbackVersion ?? undefined,
-              updated_at_ms: Date.now(),
-              models: extracted.models,
-            };
+            const clientVersion = extractedModels?.clientVersion ?? fallbackVersion ?? undefined;
+            if (extractedModels) {
+              modelsPayload = {
+                source: "codex_cli",
+                client_version: clientVersion,
+                updated_at_ms: Date.now(),
+                models: extractedModels.models,
+              };
+            }
+            if (extractedInstructions) {
+              instructionsPayload = {
+                source: "codex_cli",
+                client_version: clientVersion,
+                updated_at_ms: Date.now(),
+                instructions: extractedInstructions,
+              };
+            }
           }
         }
       }
 
+      const payload = modelsPayload || instructionsPayload
+        ? { auth: authJson, models: modelsPayload ?? undefined, instructions: instructionsPayload ?? undefined }
+        : authJson;
       const req = new Request(endpoint("/admin/codex/auth"), {
         method: "POST",
         headers: {
@@ -1127,7 +1157,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
           "Content-Type": "application/json",
           "Accept": "application/json",
         },
-        body: JSON.stringify(modelsPayload ? { auth: authJson, models: modelsPayload } : authJson),
+        body: JSON.stringify(payload),
       });
 
       const result = await doFetchWithDebug(req);

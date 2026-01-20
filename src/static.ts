@@ -6,10 +6,14 @@ const INDEX_HTML_URL = new URL("../static/index.html", import.meta.url);
 const CHAT_HTML_URL = new URL("../static/chat.html", import.meta.url);
 const ADMIN_HTML_URL = new URL("../static/admin.html", import.meta.url);
 const STYLE_CSS_URL = new URL("../static/style.css", import.meta.url);
+const CHAT_CSS_URL = new URL("../static/chat.css", import.meta.url);
+const HOME_CSS_URL = new URL("../static/home.css", import.meta.url);
+const ADMIN_CSS_URL = new URL("../static/admin.css", import.meta.url);
 const APP_JS_URL = new URL("../static/app.js", import.meta.url);
 const CHAT_JS_URL = new URL("../static/chat.js", import.meta.url);
 const ADMIN_JS_URL = new URL("../static/admin.js", import.meta.url);
 const NETWORK_JS_URL = new URL("../static/network.js", import.meta.url);
+const COMPANY_LOGO_URL = new URL("../static/company-logo.svg", import.meta.url);
 const FAVICON_32_URL = new URL("../favicon-32.png", import.meta.url);
 const FAVICON_URL = new URL("../favicon.png", import.meta.url);
 
@@ -35,10 +39,14 @@ const indexHtmlPromise = readTextFile(INDEX_HTML_URL, "static/index.html");
 const chatHtmlPromise = readTextFile(CHAT_HTML_URL, "static/chat.html");
 const adminHtmlPromise = readTextFile(ADMIN_HTML_URL, "static/admin.html");
 const styleCssPromise = readTextFile(STYLE_CSS_URL, "static/style.css");
+const chatCssPromise = readTextFile(CHAT_CSS_URL, "static/chat.css");
+const homeCssPromise = readTextFile(HOME_CSS_URL, "static/home.css");
+const adminCssPromise = readTextFile(ADMIN_CSS_URL, "static/admin.css");
 const appJsPromise = readTextFile(APP_JS_URL, "static/app.js");
 const chatJsPromise = readTextFile(CHAT_JS_URL, "static/chat.js");
 const adminJsPromise = readTextFile(ADMIN_JS_URL, "static/admin.js");
 const networkJsPromise = readTextFile(NETWORK_JS_URL, "static/network.js");
+const companyLogoPromise = readTextFile(COMPANY_LOGO_URL, "static/company-logo.svg");
 
 const favicon32Promise = readBytesFile(FAVICON_32_URL, "favicon-32.png");
 const faviconPromise = readBytesFile(FAVICON_URL, "favicon.png");
@@ -157,6 +165,60 @@ export const handleStyleCss = async (): Promise<Response> => {
   });
 };
 
+export const handleChatCss = async (): Promise<Response> => {
+  const css = await loadText(CHAT_CSS_URL, "static/chat.css", chatCssPromise);
+  if (!css) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(css, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/css; charset=utf-8",
+      "Cache-Control": staticCacheControl,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
+export const handleHomeCss = async (): Promise<Response> => {
+  const css = await loadText(HOME_CSS_URL, "static/home.css", homeCssPromise);
+  if (!css) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(css, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/css; charset=utf-8",
+      "Cache-Control": staticCacheControl,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
+export const handleAdminCss = async (): Promise<Response> => {
+  const css = await loadText(ADMIN_CSS_URL, "static/admin.css", adminCssPromise);
+  if (!css) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(css, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/css; charset=utf-8",
+      "Cache-Control": staticCacheControl,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
 export const handleAppJs = async (): Promise<Response> => {
   const js = await loadText(APP_JS_URL, "static/app.js", appJsPromise);
   if (!js) {
@@ -223,6 +285,24 @@ export const handleNetworkJs = async (): Promise<Response> => {
     status: 200,
     headers: {
       "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": staticCacheControl,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
+export const handleCompanyLogo = async (): Promise<Response> => {
+  const svg = await loadText(COMPANY_LOGO_URL, "static/company-logo.svg", companyLogoPromise);
+  if (!svg) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(svg, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/svg+xml; charset=utf-8",
       "Cache-Control": staticCacheControl,
       "X-Content-Type-Options": "nosniff",
     },
