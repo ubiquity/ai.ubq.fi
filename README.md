@@ -179,8 +179,6 @@ ubq-ai admin keys list | jq
   `Authorization: Bearer ...`. The gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
-- `CODEX_INSTRUCTIONS_B64` (optional): base64 override for the upstream `instructions` string (defaults to
-  `codex_instructions.md`).
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.
@@ -191,17 +189,7 @@ This validates your posted `auth.json` against the upstream Codex endpoint and, 
 (becoming the active upstream auth for subsequent requests).
 
 Treat `auth.json` as a secret (it contains refresh tokens).
-
-```bash
-export DENO_DEPLOY_TOKEN="..."
-curl -sS https://ai.ubq.fi/admin/codex/auth \
-  -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data-binary @~/.codex/auth.json \
-  | jq
-```
-
-Or use the repo helper CLI:
+Codex auth uploads require a model snapshot, so use the repo helper CLI:
 
 ```bash
 cd lib/ai.ubq.fi
@@ -209,9 +197,8 @@ export DENO_DEPLOY_TOKEN="..."
 deno task upload:auth --url https://ai.ubq.fi
 ```
 
-The helper CLI uses `DENO_DEPLOY_TOKEN` and attempts to extract the Codex CLI model list + instructions from your local
-`codex` binary (so `/v1/models` reflects Codex-native IDs). Use `--codex-bin` to point at a specific binary or
-`--skip-models` to disable model/instructions extraction.
+The helper CLI uses `DENO_DEPLOY_TOKEN` and extracts the Codex CLI model list from your local `codex` binary (so
+`/v1/models` reflects Codex-native IDs). Use `--codex-bin` to point at a specific binary if it is not on your PATH.
 
 ## Admin: create/manage UBQ API keys
 

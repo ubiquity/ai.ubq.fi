@@ -4,7 +4,6 @@ import {
   buildCodexRequest,
   checkCodexAuthRefresh,
   fetchCodexResponses,
-  getCodexInstructions,
   getJwtExpMs,
   parseCodexAuthFromAuthJson,
 } from "./codex.ts";
@@ -24,11 +23,6 @@ export const handleHealth = async (): Promise<Response> => {
   if (!hasCodexAuth) problems.push("CODEX_AUTH_JSON_B64 missing");
   if (config.isDeploy && config.authTokens.size === 0 && !kv) {
     problems.push("No UOS_AI_TOKEN and Deno KV unavailable");
-  }
-  try {
-    await getCodexInstructions();
-  } catch {
-    problems.push("CODEX instructions missing (env/KV or codex_instructions.md)");
   }
   return json(problems.length === 0 ? 200 : 500, {
     ok: problems.length === 0,

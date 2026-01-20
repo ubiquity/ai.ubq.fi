@@ -18,6 +18,7 @@ type ApiKeyUsageDelta = Readonly<{
   output_tokens?: number;
   total_tokens?: number;
   model?: string | null;
+  reasoning?: string | null;
   route?: string | null;
   seen_at_ms?: number;
 }>;
@@ -90,6 +91,7 @@ const buildBaseUsageRecord = (keyId: string, nowMs: number): ApiKeyUsageRecord =
   first_seen_at_ms: nowMs,
   last_seen_at_ms: nowMs,
   last_model: null,
+  last_reasoning: null,
   last_route: null,
 });
 
@@ -108,6 +110,7 @@ const normalizeUsageRecord = (value: unknown, keyId: string, nowMs: number): Api
     first_seen_at_ms: coerceNumber(value.first_seen_at_ms, nowMs),
     last_seen_at_ms: coerceNumber(value.last_seen_at_ms, nowMs),
     last_model: normalizeLabel(value.last_model),
+    last_reasoning: normalizeLabel(value.last_reasoning),
     last_route: normalizeLabel(value.last_route),
   };
 };
@@ -168,6 +171,7 @@ const buildDailySeries = (record: ApiKeyUsageDailyRecord, nowMs: number, days: n
 
 const applyDelta = (record: ApiKeyUsageRecord, delta: ApiKeyUsageDelta, nowMs: number): ApiKeyUsageRecord => {
   const model = delta.model === undefined ? record.last_model : normalizeLabel(delta.model);
+  const reasoning = delta.reasoning === undefined ? record.last_reasoning : normalizeLabel(delta.reasoning);
   const route = delta.route === undefined ? record.last_route : normalizeLabel(delta.route);
   const seenAt = typeof delta.seen_at_ms === "number" && Number.isFinite(delta.seen_at_ms)
     ? Math.trunc(delta.seen_at_ms)
@@ -186,6 +190,7 @@ const applyDelta = (record: ApiKeyUsageRecord, delta: ApiKeyUsageDelta, nowMs: n
     first_seen_at_ms: record.first_seen_at_ms > 0 ? record.first_seen_at_ms : seenAt,
     last_seen_at_ms: seenAt,
     last_model: model,
+    last_reasoning: reasoning,
     last_route: route,
   };
 };

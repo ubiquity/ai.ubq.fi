@@ -203,27 +203,3 @@ export const extractCodexModelsFromText = (text: string): ExtractedCodexModels |
   if (!models.length) return null;
   return { models, clientVersion };
 };
-
-const CODEX_INSTRUCTIONS_ANCHOR = "You are Codex, based on";
-
-export const extractCodexInstructionsFromText = (text: string): string | null => {
-  const startIndex = text.indexOf(CODEX_INSTRUCTIONS_ANCHOR);
-  if (startIndex === -1) return null;
-  const slice = text.slice(startIndex);
-
-  let endIndex = -1;
-  const examplesIndex = slice.lastIndexOf("Examples:");
-  if (examplesIndex !== -1) {
-    const lineEnd = slice.indexOf("\n", examplesIndex);
-    if (lineEnd !== -1) endIndex = lineEnd + 1;
-  }
-  if (endIndex === -1) {
-    const nullIndex = slice.indexOf("\u0000");
-    if (nullIndex !== -1) endIndex = nullIndex;
-  }
-
-  const extracted = (endIndex === -1 ? slice : slice.slice(0, endIndex)).trim();
-  if (!extracted) return null;
-  if (!extracted.includes("## General") || !extracted.includes("## Plan tool")) return null;
-  return extracted.endsWith("\n") ? extracted : `${extracted}\n`;
-};

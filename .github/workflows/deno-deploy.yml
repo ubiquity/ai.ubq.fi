@@ -17,7 +17,6 @@ jobs:
       project: ai-ubq-fi
       entrypoint: serve.ts
       include: |
-        codex_instructions.md
         favicon-32.png
         favicon.png
         static/**

@@ -2,13 +2,10 @@ import {
   cacheCodexAuth,
   CODEX_KV_KEY,
   CodexError,
-  type CodexInstructionsSnapshot,
   type CodexModelsSnapshot,
   getJwtExpMs,
-  loadCodexInstructionsSnapshot,
   loadCodexModelsSnapshot,
   parseCodexAuthFromAuthJson,
-  storeCodexInstructionsSnapshot,
   storeCodexModelsSnapshot,
   validateCodexAuthJson,
 } from "./codex.ts";
@@ -49,12 +46,15 @@ import {
   setKernelOrgUsageLimit,
   setKernelUsageLimit,
 } from "./kernel_usage.ts";
+import { listKernelPolicyQueue } from "./kernel_policy_queue.ts";
 import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "./types.ts";
 
 const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
+const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
+const UOS_CODEX_PROMPTS_CHUNK_PREFIX = ["uos_ai", "codex_instructions_chunk"] as const;
 
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
@@ -65,10 +65,12 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   const body = await readJsonBody(req);
   const authPayload = isRecord(body) && "auth" in body ? (body.auth as unknown) : body;
   const modelsPayload = isRecord(body) && "models" in body ? (body.models as unknown) : undefined;
-  const instructionsPayload = isRecord(body) && "instructions" in body ? (body.instructions as unknown) : undefined;
   const tokenData = parseCodexAuthFromAuthJson(authPayload);
   if (!tokenData) {
     return openaiError(400, "Body does not look like a Codex auth.json", "invalid_request_error");
+  }
+  if (modelsPayload === undefined) {
+    return openaiError(400, "models is required for Codex auth uploads", "invalid_request_error");
   }
 
   const seed: CodexAuthState = { ...tokenData, updated_at_ms: Date.now() };
@@ -128,54 +130,6 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     };
   }
 
-  let instructionsStored:
-    | { id: string; bytes: number; source: string; updated_at_ms: number; client_version: string | null }
-    | null = null;
-  if (instructionsPayload !== undefined) {
-    const snapshot = await normalizeCodexInstructionsPayload(instructionsPayload);
-    if (!snapshot) {
-      return openaiError(400, "instructions must include a non-empty instructions string", "invalid_request_error");
-    }
-
-    const existing = await loadCodexInstructionsSnapshot();
-    const existingId = typeof existing?.id === "string" ? existing.id : null;
-    const shouldStore = !existingId || existingId !== snapshot.id;
-
-    if (shouldStore) {
-      const size = estimateJsonSize(snapshot);
-      if (size === null) {
-        return openaiError(400, "instructions payload could not be serialized", "invalid_request_error");
-      }
-      if (size > SAFE_KV_BYTES) {
-        return openaiError(
-          413,
-          `instructions snapshot too large (${size} bytes; max ${MAX_KV_BYTES}).`,
-          "invalid_request_error",
-        );
-      }
-      const stored = await storeCodexInstructionsSnapshot(snapshot);
-      if (!stored) {
-        return openaiError(500, "Deno KV is not available; cannot persist Codex instructions", "server_error");
-      }
-      instructionsStored = {
-        id: snapshot.id,
-        bytes: size,
-        source: snapshot.source,
-        updated_at_ms: snapshot.updated_at_ms,
-        client_version: snapshot.client_version ?? null,
-      };
-    } else {
-      const size = estimateJsonSize(snapshot);
-      instructionsStored = {
-        id: existingId ?? snapshot.id,
-        bytes: size ?? 0,
-        source: existing?.source ?? snapshot.source,
-        updated_at_ms: existing?.updated_at_ms ?? snapshot.updated_at_ms,
-        client_version: existing?.client_version ?? snapshot.client_version ?? null,
-      };
-    }
-  }
-
   const expMs = getJwtExpMs(validated.auth.access_token);
   return json(
     200,
@@ -189,7 +143,6 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       upstream_status: validated.status,
       upstream_content_type: validated.contentType,
       models: modelsStored,
-      instructions: instructionsStored,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
@@ -234,6 +187,27 @@ export const handleAdminCodexModelsSet = async (req: Request): Promise<Response>
     updated_at_ms: snapshot.updated_at_ms,
     client_version: snapshot.client_version ?? null,
   });
+};
+
+export const handleAdminCodexPromptsPurge = async (): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot purge Codex prompts", "server_error");
+  }
+
+  let deleted = 0;
+  const entry = await kv.get(UOS_CODEX_PROMPTS_KEY);
+  if (entry.value !== null) {
+    await kv.delete(UOS_CODEX_PROMPTS_KEY);
+    deleted++;
+  }
+
+  for await (const item of kv.list({ prefix: UOS_CODEX_PROMPTS_CHUNK_PREFIX })) {
+    await kv.delete(item.key);
+    deleted++;
+  }
+
+  return json(200, { deleted });
 };
 
 export const handleAdminDefaults = async (req: Request): Promise<Response> => {
@@ -475,41 +449,6 @@ const normalizeCodexModelsPayload = (value: unknown): CodexModelsSnapshot | null
 
   return {
     models,
-    source,
-    updated_at_ms: updatedAtMs ?? Date.now(),
-    client_version: clientVersion ?? undefined,
-  };
-};
-
-const normalizeCodexInstructionsPayload = async (
-  value: unknown,
-): Promise<CodexInstructionsSnapshot | null> => {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const instructions = value.trimEnd();
-    return {
-      id: await sha256Base64Url(instructions),
-      instructions,
-      source: "manual",
-      updated_at_ms: Date.now(),
-    };
-  }
-  if (!isRecord(value)) return null;
-  const rawInstructions = getString(value.instructions);
-  if (!rawInstructions || !rawInstructions.trim()) return null;
-  let source = "codex_cli";
-  const sourceValue = getString(value.source);
-  if (sourceValue) source = sourceValue;
-  let updatedAtMs: number | null = null;
-  if (typeof value.updated_at_ms === "number" && Number.isFinite(value.updated_at_ms)) {
-    updatedAtMs = Math.trunc(value.updated_at_ms);
-  }
-  const clientVersion = getString(value.client_version) ?? getString(value.clientVersion);
-  const instructions = rawInstructions.trimEnd();
-  return {
-    id: await sha256Base64Url(instructions),
-    instructions,
     source,
     updated_at_ms: updatedAtMs ?? Date.now(),
     client_version: clientVersion ?? undefined,
@@ -1000,6 +939,12 @@ export const handleAdminKernelPubKeysDelete = async (req: Request): Promise<Resp
 
   await reloadKernelPublicKeys();
   return json(200, { ok: true, deleted_app_id: appId });
+};
+
+export const handleAdminKernelPolicyQueueList = async (): Promise<Response> => {
+  const records = await listKernelPolicyQueue();
+  if (!records) return openaiError(500, "Deno KV is not available", "server_error");
+  return json(200, { data: records });
 };
 
 export const handleAdminKernelUsageGet = async (req: Request): Promise<Response> => {

@@ -1,8 +1,4 @@
-import {
-  extractCodexInstructionsFromText,
-  extractCodexModelsFromText,
-  resolveCodexBinaryPath,
-} from "./codex-models.ts";
+import { extractCodexModelsFromText, resolveCodexBinaryPath } from "./codex-models.ts";
 
 const parseArgs = (args: string[]): Record<string, string | boolean> => {
   const out: Record<string, string | boolean> = {};
@@ -103,10 +99,10 @@ const usage = () => {
   console.log(`upload-codex-auth.ts
 
 Uploads your local Codex ~/.codex/auth.json to ai.ubq.fi for validation + storage in Deno KV.
-Also extracts Codex models + instructions from the local Codex binary unless --skip-models.
+Also extracts Codex models from the local Codex binary.
 
 Usage:
-  deno run --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts [--url https://ai.ubq.fi] [--auth-json ~/.codex/auth.json] [--codex-bin /path/to/codex] [--skip-models]
+  deno run --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts [--url https://ai.ubq.fi] [--auth-json ~/.codex/auth.json] [--codex-bin /path/to/codex]
 
 Auth:
   Set DENO_DEPLOY_TOKEN in env, or pass --admin-token.
@@ -122,6 +118,10 @@ const parsed = parseArgs(Deno.args);
 const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
 const authJsonPath = expandTilde((parsed["auth-json"] as string | undefined) ?? "~/.codex/auth.json");
 const adminToken = (parsed["admin-token"] as string | undefined) ?? Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
+if (parsed["skip-models"] !== undefined || parsed["no-models"] !== undefined) {
+  console.error("--skip-models is no longer supported; Codex model extraction is required.");
+  Deno.exit(2);
+}
 
 if (!adminToken) {
   console.error("Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.");
@@ -143,64 +143,45 @@ try {
   console.error(`auth.json at ${authJsonPath} is not valid JSON:`, error);
   Deno.exit(2);
 }
-const skipModels = parsed["skip-models"] === true || parsed["no-models"] === true;
 const codexBinFlag = parsed["codex-bin"] as string | undefined;
 let modelsPayload: Record<string, unknown> | null = null;
-let instructionsPayload: Record<string, unknown> | null = null;
 
-if (!skipModels) {
-  const codexPath = codexBinFlag ? expandTilde(codexBinFlag) : await findCodexBinaryOnPath();
-  if (!codexPath) {
-    console.error("Codex binary not found on PATH; skipping model + instructions extraction.");
-  } else {
-    let resolvedPath = codexPath;
-    try {
-      resolvedPath = await resolveCodexBinaryPath(
-        codexPath,
-        (path) => Deno.readTextFile(path),
-        Deno.build.os,
-        Deno.build.arch,
-        Deno.realPath,
-      );
-      const text = await Deno.readTextFile(resolvedPath);
-      const extractedModels = extractCodexModelsFromText(text);
-      const extractedInstructions = extractCodexInstructionsFromText(text);
-      if (!extractedModels) {
-        console.error("Failed to extract Codex models from the CLI binary; skipping model upload.");
-      }
-      if (!extractedInstructions) {
-        console.error("Failed to extract Codex instructions from the CLI binary; skipping instructions upload.");
-      }
-      if (extractedModels || extractedInstructions) {
-        const fallbackVersion = await resolveCodexClientVersion([resolvedPath, codexPath]);
-        const clientVersion = extractedModels?.clientVersion ?? fallbackVersion ?? undefined;
-        if (extractedModels) {
-          modelsPayload = {
-            source: "codex_cli",
-            client_version: clientVersion,
-            updated_at_ms: Date.now(),
-            models: extractedModels.models,
-          };
-        }
-        if (extractedInstructions) {
-          instructionsPayload = {
-            source: "codex_cli",
-            client_version: clientVersion,
-            updated_at_ms: Date.now(),
-            instructions: extractedInstructions,
-          };
-        }
-      }
-    } catch (error) {
-      console.error(`Failed to read Codex binary at ${resolvedPath}:`, error);
-    }
+const codexPath = codexBinFlag ? expandTilde(codexBinFlag) : await findCodexBinaryOnPath();
+if (!codexPath) {
+  console.error("Codex binary not found on PATH. Pass --codex-bin to upload models.");
+  Deno.exit(2);
+}
+
+let resolvedPath = codexPath;
+try {
+  resolvedPath = await resolveCodexBinaryPath(
+    codexPath,
+    (path) => Deno.readTextFile(path),
+    Deno.build.os,
+    Deno.build.arch,
+    Deno.realPath,
+  );
+  const text = await Deno.readTextFile(resolvedPath);
+  const extractedModels = extractCodexModelsFromText(text);
+  if (!extractedModels) {
+    console.error("Failed to extract Codex models from the CLI binary.");
+    Deno.exit(1);
   }
+  const fallbackVersion = await resolveCodexClientVersion([resolvedPath, codexPath]);
+  const clientVersion = extractedModels.clientVersion ?? fallbackVersion ?? undefined;
+  modelsPayload = {
+    source: "codex_cli",
+    client_version: clientVersion,
+    updated_at_ms: Date.now(),
+    models: extractedModels.models,
+  };
+} catch (error) {
+  console.error(`Failed to read Codex binary at ${resolvedPath}:`, error);
+  Deno.exit(1);
 }
 
 const endpoint = new URL("/admin/codex/auth", baseUrl);
-const requestPayload = modelsPayload || instructionsPayload
-  ? { auth: authJson, models: modelsPayload ?? undefined, instructions: instructionsPayload ?? undefined }
-  : authJson;
+const requestPayload = { auth: authJson, models: modelsPayload };
 const body = JSON.stringify(requestPayload);
 const res = await fetch(endpoint, {
   method: "POST",

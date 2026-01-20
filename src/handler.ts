@@ -8,10 +8,12 @@ import {
   handleAdminCodexAuth,
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
+  handleAdminCodexPromptsPurge,
   handleAdminDefaults,
   handleAdminKernelUsageDelete,
   handleAdminKernelUsageGet,
   handleAdminKernelUsageSet,
+  handleAdminKernelPolicyQueueList,
   handleAdminKernelPubKeysCreate,
   handleAdminKernelPubKeysDelete,
   handleAdminKernelPubKeysList,
@@ -138,6 +140,12 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleAdminCodexModelsSet(req));
   }
 
+  if (req.method === "POST" && path === "/admin/codex/prompts/purge") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminCodexPromptsPurge());
+  }
+
   if ((req.method === "GET" || req.method === "POST") && path === "/admin/defaults") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
@@ -184,6 +192,12 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminKernelUsageGet(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/kernel-policy-queue") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKernelPolicyQueueList());
   }
 
   if (req.method === "POST" && path === "/admin/kernel-usage") {

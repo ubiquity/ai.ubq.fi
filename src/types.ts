@@ -40,6 +40,7 @@ export type ApiKeyUsageRecord = Readonly<{
   first_seen_at_ms: number;
   last_seen_at_ms: number;
   last_model: string | null;
+  last_reasoning: string | null;
   last_route: string | null;
 }>;
 
@@ -68,6 +69,7 @@ export type KernelAuthUsageRecord = Readonly<{
   first_seen_at_ms: number;
   last_seen_at_ms: number;
   last_model: string | null;
+  last_reasoning: string | null;
   last_route: string | null;
 }>;
 
@@ -107,6 +109,7 @@ export type KernelOrgUsageRecord = Readonly<{
   first_seen_at_ms: number;
   last_seen_at_ms: number;
   last_model: string | null;
+  last_reasoning: string | null;
   last_route: string | null;
 }>;
 
@@ -129,6 +132,15 @@ export type KernelOrgLimitRecord = Readonly<{
   window_ms: number;
   created_at_ms: number;
   updated_at_ms: number;
+}>;
+
+export type KernelPolicyQueueItem = Readonly<{
+  owner: string;
+  repo: string;
+  request_count: number;
+  first_seen_at_ms: number;
+  last_seen_at_ms: number;
+  last_route: string | null;
 }>;
 
 export type ChatCompletionRequest = Readonly<{

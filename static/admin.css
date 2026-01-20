@@ -27,12 +27,152 @@ body[data-page="admin"] h1 {
 
 body[data-page="admin"] [data-card] {
   padding: 16px 18px 18px;
+  gap: 12px;
 }
 
 body[data-page="admin"] [data-edit-panel],
 body[data-page="admin"] [data-key-edit],
 body[data-page="admin"] [data-key-info] {
   background: rgba(255, 255, 255, 0.05);
+}
+
+body[data-page="admin"] main {
+  gap: 18px;
+}
+
+body[data-page="admin"] [data-layout="grid"] {
+  gap: 14px;
+}
+
+body[data-page="admin"] [data-card-body] {
+  gap: 10px;
+}
+
+body[data-page="admin"] [data-auth-grid] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+body[data-page="admin"] [data-auth-item] {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: var(--shadow-soft);
+}
+
+body[data-page="admin"] [data-auth-head] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+body[data-page="admin"] [data-auth-title] {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+body[data-page="admin"] [data-auth-meta] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+body[data-page="admin"] [data-auth-label] {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted-2);
+}
+
+body[data-page="admin"] [data-auth-value] {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-key-list] {
+  gap: 10px;
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-key] {
+  padding: 12px 14px 12px 20px;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-key]::before {
+  left: 8px;
+  top: 12px;
+  bottom: 12px;
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-sublist] {
+  padding: 2px 0 0 10px;
+  background: transparent;
+  gap: 8px;
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-subtile] {
+  padding: 10px 12px 10px 18px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-subtile]::before {
+  left: 6px;
+  top: 10px;
+  bottom: 10px;
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-key-info] {
+  padding: 0;
+  background: transparent;
+  gap: 6px 12px;
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-key-info-item] {
+  padding: 2px 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-key-info-item][data-state="warning"],
+body[data-page="admin"] [data-view="kernel"] [data-key-info-item][data-state="bad"] {
+  background: transparent;
+}
+
+body[data-page="admin"] [data-key-info-value][data-inline-actions] {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body[data-page="admin"] [data-key-info-value][data-inline-actions] button[data-icon-button] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+body[data-page="admin"] [data-key-info-value][data-inline-actions] button[data-icon-button] svg {
+  width: 14px;
+  height: 14px;
+}
+
+body[data-page="admin"] [data-view="kernel"] details[data-usage] {
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+body[data-page="admin"] [data-view="kernel"] details[data-usage][open] {
+  background: rgba(255, 255, 255, 0.045);
 }
 
 @media (max-width: 760px) {

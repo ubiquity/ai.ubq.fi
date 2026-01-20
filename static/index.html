@@ -40,9 +40,7 @@
       <main>
         <section data-hero>
           <h1>AI Gateway</h1>
-          <p data-lead>
-            OpenAI-style API surface (<code>/v1/*</code>) backed by a Codex upstream.
-          </p>
+          <p data-lead>Docs and tools for the UbiquityOS AI gateway.</p>
         </section>
 
         <section data-layout="grid" role="list">
@@ -87,8 +85,8 @@
   --data '{"messages":[{"role":"user","content":"Tell me a short joke."}]}'</code></pre>
 
               <p>
-                More parameters are supported (for example <code>model</code>, <code>reasoning_effort</code>,
-                <code>stream</code>, and system/developer messages). Full example:
+                More parameters are supported (for example <code>model</code>, <code>reasoning_effort</code>, and
+                system/developer messages). Full example:
               </p>
               <pre data-code><code>export UOS_AI_TOKEN="..."
 
@@ -100,7 +98,7 @@ curl -sS https://ai.ubq.fi/v1/models \
 curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"model":"gpt-5.2-chat-latest","reasoning_effort":"high","messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"developer","content":"Keep it concise."},{"role":"user","content":"Tell me a short joke."}],"stream":false}'</code></pre>
+  --data '{"model":"gpt-5.2-chat-latest","reasoning_effort":"high","messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"developer","content":"Keep it concise."},{"role":"user","content":"Tell me a short joke."}]}'</code></pre>
             </div>
           </article>
         </section>

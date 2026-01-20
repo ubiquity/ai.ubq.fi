@@ -10,7 +10,8 @@ import {
 } from "./api_keys.ts";
 import { json, openaiError } from "./http.ts";
 import { getBearerToken } from "./http.ts";
-import { checkKernelOrgUsageLimit, checkKernelUsageLimit, getKernelUsageLimitSnapshot } from "./kernel_usage.ts";
+import { checkKernelOrgUsageLimit, checkKernelUsageLimit, getKernelOrgUsageLimitSnapshot, getKernelUsageLimitSnapshot } from "./kernel_usage.ts";
+import { recordKernelPolicyQueue } from "./kernel_policy_queue.ts";
 import { kvPromise } from "./kv.ts";
 import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
@@ -211,7 +212,7 @@ const pruneKernelTokenJtiCache = () => {
 
 const verifyKernelAttestation = async (
   req: Request,
-  { token, owner, repo }: { token: string; owner: string; repo: string },
+  { token, owner, repo }: { token: string; owner?: string | null; repo?: string | null },
 ): Promise<{ ok: true; payload: KernelAttestationPayload } | { ok: false; response: Response }> => {
   const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
   if (!kernelToken) {
@@ -290,25 +291,29 @@ const verifyKernelAttestation = async (
     };
   }
 
-  if (payload.owner !== owner || payload.repo !== repo) {
+  const expectedOwner = typeof owner === "string" ? owner.trim() : "";
+  const expectedRepo = typeof repo === "string" ? repo.trim() : "";
+  if (expectedOwner && expectedRepo && (payload.owner !== expectedOwner || payload.repo !== expectedRepo)) {
     return {
       ok: false,
-      response: openaiError(401, `Unauthorized: kernel attestation repo mismatch. Expected '${owner}/${repo}', got '${payload.owner}/${payload.repo}'`, "invalid_kernel_token"),
+      response: openaiError(401, `Unauthorized: kernel attestation repo mismatch. Expected '${expectedOwner}/${expectedRepo}', got '${payload.owner}/${payload.repo}'`, "invalid_kernel_token"),
     };
   }
 
-  const installationId = parseInstallationIdHeader(req);
-  if (installationId === null) {
-    return {
-      ok: false,
-      response: openaiError(401, "Unauthorized: missing 'X-GitHub-Installation-Id' header, required for kernel attestation verification", "missing_installation_id"),
-    };
-  }
-  if (payload.installation_id !== installationId) {
-    return {
-      ok: false,
-      response: openaiError(401, `Unauthorized: kernel attestation installation_id mismatch. Expected '${installationId}', got '${payload.installation_id}'`, "invalid_kernel_token"),
-    };
+  if (payload.installation_id !== null) {
+    const installationId = parseInstallationIdHeader(req);
+    if (installationId === null) {
+      return {
+        ok: false,
+        response: openaiError(401, "Unauthorized: missing 'X-GitHub-Installation-Id' header, required for kernel attestation verification", "missing_installation_id"),
+      };
+    }
+    if (payload.installation_id !== installationId) {
+      return {
+        ok: false,
+        response: openaiError(401, `Unauthorized: kernel attestation installation_id mismatch. Expected '${installationId}', got '${payload.installation_id}'`, "invalid_kernel_token"),
+      };
+    }
   }
 
   const expectedTokenSha = await sha256Base64Url(token);
@@ -380,14 +385,13 @@ export const getKernelAttestationContext = async (
   const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
   if (!kernelToken) return null;
   const repoHeaders = getGitHubRepoHeaders(req);
-  if (!repoHeaders) return null;
   const attestation = await verifyKernelAttestation(req, {
     token,
-    owner: repoHeaders.owner,
-    repo: repoHeaders.repo,
+    owner: repoHeaders?.owner,
+    repo: repoHeaders?.repo,
   });
   if (!attestation.ok) return null;
-  return { owner: repoHeaders.owner, repo: repoHeaders.repo };
+  return { owner: attestation.payload.owner, repo: attestation.payload.repo };
 };
 
 const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: string): Promise<boolean> => {
@@ -434,42 +438,53 @@ const authenticateGitHubToken = async (
   if (!looksLikeGitHubToken(token)) return null;
 
   const repoHeaders = getGitHubRepoHeaders(req);
-  if (!repoHeaders) return null;
+  const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
+  if (!repoHeaders && !kernelToken) return null;
 
-  const { owner, repo } = repoHeaders;
-  const attestation = await verifyKernelAttestation(req, { token, owner, repo });
+  const attestation = await verifyKernelAttestation(req, {
+    token,
+    owner: repoHeaders?.owner,
+    repo: repoHeaders?.repo,
+  });
   if (!attestation.ok) return { ok: false, response: attestation.response };
+  const { owner, repo } = attestation.payload;
   const stateId = attestation.payload.state_id;
 
-  const resolveKernelLimitScope = async (): Promise<"org" | "repo"> => {
-    const snapshot = await getKernelUsageLimitSnapshot(owner, repo);
-    if (snapshot?.source === "kv") return "repo";
-    return "org";
+  const resolveKernelPolicyState = async (): Promise<{ limit_scope: "org" | "repo"; has_policy: boolean }> => {
+    const repoSnapshot = await getKernelUsageLimitSnapshot(owner, repo);
+    if (repoSnapshot?.source === "kv") {
+      return { limit_scope: "repo", has_policy: true };
+    }
+    const orgSnapshot = await getKernelOrgUsageLimitSnapshot(owner);
+    return { limit_scope: "org", has_policy: orgSnapshot?.source === "kv" };
   };
 
-  const enforceKernelLimit = async (): Promise<
-    { ok: true; limit_scope: "org" | "repo" } | { ok: false; response: Response }
-  > => {
-    const limitScope = await resolveKernelLimitScope();
+  const enforceKernelLimit = async (
+    limitScope: "org" | "repo",
+  ): Promise<{ ok: true } | { ok: false; response: Response }> => {
     if (limitScope === "repo") {
       const repoLimitResult = await checkKernelUsageLimit(owner, repo);
       if (!repoLimitResult.ok) return { ok: false, response: repoLimitResult.response };
-      return { ok: true, limit_scope: "repo" };
+      return { ok: true };
     }
 
     const orgLimitResult = await checkKernelOrgUsageLimit(owner);
     if (!orgLimitResult.ok) return { ok: false, response: orgLimitResult.response };
-    return { ok: true, limit_scope: "org" };
+    return { ok: true };
   };
 
   const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
   const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
   if (cachedUntil > Date.now()) {
-    const limitResult = await enforceKernelLimit();
+    const policyState = await resolveKernelPolicyState();
+    const limitResult = await enforceKernelLimit(policyState.limit_scope);
     if (!limitResult.ok) return { ok: false, response: limitResult.response };
+    if (!policyState.has_policy) {
+      await recordKernelPolicyQueue(owner, repo, getRequestPath(req));
+    }
     return {
       ok: true,
-      method: { kind: "github_token", owner, repo, state_id: stateId, limit_scope: limitResult.limit_scope },
+      method: { kind: "github_token", owner, repo, state_id: stateId, limit_scope: policyState.limit_scope },
     };
   }
 
@@ -480,11 +495,15 @@ const authenticateGitHubToken = async (
     }
 
     githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
-    const limitResult = await enforceKernelLimit();
+    const policyState = await resolveKernelPolicyState();
+    const limitResult = await enforceKernelLimit(policyState.limit_scope);
     if (!limitResult.ok) return { ok: false, response: limitResult.response };
+    if (!policyState.has_policy) {
+      await recordKernelPolicyQueue(owner, repo, getRequestPath(req));
+    }
     return {
       ok: true,
-      method: { kind: "github_token", owner, repo, state_id: stateId, limit_scope: limitResult.limit_scope },
+      method: { kind: "github_token", owner, repo, state_id: stateId, limit_scope: policyState.limit_scope },
     };
   } catch (error) {
     console.error("[ai.ubq.fi] GitHub token verification failed:", error);
@@ -537,17 +556,14 @@ const getAuthHeaderSnapshot = (req: Request): Record<string, string | null> => {
 };
 
 const logAuthDecision = (req: Request, entry: AuthLogEntry): void => {
+  if (entry.ok) return;
   const payload = {
     ...entry,
     path: getRequestPath(req),
     headers: getAuthHeaderSnapshot(req),
   };
   const line = JSON.stringify(payload);
-  if (entry.ok) {
-    console.info("[ai.ubq.fi] auth", line);
-  } else {
-    console.warn("[ai.ubq.fi] auth", line);
-  }
+  console.warn("[ai.ubq.fi] auth", line);
 };
 
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {

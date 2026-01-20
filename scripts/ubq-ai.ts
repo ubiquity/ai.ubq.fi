@@ -1,8 +1,4 @@
-import {
-  extractCodexInstructionsFromText,
-  extractCodexModelsFromText,
-  resolveCodexBinaryPath,
-} from "./codex-models.ts";
+import { extractCodexModelsFromText, resolveCodexBinaryPath } from "./codex-models.ts";
 
 export type FlagValue = string | boolean | string[];
 
@@ -155,8 +151,6 @@ const BOOLEAN_FLAGS = new Set([
   "json",
   "raw",
   "reset-usage",
-  "skip-models",
-  "no-models",
   "stream",
   "token-only",
   "verbose",
@@ -348,7 +342,7 @@ Commands:
   models
   chat [<prompt>] [--model <id>] [--reasoning-effort <level>] [--system <text>] [--developer <text>] [--messages-json <json>] [--messages-file <path>]
   responses [<input>] [--model <id>] [--reasoning-effort <level>] [--input-json <json>] [--input-file <path>]
-  admin upload-auth [--auth-json <path>] [--codex-bin <path>] [--skip-models]
+  admin upload-auth [--auth-json <path>] [--codex-bin <path>]
   admin keys create "<name>" [--token <token>] [--expires <preset>|--expires-at-ms <ms>] [--usage-limit <requests>]
   admin keys list
   admin keys revoke --id <id>
@@ -359,7 +353,7 @@ Commands:
   admin kernel-usage set --owner <name> [--repo <name>] --usage-limit <requests> [--window-ms <ms>] [--scope repo|org] [--reset-usage]
 
 Admin notes:
-  upload-auth extracts Codex models + instructions from the local codex binary unless --skip-models.
+  upload-auth extracts Codex models from the local codex binary.
 
 Admin key expiration:
   --expires <preset>           day|week|month|quarter|year|forever (sets expires_at_ms)
@@ -1104,52 +1098,32 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         return 2;
       }
 
-      const skipModels = flags["skip-models"] === true || flags["no-models"] === true;
+      if (flags["skip-models"] !== undefined || flags["no-models"] !== undefined) {
+        await writeErrText(runtime, "--skip-models is no longer supported; Codex model extraction is required.\n");
+        return 2;
+      }
       const codexBinFlag = getFlagString(flags, "codex-bin");
       let modelsPayload: Record<string, unknown> | null = null;
-      let instructionsPayload: Record<string, unknown> | null = null;
-      if (!skipModels) {
-        const binary = await loadCodexBinaryText(runtime, codexBinFlag, homeDir);
-        if (!binary) {
-          await writeErrText(runtime, "Codex binary not found on PATH; skipping model + instructions extraction.\n");
-        } else {
-          const extractedModels = extractCodexModelsFromText(binary.text);
-          const extractedInstructions = extractCodexInstructionsFromText(binary.text);
-          if (!extractedModels) {
-            await writeErrText(runtime, "Failed to extract Codex models from the CLI binary; skipping model upload.\n");
-          }
-          if (!extractedInstructions) {
-            await writeErrText(
-              runtime,
-              "Failed to extract Codex instructions from the CLI binary; skipping instructions upload.\n",
-            );
-          }
-          if (extractedModels || extractedInstructions) {
-            const fallbackVersion = await resolveCodexClientVersion(runtime, binary.path, homeDir);
-            const clientVersion = extractedModels?.clientVersion ?? fallbackVersion ?? undefined;
-            if (extractedModels) {
-              modelsPayload = {
-                source: "codex_cli",
-                client_version: clientVersion,
-                updated_at_ms: Date.now(),
-                models: extractedModels.models,
-              };
-            }
-            if (extractedInstructions) {
-              instructionsPayload = {
-                source: "codex_cli",
-                client_version: clientVersion,
-                updated_at_ms: Date.now(),
-                instructions: extractedInstructions,
-              };
-            }
-          }
-        }
+      const binary = await loadCodexBinaryText(runtime, codexBinFlag, homeDir);
+      if (!binary) {
+        await writeErrText(runtime, "Codex binary not found on PATH. Pass --codex-bin to upload models.\n");
+        return 2;
       }
+      const extractedModels = extractCodexModelsFromText(binary.text);
+      if (!extractedModels) {
+        await writeErrText(runtime, "Failed to extract Codex models from the CLI binary.\n");
+        return 1;
+      }
+      const fallbackVersion = await resolveCodexClientVersion(runtime, binary.path, homeDir);
+      const clientVersion = extractedModels.clientVersion ?? fallbackVersion ?? undefined;
+      modelsPayload = {
+        source: "codex_cli",
+        client_version: clientVersion,
+        updated_at_ms: Date.now(),
+        models: extractedModels.models,
+      };
 
-      const payload = modelsPayload || instructionsPayload
-        ? { auth: authJson, models: modelsPayload ?? undefined, instructions: instructionsPayload ?? undefined }
-        : authJson;
+      const payload = { auth: authJson, models: modelsPayload };
       const req = new Request(endpoint("/admin/codex/auth"), {
         method: "POST",
         headers: {

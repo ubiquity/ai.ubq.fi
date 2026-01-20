@@ -1,6 +1,6 @@
 const TRACE_LAYER_ATTR = "data-network-trace-layer";
 const TRACE_ATTR = "data-network-trace";
-const INSTALL_FLAG = "__ubqNetworkTraceInstalled";
+const INSTALL_FLAG = "__uosNetworkTraceInstalled";
 const DEFAULT_DURATION_MS = 1400;
 const DEFAULT_ORIGIN_KEY = "default";
 

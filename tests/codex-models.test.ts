@@ -1,9 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  extractCodexInstructionsFromText,
-  extractCodexModelsFromText,
-  resolveCodexBinaryPath,
-} from "../scripts/codex-models.ts";
+import { extractCodexModelsFromText, resolveCodexBinaryPath } from "../scripts/codex-models.ts";
 
 Deno.test("resolveCodexBinaryPath uses vendor binary for wrapper script", async () => {
   const wrapper = `#!/usr/bin/env node
@@ -70,30 +66,4 @@ Deno.test("extractCodexModelsFromText trims large fields", () => {
   assert.equal(model?.display_name, "Codex");
   assert.equal(model?.description, "desc");
   assert.equal("base_instructions" in model, false);
-});
-
-Deno.test("extractCodexInstructionsFromText extracts instruction block", () => {
-  const instructions = [
-    "You are Codex, based on GPT-5.",
-    "",
-    "## General",
-    "",
-    "- Use rg for search.",
-    "",
-    "## Plan tool",
-    "",
-    "- Avoid single-step plans.",
-    "",
-    "### Final answer structure and style guidelines",
-    "",
-    "- Examples: src/app.ts:42",
-  ].join("\n");
-  const text = `noise ${instructions}\nnext`;
-  const extracted = extractCodexInstructionsFromText(text);
-  assert.ok(extracted);
-  assert.ok(extracted?.startsWith("You are Codex, based on GPT-5."));
-  assert.ok(extracted?.includes("## General"));
-  assert.ok(extracted?.includes("## Plan tool"));
-  assert.ok(extracted?.trimEnd().endsWith("Examples: src/app.ts:42"));
-  assert.equal(extracted?.includes("next"), false);
 });

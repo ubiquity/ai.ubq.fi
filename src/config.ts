@@ -5,7 +5,6 @@ export type Config = Readonly<{
   adminTokens: ReadonlySet<string>;
   codexBaseUrl: string;
   codexAuthJsonB64: string;
-  codexInstructionsB64: string | null;
 }>;
 
 const parseTokens = (raw: string | undefined | null): Set<string> => {
@@ -34,13 +33,11 @@ const loadConfig = (): Config => {
 
   const codexBaseUrl = (getEnv("CODEX_BASE_URL") ?? "https://chatgpt.com/backend-api/codex").trim().replace(/\/$/, "");
   const codexAuthJsonB64 = (getEnv("CODEX_AUTH_JSON_B64") ?? "").trim();
-  const codexInstructionsB64 = (getEnv("CODEX_INSTRUCTIONS_B64") ?? "").trim() || null;
 
   return {
     isDeploy,
     codexBaseUrl,
     codexAuthJsonB64,
-    codexInstructionsB64,
     allowOrigin,
     authTokens,
     adminTokens,

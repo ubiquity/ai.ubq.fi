@@ -65,6 +65,7 @@ type KernelUsageDelta = Readonly<{
   output_tokens?: number;
   total_tokens?: number;
   model?: string | null;
+  reasoning?: string | null;
   route?: string | null;
   seen_at_ms?: number;
 }>;
@@ -132,6 +133,7 @@ const buildBaseUsageRecord = (owner: string, repo: string, nowMs: number): Kerne
   first_seen_at_ms: nowMs,
   last_seen_at_ms: nowMs,
   last_model: null,
+  last_reasoning: null,
   last_route: null,
 });
 
@@ -156,6 +158,7 @@ const normalizeUsageRecord = (
     first_seen_at_ms: coerceNumber(value.first_seen_at_ms, nowMs),
     last_seen_at_ms: coerceNumber(value.last_seen_at_ms, nowMs),
     last_model: normalizeLabel(value.last_model),
+    last_reasoning: normalizeLabel(value.last_reasoning),
     last_route: normalizeLabel(value.last_route),
   };
 };
@@ -244,6 +247,7 @@ const buildDailySeries = (
 
 const applyDelta = (record: KernelAuthUsageRecord, delta: KernelUsageDelta, nowMs: number): KernelAuthUsageRecord => {
   const model = delta.model === undefined ? record.last_model : normalizeLabel(delta.model);
+  const reasoning = delta.reasoning === undefined ? record.last_reasoning : normalizeLabel(delta.reasoning);
   const route = delta.route === undefined ? record.last_route : normalizeLabel(delta.route);
   const seenAt = typeof delta.seen_at_ms === "number" && Number.isFinite(delta.seen_at_ms)
     ? Math.trunc(delta.seen_at_ms)
@@ -263,6 +267,7 @@ const applyDelta = (record: KernelAuthUsageRecord, delta: KernelUsageDelta, nowM
     first_seen_at_ms: record.first_seen_at_ms > 0 ? record.first_seen_at_ms : seenAt,
     last_seen_at_ms: seenAt,
     last_model: model,
+    last_reasoning: reasoning,
     last_route: route,
   };
 };
@@ -361,6 +366,7 @@ const buildBaseOrgUsageRecord = (owner: string, nowMs: number): KernelOrgUsageRe
   first_seen_at_ms: nowMs,
   last_seen_at_ms: nowMs,
   last_model: null,
+  last_reasoning: null,
   last_route: null,
 });
 
@@ -379,12 +385,14 @@ const normalizeOrgUsageRecord = (value: unknown, owner: string, nowMs: number): 
     first_seen_at_ms: coerceNumber(value.first_seen_at_ms, nowMs),
     last_seen_at_ms: coerceNumber(value.last_seen_at_ms, nowMs),
     last_model: normalizeLabel(value.last_model),
+    last_reasoning: normalizeLabel(value.last_reasoning),
     last_route: normalizeLabel(value.last_route),
   };
 };
 
 const applyOrgDelta = (record: KernelOrgUsageRecord, delta: KernelUsageDelta, nowMs: number): KernelOrgUsageRecord => {
   const model = delta.model === undefined ? record.last_model : normalizeLabel(delta.model);
+  const reasoning = delta.reasoning === undefined ? record.last_reasoning : normalizeLabel(delta.reasoning);
   const route = delta.route === undefined ? record.last_route : normalizeLabel(delta.route);
   const seenAt = typeof delta.seen_at_ms === "number" && Number.isFinite(delta.seen_at_ms)
     ? Math.trunc(delta.seen_at_ms)
@@ -403,6 +411,7 @@ const applyOrgDelta = (record: KernelOrgUsageRecord, delta: KernelUsageDelta, no
     first_seen_at_ms: record.first_seen_at_ms > 0 ? record.first_seen_at_ms : seenAt,
     last_seen_at_ms: seenAt,
     last_model: model,
+    last_reasoning: reasoning,
     last_route: route,
   };
 };

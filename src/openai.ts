@@ -3,7 +3,6 @@ import {
   CodexError,
   fetchCodexModels,
   fetchCodexResponses,
-  getCodexInstructions,
   loadCodexModelsSnapshot,
 } from "./codex.ts";
 import {
@@ -11,6 +10,7 @@ import {
   DEFAULT_MODEL_KEY,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_REASONING_EFFORT_KEY,
+  normalizeReasoningEffort,
   type ReasoningEffort,
   REASONING_EFFORTS,
 } from "./defaults.ts";
@@ -61,6 +61,7 @@ type UsageDelta = Readonly<{
   output_tokens?: number;
   total_tokens?: number;
   model?: string | null;
+  reasoning?: string | null;
   route?: string | null;
   seen_at_ms?: number;
 }>;
@@ -97,13 +98,14 @@ const extractUsageTokens = (value: unknown): UsageTokens | null => {
 
 const recordRequestUsage = async (
   context: UsageContext | undefined,
-  details: { model: string; route: string; stream: boolean },
+  details: { model: string; route: string; stream: boolean; reasoning: string | null },
 ): Promise<void> => {
   await recordUsageDelta(context, {
     request_count: 1,
     stream_request_count: details.stream ? 1 : 0,
     non_stream_request_count: details.stream ? 0 : 1,
     model: details.model,
+    reasoning: details.reasoning,
     route: details.route,
     seen_at_ms: Date.now(),
   });
@@ -145,6 +147,34 @@ const toCodexErrorResponse = (error: unknown): Response => {
 const looksLikeReasoningModel = (model: string): boolean => {
   const trimmed = model.trim().toLowerCase();
   return trimmed.startsWith("gpt-5") || trimmed.startsWith("o");
+};
+
+const resolveDefaultReasoningLabel = (model: string, defaultEffort: ReasoningEffort): ReasoningEffort => {
+  return looksLikeReasoningModel(model) ? defaultEffort : "none";
+};
+
+const resolveReasoningLabelFromEffort = (
+  effort: ReasoningEffort | null | undefined,
+  defaultLabel: ReasoningEffort,
+): ReasoningEffort => {
+  if (effort === undefined) return defaultLabel;
+  if (effort === null) return "none";
+  return effort;
+};
+
+const resolveReasoningLabelFromParam = (
+  reasoning: Record<string, unknown> | null | undefined,
+  defaultLabel: ReasoningEffort,
+): ReasoningEffort => {
+  if (reasoning === undefined) return defaultLabel;
+  if (reasoning === null) return "none";
+  if (!isRecord(reasoning)) return defaultLabel;
+  if ("effort" in reasoning) {
+    if (reasoning.effort === null) return "none";
+    const effort = normalizeReasoningEffort(reasoning.effort);
+    if (effort) return effort;
+  }
+  return defaultLabel;
 };
 
 const parseReasoningEffortField = (
@@ -583,15 +613,15 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   }
 
   const defaultEffort = await getDefaultReasoningEffort();
-  const defaultReasoning = looksLikeReasoningModel(model) && defaultEffort !== "none"
-    ? { effort: defaultEffort }
-    : undefined;
+  const defaultReasoningLabel = resolveDefaultReasoningLabel(model, defaultEffort);
+  const defaultReasoning = defaultReasoningLabel !== "none" ? { effort: defaultReasoningLabel } : undefined;
   const codexBody = await buildCodexRequest(model, input, {
     reasoning: reasoningEffort.value === undefined ? defaultReasoning : { effort: reasoningEffort.value },
   });
 
   const stream = Boolean(body.stream);
-  await recordRequestUsage(usageContext, { model: modelRaw, route: "chat.completions", stream });
+  const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
+  await recordRequestUsage(usageContext, { model: modelRaw, route: "chat.completions", stream, reasoning: reasoningLabel });
 
   let upstream: Response;
   try {
@@ -679,10 +709,10 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
 
   const defaultEffort = await getDefaultReasoningEffort();
-  const defaultReasoning = looksLikeReasoningModel(model) && defaultEffort !== "none"
-    ? { effort: defaultEffort }
-    : undefined;
+  const defaultReasoningLabel = resolveDefaultReasoningLabel(model, defaultEffort);
+  const defaultReasoning = defaultReasoningLabel !== "none" ? { effort: defaultReasoningLabel } : undefined;
   const reasoningValue = reasoning.value !== undefined ? reasoning.value : defaultReasoning;
+  const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue });
   const passthroughKeys = [
@@ -711,12 +741,12 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   codexBody.input = input;
   codexBody.stream = true;
 
-  const instructions = getString(codexBody.instructions);
-  if (!instructions?.trim()) {
-    codexBody.instructions = await getCodexInstructions();
-  }
-
-  await recordRequestUsage(usageContext, { model: modelRaw, route: "responses", stream: clientWantsStream });
+  await recordRequestUsage(usageContext, {
+    model: modelRaw,
+    route: "responses",
+    stream: clientWantsStream,
+    reasoning: reasoningLabel,
+  });
 
   let upstream: Response;
   try {

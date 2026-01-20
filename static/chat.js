@@ -1,11 +1,11 @@
 import "./network.js";
 
 const STORAGE_KEYS = {
-  rememberToken: "ubq_ai.playground.remember_token",
-  token: "ubq_ai.playground.token",
-  model: "ubq_ai.playground.model",
-  reasoningEffort: "ubq_ai.playground.reasoning_effort",
-  systemPrompt: "ubq_ai.playground.system_prompt",
+  rememberToken: "uos_ai.playground.remember_token",
+  token: "uos_ai.playground.token",
+  model: "uos_ai.playground.model",
+  reasoningEffort: "uos_ai.playground.reasoning_effort",
+  systemPrompt: "uos_ai.playground.system_prompt",
 };
 
 const storage = {
@@ -32,7 +32,7 @@ const storage = {
   },
 };
 
-const PANEL_STATE_PREFIX = "ubq_ai.playground.panel.";
+const PANEL_STATE_PREFIX = "uos_ai.playground.panel.";
 
 const debounce = (fn, wait = 450) => {
   let timer = null;

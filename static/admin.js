@@ -1,11 +1,11 @@
 import "./network.js";
 
 const STORAGE_KEYS = {
-  rememberToken: "ubq_ai.admin.remember_token",
-  token: "ubq_ai.admin.token",
-  expiresPreset: "ubq_ai.admin.expires_preset",
-  base: "ubq_ai.admin.base",
-  view: "ubq_ai.admin.view",
+  rememberToken: "uos_ai.admin.remember_token",
+  token: "uos_ai.admin.token",
+  expiresPreset: "uos_ai.admin.expires_preset",
+  base: "uos_ai.admin.base",
+  view: "uos_ai.admin.view",
 };
 
 const storage = {
@@ -73,11 +73,13 @@ const keysTabRevoked = mustGet("keys-tab-revoked");
 const viewTabSession = mustGet("view-tab-session");
 const viewTabKeys = mustGet("view-tab-keys");
 const viewTabKernel = mustGet("view-tab-kernel");
+const viewTabPubkeys = mustGet("view-tab-pubkeys");
 const viewTabDefaults = mustGet("view-tab-defaults");
 
 const viewSession = mustGet("view-session");
 const viewKeys = mustGet("view-keys");
 const viewKernel = mustGet("view-kernel");
+const viewPubkeys = mustGet("view-pubkeys");
 const viewDefaults = mustGet("view-defaults");
 
 let currentKeyView = "all";
@@ -85,6 +87,13 @@ let currentAdminView = "session";
 let allKeys = [];
 let keysLoading = false;
 let keysLoadedAt = 0;
+
+const accessApiKeys = mustGet("access-api-keys");
+const accessGithubRepos = mustGet("access-github-repos");
+const accessGithubQueue = mustGet("access-github-queue");
+const accessKernelPubkeys = mustGet("access-kernel-pubkeys");
+const accessUpstreamSource = mustGet("access-upstream-source");
+const accessUpstreamExpiry = mustGet("access-upstream-expiry");
 
 const defaultsModelSelect = mustGet("defaults-model");
 const defaultsReasoningSelect = mustGet("defaults-reasoning");
@@ -94,17 +103,13 @@ let defaultsLoaded = false;
 let defaultsSaving = false;
 let defaultsModelMap = new Map();
 
-const kernelModeUsage = mustGet("kernel-mode-usage");
-const kernelModeLimits = mustGet("kernel-mode-limits");
-const kernelScopeRepo = mustGet("kernel-scope-repo");
-const kernelScopeOrg = mustGet("kernel-scope-org");
 const kernelListBadge = mustGet("kernel-list-badge");
 const kernelList = mustGet("kernel-list");
+const kernelQueueBadge = mustGet("kernel-queue-badge");
+const kernelQueueList = mustGet("kernel-queue-list");
 const kernelFilterInput = mustGet("kernel-filter");
 const kernelShowSelect = mustGet("kernel-show");
 const kernelSortSelect = mustGet("kernel-sort");
-const kernelHelpLimits = mustGet("kernel-help-limits");
-const kernelHelpUsage = mustGet("kernel-help-usage");
 const kernelAttention = mustGet("kernel-attention");
 const kernelNewToggle = mustGet("kernel-new-toggle");
 const kernelNewPanel = mustGet("kernel-new-panel");
@@ -121,20 +126,18 @@ const kernelNewSaveBtn = mustGet("kernel-new-save");
 const kernelNewBadge = mustGet("kernel-new-badge");
 const kernelPubKeysBadge = mustGet("kernel-pubkeys-badge");
 const kernelPubKeysList = mustGet("kernel-pubkeys-list");
-const kernelPubKeyNewToggle = mustGet("kernel-pubkey-new-toggle");
-const kernelPubKeyNewPanel = mustGet("kernel-pubkey-new-panel");
 const kernelPubKeyAppIdInput = mustGet("kernel-pubkey-app-id");
 const kernelPubKeyOwnerInput = mustGet("kernel-pubkey-owner");
 const kernelPubKeyPemInput = mustGet("kernel-pubkey-pem");
 const kernelPubKeyCreateBtn = mustGet("kernel-pubkey-create");
 const kernelPubKeyCreateBadge = mustGet("kernel-pubkey-create-badge");
-let kernelScope = "org";
-let kernelMode = "usage";
 let kernelListLoadId = 0;
 let kernelNewSaving = false;
-let kernelListRecords = [];
-let kernelListScope = "org";
-let kernelListMode = "usage";
+let kernelListRecords = { org: [], repo: [] };
+let kernelQueueItems = [];
+let kernelQueueLoading = false;
+let kernelQueueLoadedAt = 0;
+let kernelQueuePoller = null;
 let kernelPubKeys = [];
 let kernelPubKeysLoading = false;
 let kernelPubKeysLoadedAt = 0;
@@ -142,6 +145,8 @@ let kernelPubKeysSaving = false;
 let kernelPolicyState = {
   available: false,
   message: "",
+  orgAvailable: false,
+  repoAvailable: false,
   orgLimits: new Map(),
   repoLimits: new Map(),
 };
@@ -157,6 +162,7 @@ const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
 const setDefaultsBadge = (state, text) => setBadge(defaultsBadge, state, text);
 const setKernelListBadge = (state, text) => setBadge(kernelListBadge, state, text);
 const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text);
+const setKernelQueueBadge = (state, text) => setBadge(kernelQueueBadge, state, text);
 const setKernelPubKeysBadge = (state, text) => setBadge(kernelPubKeysBadge, state, text);
 const setKernelPubKeyCreateBadge = (state, text) => setBadge(kernelPubKeyCreateBadge, state, text);
 const setKernelAttention = (text) => {
@@ -173,6 +179,8 @@ const resetKernelPolicyState = () => {
   kernelPolicyState = {
     available: false,
     message: "",
+    orgAvailable: false,
+    repoAvailable: false,
     orgLimits: new Map(),
     repoLimits: new Map(),
   };
@@ -305,6 +313,21 @@ const formatWindowShort = (value) => {
   return presets[ms] ?? `${formatNumber(ms)} ms`;
 };
 
+const formatPlural = (count, singular, plural = `${singular}s`) =>
+  `${formatNumber(count)} ${count === 1 ? singular : plural}`;
+
+const formatAuthMethodLabel = (method) => {
+  if (!method) return "unknown";
+  const lookup = {
+    deno_deploy_token: "Deno Deploy token",
+    admin_allowlist: "Admin allowlist",
+    auth_tokens_allowlist: "Allowlist token",
+    kv_api_key: "API key",
+    github_token: "GitHub token",
+  };
+  return lookup[method] ?? method.replace(/_/g, " ");
+};
+
 const pad2 = (value) => String(value).padStart(2, "0");
 
 const toDateTimeLocalValue = (ms) => {
@@ -375,21 +398,9 @@ const applyIconButton = (button, name, label) => {
 
 const KERNEL_ACTIVITY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const KERNEL_NEAR_LIMIT_RATIO = 0.8;
-const KERNEL_SHOW_OPTIONS_LIMITS = [
-  { value: "all", label: "All" },
-  { value: "active", label: "Active (30d)" },
-  { value: "near-limit", label: "Near limit" },
-  { value: "no-usage", label: "No usage" },
-];
-const KERNEL_SHOW_OPTIONS_USAGE = [
-  { value: "all", label: "All" },
-  { value: "active", label: "Active (30d)" },
-  { value: "no-usage", label: "No usage" },
-];
 
-applyIconButton(kernelNewSaveBtn, "save", "Save limit");
-applyIconButton(kernelPubKeyNewToggle, "plus", "New key");
-applyIconButton(kernelPubKeyCreateBtn, "save", "Save key");
+applyIconButton(kernelNewSaveBtn, "save", "Save policy");
+applyIconButton(kernelPubKeyCreateBtn, "plus", "Add kernel attestation key");
 
 const setKernelListMessage = (text) => {
   kernelList.textContent = "";
@@ -399,50 +410,137 @@ const setKernelListMessage = (text) => {
   kernelList.appendChild(message);
 };
 
-const getKernelListMissingTokenMessage = () =>
-  kernelMode === "usage" ? "Paste an admin token to load usage." : "Paste an admin token to load limits.";
-
-const getKernelListTargetChangedMessage = () =>
-  kernelMode === "usage" ? "Target changed. Loading usage..." : "Target changed. Loading limits...";
-
-const setKernelShowOptions = (options) => {
-  const current = kernelShowSelect.value;
-  kernelShowSelect.textContent = "";
-  options.forEach((option) => {
-    const opt = document.createElement("option");
-    opt.value = option.value;
-    opt.textContent = option.label;
-    kernelShowSelect.appendChild(opt);
-  });
-  const next = options.some((option) => option.value === current) ? current : options[0]?.value ?? "";
-  kernelShowSelect.value = next;
+const setKernelQueueMessage = (text) => {
+  kernelQueueList.textContent = "";
+  const message = document.createElement("p");
+  message.dataset.empty = "kernel-queue";
+  message.textContent = text;
+  kernelQueueList.appendChild(message);
 };
 
-const setKernelMode = (mode) => {
-  kernelMode = mode === "limits" ? "limits" : "usage";
-  setTabState(kernelModeUsage, kernelMode === "usage");
-  setTabState(kernelModeLimits, kernelMode === "limits");
-  kernelHelpUsage.hidden = kernelMode !== "usage";
-  kernelHelpLimits.hidden = kernelMode !== "limits";
-  kernelNewToggle.hidden = kernelMode !== "limits";
-  if (kernelMode !== "usage") {
-    setKernelAttention("");
+const setAccessValue = (el, value, fallback = "—") => {
+  if (!el) return;
+  el.textContent = value && String(value).trim() ? String(value) : fallback;
+};
+
+const updateAccessApiKeysSummary = () => {
+  if (!getAdminToken()) {
+    setAccessValue(accessApiKeys, "Missing token");
+    return;
   }
-  if (kernelMode !== "limits") {
-    setKernelNewPanelOpen(false);
+  if (!keysLoadedAt) {
+    setAccessValue(accessApiKeys, "Not loaded");
+    return;
   }
-  setKernelShowOptions(kernelMode === "limits" ? KERNEL_SHOW_OPTIONS_LIMITS : KERNEL_SHOW_OPTIONS_USAGE);
-  if (currentAdminView === "kernel") {
-    void loadKernelList();
+  const total = Array.isArray(allKeys) ? allKeys.length : 0;
+  if (total === 0) {
+    setAccessValue(accessApiKeys, "None");
+    return;
+  }
+  const active = allKeys.filter((key) => !(typeof key?.revoked_at_ms === "number" && key.revoked_at_ms > 0)).length;
+  setAccessValue(accessApiKeys, `${formatNumber(active)} active · ${formatPlural(total, "key")}`);
+};
+
+const updateAccessGithubSummary = () => {
+  if (!getAdminToken()) {
+    setAccessValue(accessGithubRepos, "Missing token");
+    setAccessValue(accessGithubQueue, "Missing token");
+    return;
+  }
+  if (kernelListLoadId === 0) {
+    setAccessValue(accessGithubRepos, "Not loaded");
+  } else {
+    const repoRecords = Array.isArray(kernelListRecords?.repo) ? kernelListRecords.repo : [];
+    if (!repoRecords.length) {
+      setAccessValue(accessGithubRepos, "No analytics yet");
+    } else {
+      const active = repoRecords.filter((record) => getKernelTotalRequests(record) > 0).length;
+      setAccessValue(accessGithubRepos, `${formatNumber(active)} active · ${formatPlural(repoRecords.length, "repo")}`);
+    }
+  }
+  if (!kernelQueueLoadedAt) {
+    setAccessValue(accessGithubQueue, "Not loaded");
+  } else if (kernelQueueItems.length === 0) {
+    setAccessValue(accessGithubQueue, "None");
+  } else {
+    setAccessValue(accessGithubQueue, formatPlural(kernelQueueItems.length, "request"));
   }
 };
+
+const updateAccessPubkeysSummary = () => {
+  if (!getAdminToken()) {
+    setAccessValue(accessKernelPubkeys, "Missing token");
+    return;
+  }
+  if (!kernelPubKeysLoadedAt) {
+    setAccessValue(accessKernelPubkeys, "Not loaded");
+    return;
+  }
+  if (kernelPubKeys.length === 0) {
+    setAccessValue(accessKernelPubkeys, "None");
+    return;
+  }
+  setAccessValue(accessKernelPubkeys, formatPlural(kernelPubKeys.length, "key"));
+};
+
+let accessUpstreamLoading = false;
+const refreshAccessUpstreamSummary = async () => {
+  if (accessUpstreamLoading) return;
+  accessUpstreamLoading = true;
+  setAccessValue(accessUpstreamSource, "Loading...");
+  setAccessValue(accessUpstreamExpiry, "Loading...");
+  try {
+    const res = await fetch(apiUrl("/health/auth"), { cache: "no-store" });
+    const data = await res.json().catch(() => null);
+    const source = data?.auth?.source ?? "unknown";
+    const expMs = data?.auth?.access_token_exp_ms ?? null;
+    if (!res.ok) {
+      setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
+      setAccessValue(accessUpstreamExpiry, data?.error ?? "Unavailable");
+      return;
+    }
+    setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
+    setAccessValue(accessUpstreamExpiry, typeof expMs === "number" ? formatDate(expMs) : "Unknown");
+  } catch {
+    setAccessValue(accessUpstreamSource, "Offline");
+    setAccessValue(accessUpstreamExpiry, "Offline");
+  } finally {
+    accessUpstreamLoading = false;
+  }
+};
+
+const refreshAccessOverview = async () => {
+  updateAccessApiKeysSummary();
+  updateAccessGithubSummary();
+  updateAccessPubkeysSummary();
+  await Promise.all([
+    refreshAccessUpstreamSummary(),
+    keysLoadedAt ? Promise.resolve() : refreshKeys(),
+    kernelPubKeysLoadedAt ? Promise.resolve() : refreshKernelPubKeys(),
+  ]);
+  updateAccessApiKeysSummary();
+  updateAccessGithubSummary();
+  updateAccessPubkeysSummary();
+};
+
+const getKernelListMissingTokenMessage = () => "Paste an admin token to load GitHub access analytics and policies.";
+
+const getKernelListTargetChangedMessage = () => "Target changed. Loading GitHub access analytics and policies...";
+
+const getKernelQueueMissingTokenMessage = () => "Paste an admin token to load the policy queue.";
+
+const getKernelQueueTargetChangedMessage = () => "Target changed. Loading the policy queue...";
 
 const normalizeKernelFilterText = (value) => value.trim().toLowerCase();
 
-const getKernelRecordLabel = (record, scope) => {
-  const owner = typeof record.owner === "string" ? record.owner : "";
-  const repo = typeof record.repo === "string" ? record.repo : "";
-  return scope === "org" ? owner : `${owner}/${repo}`;
+const getKernelRecordOwner = (record) => (typeof record?.owner === "string" ? record.owner : "");
+const getKernelRecordRepo = (record) => (typeof record?.repo === "string" ? record.repo : "");
+
+const getKernelRecordLabel = (record) => {
+  const owner = getKernelRecordOwner(record);
+  const repo = getKernelRecordRepo(record);
+  if (!owner) return repo ? `unknown/${repo}` : "unknown";
+  return repo ? `${owner}/${repo}` : owner;
 };
 
 const getKernelRecordUsage = (record) => {
@@ -458,139 +556,114 @@ const getKernelUsageLastSeen = (usage) => {
   return Math.trunc(usage.last_seen_at_ms);
 };
 
-const getKernelUsageRequests = (record) => {
+const getKernelWindowRequests = (record) => {
   if (typeof record?.usage_requests === "number" && Number.isFinite(record.usage_requests)) {
     return Math.trunc(record.usage_requests);
   }
+  return 0;
+};
+
+const getKernelTotalRequests = (record) => {
   const usage = getKernelRecordUsage(record);
   if (!usage || typeof usage !== "object") return 0;
   return toNumber(usage.total_requests);
 };
 
 const isKernelUsageEmpty = (usage) => {
-  if (usage === null) return true;
-  if (!usage || typeof usage !== "object") return false;
+  if (usage === null || usage === undefined) return true;
+  if (typeof usage !== "object") return false;
   return toNumber(usage.total_requests) <= 0;
 };
 
-const getKernelLimitValue = (record) => {
+const getKernelPolicyLimitValue = (record) => {
   if (!record || typeof record !== "object") return null;
   const limit = record.usage_limit_requests;
   if (typeof limit !== "number" || !Number.isFinite(limit)) return null;
   return Math.trunc(limit);
 };
 
-const buildKernelPolicySummary = (record, options = {}) => {
-  const warnWhenMissing = options.warnWhenMissing === true;
-  const warnWhenUnlimited = options.warnWhenUnlimited === true;
-  if (!record || typeof record !== "object") {
-    return {
-      text: "Not set",
-      state: warnWhenMissing ? "warning" : "",
-      title: "No limit policy set. Defaults to unlimited.",
-    };
-  }
-  const limitValue = getKernelLimitValue(record);
-  if (limitValue === null) {
-    return {
-      text: "Unknown",
-      state: warnWhenMissing ? "warning" : "",
-      title: "Limit data unavailable.",
-    };
-  }
-  if (limitValue === 0) {
-    return {
-      text: "Blocked",
-      state: "bad",
-      title: "Limit set to 0. Requests blocked.",
-    };
-  }
-  if (limitValue === -1) {
-    return {
-      text: "Unlimited",
-      state: warnWhenUnlimited ? "warning" : "",
-      title: `Unlimited (window ${formatWindowMs(record.window_ms)})`,
-    };
-  }
-  const windowLabel = formatWindowShort(record.window_ms);
-  return {
-    text: `${formatNumber(limitValue)} / ${windowLabel}`,
-    state: "",
-    title: `${formatNumber(limitValue)} requests per ${formatWindowMs(record.window_ms)}`,
-  };
+const openKernelPolicyEditor = (owner, repo) => {
+  if (!owner || owner === "unknown") return;
+  setKernelNewPanelOpen(true);
+  kernelNewOwnerInput.value = owner;
+  kernelNewRepoInput.value = repo ?? "";
+  setKernelNewBadge("unknown", "Editing...");
+  kernelNewLimitInput.focus();
+  kernelNewPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 };
 
-const resolveKernelPolicyStatus = (record, scope, policyState) => {
-  if (!policyState?.available) {
-    return { org: null, repo: null, hasCap: false };
-  }
-  const owner = typeof record?.owner === "string" ? record.owner : "";
-  const repo = typeof record?.repo === "string" ? record.repo : "";
-  const orgLimit = owner ? policyState.orgLimits.get(owner) ?? null : null;
-  const repoLimit = scope === "repo" && owner && repo ? policyState.repoLimits.get(`${owner}/${repo}`) ?? null : null;
-
-  const orgLimitValue = getKernelLimitValue(orgLimit);
-  const repoLimitValue = getKernelLimitValue(repoLimit);
-  const orgHasCap = orgLimitValue !== null && orgLimitValue !== -1;
-  const repoHasCap = repoLimitValue !== null && repoLimitValue !== -1;
-  const hasCap = orgHasCap || repoHasCap;
-
-  const summaryOptions = { warnWhenMissing: !hasCap, warnWhenUnlimited: !hasCap };
-  return {
-    org: buildKernelPolicySummary(orgLimit, summaryOptions),
-    repo: scope === "repo" ? buildKernelPolicySummary(repoLimit, summaryOptions) : null,
-    hasCap,
-  };
+const hasKernelPolicyCap = (owner, repo, policyState) => {
+  if (!policyState) return false;
+  const orgAvailable = policyState.orgAvailable === true;
+  const repoAvailable = policyState.repoAvailable === true;
+  const orgRecord = orgAvailable && owner ? policyState.orgLimits.get(owner) ?? null : null;
+  const repoRecord = repoAvailable && owner && repo ? policyState.repoLimits.get(`${owner}/${repo}`) ?? null : null;
+  const orgLimit = orgAvailable ? getKernelPolicyLimitValue(orgRecord) : null;
+  const repoLimit = repoAvailable ? getKernelPolicyLimitValue(repoRecord) : null;
+  return (orgLimit !== null && orgLimit !== -1) || (repoLimit !== null && repoLimit !== -1);
 };
 
-const buildKernelPolicyRow = (record, scope, policyState) => {
-  const policyRow = document.createElement("div");
-  policyRow.dataset.keyInfo = "info";
+const buildKernelAnalyticsSummaryRow = (usage) => {
+  const infoRow = document.createElement("div");
+  infoRow.dataset.keyInfo = "info";
 
-  if (!policyState?.available) {
-    appendKeyInfo(policyRow, "Policy", "Unavailable", { state: "warning" });
-    return policyRow;
-  }
-
-  const policy = resolveKernelPolicyStatus(record, scope, policyState);
-  if (policy.org) {
-    appendKeyInfo(policyRow, "Org limit", policy.org.text, {
-      state: policy.org.state,
-      title: policy.org.title,
-    });
-  }
-  if (scope === "repo") {
-    const repoSummary = policy.repo;
-    appendKeyInfo(policyRow, "Repo limit", repoSummary?.text ?? "Not set", {
-      state: repoSummary?.state ?? "",
-      title: repoSummary?.title,
-    });
-  }
-
-  return policyRow;
+  const hasUsage = usage && typeof usage === "object";
+  const errorCount = hasUsage ? toNumber(usage.error_requests) : 0;
+  appendKeyInfo(infoRow, "Requests", hasUsage ? formatNumber(usage.total_requests) : "—");
+  appendKeyInfo(infoRow, "Tokens", hasUsage ? formatNumber(usage.total_tokens) : "—");
+  appendKeyInfo(infoRow, "Errors", hasUsage ? formatNumber(errorCount) : "—", { state: errorCount > 0 ? "bad" : "" });
+  appendKeyInfo(infoRow, "Last seen", hasUsage ? formatDate(usage.last_seen_at_ms) : "—");
+  return infoRow;
 };
 
-const summarizeKernelPolicyCoverage = (records, scope, policyState) => {
+const buildKernelOrgSummaryRow = (group) => {
+  const infoRow = document.createElement("div");
+  infoRow.dataset.keyInfo = "info";
+
+  const repos = Array.isArray(group?.repos) ? group.repos : [];
+  const repoTotal = repos.length;
+  let activeRepos = 0;
+  let lastSeen = 0;
+
+  repos.forEach((record) => {
+    const usage = getKernelRecordUsage(record);
+    if (usage && typeof usage === "object") {
+      if (toNumber(usage.total_requests) > 0) activeRepos += 1;
+      const seen = getKernelUsageLastSeen(usage);
+      if (seen !== null) lastSeen = Math.max(lastSeen, seen);
+    }
+  });
+
+  if (repoTotal === 0) {
+    const orgUsage = group?.org ? getKernelRecordUsage(group.org) : null;
+    const orgSeen = getKernelUsageLastSeen(orgUsage);
+    if (orgSeen !== null) lastSeen = orgSeen;
+  }
+
+  appendKeyInfo(infoRow, "Repos", formatNumber(repoTotal));
+  appendKeyInfo(infoRow, "Active repos", formatNumber(activeRepos));
+  appendKeyInfo(infoRow, "Last seen", lastSeen ? formatDate(lastSeen) : "—");
+  return infoRow;
+};
+
+const summarizeKernelPolicyCoverage = (records, policyState) => {
   let total = 0;
   let unbounded = 0;
 
   records.forEach((record) => {
-    if (getKernelUsageRequests(record) <= 0) return;
+    if (getKernelTotalRequests(record) <= 0) return;
     total += 1;
     if (policyState?.available) {
-      const policy = resolveKernelPolicyStatus(record, scope, policyState);
-      if (!policy.hasCap) unbounded += 1;
+      const owner = getKernelRecordOwner(record);
+      const repo = getKernelRecordRepo(record);
+      if (!hasKernelPolicyCap(owner, repo, policyState)) unbounded += 1;
     }
   });
 
   return { total, unbounded };
 };
 
-const updateKernelAttention = (summary, scope, listMode, policyState) => {
-  if (listMode !== "usage") {
-    setKernelAttention("");
-    return;
-  }
+const updateKernelAttention = (summary, policyState) => {
   const hasUsage = summary?.total > 0;
   if (!policyState?.available) {
     if (!hasUsage) {
@@ -605,78 +678,156 @@ const updateKernelAttention = (summary, scope, listMode, policyState) => {
     setKernelAttention("");
     return;
   }
-  const label = scope === "org" ? "orgs" : "repos";
+  const label = "repos";
   const countText = `${summary.unbounded} of ${summary.total}`;
-  setKernelAttention(`Attention: ${countText} ${label} with usage have no caps (limits unset or unlimited).`);
+  setKernelAttention(`Attention: ${countText} ${label} with analytics have no caps (policies unset or unlimited).`);
 };
 
-const applyKernelFilters = (records, scope, listMode) => {
+const normalizeKernelListRecords = (records) => ({
+  org: Array.isArray(records?.org) ? records.org : [],
+  repo: Array.isArray(records?.repo) ? records.repo : [],
+});
+
+const recordMatchesKernelFilters = (record, filterText, filterMode, nowMs) => {
+  const label = getKernelRecordLabel(record).toLowerCase();
+  if (filterText && !label.includes(filterText)) return false;
+
+  const usage = getKernelRecordUsage(record);
+  if (filterMode === "active") {
+    const lastSeen = getKernelUsageLastSeen(usage);
+    return lastSeen !== null && lastSeen >= nowMs - KERNEL_ACTIVITY_WINDOW_MS;
+  }
+  if (filterMode === "near-limit") {
+    const limit = getKernelPolicyLimitValue(record);
+    if (limit === null || limit <= 0 || limit === -1) return false;
+    const current = getKernelWindowRequests(record);
+    return current / limit >= KERNEL_NEAR_LIMIT_RATIO;
+  }
+  if (filterMode === "no-usage") {
+    return isKernelUsageEmpty(usage);
+  }
+  return true;
+};
+
+const applyKernelFilters = (records) => {
+  const { org, repo } = normalizeKernelListRecords(records);
   const filterText = normalizeKernelFilterText(kernelFilterInput.value);
   const filterMode = kernelShowSelect.value;
   const nowMs = Date.now();
 
-  return records.filter((record) => {
-    const label = getKernelRecordLabel(record, scope).toLowerCase();
-    if (filterText && !label.includes(filterText)) return false;
-
-    const usage = getKernelRecordUsage(record);
-    if (filterMode === "active") {
-      const lastSeen = getKernelUsageLastSeen(usage);
-      return lastSeen !== null && lastSeen >= nowMs - KERNEL_ACTIVITY_WINDOW_MS;
-    }
-    if (filterMode === "near-limit") {
-      if (listMode !== "limits") return false;
-      const limit = typeof record.usage_limit_requests === "number" ? record.usage_limit_requests : null;
-      if (limit === null || limit <= 0 || limit === -1) return false;
-      const current = getKernelUsageRequests(record);
-      return current / limit >= KERNEL_NEAR_LIMIT_RATIO;
-    }
-    if (filterMode === "no-usage") {
-      return isKernelUsageEmpty(usage);
-    }
-    return true;
-  });
+  return {
+    org: org.filter((record) => recordMatchesKernelFilters(record, filterText, filterMode, nowMs)),
+    repo: repo.filter((record) => recordMatchesKernelFilters(record, filterText, filterMode, nowMs)),
+  };
 };
 
-const sortKernelRecords = (records, scope) => {
+const getKernelRecordLastSeen = (record) => getKernelUsageLastSeen(getKernelRecordUsage(record)) ?? 0;
+
+const buildKernelGroups = (records) => {
+  const { org, repo } = normalizeKernelListRecords(records);
+  const groups = new Map();
+  const ensureGroup = (owner) => {
+    const key = owner || "unknown";
+    const existing = groups.get(key);
+    if (existing) return existing;
+    const next = { owner: key, org: null, repos: [] };
+    groups.set(key, next);
+    return next;
+  };
+
+  org.forEach((record) => {
+    const owner = getKernelRecordOwner(record);
+    const group = ensureGroup(owner);
+    group.org = record;
+  });
+
+  repo.forEach((record) => {
+    const owner = getKernelRecordOwner(record);
+    const group = ensureGroup(owner);
+    group.repos.push(record);
+  });
+
+  return [...groups.values()];
+};
+
+const getKernelGroupMetrics = (group) => {
+  let lastSeen = 0;
+  let usage = 0;
+  const records = [];
+  if (group.org) records.push(group.org);
+  if (Array.isArray(group.repos)) records.push(...group.repos);
+  records.forEach((record) => {
+    lastSeen = Math.max(lastSeen, getKernelRecordLastSeen(record));
+    usage = Math.max(usage, getKernelTotalRequests(record));
+  });
+  return { lastSeen, usage };
+};
+
+const sortKernelGroups = (groups) => {
   const mode = kernelSortSelect.value;
-  const sorted = [...records];
+  const sorted = [...groups];
   sorted.sort((a, b) => {
+    const aMetrics = getKernelGroupMetrics(a);
+    const bMetrics = getKernelGroupMetrics(b);
     if (mode === "recent") {
-      const aSeen = getKernelUsageLastSeen(getKernelRecordUsage(a)) ?? 0;
-      const bSeen = getKernelUsageLastSeen(getKernelRecordUsage(b)) ?? 0;
+      const aSeen = aMetrics.lastSeen;
+      const bSeen = bMetrics.lastSeen;
       if (aSeen !== bSeen) return bSeen - aSeen;
     } else if (mode === "usage") {
-      const aUsage = getKernelUsageRequests(a);
-      const bUsage = getKernelUsageRequests(b);
+      const aUsage = aMetrics.usage;
+      const bUsage = bMetrics.usage;
       if (aUsage !== bUsage) return bUsage - aUsage;
     }
-    const ownerCmp = (typeof a.owner === "string" ? a.owner : "").localeCompare(
-      typeof b.owner === "string" ? b.owner : "",
-    );
-    if (ownerCmp !== 0) return ownerCmp;
-    if (scope === "org") return 0;
-    return (typeof a.repo === "string" ? a.repo : "").localeCompare(typeof b.repo === "string" ? b.repo : "");
+    return a.owner.localeCompare(b.owner);
   });
   return sorted;
 };
 
-const formatKernelListBadge = (visible, total, listMode) => {
-  const label = listMode === "usage" ? "entry" : "limit";
-  const plural = listMode === "usage" ? "entries" : "limits";
-  if (total === 0) return `No ${plural}`;
-  if (visible === total) return `${total} ${total === 1 ? label : plural}`;
-  return `${visible}/${total} shown`;
+const sortKernelRepoRecords = (records) => {
+  const mode = kernelSortSelect.value;
+  const sorted = [...records];
+  sorted.sort((a, b) => {
+    if (mode === "recent") {
+      const aSeen = getKernelRecordLastSeen(a);
+      const bSeen = getKernelRecordLastSeen(b);
+      if (aSeen !== bSeen) return bSeen - aSeen;
+    } else if (mode === "usage") {
+      const aUsage = getKernelTotalRequests(a);
+      const bUsage = getKernelTotalRequests(b);
+      if (aUsage !== bUsage) return bUsage - aUsage;
+    }
+    return getKernelRecordRepo(a).localeCompare(getKernelRecordRepo(b));
+  });
+  return sorted;
+};
+
+const formatKernelListBadge = (counts) => {
+  const orgTotal = counts?.orgTotal ?? 0;
+  const repoTotal = counts?.repoTotal ?? 0;
+  const orgVisible = counts?.orgVisible ?? 0;
+  const repoVisible = counts?.repoVisible ?? 0;
+  const total = orgTotal + repoTotal;
+  if (total === 0) return "No analytics or policies";
+
+  const buildCountText = (visible, totalCount, singular, plural) => {
+    if (totalCount === 0) return "";
+    if (visible === totalCount) return `${totalCount} ${totalCount === 1 ? singular : plural}`;
+    return `${visible}/${totalCount} ${plural}`;
+  };
+
+  const orgText = buildCountText(orgVisible, orgTotal, "org", "orgs");
+  const repoText = buildCountText(repoVisible, repoTotal, "repo", "repos");
+  return [orgText, repoText].filter(Boolean).join(" · ");
 };
 
 const refreshKernelList = () => {
-  if (!Array.isArray(kernelListRecords)) {
-    setKernelListMessage(kernelListMode === "usage" ? "No usage yet." : "No limits yet.");
-    setKernelListBadge("ok", formatKernelListBadge(0, 0, kernelListMode));
+  if (!kernelListRecords || typeof kernelListRecords !== "object") {
+    setKernelListMessage("No analytics or policies yet.");
+    setKernelListBadge("ok", formatKernelListBadge({ orgTotal: 0, repoTotal: 0, orgVisible: 0, repoVisible: 0 }));
     return;
   }
-  const result = renderKernelList(kernelListRecords, kernelListScope, kernelListMode, kernelPolicyState);
-  setKernelListBadge("ok", formatKernelListBadge(result.visible, result.total, kernelListMode));
+  const result = renderKernelList(kernelListRecords, kernelPolicyState);
+  setKernelListBadge("ok", formatKernelListBadge(result));
 };
 
 const refreshKernelListDebounced = debounce(refreshKernelList, 250);
@@ -689,19 +840,161 @@ const setKernelPubKeysMessage = (text) => {
   kernelPubKeysList.appendChild(message);
 };
 
-const setKernelScope = (scope) => {
-  kernelScope = scope === "org" ? "org" : "repo";
-  setTabState(kernelScopeRepo, kernelScope === "repo");
-  setTabState(kernelScopeOrg, kernelScope === "org");
-  const hideRepo = kernelScope === "org";
-  kernelNewRepoField.hidden = hideRepo;
-  kernelNewRepoInput.disabled = hideRepo;
-  if (hideRepo) kernelNewRepoInput.value = "";
+const renderKernelPolicyQueue = (records) => {
+  kernelQueueList.textContent = "";
+  if (!Array.isArray(records) || records.length === 0) {
+    setKernelQueueMessage("No policy gaps yet.");
+    return;
+  }
+
+  let rendered = 0;
+  records.forEach((record, index) => {
+    if (!record || typeof record !== "object") return;
+    const owner = typeof record.owner === "string" ? record.owner : "";
+    const repo = typeof record.repo === "string" ? record.repo : "";
+    if (!owner || !repo) return;
+    const lastRoute = typeof record.last_route === "string" ? record.last_route : "";
+
+    const row = document.createElement("article");
+    row.dataset.key = "kernel-queue";
+    row.dataset.state = "warning";
+    row.style.setProperty("--i", index);
+    row.setAttribute("role", "listitem");
+
+    const main = document.createElement("div");
+    main.dataset.keyMain = "main";
+
+    const header = document.createElement("div");
+    header.dataset.keyHeader = "header";
+
+    const title = document.createElement("div");
+    title.dataset.keyTitle = "title";
+    title.textContent = `${owner}/${repo}`;
+
+    const controls = document.createElement("div");
+    controls.dataset.keyControls = "controls";
+
+    const status = document.createElement("span");
+    status.dataset.badge = "status";
+    status.dataset.state = "bad";
+    status.textContent = "Needs policy";
+
+    const actionRow = document.createElement("div");
+    actionRow.dataset.actionRow = "actions";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.dataset.variant = "primary";
+    applyIconButton(addBtn, "plus", `Add policy for ${owner}/${repo}`);
+    actionRow.appendChild(addBtn);
+
+    controls.appendChild(status);
+    controls.appendChild(actionRow);
+    header.appendChild(title);
+    header.appendChild(controls);
+
+    const infoRow = document.createElement("div");
+    infoRow.dataset.keyInfo = "info";
+    appendKeyInfo(infoRow, "Requests", formatNumber(record.request_count));
+    appendKeyInfo(infoRow, "First seen", formatDate(record.first_seen_at_ms));
+    appendKeyInfo(infoRow, "Last seen", formatDate(record.last_seen_at_ms));
+    appendKeyInfo(infoRow, "Route", lastRoute ? lastRoute : "unknown", { mono: true });
+
+    main.appendChild(header);
+    main.appendChild(infoRow);
+    row.appendChild(main);
+    kernelQueueList.appendChild(row);
+    rendered += 1;
+
+    addBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openKernelPolicyEditor(owner, repo);
+    });
+  });
+
+  if (rendered === 0) {
+    setKernelQueueMessage("No policy gaps yet.");
+  }
+
+  updateAccessGithubSummary();
+};
+
+const refreshKernelPolicyQueue = async () => {
+  const token = getAdminToken();
+  if (!token) {
+    setKernelQueueBadge("bad", "Missing token");
+    setKernelQueueMessage(getKernelQueueMissingTokenMessage());
+    updateAccessGithubSummary();
+    return;
+  }
+
+  if (kernelQueueLoading) return;
+  kernelQueueLoading = true;
+  setKernelQueueBadge("unknown", "Loading...");
+
+  try {
+    const res = await fetch(apiUrl("/admin/kernel-policy-queue"), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setKernelQueueBadge("bad", data?.error?.message ?? "Error");
+      setKernelQueueMessage("Failed to load the policy queue.");
+      return;
+    }
+
+    const records = Array.isArray(data?.data) ? data.data : [];
+    kernelQueueItems = records;
+    kernelQueueLoadedAt = Date.now();
+    renderKernelPolicyQueue(records);
+    setKernelQueueBadge("ok", records.length === 0 ? "No requests" : `${records.length} request${records.length === 1 ? "" : "s"}`);
+  } catch {
+    kernelQueueItems = [];
+    setKernelQueueBadge("bad", "Offline");
+    setKernelQueueMessage("Failed to load the policy queue.");
+  } finally {
+    kernelQueueLoading = false;
+    updateAccessGithubSummary();
+  }
+};
+
+const ensureKernelPolicyQueueLoaded = async () => {
+  if (currentAdminView !== "kernel") return;
+  if (kernelQueueLoading) return;
+  const token = getAdminToken();
+  if (!token) {
+    setKernelQueueBadge("bad", "Missing token");
+    setKernelQueueMessage(getKernelQueueMissingTokenMessage());
+    updateAccessGithubSummary();
+    return;
+  }
+  if (kernelQueueLoadedAt && Date.now() - kernelQueueLoadedAt < 10_000) {
+    const count = kernelQueueItems.length;
+    setKernelQueueBadge("ok", count === 0 ? "No requests" : `${count} request${count === 1 ? "" : "s"}`);
+    updateAccessGithubSummary();
+    return;
+  }
+  await refreshKernelPolicyQueue();
+};
+
+const startKernelQueuePolling = () => {
+  if (kernelQueuePoller) return;
+  kernelQueuePoller = setInterval(() => {
+    if (currentAdminView === "kernel") {
+      void refreshKernelPolicyQueue();
+    }
+  }, 15000);
+};
+
+const stopKernelQueuePolling = () => {
+  if (!kernelQueuePoller) return;
+  clearInterval(kernelQueuePoller);
+  kernelQueuePoller = null;
 };
 
 const setKernelNewPanelOpen = (open) => {
   kernelNewPanel.hidden = !open;
-  applyIconButton(kernelNewToggle, open ? "close" : "plus", open ? "Close new limit" : "New limit");
+  applyIconButton(kernelNewToggle, open ? "close" : "plus", open ? "Close new policy" : "New policy");
   if (!open) {
     resetKernelNewForm();
   }
@@ -722,14 +1015,6 @@ const resetKernelPubKeyForm = () => {
   setKernelPubKeyCreateBadge("unknown", "Idle");
 };
 
-const setKernelPubKeyNewPanelOpen = (open) => {
-  kernelPubKeyNewPanel.hidden = !open;
-  applyIconButton(kernelPubKeyNewToggle, open ? "close" : "plus", open ? "Close new key" : "New key");
-  if (!open) {
-    resetKernelPubKeyForm();
-  }
-};
-
 const setKernelNewWindowPreset = (ms) => {
   kernelNewWindowInput.value = String(ms);
 };
@@ -737,13 +1022,13 @@ const setKernelNewWindowPreset = (ms) => {
 const parseKernelLimitValue = (raw, setBadgeFn) => {
   const trimmed = raw.trim();
   if (!trimmed) {
-    setBadgeFn("bad", "Limit required");
+    setBadgeFn("bad", "Policy limit required");
     return null;
   }
   if (trimmed === "unlimited" || trimmed === "-1") return -1;
   const parsed = Number(trimmed);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    setBadgeFn("bad", "Invalid limit");
+    setBadgeFn("bad", "Invalid policy limit");
     return null;
   }
   return Math.trunc(parsed);
@@ -778,16 +1063,7 @@ const saveNewKernelLimit = async () => {
   }
 
   const repo = kernelNewRepoInput.value.trim();
-  if (kernelScope === "repo" && !repo) {
-    setKernelNewBadge("bad", "Repo required");
-    kernelNewRepoInput.focus();
-    return;
-  }
-  if (kernelScope === "org" && repo) {
-    setKernelNewBadge("bad", "Repo not allowed");
-    kernelNewRepoInput.focus();
-    return;
-  }
+  const scope = repo ? "repo" : "org";
 
   const limitValue = parseKernelLimitValue(kernelNewLimitInput.value, setKernelNewBadge);
   if (limitValue === null) return;
@@ -801,10 +1077,10 @@ const saveNewKernelLimit = async () => {
   try {
     const payload = {
       owner,
-      scope: kernelScope,
+      scope,
       usage_limit_requests: limitValue,
     };
-    if (kernelScope === "repo") payload.repo = repo;
+    if (scope === "repo") payload.repo = repo;
     if (windowResult.value !== null) payload.window_ms = windowResult.value;
 
     const res = await fetch(apiUrl("/admin/kernel-usage"), {
@@ -832,7 +1108,7 @@ const saveNewKernelLimit = async () => {
   }
 };
 
-const fetchKernelLimitList = async (token, scope) => {
+const fetchKernelPolicyList = async (token, scope) => {
   try {
     const url = new URL(apiUrl("/admin/kernel-usage"));
     url.searchParams.set("scope", scope);
@@ -844,39 +1120,115 @@ const fetchKernelLimitList = async (token, scope) => {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-      return { ok: false, message: data?.error?.message ?? "Error", limits: [] };
+      return { ok: false, message: data?.error?.message ?? "Error", records: [] };
     }
-    return { ok: true, message: "", limits: Array.isArray(data?.limits) ? data.limits : [] };
+    return { ok: true, message: "", records: Array.isArray(data?.limits) ? data.limits : [] };
   } catch {
-    return { ok: false, message: "Offline", limits: [] };
+    return { ok: false, message: "Offline", records: [] };
   }
 };
 
-const loadKernelPolicyState = async (token, scope) => {
-  const orgResult = await fetchKernelLimitList(token, "org");
-  if (!orgResult.ok) {
-    return { available: false, message: orgResult.message, orgLimits: new Map(), repoLimits: new Map() };
+const fetchKernelUsageInventory = async (token, scope) => {
+  try {
+    const url = new URL(apiUrl("/admin/kernel-usage"));
+    url.searchParams.set("scope", scope);
+    url.searchParams.set("list", "1");
+    url.searchParams.set("inventory", "1");
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      return { ok: false, message: data?.error?.message ?? "Error", records: [] };
+    }
+    return { ok: true, message: "", records: Array.isArray(data?.usage) ? data.usage : [] };
+  } catch {
+    return { ok: false, message: "Offline", records: [] };
   }
+};
+
+const buildKernelPolicyStateFromLists = (orgResult, repoResult) => {
+  if (!orgResult.ok && !repoResult.ok) {
+    const message = [orgResult.message, repoResult.message].filter(Boolean).join(" · ") || "Unavailable";
+    return {
+      available: false,
+      message,
+      orgAvailable: false,
+      repoAvailable: false,
+      orgLimits: new Map(),
+      repoLimits: new Map(),
+    };
+  }
+
   const orgLimits = new Map();
-  orgResult.limits.forEach((record) => {
-    const owner = typeof record?.owner === "string" ? record.owner : "";
-    if (owner) orgLimits.set(owner, record);
-  });
+  if (orgResult.ok) {
+    orgResult.records.forEach((record) => {
+      const owner = typeof record?.owner === "string" ? record.owner : "";
+      if (owner) orgLimits.set(owner, record);
+    });
+  }
 
   const repoLimits = new Map();
-  if (scope === "repo") {
-    const repoResult = await fetchKernelLimitList(token, "repo");
-    if (!repoResult.ok) {
-      return { available: false, message: repoResult.message, orgLimits: new Map(), repoLimits: new Map() };
-    }
-    repoResult.limits.forEach((record) => {
+  if (repoResult.ok) {
+    repoResult.records.forEach((record) => {
       const owner = typeof record?.owner === "string" ? record.owner : "";
       const repo = typeof record?.repo === "string" ? record.repo : "";
       if (owner && repo) repoLimits.set(`${owner}/${repo}`, record);
     });
   }
 
-  return { available: true, message: "", orgLimits, repoLimits };
+  const messageParts = [];
+  if (!orgResult.ok) messageParts.push(`Org policies unavailable: ${orgResult.message}`);
+  if (!repoResult.ok) messageParts.push(`Repo policies unavailable: ${repoResult.message}`);
+
+  return {
+    available: orgResult.ok && repoResult.ok,
+    message: messageParts.join(" · "),
+    orgAvailable: orgResult.ok,
+    repoAvailable: repoResult.ok,
+    orgLimits,
+    repoLimits,
+  };
+};
+
+const mergeKernelRecords = (usageRecords, policyRecords, scope) => {
+  const usageMap = new Map();
+  usageRecords.forEach((record) => {
+    if (!record || typeof record !== "object") return;
+    const owner = getKernelRecordOwner(record);
+    const repo = scope === "repo" ? getKernelRecordRepo(record) : "";
+    if (!owner || (scope === "repo" && !repo)) return;
+    const key = scope === "repo" ? `${owner}/${repo}` : owner;
+    usageMap.set(key, record);
+  });
+
+  const policyMap = new Map();
+  policyRecords.forEach((record) => {
+    if (!record || typeof record !== "object") return;
+    const owner = getKernelRecordOwner(record);
+    const repo = scope === "repo" ? getKernelRecordRepo(record) : "";
+    if (!owner || (scope === "repo" && !repo)) return;
+    const key = scope === "repo" ? `${owner}/${repo}` : owner;
+    policyMap.set(key, record);
+  });
+
+  const keys = new Set([...usageMap.keys(), ...policyMap.keys()]);
+  const merged = [];
+  keys.forEach((key) => {
+    const usage = usageMap.get(key) ?? null;
+    const policy = policyMap.get(key) ?? null;
+    const owner = policy?.owner ?? usage?.owner ?? (scope === "repo" ? key.split("/")[0] : key);
+    const repo = scope === "repo" ? (policy?.repo ?? usage?.repo ?? key.split("/")[1]) : "";
+    const record = policy ? policy : { owner, repo };
+    record.owner = owner;
+    record.repo = scope === "repo" ? repo : "";
+    record.usage = usage ?? null;
+    merged.push(record);
+  });
+
+  return merged;
 };
 
 const loadKernelList = async () => {
@@ -887,6 +1239,7 @@ const loadKernelList = async () => {
     setKernelListMessage(getKernelListMissingTokenMessage());
     resetKernelPolicyState();
     setKernelAttention("");
+    updateAccessGithubSummary();
     return;
   }
 
@@ -896,65 +1249,88 @@ const loadKernelList = async () => {
   setKernelAttention("");
 
   try {
-    const url = new URL(apiUrl("/admin/kernel-usage"));
-    url.searchParams.set("scope", kernelScope);
-    url.searchParams.set("list", "1");
-    if (kernelMode === "usage") {
-      url.searchParams.set("inventory", "1");
-    } else {
-      url.searchParams.set("include_usage", "1");
-    }
-
-    const res = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    const data = await res.json().catch(() => null);
+    const [orgUsageResult, repoUsageResult, orgPolicyResult, repoPolicyResult] = await Promise.all([
+      fetchKernelUsageInventory(token, "org"),
+      fetchKernelUsageInventory(token, "repo"),
+      fetchKernelPolicyList(token, "org"),
+      fetchKernelPolicyList(token, "repo"),
+    ]);
     if (loadId !== kernelListLoadId) return;
-    if (!res.ok) {
-      const message = data?.error?.message ?? "Error";
+    if (
+      !orgUsageResult.ok &&
+      !repoUsageResult.ok &&
+      !orgPolicyResult.ok &&
+      !repoPolicyResult.ok
+    ) {
+      const message = [
+        orgUsageResult.message,
+        repoUsageResult.message,
+        orgPolicyResult.message,
+        repoPolicyResult.message,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "Error";
       setKernelListBadge("bad", message);
       setKernelListMessage(message);
+      updateAccessGithubSummary();
       return;
     }
 
-    const scope = data?.scope === "org" ? "org" : "repo";
-    if (kernelMode === "usage") {
-      const policyState = await loadKernelPolicyState(token, scope);
-      if (loadId !== kernelListLoadId) return;
-      kernelPolicyState = policyState;
+    kernelPolicyState = buildKernelPolicyStateFromLists(orgPolicyResult, repoPolicyResult);
+    kernelListRecords = {
+      org: mergeKernelRecords(
+        orgUsageResult.ok ? orgUsageResult.records : [],
+        orgPolicyResult.ok ? orgPolicyResult.records : [],
+        "org",
+      ),
+      repo: mergeKernelRecords(
+        repoUsageResult.ok ? repoUsageResult.records : [],
+        repoPolicyResult.ok ? repoPolicyResult.records : [],
+        "repo",
+      ),
+    };
+    const result = renderKernelList(kernelListRecords, kernelPolicyState);
+    const badgeText = formatKernelListBadge(result);
+    const warnings = [];
+    if (!orgUsageResult.ok) warnings.push(`Org analytics ${orgUsageResult.message}`);
+    if (!repoUsageResult.ok) warnings.push(`Repo analytics ${repoUsageResult.message}`);
+    if (!orgPolicyResult.ok) warnings.push(`Org policies ${orgPolicyResult.message}`);
+    if (!repoPolicyResult.ok) warnings.push(`Repo policies ${repoPolicyResult.message}`);
+    if (warnings.length) {
+      setKernelListBadge("warning", `${badgeText} · ${warnings.join(" · ")}`);
+    } else {
+      setKernelListBadge("ok", badgeText);
     }
-    const records = kernelMode === "usage"
-      ? (Array.isArray(data?.usage) ? data.usage : [])
-      : (Array.isArray(data?.limits) ? data.limits : []);
-    kernelListRecords = records;
-    kernelListScope = scope;
-    kernelListMode = kernelMode;
-    const result = renderKernelList(records, scope, kernelMode, kernelPolicyState);
-    setKernelListBadge("ok", formatKernelListBadge(result.visible, result.total, kernelMode));
+    updateAccessGithubSummary();
   } catch {
     if (loadId !== kernelListLoadId) return;
     setKernelListBadge("bad", "Offline");
     setKernelListMessage("Request failed.");
+    updateAccessGithubSummary();
   }
 };
 
-const renderKernelUsageRow = (record, scope, policyState) => {
-  if (!record || typeof record !== "object") return;
-  const owner = typeof record.owner === "string" ? record.owner : "";
-  const repo = typeof record.repo === "string" ? record.repo : "";
-  const displayOwner = owner || "unknown";
-  const displayRepo = repo || "unknown";
-  const titleText = scope === "org" ? displayOwner : `${displayOwner}/${displayRepo}`;
+const KERNEL_ANALYTICS_DETAILS = {
+  label: "Analytics",
+  unavailable: "Analytics unavailable.",
+  empty: "No analytics yet.",
+};
+
+const buildKernelPolicyPlaceholder = (record, options = {}) => {
+  const owner = options.owner ?? getKernelRecordOwner(record);
+  const repo = options.repo ?? getKernelRecordRepo(record);
+  const scope = options.scope ?? (repo ? "repo" : "org");
+  const titleText = options.titleText || (repo ? repo : owner || "unknown");
+  const policyAvailable = options.policyAvailable !== false;
+  const showDetails = options.showDetails ?? options.isSubtile === true;
+  const canAdd = policyAvailable && owner && owner !== "unknown" && (scope === "org" || repo);
 
   const row = document.createElement("article");
-  row.dataset.key = "kernel-usage";
-
-  const usage = getKernelRecordUsage(record);
-  const lastSeen = getKernelUsageLastSeen(usage);
-  if (lastSeen && lastSeen >= Date.now() - KERNEL_ACTIVITY_WINDOW_MS) {
-    row.dataset.state = "active";
-  }
+  row.dataset.key = "kernel-policy";
+  row.dataset.state = "warning";
+  if (options.isSubtile) row.dataset.subtile = "true";
+  if (typeof options.index === "number") row.style.setProperty("--i", options.index);
+  row.setAttribute("role", "listitem");
 
   const main = document.createElement("div");
   main.dataset.keyMain = "main";
@@ -969,358 +1345,475 @@ const renderKernelUsageRow = (record, scope, policyState) => {
   header.appendChild(title);
   main.appendChild(header);
 
+  const usage = getKernelRecordUsage(record);
+  const summaryRow = options.summaryRow ?? buildKernelAnalyticsSummaryRow(usage);
+  if (summaryRow) main.appendChild(summaryRow);
+
   const infoRow = document.createElement("div");
   infoRow.dataset.keyInfo = "info";
-  appendKeyInfo(infoRow, "Requests", formatNumber(usage?.total_requests));
-  appendKeyInfo(infoRow, "Tokens", formatNumber(usage?.total_tokens));
-  const errorCount = toNumber(usage?.error_requests);
-  appendKeyInfo(infoRow, "Errors", formatNumber(errorCount), { state: errorCount > 0 ? "bad" : "" });
-  appendKeyInfo(infoRow, "Last seen", formatDate(usage?.last_seen_at_ms));
+  const policyLabel = scope === "repo" ? "Repo policy" : "Org policy";
+  const policyValue = policyAvailable ? "Not set" : "Unavailable";
+  const policyItem = appendKeyInfo(infoRow, policyLabel, policyValue, { state: "warning" });
+  if (canAdd) {
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.dataset.variant = "primary";
+    applyIconButton(addBtn, "plus", scope === "repo" ? "Add repo policy" : "Add org policy");
+    const valueText = document.createElement("span");
+    valueText.textContent = policyValue;
+    policyItem.valueEl.textContent = "";
+    policyItem.valueEl.dataset.inlineActions = "true";
+    policyItem.valueEl.appendChild(valueText);
+    policyItem.valueEl.appendChild(addBtn);
+    addBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openKernelPolicyEditor(owner, scope === "repo" ? repo : "");
+    });
+  }
+  appendKeyInfo(infoRow, "Window", "—");
+  appendKeyInfo(infoRow, "Window requests", "—");
+  appendKeyInfo(infoRow, "Reset at", "—");
+  appendKeyInfo(infoRow, "Updated", "—");
   main.appendChild(infoRow);
-  main.appendChild(buildKernelPolicyRow(record, scope, policyState));
 
-  main.appendChild(buildUsageDetails(usage));
+  const help = document.createElement("p");
+  help.dataset.help = "true";
+  if (options.helpText) {
+    help.textContent = options.helpText;
+  } else if (!policyAvailable) {
+    help.textContent = "Policy data unavailable.";
+  } else {
+    help.textContent = scope === "repo" ? "No repo policy set yet." : "No org policy set yet.";
+  }
+  main.appendChild(help);
+
+  if (showDetails) {
+    main.appendChild(buildUsageDetails(usage, KERNEL_ANALYTICS_DETAILS));
+  }
+
   row.appendChild(main);
-  kernelList.appendChild(row);
+  return row;
 };
 
-const renderKernelList = (records, scope, listMode, policyState = kernelPolicyState) => {
-  kernelList.textContent = "";
-  if (!Array.isArray(records) || records.length === 0) {
-    setKernelListMessage(listMode === "usage" ? "No usage yet." : "No limits yet.");
-    updateKernelAttention({ total: 0, unbounded: 0 }, scope, listMode, policyState);
-    return { total: 0, visible: 0 };
+const buildKernelPolicyTile = (record, options = {}) => {
+  if (!record || typeof record !== "object") return null;
+  const owner = options.owner ?? getKernelRecordOwner(record);
+  const repo = options.repo ?? getKernelRecordRepo(record);
+  const scope = options.scope ?? (repo ? "repo" : "org");
+  const titleText = options.titleText || (repo ? repo : owner || "unknown");
+  const confirmLabel = repo ? `${owner}/${repo}` : owner || titleText;
+
+  const row = document.createElement("article");
+  row.dataset.key = "kernel-policy";
+  if (options.isSubtile) row.dataset.subtile = "true";
+  if (typeof options.index === "number") row.style.setProperty("--i", options.index);
+  row.dataset.state = record.usage_limit_requests === 0 ? "revoked" : "active";
+  row.setAttribute("role", "listitem");
+
+  const main = document.createElement("div");
+  main.dataset.keyMain = "main";
+
+  const header = document.createElement("div");
+  header.dataset.keyHeader = "header";
+
+  const title = document.createElement("div");
+  title.dataset.keyTitle = "title";
+  title.textContent = titleText;
+
+  const controls = document.createElement("div");
+  controls.dataset.keyControls = "controls";
+
+  const actionRow = document.createElement("div");
+  actionRow.dataset.actionRow = "actions";
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  applyIconButton(editBtn, "edit", "Edit policy");
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.dataset.variant = "danger";
+  applyIconButton(deleteBtn, "trash", "Delete policy");
+
+  actionRow.appendChild(editBtn);
+  actionRow.appendChild(deleteBtn);
+  controls.appendChild(actionRow);
+  header.appendChild(title);
+  header.appendChild(controls);
+
+  const usage = getKernelRecordUsage(record);
+  const summaryRow = options.summaryRow ?? buildKernelAnalyticsSummaryRow(usage);
+
+  const infoRow = document.createElement("div");
+  infoRow.dataset.keyInfo = "info";
+
+  const limitState = record.usage_limit_requests === 0 ? "bad" : "";
+  const limitInfo = appendKeyInfo(
+    infoRow,
+    "Policy limit",
+    formatLimitValue(record.usage_limit_requests),
+    limitState ? { state: limitState } : {},
+  );
+  const windowInfo = appendKeyInfo(infoRow, "Window", formatWindowMs(record.window_ms));
+  const usageInfo = appendKeyInfo(infoRow, "Window requests", formatNumber(record.usage_requests));
+  const resetInfo = appendKeyInfo(infoRow, "Reset at", formatDate(record.usage_reset_at_ms));
+  const updatedInfo = appendKeyInfo(infoRow, "Updated", formatDate(record.updated_at_ms));
+
+  main.appendChild(header);
+  if (summaryRow) main.appendChild(summaryRow);
+  main.appendChild(infoRow);
+
+  const editPanel = document.createElement("div");
+  editPanel.dataset.editPanel = "panel";
+  editPanel.hidden = true;
+
+  const editFields = document.createElement("div");
+  editFields.dataset.editFields = "fields";
+
+  const limitField = document.createElement("label");
+  limitField.dataset.field = "true";
+  const limitLabel = document.createElement("span");
+  limitLabel.dataset.label = "label";
+  limitLabel.textContent = "Policy limit";
+  const limitInput = document.createElement("input");
+  limitInput.type = "number";
+  limitInput.inputMode = "numeric";
+  limitInput.value = typeof record.usage_limit_requests === "number" ? String(record.usage_limit_requests) : "-1";
+  limitField.appendChild(limitLabel);
+  limitField.appendChild(limitInput);
+
+  const windowField = document.createElement("label");
+  windowField.dataset.field = "true";
+  const windowLabel = document.createElement("span");
+  windowLabel.dataset.label = "label";
+  windowLabel.textContent = "Window (ms)";
+  const windowInput = document.createElement("input");
+  windowInput.type = "number";
+  windowInput.inputMode = "numeric";
+  windowInput.value = typeof record.window_ms === "number" ? String(Math.trunc(record.window_ms)) : "";
+  windowField.appendChild(windowLabel);
+  windowField.appendChild(windowInput);
+
+  editFields.appendChild(limitField);
+  editFields.appendChild(windowField);
+
+  const presetRow = document.createElement("div");
+  presetRow.dataset.layout = "row";
+  const preset1m = document.createElement("button");
+  preset1m.type = "button";
+  preset1m.textContent = "1m";
+  const preset1h = document.createElement("button");
+  preset1h.type = "button";
+  preset1h.textContent = "1h";
+  const preset1d = document.createElement("button");
+  preset1d.type = "button";
+  preset1d.textContent = "1d";
+  const preset1w = document.createElement("button");
+  preset1w.type = "button";
+  preset1w.textContent = "1w";
+  presetRow.appendChild(preset1m);
+  presetRow.appendChild(preset1h);
+  presetRow.appendChild(preset1d);
+  presetRow.appendChild(preset1w);
+
+  const editActions = document.createElement("div");
+  editActions.dataset.actionRow = "actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.dataset.variant = "primary";
+  applyIconButton(saveBtn, "save", "Save changes");
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  editActions.appendChild(saveBtn);
+  editActions.appendChild(cancelBtn);
+
+  const editBadge = document.createElement("span");
+  editBadge.dataset.badge = "status";
+  editBadge.dataset.state = "unknown";
+  editBadge.textContent = "Idle";
+
+  const editHelp = document.createElement("p");
+  editHelp.dataset.help = "true";
+  editHelp.textContent = "Leave blank to keep the current interval. Updates reset analytics.";
+
+  editPanel.appendChild(editFields);
+  editPanel.appendChild(presetRow);
+  editPanel.appendChild(editActions);
+  editPanel.appendChild(editBadge);
+  editPanel.appendChild(editHelp);
+
+  main.appendChild(editPanel);
+  const hasUsageField = Object.prototype.hasOwnProperty.call(record, "usage");
+  const detailUsage = hasUsageField ? record.usage : undefined;
+  if (hasUsageField && options.showDetails !== false) {
+    main.appendChild(buildUsageDetails(detailUsage, KERNEL_ANALYTICS_DETAILS));
   }
+  row.appendChild(main);
 
-  const filtered = sortKernelRecords(applyKernelFilters(records, scope, listMode), scope);
-  if (!filtered.length) {
-    setKernelListMessage("No matches.");
-    updateKernelAttention({ total: 0, unbounded: 0 }, scope, listMode, policyState);
-    return { total: records.length, visible: 0 };
-  }
+  const setEditBadge = (state, text) => setBadge(editBadge, state, text);
 
-  if (listMode === "usage") {
-    filtered.forEach((record) => {
-      renderKernelUsageRow(record, scope, policyState);
-    });
-    const summary = summarizeKernelPolicyCoverage(filtered, scope, policyState);
-    updateKernelAttention(summary, scope, listMode, policyState);
-    return { total: records.length, visible: filtered.length };
-  }
-
-  filtered.forEach((limit) => {
-    if (!limit || typeof limit !== "object") return;
-    const record = { ...limit };
-    const owner = typeof record.owner === "string" ? record.owner : "";
-    const repo = typeof record.repo === "string" ? record.repo : "";
-    const displayOwner = owner || "unknown";
-    const displayRepo = repo || "unknown";
-    const titleText = scope === "org" ? displayOwner : `${displayOwner}/${displayRepo}`;
-
-    const row = document.createElement("article");
-    row.dataset.key = "kernel";
-    row.dataset.state = record.usage_limit_requests === 0 ? "revoked" : "active";
-
-    const main = document.createElement("div");
-    main.dataset.keyMain = "main";
-
-    const header = document.createElement("div");
-    header.dataset.keyHeader = "header";
-
-    const title = document.createElement("div");
-    title.dataset.keyTitle = "title";
-    title.textContent = titleText;
-
-    const controls = document.createElement("div");
-    controls.dataset.keyControls = "controls";
-
-    const actionRow = document.createElement("div");
-    actionRow.dataset.actionRow = "actions";
-
-    const editBtn = document.createElement("button");
-    editBtn.type = "button";
-    applyIconButton(editBtn, "edit", "Edit limit");
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.dataset.variant = "danger";
-    applyIconButton(deleteBtn, "trash", "Delete limit");
-
-    actionRow.appendChild(editBtn);
-    actionRow.appendChild(deleteBtn);
-    controls.appendChild(actionRow);
-    header.appendChild(title);
-    header.appendChild(controls);
-
-    const infoRow = document.createElement("div");
-    infoRow.dataset.keyInfo = "info";
-
-    const limitState = record.usage_limit_requests === 0 ? "bad" : "";
-    const limitInfo = appendKeyInfo(
-      infoRow,
-      "Limit",
-      formatLimitValue(record.usage_limit_requests),
-      limitState ? { state: limitState } : {},
-    );
-    const windowInfo = appendKeyInfo(infoRow, "Window", formatWindowMs(record.window_ms));
-    const usageInfo = appendKeyInfo(infoRow, "Usage", formatNumber(record.usage_requests));
-    const resetInfo = appendKeyInfo(infoRow, "Reset at", formatDate(record.usage_reset_at_ms));
-    const updatedInfo = appendKeyInfo(infoRow, "Updated", formatDate(record.updated_at_ms));
-
-    main.appendChild(header);
-    main.appendChild(infoRow);
-
-    const editPanel = document.createElement("div");
-    editPanel.dataset.editPanel = "panel";
-    editPanel.hidden = true;
-
-    const editFields = document.createElement("div");
-    editFields.dataset.editFields = "fields";
-
-    const limitField = document.createElement("label");
-    limitField.dataset.field = "true";
-    const limitLabel = document.createElement("span");
-    limitLabel.dataset.label = "label";
-    limitLabel.textContent = "Usage Limit";
-    const limitInput = document.createElement("input");
-    limitInput.type = "number";
-    limitInput.inputMode = "numeric";
+  const resetEditInputs = () => {
     limitInput.value = typeof record.usage_limit_requests === "number" ? String(record.usage_limit_requests) : "-1";
-    limitField.appendChild(limitLabel);
-    limitField.appendChild(limitInput);
-
-    const windowField = document.createElement("label");
-    windowField.dataset.field = "true";
-    const windowLabel = document.createElement("span");
-    windowLabel.dataset.label = "label";
-    windowLabel.textContent = "Window (ms)";
-    const windowInput = document.createElement("input");
-    windowInput.type = "number";
-    windowInput.inputMode = "numeric";
     windowInput.value = typeof record.window_ms === "number" ? String(Math.trunc(record.window_ms)) : "";
-    windowField.appendChild(windowLabel);
-    windowField.appendChild(windowInput);
+    setEditBadge("unknown", "Idle");
+  };
 
-    editFields.appendChild(limitField);
-    editFields.appendChild(windowField);
-
-    const presetRow = document.createElement("div");
-    presetRow.dataset.layout = "row";
-    const preset1m = document.createElement("button");
-    preset1m.type = "button";
-    preset1m.textContent = "1m";
-    const preset1h = document.createElement("button");
-    preset1h.type = "button";
-    preset1h.textContent = "1h";
-    const preset1d = document.createElement("button");
-    preset1d.type = "button";
-    preset1d.textContent = "1d";
-    const preset1w = document.createElement("button");
-    preset1w.type = "button";
-    preset1w.textContent = "1w";
-    presetRow.appendChild(preset1m);
-    presetRow.appendChild(preset1h);
-    presetRow.appendChild(preset1d);
-    presetRow.appendChild(preset1w);
-
-    const editActions = document.createElement("div");
-    editActions.dataset.actionRow = "actions";
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "button";
-    saveBtn.dataset.variant = "primary";
-    applyIconButton(saveBtn, "save", "Save changes");
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.textContent = "Cancel";
-    editActions.appendChild(saveBtn);
-    editActions.appendChild(cancelBtn);
-
-    const editBadge = document.createElement("span");
-    editBadge.dataset.badge = "status";
-    editBadge.dataset.state = "unknown";
-    editBadge.textContent = "Idle";
-
-    const editHelp = document.createElement("p");
-    editHelp.dataset.help = "true";
-    editHelp.textContent = "Leave blank to keep the current interval. Updates reset usage.";
-
-    editPanel.appendChild(editFields);
-    editPanel.appendChild(presetRow);
-    editPanel.appendChild(editActions);
-    editPanel.appendChild(editBadge);
-    editPanel.appendChild(editHelp);
-
-    main.appendChild(editPanel);
-    const hasUsageField = Object.prototype.hasOwnProperty.call(record, "usage");
-    const usage = hasUsageField ? record.usage : undefined;
-    if (hasUsageField) {
-      main.appendChild(buildUsageDetails(usage));
+  const updateInfo = (updated) => {
+    const next = updated ?? record;
+    limitInfo.valueEl.textContent = formatLimitValue(next.usage_limit_requests);
+    if (next.usage_limit_requests === 0) {
+      limitInfo.item.dataset.state = "bad";
+      row.dataset.state = "revoked";
+    } else {
+      delete limitInfo.item.dataset.state;
+      row.dataset.state = "active";
     }
-    row.appendChild(main);
-    kernelList.appendChild(row);
+    windowInfo.valueEl.textContent = formatWindowMs(next.window_ms);
+    usageInfo.valueEl.textContent = formatNumber(next.usage_requests);
+    resetInfo.valueEl.textContent = formatDate(next.usage_reset_at_ms);
+    updatedInfo.valueEl.textContent = formatDate(next.updated_at_ms);
+  };
 
-    const setEditBadge = (state, text) => setBadge(editBadge, state, text);
+  const saveEdits = async () => {
+    const limitValue = parseKernelLimitValue(limitInput.value, setEditBadge);
+    if (limitValue === null) return;
+    const windowResult = parseKernelWindowValue(windowInput.value, setEditBadge);
+    if (!windowResult.ok) return;
 
-    const resetEditInputs = () => {
-      limitInput.value = typeof record.usage_limit_requests === "number" ? String(record.usage_limit_requests) : "-1";
-      windowInput.value = typeof record.window_ms === "number" ? String(Math.trunc(record.window_ms)) : "";
-      setEditBadge("unknown", "Idle");
-    };
+    const token = getAdminToken();
+    if (!token) {
+      setEditBadge("bad", "Missing token");
+      setAuthBadge("bad", "Missing token");
+      tokenInput.focus();
+      return;
+    }
 
-    const updateInfo = (updated) => {
-      const next = updated ?? record;
-      limitInfo.valueEl.textContent = formatLimitValue(next.usage_limit_requests);
-      if (next.usage_limit_requests === 0) {
-        limitInfo.item.dataset.state = "bad";
-        row.dataset.state = "revoked";
+    saveBtn.disabled = true;
+    setEditBadge("unknown", "Saving...");
+
+    try {
+      const payload = {
+        owner,
+        scope,
+        usage_limit_requests: limitValue,
+      };
+      if (scope === "repo") payload.repo = repo;
+      if (windowResult.value !== null) payload.window_ms = windowResult.value;
+
+      const res = await fetch(apiUrl("/admin/kernel-usage"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setEditBadge("bad", data?.error?.message ?? "Error");
+        return;
+      }
+
+      if (data?.limit && typeof data.limit === "object") {
+        Object.assign(record, data.limit);
       } else {
-        delete limitInfo.item.dataset.state;
-        row.dataset.state = "active";
+        record.usage_limit_requests = limitValue;
+        if (windowResult.value !== null) record.window_ms = windowResult.value;
       }
-      windowInfo.valueEl.textContent = formatWindowMs(next.window_ms);
-      usageInfo.valueEl.textContent = formatNumber(next.usage_requests);
-      resetInfo.valueEl.textContent = formatDate(next.usage_reset_at_ms);
-      updatedInfo.valueEl.textContent = formatDate(next.updated_at_ms);
-    };
-
-    const saveEdits = async () => {
-      const limitValue = parseKernelLimitValue(limitInput.value, setEditBadge);
-      if (limitValue === null) return;
-      const windowResult = parseKernelWindowValue(windowInput.value, setEditBadge);
-      if (!windowResult.ok) return;
-
-      const token = getAdminToken();
-      if (!token) {
-        setEditBadge("bad", "Missing token");
-        setAuthBadge("bad", "Missing token");
-        tokenInput.focus();
-        return;
-      }
-
-      saveBtn.disabled = true;
-      setEditBadge("unknown", "Saving...");
-
-      try {
-        const payload = {
-          owner,
-          scope,
-          usage_limit_requests: limitValue,
-        };
-        if (scope === "repo") payload.repo = repo;
-        if (windowResult.value !== null) payload.window_ms = windowResult.value;
-
-        const res = await fetch(apiUrl("/admin/kernel-usage"), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          setEditBadge("bad", data?.error?.message ?? "Error");
-          return;
-        }
-
-        if (data?.limit && typeof data.limit === "object") {
-          Object.assign(record, data.limit);
-        } else {
-          record.usage_limit_requests = limitValue;
-          if (windowResult.value !== null) record.window_ms = windowResult.value;
-        }
-        updateInfo(record);
-        resetEditInputs();
-        setEditBadge("ok", "Saved");
-      } catch {
-        setEditBadge("bad", "Offline");
-      } finally {
-        saveBtn.disabled = false;
-      }
-    };
-
-    const deleteLimit = async () => {
-      const token = getAdminToken();
-      if (!token) {
-        setKernelListBadge("bad", "Missing token");
-        setAuthBadge("bad", "Missing token");
-        tokenInput.focus();
-        return;
-      }
-      if (!confirm(`Delete kernel limit for ${titleText}?`)) return;
-
-      setKernelListBadge("unknown", "Deleting...");
-      deleteBtn.disabled = true;
-
-      try {
-        const res = await fetch(apiUrl("/admin/kernel-usage"), {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ owner, repo: scope === "repo" ? repo : undefined, scope }),
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          setKernelListBadge("bad", data?.error?.message ?? "Error");
-          return;
-        }
-        await loadKernelList();
-      } catch {
-        setKernelListBadge("bad", "Offline");
-      } finally {
-        deleteBtn.disabled = false;
-      }
-    };
-
-    editBtn.addEventListener("click", () => {
-      if (!editPanel.hidden) {
-        limitInput.focus();
-        return;
-      }
-      editPanel.hidden = false;
-      editBtn.disabled = true;
-      limitInput.focus();
-    });
-
-    cancelBtn.addEventListener("click", () => {
-      editPanel.hidden = true;
-      editBtn.disabled = false;
+      updateInfo(record);
       resetEditInputs();
-    });
+      setEditBadge("ok", "Saved");
+    } catch {
+      setEditBadge("bad", "Offline");
+    } finally {
+      saveBtn.disabled = false;
+    }
+  };
 
-    saveBtn.addEventListener("click", () => {
-      void saveEdits();
-    });
+  const deleteLimit = async () => {
+    const token = getAdminToken();
+    if (!token) {
+      setKernelListBadge("bad", "Missing token");
+      setAuthBadge("bad", "Missing token");
+      tokenInput.focus();
+      return;
+    }
+    if (!confirm(`Delete policy for ${confirmLabel}?`)) return;
 
-    preset1m.addEventListener("click", () => {
-      windowInput.value = "60000";
-      setEditBadge("unknown", "Editing...");
-    });
-    preset1h.addEventListener("click", () => {
-      windowInput.value = "3600000";
-      setEditBadge("unknown", "Editing...");
-    });
-    preset1d.addEventListener("click", () => {
-      windowInput.value = "86400000";
-      setEditBadge("unknown", "Editing...");
-    });
-    preset1w.addEventListener("click", () => {
-      windowInput.value = "604800000";
-      setEditBadge("unknown", "Editing...");
-    });
+    setKernelListBadge("unknown", "Deleting...");
+    deleteBtn.disabled = true;
 
-    deleteBtn.addEventListener("click", () => {
-      void deleteLimit();
-    });
+    try {
+      const res = await fetch(apiUrl("/admin/kernel-usage"), {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ owner, repo: scope === "repo" ? repo : undefined, scope }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setKernelListBadge("bad", data?.error?.message ?? "Error");
+        return;
+      }
+      await loadKernelList();
+    } catch {
+      setKernelListBadge("bad", "Offline");
+    } finally {
+      deleteBtn.disabled = false;
+    }
+  };
 
-    limitInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
-    windowInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
+  editBtn.addEventListener("click", () => {
+    if (!editPanel.hidden) {
+      limitInput.focus();
+      return;
+    }
+    editPanel.hidden = false;
+    editBtn.disabled = true;
+    limitInput.focus();
   });
 
-  updateKernelAttention(null, scope, listMode, policyState);
-  return { total: records.length, visible: filtered.length };
+  cancelBtn.addEventListener("click", () => {
+    editPanel.hidden = true;
+    editBtn.disabled = false;
+    resetEditInputs();
+  });
+
+  saveBtn.addEventListener("click", () => {
+    void saveEdits();
+  });
+
+  preset1m.addEventListener("click", () => {
+    windowInput.value = "60000";
+    setEditBadge("unknown", "Editing...");
+  });
+  preset1h.addEventListener("click", () => {
+    windowInput.value = "3600000";
+    setEditBadge("unknown", "Editing...");
+  });
+  preset1d.addEventListener("click", () => {
+    windowInput.value = "86400000";
+    setEditBadge("unknown", "Editing...");
+  });
+  preset1w.addEventListener("click", () => {
+    windowInput.value = "604800000";
+    setEditBadge("unknown", "Editing...");
+  });
+
+  deleteBtn.addEventListener("click", () => {
+    void deleteLimit();
+  });
+
+  limitInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
+  windowInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
+
+  return row;
+};
+
+const renderKernelList = (records, policyState = kernelPolicyState) => {
+  kernelList.textContent = "";
+  const { org, repo } = normalizeKernelListRecords(records);
+  const allGroups = buildKernelGroups(records);
+  const totalOrgCount = allGroups.length;
+  const totalRepoCount = repo.length;
+
+  if (totalOrgCount === 0 && totalRepoCount === 0) {
+    setKernelListMessage("No analytics or policies yet.");
+    updateKernelAttention({ total: 0, unbounded: 0 }, policyState);
+    return { orgTotal: 0, repoTotal: 0, orgVisible: 0, repoVisible: 0 };
+  }
+
+  const filtered = applyKernelFilters(records);
+  const visibleGroups = buildKernelGroups(filtered);
+  if (visibleGroups.length === 0 && filtered.repo.length === 0) {
+    setKernelListMessage("No matches.");
+    updateKernelAttention({ total: 0, unbounded: 0 }, policyState);
+    return {
+      orgTotal: totalOrgCount,
+      repoTotal: totalRepoCount,
+      orgVisible: 0,
+      repoVisible: 0,
+    };
+  }
+
+  const sortedGroups = sortKernelGroups(visibleGroups);
+  sortedGroups.forEach((group, index) => {
+    const policyAvailableOrg = policyState?.orgAvailable !== false;
+    const orgRecord = group.org ?? { owner: group.owner, repo: "", usage: null };
+    const orgHasPolicy = policyAvailableOrg && typeof orgRecord?.usage_limit_requests === "number";
+    const orgSummaryRow = buildKernelOrgSummaryRow(group);
+    const groupTile = orgHasPolicy
+      ? buildKernelPolicyTile(orgRecord, {
+        owner: group.owner,
+        repo: "",
+        scope: "org",
+        titleText: group.owner || "unknown",
+        index,
+        summaryRow: orgSummaryRow,
+        showDetails: false,
+      })
+      : buildKernelPolicyPlaceholder(orgRecord, {
+        owner: group.owner,
+        repo: "",
+        scope: "org",
+        titleText: group.owner || "unknown",
+        index,
+        summaryRow: orgSummaryRow,
+        showDetails: false,
+        policyAvailable: policyAvailableOrg,
+      });
+
+    if (!groupTile) return;
+    groupTile.dataset.group = "org";
+
+    const repos = sortKernelRepoRecords(group.repos);
+    if (repos.length) {
+      const policyAvailableRepo = policyState?.repoAvailable !== false;
+      const sublist = document.createElement("div");
+      sublist.dataset.sublist = "repos";
+      sublist.setAttribute("role", "list");
+      repos.forEach((record, repoIndex) => {
+        const repoName = getKernelRecordRepo(record) || "unknown";
+        const repoHasPolicy = policyAvailableRepo && typeof record?.usage_limit_requests === "number";
+        const tile = repoHasPolicy
+          ? buildKernelPolicyTile(record, {
+            owner: group.owner,
+            repo: repoName,
+            scope: "repo",
+            titleText: repoName,
+            index: repoIndex,
+            isSubtile: true,
+            showDetails: true,
+          })
+          : buildKernelPolicyPlaceholder(record, {
+            owner: group.owner,
+            repo: repoName,
+            scope: "repo",
+            titleText: repoName,
+            index: repoIndex,
+            isSubtile: true,
+            showDetails: true,
+            policyAvailable: policyAvailableRepo,
+          });
+        if (tile) sublist.appendChild(tile);
+      });
+      groupTile.appendChild(sublist);
+    }
+    kernelList.appendChild(groupTile);
+  });
+
+  const summary = summarizeKernelPolicyCoverage(filtered.repo, policyState);
+  updateKernelAttention(summary, policyState);
+
+  return {
+    orgTotal: totalOrgCount,
+    repoTotal: totalRepoCount,
+    orgVisible: visibleGroups.length,
+    repoVisible: filtered.repo.length,
+  };
 };
 
 const appendMetaItem = (container, label, value, options = {}) => {
@@ -1392,7 +1885,7 @@ const normalizeKernelPubKeyPem = (value) => {
 const renderKernelPubKeys = (records) => {
   kernelPubKeysList.textContent = "";
   if (!Array.isArray(records) || records.length === 0) {
-    setKernelPubKeysMessage("No public keys yet.");
+    setKernelPubKeysMessage("No kernel attestation keys yet.");
     return;
   }
 
@@ -1402,7 +1895,7 @@ const renderKernelPubKeys = (records) => {
     return aId - bId;
   });
 
-  sorted.forEach((record) => {
+  sorted.forEach((record, index) => {
     if (!record || typeof record !== "object") return;
     const appId = typeof record.app_id === "number" ? Math.trunc(record.app_id) : null;
     const owner = typeof record.owner === "string" ? record.owner : "";
@@ -1412,6 +1905,7 @@ const renderKernelPubKeys = (records) => {
     const row = document.createElement("article");
     row.dataset.key = "kernel-pubkey";
     row.dataset.state = "active";
+    row.style.setProperty("--i", index);
 
     const main = document.createElement("div");
     main.dataset.keyMain = "main";
@@ -1432,7 +1926,7 @@ const renderKernelPubKeys = (records) => {
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.dataset.variant = "danger";
-    applyIconButton(deleteBtn, "trash", appId ? `Delete App ${appId}` : "Delete public key");
+    applyIconButton(deleteBtn, "trash", appId ? `Delete App ${appId}` : "Delete kernel attestation key");
 
     actionRow.appendChild(deleteBtn);
     controls.appendChild(actionRow);
@@ -1443,6 +1937,7 @@ const renderKernelPubKeys = (records) => {
     infoRow.dataset.keyInfo = "info";
     appendKeyInfo(infoRow, "App ID", appId ? String(appId) : "unknown", { mono: true });
     appendKeyInfo(infoRow, "Owner", formatOptionalText(owner));
+    appendKeyInfo(infoRow, "Key preview", formatPemPreview(pem) || "—", { mono: true });
     appendKeyInfo(infoRow, "Added", formatDate(addedAt));
 
     main.appendChild(header);
@@ -1457,11 +1952,11 @@ const renderKernelPubKeys = (records) => {
 
       const label = document.createElement("span");
       label.dataset.usageLabel = "label";
-      label.textContent = "Public key";
+      label.textContent = "Attestation key";
 
       const summaryMeta = document.createElement("span");
       summaryMeta.dataset.usageSummary = "summary";
-      summaryMeta.textContent = formatPemPreview(pem) || "PEM";
+      summaryMeta.textContent = formatPemPreview(pem) || "View PEM";
 
       summary.appendChild(label);
       summary.appendChild(summaryMeta);
@@ -1486,13 +1981,16 @@ const renderKernelPubKeys = (records) => {
       deleteBtn.disabled = true;
     }
   });
+
+  updateAccessPubkeysSummary();
 };
 
 const refreshKernelPubKeys = async () => {
   const token = getAdminToken();
   if (!token) {
     setKernelPubKeysBadge("bad", "Missing token");
-    setKernelPubKeysMessage("Paste an admin token to load public keys.");
+    setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
+    updateAccessPubkeysSummary();
     return;
   }
 
@@ -1508,7 +2006,7 @@ const refreshKernelPubKeys = async () => {
     const data = await res.json().catch(() => null);
     if (!res.ok) {
       setKernelPubKeysBadge("bad", data?.error?.message ?? "Error");
-      setKernelPubKeysMessage("Failed to load public keys.");
+      setKernelPubKeysMessage("Failed to load kernel attestation keys.");
       return;
     }
 
@@ -1520,23 +2018,26 @@ const refreshKernelPubKeys = async () => {
   } catch {
     kernelPubKeys = [];
     setKernelPubKeysBadge("bad", "Offline");
-    setKernelPubKeysMessage("Failed to load public keys.");
+    setKernelPubKeysMessage("Failed to load kernel attestation keys.");
   } finally {
     kernelPubKeysLoading = false;
+    updateAccessPubkeysSummary();
   }
 };
 
 const ensureKernelPubKeysLoaded = async () => {
-  if (currentAdminView !== "kernel") return;
+  if (currentAdminView !== "pubkeys") return;
   if (kernelPubKeysLoading) return;
   const token = getAdminToken();
   if (!token) {
     setKernelPubKeysBadge("bad", "Missing token");
-    setKernelPubKeysMessage("Paste an admin token to load public keys.");
+    setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
+    updateAccessPubkeysSummary();
     return;
   }
   if (kernelPubKeysLoadedAt && Date.now() - kernelPubKeysLoadedAt < 10_000) {
     setKernelPubKeysBadge("ok", `${kernelPubKeys.length} key${kernelPubKeys.length === 1 ? "" : "s"}`);
+    updateAccessPubkeysSummary();
     return;
   }
   await refreshKernelPubKeys();
@@ -1592,11 +2093,8 @@ const createKernelPubKey = async () => {
       return;
     }
 
-    kernelPubKeyAppIdInput.value = "";
-    kernelPubKeyOwnerInput.value = "";
-    kernelPubKeyPemInput.value = "";
+    resetKernelPubKeyForm();
     setKernelPubKeyCreateBadge("ok", "Saved");
-    setKernelPubKeyNewPanelOpen(false);
     await refreshKernelPubKeys();
   } catch {
     setKernelPubKeyCreateBadge("bad", "Offline");
@@ -1614,7 +2112,7 @@ const deleteKernelPubKey = async (appId, button) => {
     tokenInput.focus();
     return;
   }
-  if (!confirm(`Delete public key for App ${appId}?`)) return;
+  if (!confirm(`Delete kernel attestation key for App ${appId}?`)) return;
 
   setKernelPubKeysBadge("unknown", "Deleting...");
   if (button) button.disabled = true;
@@ -1650,34 +2148,76 @@ const appendUsagePill = (container, label, value = "", options = {}) => {
   container.appendChild(pill);
 };
 
-const SPARKLINE_DAY_WIDTH = 24;
-const SPARKLINE_HEIGHT = 42;
+const SPARKLINE_MIN_WIDTH = 240;
+const SPARKLINE_HEIGHT = 96;
+const SPARKLINE_PAD_Y = 6;
 let sparklineCounter = 0;
 const buildUsageSparkline = (usage) => {
   const daily = Array.isArray(usage?.daily_requests) ? usage.daily_requests : null;
   if (!daily || daily.length === 0) return null;
 
-  const width = daily.length * SPARKLINE_DAY_WIDTH;
-  const height = SPARKLINE_HEIGHT;
-  const maxValue = Math.max(...daily);
-  const scaleMax = maxValue > 0 ? maxValue : 1;
-  const padY = 6;
-  const xOffset = SPARKLINE_DAY_WIDTH / 2;
+  const values = daily.map((value) =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
+  );
+  const count = values.length;
+  if (!count) return null;
 
-  const points = daily.map((value, index) => {
-    const x = index * SPARKLINE_DAY_WIDTH + xOffset;
-    const ratio = Math.min(1, value / scaleMax);
-    const y = height - padY - ratio * (height - padY * 2);
-    return `${x},${y}`;
+  const dayWidth = count >= 90 ? 8 : count >= 60 ? 10 : count >= 30 ? 12 : count >= 14 ? 16 : 22;
+  const width = Math.max(SPARKLINE_MIN_WIDTH, count * dayWidth);
+  const height = SPARKLINE_HEIGHT;
+  const padX = Math.min(10, Math.max(4, Math.round(width * 0.02)));
+  const plotWidth = Math.max(1, width - padX * 2);
+  const maxValue = Math.max(...values);
+  const sorted = [...values].sort((a, b) => a - b);
+  const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? maxValue;
+  const p50 = sorted[Math.floor((sorted.length - 1) * 0.5)] ?? p90;
+  const spread = Math.max(1, p90 - p50);
+  let scaleMax = maxValue;
+  if (maxValue > p90 + spread * 1.5) {
+    scaleMax = p90 + spread;
+  }
+  scaleMax = Math.max(1, scaleMax);
+  const padTop = SPARKLINE_PAD_Y;
+  const padBottom = SPARKLINE_PAD_Y;
+  const drawHeight = height - padTop - padBottom;
+  const baseline = height - padBottom;
+  const stepX = count === 1 ? 0 : plotWidth / (count - 1);
+
+  const points = values.map((value, index) => {
+    const clampedValue = Math.min(value, scaleMax);
+    const ratio = scaleMax === 0 ? 0 : clampedValue / scaleMax;
+    const y = baseline - ratio * drawHeight;
+    const x = count === 1 ? width / 2 : padX + index * stepX;
+    return { x, y, value, clamped: value > scaleMax };
   });
+
+  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
+  const areaPath = `${linePath} L ${points[points.length - 1].x},${baseline} L ${points[0].x},${baseline} Z`;
+
+  const avgWindow = Math.min(7, Math.max(3, Math.round(count / 12)));
+  const avgValues = values.map((_, index) => {
+    const start = Math.max(0, index - avgWindow + 1);
+    const slice = values.slice(start, index + 1);
+    return slice.reduce((sum, value) => sum + value, 0) / slice.length;
+  });
+  const avgPoints = avgValues.map((value, index) => {
+    const clampedValue = Math.min(value, scaleMax);
+    const ratio = scaleMax === 0 ? 0 : clampedValue / scaleMax;
+    const y = baseline - ratio * drawHeight;
+    const x = count === 1 ? width / 2 : padX + index * stepX;
+    return { x, y };
+  });
+  const avgPath = avgPoints.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   const gradientId = `sparkline-${++sparklineCounter}`;
+  const areaGradientId = `${gradientId}-area`;
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
+  svg.setAttribute("preserveAspectRatio", "none");
   svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", `Last ${daily.length} days requests`);
+  svg.setAttribute("aria-label", `Last ${count} days requests`);
 
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
   const gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
@@ -1699,34 +2239,111 @@ const buildUsageSparkline = (usage) => {
 
   gradient.appendChild(stopStart);
   gradient.appendChild(stopEnd);
+
+  const areaGradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+  areaGradient.setAttribute("id", areaGradientId);
+  areaGradient.setAttribute("x1", "0");
+  areaGradient.setAttribute("y1", "0");
+  areaGradient.setAttribute("x2", "0");
+  areaGradient.setAttribute("y2", "1");
+
+  const areaStart = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+  areaStart.setAttribute("offset", "0%");
+  areaStart.setAttribute("stop-color", "#ffffff");
+  areaStart.setAttribute("stop-opacity", "0.24");
+
+  const areaEnd = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+  areaEnd.setAttribute("offset", "100%");
+  areaEnd.setAttribute("stop-color", "#ffffff");
+  areaEnd.setAttribute("stop-opacity", "0");
+
+  areaGradient.appendChild(areaStart);
+  areaGradient.appendChild(areaEnd);
   defs.appendChild(gradient);
+  defs.appendChild(areaGradient);
   svg.appendChild(defs);
 
-  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-  polyline.setAttribute("points", points.join(" "));
-  polyline.setAttribute("fill", "none");
-  polyline.setAttribute("stroke", `url(#${gradientId})`);
-  polyline.setAttribute("stroke-width", "2");
-  polyline.setAttribute("stroke-linecap", "round");
-  polyline.setAttribute("stroke-linejoin", "round");
-  polyline.dataset.usageSparkLine = "line";
-  svg.appendChild(polyline);
+  [0.25, 0.5, 0.75].forEach((offset) => {
+    const y = baseline - drawHeight * offset;
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", "0");
+    line.setAttribute("x2", String(width));
+    line.setAttribute("y1", String(y));
+    line.setAttribute("y2", String(y));
+    line.dataset.usageSparkGrid = "line";
+    svg.appendChild(line);
+  });
 
-  if (points.length === 1) {
-    const [x, y] = points[0].split(",").map(Number);
-    const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    dot.setAttribute("cx", String(x));
-    dot.setAttribute("cy", String(y));
-    dot.setAttribute("r", "2.5");
-    dot.setAttribute("fill", "rgba(255, 255, 255, 0.8)");
-    svg.appendChild(dot);
+  if (count >= 14) {
+    for (let i = 6; i < count; i += 7) {
+      const x = padX + i * stepX;
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", String(x));
+      line.setAttribute("x2", String(x));
+      line.setAttribute("y1", String(padTop));
+      line.setAttribute("y2", String(baseline));
+      line.dataset.usageSparkGrid = "vertical";
+      svg.appendChild(line);
+    }
   }
+
+  const area = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  area.setAttribute("d", areaPath);
+  area.setAttribute("fill", `url(#${areaGradientId})`);
+  area.dataset.usageSparkArea = "area";
+  svg.appendChild(area);
+
+  const avgPathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  avgPathEl.setAttribute("d", avgPath);
+  avgPathEl.setAttribute("fill", "none");
+  avgPathEl.setAttribute("stroke", "rgba(255, 255, 255, 0.4)");
+  avgPathEl.setAttribute("stroke-width", "1.6");
+  avgPathEl.setAttribute("stroke-linecap", "round");
+  avgPathEl.setAttribute("stroke-linejoin", "round");
+  avgPathEl.dataset.usageSparkTrend = "trend";
+  svg.appendChild(avgPathEl);
+
+  const linePathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  linePathEl.setAttribute("d", linePath);
+  linePathEl.setAttribute("fill", "none");
+  linePathEl.setAttribute("stroke", `url(#${gradientId})`);
+  linePathEl.setAttribute("stroke-width", "2.2");
+  linePathEl.setAttribute("stroke-linecap", "round");
+  linePathEl.setAttribute("stroke-linejoin", "round");
+  linePathEl.dataset.usageSparkLine = "line";
+  svg.appendChild(linePathEl);
+
+  const scaleMaxLabel = Math.max(1, Math.round(scaleMax));
+  const maxLabel = maxValue > scaleMax ? `Max ${formatCompactNumber(scaleMaxLabel)}+` : `Max ${formatCompactNumber(scaleMaxLabel)}`;
 
   const container = document.createElement("div");
   container.dataset.usageSpark = "spark";
-  container.style.setProperty("--spark-days", String(daily.length));
-  container.style.setProperty("--spark-width", `${width}px`);
-  container.appendChild(svg);
+  container.style.setProperty("--spark-days", String(count));
+  container.style.setProperty("--spark-height", `${height}px`);
+
+  const scaleRow = document.createElement("div");
+  scaleRow.dataset.usageSparkScale = "scale";
+  scaleRow.textContent = maxLabel;
+  container.appendChild(scaleRow);
+
+  const chart = document.createElement("div");
+  chart.dataset.usageSparkChart = "chart";
+  chart.appendChild(svg);
+  container.appendChild(chart);
+
+  const axis = document.createElement("div");
+  axis.dataset.usageSparkAxis = "axis";
+  if (count > 1) {
+    const startLabel = document.createElement("span");
+    startLabel.textContent = `Last ${count}d`;
+    axis.appendChild(startLabel);
+  } else {
+    axis.dataset.single = "true";
+  }
+  const endLabel = document.createElement("span");
+  endLabel.textContent = "Today";
+  axis.appendChild(endLabel);
+  container.appendChild(axis);
   return container;
 };
 
@@ -1771,7 +2388,11 @@ const buildUsageSummary = (usage) => {
   return summary;
 };
 
-const buildUsageDetails = (usage) => {
+const buildUsageDetails = (usage, options = {}) => {
+  const labelText = options.label ?? "Analytics";
+  const unavailableText = options.unavailable ?? "Analytics unavailable.";
+  const emptyText = options.empty ?? "No analytics yet.";
+
   const usageSection = document.createElement("details");
   usageSection.dataset.usage = "details";
 
@@ -1780,7 +2401,7 @@ const buildUsageDetails = (usage) => {
 
   const usageLabel = document.createElement("span");
   usageLabel.dataset.usageLabel = "label";
-  usageLabel.textContent = "Usage";
+  usageLabel.textContent = labelText;
 
   usageTitle.appendChild(usageLabel);
   usageTitle.appendChild(buildUsageSummary(usage));
@@ -1792,22 +2413,22 @@ const buildUsageDetails = (usage) => {
   if (usage === undefined) {
     const empty = document.createElement("div");
     empty.dataset.usageEmpty = "empty";
-    empty.textContent = "Usage unavailable.";
+    empty.textContent = unavailableText;
     usageSection.appendChild(empty);
   } else if (usage === null) {
     const empty = document.createElement("div");
     empty.dataset.usageEmpty = "empty";
-    empty.textContent = "No usage yet.";
+    empty.textContent = emptyText;
     usageSection.appendChild(empty);
   } else if (typeof usage !== "object") {
     const empty = document.createElement("div");
     empty.dataset.usageEmpty = "empty";
-    empty.textContent = "Usage unavailable.";
+    empty.textContent = unavailableText;
     usageSection.appendChild(empty);
   } else if (Object.keys(usage).length === 0) {
     const empty = document.createElement("div");
     empty.dataset.usageEmpty = "empty";
-    empty.textContent = "No usage yet.";
+    empty.textContent = emptyText;
     usageSection.appendChild(empty);
   } else {
     const usageList = document.createElement("div");
@@ -1817,13 +2438,13 @@ const buildUsageDetails = (usage) => {
     const errorCount = toNumber(usage.error_requests);
     appendMetaItem(usageList, "Errors", formatNumber(errorCount), { state: errorCount > 0 ? "bad" : "" });
     appendMetaItem(usageList, "Stream", formatNumber(usage.stream_requests));
-    appendMetaItem(usageList, "Non-stream", formatNumber(usage.non_stream_requests));
     appendMetaItem(usageList, "Tokens in", formatNumber(usage.input_tokens));
     appendMetaItem(usageList, "Tokens out", formatNumber(usage.output_tokens));
     appendMetaItem(usageList, "Tokens total", formatNumber(usage.total_tokens));
     appendMetaItem(usageList, "First seen", formatDate(usage.first_seen_at_ms));
     appendMetaItem(usageList, "Last seen", formatDate(usage.last_seen_at_ms));
     appendMetaItem(usageList, "Last model", formatOptionalText(usage.last_model), { mono: true });
+    appendMetaItem(usageList, "Last reasoning", formatOptionalText(usage.last_reasoning), { mono: true });
     appendMetaItem(usageList, "Last route", formatOptionalText(usage.last_route));
     usageSection.appendChild(usageList);
   }
@@ -1840,7 +2461,8 @@ const renderKeys = (keys, view = "all") => {
     filteredKeys = keys.filter(k => k.revoked_at_ms);
   }
   if (!filteredKeys.length) {
-    setKeyListMessage(view === "all" ? "No keys yet." : `No ${view} keys.`);
+    setKeyListMessage(view === "all" ? "No API keys yet." : `No ${view} API keys.`);
+    updateAccessApiKeysSummary();
     return;
   }
 
@@ -1881,17 +2503,17 @@ const renderKeys = (keys, view = "all") => {
       const isNearLimit = hasLimit && limitValue > 0 && current / limitValue >= 0.8;
       const isAtLimit = hasLimit && current >= limitValue;
       const title = `${formatNumber(current)} requests${
-        hasLimit ? ` of ${formatNumber(limitValue)} limit` : ""
+        hasLimit ? ` of ${formatNumber(limitValue)} policy limit` : ""
       } (resets ${formatDate(key.usage_reset_at_ms)})`;
       const state = isAtLimit ? "bad" : (isNearLimit ? "warning" : "");
       return { usageText, title, state };
     };
 
-    // Display usage limit information
+    // Display policy limit information
     let usageInfo = null;
     if (typeof key.usage_limit_requests === "number") {
       const usageData = getUsageInfoData();
-      usageInfo = appendKeyInfo(infoRow, "Usage", usageData.usageText, {
+      usageInfo = appendKeyInfo(infoRow, "Analytics", usageData.usageText, {
         state: usageData.state,
         title: usageData.title,
       });
@@ -1907,33 +2529,33 @@ const renderKeys = (keys, view = "all") => {
 
     const editBtn = document.createElement("button");
     editBtn.type = "button";
-    applyIconButton(editBtn, "edit", "Edit key");
+    applyIconButton(editBtn, "edit", "Edit API key");
     actionRow.appendChild(editBtn);
 
     if (!key.revoked_at_ms) {
       const revokeBtn = document.createElement("button");
       revokeBtn.type = "button";
       revokeBtn.dataset.variant = "danger";
-      applyIconButton(revokeBtn, "revoke", "Revoke key");
+      applyIconButton(revokeBtn, "revoke", "Revoke API key");
       revokeBtn.addEventListener("click", () => {
-        void revokeKey(key.id, key.name || "this key", revokeBtn);
+        void revokeKey(key.id, key.name || "this API key", revokeBtn);
       });
       actionRow.appendChild(revokeBtn);
     } else {
       const restoreBtn = document.createElement("button");
       restoreBtn.type = "button";
-      applyIconButton(restoreBtn, "restore", "Unrevoke key");
+      applyIconButton(restoreBtn, "restore", "Unrevoke API key");
       restoreBtn.addEventListener("click", () => {
-        void unrevokeKey(key.id, key.name || "this key", restoreBtn);
+        void unrevokeKey(key.id, key.name || "this API key", restoreBtn);
       });
       actionRow.appendChild(restoreBtn);
 
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.dataset.variant = "danger";
-      applyIconButton(deleteBtn, "trash", "Delete key");
+      applyIconButton(deleteBtn, "trash", "Delete API key");
       deleteBtn.addEventListener("click", () => {
-        void deleteKey(key.id, key.name || "this key", deleteBtn);
+        void deleteKey(key.id, key.name || "this API key", deleteBtn);
       });
       actionRow.appendChild(deleteBtn);
     }
@@ -1973,7 +2595,7 @@ const renderKeys = (keys, view = "all") => {
     limitField.dataset.field = "true";
     const limitLabel = document.createElement("span");
     limitLabel.dataset.label = "label";
-    limitLabel.textContent = "Usage Limit";
+    limitLabel.textContent = "Policy limit";
     const limitInput = document.createElement("input");
     limitInput.type = "number";
     limitInput.inputMode = "numeric";
@@ -2032,6 +2654,27 @@ const renderKeys = (keys, view = "all") => {
       expires_at_ms: typeof key.expires_at_ms === "number" ? key.expires_at_ms : -1,
     };
 
+    const getEditInputState = () => ({
+      name: nameInput.value,
+      limit: limitInput.value,
+      expires: expiresInput.value,
+      never: neverInput.checked,
+    });
+
+    const isSameEditInputState = (left, right) =>
+      left.name === right.name &&
+      left.limit === right.limit &&
+      left.expires === right.expires &&
+      left.never === right.never;
+
+    const syncEditInputsFromKey = () => {
+      nameInput.value = key.name || "";
+      limitInput.value = String(key.usage_limit_requests);
+      neverInput.checked = key.expires_at_ms === -1;
+      expiresInput.disabled = neverInput.checked;
+      expiresInput.value = neverInput.checked ? "" : toDateTimeLocalValue(key.expires_at_ms);
+    };
+
     const updateUsageInfo = () => {
       if (!usageInfo) return;
       const usageData = getUsageInfoData();
@@ -2060,7 +2703,7 @@ const renderKeys = (keys, view = "all") => {
 
       const limitRaw = limitInput.value.trim();
       if (!limitRaw) {
-        setEditBadge("bad", "Limit required");
+        setEditBadge("bad", "Policy limit required");
         return null;
       }
       let nextLimit;
@@ -2069,7 +2712,7 @@ const renderKeys = (keys, view = "all") => {
       } else {
         const parsed = Number(limitRaw);
         if (!Number.isFinite(parsed) || parsed < 0) {
-          setEditBadge("bad", "Invalid limit");
+          setEditBadge("bad", "Invalid policy limit");
           return null;
         }
         nextLimit = Math.trunc(parsed);
@@ -2116,6 +2759,7 @@ const renderKeys = (keys, view = "all") => {
         return;
       }
       const { payload, nextSnapshot } = result;
+      const requestInputs = getEditInputState();
       editSaving = true;
       setEditBadge("unknown", "Saving...");
       try {
@@ -2149,19 +2793,22 @@ const renderKeys = (keys, view = "all") => {
         expiresInfo.valueEl.textContent = formatExpires(key.expires_at_ms);
         updateUsageInfo();
 
-        nameInput.value = key.name || "";
-        limitInput.value = String(key.usage_limit_requests);
-        neverInput.checked = key.expires_at_ms === -1;
-        expiresInput.disabled = neverInput.checked;
-        expiresInput.value = neverInput.checked ? "" : toDateTimeLocalValue(key.expires_at_ms);
+        const inputsUnchanged = isSameEditInputState(requestInputs, getEditInputState());
+        if (inputsUnchanged) {
+          syncEditInputsFromKey();
+        }
 
         editSnapshot = {
           name: key.name || "",
           usage_limit_requests: key.usage_limit_requests,
           expires_at_ms: key.expires_at_ms,
         };
-        editDirty = false;
-        setEditBadge("ok", "Saved");
+        editDirty = !inputsUnchanged;
+        if (editDirty) {
+          setEditBadge("unknown", "Editing...");
+        } else {
+          setEditBadge("ok", "Saved");
+        }
       } catch {
         setEditBadge("bad", "Offline");
       } finally {
@@ -2175,7 +2822,7 @@ const renderKeys = (keys, view = "all") => {
 
     const scheduleEditSave = debounce(() => {
       void saveEdits();
-    }, 650);
+    }, 1000);
 
     const markEditDirty = () => {
       editDirty = true;
@@ -2189,7 +2836,7 @@ const renderKeys = (keys, view = "all") => {
     editBtn.addEventListener("click", () => {
       const willOpen = editPanel.hidden;
       editPanel.hidden = !willOpen;
-      applyIconButton(editBtn, willOpen ? "close" : "edit", willOpen ? "Close editor" : "Edit key");
+      applyIconButton(editBtn, willOpen ? "close" : "edit", willOpen ? "Close editor" : "Edit API key");
     });
 
     nameInput.addEventListener("input", () => {
@@ -2219,7 +2866,8 @@ const renderKeys = (keys, view = "all") => {
     row.appendChild(main);
     keysList.appendChild(row);
   });
-  setKeysBadge("ok", `${filteredKeys.length} keys`);
+  setKeysBadge("ok", `${formatPlural(filteredKeys.length, "API key")}`);
+  updateAccessApiKeysSummary();
 };
 
 const setTabState = (tab, selected) => {
@@ -2231,6 +2879,7 @@ const viewTabs = {
   session: viewTabSession,
   keys: viewTabKeys,
   kernel: viewTabKernel,
+  pubkeys: viewTabPubkeys,
   defaults: viewTabDefaults,
 };
 
@@ -2238,6 +2887,7 @@ const viewSections = {
   session: viewSession,
   keys: viewKeys,
   kernel: viewKernel,
+  pubkeys: viewPubkeys,
   defaults: viewDefaults,
 };
 
@@ -2259,6 +2909,13 @@ const setAdminView = (view) => {
   }
   if (nextView === "kernel") {
     void loadKernelList();
+    void ensureKernelPolicyQueueLoaded();
+    void refreshAccessOverview();
+    startKernelQueuePolling();
+  } else {
+    stopKernelQueuePolling();
+  }
+  if (nextView === "pubkeys") {
     void ensureKernelPubKeysLoaded();
   }
 };
@@ -2271,7 +2928,7 @@ const switchKeysView = (view) => {
   if (allKeys.length) {
     renderKeys(allKeys, view);
   } else {
-    setKeyListMessage("Paste an admin token to load keys.");
+    setKeyListMessage("Paste an admin token to load API keys.");
     setKeysBadge("unknown", "Not loaded");
   }
 };
@@ -2320,7 +2977,7 @@ const testAdminToken = async () => {
       return;
     }
     const kind = data?.auth?.method?.kind;
-    setAuthBadge("ok", kind ? `OK (${kind})` : "OK");
+    setAuthBadge("ok", kind ? `OK (${formatAuthMethodLabel(kind)})` : "OK");
   } catch {
     setAuthBadge("bad", "Offline");
   }
@@ -2385,7 +3042,7 @@ const createKey = async () => {
       `id: ${data?.id ?? ""}`,
       `name: ${data?.name ?? name}`,
       `prefix: ${data?.prefix ?? ""}`,
-      `usage_limit: ${data?.usage_limit_requests === -1 ? "unlimited" : (data?.usage_limit_requests ?? "")}`,
+      `policy_limit: ${data?.usage_limit_requests === -1 ? "unlimited" : (data?.usage_limit_requests ?? "")}`,
       `created_at: ${formatDate(data?.created_at_ms)}`,
       `expires_at: ${formatExpires(data?.expires_at_ms)}`,
     ];
@@ -2407,7 +3064,8 @@ const refreshKeys = async () => {
   const token = getAdminToken();
   if (!token) {
     setKeysBadge("bad", "Missing token");
-    setKeyListMessage("Paste an admin token to load keys.");
+    setKeyListMessage("Paste an admin token to load API keys.");
+    updateAccessApiKeysSummary();
     return;
   }
 
@@ -2423,7 +3081,7 @@ const refreshKeys = async () => {
     const data = await res.json().catch(() => null);
     if (!res.ok) {
       setKeysBadge("bad", data?.error?.message ?? "Error");
-      setKeyListMessage("Failed to load keys.");
+      setKeyListMessage("Failed to load API keys.");
       return;
     }
     const keys = Array.isArray(data?.data) ? data.data : [];
@@ -2433,9 +3091,10 @@ const refreshKeys = async () => {
   } catch {
     allKeys = [];
     setKeysBadge("bad", "Offline");
-    setKeyListMessage("Failed to load keys.");
+    setKeyListMessage("Failed to load API keys.");
   } finally {
     keysLoading = false;
+    updateAccessApiKeysSummary();
   }
 };
 
@@ -2445,11 +3104,11 @@ const ensureKeysLoaded = async () => {
   const token = getAdminToken();
   if (!token) {
     setKeysBadge("bad", "Missing token");
-    setKeyListMessage("Paste an admin token to load keys.");
+    setKeyListMessage("Paste an admin token to load API keys.");
     return;
   }
   if (allKeys.length && Date.now() - keysLoadedAt < 10_000) {
-    setKeysBadge("ok", `${allKeys.length} keys`);
+    setKeysBadge("ok", `${formatPlural(allKeys.length, "API key")}`);
     return;
   }
   await refreshKeys();
@@ -2724,18 +3383,18 @@ setKeysBadge("unknown", "Not loaded");
 setDefaultsBadge("unknown", "Idle");
 setKernelListBadge("unknown", "Not loaded");
 setKernelNewBadge("unknown", "Idle");
+setKernelQueueBadge("unknown", "Not loaded");
 setKernelPubKeysBadge("unknown", "Not loaded");
 setKernelPubKeyCreateBadge("unknown", "Idle");
-setKeyListMessage("Paste an admin token to load keys.");
+setKeyListMessage("Paste an admin token to load API keys.");
 setKernelListMessage(getKernelListMissingTokenMessage());
-setKernelPubKeysMessage("Paste an admin token to load public keys.");
+setKernelQueueMessage(getKernelQueueMissingTokenMessage());
+setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
 kernelFilterInput.value = "";
 kernelShowSelect.value = "all";
 switchKeysView("all");
-setKernelMode("usage");
-setKernelScope("org");
 setKernelNewPanelOpen(false);
-setKernelPubKeyNewPanelOpen(false);
+resetKernelPubKeyForm();
 setAdminView(storage.get(STORAGE_KEYS.view) ?? "session");
 if (getAdminToken()) scheduleTokenCheck();
 
@@ -2747,16 +3406,20 @@ tokenInput.addEventListener("input", () => {
   persistTokenIfEnabled();
   keysLoadedAt = 0;
   defaultsLoaded = false;
+  kernelQueueLoadedAt = 0;
   kernelPubKeysLoadedAt = 0;
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
     setKeysBadge("unknown", "Not loaded");
-    setKeyListMessage("Paste an admin token to load keys.");
+    setKeyListMessage("Paste an admin token to load API keys.");
     setKernelListBadge("unknown", "Not loaded");
     setKernelListMessage(getKernelListMissingTokenMessage());
+    setKernelQueueBadge("unknown", "Not loaded");
+    setKernelQueueMessage(getKernelQueueMissingTokenMessage());
     setKernelPubKeysBadge("unknown", "Not loaded");
-    setKernelPubKeysMessage("Paste an admin token to load public keys.");
+    setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
     allKeys = [];
+    kernelQueueItems = [];
     kernelPubKeys = [];
     kernelPubKeysLoadedAt = 0;
   } else {
@@ -2771,6 +3434,10 @@ tokenInput.addEventListener("input", () => {
   }
   if (currentAdminView === "kernel") {
     void loadKernelList();
+    void ensureKernelPolicyQueueLoaded();
+    void refreshAccessOverview();
+  }
+  if (currentAdminView === "pubkeys") {
     void ensureKernelPubKeysLoaded();
   }
 });
@@ -2794,17 +3461,21 @@ baseSelect.addEventListener("change", () => {
   setDefaultsBadge("unknown", "Idle");
   setKernelListBadge("unknown", "Not loaded");
   setKernelNewBadge("unknown", "Idle");
+  setKernelQueueBadge("unknown", "Not loaded");
   setKernelPubKeysBadge("unknown", "Not loaded");
   setKernelPubKeyCreateBadge("unknown", "Idle");
-  setKeyListMessage("Target changed. Loading keys...");
+  setKeyListMessage("Target changed. Loading API keys...");
   setKernelListMessage(getKernelListTargetChangedMessage());
-  setKernelPubKeysMessage("Target changed. Loading public keys...");
+  setKernelQueueMessage(getKernelQueueTargetChangedMessage());
+  setKernelPubKeysMessage("Target changed. Loading kernel attestation keys...");
   clearCreateResult();
   setKernelNewPanelOpen(false);
-  setKernelPubKeyNewPanelOpen(false);
+  resetKernelPubKeyForm();
   allKeys = [];
   keysLoadedAt = 0;
   defaultsLoaded = false;
+  kernelQueueItems = [];
+  kernelQueueLoadedAt = 0;
   kernelPubKeys = [];
   kernelPubKeysLoadedAt = 0;
   scheduleTokenCheck();
@@ -2816,6 +3487,10 @@ baseSelect.addEventListener("change", () => {
   }
   if (currentAdminView === "kernel") {
     void loadKernelList();
+    void ensureKernelPolicyQueueLoaded();
+    void refreshAccessOverview();
+  }
+  if (currentAdminView === "pubkeys") {
     void ensureKernelPubKeysLoaded();
   }
 });
@@ -2827,39 +3502,17 @@ keyExpiresSelect.addEventListener("change", () => {
 viewTabSession.addEventListener("click", () => setAdminView("session"));
 viewTabKeys.addEventListener("click", () => setAdminView("keys"));
 viewTabKernel.addEventListener("click", () => setAdminView("kernel"));
+viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys"));
 viewTabDefaults.addEventListener("click", () => setAdminView("defaults"));
-
-kernelModeUsage.addEventListener("click", () => setKernelMode("usage"));
-kernelModeLimits.addEventListener("click", () => setKernelMode("limits"));
 
 createKeyBtn.addEventListener("click", () => {
   void createKey();
 });
 
-kernelScopeRepo.addEventListener("click", () => {
-  setKernelScope("repo");
-  setKernelNewPanelOpen(false);
-  if (currentAdminView === "kernel") {
-    void loadKernelList();
-  }
-});
-kernelScopeOrg.addEventListener("click", () => {
-  setKernelScope("org");
-  setKernelNewPanelOpen(false);
-  if (currentAdminView === "kernel") {
-    void loadKernelList();
-  }
-});
 kernelNewToggle.addEventListener("click", () => {
   const nextOpen = kernelNewPanel.hidden;
   setKernelNewPanelOpen(nextOpen);
   if (nextOpen) kernelNewOwnerInput.focus();
-});
-
-kernelPubKeyNewToggle.addEventListener("click", () => {
-  const nextOpen = kernelPubKeyNewPanel.hidden;
-  setKernelPubKeyNewPanelOpen(nextOpen);
-  if (nextOpen) kernelPubKeyAppIdInput.focus();
 });
 
 kernelNewPreset1m.addEventListener("click", () => {
