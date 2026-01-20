@@ -41,8 +41,20 @@ export const coerceApiKeyExpiresAtMs = (record: unknown): number => {
   return expiresAtMs;
 };
 
-export const calculateNextResetMs = (nowMs: number): number => {
-  return nowMs + USAGE_RESET_PERIOD_MS;
+export const normalizeApiKeyWindowMs = (value: unknown, fallback = USAGE_RESET_PERIOD_MS): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  const windowMs = Math.trunc(value);
+  if (windowMs <= 0) return fallback;
+  return windowMs;
+};
+
+export const coerceApiKeyWindowMs = (record: unknown, fallback = USAGE_RESET_PERIOD_MS): number => {
+  if (!isRecord(record)) return fallback;
+  return normalizeApiKeyWindowMs(record.window_ms, fallback);
+};
+
+export const calculateNextResetMs = (nowMs: number, windowMs = USAGE_RESET_PERIOD_MS): number => {
+  return nowMs + windowMs;
 };
 
 export const shouldResetUsage = (resetAtMs: number, nowMs: number): boolean => {

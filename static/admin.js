@@ -58,10 +58,15 @@ const basePreview = mustGet("base-preview");
 
 const keyNameInput = mustGet("key-name");
 const keyUsageLimitInput = mustGet("key-usage-limit");
+const keyUsageWindowInput = mustGet("key-usage-window");
 const keyExpiresSelect = mustGet("key-expires");
 const createKeyBtn = mustGet("create-key");
 const createBadge = mustGet("create-badge");
 const createResult = mustGet("create-result");
+const keyWindowPreset1m = mustGet("key-window-1m");
+const keyWindowPreset1h = mustGet("key-window-1h");
+const keyWindowPreset1d = mustGet("key-window-1d");
+const keyWindowPreset1w = mustGet("key-window-1w");
 
 const keysBadge = mustGet("keys-badge");
 const keysList = mustGet("keys-list");
@@ -124,6 +129,8 @@ const kernelNewRepoField = mustGet("kernel-new-repo-field");
 const kernelNewRepoInput = mustGet("kernel-new-repo");
 const kernelNewLimitInput = mustGet("kernel-new-limit");
 const kernelNewWindowInput = mustGet("kernel-new-window");
+const kernelNewExpiresInput = mustGet("kernel-new-expires");
+const kernelNewNeverInput = mustGet("kernel-new-never");
 const kernelNewPreset1m = mustGet("kernel-new-window-1m");
 const kernelNewPreset1h = mustGet("kernel-new-window-1h");
 const kernelNewPreset1d = mustGet("kernel-new-window-1d");
@@ -259,6 +266,8 @@ const formatDateWithZone = (ms) => {
 };
 
 const formatExpires = (ms) => (ms === -1 ? "Never" : formatDate(ms));
+
+const isExpiredAt = (ms) => typeof ms === "number" && Number.isFinite(ms) && ms !== -1 && ms <= Date.now();
 
 const numberFormatter = new Intl.NumberFormat();
 const compactNumberFormatter = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
@@ -403,10 +412,11 @@ const applyIconButton = (button, name, label) => {
 
 const KERNEL_ACTIVITY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const KERNEL_NEAR_LIMIT_RATIO = 0.8;
+const DEFAULT_API_KEY_WINDOW_MS = 604800000;
 const DEFAULT_KERNEL_POLICY_LIMIT = -1;
 const DEFAULT_KERNEL_POLICY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
-applyIconButton(kernelNewSaveBtn, "save", "Save policy");
+applyIconButton(kernelNewSaveBtn, "save", "Save rate limit");
 applyIconButton(kernelPubKeyCreateBtn, "plus", "Add kernel attestation key");
 
 const setKernelListMessage = (text) => {
@@ -530,13 +540,13 @@ const refreshAccessOverview = async () => {
   updateAccessPubkeysSummary();
 };
 
-const getKernelListMissingTokenMessage = () => "Paste an admin token to load GitHub access analytics and policies.";
+const getKernelListMissingTokenMessage = () => "Paste an admin token to load GitHub access analytics and rate limits.";
 
-const getKernelListTargetChangedMessage = () => "Target changed. Loading GitHub access analytics and policies...";
+const getKernelListTargetChangedMessage = () => "Target changed. Loading GitHub access analytics and rate limits...";
 
-const getKernelQueueMissingTokenMessage = () => "Paste an admin token to load the policy queue.";
+const getKernelQueueMissingTokenMessage = () => "Paste an admin token to load the rate limit queue.";
 
-const getKernelQueueTargetChangedMessage = () => "Target changed. Loading the policy queue...";
+const getKernelQueueTargetChangedMessage = () => "Target changed. Loading the rate limit queue...";
 
 const normalizeKernelFilterText = (value) => value.trim().toLowerCase();
 
@@ -677,7 +687,9 @@ const updateKernelAttention = (summary, policyState) => {
       setKernelAttention("");
       return;
     }
-    const message = policyState?.message ? `Policy data unavailable: ${policyState.message}` : "Policy data unavailable.";
+    const message = policyState?.message
+      ? `Rate limit data unavailable: ${policyState.message}`
+      : "Rate limit data unavailable.";
     setKernelAttention(message);
     return;
   }
@@ -687,7 +699,7 @@ const updateKernelAttention = (summary, policyState) => {
   }
   const label = "repos";
   const countText = `${summary.unbounded} of ${summary.total}`;
-  setKernelAttention(`Attention: ${countText} ${label} with analytics have no caps (policies unset or unlimited).`);
+  setKernelAttention(`Attention: ${countText} ${label} with analytics have no caps (rate limits unset or unlimited).`);
 };
 
 const normalizeKernelListRecords = (records) => ({
@@ -814,7 +826,7 @@ const formatKernelListBadge = (counts) => {
   const orgVisible = counts?.orgVisible ?? 0;
   const repoVisible = counts?.repoVisible ?? 0;
   const total = orgTotal + repoTotal;
-  if (total === 0) return "No analytics or policies";
+  if (total === 0) return "No analytics or rate limits";
 
   const buildCountText = (visible, totalCount, singular, plural) => {
     if (totalCount === 0) return "";
@@ -829,7 +841,7 @@ const formatKernelListBadge = (counts) => {
 
 const refreshKernelList = () => {
   if (!kernelListRecords || typeof kernelListRecords !== "object") {
-    setKernelListMessage("No analytics or policies yet.");
+    setKernelListMessage("No analytics or rate limits yet.");
     setKernelListBadge("ok", formatKernelListBadge({ orgTotal: 0, repoTotal: 0, orgVisible: 0, repoVisible: 0 }));
     return;
   }
@@ -850,7 +862,7 @@ const setKernelPubKeysMessage = (text) => {
 const renderKernelPolicyQueue = (records) => {
   kernelQueueList.textContent = "";
   if (!Array.isArray(records) || records.length === 0) {
-    setKernelQueueMessage("No policy gaps yet.");
+    setKernelQueueMessage("No rate limit gaps yet.");
     return;
   }
 
@@ -884,14 +896,14 @@ const renderKernelPolicyQueue = (records) => {
     const status = document.createElement("span");
     status.dataset.badge = "status";
     status.dataset.state = "bad";
-    status.textContent = "Needs policy";
+    status.textContent = "Needs rate limit";
 
     const actionRow = document.createElement("div");
     actionRow.dataset.actionRow = "actions";
     const addBtn = document.createElement("button");
     addBtn.type = "button";
     addBtn.dataset.variant = "primary";
-    applyIconButton(addBtn, "plus", `Add policy for ${owner}/${repo}`);
+    applyIconButton(addBtn, "plus", `Add rate limit for ${owner}/${repo}`);
     actionRow.appendChild(addBtn);
 
     controls.appendChild(status);
@@ -919,7 +931,7 @@ const renderKernelPolicyQueue = (records) => {
   });
 
   if (rendered === 0) {
-    setKernelQueueMessage("No policy gaps yet.");
+    setKernelQueueMessage("No rate limit gaps yet.");
   }
 
   updateAccessGithubSummary();
@@ -946,7 +958,7 @@ const refreshKernelPolicyQueue = async () => {
     const data = await res.json().catch(() => null);
     if (!res.ok) {
       setKernelQueueBadge("bad", data?.error?.message ?? "Error");
-      setKernelQueueMessage("Failed to load the policy queue.");
+      setKernelQueueMessage("Failed to load the rate limit queue.");
       return;
     }
 
@@ -958,7 +970,7 @@ const refreshKernelPolicyQueue = async () => {
   } catch {
     kernelQueueItems = [];
     setKernelQueueBadge("bad", "Offline");
-    setKernelQueueMessage("Failed to load the policy queue.");
+    setKernelQueueMessage("Failed to load the rate limit queue.");
   } finally {
     kernelQueueLoading = false;
     updateAccessGithubSummary();
@@ -986,7 +998,7 @@ const ensureKernelPolicyQueueLoaded = async () => {
 
 const setKernelNewPanelOpen = (open) => {
   kernelNewPanel.hidden = !open;
-  applyIconButton(kernelNewToggle, open ? "close" : "plus", open ? "Close new policy" : "New policy");
+  applyIconButton(kernelNewToggle, open ? "close" : "plus", open ? "Close new rate limit" : "New rate limit");
   if (!open) {
     resetKernelNewForm();
   }
@@ -997,6 +1009,9 @@ const resetKernelNewForm = () => {
   kernelNewRepoInput.value = "";
   kernelNewLimitInput.value = "-1";
   kernelNewWindowInput.value = "";
+  kernelNewExpiresInput.value = "";
+  kernelNewNeverInput.checked = true;
+  kernelNewExpiresInput.disabled = true;
   setKernelNewBadge("unknown", "Idle");
 };
 
@@ -1014,13 +1029,13 @@ const setKernelNewWindowPreset = (ms) => {
 const parseKernelLimitValue = (raw, setBadgeFn) => {
   const trimmed = raw.trim();
   if (!trimmed) {
-    setBadgeFn("bad", "Policy limit required");
+    setBadgeFn("bad", "Rate limit required");
     return null;
   }
   if (trimmed === "unlimited" || trimmed === "-1") return -1;
   const parsed = Number(trimmed);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    setBadgeFn("bad", "Invalid policy limit");
+    setBadgeFn("bad", "Invalid rate limit");
     return null;
   }
   return Math.trunc(parsed);
@@ -1035,6 +1050,20 @@ const parseKernelWindowValue = (raw, setBadgeFn) => {
     return { ok: false, value: null };
   }
   return { ok: true, value: Math.trunc(parsed) };
+};
+
+const parseKernelExpiresValue = (raw, never, setBadgeFn) => {
+  if (never) return { ok: true, value: -1 };
+  const parsed = parseDateTimeLocalValue(raw);
+  if (parsed === null) {
+    setBadgeFn("bad", "Expiration required");
+    return { ok: false, value: null };
+  }
+  if (parsed <= Date.now()) {
+    setBadgeFn("bad", "Expiration must be in the future");
+    return { ok: false, value: null };
+  }
+  return { ok: true, value: parsed };
 };
 
 const saveNewKernelLimit = async () => {
@@ -1061,6 +1090,12 @@ const saveNewKernelLimit = async () => {
   if (limitValue === null) return;
   const windowResult = parseKernelWindowValue(kernelNewWindowInput.value, setKernelNewBadge);
   if (!windowResult.ok) return;
+  const expiresResult = parseKernelExpiresValue(
+    kernelNewExpiresInput.value,
+    kernelNewNeverInput.checked,
+    setKernelNewBadge,
+  );
+  if (!expiresResult.ok) return;
 
   kernelNewSaving = true;
   kernelNewSaveBtn.disabled = true;
@@ -1071,6 +1106,7 @@ const saveNewKernelLimit = async () => {
       owner,
       scope,
       usage_limit_requests: limitValue,
+      expires_at_ms: expiresResult.value,
     };
     if (scope === "repo") payload.repo = repo;
     if (windowResult.value !== null) payload.window_ms = windowResult.value;
@@ -1172,8 +1208,8 @@ const buildKernelPolicyStateFromLists = (orgResult, repoResult) => {
   }
 
   const messageParts = [];
-  if (!orgResult.ok) messageParts.push(`Org policies unavailable: ${orgResult.message}`);
-  if (!repoResult.ok) messageParts.push(`Repo policies unavailable: ${repoResult.message}`);
+  if (!orgResult.ok) messageParts.push(`Org rate limits unavailable: ${orgResult.message}`);
+  if (!repoResult.ok) messageParts.push(`Repo rate limits unavailable: ${repoResult.message}`);
 
   return {
     available: orgResult.ok && repoResult.ok,
@@ -1286,8 +1322,8 @@ const loadKernelList = async () => {
     const warnings = [];
     if (!orgUsageResult.ok) warnings.push(`Org analytics ${orgUsageResult.message}`);
     if (!repoUsageResult.ok) warnings.push(`Repo analytics ${repoUsageResult.message}`);
-    if (!orgPolicyResult.ok) warnings.push(`Org policies ${orgPolicyResult.message}`);
-    if (!repoPolicyResult.ok) warnings.push(`Repo policies ${repoPolicyResult.message}`);
+    if (!orgPolicyResult.ok) warnings.push(`Org rate limits ${orgPolicyResult.message}`);
+    if (!repoPolicyResult.ok) warnings.push(`Repo rate limits ${repoPolicyResult.message}`);
     if (warnings.length) {
       setKernelListBadge("warning", `${badgeText} · ${warnings.join(" · ")}`);
     } else {
@@ -1343,14 +1379,14 @@ const buildKernelPolicyPlaceholder = (record, options = {}) => {
 
   const infoRow = document.createElement("div");
   infoRow.dataset.keyInfo = "info";
-  const policyLabel = scope === "repo" ? "Repo policy" : "Org policy";
+  const policyLabel = scope === "repo" ? "Repo rate limit" : "Org rate limit";
   const policyValue = policyAvailable ? "Not set" : "Unavailable";
   const policyItem = appendKeyInfo(infoRow, policyLabel, policyValue, { state: "warning" });
   if (canAdd) {
     const addBtn = document.createElement("button");
     addBtn.type = "button";
     addBtn.dataset.variant = "primary";
-    applyIconButton(addBtn, "plus", scope === "repo" ? "Add repo policy" : "Add org policy");
+    applyIconButton(addBtn, "plus", scope === "repo" ? "Add repo rate limit" : "Add org rate limit");
     const valueText = document.createElement("span");
     valueText.textContent = policyValue;
     policyItem.valueEl.textContent = "";
@@ -1365,6 +1401,7 @@ const buildKernelPolicyPlaceholder = (record, options = {}) => {
   appendKeyInfo(infoRow, "Window", "—");
   appendKeyInfo(infoRow, "Window requests", "—");
   appendKeyInfo(infoRow, "Reset at", "—");
+  appendKeyInfo(infoRow, "Expires", "—");
   appendKeyInfo(infoRow, "Updated", "—");
   main.appendChild(infoRow);
 
@@ -1373,9 +1410,9 @@ const buildKernelPolicyPlaceholder = (record, options = {}) => {
   if (options.helpText) {
     help.textContent = options.helpText;
   } else if (!policyAvailable) {
-    help.textContent = "Policy data unavailable.";
+    help.textContent = "Rate limit data unavailable.";
   } else {
-    help.textContent = scope === "repo" ? "No repo policy set yet." : "No org policy set yet.";
+    help.textContent = scope === "repo" ? "No repo rate limit set yet." : "No org rate limit set yet.";
   }
   main.appendChild(help);
 
@@ -1399,7 +1436,8 @@ const buildKernelPolicyTile = (record, options = {}) => {
   row.dataset.key = "kernel-policy";
   if (options.isSubtile) row.dataset.subtile = "true";
   if (typeof options.index === "number") row.style.setProperty("--i", options.index);
-  row.dataset.state = record.usage_limit_requests === 0 ? "revoked" : "active";
+  const expired = isExpiredAt(record.expires_at_ms);
+  row.dataset.state = expired || record.usage_limit_requests === 0 ? "revoked" : "active";
   row.setAttribute("role", "listitem");
 
   const main = document.createElement("div");
@@ -1420,12 +1458,12 @@ const buildKernelPolicyTile = (record, options = {}) => {
 
   const editBtn = document.createElement("button");
   editBtn.type = "button";
-  applyIconButton(editBtn, "edit", "Edit policy");
+  applyIconButton(editBtn, "edit", "Edit rate limit");
 
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   deleteBtn.dataset.variant = "danger";
-  applyIconButton(deleteBtn, "trash", "Delete policy");
+  applyIconButton(deleteBtn, "trash", "Delete rate limit");
 
   actionRow.appendChild(editBtn);
   actionRow.appendChild(deleteBtn);
@@ -1442,13 +1480,16 @@ const buildKernelPolicyTile = (record, options = {}) => {
   const limitState = record.usage_limit_requests === 0 ? "bad" : "";
   const limitInfo = appendKeyInfo(
     infoRow,
-    "Policy limit",
+    "Rate limit",
     formatLimitValue(record.usage_limit_requests),
     limitState ? { state: limitState } : {},
   );
   const windowInfo = appendKeyInfo(infoRow, "Window", formatWindowMs(record.window_ms));
   const usageInfo = appendKeyInfo(infoRow, "Window requests", formatNumber(record.usage_requests));
   const resetInfo = appendKeyInfo(infoRow, "Reset at", formatDate(record.usage_reset_at_ms));
+  const expiresInfo = appendKeyInfo(infoRow, "Expires", formatExpires(record.expires_at_ms), {
+    state: expired ? "bad" : "",
+  });
   const updatedInfo = appendKeyInfo(infoRow, "Updated", formatDate(record.updated_at_ms));
 
   main.appendChild(header);
@@ -1466,7 +1507,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
   limitField.dataset.field = "true";
   const limitLabel = document.createElement("span");
   limitLabel.dataset.label = "label";
-  limitLabel.textContent = "Policy limit";
+  limitLabel.textContent = "Rate limit";
   const limitInput = document.createElement("input");
   limitInput.type = "number";
   limitInput.inputMode = "numeric";
@@ -1486,8 +1527,31 @@ const buildKernelPolicyTile = (record, options = {}) => {
   windowField.appendChild(windowLabel);
   windowField.appendChild(windowInput);
 
+  const expiresField = document.createElement("label");
+  expiresField.dataset.field = "true";
+  const expiresLabel = document.createElement("span");
+  expiresLabel.dataset.label = "label";
+  expiresLabel.textContent = "Expires";
+  const expiresInput = document.createElement("input");
+  expiresInput.type = "datetime-local";
+  expiresInput.value = record.expires_at_ms === -1 ? "" : toDateTimeLocalValue(record.expires_at_ms);
+  expiresInput.disabled = record.expires_at_ms === -1;
+  expiresField.appendChild(expiresLabel);
+  expiresField.appendChild(expiresInput);
+
+  const neverLabel = document.createElement("label");
+  neverLabel.dataset.check = "true";
+  const neverInput = document.createElement("input");
+  neverInput.type = "checkbox";
+  neverInput.checked = record.expires_at_ms === -1;
+  const neverText = document.createElement("span");
+  neverText.textContent = "Never expires";
+  neverLabel.appendChild(neverInput);
+  neverLabel.appendChild(neverText);
+
   editFields.appendChild(limitField);
   editFields.appendChild(windowField);
+  editFields.appendChild(expiresField);
 
   const presetRow = document.createElement("div");
   presetRow.dataset.layout = "row";
@@ -1527,9 +1591,10 @@ const buildKernelPolicyTile = (record, options = {}) => {
 
   const editHelp = document.createElement("p");
   editHelp.dataset.help = "true";
-  editHelp.textContent = "Leave blank to keep the current interval. Updates reset analytics.";
+  editHelp.textContent = "Leave window blank to keep the current interval. Updates reset analytics.";
 
   editPanel.appendChild(editFields);
+  editPanel.appendChild(neverLabel);
   editPanel.appendChild(presetRow);
   editPanel.appendChild(editActions);
   editPanel.appendChild(editBadge);
@@ -1548,13 +1613,17 @@ const buildKernelPolicyTile = (record, options = {}) => {
   const resetEditInputs = () => {
     limitInput.value = typeof record.usage_limit_requests === "number" ? String(record.usage_limit_requests) : "-1";
     windowInput.value = typeof record.window_ms === "number" ? String(Math.trunc(record.window_ms)) : "";
+    neverInput.checked = record.expires_at_ms === -1;
+    expiresInput.disabled = neverInput.checked;
+    expiresInput.value = neverInput.checked ? "" : toDateTimeLocalValue(record.expires_at_ms);
     setEditBadge("unknown", "Idle");
   };
 
   const updateInfo = (updated) => {
     const next = updated ?? record;
+    const nextExpired = isExpiredAt(next.expires_at_ms);
     limitInfo.valueEl.textContent = formatLimitValue(next.usage_limit_requests);
-    if (next.usage_limit_requests === 0) {
+    if (nextExpired || next.usage_limit_requests === 0) {
       limitInfo.item.dataset.state = "bad";
       row.dataset.state = "revoked";
     } else {
@@ -1564,6 +1633,12 @@ const buildKernelPolicyTile = (record, options = {}) => {
     windowInfo.valueEl.textContent = formatWindowMs(next.window_ms);
     usageInfo.valueEl.textContent = formatNumber(next.usage_requests);
     resetInfo.valueEl.textContent = formatDate(next.usage_reset_at_ms);
+    expiresInfo.valueEl.textContent = formatExpires(next.expires_at_ms);
+    if (nextExpired) {
+      expiresInfo.item.dataset.state = "bad";
+    } else {
+      delete expiresInfo.item.dataset.state;
+    }
     updatedInfo.valueEl.textContent = formatDate(next.updated_at_ms);
   };
 
@@ -1572,6 +1647,8 @@ const buildKernelPolicyTile = (record, options = {}) => {
     if (limitValue === null) return;
     const windowResult = parseKernelWindowValue(windowInput.value, setEditBadge);
     if (!windowResult.ok) return;
+    const expiresResult = parseKernelExpiresValue(expiresInput.value, neverInput.checked, setEditBadge);
+    if (!expiresResult.ok) return;
 
     const token = getAdminToken();
     if (!token) {
@@ -1589,6 +1666,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
         owner,
         scope,
         usage_limit_requests: limitValue,
+        expires_at_ms: expiresResult.value,
       };
       if (scope === "repo") payload.repo = repo;
       if (windowResult.value !== null) payload.window_ms = windowResult.value;
@@ -1612,6 +1690,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
       } else {
         record.usage_limit_requests = limitValue;
         if (windowResult.value !== null) record.window_ms = windowResult.value;
+        record.expires_at_ms = expiresResult.value;
       }
       updateInfo(record);
       resetEditInputs();
@@ -1631,7 +1710,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
       tokenInput.focus();
       return;
     }
-    if (!confirm(`Delete policy for ${confirmLabel}?`)) return;
+    if (!confirm(`Delete rate limit for ${confirmLabel}?`)) return;
 
     setKernelListBadge("unknown", "Deleting...");
     deleteBtn.disabled = true;
@@ -1701,6 +1780,12 @@ const buildKernelPolicyTile = (record, options = {}) => {
 
   limitInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
   windowInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
+  expiresInput.addEventListener("input", () => setEditBadge("unknown", "Editing..."));
+  neverInput.addEventListener("change", () => {
+    expiresInput.disabled = neverInput.checked;
+    if (neverInput.checked) expiresInput.value = "";
+    setEditBadge("unknown", "Editing...");
+  });
 
   return row;
 };
@@ -1713,7 +1798,7 @@ const renderKernelList = (records, policyState = kernelPolicyState) => {
   const totalRepoCount = repo.length;
 
   if (totalOrgCount === 0 && totalRepoCount === 0) {
-    setKernelListMessage("No analytics or policies yet.");
+    setKernelListMessage("No analytics or rate limits yet.");
     updateKernelAttention({ total: 0, unbounded: 0 }, policyState);
     return { orgTotal: 0, repoTotal: 0, orgVisible: 0, repoVisible: 0 };
   }
@@ -2486,30 +2571,43 @@ const renderKeys = (keys, view = "all") => {
       appendKeyInfo(infoRow, "Revoked", formatDate(key.revoked_at_ms), { state: "bad" });
     }
 
+    const resolveKeyWindowMs = () => {
+      if (typeof key.window_ms === "number" && Number.isFinite(key.window_ms)) return Math.trunc(key.window_ms);
+      return DEFAULT_API_KEY_WINDOW_MS;
+    };
+
     const getUsageInfoData = () => {
-      const limitValue = key.usage_limit_requests;
+      const limitValue = typeof key.usage_limit_requests === "number" ? key.usage_limit_requests : -1;
       const current = typeof key.usage_requests === "number" ? key.usage_requests : 0;
+      const windowMs = resolveKeyWindowMs();
       const limitText = limitValue === -1 ? "Unlimited" : formatNumber(limitValue);
-      const usageText = limitValue === -1 ? `${current}` : `${current}/${limitText}`;
+      const usageText = limitValue === -1 ? `${formatNumber(current)}` : `${formatNumber(current)}/${limitText}`;
       const hasLimit = limitValue !== -1;
       const isNearLimit = hasLimit && limitValue > 0 && current / limitValue >= 0.8;
       const isAtLimit = hasLimit && current >= limitValue;
       const title = `${formatNumber(current)} requests${
-        hasLimit ? ` of ${formatNumber(limitValue)} policy limit` : ""
-      } (resets ${formatDate(key.usage_reset_at_ms)})`;
+        hasLimit ? ` of ${formatNumber(limitValue)} rate limit` : ""
+      } (window ${formatWindowShort(windowMs)}, resets ${formatDate(key.usage_reset_at_ms)})`;
       const state = isAtLimit ? "bad" : (isNearLimit ? "warning" : "");
-      return { usageText, title, state };
+      return { usageText, title, state, limitValue, windowMs };
     };
 
-    // Display policy limit information
-    let usageInfo = null;
-    if (typeof key.usage_limit_requests === "number") {
-      const usageData = getUsageInfoData();
-      usageInfo = appendKeyInfo(infoRow, "Analytics", usageData.usageText, {
-        state: usageData.state,
-        title: usageData.title,
-      });
-    }
+    const usageData = getUsageInfoData();
+    const limitState = usageData.limitValue === 0 ? "bad" : "";
+    const limitInfo = appendKeyInfo(
+      infoRow,
+      "Rate limit",
+      formatLimitValue(usageData.limitValue),
+      limitState ? { state: limitState } : {},
+    );
+    const windowInfo = appendKeyInfo(infoRow, "Window", formatWindowShort(usageData.windowMs), {
+      title: formatWindowMs(usageData.windowMs),
+    });
+    const usageInfo = appendKeyInfo(infoRow, "Window requests", usageData.usageText, {
+      state: usageData.state,
+      title: usageData.title,
+    });
+    const resetInfo = appendKeyInfo(infoRow, "Reset at", formatDate(key.usage_reset_at_ms));
 
     const status = document.createElement("span");
     status.dataset.badge = "status";
@@ -2587,13 +2685,25 @@ const renderKeys = (keys, view = "all") => {
     limitField.dataset.field = "true";
     const limitLabel = document.createElement("span");
     limitLabel.dataset.label = "label";
-    limitLabel.textContent = "Policy limit";
+    limitLabel.textContent = "Rate limit";
     const limitInput = document.createElement("input");
     limitInput.type = "number";
     limitInput.inputMode = "numeric";
     limitInput.value = typeof key.usage_limit_requests === "number" ? String(key.usage_limit_requests) : "-1";
     limitField.appendChild(limitLabel);
     limitField.appendChild(limitInput);
+
+    const windowField = document.createElement("label");
+    windowField.dataset.field = "true";
+    const windowLabel = document.createElement("span");
+    windowLabel.dataset.label = "label";
+    windowLabel.textContent = "Window (ms)";
+    const windowInput = document.createElement("input");
+    windowInput.type = "number";
+    windowInput.inputMode = "numeric";
+    windowInput.value = String(resolveKeyWindowMs());
+    windowField.appendChild(windowLabel);
+    windowField.appendChild(windowInput);
 
     const expiresField = document.createElement("label");
     expiresField.dataset.field = "true";
@@ -2619,8 +2729,30 @@ const renderKeys = (keys, view = "all") => {
 
     editFields.appendChild(nameField);
     editFields.appendChild(limitField);
+    editFields.appendChild(windowField);
     editFields.appendChild(expiresField);
     editPanel.appendChild(editFields);
+
+    const presetRow = document.createElement("div");
+    presetRow.dataset.layout = "row";
+    const preset1m = document.createElement("button");
+    preset1m.type = "button";
+    preset1m.textContent = "1m";
+    const preset1h = document.createElement("button");
+    preset1h.type = "button";
+    preset1h.textContent = "1h";
+    const preset1d = document.createElement("button");
+    preset1d.type = "button";
+    preset1d.textContent = "1d";
+    const preset1w = document.createElement("button");
+    preset1w.type = "button";
+    preset1w.textContent = "1w";
+    presetRow.appendChild(preset1m);
+    presetRow.appendChild(preset1h);
+    presetRow.appendChild(preset1d);
+    presetRow.appendChild(preset1w);
+
+    editPanel.appendChild(presetRow);
     editPanel.appendChild(neverLabel);
 
     const editBadge = document.createElement("span");
@@ -2630,7 +2762,7 @@ const renderKeys = (keys, view = "all") => {
 
     const editHelp = document.createElement("p");
     editHelp.dataset.help = "true";
-    editHelp.textContent = "Edits save automatically.";
+    editHelp.textContent = "Edits save automatically. Window updates reset usage.";
 
     editPanel.appendChild(editBadge);
     editPanel.appendChild(editHelp);
@@ -2643,12 +2775,14 @@ const renderKeys = (keys, view = "all") => {
     let editSnapshot = {
       name: key.name || "",
       usage_limit_requests: typeof key.usage_limit_requests === "number" ? key.usage_limit_requests : -1,
+      window_ms: resolveKeyWindowMs(),
       expires_at_ms: typeof key.expires_at_ms === "number" ? key.expires_at_ms : -1,
     };
 
     const getEditInputState = () => ({
       name: nameInput.value,
       limit: limitInput.value,
+      window: windowInput.value,
       expires: expiresInput.value,
       never: neverInput.checked,
     });
@@ -2656,20 +2790,29 @@ const renderKeys = (keys, view = "all") => {
     const isSameEditInputState = (left, right) =>
       left.name === right.name &&
       left.limit === right.limit &&
+      left.window === right.window &&
       left.expires === right.expires &&
       left.never === right.never;
 
     const syncEditInputsFromKey = () => {
       nameInput.value = key.name || "";
       limitInput.value = String(key.usage_limit_requests);
+      windowInput.value = String(resolveKeyWindowMs());
       neverInput.checked = key.expires_at_ms === -1;
       expiresInput.disabled = neverInput.checked;
       expiresInput.value = neverInput.checked ? "" : toDateTimeLocalValue(key.expires_at_ms);
     };
 
     const updateUsageInfo = () => {
-      if (!usageInfo) return;
       const usageData = getUsageInfoData();
+      limitInfo.valueEl.textContent = formatLimitValue(usageData.limitValue);
+      if (usageData.limitValue === 0) {
+        limitInfo.item.dataset.state = "bad";
+      } else {
+        delete limitInfo.item.dataset.state;
+      }
+      windowInfo.valueEl.textContent = formatWindowShort(usageData.windowMs);
+      windowInfo.valueEl.title = formatWindowMs(usageData.windowMs);
       usageInfo.valueEl.textContent = usageData.usageText;
       if (usageData.state) {
         usageInfo.item.dataset.state = usageData.state;
@@ -2677,6 +2820,7 @@ const renderKeys = (keys, view = "all") => {
         delete usageInfo.item.dataset.state;
       }
       usageInfo.valueEl.title = usageData.title;
+      resetInfo.valueEl.textContent = formatDate(key.usage_reset_at_ms);
     };
 
     const buildEditPayload = () => {
@@ -2695,7 +2839,7 @@ const renderKeys = (keys, view = "all") => {
 
       const limitRaw = limitInput.value.trim();
       if (!limitRaw) {
-        setEditBadge("bad", "Policy limit required");
+        setEditBadge("bad", "Rate limit required");
         return null;
       }
       let nextLimit;
@@ -2704,13 +2848,26 @@ const renderKeys = (keys, view = "all") => {
       } else {
         const parsed = Number(limitRaw);
         if (!Number.isFinite(parsed) || parsed < 0) {
-          setEditBadge("bad", "Invalid policy limit");
+          setEditBadge("bad", "Invalid rate limit");
           return null;
         }
         nextLimit = Math.trunc(parsed);
       }
       if (nextLimit !== editSnapshot.usage_limit_requests) {
         payload.usage_limit_requests = nextLimit;
+        changed = true;
+      }
+
+      const windowResult = parseKernelWindowValue(windowInput.value, setEditBadge);
+      if (!windowResult.ok) return null;
+      let nextWindowMs = editSnapshot.window_ms;
+      if (windowResult.value !== null) {
+        nextWindowMs = windowResult.value;
+      } else {
+        windowInput.value = String(editSnapshot.window_ms);
+      }
+      if (nextWindowMs !== editSnapshot.window_ms) {
+        payload.window_ms = nextWindowMs;
         changed = true;
       }
 
@@ -2736,7 +2893,15 @@ const renderKeys = (keys, view = "all") => {
         return null;
       }
 
-      return { payload, nextSnapshot: { name: nextName, usage_limit_requests: nextLimit, expires_at_ms: nextExpiresAtMs } };
+      return {
+        payload,
+        nextSnapshot: {
+          name: nextName,
+          usage_limit_requests: nextLimit,
+          window_ms: nextWindowMs,
+          expires_at_ms: nextExpiresAtMs,
+        },
+      };
     };
 
     const saveEdits = async () => {
@@ -2773,10 +2938,12 @@ const renderKeys = (keys, view = "all") => {
         const updatedLimit = typeof data?.usage_limit_requests === "number"
           ? data.usage_limit_requests
           : nextSnapshot.usage_limit_requests;
+        const updatedWindowMs = typeof data?.window_ms === "number" ? data.window_ms : nextSnapshot.window_ms;
         const updatedExpires = typeof data?.expires_at_ms === "number" ? data.expires_at_ms : nextSnapshot.expires_at_ms;
 
         key.name = updatedName;
         key.usage_limit_requests = updatedLimit;
+        key.window_ms = updatedWindowMs;
         key.expires_at_ms = updatedExpires;
         if (typeof data?.usage_requests === "number") key.usage_requests = data.usage_requests;
         if (typeof data?.usage_reset_at_ms === "number") key.usage_reset_at_ms = data.usage_reset_at_ms;
@@ -2793,6 +2960,7 @@ const renderKeys = (keys, view = "all") => {
         editSnapshot = {
           name: key.name || "",
           usage_limit_requests: key.usage_limit_requests,
+          window_ms: resolveKeyWindowMs(),
           expires_at_ms: key.expires_at_ms,
         };
         editDirty = !inputsUnchanged;
@@ -2837,12 +3005,32 @@ const renderKeys = (keys, view = "all") => {
     limitInput.addEventListener("input", () => {
       markEditDirty();
     });
+    windowInput.addEventListener("input", () => {
+      markEditDirty();
+    });
     expiresInput.addEventListener("input", () => {
       markEditDirty();
     });
     neverInput.addEventListener("change", () => {
       expiresInput.disabled = neverInput.checked;
       if (neverInput.checked) expiresInput.value = "";
+      markEditDirty();
+    });
+
+    preset1m.addEventListener("click", () => {
+      windowInput.value = "60000";
+      markEditDirty();
+    });
+    preset1h.addEventListener("click", () => {
+      windowInput.value = "3600000";
+      markEditDirty();
+    });
+    preset1d.addEventListener("click", () => {
+      windowInput.value = "86400000";
+      markEditDirty();
+    });
+    preset1w.addEventListener("click", () => {
+      windowInput.value = "604800000";
       markEditDirty();
     });
 
@@ -2999,11 +3187,14 @@ const createKey = async () => {
   const expiresPreset = keyExpiresSelect.value;
   const expiresAtMs = computeExpiresAtMs(expiresPreset);
   const usageLimit = parseInt(keyUsageLimitInput.value, 10);
+  const windowResult = parseKernelWindowValue(keyUsageWindowInput.value, setCreateBadge);
+  if (!windowResult.ok) return;
   const payload = {
     name,
     expires_at_ms: expiresAtMs,
     usage_limit_requests: isNaN(usageLimit) ? 50 : usageLimit,
   };
+  if (windowResult.value !== null) payload.window_ms = windowResult.value;
 
   clearCreateResult();
   setCreateBadge("unknown", "Creating...");
@@ -3031,7 +3222,8 @@ const createKey = async () => {
       `id: ${data?.id ?? ""}`,
       `name: ${data?.name ?? name}`,
       `prefix: ${data?.prefix ?? ""}`,
-      `policy_limit: ${data?.usage_limit_requests === -1 ? "unlimited" : (data?.usage_limit_requests ?? "")}`,
+      `rate_limit: ${data?.usage_limit_requests === -1 ? "unlimited" : (data?.usage_limit_requests ?? "")}`,
+      `window_ms: ${formatWindowMs(data?.window_ms)}`,
       `created_at: ${formatDate(data?.created_at_ms)}`,
       `expires_at: ${formatExpires(data?.expires_at_ms)}`,
     ];
@@ -3039,6 +3231,7 @@ const createKey = async () => {
     createResult.hidden = false;
     setCreateBadge("ok", "Created");
     keyNameInput.value = "";
+    keyUsageWindowInput.value = "";
     void refreshKeys();
   } catch {
     setCreateBadge("bad", "Error");
@@ -3517,6 +3710,18 @@ baseSelect.addEventListener("change", () => {
 keyExpiresSelect.addEventListener("change", () => {
   storage.set(STORAGE_KEYS.expiresPreset, keyExpiresSelect.value);
 });
+keyWindowPreset1m.addEventListener("click", () => {
+  keyUsageWindowInput.value = "60000";
+});
+keyWindowPreset1h.addEventListener("click", () => {
+  keyUsageWindowInput.value = "3600000";
+});
+keyWindowPreset1d.addEventListener("click", () => {
+  keyUsageWindowInput.value = "86400000";
+});
+keyWindowPreset1w.addEventListener("click", () => {
+  keyUsageWindowInput.value = "604800000";
+});
 
 viewTabSession.addEventListener("click", () => setAdminView("session"));
 viewTabKeys.addEventListener("click", () => setAdminView("keys"));
@@ -3559,6 +3764,12 @@ kernelNewOwnerInput.addEventListener("input", () => setKernelNewBadge("unknown",
 kernelNewRepoInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
 kernelNewLimitInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
 kernelNewWindowInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
+kernelNewExpiresInput.addEventListener("input", () => setKernelNewBadge("unknown", "Editing..."));
+kernelNewNeverInput.addEventListener("change", () => {
+  kernelNewExpiresInput.disabled = kernelNewNeverInput.checked;
+  if (kernelNewNeverInput.checked) kernelNewExpiresInput.value = "";
+  setKernelNewBadge("unknown", "Editing...");
+});
 
 kernelFilterInput.addEventListener("input", () => {
   refreshKernelListDebounced();

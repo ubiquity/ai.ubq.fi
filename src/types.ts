@@ -16,6 +16,7 @@ export type ApiKeyRecord = Readonly<{
   usage_limit_requests: number;
   usage_requests: number;
   usage_reset_at_ms: number;
+  window_ms: number;
 }>;
 
 export type ApiKeyHashRecord = Readonly<{
@@ -25,6 +26,7 @@ export type ApiKeyHashRecord = Readonly<{
   usage_limit_requests: number;
   usage_requests: number;
   usage_reset_at_ms: number;
+  window_ms: number;
 }>;
 
 export type ApiKeyUsageRecord = Readonly<{
@@ -92,6 +94,7 @@ export type KernelAuthLimitRecord = Readonly<{
   usage_requests: number;
   usage_reset_at_ms: number;
   window_ms: number;
+  expires_at_ms: number;
   created_at_ms: number;
   updated_at_ms: number;
 }>;
@@ -130,6 +133,7 @@ export type KernelOrgLimitRecord = Readonly<{
   usage_requests: number;
   usage_reset_at_ms: number;
   window_ms: number;
+  expires_at_ms: number;
   created_at_ms: number;
   updated_at_ms: number;
 }>;

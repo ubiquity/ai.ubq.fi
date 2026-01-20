@@ -119,10 +119,21 @@
                 </select>
               </label>
               <label data-field>
-                <span data-label>Policy limit (req/week)</span>
+                <span data-label>Rate limit (requests)</span>
                 <input id="key-usage-limit" type="number" inputmode="numeric" placeholder="50" value="50" />
               </label>
-              <p data-help>Default is 50. Use -1 for unlimited.</p>
+              <label data-field>
+                <span data-label>Window (ms)</span>
+                <input id="key-usage-window" type="number" inputmode="numeric" placeholder="604800000" />
+              </label>
+              <p data-help>Default limit is 50. Use -1 for unlimited.</p>
+              <div data-layout="row">
+                <button id="key-window-1m" type="button">1m</button>
+                <button id="key-window-1h" type="button">1h</button>
+                <button id="key-window-1d" type="button">1d</button>
+                <button id="key-window-1w" type="button">1w</button>
+              </div>
+              <p data-help>Leave window blank for the default weekly interval (604800000 ms).</p>
               <div data-layout="row">
                 <button
                   id="create-key"
@@ -190,7 +201,7 @@
                     <span data-auth-value id="access-github-repos">—</span>
                   </div>
                   <div data-auth-meta>
-                    <span data-auth-label>Policy queue</span>
+                    <span data-auth-label>Rate limit queue</span>
                     <span data-auth-value id="access-github-queue">—</span>
                   </div>
                 </div>
@@ -223,22 +234,22 @@
           </article>
           <article data-card aria-labelledby="card-kernel-queue">
             <header>
-              <h2 id="card-kernel-queue">Policy queue</h2>
-              <p>Requests authenticated via GitHub tokens without an org or repo policy.</p>
+              <h2 id="card-kernel-queue">Rate limit queue</h2>
+              <p>Requests authenticated via GitHub tokens without an org or repo rate limit.</p>
             </header>
             <div data-card-body>
               <span id="kernel-queue-badge" data-badge data-state="unknown">Not loaded</span>
               <div id="kernel-queue-list" data-key-list role="list"></div>
-              <p data-help>Set org or repo policies to remove entries from the queue.</p>
+              <p data-help>Set org or repo rate limits to remove entries from the queue.</p>
             </div>
           </article>
           <article data-card aria-labelledby="card-kernel-limits">
             <header>
-              <h2 id="card-kernel-limits">GitHub access: analytics &amp; policies</h2>
+              <h2 id="card-kernel-limits">GitHub access: analytics &amp; rate limits</h2>
             </header>
             <div data-card-body>
               <div data-layout="row">
-                <button id="kernel-new-toggle" type="button">New policy</button>
+                <button id="kernel-new-toggle" type="button">New rate limit</button>
                 <span id="kernel-list-badge" data-badge data-state="unknown">Not loaded</span>
               </div>
               <div data-layout="row">
@@ -257,7 +268,7 @@
                   <select id="kernel-show">
                     <option value="all" selected>All</option>
                     <option value="active">Active (30d)</option>
-                    <option value="near-limit">Near policy cap</option>
+                    <option value="near-limit">Near rate limit cap</option>
                     <option value="no-usage">No analytics</option>
                   </select>
                 </label>
@@ -281,15 +292,23 @@
                     <input id="kernel-new-repo" type="text" inputmode="text" autocomplete="off" placeholder="demo" />
                   </label>
                   <label data-field>
-                    <span data-label>Policy limit (requests)</span>
+                    <span data-label>Rate limit (requests)</span>
                     <input id="kernel-new-limit" type="number" inputmode="numeric" placeholder="-1" value="-1" />
                   </label>
                   <label data-field>
                     <span data-label>Window (ms)</span>
                     <input id="kernel-new-window" type="number" inputmode="numeric" placeholder="604800000" />
                   </label>
+                  <label data-field>
+                    <span data-label>Expires</span>
+                    <input id="kernel-new-expires" type="datetime-local" disabled />
+                  </label>
                 </div>
-                <p data-help>Use -1 for unlimited. Org + repo policies are enforced together.</p>
+                <p data-help>Use -1 for unlimited. Org + repo rate limits are enforced together.</p>
+                <label data-check>
+                  <input id="kernel-new-never" type="checkbox" checked />
+                  <span>Never expires</span>
+                </label>
                 <div data-layout="row">
                   <button id="kernel-new-window-1m" type="button">1m</button>
                   <button id="kernel-new-window-1h" type="button">1h</button>
@@ -300,12 +319,13 @@
                   <button id="kernel-new-save" type="button" data-variant="primary">Save</button>
                 </div>
                 <span id="kernel-new-badge" data-badge data-state="unknown">Idle</span>
-                <p data-help>Leave blank for the default weekly interval (604800000 ms). Updates reset analytics.</p>
+                <p data-help>Leave window blank for the default weekly interval (604800000 ms). Updates reset analytics.</p>
               </div>
               <div id="kernel-list" data-key-list role="list"></div>
               <p id="kernel-help" data-help>
-                Analytics and policies share the same list. Org tiles summarize repo activity and org policies; repo tiles
-                include analytics details and policy controls. Policy edits require Save/Cancel. Delete removes the policy.
+                Analytics and rate limits share the same list. Org tiles summarize repo activity and org rate limits; repo
+                tiles include analytics details and rate limit controls. Rate limit edits require Save/Cancel. Delete
+                removes the rate limit.
                 GitHub tokens are never stored.
               </p>
               <p id="kernel-attention" data-help data-tone="warning" hidden></p>
@@ -384,11 +404,11 @@
                 <select id="defaults-reasoning"></select>
               </label>
               <label data-field>
-                <span data-label>No-policy limit (requests)</span>
+                <span data-label>Default rate limit (requests)</span>
                 <input id="defaults-kernel-limit" type="number" inputmode="numeric" placeholder="-1" />
               </label>
               <label data-field>
-                <span data-label>No-policy window (ms)</span>
+                <span data-label>Default window (ms)</span>
                 <input id="defaults-kernel-window" type="number" inputmode="numeric" placeholder="604800000" />
               </label>
               <div data-layout="row">
@@ -399,7 +419,7 @@
               </div>
               <span id="defaults-badge" data-badge data-state="unknown">Idle</span>
               <p id="defaults-meta" data-help>Models load automatically.</p>
-              <p data-help>Applies when no org or repo policy exists. Use -1 for unlimited, 0 to deny by default.</p>
+              <p data-help>Applies when no org or repo rate limit exists. Use -1 for unlimited, 0 to deny by default.</p>
               <p data-help>Changes save automatically. Reasoning options depend on the selected model.</p>
             </div>
           </article>

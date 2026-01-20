@@ -31,6 +31,7 @@ const MAX_KV_RETRIES = 3;
 const DAILY_SERIES_DAYS = 30;
 const DAILY_HISTORY_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const KERNEL_NO_EXPIRATION_MS = -1;
 
 const normalizeWindowMs = (value: unknown, fallback: number): number => {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -543,6 +544,7 @@ const buildBaseLimitRecord = (
   usage_requests: 0,
   usage_reset_at_ms: calculateNextResetMsForWindow(nowMs, windowMs),
   window_ms: windowMs,
+  expires_at_ms: KERNEL_NO_EXPIRATION_MS,
   created_at_ms: nowMs,
   updated_at_ms: nowMs,
 });
@@ -555,6 +557,17 @@ const normalizeResetAtMs = (value: unknown, nowMs: number, windowMs: number): nu
   if (resetAtMs <= 0) return calculateNextResetMsForWindow(nowMs, windowMs);
   return resetAtMs;
 };
+
+const normalizeExpiresAtMs = (value: unknown): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return KERNEL_NO_EXPIRATION_MS;
+  const expiresAtMs = Math.trunc(value);
+  if (expiresAtMs === KERNEL_NO_EXPIRATION_MS) return KERNEL_NO_EXPIRATION_MS;
+  if (expiresAtMs < 0) return KERNEL_NO_EXPIRATION_MS;
+  return expiresAtMs;
+};
+
+const isExpired = (expiresAtMs: number, nowMs: number): boolean =>
+  expiresAtMs !== KERNEL_NO_EXPIRATION_MS && expiresAtMs <= nowMs;
 
 const normalizeLimitRecord = (
   value: unknown,
@@ -575,6 +588,7 @@ const normalizeLimitRecord = (
     usage_requests: Math.max(0, coerceNumber(value.usage_requests, 0)),
     usage_reset_at_ms: normalizeResetAtMs(value.usage_reset_at_ms, nowMs, windowMs),
     window_ms: windowMs,
+    expires_at_ms: normalizeExpiresAtMs(value.expires_at_ms),
     created_at_ms: coerceNumber(value.created_at_ms, nowMs),
     updated_at_ms: coerceNumber(value.updated_at_ms, nowMs),
   };
@@ -667,7 +681,7 @@ export const setKernelUsageLimit = async (
   owner: string,
   repo: string,
   usageLimitRequests: number,
-  options: { resetUsage?: boolean; windowMs?: number } = {},
+  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {},
 ): Promise<KernelAuthLimitRecord | null> => {
   try {
     const kv = await kvPromise;
@@ -680,6 +694,9 @@ export const setKernelUsageLimit = async (
     const windowMs = options.windowMs === undefined
       ? current.window_ms
       : normalizeWindowMs(options.windowMs, current.window_ms);
+    const expiresAtMs = options.expiresAtMs === undefined
+      ? current.expires_at_ms
+      : normalizeExpiresAtMs(options.expiresAtMs);
     const nextResetAtMs = calculateNextResetMsForWindow(nowMs, windowMs);
     const nextUsageRequests = 0;
     const updated: KernelAuthLimitRecord = {
@@ -688,6 +705,7 @@ export const setKernelUsageLimit = async (
       usage_requests: nextUsageRequests,
       usage_reset_at_ms: nextResetAtMs,
       window_ms: windowMs,
+      expires_at_ms: expiresAtMs,
       created_at_ms: entry.value ? current.created_at_ms : nowMs,
       updated_at_ms: nowMs,
     };
@@ -729,6 +747,17 @@ export const checkKernelUsageLimit = async (
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
       const entry = await kv.get<KernelAuthLimitRecord>(key);
       let record = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
+
+      if (isExpired(record.expires_at_ms, nowMs)) {
+        return {
+          ok: false,
+          response: openaiError(
+            429,
+            "GitHub access rate limit expired; update it via /admin/kernel-usage.",
+            "rate_limit_exceeded",
+          ),
+        };
+      }
 
       if (record.usage_limit_requests === 0) {
         return {
@@ -823,6 +852,7 @@ const buildBaseOrgLimitRecord = (
   usage_requests: 0,
   usage_reset_at_ms: calculateNextResetMsForWindow(nowMs, windowMs),
   window_ms: windowMs,
+  expires_at_ms: KERNEL_NO_EXPIRATION_MS,
   created_at_ms: nowMs,
   updated_at_ms: nowMs,
 });
@@ -844,6 +874,7 @@ const normalizeOrgLimitRecord = (
     usage_requests: Math.max(0, coerceNumber(value.usage_requests, 0)),
     usage_reset_at_ms: normalizeResetAtMs(value.usage_reset_at_ms, nowMs, windowMs),
     window_ms: windowMs,
+    expires_at_ms: normalizeExpiresAtMs(value.expires_at_ms),
     created_at_ms: coerceNumber(value.created_at_ms, nowMs),
     updated_at_ms: coerceNumber(value.updated_at_ms, nowMs),
   };
@@ -922,7 +953,7 @@ export const listKernelOrgUsageRecords = async (
 export const setKernelOrgUsageLimit = async (
   owner: string,
   usageLimitRequests: number,
-  options: { resetUsage?: boolean; windowMs?: number } = {},
+  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {},
 ): Promise<KernelOrgLimitRecord | null> => {
   try {
     const kv = await kvPromise;
@@ -935,6 +966,9 @@ export const setKernelOrgUsageLimit = async (
     const windowMs = options.windowMs === undefined
       ? current.window_ms
       : normalizeWindowMs(options.windowMs, current.window_ms);
+    const expiresAtMs = options.expiresAtMs === undefined
+      ? current.expires_at_ms
+      : normalizeExpiresAtMs(options.expiresAtMs);
     const nextResetAtMs = calculateNextResetMsForWindow(nowMs, windowMs);
     const nextUsageRequests = 0;
     const updated: KernelOrgLimitRecord = {
@@ -943,6 +977,7 @@ export const setKernelOrgUsageLimit = async (
       usage_requests: nextUsageRequests,
       usage_reset_at_ms: nextResetAtMs,
       window_ms: windowMs,
+      expires_at_ms: expiresAtMs,
       created_at_ms: entry.value ? current.created_at_ms : nowMs,
       updated_at_ms: nowMs,
     };
@@ -983,6 +1018,17 @@ export const checkKernelOrgUsageLimit = async (
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
       const entry = await kv.get<KernelOrgLimitRecord>(key);
       let record = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
+
+      if (isExpired(record.expires_at_ms, nowMs)) {
+        return {
+          ok: false,
+          response: openaiError(
+            429,
+            "GitHub org rate limit expired; update it via /admin/kernel-usage.",
+            "rate_limit_exceeded",
+          ),
+        };
+      }
 
       if (record.usage_limit_requests === 0) {
         return {

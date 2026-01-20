@@ -6,6 +6,7 @@ import {
   apiKeyIdKey,
   calculateNextResetMs,
   coerceApiKeyExpiresAtMs,
+  normalizeApiKeyWindowMs,
   shouldResetUsage,
 } from "./api_keys.ts";
 import { json, openaiError } from "./http.ts";
@@ -629,21 +630,25 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
       const usageLimit = hashEntry.value.usage_limit_requests;
       const usageRequests = hashEntry.value.usage_requests;
       const usageResetAtMs = hashEntry.value.usage_reset_at_ms;
+      const windowMs = normalizeApiKeyWindowMs(hashEntry.value.window_ms);
 
       if (shouldResetUsage(usageResetAtMs, now)) {
         const idKey = apiKeyIdKey(hashEntry.value.id);
         const idEntry = await kv.get<ApiKeyRecord>(idKey);
         if (idEntry.value) {
-          const newResetAtMs = calculateNextResetMs(now);
+          const resolvedWindowMs = normalizeApiKeyWindowMs(idEntry.value.window_ms, windowMs);
+          const newResetAtMs = calculateNextResetMs(now, resolvedWindowMs);
           const updatedRecord: ApiKeyRecord = {
             ...idEntry.value,
             usage_requests: 0,
             usage_reset_at_ms: newResetAtMs,
+            window_ms: resolvedWindowMs,
           };
           const updatedHash: ApiKeyHashRecord = {
             ...hashEntry.value,
             usage_requests: 0,
             usage_reset_at_ms: newResetAtMs,
+            window_ms: resolvedWindowMs,
           };
           await kv.atomic()
             .check(idEntry)
@@ -842,11 +847,16 @@ export const incrementApiKeyUsage = async (keyId: string): Promise<void> => {
   const updatedRecord: ApiKeyRecord = {
     ...idEntry.value,
     usage_requests: idEntry.value.usage_requests + 1,
+    window_ms: normalizeApiKeyWindowMs(idEntry.value.window_ms),
   };
   const updatedHash: ApiKeyHashRecord = hashEntry.value
     ? {
       ...hashEntry.value,
       usage_requests: hashEntry.value.usage_requests + 1,
+      window_ms: normalizeApiKeyWindowMs(
+        hashEntry.value.window_ms,
+        normalizeApiKeyWindowMs(idEntry.value.window_ms),
+      ),
     }
     : {
       id: keyId,
@@ -855,6 +865,7 @@ export const incrementApiKeyUsage = async (keyId: string): Promise<void> => {
       usage_limit_requests: idEntry.value.usage_limit_requests,
       usage_requests: idEntry.value.usage_requests + 1,
       usage_reset_at_ms: idEntry.value.usage_reset_at_ms,
+      window_ms: normalizeApiKeyWindowMs(idEntry.value.window_ms),
     };
 
   const atomic = kv.atomic()
@@ -917,6 +928,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
           usage_limit_requests: entry.value.usage_limit_requests,
           usage_requests: entry.value.usage_requests,
           usage_reset_at_ms: entry.value.usage_reset_at_ms,
+          window_ms: normalizeApiKeyWindowMs(entry.value.window_ms),
         };
       }
     }

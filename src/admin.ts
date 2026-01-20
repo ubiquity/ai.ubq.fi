@@ -30,9 +30,11 @@ import {
   apiKeyIdKey,
   calculateNextResetMs,
   coerceApiKeyExpiresAtMs,
+  coerceApiKeyWindowMs,
   DEFAULT_USAGE_LIMIT_REQUESTS,
   generateApiKeyToken,
   getDefaultExpiryMs,
+  USAGE_RESET_PERIOD_MS,
 } from "./api_keys.ts";
 import { getApiKeyUsage } from "./analytics.ts";
 import { reloadKernelPublicKeys } from "./auth.ts";
@@ -375,6 +377,21 @@ const normalizeApiKeyUsageLimit = (value: unknown): number | null => {
   return limit;
 };
 
+const normalizeApiKeyWindowMsInput = (value: unknown): number | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return null;
+    value = parsed;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const windowMs = Math.trunc(value);
+  if (windowMs <= 0) return null;
+  return windowMs;
+};
+
 const normalizeKernelRepoPart = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -415,6 +432,22 @@ const normalizeKernelWindowMsInput = (value: unknown): number | null => {
   const windowMs = Math.trunc(value);
   if (windowMs <= 0) return null;
   return windowMs;
+};
+
+const normalizeKernelExpiresAtMsInput = (value: unknown, nowMs: number): number | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return null;
+    value = parsed;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const expiresAtMs = Math.trunc(value);
+  if (expiresAtMs === API_KEY_NO_EXPIRATION_MS) return API_KEY_NO_EXPIRATION_MS;
+  if (expiresAtMs <= nowMs) return null;
+  return expiresAtMs;
 };
 
 const normalizeKernelScope = (value: unknown): "repo" | "org" => {
@@ -563,6 +596,11 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
       "invalid_request_error",
     );
   }
+  const windowMs = normalizeApiKeyWindowMsInput(raw.window_ms);
+  if (raw.window_ms !== undefined && windowMs === null) {
+    return openaiError(400, "window_ms must be a positive number", "invalid_request_error");
+  }
+  const resolvedWindowMs = windowMs ?? USAGE_RESET_PERIOD_MS;
 
   const hash = await sha256Base64Url(token);
   const hashKey = apiKeyHashKey(hash);
@@ -572,7 +610,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   }
 
   const id = crypto.randomUUID();
-  const usageResetAtMs = calculateNextResetMs(now);
+  const usageResetAtMs = calculateNextResetMs(now, resolvedWindowMs);
   const record: ApiKeyRecord = {
     id,
     name,
@@ -584,6 +622,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_limit_requests: usageLimitRequests,
     usage_requests: 0,
     usage_reset_at_ms: usageResetAtMs,
+    window_ms: resolvedWindowMs,
   };
   const hashRecord: ApiKeyHashRecord = {
     id,
@@ -592,6 +631,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_limit_requests: usageLimitRequests,
     usage_requests: 0,
     usage_reset_at_ms: usageResetAtMs,
+    window_ms: resolvedWindowMs,
   };
 
   const commit = await kv.atomic()
@@ -616,6 +656,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
       usage_limit_requests: record.usage_limit_requests,
       usage_requests: record.usage_requests,
       usage_reset_at_ms: record.usage_reset_at_ms,
+      window_ms: record.window_ms,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
@@ -656,6 +697,7 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
         usage_limit_requests: r.usage_limit_requests,
         usage_requests: r.usage_requests,
         usage_reset_at_ms: r.usage_reset_at_ms,
+        window_ms: coerceApiKeyWindowMs(r),
         ...(includeUsage ? { usage: usageById.get(r.id) ?? null } : {}),
       })),
     },
@@ -680,11 +722,13 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
 
   const now = Date.now();
   const currentExpiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
+  const currentWindowMs = coerceApiKeyWindowMs(entry.value);
   let nextName = entry.value.name;
   let nextExpiresAtMs = currentExpiresAtMs;
   let nextUsageLimit = entry.value.usage_limit_requests;
   let nextUsageRequests = entry.value.usage_requests;
   let nextUsageResetAtMs = entry.value.usage_reset_at_ms;
+  let nextWindowMs = currentWindowMs;
 
   if (Object.prototype.hasOwnProperty.call(raw, "name")) {
     const name = normalizeApiKeyName(raw.name);
@@ -716,15 +760,24 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     nextUsageLimit = usageLimitRequests;
   }
 
+  if (Object.prototype.hasOwnProperty.call(raw, "window_ms")) {
+    const windowMs = normalizeApiKeyWindowMsInput(raw.window_ms);
+    if (windowMs === null) {
+      return openaiError(400, "window_ms must be a positive number", "invalid_request_error");
+    }
+    nextWindowMs = windowMs;
+  }
+
   const resetUsage = normalizeOptionalBoolean(raw.reset_usage);
-  if (resetUsage) {
+  if (resetUsage || nextWindowMs !== currentWindowMs) {
     nextUsageRequests = 0;
-    nextUsageResetAtMs = calculateNextResetMs(now);
+    nextUsageResetAtMs = calculateNextResetMs(now, nextWindowMs);
   }
 
   const hasChanges = nextName !== entry.value.name ||
     nextExpiresAtMs !== currentExpiresAtMs ||
     nextUsageLimit !== entry.value.usage_limit_requests ||
+    nextWindowMs !== currentWindowMs ||
     (resetUsage &&
       (nextUsageRequests !== entry.value.usage_requests || nextUsageResetAtMs !== entry.value.usage_reset_at_ms));
 
@@ -742,6 +795,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
         usage_limit_requests: entry.value.usage_limit_requests,
         usage_requests: entry.value.usage_requests,
         usage_reset_at_ms: entry.value.usage_reset_at_ms,
+        window_ms: currentWindowMs,
       },
       { "x-ubq-upstream": "chatgpt_codex" },
     );
@@ -754,6 +808,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     usage_limit_requests: nextUsageLimit,
     usage_requests: nextUsageRequests,
     usage_reset_at_ms: nextUsageResetAtMs,
+    window_ms: nextWindowMs,
   };
   const hashKey = apiKeyHashKey(entry.value.hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
@@ -764,6 +819,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     usage_limit_requests: updated.usage_limit_requests,
     usage_requests: updated.usage_requests,
     usage_reset_at_ms: updated.usage_reset_at_ms,
+    window_ms: updated.window_ms,
   };
 
   const atomic = kv.atomic()
@@ -790,6 +846,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
       usage_limit_requests: updated.usage_limit_requests,
       usage_requests: updated.usage_requests,
       usage_reset_at_ms: updated.usage_reset_at_ms,
+      window_ms: updated.window_ms,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
@@ -821,6 +878,10 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
     id,
     expires_at_ms: updated.expires_at_ms,
     revoked_at_ms: updated.revoked_at_ms,
+    usage_limit_requests: updated.usage_limit_requests,
+    usage_requests: updated.usage_requests,
+    usage_reset_at_ms: updated.usage_reset_at_ms,
+    window_ms: updated.window_ms,
   };
 
   const atomic = kv.atomic()
@@ -872,6 +933,10 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
     id,
     expires_at_ms: updated.expires_at_ms,
     revoked_at_ms: updated.revoked_at_ms,
+    usage_limit_requests: updated.usage_limit_requests,
+    usage_requests: updated.usage_requests,
+    usage_reset_at_ms: updated.usage_reset_at_ms,
+    window_ms: updated.window_ms,
   };
 
   const atomic = kv.atomic()
@@ -1157,10 +1222,20 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
   if (raw.window_ms !== undefined && windowMs === null) {
     return openaiError(400, "window_ms must be a positive number", "invalid_request_error");
   }
+  const nowMs = Date.now();
+  const expiresAtMs = normalizeKernelExpiresAtMsInput(raw.expires_at_ms, nowMs);
+  if (raw.expires_at_ms !== undefined && expiresAtMs === null) {
+    return openaiError(
+      400,
+      "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1",
+      "invalid_request_error",
+    );
+  }
 
   if (scope === "org") {
     const updated = await setKernelOrgUsageLimit(owner, usageLimitRequests, {
       windowMs: windowMs ?? undefined,
+      expiresAtMs: expiresAtMs ?? undefined,
     });
     if (!updated) {
       return openaiError(409, "Concurrent modification; retry", "invalid_request_error");
@@ -1170,6 +1245,7 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
 
   const updated = await setKernelUsageLimit(owner, repo!, usageLimitRequests, {
     windowMs: windowMs ?? undefined,
+    expiresAtMs: expiresAtMs ?? undefined,
   });
   if (!updated) {
     return openaiError(409, "Concurrent modification; retry", "invalid_request_error");
