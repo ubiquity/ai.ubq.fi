@@ -119,6 +119,7 @@ body[data-page="admin"] [data-view="kernel"] [data-sublist] {
   padding: 2px 0 0 10px;
   background: transparent;
   gap: 8px;
+  align-items: start;
 }
 
 body[data-page="admin"] [data-view="kernel"] [data-subtile] {

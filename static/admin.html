@@ -383,8 +383,23 @@
                 <span data-label>Reasoning</span>
                 <select id="defaults-reasoning"></select>
               </label>
+              <label data-field>
+                <span data-label>No-policy limit (requests)</span>
+                <input id="defaults-kernel-limit" type="number" inputmode="numeric" placeholder="-1" />
+              </label>
+              <label data-field>
+                <span data-label>No-policy window (ms)</span>
+                <input id="defaults-kernel-window" type="number" inputmode="numeric" placeholder="604800000" />
+              </label>
+              <div data-layout="row">
+                <button id="defaults-kernel-window-1m" type="button">1m</button>
+                <button id="defaults-kernel-window-1h" type="button">1h</button>
+                <button id="defaults-kernel-window-1d" type="button">1d</button>
+                <button id="defaults-kernel-window-1w" type="button">1w</button>
+              </div>
               <span id="defaults-badge" data-badge data-state="unknown">Idle</span>
               <p id="defaults-meta" data-help>Models load automatically.</p>
+              <p data-help>Applies when no org or repo policy exists. Use -1 for unlimited, 0 to deny by default.</p>
               <p data-help>Changes save automatically. Reasoning options depend on the selected model.</p>
             </div>
           </article>

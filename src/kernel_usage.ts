@@ -1,4 +1,10 @@
-import { API_KEY_NO_USAGE_LIMIT, USAGE_RESET_PERIOD_MS, shouldResetUsage } from "./api_keys.ts";
+import { API_KEY_NO_USAGE_LIMIT, shouldResetUsage } from "./api_keys.ts";
+import {
+  DEFAULT_KERNEL_POLICY_LIMIT_KEY,
+  DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS,
+  DEFAULT_KERNEL_POLICY_WINDOW_KEY,
+  DEFAULT_KERNEL_POLICY_WINDOW_MS,
+} from "./defaults.ts";
 import { openaiError } from "./http.ts";
 import { kvPromise } from "./kv.ts";
 import { getString, isRecord } from "./utils.ts";
@@ -22,7 +28,6 @@ export const KERNEL_AUTH_ORG_LIMIT_PREFIX = ["ubq_ai", "kernel_auth", "org_limit
 
 const MAX_LABEL_LENGTH = 120;
 const MAX_KV_RETRIES = 3;
-const DEFAULT_KERNEL_AUTH_WINDOW_MS = USAGE_RESET_PERIOD_MS;
 const DAILY_SERIES_DAYS = 30;
 const DAILY_HISTORY_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -32,6 +37,38 @@ const normalizeWindowMs = (value: unknown, fallback: number): number => {
   const windowMs = Math.trunc(value);
   if (windowMs <= 0) return fallback;
   return windowMs;
+};
+
+const normalizeDefaultKernelLimit = (value: unknown): number => {
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) value = parsed;
+  }
+  return normalizeUsageLimitRequests(value, DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS);
+};
+
+const normalizeDefaultKernelWindow = (value: unknown): number => {
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) value = parsed;
+  }
+  return normalizeWindowMs(value, DEFAULT_KERNEL_POLICY_WINDOW_MS);
+};
+
+const loadKernelDefaultPolicy = async (
+  kv: Deno.Kv | null,
+): Promise<{ limit: number; windowMs: number }> => {
+  if (!kv) {
+    return { limit: DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS, windowMs: DEFAULT_KERNEL_POLICY_WINDOW_MS };
+  }
+  const [limitEntry, windowEntry] = await Promise.all([
+    kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY),
+    kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY),
+  ]);
+  return {
+    limit: normalizeDefaultKernelLimit(limitEntry.value),
+    windowMs: normalizeDefaultKernelWindow(windowEntry.value),
+  };
 };
 
 const calculateNextResetMsForWindow = (nowMs: number, windowMs: number): number => {
@@ -45,8 +82,6 @@ const normalizeUsageLimitRequests = (value: unknown, fallback: number): number =
   if (limit < 0) return fallback;
   return limit;
 };
-
-const DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS = API_KEY_NO_USAGE_LIMIT;
 
 export const kernelUsageKey = (owner: string, repo: string) => [...KERNEL_AUTH_USAGE_PREFIX, owner, repo] as const;
 export const kernelUsageDailyKey = (owner: string, repo: string) => [...KERNEL_AUTH_USAGE_DAILY_PREFIX, owner, repo] as const;
@@ -527,11 +562,12 @@ const normalizeLimitRecord = (
   repo: string,
   nowMs: number,
   defaultLimit: number,
+  defaultWindowMs: number,
 ): KernelAuthLimitRecord => {
   if (!isRecord(value)) {
-    return buildBaseLimitRecord(owner, repo, nowMs, defaultLimit, DEFAULT_KERNEL_AUTH_WINDOW_MS);
+    return buildBaseLimitRecord(owner, repo, nowMs, defaultLimit, defaultWindowMs);
   }
-  const windowMs = normalizeWindowMs(value.window_ms, DEFAULT_KERNEL_AUTH_WINDOW_MS);
+  const windowMs = normalizeWindowMs(value.window_ms, defaultWindowMs);
   return {
     owner: normalizeOwnerRepo(value.owner, owner),
     repo: normalizeOwnerRepo(value.repo, repo),
@@ -556,10 +592,11 @@ export const getKernelUsageLimitSnapshot = async (
   try {
     const kv = await kvPromise;
     if (!kv) return null;
+    const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
     const entry = await kv.get<KernelAuthLimitRecord>(kernelLimitKey(owner, repo));
     const source = entry.value ? "kv" : "default";
-    const record = normalizeLimitRecord(entry.value, owner, repo, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS);
+    const record = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
     return { record, source };
   } catch (error) {
     console.warn("[ai.ubq.fi] Failed to load kernel auth usage limit:", error);
@@ -571,12 +608,13 @@ export const listKernelUsageLimits = async (): Promise<KernelAuthLimitRecord[] |
   try {
     const kv = await kvPromise;
     if (!kv) return null;
+    const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
     const records: KernelAuthLimitRecord[] = [];
     for await (const entry of kv.list<KernelAuthLimitRecord>({ prefix: KERNEL_AUTH_LIMIT_PREFIX })) {
       const keyOwner = typeof entry.key[3] === "string" ? entry.key[3] : "";
       const keyRepo = typeof entry.key[4] === "string" ? entry.key[4] : "";
-      records.push(normalizeLimitRecord(entry.value, keyOwner, keyRepo, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS));
+      records.push(normalizeLimitRecord(entry.value, keyOwner, keyRepo, nowMs, defaults.limit, defaults.windowMs));
     }
     records.sort((a, b) => {
       const ownerCmp = a.owner.localeCompare(b.owner);
@@ -634,10 +672,11 @@ export const setKernelUsageLimit = async (
   try {
     const kv = await kvPromise;
     if (!kv) return null;
+    const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelLimitKey(owner, repo);
     const nowMs = Date.now();
     const entry = await kv.get<KernelAuthLimitRecord>(key);
-    const current = normalizeLimitRecord(entry.value, owner, repo, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS);
+    const current = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
     const windowMs = options.windowMs === undefined
       ? current.window_ms
       : normalizeWindowMs(options.windowMs, current.window_ms);
@@ -683,12 +722,13 @@ export const checkKernelUsageLimit = async (
   try {
     const kv = await kvPromise;
     if (!kv) return { ok: true };
+    const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelLimitKey(owner, repo);
     const nowMs = Date.now();
 
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
       const entry = await kv.get<KernelAuthLimitRecord>(key);
-      let record = normalizeLimitRecord(entry.value, owner, repo, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS);
+      let record = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
 
       if (record.usage_limit_requests === 0) {
         return {
@@ -745,12 +785,13 @@ export const incrementKernelUsageLimit = async (owner: string, repo: string): Pr
   try {
     const kv = await kvPromise;
     if (!kv) return;
+    const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelLimitKey(owner, repo);
     const nowMs = Date.now();
 
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
       const entry = await kv.get<KernelAuthLimitRecord>(key);
-      const current = normalizeLimitRecord(entry.value, owner, repo, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS);
+      const current = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
       const resetUsage = shouldResetUsage(current.usage_reset_at_ms, nowMs);
       const updated: KernelAuthLimitRecord = {
         ...current,
@@ -791,11 +832,12 @@ const normalizeOrgLimitRecord = (
   owner: string,
   nowMs: number,
   defaultLimit: number,
+  defaultWindowMs: number,
 ): KernelOrgLimitRecord => {
   if (!isRecord(value)) {
-    return buildBaseOrgLimitRecord(owner, nowMs, defaultLimit, DEFAULT_KERNEL_AUTH_WINDOW_MS);
+    return buildBaseOrgLimitRecord(owner, nowMs, defaultLimit, defaultWindowMs);
   }
-  const windowMs = normalizeWindowMs(value.window_ms, DEFAULT_KERNEL_AUTH_WINDOW_MS);
+  const windowMs = normalizeWindowMs(value.window_ms, defaultWindowMs);
   return {
     owner: normalizeOwnerRepo(value.owner, owner),
     usage_limit_requests: normalizeUsageLimitRequests(value.usage_limit_requests, defaultLimit),
@@ -816,10 +858,11 @@ export const getKernelOrgUsageLimitSnapshot = async (owner: string): Promise<Ker
   try {
     const kv = await kvPromise;
     if (!kv) return null;
+    const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
     const entry = await kv.get<KernelOrgLimitRecord>(kernelOrgLimitKey(owner));
     const source = entry.value ? "kv" : "default";
-    const record = normalizeOrgLimitRecord(entry.value, owner, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS);
+    const record = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
     return { record, source };
   } catch (error) {
     console.warn("[ai.ubq.fi] Failed to load kernel org usage limit:", error);
@@ -831,11 +874,12 @@ export const listKernelOrgUsageLimits = async (): Promise<KernelOrgLimitRecord[]
   try {
     const kv = await kvPromise;
     if (!kv) return null;
+    const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
     const records: KernelOrgLimitRecord[] = [];
     for await (const entry of kv.list<KernelOrgLimitRecord>({ prefix: KERNEL_AUTH_ORG_LIMIT_PREFIX })) {
       const keyOwner = typeof entry.key[3] === "string" ? entry.key[3] : "";
-      records.push(normalizeOrgLimitRecord(entry.value, keyOwner, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS));
+      records.push(normalizeOrgLimitRecord(entry.value, keyOwner, nowMs, defaults.limit, defaults.windowMs));
     }
     records.sort((a, b) => a.owner.localeCompare(b.owner));
     return records;
@@ -883,10 +927,11 @@ export const setKernelOrgUsageLimit = async (
   try {
     const kv = await kvPromise;
     if (!kv) return null;
+    const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelOrgLimitKey(owner);
     const nowMs = Date.now();
     const entry = await kv.get<KernelOrgLimitRecord>(key);
-    const current = normalizeOrgLimitRecord(entry.value, owner, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS);
+    const current = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
     const windowMs = options.windowMs === undefined
       ? current.window_ms
       : normalizeWindowMs(options.windowMs, current.window_ms);
@@ -931,12 +976,13 @@ export const checkKernelOrgUsageLimit = async (
   try {
     const kv = await kvPromise;
     if (!kv) return { ok: true };
+    const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelOrgLimitKey(owner);
     const nowMs = Date.now();
 
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
       const entry = await kv.get<KernelOrgLimitRecord>(key);
-      let record = normalizeOrgLimitRecord(entry.value, owner, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS);
+      let record = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
 
       if (record.usage_limit_requests === 0) {
         return {
@@ -993,12 +1039,13 @@ export const incrementKernelOrgUsageLimit = async (owner: string): Promise<void>
   try {
     const kv = await kvPromise;
     if (!kv) return;
+    const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelOrgLimitKey(owner);
     const nowMs = Date.now();
 
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
       const entry = await kv.get<KernelOrgLimitRecord>(key);
-      const current = normalizeOrgLimitRecord(entry.value, owner, nowMs, DEFAULT_KERNEL_AUTH_USAGE_LIMIT_REQUESTS);
+      const current = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
       const resetUsage = shouldResetUsage(current.usage_reset_at_ms, nowMs);
       const updated: KernelOrgLimitRecord = {
         ...current,

@@ -97,6 +97,12 @@ const accessUpstreamExpiry = mustGet("access-upstream-expiry");
 
 const defaultsModelSelect = mustGet("defaults-model");
 const defaultsReasoningSelect = mustGet("defaults-reasoning");
+const defaultsKernelLimitInput = mustGet("defaults-kernel-limit");
+const defaultsKernelWindowInput = mustGet("defaults-kernel-window");
+const defaultsKernelWindowPreset1m = mustGet("defaults-kernel-window-1m");
+const defaultsKernelWindowPreset1h = mustGet("defaults-kernel-window-1h");
+const defaultsKernelWindowPreset1d = mustGet("defaults-kernel-window-1d");
+const defaultsKernelWindowPreset1w = mustGet("defaults-kernel-window-1w");
 const defaultsBadge = mustGet("defaults-badge");
 const defaultsMeta = mustGet("defaults-meta");
 let defaultsLoaded = false;
@@ -137,7 +143,6 @@ let kernelListRecords = { org: [], repo: [] };
 let kernelQueueItems = [];
 let kernelQueueLoading = false;
 let kernelQueueLoadedAt = 0;
-let kernelQueuePoller = null;
 let kernelPubKeys = [];
 let kernelPubKeysLoading = false;
 let kernelPubKeysLoadedAt = 0;
@@ -398,6 +403,8 @@ const applyIconButton = (button, name, label) => {
 
 const KERNEL_ACTIVITY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const KERNEL_NEAR_LIMIT_RATIO = 0.8;
+const DEFAULT_KERNEL_POLICY_LIMIT = -1;
+const DEFAULT_KERNEL_POLICY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 applyIconButton(kernelNewSaveBtn, "save", "Save policy");
 applyIconButton(kernelPubKeyCreateBtn, "plus", "Add kernel attestation key");
@@ -975,21 +982,6 @@ const ensureKernelPolicyQueueLoaded = async () => {
     return;
   }
   await refreshKernelPolicyQueue();
-};
-
-const startKernelQueuePolling = () => {
-  if (kernelQueuePoller) return;
-  kernelQueuePoller = setInterval(() => {
-    if (currentAdminView === "kernel") {
-      void refreshKernelPolicyQueue();
-    }
-  }, 15000);
-};
-
-const stopKernelQueuePolling = () => {
-  if (!kernelQueuePoller) return;
-  clearInterval(kernelQueuePoller);
-  kernelQueuePoller = null;
 };
 
 const setKernelNewPanelOpen = (open) => {
@@ -2911,9 +2903,6 @@ const setAdminView = (view) => {
     void loadKernelList();
     void ensureKernelPolicyQueueLoaded();
     void refreshAccessOverview();
-    startKernelQueuePolling();
-  } else {
-    stopKernelQueuePolling();
   }
   if (nextView === "pubkeys") {
     void ensureKernelPubKeysLoaded();
@@ -3323,9 +3312,17 @@ const loadDefaults = async () => {
     const currentModel = typeof defaultsPayload?.defaults?.model === "string" ? defaultsPayload.defaults.model : "";
     const currentReasoning =
       typeof defaultsPayload?.defaults?.reasoning_effort === "string" ? defaultsPayload.defaults.reasoning_effort : "";
+    const currentKernelLimit = typeof defaultsPayload?.defaults?.kernel_policy_limit_requests === "number"
+      ? Math.trunc(defaultsPayload.defaults.kernel_policy_limit_requests)
+      : DEFAULT_KERNEL_POLICY_LIMIT;
+    const currentKernelWindow = typeof defaultsPayload?.defaults?.kernel_policy_window_ms === "number"
+      ? Math.trunc(defaultsPayload.defaults.kernel_policy_window_ms)
+      : DEFAULT_KERNEL_POLICY_WINDOW_MS;
     const modelOptions = models.map((model) => ({ value: model.slug, label: formatModelLabel(model) }));
     const selectedModel = setSelectOptions(defaultsModelSelect, modelOptions, currentModel, "No models available");
     const selectedReasoning = updateReasoningOptions(selectedModel, currentReasoning);
+    defaultsKernelLimitInput.value = String(currentKernelLimit);
+    defaultsKernelWindowInput.value = String(currentKernelWindow);
     defaultsLoaded = true;
     setDefaultsBadge("ok", `${selectedModel} · ${selectedReasoning}`);
   } catch {
@@ -3346,6 +3343,17 @@ const saveDefaults = async () => {
   defaultsSaving = true;
   const model = defaultsModelSelect.value;
   const reasoning = defaultsReasoningSelect.value;
+  const limitValue = parseKernelLimitValue(defaultsKernelLimitInput.value, setDefaultsBadge);
+  if (limitValue === null) {
+    defaultsSaving = false;
+    return;
+  }
+  const windowResult = parseKernelWindowValue(defaultsKernelWindowInput.value, setDefaultsBadge);
+  if (!windowResult.ok || windowResult.value === null) {
+    setDefaultsBadge("bad", "Window required");
+    defaultsSaving = false;
+    return;
+  }
   setDefaultsBadge("unknown", "Saving...");
 
   try {
@@ -3355,7 +3363,12 @@ const saveDefaults = async () => {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ model, reasoning_effort: reasoning }),
+      body: JSON.stringify({
+        model,
+        reasoning_effort: reasoning,
+        kernel_policy_limit_requests: limitValue,
+        kernel_policy_window_ms: windowResult.value,
+      }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
@@ -3364,6 +3377,12 @@ const saveDefaults = async () => {
     }
     const saved = data?.defaults;
     const summary = saved?.model && saved?.reasoning_effort ? `${saved.model} · ${saved.reasoning_effort}` : "Saved";
+    if (typeof saved?.kernel_policy_limit_requests === "number") {
+      defaultsKernelLimitInput.value = String(Math.trunc(saved.kernel_policy_limit_requests));
+    }
+    if (typeof saved?.kernel_policy_window_ms === "number") {
+      defaultsKernelWindowInput.value = String(Math.trunc(saved.kernel_policy_window_ms));
+    }
     setDefaultsBadge("ok", summary);
   } catch {
     setDefaultsBadge("bad", "Offline");
@@ -3572,4 +3591,39 @@ defaultsModelSelect.addEventListener("change", () => {
 defaultsReasoningSelect.addEventListener("change", () => {
   if (!defaultsLoaded) return;
   scheduleDefaultsSave();
+});
+
+const markDefaultsEditing = () => {
+  if (!defaultsLoaded) return;
+  setDefaultsBadge("unknown", "Editing...");
+  scheduleDefaultsSave();
+};
+
+defaultsKernelLimitInput.addEventListener("input", () => {
+  markDefaultsEditing();
+});
+
+defaultsKernelWindowInput.addEventListener("input", () => {
+  markDefaultsEditing();
+});
+
+defaultsKernelWindowPreset1m.addEventListener("click", () => {
+  if (!defaultsLoaded) return;
+  defaultsKernelWindowInput.value = "60000";
+  markDefaultsEditing();
+});
+defaultsKernelWindowPreset1h.addEventListener("click", () => {
+  if (!defaultsLoaded) return;
+  defaultsKernelWindowInput.value = "3600000";
+  markDefaultsEditing();
+});
+defaultsKernelWindowPreset1d.addEventListener("click", () => {
+  if (!defaultsLoaded) return;
+  defaultsKernelWindowInput.value = "86400000";
+  markDefaultsEditing();
+});
+defaultsKernelWindowPreset1w.addEventListener("click", () => {
+  if (!defaultsLoaded) return;
+  defaultsKernelWindowInput.value = "604800000";
+  markDefaultsEditing();
 });

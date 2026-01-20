@@ -10,6 +10,10 @@ import {
   validateCodexAuthJson,
 } from "./codex.ts";
 import {
+  DEFAULT_KERNEL_POLICY_LIMIT_KEY,
+  DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS,
+  DEFAULT_KERNEL_POLICY_WINDOW_KEY,
+  DEFAULT_KERNEL_POLICY_WINDOW_MS,
   DEFAULT_MODEL,
   DEFAULT_MODEL_KEY,
   DEFAULT_REASONING_EFFORT,
@@ -219,49 +223,108 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
   if (req.method === "GET") {
     const modelEntry = await kv.get<string>(DEFAULT_MODEL_KEY);
     const reasoningEntry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
+    const kernelLimitEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY);
+    const kernelWindowEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY);
     const model = typeof modelEntry.value === "string" && modelEntry.value.trim() ? modelEntry.value : DEFAULT_MODEL;
     const reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
-    return json(200, { ok: true, defaults: { model, reasoning_effort: reasoningEffort } });
+    const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
+    const kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
+    return json(200, {
+      ok: true,
+      defaults: {
+        model,
+        reasoning_effort: reasoningEffort,
+        kernel_policy_limit_requests: kernelPolicyLimit,
+        kernel_policy_window_ms: kernelPolicyWindow,
+      },
+    });
   }
 
   if (req.method === "POST") {
     const raw = await readJsonBody(req);
     if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-    const model = normalizeDefaultModel(raw.model);
-    if (!model) return openaiError(400, "model must be a non-empty string", "invalid_request_error");
+    const modelEntry = await kv.get<string>(DEFAULT_MODEL_KEY);
+    const reasoningEntry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
+    const kernelLimitEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY);
+    const kernelWindowEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY);
 
-    const snapshot = await loadCodexModelsSnapshot();
-    if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) {
-      return openaiError(409, "No Codex model snapshot stored", "invalid_request_error");
+    let model = typeof modelEntry.value === "string" && modelEntry.value.trim() ? modelEntry.value : DEFAULT_MODEL;
+    let reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
+    let kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
+    let kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
+
+    const wantsModelUpdate = Object.prototype.hasOwnProperty.call(raw, "model")
+      || Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
+    if (wantsModelUpdate) {
+      const nextModel = normalizeDefaultModel(raw.model ?? model);
+      if (!nextModel) return openaiError(400, "model must be a non-empty string", "invalid_request_error");
+
+      const snapshot = await loadCodexModelsSnapshot();
+      if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) {
+        return openaiError(409, "No Codex model snapshot stored", "invalid_request_error");
+      }
+
+      const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === nextModel) ?? null;
+      if (!modelRecord) {
+        return openaiError(400, "model is not in the stored Codex model list", "invalid_request_error");
+      }
+
+      let nextReasoning = normalizeReasoningEffort(raw.reasoning_effort ?? reasoningEffort);
+      const modelDefault = normalizeReasoningEffort(modelRecord.default_reasoning_level);
+      if (!nextReasoning) {
+        nextReasoning = modelDefault ?? DEFAULT_REASONING_EFFORT;
+      }
+
+      const levels = extractModelReasoningLevels(modelRecord);
+      if (levels.length > 0 && !levels.includes(nextReasoning)) {
+        return openaiError(
+          400,
+          `reasoning_effort must be one of: ${levels.join(", ")}`,
+          "invalid_request_error",
+        );
+      }
+      if (levels.length === 0) {
+        nextReasoning = "none";
+      }
+
+      model = nextModel;
+      reasoningEffort = nextReasoning;
+      await kv.set(DEFAULT_MODEL_KEY, model);
+      await kv.set(DEFAULT_REASONING_EFFORT_KEY, reasoningEffort);
     }
 
-    const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === model) ?? null;
-    if (!modelRecord) {
-      return openaiError(400, "model is not in the stored Codex model list", "invalid_request_error");
+    if (Object.prototype.hasOwnProperty.call(raw, "kernel_policy_limit_requests")) {
+      const parsed = normalizeKernelUsageLimitInput(raw.kernel_policy_limit_requests);
+      if (parsed === null) {
+        return openaiError(
+          400,
+          "kernel_policy_limit_requests must be a non-negative number or -1 for unlimited",
+          "invalid_request_error",
+        );
+      }
+      kernelPolicyLimit = parsed;
+      await kv.set(DEFAULT_KERNEL_POLICY_LIMIT_KEY, kernelPolicyLimit);
     }
 
-    let reasoningEffort = normalizeReasoningEffort(raw.reasoning_effort);
-    const modelDefault = normalizeReasoningEffort(modelRecord.default_reasoning_level);
-    if (!reasoningEffort) {
-      reasoningEffort = modelDefault ?? DEFAULT_REASONING_EFFORT;
+    if (Object.prototype.hasOwnProperty.call(raw, "kernel_policy_window_ms")) {
+      const parsed = normalizeKernelWindowMsInput(raw.kernel_policy_window_ms);
+      if (parsed === null) {
+        return openaiError(400, "kernel_policy_window_ms must be a positive number", "invalid_request_error");
+      }
+      kernelPolicyWindow = parsed;
+      await kv.set(DEFAULT_KERNEL_POLICY_WINDOW_KEY, kernelPolicyWindow);
     }
 
-    const levels = extractModelReasoningLevels(modelRecord);
-    if (levels.length > 0 && !levels.includes(reasoningEffort)) {
-      return openaiError(
-        400,
-        `reasoning_effort must be one of: ${levels.join(", ")}`,
-        "invalid_request_error",
-      );
-    }
-    if (levels.length === 0) {
-      reasoningEffort = "none";
-    }
-
-    await kv.set(DEFAULT_MODEL_KEY, model);
-    await kv.set(DEFAULT_REASONING_EFFORT_KEY, reasoningEffort);
-    return json(200, { ok: true, defaults: { model, reasoning_effort: reasoningEffort } });
+    return json(200, {
+      ok: true,
+      defaults: {
+        model,
+        reasoning_effort: reasoningEffort,
+        kernel_policy_limit_requests: kernelPolicyLimit,
+        kernel_policy_window_ms: kernelPolicyWindow,
+      },
+    });
   }
 
   return openaiError(405, "Method not allowed", "method_not_allowed");
