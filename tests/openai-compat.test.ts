@@ -65,6 +65,9 @@ const baseSseChunks = () => [
   })}\n\n`,
 ];
 
+const parseWarnings = (value: string | null): string[] =>
+  value ? value.split(",").map((entry) => entry.trim()).filter(Boolean) : [];
+
 const withFetchMock = async <T>(
   handler: (url: string, bodyText: string | null) => Response | Promise<Response>,
   fn: () => Promise<T>,
@@ -103,6 +106,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
             body: JSON.stringify({
               messages: [{ role: "user", content: "ping" }],
               temperature: 0.2,
+              max_tokens: 12,
             }),
           }),
         ),
@@ -111,12 +115,15 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal(response.status, 200);
     const payload = await response.json() as { model?: string };
     assert.equal(payload.model, "gpt-5.2");
-    assert.equal(response.headers.get("x-uos-warning"), "temperature_ignored");
+    const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+    assert.ok(warnings.includes("temperature_ignored"));
+    assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], "gpt-5.2");
     assert.deepEqual(recorded["reasoning"], { effort: "low" });
     assert.equal("temperature" in recorded, false);
+    assert.equal("max_output_tokens" in recorded, false);
   });
 
   await t.step("responses uses default model/reasoning and ignores temperature", async () => {
@@ -135,6 +142,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
             body: JSON.stringify({
               input: "ping",
               temperature: 0.7,
+              max_output_tokens: 24,
             }),
           }),
         ),
@@ -143,12 +151,15 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal(response.status, 200);
     const payload = await response.json() as { model?: string; reasoning?: unknown };
     assert.equal(payload.model, "gpt-5.2");
-    assert.equal(response.headers.get("x-uos-warning"), "temperature_ignored");
+    const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+    assert.ok(warnings.includes("temperature_ignored"));
+    assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], "gpt-5.2");
     assert.deepEqual(recorded["reasoning"], { effort: "low" });
     assert.equal("temperature" in recorded, false);
+    assert.equal("max_output_tokens" in recorded, false);
   });
 });
 

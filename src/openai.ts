@@ -180,11 +180,12 @@ const resolveReasoningLabelFromParam = (
 
 const UOS_WARNING_HEADER = "x-uos-warning";
 const TEMPERATURE_IGNORED_WARNING = "temperature_ignored";
+const MAX_OUTPUT_TOKENS_IGNORED_WARNING = "max_output_tokens_ignored";
 
-const withUosWarning = (response: Response, warning: string | null): Response => {
-  if (!warning) return response;
+const withUosWarning = (response: Response, warnings: string[]): Response => {
+  if (!warnings.length) return response;
   const headers = new Headers(response.headers);
-  headers.set(UOS_WARNING_HEADER, warning);
+  headers.set(UOS_WARNING_HEADER, warnings.join(", "));
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -698,9 +699,16 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
-  const temperatureIgnored = Object.prototype.hasOwnProperty.call(rawRecord, "temperature")
-    ? TEMPERATURE_IGNORED_WARNING
-    : null;
+  const warnings: string[] = [];
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "temperature")) {
+    warnings.push(TEMPERATURE_IGNORED_WARNING);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(rawRecord, "max_completion_tokens") ||
+    Object.prototype.hasOwnProperty.call(rawRecord, "max_tokens")
+  ) {
+    warnings.push(MAX_OUTPUT_TOKENS_IGNORED_WARNING);
+  }
 
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
   const rawModelValue = rawRecord.model;
@@ -785,12 +793,6 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
       codexBody[key] = rawRecord[key];
     }
   }
-  const maxCompletionTokens = Object.prototype.hasOwnProperty.call(rawRecord, "max_completion_tokens")
-    ? rawRecord.max_completion_tokens
-    : Object.prototype.hasOwnProperty.call(rawRecord, "max_tokens")
-    ? rawRecord.max_tokens
-    : undefined;
-  if (maxCompletionTokens !== undefined) codexBody.max_output_tokens = maxCompletionTokens;
   codexBody.store = false;
 
   const stream = Boolean(body.stream);
@@ -828,7 +830,7 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     model,
     usageContext,
   );
-  return withUosWarning(response, temperatureIgnored);
+  return withUosWarning(response, warnings);
 };
 
 export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
@@ -840,9 +842,13 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
-  const temperatureIgnored = Object.prototype.hasOwnProperty.call(rawRecord, "temperature")
-    ? TEMPERATURE_IGNORED_WARNING
-    : null;
+  const warnings: string[] = [];
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "temperature")) {
+    warnings.push(TEMPERATURE_IGNORED_WARNING);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "max_output_tokens")) {
+    warnings.push(MAX_OUTPUT_TOKENS_IGNORED_WARNING);
+  }
 
   const clientWantsStream = Boolean(rawBody.stream);
 
@@ -921,7 +927,6 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     "background",
     "conversation",
     "include",
-    "max_output_tokens",
     "max_tool_calls",
     "tools",
     "tool_choice",
@@ -994,14 +999,14 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
         statusText: upstream.statusText,
         headers,
       });
-      return withUosWarning(response, temperatureIgnored);
+      return withUosWarning(response, warnings);
     }
     const response = new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers,
     });
-    return withUosWarning(response, temperatureIgnored);
+    return withUosWarning(response, warnings);
   }
 
   if (!upstream.body) {
@@ -1024,5 +1029,5 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const usageTokens = extractUsageTokens(finalResponse.usage);
   await recordCompletionUsage(usageContext, usageTokens);
   const response = json(200, finalResponse, { "x-ubq-upstream": "chatgpt_codex" });
-  return withUosWarning(response, temperatureIgnored);
+  return withUosWarning(response, warnings);
 };
