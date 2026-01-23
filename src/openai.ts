@@ -685,8 +685,13 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
 
-  const modelRaw = (getString(body.model) ?? "").trim();
-  if (!modelRaw) return openaiError(400, "model is required", "invalid_request_error");
+  const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
+  const rawModelValue = rawRecord.model;
+  const modelRawValue = getString(rawModelValue);
+  if (hasModel && modelRawValue === null && rawModelValue !== null && rawModelValue !== undefined) {
+    return openaiError(400, "model must be a string", "invalid_request_error");
+  }
+  const modelRaw = (modelRawValue ?? "").trim() || await getDefaultModel();
   const model = normalizeModelForCodex(modelRaw);
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
@@ -716,11 +721,14 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   const instructions = instructionParts.join("\n\n").trim();
   const defaultEffort = await getDefaultReasoningEffort();
   const defaultReasoningLabel = resolveDefaultReasoningLabel(model, defaultEffort);
-  const reasoningValue = reasoningEffort.value === undefined
-    ? undefined
-    : reasoningEffort.value === null
-    ? null
-    : { effort: reasoningEffort.value };
+  let reasoningValue: Record<string, unknown> | null | undefined;
+  if (reasoningEffort.value === undefined) {
+    reasoningValue = looksLikeReasoningModel(model) ? { effort: defaultReasoningLabel } : undefined;
+  } else if (reasoningEffort.value === null) {
+    reasoningValue = null;
+  } else {
+    reasoningValue = { effort: reasoningEffort.value };
+  }
   const codexBody = await buildCodexRequest(model, input, {
     reasoning: reasoningValue,
     instructions,
@@ -819,9 +827,10 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const clientWantsStream = Boolean(rawBody.stream);
 
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
-  const modelRawValue = getString(rawBody.model);
-  if (hasModel && (modelRawValue === null || !modelRawValue.trim())) {
-    return openaiError(400, "model must be a non-empty string", "invalid_request_error");
+  const rawModelValue = rawRecord.model;
+  const modelRawValue = getString(rawModelValue);
+  if (hasModel && modelRawValue === null && rawModelValue !== null && rawModelValue !== undefined) {
+    return openaiError(400, "model must be a string", "invalid_request_error");
   }
   const modelRaw = (modelRawValue ?? "").trim() || await getDefaultModel();
   const model = normalizeModelForCodex(modelRaw);
@@ -882,7 +891,10 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const defaultReasoningLabel = resolveDefaultReasoningLabel(model, defaultEffort);
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
 
-  const reasoningValue = reasoning.value;
+  let reasoningValue = reasoning.value;
+  if (reasoningValue === undefined && looksLikeReasoningModel(model)) {
+    reasoningValue = { effort: defaultReasoningLabel };
+  }
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });
   const passthroughKeys = [
