@@ -39,6 +39,7 @@ const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
   return DEFAULT_REASONING_EFFORT;
 };
 
+
 type UsageContext = Readonly<{
   keyId: string | null;
   kernelRepo: { owner: string; repo: string } | null;
@@ -176,7 +177,6 @@ const resolveReasoningLabelFromParam = (
   }
   return defaultLabel;
 };
-
 const parseReasoningEffortField = (
   value: unknown,
   fieldName: string,
@@ -220,6 +220,82 @@ const parseReasoningParam = (
   return { ok: true, value };
 };
 
+const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set([
+  "messages",
+  "model",
+  "audio",
+  "frequency_penalty",
+  "function_call",
+  "functions",
+  "logit_bias",
+  "logprobs",
+  "max_completion_tokens",
+  "max_tokens",
+  "metadata",
+  "modalities",
+  "n",
+  "parallel_tool_calls",
+  "prediction",
+  "presence_penalty",
+  "prompt_cache_key",
+  "prompt_cache_retention",
+  "reasoning_effort",
+  "response_format",
+  "safety_identifier",
+  "seed",
+  "service_tier",
+  "stop",
+  "store",
+  "stream",
+  "stream_options",
+  "temperature",
+  "tool_choice",
+  "tools",
+  "top_logprobs",
+  "top_p",
+  "user",
+  "verbosity",
+  "web_search_options",
+]);
+
+const RESPONSES_ALLOWED_KEYS = new Set([
+  "background",
+  "conversation",
+  "include",
+  "input",
+  "instructions",
+  "max_output_tokens",
+  "max_tool_calls",
+  "metadata",
+  "model",
+  "parallel_tool_calls",
+  "previous_response_id",
+  "prompt",
+  "prompt_cache_key",
+  "prompt_cache_retention",
+  "reasoning",
+  "safety_identifier",
+  "service_tier",
+  "store",
+  "stream",
+  "stream_options",
+  "temperature",
+  "text",
+  "tool_choice",
+  "tools",
+  "top_logprobs",
+  "top_p",
+  "truncation",
+  "user",
+]);
+
+const findUnknownKey = (record: Record<string, unknown>, allowed: ReadonlySet<string>): string | null => {
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) return key;
+  }
+  return null;
+};
+
 const extractMessageContentItems = (role: ResponseMessageItem["role"], content: unknown): MessageContentItem[] => {
   const isAssistant = role === "assistant";
   const textItemType: MessageContentItem["type"] = isAssistant ? "output_text" : "input_text";
@@ -261,6 +337,13 @@ const extractMessageContentItems = (role: ResponseMessageItem["role"], content: 
   if (items.length > 0) return items;
   return [{ type: textItemType, text: "" }];
 };
+
+const messageContentToText = (items: MessageContentItem[]): string =>
+  items
+    .filter((item) => item.type === "input_text" || item.type === "output_text")
+    .map((item) => item.text)
+    .filter((text) => text && text.trim())
+    .join("\n");
 
 const chatRoleToCodexRole = (role: string): ResponseMessageItem["role"] | null => {
   if (role === "system") return "developer";
@@ -596,7 +679,14 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;
   if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-  const modelRaw = (getString(body.model) ?? "").trim() || await getDefaultModel();
+  const rawRecord = body as Record<string, unknown>;
+  const unknownKey = findUnknownKey(rawRecord, CHAT_COMPLETIONS_ALLOWED_KEYS);
+  if (unknownKey) {
+    return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
+  }
+
+  const modelRaw = (getString(body.model) ?? "").trim();
+  if (!modelRaw) return openaiError(400, "model is required", "invalid_request_error");
   const model = normalizeModelForCodex(modelRaw);
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
@@ -606,18 +696,77 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   if (!reasoningEffort.ok) return openaiError(400, reasoningEffort.message, "invalid_request_error");
 
   const input: ResponseMessageItem[] = [];
+  const instructionParts: string[] = [];
   for (const msg of messagesRaw) {
+    if (!isRecord(msg)) return openaiError(400, "Invalid message in messages[]", "invalid_request_error");
+    const roleRaw = getString(msg.role);
+    if (!roleRaw) return openaiError(400, "Invalid message in messages[]", "invalid_request_error");
+    if (roleRaw === "system" || roleRaw === "developer") {
+      const converted = toResponseMessageItem(msg);
+      if (!converted) return openaiError(400, "Invalid message in messages[]", "invalid_request_error");
+      const instructionText = messageContentToText(converted.content).trim();
+      if (instructionText) instructionParts.push(instructionText);
+      continue;
+    }
     const converted = toResponseMessageItem(msg);
     if (!converted) return openaiError(400, "Invalid message in messages[]", "invalid_request_error");
     input.push(converted);
   }
 
+  const instructions = instructionParts.join("\n\n").trim();
   const defaultEffort = await getDefaultReasoningEffort();
   const defaultReasoningLabel = resolveDefaultReasoningLabel(model, defaultEffort);
-  const defaultReasoning = defaultReasoningLabel !== "none" ? { effort: defaultReasoningLabel } : undefined;
+  const reasoningValue = reasoningEffort.value === undefined
+    ? undefined
+    : reasoningEffort.value === null
+    ? null
+    : { effort: reasoningEffort.value };
   const codexBody = await buildCodexRequest(model, input, {
-    reasoning: reasoningEffort.value === undefined ? defaultReasoning : { effort: reasoningEffort.value },
+    reasoning: reasoningValue,
+    instructions: instructions ? instructions : undefined,
   });
+  const passthroughKeys = [
+    "audio",
+    "frequency_penalty",
+    "function_call",
+    "functions",
+    "logit_bias",
+    "logprobs",
+    "metadata",
+    "modalities",
+    "n",
+    "parallel_tool_calls",
+    "prediction",
+    "presence_penalty",
+    "prompt_cache_key",
+    "prompt_cache_retention",
+    "response_format",
+    "safety_identifier",
+    "seed",
+    "service_tier",
+    "stop",
+    "store",
+    "stream_options",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_logprobs",
+    "top_p",
+    "user",
+    "verbosity",
+    "web_search_options",
+  ];
+  for (const key of passthroughKeys) {
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
+      codexBody[key] = rawRecord[key];
+    }
+  }
+  const maxCompletionTokens = Object.prototype.hasOwnProperty.call(rawRecord, "max_completion_tokens")
+    ? rawRecord.max_completion_tokens
+    : Object.prototype.hasOwnProperty.call(rawRecord, "max_tokens")
+    ? rawRecord.max_tokens
+    : undefined;
+  if (maxCompletionTokens !== undefined) codexBody.max_output_tokens = maxCompletionTokens;
 
   const stream = Boolean(body.stream);
   const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
@@ -660,17 +809,29 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const rawBody = (await readJsonBody(req)) as ResponsesRequest | null;
   if (!rawBody || !isRecord(rawBody)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
+  const rawRecord = rawBody as Record<string, unknown>;
+  const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS);
+  if (unknownKey) {
+    return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
+  }
+
   const clientWantsStream = Boolean(rawBody.stream);
 
-  const modelRaw = (getString(rawBody.model) ?? "").trim() || await getDefaultModel();
+  const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
+  const modelRawValue = getString(rawBody.model);
+  if (hasModel && (modelRawValue === null || !modelRawValue.trim())) {
+    return openaiError(400, "model must be a non-empty string", "invalid_request_error");
+  }
+  const modelRaw = (modelRawValue ?? "").trim() || await getDefaultModel();
   const model = normalizeModelForCodex(modelRaw);
 
   const inputRaw = rawBody.input;
   let input: ResponseMessageItem[];
-  if (typeof inputRaw === "string") {
+  if (inputRaw === undefined) {
+    input = [];
+  } else if (typeof inputRaw === "string") {
     input = [{ type: "message", role: "user", content: [{ type: "input_text", text: inputRaw }] }];
   } else if (Array.isArray(inputRaw)) {
-    if (inputRaw.length === 0) return openaiError(400, "input must be a non-empty array", "invalid_request_error");
     const converted: ResponseMessageItem[] = [];
     let contentBuffer: MessageContentItem[] = [];
 
@@ -708,30 +869,46 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
 
+  let instructions: string | undefined = undefined;
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "instructions")) {
+    const rawInstructions = getString(rawBody.instructions);
+    if (rawInstructions === null) {
+      return openaiError(400, "instructions must be a string", "invalid_request_error");
+    }
+    instructions = rawInstructions;
+  }
   const defaultEffort = await getDefaultReasoningEffort();
   const defaultReasoningLabel = resolveDefaultReasoningLabel(model, defaultEffort);
-  const defaultReasoning = defaultReasoningLabel !== "none" ? { effort: defaultReasoningLabel } : undefined;
-  const reasoningValue = reasoning.value !== undefined ? reasoning.value : defaultReasoning;
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
 
-  const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue });
+  const reasoningValue = reasoning.value;
+
+  const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });
   const passthroughKeys = [
+    "background",
+    "conversation",
+    "include",
+    "max_output_tokens",
+    "max_tool_calls",
     "tools",
     "tool_choice",
     "parallel_tool_calls",
     "metadata",
-    "max_output_tokens",
     "temperature",
     "top_p",
-    "seed",
     "truncation",
-    "response_format",
-    "user",
-    "include",
+    "prompt",
+    "prompt_cache_key",
+    "prompt_cache_retention",
+    "previous_response_id",
+    "safety_identifier",
+    "service_tier",
     "store",
-    "instructions",
+    "stream_options",
+    "text",
+    "top_logprobs",
+    "user",
   ];
-  const rawRecord = rawBody as Record<string, unknown>;
   for (const key of passthroughKeys) {
     if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
       codexBody[key] = rawRecord[key];

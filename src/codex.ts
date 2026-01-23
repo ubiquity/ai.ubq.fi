@@ -449,20 +449,16 @@ export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): P
 export const buildCodexRequest = async (
   model: string,
   input: ResponseMessageItem[],
-  options: Readonly<{ reasoning?: Record<string, unknown> | null }> = {},
+  options: Readonly<{ reasoning?: Record<string, unknown> | null; instructions?: string | null }> = {},
 ): Promise<Record<string, unknown>> => {
   const body: Record<string, unknown> = {
     model,
     input,
-    tools: [],
-    tool_choice: "auto",
-    parallel_tool_calls: false,
-    store: false,
     stream: true,
-    include: [],
   };
 
   if (options.reasoning !== undefined) body.reasoning = options.reasoning;
+  if (options.instructions !== undefined) body.instructions = options.instructions;
 
   return body;
 };
@@ -476,40 +472,44 @@ export const validateCodexAuthJson = async (
     body: string;
   }
 > => {
-  const model = "gpt-5.1-codex-mini";
-  const input: ResponseMessageItem[] = [
-    {
-      type: "message",
-      role: "user",
-      content: [{ type: "input_text", text: "ping" }],
-    },
-  ];
-  const body = await buildCodexRequest(model, input);
-
+  const urls = codexModelsBaseUrls();
   let refreshed = false;
-  let res = await fetchCodexResponsesWithAuth(auth, body);
-  if (res.status === 401) {
-    try {
-      const next = await refreshAuthStateless(auth);
-      refreshed = true;
-      res = await fetchCodexResponsesWithAuth(next, body);
-      auth = next;
-    } catch {
-      // ignore and return the original 401 response
+  let lastResponse: Response | null = null;
+
+  for (const url of urls) {
+    let res = await fetchCodexModelsWithAuth(auth, url);
+    if (res.status === 401) {
+      try {
+        const next = await refreshAuthStateless(auth);
+        refreshed = true;
+        res = await fetchCodexModelsWithAuth(next, url);
+        auth = next;
+      } catch {
+        // ignore and return the original 401 response
+      }
     }
+    if (res.status === 404 && urls.length > 1) {
+      lastResponse = res;
+      continue;
+    }
+
+    const contentType = res.headers.get("Content-Type");
+    if (res.ok) {
+      try {
+        await res.body?.cancel();
+      } catch {
+        // ignore
+      }
+      return { ok: true, auth, refreshed, status: res.status, contentType };
+    }
+
+    const text = await res.text().catch(() => "");
+    const bodySnippet = (text || res.statusText).slice(0, 8_000);
+    return { ok: false, status: res.status, body: bodySnippet };
   }
 
-  const contentType = res.headers.get("Content-Type");
-  if (res.ok) {
-    try {
-      await res.body?.cancel();
-    } catch {
-      // ignore
-    }
-    return { ok: true, auth, refreshed, status: res.status, contentType };
-  }
-
-  const text = await res.text().catch(() => "");
-  const bodySnippet = (text || res.statusText).slice(0, 8_000);
-  return { ok: false, status: res.status, body: bodySnippet };
+  const fallback = lastResponse ?? new Response("Codex upstream models endpoint not found.", { status: 404 });
+  const text = await fallback.text().catch(() => "");
+  const bodySnippet = (text || fallback.statusText).slice(0, 8_000);
+  return { ok: false, status: fallback.status, body: bodySnippet };
 };

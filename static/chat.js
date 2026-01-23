@@ -426,11 +426,12 @@ const sendPrompt = async () => {
   const text = promptInput.value.trim();
   if (!text) return;
 
+  const systemPrompt = systemInput.value.trim();
+
   promptInput.value = "";
   conversation.push({ role: "user", content: text });
   appendMessage("user", text);
 
-  const systemPrompt = systemInput.value.trim();
   const requestMessages = [];
   if (systemPrompt) requestMessages.push({ role: "system", content: systemPrompt });
   requestMessages.push(...conversation);

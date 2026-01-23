@@ -82,7 +82,7 @@
               <pre data-code><code>curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"messages":[{"role":"user","content":"Tell me a short joke."}]}'</code></pre>
+  --data '{"model":"gpt-5.2-chat-latest","messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Tell me a short joke."}]}'</code></pre>
 
               <p>
                 More parameters are supported (for example <code>model</code>, <code>reasoning_effort</code>, and

@@ -65,7 +65,7 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
   --data '{
     "model": "gpt-5.1-codex-mini",
     "reasoning_effort": "high",
-    "messages": [{"role":"user","content":"Tell me a short joke."}],
+    "messages": [{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Tell me a short joke."}],
     "stream": false
   }'
 ```
@@ -76,17 +76,18 @@ Just the assistant message text:
 curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"model":"gpt-5.2-chat-latest","messages":[{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
+  --data '{"model":"gpt-5.2-chat-latest","messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
   | jq -r '.choices[0].message.content'
 ```
 
 Notes:
 
-- `system` messages are not supported by the Codex upstream; the gateway converts them to `developer`.
+- System/developer messages are optional. When present, the gateway combines them into upstream instructions.
 - The Codex upstream requires `stream: true`; when you set `"stream": false`, the gateway buffers the upstream stream
   and returns a normal JSON response.
-- Defaults: if `model` is omitted/blank, the gateway uses `gpt-5.2-chat-latest`; if reasoning is omitted, the gateway uses
-  `xhigh` reasoning effort (for `gpt-5*` and `o*` models).
+- Chat completions require `model` (per the OpenAI API). Responses allow omitting `model`; the gateway falls back to its
+  configured default.
+- Use `reasoning_effort` for chat completions or `reasoning` for responses to control reasoning level.
 
 Streaming:
 
@@ -97,7 +98,7 @@ curl -N https://ai.ubq.fi/v1/chat/completions \
   --data '{
     "model": "gpt-5.1-codex-mini",
     "stream": true,
-    "messages": [{"role":"user","content":"Say hello in 5 different ways."}]
+    "messages": [{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Say hello in 5 different ways."}]
   }'
 ```
 
@@ -110,6 +111,7 @@ curl -sS https://ai.ubq.fi/v1/responses \
   --data '{
     "model": "gpt-5.2-chat-latest",
     "reasoning": { "effort": "high" },
+    "instructions": "You are a helpful assistant.",
     "input": "Summarize this in 1 sentence: ..."
   }'
 ```
@@ -121,7 +123,7 @@ Run from this repo:
 ```bash
 cd lib/ai.ubq.fi
 export UOS_AI_TOKEN="..."
-deno task ubq-ai chat "Tell me a short joke."
+deno task ubq-ai chat --system "You are a helpful assistant." "Tell me a short joke."
 ```
 
 Client commands also accept an admin token (`DENO_DEPLOY_TOKEN`) when
@@ -140,11 +142,11 @@ Examples:
 export UOS_AI_TOKEN="..."
 ubq-ai whoami | jq
 ubq-ai models | jq
-ubq-ai chat "Tell me a short joke."
-ubq-ai chat --reasoning-effort high "Solve: 24*7."
-ubq-ai chat --stream "Say hello in 5 different ways."
-ubq-ai responses "Summarize this in 1 sentence: ..."
-ubq-ai responses --reasoning-effort high "Write a short proof sketch for the pigeonhole principle."
+ubq-ai chat --system "You are a helpful assistant." "Tell me a short joke."
+ubq-ai chat --system "You are a helpful assistant." --reasoning-effort high "Solve: 24*7."
+ubq-ai chat --system "You are a helpful assistant." --stream "Say hello in 5 different ways."
+ubq-ai responses --instructions "You are a helpful assistant." "Summarize this in 1 sentence: ..."
+ubq-ai responses --instructions "You are a helpful assistant." --reasoning-effort high "Write a short proof sketch for the pigeonhole principle."
 ```
 
 Debug (prints useful env/token fingerprints to stderr, never raw secrets):

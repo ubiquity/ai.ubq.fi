@@ -341,7 +341,7 @@ Commands:
   whoami
   models
   chat [<prompt>] [--model <id>] [--reasoning-effort <level>] [--system <text>] [--developer <text>] [--messages-json <json>] [--messages-file <path>]
-  responses [<input>] [--model <id>] [--reasoning-effort <level>] [--input-json <json>] [--input-file <path>]
+  responses [<input>] [--model <id>] [--reasoning-effort <level>] [--instructions <text>] [--input-json <json>] [--input-file <path>]
   admin upload-auth [--auth-json <path>] [--codex-bin <path>]
   admin keys create "<name>" [--token <token>] [--expires <preset>|--expires-at-ms <ms>] [--usage-limit <requests>]
   admin keys list
@@ -360,8 +360,8 @@ Admin key expiration:
   --expires-at-ms <ms>         Unix epoch ms timestamp; -1 means does not expire
 
 Examples:
-  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat \"Tell me a short joke.\"
-  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --stream \"Say hello in 5 different ways.\"
+  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --system \"You are a helpful assistant.\" \"Tell me a short joke.\"
+  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --system \"You are a helpful assistant.\" --stream \"Say hello in 5 different ways.\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"example key\"
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"tmp key\" --expires week
@@ -934,6 +934,8 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       return 2;
     }
     const model = (getFlagString(flags, "model") ?? "gpt-5.2-chat-latest").trim() || "gpt-5.2-chat-latest";
+    const instructionsRaw = getFlagString(flags, "instructions");
+    const instructions = typeof instructionsRaw === "string" ? instructionsRaw.trim() : "";
 
     const inputFromJson = (raw: string): unknown | null => {
       try {
@@ -986,6 +988,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       input,
       stream: wantsStream,
     };
+    if (instructionsRaw !== undefined) {
+      body.instructions = instructions;
+    }
 
     const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
     if (reasoningEffortRaw) {

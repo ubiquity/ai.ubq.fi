@@ -223,6 +223,8 @@ Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", asy
       const body = JSON.parse(recorded.bodyText ?? "null") as { stream?: unknown; messages?: unknown };
       assert.equal(body.stream, true);
       assert.ok(Array.isArray(body.messages));
+      const first = (body.messages as Array<{ role?: unknown; content?: unknown }>)[0];
+      assert.equal(first?.role, "system");
       const last = (body.messages as Array<{ role?: unknown; content?: unknown }>).at(-1);
       assert.equal(last?.role, "user");
       assert.equal(last?.content, "Say hello in 2 ways.");
@@ -238,7 +240,10 @@ Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", asy
     },
   });
 
-  const code = await runUbqAi(["chat", "--stream", "Say hello in 2 ways."], runtime);
+  const code = await runUbqAi(
+    ["chat", "--stream", "--system", "You are a helpful assistant.", "Say hello in 2 ways."],
+    runtime,
+  );
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "Hello world\n");
@@ -261,7 +266,7 @@ Deno.test("ubq-ai: chat (non-stream) prints assistant content", async () => {
     },
   });
 
-  const code = await runUbqAi(["chat", "Tell me a short joke."], runtime);
+  const code = await runUbqAi(["chat", "--system", "You are a helpful assistant.", "Tell me a short joke."], runtime);
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "hi\n");
@@ -284,7 +289,10 @@ Deno.test("ubq-ai: chat passes --reasoning-effort through", async () => {
     },
   });
 
-  const code = await runUbqAi(["chat", "--reasoning-effort", "xhigh", "Tell me a short joke."], runtime);
+  const code = await runUbqAi(
+    ["chat", "--reasoning-effort", "xhigh", "--system", "You are a helpful assistant.", "Tell me a short joke."],
+    runtime,
+  );
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "ok\n");
@@ -307,7 +315,7 @@ Deno.test("ubq-ai: chat falls back to admin token when client token missing", as
     },
   });
 
-  const code = await runUbqAi(["chat", "Tell me a short joke."], runtime);
+  const code = await runUbqAi(["chat", "--system", "You are a helpful assistant.", "Tell me a short joke."], runtime);
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "hi\n");
@@ -318,6 +326,8 @@ Deno.test("ubq-ai: responses (non-stream) prints extracted assistant text", asyn
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/responses"));
+      const body = JSON.parse(recorded.bodyText ?? "null") as { instructions?: unknown };
+      assert.equal(body.instructions, "You are a helpful assistant.");
       return jsonResponse(200, {
         id: "resp_test",
         output: [
@@ -331,7 +341,10 @@ Deno.test("ubq-ai: responses (non-stream) prints extracted assistant text", asyn
     },
   });
 
-  const code = await runUbqAi(["responses", "--model", "gpt-5.2", "Summarize this."], runtime);
+  const code = await runUbqAi(
+    ["responses", "--model", "gpt-5.2", "--instructions", "You are a helpful assistant.", "Summarize this."],
+    runtime,
+  );
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "Summary.\n");
@@ -342,8 +355,9 @@ Deno.test("ubq-ai: responses maps --reasoning-effort to reasoning.effort", async
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/responses"));
-      const body = JSON.parse(recorded.bodyText ?? "null") as { reasoning?: unknown };
+      const body = JSON.parse(recorded.bodyText ?? "null") as { reasoning?: unknown; instructions?: unknown };
       assert.deepEqual(body.reasoning, { effort: "high" });
+      assert.equal(body.instructions, "You are a helpful assistant.");
       return jsonResponse(200, {
         id: "resp_test",
         output: [
@@ -357,7 +371,10 @@ Deno.test("ubq-ai: responses maps --reasoning-effort to reasoning.effort", async
     },
   });
 
-  const code = await runUbqAi(["responses", "--reasoning-effort", "high", "Summarize this."], runtime);
+  const code = await runUbqAi(
+    ["responses", "--reasoning-effort", "high", "--instructions", "You are a helpful assistant.", "Summarize this."],
+    runtime,
+  );
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "Done.\n");
@@ -370,6 +387,8 @@ Deno.test("ubq-ai: responses falls back to admin token when client token missing
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/responses"));
       assert.equal(recorded.headers.authorization, "Bearer deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz");
+      const body = JSON.parse(recorded.bodyText ?? "null") as { instructions?: unknown };
+      assert.equal(body.instructions, "You are a helpful assistant.");
       return jsonResponse(200, {
         id: "resp_test",
         output: [
@@ -383,7 +402,10 @@ Deno.test("ubq-ai: responses falls back to admin token when client token missing
     },
   });
 
-  const code = await runUbqAi(["responses", "--model", "gpt-5.2", "Summarize this."], runtime);
+  const code = await runUbqAi(
+    ["responses", "--model", "gpt-5.2", "--instructions", "You are a helpful assistant.", "Summarize this."],
+    runtime,
+  );
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "Summary.\n");
