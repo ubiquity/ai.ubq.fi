@@ -723,7 +723,7 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     : { effort: reasoningEffort.value };
   const codexBody = await buildCodexRequest(model, input, {
     reasoning: reasoningValue,
-    instructions: instructions ? instructions : undefined,
+    instructions,
   });
   const passthroughKeys = [
     "audio",
@@ -870,7 +870,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
 
-  let instructions: string | undefined = undefined;
+  let instructions = "";
   if (Object.prototype.hasOwnProperty.call(rawRecord, "instructions")) {
     const rawInstructions = getString(rawBody.instructions);
     if (rawInstructions === null) {
