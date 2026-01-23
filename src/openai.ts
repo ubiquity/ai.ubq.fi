@@ -182,6 +182,23 @@ const UOS_WARNING_HEADER = "x-uos-warning";
 const TEMPERATURE_IGNORED_WARNING = "temperature_ignored";
 const MAX_OUTPUT_TOKENS_IGNORED_WARNING = "max_output_tokens_ignored";
 
+const WARNING_KEY_MAP = new Map<string, string>([
+  ["temperature", TEMPERATURE_IGNORED_WARNING],
+  ["max_tokens", MAX_OUTPUT_TOKENS_IGNORED_WARNING],
+  ["max_completion_tokens", MAX_OUTPUT_TOKENS_IGNORED_WARNING],
+  ["max_output_tokens", MAX_OUTPUT_TOKENS_IGNORED_WARNING],
+]);
+
+const buildIgnoredWarnings = (record: Record<string, unknown>, usedKeys: ReadonlySet<string>): string[] => {
+  const warnings = new Set<string>();
+  for (const key of Object.keys(record)) {
+    if (usedKeys.has(key)) continue;
+    const mapped = WARNING_KEY_MAP.get(key) ?? `${key}_ignored`;
+    warnings.add(mapped);
+  }
+  return Array.from(warnings);
+};
+
 const withUosWarning = (response: Response, warnings: string[]): Response => {
   if (!warnings.length) return response;
   const headers = new Headers(response.headers);
@@ -699,16 +716,10 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
-  const warnings: string[] = [];
-  if (Object.prototype.hasOwnProperty.call(rawRecord, "temperature")) {
-    warnings.push(TEMPERATURE_IGNORED_WARNING);
-  }
-  if (
-    Object.prototype.hasOwnProperty.call(rawRecord, "max_completion_tokens") ||
-    Object.prototype.hasOwnProperty.call(rawRecord, "max_tokens")
-  ) {
-    warnings.push(MAX_OUTPUT_TOKENS_IGNORED_WARNING);
-  }
+  const warnings = buildIgnoredWarnings(
+    rawRecord,
+    new Set(["messages", "model", "stream", "reasoning_effort"]),
+  );
 
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
   const rawModelValue = rawRecord.model;
@@ -758,41 +769,6 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     reasoning: reasoningValue,
     instructions,
   });
-  const passthroughKeys = [
-    "audio",
-    "frequency_penalty",
-    "function_call",
-    "functions",
-    "logit_bias",
-    "logprobs",
-    "metadata",
-    "modalities",
-    "n",
-    "parallel_tool_calls",
-    "prediction",
-    "presence_penalty",
-    "prompt_cache_key",
-    "prompt_cache_retention",
-    "response_format",
-    "safety_identifier",
-    "seed",
-    "service_tier",
-    "stop",
-    "store",
-    "stream_options",
-    "tool_choice",
-    "tools",
-    "top_logprobs",
-    "top_p",
-    "user",
-    "verbosity",
-    "web_search_options",
-  ];
-  for (const key of passthroughKeys) {
-    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
-      codexBody[key] = rawRecord[key];
-    }
-  }
   codexBody.store = false;
 
   const stream = Boolean(body.stream);
@@ -842,13 +818,10 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
-  const warnings: string[] = [];
-  if (Object.prototype.hasOwnProperty.call(rawRecord, "temperature")) {
-    warnings.push(TEMPERATURE_IGNORED_WARNING);
-  }
-  if (Object.prototype.hasOwnProperty.call(rawRecord, "max_output_tokens")) {
-    warnings.push(MAX_OUTPUT_TOKENS_IGNORED_WARNING);
-  }
+  const warnings = buildIgnoredWarnings(
+    rawRecord,
+    new Set(["model", "input", "stream", "reasoning", "instructions"]),
+  );
 
   const clientWantsStream = Boolean(rawBody.stream);
 
@@ -923,34 +896,6 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   }
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });
-  const passthroughKeys = [
-    "background",
-    "conversation",
-    "include",
-    "max_tool_calls",
-    "tools",
-    "tool_choice",
-    "parallel_tool_calls",
-    "metadata",
-    "top_p",
-    "truncation",
-    "prompt",
-    "prompt_cache_key",
-    "prompt_cache_retention",
-    "previous_response_id",
-    "safety_identifier",
-    "service_tier",
-    "store",
-    "stream_options",
-    "text",
-    "top_logprobs",
-    "user",
-  ];
-  for (const key of passthroughKeys) {
-    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
-      codexBody[key] = rawRecord[key];
-    }
-  }
   codexBody.model = model;
   codexBody.input = input;
   codexBody.stream = true;
