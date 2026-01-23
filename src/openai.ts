@@ -718,7 +718,16 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   }
   const warnings = buildIgnoredWarnings(
     rawRecord,
-    new Set(["messages", "model", "stream", "reasoning_effort"]),
+    new Set([
+      "messages",
+      "model",
+      "stream",
+      "reasoning_effort",
+      "tools",
+      "tool_choice",
+      "parallel_tool_calls",
+      "prompt_cache_key",
+    ]),
   );
 
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
@@ -769,6 +778,12 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     reasoning: reasoningValue,
     instructions,
   });
+  const passthroughKeys = ["tools", "tool_choice", "parallel_tool_calls", "prompt_cache_key"];
+  for (const key of passthroughKeys) {
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
+      codexBody[key] = rawRecord[key];
+    }
+  }
   codexBody.store = false;
 
   const stream = Boolean(body.stream);
@@ -820,7 +835,19 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   }
   const warnings = buildIgnoredWarnings(
     rawRecord,
-    new Set(["model", "input", "stream", "reasoning", "instructions"]),
+    new Set([
+      "model",
+      "input",
+      "stream",
+      "reasoning",
+      "instructions",
+      "tools",
+      "tool_choice",
+      "parallel_tool_calls",
+      "prompt_cache_key",
+      "text",
+      "include",
+    ]),
   );
 
   const clientWantsStream = Boolean(rawBody.stream);
@@ -896,6 +923,12 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   }
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });
+  const passthroughKeys = ["tools", "tool_choice", "parallel_tool_calls", "prompt_cache_key", "text", "include"];
+  for (const key of passthroughKeys) {
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
+      codexBody[key] = rawRecord[key];
+    }
+  }
   codexBody.model = model;
   codexBody.input = input;
   codexBody.stream = true;
