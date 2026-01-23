@@ -177,6 +177,20 @@ const resolveReasoningLabelFromParam = (
   }
   return defaultLabel;
 };
+
+const UOS_WARNING_HEADER = "x-uos-warning";
+const TEMPERATURE_IGNORED_WARNING = "temperature_ignored";
+
+const withUosWarning = (response: Response, warning: string | null): Response => {
+  if (!warning) return response;
+  const headers = new Headers(response.headers);
+  headers.set(UOS_WARNING_HEADER, warning);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
 const parseReasoningEffortField = (
   value: unknown,
   fieldName: string,
@@ -684,6 +698,9 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
+  const temperatureIgnored = Object.prototype.hasOwnProperty.call(rawRecord, "temperature")
+    ? TEMPERATURE_IGNORED_WARNING
+    : null;
 
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
   const rawModelValue = rawRecord.model;
@@ -806,11 +823,12 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
   }
 
-  return stream ? streamChatCompletions(upstream, model, usageContext) : await completeChatCompletions(
+  const response = stream ? streamChatCompletions(upstream, model, usageContext) : await completeChatCompletions(
     upstream,
     model,
     usageContext,
   );
+  return withUosWarning(response, temperatureIgnored);
 };
 
 export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
@@ -822,6 +840,9 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
+  const temperatureIgnored = Object.prototype.hasOwnProperty.call(rawRecord, "temperature")
+    ? TEMPERATURE_IGNORED_WARNING
+    : null;
 
   const clientWantsStream = Boolean(rawBody.stream);
 
@@ -968,17 +989,19 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     if (usageContext?.keyId || usageContext?.kernelRepo || usageContext?.kernelOrg) {
       const [clientStream, analyticsStream] = upstream.body.tee();
       void collectResponsesStreamUsage(analyticsStream, usageContext);
-      return new Response(clientStream, {
+      const response = new Response(clientStream, {
         status: upstream.status,
         statusText: upstream.statusText,
         headers,
       });
+      return withUosWarning(response, temperatureIgnored);
     }
-    return new Response(upstream.body, {
+    const response = new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers,
     });
+    return withUosWarning(response, temperatureIgnored);
   }
 
   if (!upstream.body) {
@@ -1000,5 +1023,6 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   }
   const usageTokens = extractUsageTokens(finalResponse.usage);
   await recordCompletionUsage(usageContext, usageTokens);
-  return json(200, finalResponse, { "x-ubq-upstream": "chatgpt_codex" });
+  const response = json(200, finalResponse, { "x-ubq-upstream": "chatgpt_codex" });
+  return withUosWarning(response, temperatureIgnored);
 };

@@ -111,6 +111,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal(response.status, 200);
     const payload = await response.json() as { model?: string };
     assert.equal(payload.model, "gpt-5.2");
+    assert.equal(response.headers.get("x-uos-warning"), "temperature_ignored");
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], "gpt-5.2");
@@ -142,6 +143,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal(response.status, 200);
     const payload = await response.json() as { model?: string; reasoning?: unknown };
     assert.equal(payload.model, "gpt-5.2");
+    assert.equal(response.headers.get("x-uos-warning"), "temperature_ignored");
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], "gpt-5.2");
