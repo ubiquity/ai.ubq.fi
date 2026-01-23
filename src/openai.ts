@@ -767,6 +767,7 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     ? rawRecord.max_tokens
     : undefined;
   if (maxCompletionTokens !== undefined) codexBody.max_output_tokens = maxCompletionTokens;
+  codexBody.store = false;
 
   const stream = Boolean(body.stream);
   const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
@@ -917,6 +918,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   codexBody.model = model;
   codexBody.input = input;
   codexBody.stream = true;
+  codexBody.store = false;
 
   await recordRequestUsage(usageContext, {
     model: modelRaw,

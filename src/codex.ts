@@ -454,6 +454,7 @@ export const buildCodexRequest = async (
   const body: Record<string, unknown> = {
     model,
     input,
+    store: false,
     stream: true,
   };
 
