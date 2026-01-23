@@ -229,12 +229,14 @@ export const recordApiKeyUsage = async (keyId: string, delta: ApiKeyUsageDelta):
       for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
         const entry = await kv.get<ApiKeyUsageDailyRecord>(apiKeyUsageDailyKey(keyId));
         const current = normalizeDailyUsageRecord(entry.value, keyId, nowMs);
-        const nextDays = [...current.days];
+        let nextDays = [...current.days];
         const existing = nextDays.find((item) => item.day === dayKey);
         if (existing) {
-          existing.request_count += requestCount;
+          nextDays = nextDays.map((item) =>
+            item.day === dayKey ? { ...item, request_count: item.request_count + requestCount } : item
+          );
         } else {
-          nextDays.push({ day: dayKey, request_count: requestCount });
+          nextDays = [...nextDays, { day: dayKey, request_count: requestCount }];
         }
         const updated: ApiKeyUsageDailyRecord = {
           key_id: keyId,

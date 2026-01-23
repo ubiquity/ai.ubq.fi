@@ -157,6 +157,7 @@ export type ChatCompletionRequest = Readonly<{
 export type ResponsesRequest = Readonly<{
   model?: unknown;
   input?: unknown;
+  instructions?: unknown;
   reasoning?: unknown;
   stream?: unknown;
 }>;
