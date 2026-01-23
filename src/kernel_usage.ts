@@ -343,9 +343,10 @@ export const recordKernelUsage = async (owner: string, repo: string, delta: Kern
         const entry = await kv.get<KernelAuthUsageDailyRecord>(kernelUsageDailyKey(owner, repo));
         const current = normalizeDailyUsageRecord(entry.value, owner, repo, nowMs);
         const nextDays = [...current.days];
-        const existing = nextDays.find((item) => item.day === dayKey);
-        if (existing) {
-          existing.request_count += requestCount;
+        const index = nextDays.findIndex((item) => item.day === dayKey);
+        if (index >= 0) {
+          const existing = nextDays[index]!;
+          nextDays[index] = { day: existing.day, request_count: existing.request_count + requestCount };
         } else {
           nextDays.push({ day: dayKey, request_count: requestCount });
         }
@@ -487,9 +488,10 @@ export const recordKernelOrgUsage = async (owner: string, delta: KernelUsageDelt
         const entry = await kv.get<KernelOrgUsageDailyRecord>(kernelOrgUsageDailyKey(owner));
         const current = normalizeDailyOrgUsageRecord(entry.value, owner, nowMs);
         const nextDays = [...current.days];
-        const existing = nextDays.find((item) => item.day === dayKey);
-        if (existing) {
-          existing.request_count += requestCount;
+        const index = nextDays.findIndex((item) => item.day === dayKey);
+        if (index >= 0) {
+          const existing = nextDays[index]!;
+          nextDays[index] = { day: existing.day, request_count: existing.request_count + requestCount };
         } else {
           nextDays.push({ day: dayKey, request_count: requestCount });
         }
