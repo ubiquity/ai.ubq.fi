@@ -1,5 +1,7 @@
 body[data-page="admin"] [data-shell] {
-  padding: calc(24px + env(safe-area-inset-top)) 28px calc(64px + env(safe-area-inset-bottom));
+  width: 100%;
+  max-width: 100%;
+  padding: calc(24px + env(safe-area-inset-top)) clamp(20px, 4vw, 64px) calc(64px + env(safe-area-inset-bottom));
   gap: 20px;
 }
 

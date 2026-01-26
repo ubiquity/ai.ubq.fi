@@ -6,6 +6,8 @@ const STORAGE_KEYS = {
   expiresPreset: "uos_ai.admin.expires_preset",
   base: "uos_ai.admin.base",
   view: "uos_ai.admin.view",
+  defaultsSnapshot: "uos_ai.admin.defaults_snapshot",
+  defaultsModels: "uos_ai.admin.defaults_models",
 };
 
 const storage = {
@@ -30,6 +32,24 @@ const storage = {
       // ignore
     }
   },
+};
+
+const readStorageJson = (key) => {
+  const raw = storage.get(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const writeStorageJson = (key, value) => {
+  try {
+    storage.set(key, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
 };
 
 const debounce = (fn, wait = 450) => {
@@ -113,6 +133,8 @@ const defaultsMeta = mustGet("defaults-meta");
 let defaultsLoaded = false;
 let defaultsSaving = false;
 let defaultsModelMap = new Map();
+let defaultsTouched = false;
+let defaultsLoadId = 0;
 
 const kernelListBadge = mustGet("kernel-list-badge");
 const kernelList = mustGet("kernel-list");
@@ -2916,6 +2938,7 @@ const renderKeys = (keys, view = "all") => {
         return;
       }
       const { payload, nextSnapshot } = result;
+      const hasExpiresField = Object.prototype.hasOwnProperty.call(payload, "expires_at_ms");
       const requestInputs = getEditInputState();
       editSaving = true;
       setEditBadge("unknown", "Saving...");
@@ -2940,11 +2963,15 @@ const renderKeys = (keys, view = "all") => {
           : nextSnapshot.usage_limit_requests;
         const updatedWindowMs = typeof data?.window_ms === "number" ? data.window_ms : nextSnapshot.window_ms;
         const updatedExpires = typeof data?.expires_at_ms === "number" ? data.expires_at_ms : nextSnapshot.expires_at_ms;
+        const expiresMismatch = hasExpiresField &&
+          typeof data?.expires_at_ms === "number" &&
+          data.expires_at_ms !== nextSnapshot.expires_at_ms;
+        const resolvedExpires = expiresMismatch ? nextSnapshot.expires_at_ms : updatedExpires;
 
         key.name = updatedName;
         key.usage_limit_requests = updatedLimit;
         key.window_ms = updatedWindowMs;
-        key.expires_at_ms = updatedExpires;
+        key.expires_at_ms = resolvedExpires;
         if (typeof data?.usage_requests === "number") key.usage_requests = data.usage_requests;
         if (typeof data?.usage_reset_at_ms === "number") key.usage_reset_at_ms = data.usage_reset_at_ms;
 
@@ -2953,7 +2980,7 @@ const renderKeys = (keys, view = "all") => {
         updateUsageInfo();
 
         const inputsUnchanged = isSameEditInputState(requestInputs, getEditInputState());
-        if (inputsUnchanged) {
+        if (inputsUnchanged && !expiresMismatch) {
           syncEditInputsFromKey();
         }
 
@@ -2963,8 +2990,10 @@ const renderKeys = (keys, view = "all") => {
           window_ms: resolveKeyWindowMs(),
           expires_at_ms: key.expires_at_ms,
         };
-        editDirty = !inputsUnchanged;
-        if (editDirty) {
+        editDirty = expiresMismatch || !inputsUnchanged;
+        if (expiresMismatch) {
+          setEditBadge("bad", "Save conflict — retry");
+        } else if (editDirty) {
           setEditBadge("unknown", "Editing...");
         } else {
           setEditBadge("ok", "Saved");
@@ -3403,6 +3432,68 @@ const formatModelLabel = (model) => {
   return label && label.trim() ? label : "unknown";
 };
 
+const coerceFiniteInt = (value) => (typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null);
+
+const extractCachedModels = (cached) => {
+  if (!cached || typeof cached !== "object") return { snapshot: null, models: [] };
+  const rawModels = Array.isArray(cached.models) ? cached.models : [];
+  const models = rawModels.filter((model) => typeof model?.slug === "string" && model.slug.trim().length > 0);
+  if (!models.length) return { snapshot: null, models: [] };
+  const snapshot = {
+    updated_at_ms: coerceFiniteInt(cached.updated_at_ms),
+    source: typeof cached.source === "string" && cached.source.trim() ? cached.source.trim() : "cached",
+    client_version: typeof cached.client_version === "string" && cached.client_version.trim()
+      ? cached.client_version.trim()
+      : "",
+  };
+  return { snapshot, models };
+};
+
+const extractCachedDefaults = (cached) => {
+  if (!cached || typeof cached !== "object") return null;
+  const model = typeof cached.model === "string" ? cached.model : "";
+  const reasoning = typeof cached.reasoning_effort === "string" ? cached.reasoning_effort : "";
+  const limit = coerceFiniteInt(cached.kernel_policy_limit_requests);
+  const windowMs = coerceFiniteInt(cached.kernel_policy_window_ms);
+  return { model, reasoning_effort: reasoning, kernel_policy_limit_requests: limit, kernel_policy_window_ms: windowMs };
+};
+
+const applyDefaultsSnapshot = (snapshot, defaults, options = {}) => {
+  if (!Array.isArray(snapshot?.models) || !snapshot.models.length) return null;
+  const models = snapshot.models;
+  defaultsModelMap = new Map(models.map((model) => [model.slug, model]));
+  if (snapshot.meta) updateDefaultsMeta(snapshot.meta, models);
+  const modelOptions = models.map((model) => ({ value: model.slug, label: formatModelLabel(model) }));
+  const preferredModel = options.preserveInputs ? defaultsModelSelect.value : defaults?.model ?? "";
+  const selectedModel = setSelectOptions(defaultsModelSelect, modelOptions, preferredModel, "No models available");
+  const preferredReasoning = options.preserveInputs ? defaultsReasoningSelect.value : defaults?.reasoning_effort ?? "";
+  const selectedReasoning = updateReasoningOptions(selectedModel, preferredReasoning);
+  if (!options.preserveInputs) {
+    if (typeof defaults?.kernel_policy_limit_requests === "number") {
+      defaultsKernelLimitInput.value = String(Math.trunc(defaults.kernel_policy_limit_requests));
+    }
+    if (typeof defaults?.kernel_policy_window_ms === "number") {
+      defaultsKernelWindowInput.value = String(Math.trunc(defaults.kernel_policy_window_ms));
+    }
+  }
+  return { selectedModel, selectedReasoning };
+};
+
+const persistDefaultsSnapshot = (snapshot) => {
+  if (!snapshot) return;
+  writeStorageJson(STORAGE_KEYS.defaultsSnapshot, snapshot);
+};
+
+const persistDefaultsModels = (snapshot, models) => {
+  if (!Array.isArray(models) || models.length === 0) return;
+  writeStorageJson(STORAGE_KEYS.defaultsModels, {
+    updated_at_ms: snapshot?.updated_at_ms ?? null,
+    source: snapshot?.source ?? "unknown",
+    client_version: snapshot?.client_version ?? "",
+    models,
+  });
+};
+
 const setSelectOptions = (select, options, selected, emptyLabel) => {
   select.textContent = "";
   if (!options.length) {
@@ -3463,9 +3554,28 @@ const loadDefaults = async () => {
     return;
   }
 
+  const loadId = ++defaultsLoadId;
+  defaultsTouched = false;
   defaultsLoaded = false;
   setDefaultsBadge("unknown", "Loading...");
-  defaultsMeta.textContent = "Loading model list...";
+  let cacheApplied = false;
+  const cachedDefaults = extractCachedDefaults(readStorageJson(STORAGE_KEYS.defaultsSnapshot));
+  const cachedModels = extractCachedModels(readStorageJson(STORAGE_KEYS.defaultsModels));
+  if (cachedModels.models.length) {
+    const cachedSnapshot = {
+      models: cachedModels.models,
+      meta: cachedModels.snapshot,
+    };
+    const cachedResult = applyDefaultsSnapshot(cachedSnapshot, cachedDefaults);
+    if (cachedResult) {
+      cacheApplied = true;
+      defaultsLoaded = true;
+      setDefaultsBadge("unknown", "Cached");
+    }
+  }
+  if (!cacheApplied) {
+    defaultsMeta.textContent = "Loading model list...";
+  }
 
   try {
     const [modelsRes, defaultsRes] = await Promise.all([
@@ -3478,16 +3588,18 @@ const loadDefaults = async () => {
         cache: "no-store",
       }),
     ]);
+    if (loadId !== defaultsLoadId) return;
     const modelsPayload = await modelsRes.json().catch(() => null);
     if (!modelsRes.ok) {
       setDefaultsBadge("bad", modelsPayload?.error?.message ?? "Error");
-      defaultsMeta.textContent = "Failed to load models.";
+      if (!cacheApplied) defaultsMeta.textContent = "Failed to load models.";
       return;
     }
     const snapshot = modelsPayload?.data ?? null;
     const models = Array.isArray(snapshot?.models) ? snapshot.models.filter((model) => typeof model?.slug === "string") : [];
     defaultsModelMap = new Map(models.map((model) => [model.slug, model]));
     updateDefaultsMeta(snapshot, models);
+    persistDefaultsModels(snapshot, models);
 
     const defaultsPayload = await defaultsRes.json().catch(() => null);
     if (!defaultsRes.ok) {
@@ -3497,27 +3609,34 @@ const loadDefaults = async () => {
 
     if (!models.length) {
       setDefaultsBadge("bad", "No models");
-      setSelectOptions(defaultsModelSelect, [], "", "No models available");
-      setSelectOptions(defaultsReasoningSelect, [], "", "No reasoning levels");
+      if (!cacheApplied) {
+        setSelectOptions(defaultsModelSelect, [], "", "No models available");
+        setSelectOptions(defaultsReasoningSelect, [], "", "No reasoning levels");
+      }
       return;
     }
 
-    const currentModel = typeof defaultsPayload?.defaults?.model === "string" ? defaultsPayload.defaults.model : "";
-    const currentReasoning =
-      typeof defaultsPayload?.defaults?.reasoning_effort === "string" ? defaultsPayload.defaults.reasoning_effort : "";
-    const currentKernelLimit = typeof defaultsPayload?.defaults?.kernel_policy_limit_requests === "number"
-      ? Math.trunc(defaultsPayload.defaults.kernel_policy_limit_requests)
-      : DEFAULT_KERNEL_POLICY_LIMIT;
-    const currentKernelWindow = typeof defaultsPayload?.defaults?.kernel_policy_window_ms === "number"
-      ? Math.trunc(defaultsPayload.defaults.kernel_policy_window_ms)
-      : DEFAULT_KERNEL_POLICY_WINDOW_MS;
-    const modelOptions = models.map((model) => ({ value: model.slug, label: formatModelLabel(model) }));
-    const selectedModel = setSelectOptions(defaultsModelSelect, modelOptions, currentModel, "No models available");
-    const selectedReasoning = updateReasoningOptions(selectedModel, currentReasoning);
-    defaultsKernelLimitInput.value = String(currentKernelLimit);
-    defaultsKernelWindowInput.value = String(currentKernelWindow);
+    const serverDefaults = {
+      model: typeof defaultsPayload?.defaults?.model === "string" ? defaultsPayload.defaults.model : "",
+      reasoning_effort:
+        typeof defaultsPayload?.defaults?.reasoning_effort === "string" ? defaultsPayload.defaults.reasoning_effort : "",
+      kernel_policy_limit_requests: typeof defaultsPayload?.defaults?.kernel_policy_limit_requests === "number"
+        ? Math.trunc(defaultsPayload.defaults.kernel_policy_limit_requests)
+        : DEFAULT_KERNEL_POLICY_LIMIT,
+      kernel_policy_window_ms: typeof defaultsPayload?.defaults?.kernel_policy_window_ms === "number"
+        ? Math.trunc(defaultsPayload.defaults.kernel_policy_window_ms)
+        : DEFAULT_KERNEL_POLICY_WINDOW_MS,
+    };
+    persistDefaultsSnapshot(serverDefaults);
+    const result = applyDefaultsSnapshot(
+      { models, meta: snapshot },
+      serverDefaults,
+      { preserveInputs: defaultsTouched },
+    );
     defaultsLoaded = true;
-    setDefaultsBadge("ok", `${selectedModel} · ${selectedReasoning}`);
+    if (!defaultsTouched && result) {
+      setDefaultsBadge("ok", `${result.selectedModel} · ${result.selectedReasoning}`);
+    }
   } catch {
     setDefaultsBadge("bad", "Offline");
     defaultsMeta.textContent = "Offline.";
@@ -3576,6 +3695,18 @@ const saveDefaults = async () => {
     if (typeof saved?.kernel_policy_window_ms === "number") {
       defaultsKernelWindowInput.value = String(Math.trunc(saved.kernel_policy_window_ms));
     }
+    persistDefaultsSnapshot({
+      model: typeof saved?.model === "string" && saved.model ? saved.model : model,
+      reasoning_effort:
+        typeof saved?.reasoning_effort === "string" && saved.reasoning_effort ? saved.reasoning_effort : reasoning,
+      kernel_policy_limit_requests: typeof saved?.kernel_policy_limit_requests === "number"
+        ? Math.trunc(saved.kernel_policy_limit_requests)
+        : limitValue,
+      kernel_policy_window_ms: typeof saved?.kernel_policy_window_ms === "number"
+        ? Math.trunc(saved.kernel_policy_window_ms)
+        : windowResult.value,
+    });
+    defaultsTouched = false;
     setDefaultsBadge("ok", summary);
   } catch {
     setDefaultsBadge("bad", "Offline");
@@ -3794,6 +3925,7 @@ keysTabRevoked.addEventListener("click", () => switchKeysView("revoked"));
 
 defaultsModelSelect.addEventListener("change", () => {
   if (!defaultsLoaded) return;
+  defaultsTouched = true;
   const model = defaultsModelSelect.value;
   updateReasoningOptions(model, defaultsReasoningSelect.value);
   scheduleDefaultsSave();
@@ -3801,11 +3933,13 @@ defaultsModelSelect.addEventListener("change", () => {
 
 defaultsReasoningSelect.addEventListener("change", () => {
   if (!defaultsLoaded) return;
+  defaultsTouched = true;
   scheduleDefaultsSave();
 });
 
 const markDefaultsEditing = () => {
   if (!defaultsLoaded) return;
+  defaultsTouched = true;
   setDefaultsBadge("unknown", "Editing...");
   scheduleDefaultsSave();
 };

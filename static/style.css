@@ -17,7 +17,7 @@
   --radius-lg: 18px;
   --radius-md: 16px;
   --radius-sm: 12px;
-  --page-width: 1080px;
+  --page-width: 100%;
   --font-family: "Ubiquity Nova", "Proxima Nova", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --network-trace-width: 3px;
@@ -171,15 +171,12 @@ pre[data-code] code {
 }
 
 [data-shell] {
+  width: 100%;
   max-width: var(--page-width);
   margin: 0 auto;
-  padding: calc(32px + env(safe-area-inset-top)) 20px calc(64px + env(safe-area-inset-bottom));
+  padding: calc(32px + env(safe-area-inset-top)) clamp(20px, 4vw, 56px) calc(64px + env(safe-area-inset-bottom));
   display: grid;
   gap: 24px;
-}
-
-body[data-page="admin"] [data-shell] {
-  max-width: 1180px;
 }
 
 header[data-shared-header] {
