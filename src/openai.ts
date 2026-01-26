@@ -763,6 +763,15 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     input.push(converted);
   }
 
+  if (input.length === 0) {
+    // Ensure upstream receives a non-empty input for system-only chats.
+    input.push({
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "" }],
+    });
+  }
+
   const instructions = instructionParts.join("\n\n").trim();
   const defaultEffort = await getDefaultReasoningEffort();
   const defaultReasoningLabel = resolveDefaultReasoningLabel(model, defaultEffort);

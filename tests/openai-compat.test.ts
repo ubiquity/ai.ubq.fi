@@ -163,6 +163,42 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
   });
 });
 
+Deno.test("openai: chat completions accept system-only messages", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "system", content: "Only system." }],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  const recorded = recordedBody as Record<string, unknown>;
+  assert.equal(recorded["instructions"], "Only system.");
+  const input = recorded["input"];
+  assert.ok(Array.isArray(input));
+  assert.ok(input.length > 0);
+  const first = input[0] as Record<string, unknown>;
+  assert.equal(first["type"], "message");
+  assert.equal(first["role"], "user");
+  const content = first["content"];
+  assert.ok(Array.isArray(content));
+  const firstContent = (content as Record<string, unknown>[])[0] ?? null;
+  assert.equal(firstContent?.["type"], "input_text");
+});
+
 if (originalOpenKv) {
   Deno.test("openai: restore openKv", () => {
     (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
