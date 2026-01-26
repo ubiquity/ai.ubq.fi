@@ -31,13 +31,16 @@ export const json = (status: number, body: unknown, extraHeaders: HeadersInit = 
   });
 
 export const openaiError = (status: number, message: string, code?: string): Response =>
-  json(status, {
-    error: {
-      message,
-      type: "invalid_request_error",
-      code,
-    },
-  });
+  {
+    console.trace(`[ai.ubq.fi] OpenAI API error (${status}):`, message);
+    return json(status, {
+      error: {
+        message,
+        type: "invalid_request_error",
+        code,
+      },
+    });
+  };
 
 export const getBearerToken = (req: Request): string | null => {
   const value = req.headers.get("Authorization");
