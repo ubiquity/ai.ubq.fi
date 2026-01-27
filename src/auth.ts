@@ -77,19 +77,6 @@ const getKernelPublicKeyPems = async (): Promise<string[]> => {
   return tokens;
 };
 
-export const reloadKernelPublicKeys = async () => {
-  const pems = await getKernelPublicKeyPems();
-  const keys: CryptoKey[] = [];
-  for (const pem of pems) {
-    try {
-      keys.push(await importRsaPublicKey(pem));
-    } catch (error) {
-      console.error("[ai.ubq.fi] Failed to import kernel public key:", error);
-    }
-  }
-  kernelPublicKeysPromise = Promise.resolve(keys);
-};
-
 const importRsaPublicKey = async (publicKeyPem: string): Promise<CryptoKey> => {
   const pemContents = publicKeyPem
     .replace("-----BEGIN PUBLIC KEY-----", "")
@@ -109,7 +96,12 @@ const importRsaPublicKey = async (publicKeyPem: string): Promise<CryptoKey> => {
   );
 };
 
-let kernelPublicKeysPromise: Promise<ReadonlyArray<CryptoKey>> = (async () => {
+const KERNEL_PUBLIC_KEYS_REFRESH_MS = 60_000;
+
+let kernelPublicKeysPromise: Promise<ReadonlyArray<CryptoKey>> | null = null;
+let kernelPublicKeysLoadedAtMs = 0;
+
+const loadKernelPublicKeys = async (): Promise<ReadonlyArray<CryptoKey>> => {
   const pems = await getKernelPublicKeyPems();
   const keys: CryptoKey[] = [];
   for (const pem of pems) {
@@ -120,7 +112,24 @@ let kernelPublicKeysPromise: Promise<ReadonlyArray<CryptoKey>> = (async () => {
     }
   }
   return keys;
-})();
+};
+
+const getKernelPublicKeys = async (forceReload = false): Promise<ReadonlyArray<CryptoKey>> => {
+  const now = Date.now();
+  if (!forceReload && kernelPublicKeysPromise && now - kernelPublicKeysLoadedAtMs < KERNEL_PUBLIC_KEYS_REFRESH_MS) {
+    return kernelPublicKeysPromise;
+  }
+  kernelPublicKeysPromise = (async () => {
+    const keys = await loadKernelPublicKeys();
+    kernelPublicKeysLoadedAtMs = Date.now();
+    return keys;
+  })();
+  return kernelPublicKeysPromise;
+};
+
+export const reloadKernelPublicKeys = async (): Promise<void> => {
+  await getKernelPublicKeys(true);
+};
 
 const decodeBase64UrlToBytes = (raw: string): Uint8Array<ArrayBuffer> => {
   const b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
@@ -223,7 +232,7 @@ const verifyKernelAttestation = async (
     };
   }
 
-  const keys = await kernelPublicKeysPromise;
+  const keys = await getKernelPublicKeys();
   if (keys.length === 0) {
     return {
       ok: false,
@@ -337,17 +346,32 @@ const verifyKernelAttestation = async (
     };
   }
 
-  let signatureValid = false;
-  for (const key of keys) {
-    try {
-      const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signatureBytes, dataArray);
-      if (ok) {
-        signatureValid = true;
-        break;
+  const verifySignature = async (candidateKeys: ReadonlyArray<CryptoKey>): Promise<boolean> => {
+    for (const key of candidateKeys) {
+      try {
+        const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signatureBytes, dataArray);
+        if (ok) return true;
+      } catch {
+        // ignore and try next key
       }
-    } catch {
-      // ignore and try next key
     }
+    return false;
+  };
+
+  let signatureValid = await verifySignature(keys);
+  if (!signatureValid) {
+    const refreshedKeys = await getKernelPublicKeys(true);
+    if (refreshedKeys.length === 0) {
+      return {
+        ok: false,
+        response: openaiError(
+          500,
+          "Server misconfigured: No kernel public keys loaded. Set 'UOS_AI_KERNEL_PUBLIC_KEY' or use admin endpoints to add pubkeys.",
+          "server_error",
+        ),
+      };
+    }
+    signatureValid = await verifySignature(refreshedKeys);
   }
   if (!signatureValid) {
     return {
