@@ -1,16 +1,14 @@
 import { config } from "./config.ts";
 import {
   CODEX_KV_KEY,
-  buildCodexRequest,
   checkCodexAuthRefresh,
-  fetchCodexResponses,
+  fetchCodexModels,
   getJwtExpMs,
   parseCodexAuthFromAuthJson,
 } from "./codex.ts";
 import { json } from "./http.ts";
 import { kvPromise } from "./kv.ts";
 import { decodeBase64ToString } from "./utils.ts";
-import type { ResponseMessageItem } from "./types.ts";
 
 export const handleHealth = async (): Promise<Response> => {
   const problems: string[] = [];
@@ -109,20 +107,9 @@ export const handleHealthUpstream = async (): Promise<Response> => {
     });
   }
 
-  const model = "gpt-5.1-codex-mini";
-  const input: ResponseMessageItem[] = [
-    {
-      type: "message",
-      role: "user",
-      content: [{ type: "input_text", text: "ping" }],
-    },
-  ];
-
-  const body = await buildCodexRequest(model, input);
-
   let res: Response;
   try {
-    res = await fetchCodexResponses(body);
+    res = await fetchCodexModels();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return json(503, {

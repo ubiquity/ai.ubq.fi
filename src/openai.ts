@@ -11,8 +11,8 @@ import {
   DEFAULT_REASONING_EFFORT,
   DEFAULT_REASONING_EFFORT_KEY,
   normalizeReasoningEffort,
-  type ReasoningEffort,
   REASONING_EFFORTS,
+  type ReasoningEffort,
 } from "./defaults.ts";
 import { recordApiKeyUsage } from "./analytics.ts";
 import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
@@ -38,7 +38,6 @@ const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
   if (effort && REASONING_EFFORTS.has(effort as ReasoningEffort)) return effort as ReasoningEffort;
   return DEFAULT_REASONING_EFFORT;
 };
-
 
 type UsageContext = Readonly<{
   keyId: string | null;
@@ -664,24 +663,29 @@ const completeChatCompletions = async (
 };
 
 export const handleModels = async (): Promise<Response> => {
-  const snapshot = await loadCodexModelsSnapshot();
-  if (snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0) {
-    const normalized = normalizeModelList({ models: snapshot.models });
-    if (normalized) {
-      return json(200, normalized, { "x-ubq-upstream": snapshot.source || "codex_cli" });
-    }
-  }
-
-  let upstream: Response;
+  let upstream: Response | null = null;
   try {
     upstream = await fetchCodexModels();
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream models fetch failed:", error);
+    upstream = null;
+    const snapshot = await loadCodexModelsSnapshot();
+    if (snapshot && snapshot.source !== "codex_cli" && Array.isArray(snapshot.models) && snapshot.models.length > 0) {
+      const normalized = normalizeModelList({ models: snapshot.models });
+      if (normalized) return json(200, normalized, { "x-ubq-upstream": snapshot.source || "chatgpt_codex" });
+    }
     return toCodexErrorResponse(error);
   }
 
   if (!upstream.ok) {
     const text = await upstream.text().catch(() => "");
+    if (upstream.status !== 400 && upstream.status !== 401 && upstream.status !== 403) {
+      const snapshot = await loadCodexModelsSnapshot();
+      if (snapshot && snapshot.source !== "codex_cli" && Array.isArray(snapshot.models) && snapshot.models.length > 0) {
+        const normalized = normalizeModelList({ models: snapshot.models });
+        if (normalized) return json(200, normalized, { "x-ubq-upstream": snapshot.source || "chatgpt_codex" });
+      }
+    }
     return new Response(text || upstream.statusText, {
       status: upstream.status,
       headers: {
@@ -797,7 +801,12 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
 
   const stream = Boolean(body.stream);
   const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
-  await recordRequestUsage(usageContext, { model: modelRaw, route: "chat.completions", stream, reasoning: reasoningLabel });
+  await recordRequestUsage(usageContext, {
+    model: modelRaw,
+    route: "chat.completions",
+    stream,
+    reasoning: reasoningLabel,
+  });
 
   let upstream: Response;
   try {

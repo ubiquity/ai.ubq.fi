@@ -3,6 +3,7 @@ import {
   CODEX_KV_KEY,
   CodexError,
   type CodexModelsSnapshot,
+  fetchCodexModels,
   getJwtExpMs,
   loadCodexModelsSnapshot,
   parseCodexAuthFromAuthJson,
@@ -18,8 +19,8 @@ import {
   DEFAULT_MODEL_KEY,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_REASONING_EFFORT_KEY,
-  type ReasoningEffort,
   normalizeReasoningEffort,
+  type ReasoningEffort,
 } from "./defaults.ts";
 import { json, openaiError } from "./http.ts";
 import {
@@ -45,10 +46,10 @@ import {
   getKernelOrgUsageLimitSnapshot,
   getKernelUsage,
   getKernelUsageLimitSnapshot,
-  listKernelOrgUsageRecords,
   listKernelOrgUsageLimits,
-  listKernelUsageRecords,
+  listKernelOrgUsageRecords,
   listKernelUsageLimits,
+  listKernelUsageRecords,
   setKernelOrgUsageLimit,
   setKernelUsageLimit,
 } from "./kernel_usage.ts";
@@ -75,15 +76,15 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   if (!tokenData) {
     return openaiError(400, "Body does not look like a Codex auth.json", "invalid_request_error");
   }
-  if (modelsPayload === undefined) {
-    return openaiError(400, "models is required for Codex auth uploads", "invalid_request_error");
-  }
 
   const seed: CodexAuthState = { ...tokenData, updated_at_ms: Date.now() };
+  const clientVersion = isRecord(modelsPayload)
+    ? getString(modelsPayload.client_version) ?? getString(modelsPayload.clientVersion)
+    : null;
 
   let validated: Awaited<ReturnType<typeof validateCodexAuthJson>>;
   try {
-    validated = await validateCodexAuthJson(seed);
+    validated = await validateCodexAuthJson(seed, { clientVersion });
   } catch (error) {
     console.error("[ai.ubq.fi] Codex auth validation failed:", error);
     if (error instanceof CodexError) {
@@ -108,32 +109,56 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   let modelsStored:
     | { count: number; source: string; updated_at_ms: number; client_version: string | null }
     | null = null;
-  if (modelsPayload !== undefined) {
-    const snapshot = normalizeCodexModelsPayload(modelsPayload);
-    if (!snapshot) {
-      return openaiError(400, "models must include a non-empty models array", "invalid_request_error");
+  try {
+    const upstream = await fetchCodexModels({ clientVersion });
+    if (upstream.ok) {
+      const text = await upstream.text().catch(() => "");
+      let parsed: unknown = null;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = null;
+      }
+      const snapshot = isRecord(parsed)
+        ? normalizeCodexModelsPayload({
+          ...parsed,
+          source: "chatgpt_codex",
+          client_version: clientVersion ?? undefined,
+          updated_at_ms: Date.now(),
+        })
+        : null;
+      if (!snapshot) {
+        console.warn("[ai.ubq.fi] Codex models payload did not include a model list; skipping KV store.");
+      } else {
+        const size = estimateJsonSize(snapshot);
+        if (size === null) {
+          return openaiError(400, "models payload could not be serialized", "invalid_request_error");
+        }
+        if (size > SAFE_KV_BYTES) {
+          return openaiError(
+            413,
+            `models snapshot too large (${size} bytes; max ${MAX_KV_BYTES}).`,
+            "invalid_request_error",
+          );
+        }
+        const stored = await storeCodexModelsSnapshot(snapshot);
+        if (!stored) {
+          return openaiError(500, "Deno KV is not available; cannot persist Codex models", "server_error");
+        }
+        modelsStored = {
+          count: snapshot.models.length,
+          source: snapshot.source,
+          updated_at_ms: snapshot.updated_at_ms,
+          client_version: snapshot.client_version ?? null,
+        };
+      }
+    } else {
+      const text = await upstream.text().catch(() => "");
+      const snippet = (text || upstream.statusText).trim().slice(0, 400);
+      console.warn(`[ai.ubq.fi] Codex models fetch failed (${upstream.status}): ${snippet}`);
     }
-    const size = estimateJsonSize(snapshot);
-    if (size === null) {
-      return openaiError(400, "models payload could not be serialized", "invalid_request_error");
-    }
-    if (size > SAFE_KV_BYTES) {
-      return openaiError(
-        413,
-        `models snapshot too large (${size} bytes; max ${MAX_KV_BYTES}).`,
-        "invalid_request_error",
-      );
-    }
-    const stored = await storeCodexModelsSnapshot(snapshot);
-    if (!stored) {
-      return openaiError(500, "Deno KV is not available; cannot persist Codex models", "server_error");
-    }
-    modelsStored = {
-      count: snapshot.models.length,
-      source: snapshot.source,
-      updated_at_ms: snapshot.updated_at_ms,
-      client_version: snapshot.client_version ?? null,
-    };
+  } catch (error) {
+    console.warn("[ai.ubq.fi] Failed to fetch Codex models after auth upload:", error);
   }
 
   const expMs = getJwtExpMs(validated.auth.access_token);
@@ -229,7 +254,8 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
     const kernelWindowEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY);
     const model = typeof modelEntry.value === "string" && modelEntry.value.trim() ? modelEntry.value : DEFAULT_MODEL;
     const reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
-    const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
+    const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
+      DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
     const kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
     return json(200, {
       ok: true,
@@ -253,11 +279,12 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
 
     let model = typeof modelEntry.value === "string" && modelEntry.value.trim() ? modelEntry.value : DEFAULT_MODEL;
     let reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
-    let kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
+    let kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
+      DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
     let kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
 
-    const wantsModelUpdate = Object.prototype.hasOwnProperty.call(raw, "model")
-      || Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
+    const wantsModelUpdate = Object.prototype.hasOwnProperty.call(raw, "model") ||
+      Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
     if (wantsModelUpdate) {
       const nextModel = normalizeDefaultModel(raw.model ?? model);
       if (!nextModel) return openaiError(400, "model must be a non-empty string", "invalid_request_error");
@@ -267,7 +294,8 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
         return openaiError(409, "No Codex model snapshot stored", "invalid_request_error");
       }
 
-      const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === nextModel) ?? null;
+      const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === nextModel) ??
+        null;
       if (!modelRecord) {
         return openaiError(400, "model is not in the stored Codex model list", "invalid_request_error");
       }

@@ -5,8 +5,7 @@ OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 ## How auth works
 
 - Clients authenticate to `ai.ubq.fi` with a **UBQ gateway token**: `Authorization: Bearer <token>`.
-  - Accepted tokens come from `UOS_AI_TOKEN` and/or API keys stored in Deno KV (created via
-    `/admin/api-keys`).
+  - Accepted tokens come from `UOS_AI_TOKEN` and/or API keys stored in Deno KV (created via `/admin/api-keys`).
   - Admin tokens (including Deno Deploy tokens) also grant access to client routes (`/v1/*`).
 - The gateway **does not use or forward your client token upstream**.
   - For upstream requests, it uses **Codex CLI ChatGPT auth** from `CODEX_AUTH_JSON_B64` (base64 of
@@ -126,8 +125,7 @@ export UOS_AI_TOKEN="..."
 deno task ubq-ai chat --system "You are a helpful assistant." "Tell me a short joke."
 ```
 
-Client commands also accept an admin token (`DENO_DEPLOY_TOKEN`) when
-`UOS_AI_TOKEN` is unset.
+Client commands also accept an admin token (`DENO_DEPLOY_TOKEN`) when `UOS_AI_TOKEN` is unset.
 
 Install on your machine:
 
@@ -177,8 +175,8 @@ ubq-ai admin keys list | jq
 ## Runtime env
 
 - `CODEX_AUTH_JSON_B64` (required): base64 of `~/.codex/auth.json` from a machine that ran `codex login`.
-- `UOS_AI_TOKEN` (optional): Comma- or newline-separated client tokens accepted via
-  `Authorization: Bearer ...`. The gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
+- `UOS_AI_TOKEN` (optional): Comma- or newline-separated client tokens accepted via `Authorization: Bearer ...`. The
+  gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
@@ -188,10 +186,10 @@ ubq-ai admin keys list | jq
 ## Admin: upload/validate Codex auth.json
 
 This validates your posted `auth.json` against the upstream Codex endpoint and, if valid, stores the tokens in Deno KV
-(becoming the active upstream auth for subsequent requests).
+(becoming the active upstream auth for subsequent requests). The gateway then fetches the upstream Codex model catalog
+and stores a snapshot in KV for fallback use if upstream is temporarily unavailable.
 
-Treat `auth.json` as a secret (it contains refresh tokens).
-Codex auth uploads require a model snapshot, so use the repo helper CLI:
+Treat `auth.json` as a secret (it contains refresh tokens). Use the repo helper CLI:
 
 ```bash
 cd lib/ai.ubq.fi
@@ -204,7 +202,8 @@ The helper CLI uses `DENO_DEPLOY_TOKEN` and extracts the Codex CLI model list fr
 
 ## Admin: create/manage UBQ API keys
 
-API keys are stored in Deno KV (hashed) and are only returned once on creation. Keys are prefixed with `u_` for easy identification.
+API keys are stored in Deno KV (hashed) and are only returned once on creation. Keys are prefixed with `u_` for easy
+identification.
 
 **Default Limits:**
 
@@ -252,9 +251,9 @@ deno task ubq-ai admin keys create "unlimited key" --usage-limit unlimited
 
 ## Admin: kernel auth usage limits (GitHub token)
 
-Kernel-attested GitHub token auth is tracked per `owner/repo` and can also be limited per org (`owner`).
-The default limit is unlimited until an admin sets a per-repo or per-org limit. Limits reset weekly by default,
-unless `window_ms` is provided.
+Kernel-attested GitHub token auth is tracked per `owner/repo` and can also be limited per org (`owner`). The default
+limit is unlimited until an admin sets a per-repo or per-org limit. Limits reset weekly by default, unless `window_ms`
+is provided.
 
 Get repo usage/limit (admin):
 

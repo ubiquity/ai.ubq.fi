@@ -7,6 +7,36 @@ const CODEX_REFRESH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_USER_AGENT = "codex_cli_rs/0.99.0 (ai.ubq.fi)";
+const CODEX_CLIENT_VERSION = (() => {
+  const match = CODEX_USER_AGENT.match(/codex_cli_rs\/([0-9]+(?:\.[0-9]+){1,2})/);
+  return match ? match[1] : null;
+})();
+
+const parseSemverTriplet = (value: string): [number, number, number] | null => {
+  const parts = value.trim().split(".");
+  if (parts.length < 2 || parts.length > 3) return null;
+  const nums = parts.map((part) => Number(part));
+  if (nums.some((num) => !Number.isFinite(num) || num < 0)) return null;
+  const [major, minor, patch = 0] = nums;
+  return [Math.trunc(major), Math.trunc(minor), Math.trunc(patch)];
+};
+
+const pickHigherSemver = (a: string | null | undefined, b: string | null | undefined): string | null => {
+  const aNorm = typeof a === "string" ? a.trim() : "";
+  const bNorm = typeof b === "string" ? b.trim() : "";
+  if (!aNorm && !bNorm) return null;
+  if (!aNorm) return bNorm || null;
+  if (!bNorm) return aNorm || null;
+
+  const aParsed = parseSemverTriplet(aNorm);
+  const bParsed = parseSemverTriplet(bNorm);
+  if (!aParsed || !bParsed) return aNorm;
+  for (let i = 0; i < 3; i++) {
+    if (aParsed[i] > bParsed[i]) return aNorm;
+    if (aParsed[i] < bParsed[i]) return bNorm;
+  }
+  return aNorm;
+};
 
 export type CodexErrorCode =
   | "codex_auth_missing"
@@ -302,7 +332,7 @@ const getValidAuth = async (): Promise<CodexAuthState> => {
   return await refreshInFlight;
 };
 
-const fetchCodexResponsesWithAuth = async (auth: CodexAuthState, body: unknown): Promise<Response> => {
+const _fetchCodexResponsesWithAuth = async (auth: CodexAuthState, body: unknown): Promise<Response> => {
   const url = `${config.codexBaseUrl}/responses`;
 
   const headers = new Headers();
@@ -322,13 +352,19 @@ const fetchCodexResponsesWithAuth = async (auth: CodexAuthState, body: unknown):
   });
 };
 
-const codexModelsBaseUrls = (): string[] => {
+const codexModelsBaseUrls = (clientVersion: string | null): string[] => {
   const base = config.codexBaseUrl.replace(/\/+$/, "");
   const urls = new Set<string>();
+
+  // Prefer the Codex-specific models endpoint when available. It requires `client_version`.
   if (base.endsWith("/codex")) {
-    urls.add(`${base.slice(0, -"/codex".length)}/models`);
+    const codexUrl = new URL(`${base}/models`);
+    if (clientVersion) codexUrl.searchParams.set("client_version", clientVersion);
+    urls.add(codexUrl.toString());
+  } else {
+    urls.add(`${base}/models`);
   }
-  urls.add(`${base}/models`);
+
   return Array.from(urls);
 };
 
@@ -410,9 +446,12 @@ export const fetchCodexResponses = async (body: unknown): Promise<Response> => {
   }
 };
 
-export const fetchCodexModels = async (): Promise<Response> => {
+export const fetchCodexModels = async (
+  options: Readonly<{ clientVersion?: string | null }> = {},
+): Promise<Response> => {
   const auth = await getValidAuth();
-  const urls = codexModelsBaseUrls();
+  const clientVersion = pickHigherSemver(options.clientVersion, CODEX_CLIENT_VERSION);
+  const urls = codexModelsBaseUrls(clientVersion);
   let lastResponse: Response | null = null;
 
   for (const url of urls) {
@@ -422,7 +461,7 @@ export const fetchCodexModels = async (): Promise<Response> => {
       const auth2 = await getValidAuth();
       res = await fetchCodexModelsWithAuth(auth2, url);
     }
-    if (res.status === 404 && urls.length > 1) {
+    if ((res.status === 404 || res.status === 400) && urls.length > 1) {
       lastResponse = res;
       continue;
     }
@@ -446,11 +485,11 @@ export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): P
   return true;
 };
 
-export const buildCodexRequest = async (
+export const buildCodexRequest = (
   model: string,
   input: ResponseMessageItem[],
   options: Readonly<{ reasoning?: Record<string, unknown> | null; instructions?: string | null }> = {},
-): Promise<Record<string, unknown>> => {
+): Record<string, unknown> => {
   const body: Record<string, unknown> = {
     model,
     input,
@@ -466,6 +505,7 @@ export const buildCodexRequest = async (
 
 export const validateCodexAuthJson = async (
   auth: CodexAuthState,
+  options: Readonly<{ clientVersion?: string | null }> = {},
 ): Promise<
   { ok: true; auth: CodexAuthState; refreshed: boolean; status: number; contentType: string | null } | {
     ok: false;
@@ -473,7 +513,8 @@ export const validateCodexAuthJson = async (
     body: string;
   }
 > => {
-  const urls = codexModelsBaseUrls();
+  const clientVersion = pickHigherSemver(options.clientVersion, CODEX_CLIENT_VERSION);
+  const urls = codexModelsBaseUrls(clientVersion);
   let refreshed = false;
   let lastResponse: Response | null = null;
 
@@ -489,7 +530,7 @@ export const validateCodexAuthJson = async (
         // ignore and return the original 401 response
       }
     }
-    if (res.status === 404 && urls.length > 1) {
+    if ((res.status === 404 || res.status === 400) && urls.length > 1) {
       lastResponse = res;
       continue;
     }

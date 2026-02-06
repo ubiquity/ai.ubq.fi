@@ -16,31 +16,32 @@ kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
 const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv;
 
 const kvStub = {
-  get: async (key: Deno.KvKey) =>
-    ({ key, value: kvStore.get(keyToString(key)) ?? null }) as Deno.KvEntryMaybe<unknown>,
-  set: async (key: Deno.KvKey, value: unknown) => {
+  get: (key: Deno.KvKey) =>
+    Promise.resolve(({ key, value: kvStore.get(keyToString(key)) ?? null }) as Deno.KvEntryMaybe<unknown>),
+  set: (key: Deno.KvKey, value: unknown) => {
     kvStore.set(keyToString(key), value);
-    return { ok: true } as const;
+    return Promise.resolve({ ok: true } as const);
   },
-  delete: async (key: Deno.KvKey) => {
+  delete: (key: Deno.KvKey) => {
     kvStore.delete(keyToString(key));
+    return Promise.resolve();
   },
   list: async function* (_selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
-    return;
+    yield* [];
   },
   atomic: () => {
     const chain = {
       check: () => chain,
       set: () => chain,
       delete: () => chain,
-      commit: async () => ({ ok: true } as const),
+      commit: () => Promise.resolve({ ok: true } as const),
     };
     return chain;
   },
   close: () => {},
 } as unknown as Deno.Kv;
 
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = async () => kvStub;
+(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
 const { handleChatCompletions, handleResponses } = await import("../src/openai.ts");
 
@@ -59,10 +60,12 @@ const sseResponse = (chunks: string[]): Response => {
 const baseSseChunks = () => [
   `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_test", created_at: 0 } })}\n\n`,
   `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "pong" })}\n\n`,
-  `data: ${JSON.stringify({
-    type: "response.completed",
-    response: { model: "gpt-5.2", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
-  })}\n\n`,
+  `data: ${
+    JSON.stringify({
+      type: "response.completed",
+      response: { model: "gpt-5.2", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+    })
+  }\n\n`,
 ];
 
 const parseWarnings = (value: string | null): string[] =>
@@ -74,11 +77,7 @@ const withFetchMock = async <T>(
 ): Promise<T> => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string"
-      ? input
-      : input instanceof URL
-      ? input.toString()
-      : input.url;
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const bodyText = typeof init?.body === "string" ? init.body : null;
     return await handler(url, bodyText);
   };

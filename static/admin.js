@@ -147,7 +147,7 @@ const kernelAttention = mustGet("kernel-attention");
 const kernelNewToggle = mustGet("kernel-new-toggle");
 const kernelNewPanel = mustGet("kernel-new-panel");
 const kernelNewOwnerInput = mustGet("kernel-new-owner");
-const kernelNewRepoField = mustGet("kernel-new-repo-field");
+const _kernelNewRepoField = mustGet("kernel-new-repo-field");
 const kernelNewRepoInput = mustGet("kernel-new-repo");
 const kernelNewLimitInput = mustGet("kernel-new-limit");
 const kernelNewWindowInput = mustGet("kernel-new-window");
@@ -1814,7 +1814,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
 
 const renderKernelList = (records, policyState = kernelPolicyState) => {
   kernelList.textContent = "";
-  const { org, repo } = normalizeKernelListRecords(records);
+  const { org: _org, repo } = normalizeKernelListRecords(records);
   const allGroups = buildKernelGroups(records);
   const totalOrgCount = allGroups.length;
   const totalRepoCount = repo.length;

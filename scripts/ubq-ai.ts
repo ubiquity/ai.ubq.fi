@@ -92,11 +92,14 @@ const readCodexPackageVersion = async (runtime: UbqAiRuntime, codexPath: string 
 
 const resolveCodexClientVersion = async (
   runtime: UbqAiRuntime,
-  codexPath: string | null,
+  codexPaths: (string | null | undefined)[],
   homeDir: string | undefined,
 ): Promise<string | null> => {
-  const pkgVersion = await readCodexPackageVersion(runtime, codexPath);
-  if (pkgVersion) return pkgVersion;
+  for (const codexPath of codexPaths) {
+    if (!codexPath) continue;
+    const pkgVersion = await readCodexPackageVersion(runtime, codexPath);
+    if (pkgVersion) return pkgVersion;
+  }
   return await readCodexVersionFile(runtime, homeDir);
 };
 
@@ -104,7 +107,9 @@ const loadCodexBinaryText = async (
   runtime: UbqAiRuntime,
   codexBinFlag: string | null,
   homeDir: string | undefined,
-): Promise<{ path: string; text: string } | null> => {
+): Promise<
+  { path: string; sourcePath: string; text: string; models: NonNullable<ReturnType<typeof extractCodexModelsFromText>> } | null
+> => {
   const candidates: string[] = [];
   if (codexBinFlag) candidates.push(expandTilde(codexBinFlag, homeDir));
   const pathValue = runtime.envGet("PATH") ?? "";
@@ -113,7 +118,11 @@ const loadCodexBinaryText = async (
     candidates.push(`${segment.replace(/\/$/, "")}/codex`);
   }
 
+  const seen = new Set<string>();
+
   for (const candidate of candidates) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
     try {
       const resolved = await resolveCodexBinaryPath(
         candidate,
@@ -122,8 +131,20 @@ const loadCodexBinaryText = async (
         Deno.build.arch,
         Deno.realPath,
       );
-      const text = await runtime.readTextFile(resolved);
-      return { path: resolved, text };
+      let text: string;
+      try {
+        text = await runtime.readTextFile(resolved);
+      } catch (error) {
+        try {
+          const bytes = await Deno.readFile(resolved);
+          text = new TextDecoder().decode(bytes);
+        } catch {
+          throw error;
+        }
+      }
+      const models = extractCodexModelsFromText(text);
+      if (!models) continue;
+      return { path: resolved, sourcePath: candidate, text, models };
     } catch {
       // ignore
     }
@@ -1111,15 +1132,14 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       let modelsPayload: Record<string, unknown> | null = null;
       const binary = await loadCodexBinaryText(runtime, codexBinFlag, homeDir);
       if (!binary) {
-        await writeErrText(runtime, "Codex binary not found on PATH. Pass --codex-bin to upload models.\n");
+        await writeErrText(
+          runtime,
+          "Codex binary with model metadata not found on PATH. Pass --codex-bin to the real Codex binary.\n",
+        );
         return 2;
       }
-      const extractedModels = extractCodexModelsFromText(binary.text);
-      if (!extractedModels) {
-        await writeErrText(runtime, "Failed to extract Codex models from the CLI binary.\n");
-        return 1;
-      }
-      const fallbackVersion = await resolveCodexClientVersion(runtime, binary.path, homeDir);
+      const extractedModels = binary.models;
+      const fallbackVersion = await resolveCodexClientVersion(runtime, [binary.sourcePath, binary.path], homeDir);
       const clientVersion = extractedModels.clientVersion ?? fallbackVersion ?? undefined;
       modelsPayload = {
         source: "codex_cli",
