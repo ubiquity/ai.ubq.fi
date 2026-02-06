@@ -6,13 +6,13 @@
 
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>UbiquityOS — AI Gateway</title>
-    <meta name="description" content="OpenAI API-compatible gateway for the UbiquityOS ecosystem." />
+    <title>UbiquityOS — LLMs & Agents</title>
+    <meta name="description" content="Comprehensive LLM and agent-bus documentation for the UbiquityOS AI gateway." />
 
     <link rel="stylesheet" href="/style.css" />
-    <link rel="stylesheet" href="/home.css" />
+    <link rel="stylesheet" href="/docs.css" />
   </head>
-  <body data-page="home" data-role="public">
+  <body data-page="docs" data-role="public">
     <div data-shell>
       <header data-shared-header>
         <div data-brand>
@@ -31,60 +31,36 @@
           <strong>OpenAI-compatible</strong>
         </div>
         <nav data-actions aria-label="Primary">
-          <a data-button data-variant="primary" href="/docs">Docs</a>
+          <a data-button data-variant="primary" aria-current="page" href="/docs">Docs</a>
           <a data-button href="/chat">Chat playground</a>
           <a data-button href="/admin">Admin</a>
         </nav>
       </header>
 
       <main>
-        <section data-hero>
-          <h1>AI Gateway</h1>
-          <p data-lead>OpenAI-compatible gateway for the UbiquityOS ecosystem.</p>
+        <section data-hero data-docs-hero>
+          <div>
+            <h1>LLMs &amp; Agents</h1>
+            <p data-lead>Comprehensive reference for the UbiquityOS AI gateway.</p>
+          </div>
           <div data-layout="row">
-            <a data-button data-variant="primary" href="/docs">Read the full docs</a>
-            <a data-button href="/chat">Open the chat playground</a>
+            <a data-button data-variant="primary" href="/docs/llms-agents.md">View Markdown</a>
+            <a data-button href="/">Overview</a>
           </div>
         </section>
 
-        <section data-layout="grid" role="list">
-          <article data-card data-span="half" role="listitem" aria-labelledby="card-quickstart">
-            <header>
-              <h2 id="card-quickstart">Quickstart (curl)</h2>
-              <p>Assumes <code>$UOS_AI_TOKEN</code> is set.</p>
-            </header>
-            <div data-card-body>
-              <pre data-code><code>export UOS_AI_TOKEN="..."
-
-curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UOS_AI_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"model":"gpt-5.2-chat-latest","messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Tell me a short joke."}]}'</code></pre>
-              <div data-layout="row">
-                <a data-button data-variant="primary" href="/docs">Full LLMs &amp; agents docs</a>
-                <a data-button href="/health">Health check</a>
-              </div>
-            </div>
+        <section data-docs-layout>
+          <article data-card data-docs-content data-docs-source="/docs/llms-agents.md" aria-live="polite">
+            <p>Loading docs…</p>
           </article>
 
-          <article data-card data-span="half" role="listitem" aria-labelledby="card-status">
-            <header>
-              <h2 id="card-status">Status</h2>
-              <p>
-                Health endpoint:
-                <a href="/health">/health</a>
-              </p>
-            </header>
-            <div data-card-body>
-              <div data-layout="row">
-                <span id="status-badge" data-badge data-state="unknown">Checking...</span>
-                <a data-button href="/health">View JSON</a>
-              </div>
-            </div>
-          </article>
+          <aside data-card data-docs-sidebar>
+            <h2>On this page</h2>
+            <nav data-docs-toc aria-label="Table of contents"></nav>
+          </aside>
         </section>
       </main>
     </div>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/docs.js"></script>
   </body>
 </html>

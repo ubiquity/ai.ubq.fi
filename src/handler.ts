@@ -32,6 +32,10 @@ import {
   handleChatCss,
   handleChatJs,
   handleChatPage,
+  handleDocsCss,
+  handleDocsJs,
+  handleDocsLlmAgentsMd,
+  handleDocsPage,
   handleHomeCss,
   handleCompanyLogo,
   handleFavicon,
@@ -58,6 +62,10 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleRoot(req));
   }
 
+  if (req.method === "GET" && (path === "/docs" || path === "/docs.html")) {
+    return withCors(await handleDocsPage());
+  }
+
   if (req.method === "GET" && (path === "/chat" || path === "/chat.html")) {
     return withCors(await handleChatPage());
   }
@@ -82,6 +90,10 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleStyleCss());
   }
 
+  if (req.method === "GET" && path === "/docs.css") {
+    return withCors(await handleDocsCss());
+  }
+
   if (req.method === "GET" && path === "/chat.css") {
     return withCors(await handleChatCss());
   }
@@ -98,8 +110,16 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleAppJs());
   }
 
+  if (req.method === "GET" && path === "/docs.js") {
+    return withCors(await handleDocsJs());
+  }
+
   if (req.method === "GET" && path === "/company-logo.svg") {
     return withCors(await handleCompanyLogo());
+  }
+
+  if (req.method === "GET" && path === "/docs/llms-agents.md") {
+    return withCors(await handleDocsLlmAgentsMd());
   }
 
   if (req.method === "GET" && path === "/favicon-32.png") {

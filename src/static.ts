@@ -3,16 +3,20 @@ import { json } from "./http.ts";
 import { kvPromise } from "./kv.ts";
 
 const INDEX_HTML_URL = new URL("../static/index.html", import.meta.url);
+const DOCS_HTML_URL = new URL("../static/docs.html", import.meta.url);
 const CHAT_HTML_URL = new URL("../static/chat.html", import.meta.url);
 const ADMIN_HTML_URL = new URL("../static/admin.html", import.meta.url);
 const STYLE_CSS_URL = new URL("../static/style.css", import.meta.url);
 const CHAT_CSS_URL = new URL("../static/chat.css", import.meta.url);
 const HOME_CSS_URL = new URL("../static/home.css", import.meta.url);
+const DOCS_CSS_URL = new URL("../static/docs.css", import.meta.url);
 const ADMIN_CSS_URL = new URL("../static/admin.css", import.meta.url);
 const APP_JS_URL = new URL("../static/app.js", import.meta.url);
 const CHAT_JS_URL = new URL("../static/chat.js", import.meta.url);
 const ADMIN_JS_URL = new URL("../static/admin.js", import.meta.url);
 const NETWORK_JS_URL = new URL("../static/network.js", import.meta.url);
+const DOCS_JS_URL = new URL("../static/docs.js", import.meta.url);
+const DOCS_LLM_AGENTS_MD_URL = new URL("../static/docs/llms-agents.md", import.meta.url);
 const COMPANY_LOGO_URL = new URL("../static/company-logo.svg", import.meta.url);
 const FAVICON_32_URL = new URL("../favicon-32.png", import.meta.url);
 const FAVICON_URL = new URL("../favicon.png", import.meta.url);
@@ -36,16 +40,20 @@ const readBytesFile = async (url: URL, label: string): Promise<Uint8Array | null
 };
 
 const indexHtmlPromise = readTextFile(INDEX_HTML_URL, "static/index.html");
+const docsHtmlPromise = readTextFile(DOCS_HTML_URL, "static/docs.html");
 const chatHtmlPromise = readTextFile(CHAT_HTML_URL, "static/chat.html");
 const adminHtmlPromise = readTextFile(ADMIN_HTML_URL, "static/admin.html");
 const styleCssPromise = readTextFile(STYLE_CSS_URL, "static/style.css");
 const chatCssPromise = readTextFile(CHAT_CSS_URL, "static/chat.css");
 const homeCssPromise = readTextFile(HOME_CSS_URL, "static/home.css");
+const docsCssPromise = readTextFile(DOCS_CSS_URL, "static/docs.css");
 const adminCssPromise = readTextFile(ADMIN_CSS_URL, "static/admin.css");
 const appJsPromise = readTextFile(APP_JS_URL, "static/app.js");
 const chatJsPromise = readTextFile(CHAT_JS_URL, "static/chat.js");
 const adminJsPromise = readTextFile(ADMIN_JS_URL, "static/admin.js");
 const networkJsPromise = readTextFile(NETWORK_JS_URL, "static/network.js");
+const docsJsPromise = readTextFile(DOCS_JS_URL, "static/docs.js");
+const docsLlmAgentsMdPromise = readTextFile(DOCS_LLM_AGENTS_MD_URL, "static/docs/llms-agents.md");
 const companyLogoPromise = readTextFile(COMPANY_LOGO_URL, "static/company-logo.svg");
 
 const favicon32Promise = readBytesFile(FAVICON_32_URL, "favicon-32.png");
@@ -111,6 +119,23 @@ export const handleRoot = async (req: Request): Promise<Response> => {
     },
     { "Vary": "Accept" },
   );
+};
+
+export const handleDocsPage = async (): Promise<Response> => {
+  const html = await loadText(DOCS_HTML_URL, "static/docs.html", docsHtmlPromise);
+  if (!html) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(html, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      ...htmlSecurityHeaders(),
+    },
+  });
 };
 
 export const handleChatPage = async (): Promise<Response> => {
@@ -185,6 +210,24 @@ export const handleChatCss = async (): Promise<Response> => {
 
 export const handleHomeCss = async (): Promise<Response> => {
   const css = await loadText(HOME_CSS_URL, "static/home.css", homeCssPromise);
+  if (!css) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(css, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/css; charset=utf-8",
+      "Cache-Control": staticCacheControl,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
+export const handleDocsCss = async (): Promise<Response> => {
+  const css = await loadText(DOCS_CSS_URL, "static/docs.css", docsCssPromise);
   if (!css) {
     return new Response("Not found", {
       status: 404,
@@ -285,6 +328,46 @@ export const handleNetworkJs = async (): Promise<Response> => {
     status: 200,
     headers: {
       "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": staticCacheControl,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
+export const handleDocsJs = async (): Promise<Response> => {
+  const js = await loadText(DOCS_JS_URL, "static/docs.js", docsJsPromise);
+  if (!js) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(js, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": staticCacheControl,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
+export const handleDocsLlmAgentsMd = async (): Promise<Response> => {
+  const md = await loadText(
+    DOCS_LLM_AGENTS_MD_URL,
+    "static/docs/llms-agents.md",
+    docsLlmAgentsMdPromise,
+  );
+  if (!md) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(md, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/markdown; charset=utf-8",
       "Cache-Control": staticCacheControl,
       "X-Content-Type-Options": "nosniff",
     },
