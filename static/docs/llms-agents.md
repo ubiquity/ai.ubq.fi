@@ -209,6 +209,7 @@ Defaults can be managed via `/admin/defaults` (admin auth required). The built-i
 
 The gateway normalizes some chat-latest aliases before sending upstream:
 
+- `gpt-5.3-chat-latest` -> `gpt-5.3`
 - `gpt-5.2-chat-latest` -> `gpt-5.2`
 - `gpt-5.1-chat-latest` -> `gpt-5.1`
 - `gpt-5-chat-latest` -> `gpt-5.2`

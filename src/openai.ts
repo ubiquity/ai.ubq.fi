@@ -388,6 +388,7 @@ const chatRoleToCodexRole = (role: string): ResponseMessageItem["role"] | null =
 const normalizeModelForCodex = (model: string): string => {
   const trimmed = model.trim();
   if (!trimmed) return "gpt-5.1-codex-mini";
+  if (trimmed === "gpt-5.3-chat-latest") return "gpt-5.3";
   if (trimmed === "gpt-5.2-chat-latest") return "gpt-5.2";
   if (trimmed === "gpt-5.1-chat-latest") return "gpt-5.1";
   if (trimmed === "gpt-5-chat-latest") return "gpt-5.2";
