@@ -85,7 +85,8 @@ const normalizeUsageLimitRequests = (value: unknown, fallback: number): number =
 };
 
 export const kernelUsageKey = (owner: string, repo: string) => [...KERNEL_AUTH_USAGE_PREFIX, owner, repo] as const;
-export const kernelUsageDailyKey = (owner: string, repo: string) => [...KERNEL_AUTH_USAGE_DAILY_PREFIX, owner, repo] as const;
+export const kernelUsageDailyKey = (owner: string, repo: string) =>
+  [...KERNEL_AUTH_USAGE_DAILY_PREFIX, owner, repo] as const;
 export const kernelLimitKey = (owner: string, repo: string) => [...KERNEL_AUTH_LIMIT_PREFIX, owner, repo] as const;
 export const kernelOrgUsageKey = (owner: string) => [...KERNEL_AUTH_ORG_USAGE_PREFIX, owner] as const;
 export const kernelOrgUsageDailyKey = (owner: string) => [...KERNEL_AUTH_ORG_USAGE_DAILY_PREFIX, owner] as const;

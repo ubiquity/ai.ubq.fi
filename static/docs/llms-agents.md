@@ -1,6 +1,7 @@
 # LLMs and Agents
 
-UbiquityOS AI Gateway provides OpenAI-compatible endpoints for chat and responses, plus an agent message bus for kernel-driven workflows. This page focuses on LLM usage and the agent bus.
+UbiquityOS AI Gateway provides OpenAI-compatible endpoints for chat and responses, plus an agent message bus for
+kernel-driven workflows. This page focuses on LLM usage and the agent bus.
 
 ## Base URL
 
@@ -83,7 +84,8 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
 
 ## Models
 
-`GET /v1/models` returns a normalized OpenAI-style model list (`object: "list"`, `data: [...]`). The gateway may serve the upstream list or a cached snapshot when upstream is unavailable.
+`GET /v1/models` returns a normalized OpenAI-style model list (`object: "list"`, `data: [...]`). The gateway may serve
+the upstream list or a cached snapshot when upstream is unavailable.
 
 ## Chat Completions
 
@@ -114,7 +116,8 @@ Supported message content:
 }
 ```
 
-System and developer messages are combined into a single instruction block upstream. User and assistant messages are passed through as conversation input.
+System and developer messages are combined into a single instruction block upstream. User and assistant messages are
+passed through as conversation input.
 
 Role mapping notes:
 
@@ -124,7 +127,8 @@ Role mapping notes:
 
 ### Streaming
 
-Set `"stream": true` to receive server-sent events (`text/event-stream`) in OpenAI `chat.completion.chunk` format with a final `data: [DONE]` sentinel.
+Set `"stream": true` to receive server-sent events (`text/event-stream`) in OpenAI `chat.completion.chunk` format with a
+final `data: [DONE]` sentinel.
 
 ```bash
 curl -N https://ai.ubq.fi/v1/chat/completions \
@@ -139,7 +143,8 @@ curl -N https://ai.ubq.fi/v1/chat/completions \
   }'
 ```
 
-If `stream` is omitted or `false`, the gateway buffers the upstream stream and returns a standard chat completion JSON response.
+If `stream` is omitted or `false`, the gateway buffers the upstream stream and returns a standard chat completion JSON
+response.
 
 ## Responses
 
@@ -152,7 +157,7 @@ Input formats:
 
 ```json
 [
-  {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Hello"}]}
+  { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Hello" }] }
 ]
 ```
 
@@ -160,8 +165,8 @@ Input formats:
 
 ```json
 [
-  {"type": "input_text", "text": "Summarize this"},
-  {"type": "input_image", "image_url": "https://..."}
+  { "type": "input_text", "text": "Summarize this" },
+  { "type": "input_image", "image_url": "https://..." }
 ]
 ```
 
@@ -194,7 +199,8 @@ curl -sS https://ai.ubq.fi/v1/responses \
   }'
 ```
 
-When `stream` is `false`, the gateway buffers the upstream stream and returns the final `response` object. When `stream` is `true`, the upstream SSE stream is passed through.
+When `stream` is `false`, the gateway buffers the upstream stream and returns the final `response` object. When `stream`
+is `true`, the upstream SSE stream is passed through.
 
 ## Reasoning defaults
 
@@ -203,7 +209,8 @@ When `stream` is `false`, the gateway buffers the upstream stream and returns th
 - Use `reasoning_effort: null` (chat completions) or `reasoning: null` (responses) to disable reasoning.
 - Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
 
-Defaults can be managed via `/admin/defaults` (admin auth required). The built-in defaults are `model = gpt-5.2-codex` and `reasoning_effort = medium`.
+Defaults can be managed via `/admin/defaults` (admin auth required). The built-in defaults are `model = gpt-5.2-codex`
+and `reasoning_effort = medium`.
 
 ## Model normalization
 
@@ -216,7 +223,9 @@ The gateway normalizes some chat-latest aliases before sending upstream:
 
 ## Ignored parameters and warnings
 
-Requests accept a broad set of OpenAI-compatible keys, but unknown top-level keys are rejected with `invalid_request_error`. Only a subset are forwarded upstream. Ignored keys are reported in the `x-uos-warning` response header (comma-separated).
+Requests accept a broad set of OpenAI-compatible keys, but unknown top-level keys are rejected with
+`invalid_request_error`. Only a subset are forwarded upstream. Ignored keys are reported in the `x-uos-warning` response
+header (comma-separated).
 
 Keys forwarded for chat completions:
 
@@ -287,7 +296,8 @@ Response includes:
 
 ## Auth introspection
 
-`GET /v1/auth` returns the auth mode, the method used, and a token fingerprint (never the raw token). Use it to confirm which auth path was selected.
+`GET /v1/auth` returns the auth mode, the method used, and a token fingerprint (never the raw token). Use it to confirm
+which auth path was selected.
 
 If the auth method is a KV API key, the response includes key metadata and usage counters.
 

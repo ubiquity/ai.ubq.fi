@@ -108,7 +108,13 @@ const loadCodexBinaryText = async (
   codexBinFlag: string | null,
   homeDir: string | undefined,
 ): Promise<
-  { path: string; sourcePath: string; text: string; models: NonNullable<ReturnType<typeof extractCodexModelsFromText>> } | null
+  | {
+    path: string;
+    sourcePath: string;
+    text: string;
+    models: NonNullable<ReturnType<typeof extractCodexModelsFromText>>;
+  }
+  | null
 > => {
   const candidates: string[] = [];
   if (codexBinFlag) candidates.push(expandTilde(codexBinFlag, homeDir));

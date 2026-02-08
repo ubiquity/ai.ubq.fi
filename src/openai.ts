@@ -19,7 +19,7 @@ import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
 import { json, openaiError } from "./http.ts";
 import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
-import { getString, isRecord } from "./utils.ts";
+import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type { ChatCompletionRequest, MessageContentItem, ResponseMessageItem, ResponsesRequest } from "./types.ts";
 
 const getDefaultModel = async (): Promise<string> => {
@@ -320,11 +320,280 @@ const RESPONSES_ALLOWED_KEYS = new Set([
   "user",
 ]);
 
+const EMBEDDINGS_ALLOWED_KEYS = new Set([
+  "model",
+  "input",
+  "encoding_format",
+  "dimensions",
+  "user",
+]);
+
 const findUnknownKey = (record: Record<string, unknown>, allowed: ReadonlySet<string>): string | null => {
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) return key;
   }
   return null;
+};
+
+type EmbeddingsEncodingFormat = "float" | "base64";
+
+type VoyageRateLimitState = Readonly<{
+  window_start_ms: number;
+  requests: number;
+  tokens: number;
+}>;
+
+const EMBEDDINGS_MAX_INPUTS_PER_REQUEST = 128;
+const EMBEDDINGS_MAX_CHARS_PER_INPUT = 20_000;
+const EMBEDDINGS_MAX_TOTAL_CHARS = 100_000;
+const EMBEDDINGS_TIMEOUT_MS = 20_000;
+const EMBEDDINGS_CACHE_TTL_MS = 30 * 24 * 60 * 60_000;
+
+const VOYAGE_EMBEDDINGS_URL = "https://api.voyageai.com/v1/embeddings";
+const VOYAGE_INPUT_TYPE = "document";
+// Voyage free-tier throttles are tiny; we enforce conservative defaults to avoid 429s.
+const VOYAGE_RATE_LIMIT_RPM = 3;
+const VOYAGE_RATE_LIMIT_TPM = 10_000;
+const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
+const VOYAGE_API_KEY_KV_KEY: Deno.KvKey = ["uos_ai", "voyage_api_key"];
+
+const TOKEN_ESTIMATOR = new TextEncoder();
+
+const getEnv = (key: string): string | undefined => {
+  try {
+    return Deno.env.get(key);
+  } catch {
+    return undefined;
+  }
+};
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+const estimateTokens = (text: string): number => {
+  if (!text) return 0;
+  const bytes = TOKEN_ESTIMATOR.encode(text).byteLength;
+  return Math.ceil(bytes / 4);
+};
+
+const estimateTokenCount = (texts: string[]): number => texts.reduce((sum, text) => sum + estimateTokens(text), 0);
+
+const chunkByTokenBudget = (
+  items: ReadonlyArray<{ hash: string; text: string }>,
+  maxItems: number,
+  maxTokens: number,
+): Array<Array<{ hash: string; text: string }>> => {
+  const out: Array<Array<{ hash: string; text: string }>> = [];
+  const itemLimit = Math.max(1, Math.trunc(maxItems));
+  const tokenLimit = Math.max(1, Math.trunc(maxTokens));
+
+  let current: Array<{ hash: string; text: string }> = [];
+  let currentTokens = 0;
+
+  for (const item of items) {
+    const tokens = estimateTokens(item.text);
+    const nextTokens = currentTokens + tokens;
+    const hitsItemLimit = current.length >= itemLimit;
+    const hitsTokenLimit = nextTokens > tokenLimit && current.length > 0;
+    if (hitsItemLimit || hitsTokenLimit) {
+      out.push(current);
+      current = [];
+      currentTokens = 0;
+    }
+    current.push(item);
+    currentTokens += tokens;
+  }
+  if (current.length) out.push(current);
+  return out;
+};
+
+const normalizeVoyageRateLimitState = (value: unknown): VoyageRateLimitState | null => {
+  if (!isRecord(value)) return null;
+  const windowStart = typeof value.window_start_ms === "number" && Number.isFinite(value.window_start_ms)
+    ? Math.trunc(value.window_start_ms)
+    : null;
+  const requests = typeof value.requests === "number" && Number.isFinite(value.requests)
+    ? Math.trunc(value.requests)
+    : null;
+  const tokens = typeof value.tokens === "number" && Number.isFinite(value.tokens) ? Math.trunc(value.tokens) : null;
+  if (windowStart === null || requests === null || tokens === null) return null;
+  if (windowStart < 0 || requests < 0 || tokens < 0) return null;
+  return { window_start_ms: windowStart, requests, tokens };
+};
+
+const tryReserveVoyageBudget = async (
+  kv: Deno.Kv,
+  tokens: number,
+): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
+  const windowMs = 60_000;
+  const now = Date.now();
+  const entry = await kv.get<VoyageRateLimitState>(VOYAGE_RATE_LIMIT_KEY);
+  const current = normalizeVoyageRateLimitState(entry.value);
+  const state = !current || now - current.window_start_ms >= windowMs
+    ? { window_start_ms: now, requests: 0, tokens: 0 }
+    : current;
+
+  const wouldExceedRequests = VOYAGE_RATE_LIMIT_RPM > 0 && state.requests + 1 > VOYAGE_RATE_LIMIT_RPM;
+  const wouldExceedTokens = VOYAGE_RATE_LIMIT_TPM > 0 && state.tokens + tokens > VOYAGE_RATE_LIMIT_TPM;
+  if (wouldExceedRequests || wouldExceedTokens) {
+    const waitMs = Math.max(0, windowMs - (now - state.window_start_ms));
+    return { ok: false, wait_ms: waitMs };
+  }
+
+  const next: VoyageRateLimitState = {
+    window_start_ms: state.window_start_ms,
+    requests: state.requests + 1,
+    tokens: state.tokens + tokens,
+  };
+  const commit = await kv.atomic().check(entry).set(VOYAGE_RATE_LIMIT_KEY, next).commit();
+  if (commit.ok) return { ok: true };
+  return { ok: false, wait_ms: 0 };
+};
+
+const applyVoyageRateLimit = async (
+  kv: Deno.Kv,
+  tokens: number,
+  deadlineMs: number,
+): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
+  // Best-effort concurrency-safe rate limiting using KV. If we can't reserve
+  // within the request deadline, we fail with 429 and let clients retry.
+  for (;;) {
+    const now = Date.now();
+    if (now >= deadlineMs) return { ok: false, wait_ms: 0 };
+    let reserved: { ok: true } | { ok: false; wait_ms: number } = { ok: false, wait_ms: 0 };
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      reserved = await tryReserveVoyageBudget(kv, tokens);
+      if (reserved.ok) return reserved;
+      if (reserved.wait_ms > 0) break;
+      await sleep(5 + attempt * 5);
+    }
+    if (reserved.ok) return reserved;
+    const waitMs = reserved.wait_ms;
+    if (waitMs <= 0) continue;
+    if (now + waitMs > deadlineMs) return { ok: false, wait_ms: waitMs };
+    await sleep(waitMs);
+  }
+};
+
+const resolveEmbeddingsModel = (raw: string): { upstream: "voyage"; model: string } | null => {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "text-embedding-3-small" || normalized === "text-embedding-3-large") {
+    // OpenAI-compatible model names; backed by Voyage.
+    return { upstream: "voyage", model: "voyage-4-large" };
+  }
+  if (normalized.startsWith("voyage-")) {
+    return { upstream: "voyage", model: normalized };
+  }
+  return null;
+};
+
+const parseEmbeddingsEncodingFormat = (
+  value: unknown,
+): { ok: true; value: EmbeddingsEncodingFormat } | { ok: false; message: string } => {
+  if (value === undefined) return { ok: true, value: "float" };
+  if (typeof value !== "string") return { ok: false, message: "encoding_format must be a string" };
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "float" || normalized === "base64") return { ok: true, value: normalized };
+  return { ok: false, message: 'encoding_format must be one of: "float", "base64"' };
+};
+
+const floatEmbeddingToBase64 = (embedding: number[]): string => {
+  const buffer = new ArrayBuffer(embedding.length * 4);
+  const view = new DataView(buffer);
+  for (let i = 0; i < embedding.length; i += 1) {
+    view.setFloat32(i * 4, embedding[i], true);
+  }
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+};
+
+const extractRetryAfterMs = (value: string | null): number | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(60_000, Math.trunc(seconds * 1000));
+  }
+  const asDate = Date.parse(trimmed);
+  if (!Number.isNaN(asDate)) {
+    const delta = asDate - Date.now();
+    if (delta > 0) return Math.min(60_000, Math.trunc(delta));
+  }
+  return null;
+};
+
+const readVoyageApiKey = async (kv: Deno.Kv | null): Promise<string | null> => {
+  const envKey = (getEnv("VOYAGEAI_API_KEY") ?? "").trim();
+  if (envKey) return envKey;
+  if (!kv) return null;
+  const entry = await kv.get<string>(VOYAGE_API_KEY_KV_KEY);
+  const kvKey = typeof entry.value === "string" ? entry.value.trim() : "";
+  return kvKey || null;
+};
+
+const fetchVoyageEmbeddings = async (params: {
+  apiKey: string;
+  model: string;
+  inputs: string[];
+  deadlineMs: number;
+}): Promise<number[][]> => {
+  const controller = new AbortController();
+  const now = Date.now();
+  const timeoutMs = Math.max(1, Math.min(EMBEDDINGS_TIMEOUT_MS, params.deadlineMs - now));
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(VOYAGE_EMBEDDINGS_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${params.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: params.model,
+        input: params.inputs.length === 1 ? params.inputs[0] : params.inputs,
+        input_type: VOYAGE_INPUT_TYPE,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      const snippet = text.trim().slice(0, 800);
+      const message = snippet
+        ? `Voyage embeddings failed (${resp.status}): ${snippet}`
+        : `Voyage embeddings failed (${resp.status}).`;
+      const err = new Error(message);
+      (err as { status?: number; retry_after_ms?: number }).status = resp.status;
+      (err as { retry_after_ms?: number }).retry_after_ms = extractRetryAfterMs(resp.headers.get("Retry-After")) ??
+        undefined;
+      throw err;
+    }
+
+    const payload = await resp.json().catch(() => null) as unknown;
+    if (!isRecord(payload) || !Array.isArray(payload.data)) {
+      throw new Error("Voyage embeddings returned invalid JSON.");
+    }
+    const data = payload.data as Array<Record<string, unknown>>;
+    const vectors: number[][] = [];
+    for (const item of data) {
+      const embedding = isRecord(item) ? item.embedding : null;
+      if (!Array.isArray(embedding)) {
+        throw new Error("Voyage embeddings response missing embedding vector.");
+      }
+      const vec = embedding.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+      if (vec.length !== embedding.length) {
+        throw new Error("Voyage embeddings response contained non-numeric values.");
+      }
+      vectors.push(vec);
+    }
+    return vectors;
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 const extractMessageContentItems = (role: ResponseMessageItem["role"], content: unknown): MessageContentItem[] => {
@@ -710,6 +979,313 @@ export const handleModels = async (): Promise<Response> => {
   }
 
   return json(200, normalized, { "x-ubq-upstream": "chatgpt_codex" });
+};
+
+export const handleEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
+  const requestId = crypto.randomUUID();
+  const startedAtMs = Date.now();
+
+  const rawBody = (await readJsonBody(req)) as Record<string, unknown> | null;
+  if (!rawBody || !isRecord(rawBody)) {
+    return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  }
+
+  const unknownKey = findUnknownKey(rawBody, EMBEDDINGS_ALLOWED_KEYS);
+  if (unknownKey) {
+    return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
+  }
+
+  const modelRaw = getString(rawBody.model);
+  if (!modelRaw || !modelRaw.trim()) {
+    return openaiError(400, "model is required and must be a non-empty string", "invalid_request_error", {
+      param: "model",
+    });
+  }
+  const model = modelRaw.trim();
+
+  const encodingFormat = parseEmbeddingsEncodingFormat(rawBody.encoding_format);
+  if (!encodingFormat.ok) {
+    return openaiError(400, encodingFormat.message, "invalid_request_error", { param: "encoding_format" });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawBody, "dimensions")) {
+    const rawDimensions = rawBody.dimensions;
+    if (typeof rawDimensions !== "number" || !Number.isFinite(rawDimensions)) {
+      return openaiError(400, "dimensions must be a number", "invalid_request_error", { param: "dimensions" });
+    }
+    const dims = Math.trunc(rawDimensions);
+    if (dims <= 0) {
+      return openaiError(400, "dimensions must be a positive integer", "invalid_request_error", {
+        param: "dimensions",
+      });
+    }
+    // Voyage does not guarantee OpenAI-compatible dimension control.
+    return openaiError(400, "dimensions is not supported by this gateway", "invalid_request_error", {
+      param: "dimensions",
+    });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawBody, "user")) {
+    const user = rawBody.user;
+    if (user !== undefined && user !== null && typeof user !== "string") {
+      return openaiError(400, "user must be a string", "invalid_request_error", { param: "user" });
+    }
+  }
+
+  const inputRaw = rawBody.input;
+  let inputs: string[] = [];
+  if (typeof inputRaw === "string") {
+    inputs = [inputRaw];
+  } else if (Array.isArray(inputRaw)) {
+    for (const item of inputRaw) {
+      if (typeof item !== "string") {
+        return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
+          param: "input",
+        });
+      }
+      inputs.push(item);
+    }
+  } else {
+    return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
+      param: "input",
+    });
+  }
+
+  if (inputs.length === 0) {
+    return openaiError(400, "input must be a non-empty string or a non-empty array", "invalid_request_error", {
+      param: "input",
+    });
+  }
+
+  if (inputs.length > EMBEDDINGS_MAX_INPUTS_PER_REQUEST) {
+    return openaiError(
+      400,
+      `Too many inputs: ${inputs.length} (max ${EMBEDDINGS_MAX_INPUTS_PER_REQUEST})`,
+      "invalid_request_error",
+      { param: "input" },
+    );
+  }
+
+  let totalChars = 0;
+  for (const text of inputs) {
+    const len = text.length;
+    if (len > EMBEDDINGS_MAX_CHARS_PER_INPUT) {
+      return openaiError(
+        400,
+        `Input too large: ${len} chars (max ${EMBEDDINGS_MAX_CHARS_PER_INPUT})`,
+        "invalid_request_error",
+        { param: "input" },
+      );
+    }
+    totalChars += len;
+    if (totalChars > EMBEDDINGS_MAX_TOTAL_CHARS) {
+      return openaiError(
+        400,
+        `Request too large: ${totalChars} chars total (max ${EMBEDDINGS_MAX_TOTAL_CHARS})`,
+        "invalid_request_error",
+        { param: "input" },
+      );
+    }
+  }
+
+  const resolved = resolveEmbeddingsModel(model);
+  if (!resolved) {
+    return openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" });
+  }
+
+  await recordRequestUsage(usageContext, { model, route: "embeddings", stream: false, reasoning: null });
+
+  const deadlineMs = startedAtMs + EMBEDDINGS_TIMEOUT_MS;
+  const kv = await kvPromise;
+  const apiKey = await readVoyageApiKey(kv);
+  if (!apiKey) {
+    return openaiError(
+      503,
+      "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
+      "server_error",
+      { type: "server_error", param: null },
+    );
+  }
+  const shouldCache = encodingFormat.value === "float" && !Object.prototype.hasOwnProperty.call(rawBody, "dimensions");
+
+  const hashes = await Promise.all(inputs.map((text) => sha256Hex(text)));
+
+  // Dedupe within a request (hash collisions are astronomically unlikely).
+  const buckets = new Map<string, { text: string; indices: number[] }>();
+  for (let i = 0; i < inputs.length; i += 1) {
+    const hash = hashes[i]!;
+    const existing = buckets.get(hash);
+    if (existing) {
+      existing.indices.push(i);
+    } else {
+      buckets.set(hash, { text: inputs[i]!, indices: [i] });
+    }
+  }
+
+  const cacheModelKey = model;
+  const cacheKeyFor = (hash: string): Deno.KvKey => ["embeddings", "v1", cacheModelKey, hash];
+  const vectorsByIndex: Array<number[] | null> = Array.from({ length: inputs.length }, () => null);
+
+  const missing: Array<{ hash: string; text: string; indices: number[] }> = [];
+  if (shouldCache && kv) {
+    const unique = Array.from(buckets.entries()).map(([hash, bucket]) => ({ hash, ...bucket }));
+    const entries = await Promise.all(unique.map((item) => kv.get<{ embedding?: unknown }>(cacheKeyFor(item.hash))));
+    for (let i = 0; i < unique.length; i += 1) {
+      const item = unique[i]!;
+      const entry = entries[i]!;
+      const cached = entry.value?.embedding;
+      if (Array.isArray(cached) && cached.every((v) => typeof v === "number" && Number.isFinite(v))) {
+        for (const idx of item.indices) vectorsByIndex[idx] = cached as number[];
+      } else {
+        missing.push(item);
+      }
+    }
+  } else {
+    for (const [hash, bucket] of buckets.entries()) {
+      missing.push({ hash, text: bucket.text, indices: bucket.indices });
+    }
+  }
+
+  console.info(
+    `[ai.ubq.fi] embeddings request_id=${requestId} model=${model} upstream=${resolved.upstream} inputs=${inputs.length} unique=${buckets.size} chars=${totalChars} cache=${
+      shouldCache && Boolean(kv)
+    }`,
+  );
+
+  if (missing.length > 0) {
+    const chunks = chunkByTokenBudget(
+      missing.map((item) => ({ hash: item.hash, text: item.text })),
+      EMBEDDINGS_MAX_INPUTS_PER_REQUEST,
+      VOYAGE_RATE_LIMIT_TPM,
+    );
+
+    let offset = 0;
+    for (const chunk of chunks) {
+      const now = Date.now();
+      if (now >= deadlineMs) {
+        return openaiError(502, "Embeddings request timed out.", "timeout", { type: "server_error", param: null });
+      }
+
+      const chunkItems = missing.slice(offset, offset + chunk.length);
+      offset += chunk.length;
+      const texts = chunkItems.map((item) => item.text);
+      const tokenEstimate = estimateTokenCount(texts);
+
+      if (kv) {
+        const reserved = await applyVoyageRateLimit(kv, tokenEstimate, deadlineMs);
+        if (!reserved.ok) {
+          const retryAfterSeconds = Math.max(1, Math.ceil(reserved.wait_ms / 1000));
+          const body = {
+            error: {
+              message: `Rate limit exceeded; retry after ~${retryAfterSeconds}s`,
+              type: "rate_limit_error",
+              code: "rate_limit_exceeded",
+              param: null,
+            },
+          };
+          return json(429, body, { "Retry-After": String(retryAfterSeconds) });
+        }
+      }
+
+      const retryable = new Set([429, 500, 502, 503, 504]);
+      let attempt = 0;
+      let backoffMs = 250;
+      let vectors: number[][] | null = null;
+
+      for (;;) {
+        try {
+          vectors = await fetchVoyageEmbeddings({ apiKey, model: resolved.model, inputs: texts, deadlineMs });
+          break;
+        } catch (error) {
+          const status = (error as { status?: number }).status;
+          const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
+          const snippet = formatErrorSnippet(error);
+          const message = snippet
+            ? `Embeddings upstream request failed: ${snippet}`
+            : "Embeddings upstream request failed.";
+
+          if (!status || !retryable.has(status) || attempt >= 2) {
+            console.error(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
+            return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
+          }
+
+          const now = Date.now();
+          const waitMs = Math.max(0, retryAfterMs ?? backoffMs);
+          if (now + waitMs >= deadlineMs) {
+            if (status === 429) {
+              const retryAfterSeconds = Math.max(1, Math.ceil(waitMs / 1000));
+              const body = {
+                error: {
+                  message,
+                  type: "rate_limit_error",
+                  code: "rate_limit_exceeded",
+                  param: null,
+                },
+              };
+              return json(429, body, { "Retry-After": String(retryAfterSeconds) });
+            }
+            return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
+          }
+
+          await sleep(waitMs);
+          backoffMs = Math.min(2000, backoffMs * 2);
+          attempt += 1;
+        }
+      }
+
+      if (!vectors || vectors.length !== chunkItems.length) {
+        return openaiError(502, "Embeddings upstream returned a size mismatch.", "upstream_error", {
+          type: "server_error",
+          param: null,
+        });
+      }
+
+      const cacheWrites: Promise<unknown>[] = [];
+      for (let i = 0; i < chunkItems.length; i += 1) {
+        const item = chunkItems[i]!;
+        const vec = vectors[i]!;
+        for (const idx of item.indices) vectorsByIndex[idx] = vec;
+        if (shouldCache && kv) {
+          cacheWrites.push(
+            kv.set(
+              cacheKeyFor(item.hash),
+              { embedding: vec, created_at: new Date().toISOString() },
+              { expireIn: EMBEDDINGS_CACHE_TTL_MS },
+            ),
+          );
+        }
+      }
+      if (cacheWrites.length) await Promise.all(cacheWrites);
+    }
+  }
+
+  const data: Array<{ object: "embedding"; index: number; embedding: number[] | string }> = [];
+  for (let i = 0; i < vectorsByIndex.length; i += 1) {
+    const vec = vectorsByIndex[i];
+    if (!vec) {
+      return openaiError(502, "Embeddings gateway failed to construct a complete response.", "server_error", {
+        type: "server_error",
+        param: null,
+      });
+    }
+    data.push({
+      object: "embedding",
+      index: i,
+      embedding: encodingFormat.value === "base64" ? floatEmbeddingToBase64(vec) : vec,
+    });
+  }
+
+  const elapsedMs = Date.now() - startedAtMs;
+  console.info(
+    `[ai.ubq.fi] embeddings request_id=${requestId} status=200 upstream=${resolved.upstream} ms=${elapsedMs}`,
+  );
+
+  return json(200, {
+    object: "list",
+    data,
+    model,
+    usage: { prompt_tokens: 0, total_tokens: 0 },
+  }, { "x-ubq-upstream": resolved.upstream });
 };
 
 export const handleChatCompletions = async (req: Request, usageContext?: UsageContext): Promise<Response> => {

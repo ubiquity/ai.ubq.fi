@@ -2,28 +2,38 @@ import {
   handleAdminApiKeysCreate,
   handleAdminApiKeysDelete,
   handleAdminApiKeysList,
+  handleAdminApiKeysRevoke,
   handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
-  handleAdminApiKeysRevoke,
   handleAdminCodexAuth,
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
   handleAdminCodexPromptsPurge,
   handleAdminDefaults,
-  handleAdminKernelUsageDelete,
-  handleAdminKernelUsageGet,
-  handleAdminKernelUsageSet,
   handleAdminKernelPolicyQueueList,
   handleAdminKernelPubKeysCreate,
   handleAdminKernelPubKeysDelete,
   handleAdminKernelPubKeysList,
+  handleAdminKernelUsageDelete,
+  handleAdminKernelUsageGet,
+  handleAdminKernelUsageSet,
 } from "./admin.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
-import { authenticateClient, getKernelAttestationContext, handleV1Auth, incrementApiKeyUsage, requireAdminAuth } from "./auth.ts";
+import {
+  authenticateClient,
+  getKernelAttestationContext,
+  handleV1Auth,
+  incrementApiKeyUsage,
+  requireAdminAuth,
+} from "./auth.ts";
 import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, openaiError, withCors } from "./http.ts";
-import { getKernelUsageLimitSnapshot, incrementKernelOrgUsageLimit, incrementKernelUsageLimit } from "./kernel_usage.ts";
-import { handleChatCompletions, handleModels, handleResponses } from "./openai.ts";
+import {
+  getKernelUsageLimitSnapshot,
+  incrementKernelOrgUsageLimit,
+  incrementKernelUsageLimit,
+} from "./kernel_usage.ts";
+import { handleChatCompletions, handleEmbeddings, handleModels, handleResponses } from "./openai.ts";
 import {
   handleAdminCss,
   handleAdminJs,
@@ -32,14 +42,14 @@ import {
   handleChatCss,
   handleChatJs,
   handleChatPage,
+  handleCompanyLogo,
   handleDocsCss,
   handleDocsJs,
   handleDocsLlmAgentsMd,
   handleDocsPage,
-  handleHomeCss,
-  handleCompanyLogo,
   handleFavicon,
   handleFavicon32,
+  handleHomeCss,
   handleNetworkJs,
   handleRoot,
   handleStyleCss,
@@ -298,6 +308,15 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(await handleModels());
+  }
+
+  if (req.method === "POST" && path === "/v1/embeddings") {
+    const response = await handleEmbeddings(req, usageContext);
+    if (response.ok) {
+      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
+      await incrementKernelLimitUsage();
+    }
+    return withCors(response);
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {

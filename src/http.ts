@@ -38,14 +38,20 @@ export const openaiError = (
   status: number,
   message: string,
   code?: string,
+  options: { type?: string; param?: string | null } = {},
 ): Response => {
   console.trace(`[ai.ubq.fi] OpenAI API error (${status}):`, message);
+  const type = (options.type ?? "invalid_request_error").trim() || "invalid_request_error";
+  const error: Record<string, unknown> = {
+    message,
+    type,
+    code,
+  };
+  if (Object.prototype.hasOwnProperty.call(options, "param")) {
+    error.param = options.param ?? null;
+  }
   return json(status, {
-    error: {
-      message,
-      type: "invalid_request_error",
-      code,
-    },
+    error,
   });
 };
 

@@ -119,10 +119,10 @@ const findMatchingBrace = (text: string, start: number): number | null => {
         escape = true;
         continue;
       }
-      if (ch === "\"") inString = false;
+      if (ch === '"') inString = false;
       continue;
     }
-    if (ch === "\"") {
+    if (ch === '"') {
       inString = true;
       continue;
     }
