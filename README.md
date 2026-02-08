@@ -131,6 +131,41 @@ Notes:
 - Embedding dimensionality may differ from OpenAI because the vectors come from Voyage.
 - When the provider rate limit is exceeded, the gateway returns `429` with `Retry-After`; clients should retry.
 
+Embeddings jobs (async, gateway-specific):
+
+Use this when you might exceed Voyage's free-tier rate limits. The gateway will either return the embeddings immediately
+or queue the request and let you poll for completion.
+
+Create:
+
+```bash
+curl -sS https://ai.ubq.fi/v1/embeddings/jobs \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"model":"text-embedding-3-small","input":["hello","world"]}' \
+  | jq
+```
+
+Poll:
+
+```bash
+job_id="$(curl -sS https://ai.ubq.fi/v1/embeddings/jobs \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"model":"text-embedding-3-small","input":"hello"}' \
+  | jq -r .id)"
+
+curl -sS "https://ai.ubq.fi/v1/embeddings/jobs/${job_id}" \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  | jq
+```
+
+Notes:
+
+- Jobs currently support `encoding_format="float"` only.
+- When queued, the gateway responds `202` with `Retry-After` and `retry_after_seconds`; poll until `status="succeeded"`.
+- Inputs are stored encrypted in Deno KV for up to 24h to allow deferred processing, and deleted once the job completes.
+
 ## CLI (ubq-ai)
 
 Run from this repo:

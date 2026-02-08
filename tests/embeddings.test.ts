@@ -46,7 +46,7 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleEmbeddings } = await import("../src/openai.ts");
+const { handleEmbeddings, handleEmbeddingsJobCreate, handleEmbeddingsJobGet } = await import("../src/openai.ts");
 const { kvPromise } = await import("../src/kv.ts");
 
 type FetchMockQueue = {
@@ -266,6 +266,121 @@ Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () 
   } finally {
     await kv.delete(rateKey);
   }
+});
+
+Deno.test("embeddings jobs: create returns job + result when not rate limited", async () => {
+  const input = `job-ok-${crypto.randomUUID()}`;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
+      const count = Array.isArray(body.input) ? body.input.length : 1;
+      return voyageOkResponse(count);
+    },
+    () =>
+      handleEmbeddingsJobCreate(
+        new Request("https://ai.ubq.fi/v1/embeddings/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "text-embedding-3-small", input }),
+        }),
+        "test_token",
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    id?: unknown;
+    object?: unknown;
+    status?: unknown;
+    result?: { object?: unknown; data?: unknown[]; model?: unknown };
+  };
+  assert.equal(payload.object, "embeddings.job");
+  assert.equal(typeof payload.id, "string");
+  assert.equal(payload.status, "succeeded");
+  assert.equal(payload.result?.object, "list");
+  assert.equal(payload.result?.model, "text-embedding-3-small");
+  assert.ok(Array.isArray(payload.result?.data));
+});
+
+Deno.test("embeddings jobs: create queues with 202 + Retry-After when KV rate limited", async () => {
+  const kv = await kvPromise;
+  assert.ok(kv);
+  const rateKey: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
+  await kv.set(rateKey, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
+  try {
+    const input = `job-queued-${crypto.randomUUID()}`;
+    const response = await withFetchMock(
+      () => {
+        throw new Error("Embeddings job should be queued before upstream fetch");
+      },
+      () =>
+        handleEmbeddingsJobCreate(
+          new Request("https://ai.ubq.fi/v1/embeddings/jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: "text-embedding-3-small", input }),
+          }),
+          "test_token",
+        ),
+    );
+
+    assert.equal(response.status, 202);
+    const retryAfter = response.headers.get("Retry-After");
+    assert.ok(retryAfter);
+    const retryAfterSeconds = Number(retryAfter);
+    assert.ok(Number.isFinite(retryAfterSeconds));
+    assert.ok(retryAfterSeconds >= 1);
+    assert.ok(retryAfterSeconds <= 60);
+
+    const payload = await response.json() as { status?: unknown; id?: unknown };
+    assert.equal(payload.status, "queued");
+    assert.equal(typeof payload.id, "string");
+  } finally {
+    await kv.delete(rateKey);
+  }
+});
+
+Deno.test("embeddings jobs: poll runs queued job to completion", async () => {
+  const kv = await kvPromise;
+  assert.ok(kv);
+  const rateKey: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
+  await kv.set(rateKey, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
+
+  const input = `job-poll-${crypto.randomUUID()}`;
+  const created = await withFetchMock(
+    () => {
+      throw new Error("Embeddings job should be queued before upstream fetch");
+    },
+    () =>
+      handleEmbeddingsJobCreate(
+        new Request("https://ai.ubq.fi/v1/embeddings/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "text-embedding-3-small", input }),
+        }),
+        "test_token",
+      ),
+  );
+  assert.equal(created.status, 202);
+  const createdPayload = await created.json() as { id?: unknown };
+  assert.equal(typeof createdPayload.id, "string");
+  const jobId = createdPayload.id as string;
+
+  await kv.delete(rateKey);
+
+  const polled = await withFetchMock(
+    (_url, bodyText) => {
+      const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
+      const count = Array.isArray(body.input) ? body.input.length : 1;
+      return voyageOkResponse(count);
+    },
+    () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/v1/embeddings/jobs/${jobId}`), "test_token", jobId),
+  );
+
+  assert.equal(polled.status, 200);
+  const payload = await polled.json() as { status?: unknown; result?: { data?: unknown[] } };
+  assert.equal(payload.status, "succeeded");
+  assert.ok(Array.isArray(payload.result?.data));
 });
 
 addEventListener("unload", () => {

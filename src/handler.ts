@@ -33,7 +33,14 @@ import {
   incrementKernelOrgUsageLimit,
   incrementKernelUsageLimit,
 } from "./kernel_usage.ts";
-import { handleChatCompletions, handleEmbeddings, handleModels, handleResponses } from "./openai.ts";
+import {
+  handleChatCompletions,
+  handleEmbeddings,
+  handleEmbeddingsJobCreate,
+  handleEmbeddingsJobGet,
+  handleModels,
+  handleResponses,
+} from "./openai.ts";
 import {
   handleAdminCss,
   handleAdminJs,
@@ -308,6 +315,22 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(await handleModels());
+  }
+
+  if (req.method === "POST" && path === "/v1/embeddings/jobs") {
+    const response = await handleEmbeddingsJobCreate(req, authResult.token, usageContext);
+    if (response.ok) {
+      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
+      await incrementKernelLimitUsage();
+    }
+    return withCors(response);
+  }
+
+  if (req.method === "GET" && path.startsWith("/v1/embeddings/jobs/")) {
+    const jobId = path.slice("/v1/embeddings/jobs/".length).trim();
+    if (!jobId) return withCors(openaiError(404, "Not found", "not_found"));
+    const response = await handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext);
+    return withCors(response);
   }
 
   if (req.method === "POST" && path === "/v1/embeddings") {

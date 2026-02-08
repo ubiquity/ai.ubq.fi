@@ -70,11 +70,23 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
   }'
 ```
 
+Request embeddings:
+
+```bash
+curl -sS https://ai.ubq.fi/v1/embeddings \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"model":"text-embedding-3-small","input":["hello","world"]}'
+```
+
 ## Endpoints
 
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
+- `POST /v1/embeddings`
+- `POST /v1/embeddings/jobs`
+- `GET /v1/embeddings/jobs/{id}`
 - `GET /v1/auth`
 - `GET /v1/agent-bus`
 - `POST /v1/agent-bus`
@@ -201,6 +213,33 @@ curl -sS https://ai.ubq.fi/v1/responses \
 
 When `stream` is `false`, the gateway buffers the upstream stream and returns the final `response` object. When `stream`
 is `true`, the upstream SSE stream is passed through.
+
+## Embeddings
+
+`POST /v1/embeddings`
+
+OpenAI-compatible embeddings endpoint backed by Voyage (cached in Deno KV for 30 days).
+
+Request:
+
+- `model` (string, required): accepts `text-embedding-3-small`, `text-embedding-3-large`, or `voyage-*`.
+- `input` (string or string[], required).
+- `encoding_format` (optional): `float` (default) or `base64`.
+
+The gateway returns an OpenAI-style response with `object: "list"` and one `data[]` entry per input string.
+
+## Embeddings Jobs (Async)
+
+`POST /v1/embeddings/jobs` creates an async job. The gateway either completes it immediately (`200`) or queues it
+(`202`) when Voyage is rate limited.
+
+`GET /v1/embeddings/jobs/{id}` polls the job until `status="succeeded"` or `status="failed"`.
+
+Notes:
+
+- Jobs currently support `encoding_format="float"` only.
+- When queued, the gateway responds with `Retry-After` and `retry_after_seconds`.
+- Inputs are stored encrypted in Deno KV for up to 24h to allow deferred processing, and deleted once the job completes.
 
 ## Reasoning defaults
 
