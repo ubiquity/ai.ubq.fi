@@ -479,7 +479,7 @@ const resolveEmbeddingsModel = (raw: string): { upstream: "voyage"; model: strin
   if (!trimmed) return null;
   const normalized = trimmed.toLowerCase();
   if (normalized === "text-embedding-3-small" || normalized === "text-embedding-3-large") {
-    // OpenAI-compatible model names; backed by Voyage.
+    // OpenAI-compatible model names; backed by Voyage (dimensionality may differ from OpenAI).
     return { upstream: "voyage", model: "voyage-4-large" };
   }
   if (normalized.startsWith("voyage-")) {

@@ -128,6 +128,7 @@ Notes:
 
 - `input` can be a string or an array of strings (batching is strongly recommended).
 - Backed by Voyage (`voyage-4-large`) and cached in Deno KV for 30 days to avoid repeat paid calls.
+- Embedding dimensionality may differ from OpenAI because the vectors come from Voyage.
 - When the provider rate limit is exceeded, the gateway returns `429` with `Retry-After`; clients should retry.
 
 ## CLI (ubq-ai)
