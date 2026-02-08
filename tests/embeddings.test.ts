@@ -47,11 +47,36 @@ const kvStub = {
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
 const { handleEmbeddings } = await import("../src/openai.ts");
+const { kvPromise } = await import("../src/kv.ts");
+
+type FetchMockQueue = {
+  chain: Promise<void>;
+};
+
+const fetchMockQueue: FetchMockQueue = (() => {
+  const key = "__uosFetchMockQueue";
+  const globalRecord = globalThis as unknown as Record<string, unknown>;
+  const existing = globalRecord[key];
+  if (existing && typeof existing === "object" && existing !== null) {
+    const chain = (existing as { chain?: unknown }).chain;
+    if (chain instanceof Promise) return existing as FetchMockQueue;
+  }
+  const created: FetchMockQueue = { chain: Promise.resolve() };
+  globalRecord[key] = created;
+  return created;
+})();
 
 const withFetchMock = async <T>(
   handler: (url: string, bodyText: string | null, headers: Headers) => Response | Promise<Response>,
   fn: () => Promise<T>,
 ): Promise<T> => {
+  const prev = fetchMockQueue.chain;
+  let release = () => {};
+  fetchMockQueue.chain = new Promise<void>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  await prev;
+
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -63,6 +88,7 @@ const withFetchMock = async <T>(
     return await fn();
   } finally {
     globalThis.fetch = originalFetch;
+    release();
   }
 };
 
@@ -211,8 +237,37 @@ Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings",
   assert.ok(Math.abs(view.getFloat32(4, true) + 0.5) < 1e-5);
 });
 
-if (originalOpenKv) {
-  Deno.test("embeddings: restore openKv", () => {
-    (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
-  });
-}
+Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () => {
+  const kv = await kvPromise;
+  assert.ok(kv);
+  const rateKey: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
+  await kv.set(rateKey, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
+  try {
+    const response = await withFetchMock(
+      () => {
+        throw new Error("Embeddings should be rate limited before upstream fetch");
+      },
+      () =>
+        handleEmbeddings(
+          new Request("https://ai.ubq.fi/v1/embeddings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: "text-embedding-3-small", input: "rate-limit-test" }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 429);
+    const retryAfter = response.headers.get("Retry-After");
+    assert.ok(retryAfter);
+    const retryAfterSeconds = Number(retryAfter);
+    assert.ok(Number.isFinite(retryAfterSeconds));
+    assert.ok(retryAfterSeconds >= 1);
+    assert.ok(retryAfterSeconds <= 60);
+  } finally {
+    await kv.delete(rateKey);
+  }
+});
+
+addEventListener("unload", () => {
+  (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
+});

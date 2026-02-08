@@ -505,9 +505,13 @@ const floatEmbeddingToBase64 = (embedding: number[]): string => {
     view.setFloat32(i * 4, embedding[i], true);
   }
   const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary);
+  const chunkSize = 0x8000; // Avoid large variadic calls and quadratic string concatenation.
+  const chunks: string[] = [];
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    chunks.push(String.fromCharCode(...chunk));
+  }
+  return btoa(chunks.join(""));
 };
 
 const extractRetryAfterMs = (value: string | null): number | null => {
@@ -540,7 +544,7 @@ const fetchVoyageEmbeddings = async (params: {
   model: string;
   inputs: string[];
   deadlineMs: number;
-}): Promise<number[][]> => {
+}): Promise<{ vectors: number[][]; totalTokens: number | null }> => {
   const controller = new AbortController();
   const now = Date.now();
   const timeoutMs = Math.max(1, Math.min(EMBEDDINGS_TIMEOUT_MS, params.deadlineMs - now));
@@ -577,6 +581,15 @@ const fetchVoyageEmbeddings = async (params: {
     if (!isRecord(payload) || !Array.isArray(payload.data)) {
       throw new Error("Voyage embeddings returned invalid JSON.");
     }
+
+    let totalTokens: number | null = null;
+    if (isRecord(payload.usage)) {
+      const rawTotalTokens = payload.usage.total_tokens;
+      if (typeof rawTotalTokens === "number" && Number.isFinite(rawTotalTokens)) {
+        totalTokens = Math.max(0, Math.trunc(rawTotalTokens));
+      }
+    }
+
     const data = payload.data as Array<Record<string, unknown>>;
     const vectors: number[][] = [];
     for (const item of data) {
@@ -590,7 +603,7 @@ const fetchVoyageEmbeddings = async (params: {
       }
       vectors.push(vec);
     }
-    return vectors;
+    return { vectors, totalTokens };
   } finally {
     clearTimeout(timeout);
   }
@@ -1093,12 +1106,25 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
     return openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" });
   }
 
+  for (const text of inputs) {
+    const tokenEstimate = estimateTokens(text);
+    if (tokenEstimate > VOYAGE_RATE_LIMIT_TPM) {
+      return openaiError(
+        400,
+        `Input too large for embeddings provider: ~${tokenEstimate} tokens (max ${VOYAGE_RATE_LIMIT_TPM}).`,
+        "invalid_request_error",
+        { param: "input" },
+      );
+    }
+  }
+
   await recordRequestUsage(usageContext, { model, route: "embeddings", stream: false, reasoning: null });
 
   const deadlineMs = startedAtMs + EMBEDDINGS_TIMEOUT_MS;
   const kv = await kvPromise;
   const apiKey = await readVoyageApiKey(kv);
   if (!apiKey) {
+    await recordErrorUsage(usageContext);
     return openaiError(
       503,
       "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
@@ -1122,9 +1148,12 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
     }
   }
 
-  const cacheModelKey = model;
+  const cacheModelKey = model.toLowerCase();
   const cacheKeyFor = (hash: string): Deno.KvKey => ["embeddings", "v1", cacheModelKey, hash];
   const vectorsByIndex: Array<number[] | null> = Array.from({ length: inputs.length }, () => null);
+
+  let voyageTotalTokens = 0;
+  let sawVoyageTokenUsage = false;
 
   const missing: Array<{ hash: string; text: string; indices: number[] }> = [];
   if (shouldCache && kv) {
@@ -1163,6 +1192,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
     for (const chunk of chunks) {
       const now = Date.now();
       if (now >= deadlineMs) {
+        await recordErrorUsage(usageContext);
         return openaiError(502, "Embeddings request timed out.", "timeout", { type: "server_error", param: null });
       }
 
@@ -1174,6 +1204,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
       if (kv) {
         const reserved = await applyVoyageRateLimit(kv, tokenEstimate, deadlineMs);
         if (!reserved.ok) {
+          await recordErrorUsage(usageContext);
           const retryAfterSeconds = Math.max(1, Math.ceil(reserved.wait_ms / 1000));
           const body = {
             error: {
@@ -1194,7 +1225,12 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
 
       for (;;) {
         try {
-          vectors = await fetchVoyageEmbeddings({ apiKey, model: resolved.model, inputs: texts, deadlineMs });
+          const upstream = await fetchVoyageEmbeddings({ apiKey, model: resolved.model, inputs: texts, deadlineMs });
+          vectors = upstream.vectors;
+          if (typeof upstream.totalTokens === "number") {
+            sawVoyageTokenUsage = true;
+            voyageTotalTokens += upstream.totalTokens;
+          }
           break;
         } catch (error) {
           const status = (error as { status?: number }).status;
@@ -1206,6 +1242,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
 
           if (!status || !retryable.has(status) || attempt >= 2) {
             console.error(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
+            await recordErrorUsage(usageContext);
             return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
           }
 
@@ -1213,6 +1250,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
           const waitMs = Math.max(0, retryAfterMs ?? backoffMs);
           if (now + waitMs >= deadlineMs) {
             if (status === 429) {
+              await recordErrorUsage(usageContext);
               const retryAfterSeconds = Math.max(1, Math.ceil(waitMs / 1000));
               const body = {
                 error: {
@@ -1224,6 +1262,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
               };
               return json(429, body, { "Retry-After": String(retryAfterSeconds) });
             }
+            await recordErrorUsage(usageContext);
             return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
           }
 
@@ -1234,6 +1273,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
       }
 
       if (!vectors || vectors.length !== chunkItems.length) {
+        await recordErrorUsage(usageContext);
         return openaiError(502, "Embeddings upstream returned a size mismatch.", "upstream_error", {
           type: "server_error",
           param: null,
@@ -1263,6 +1303,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
   for (let i = 0; i < vectorsByIndex.length; i += 1) {
     const vec = vectorsByIndex[i];
     if (!vec) {
+      await recordErrorUsage(usageContext);
       return openaiError(502, "Embeddings gateway failed to construct a complete response.", "server_error", {
         type: "server_error",
         param: null,
@@ -1280,11 +1321,19 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
     `[ai.ubq.fi] embeddings request_id=${requestId} status=200 upstream=${resolved.upstream} ms=${elapsedMs}`,
   );
 
+  const usageTokens: UsageTokens | null = sawVoyageTokenUsage
+    ? { inputTokens: voyageTotalTokens, outputTokens: 0, totalTokens: voyageTotalTokens }
+    : null;
+  await recordCompletionUsage(usageContext, usageTokens);
+
   return json(200, {
     object: "list",
     data,
     model,
-    usage: { prompt_tokens: 0, total_tokens: 0 },
+    usage: {
+      prompt_tokens: usageTokens?.inputTokens ?? 0,
+      total_tokens: usageTokens?.totalTokens ?? 0,
+    },
   }, { "x-ubq-upstream": resolved.upstream });
 };
 
