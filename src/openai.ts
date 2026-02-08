@@ -707,9 +707,12 @@ const fetchVoyageEmbeddings = async (params: {
       if (!Array.isArray(embedding)) {
         throw new Error("Voyage embeddings response missing embedding vector.");
       }
-      const vec = embedding.map((v) => Number(v)).filter((v) => Number.isFinite(v));
-      if (vec.length !== embedding.length) {
-        throw new Error("Voyage embeddings response contained non-numeric values.");
+      const vec: number[] = [];
+      for (const v of embedding) {
+        if (typeof v !== "number" || !Number.isFinite(v)) {
+          throw new Error("Voyage embeddings response contained non-numeric values.");
+        }
+        vec.push(v);
       }
       vectors.push(vec);
     }

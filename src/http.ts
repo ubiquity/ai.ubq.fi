@@ -5,7 +5,8 @@ export const corsHeaders = (): HeadersInit => ({
   "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "Access-Control-Allow-Headers":
     "Authorization,Content-Type,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
-  "Access-Control-Expose-Headers": "x-uos-warning",
+  // Allow browser clients to read gateway warnings and backoff hints (Retry-After).
+  "Access-Control-Expose-Headers": "x-uos-warning,Retry-After",
   "Access-Control-Max-Age": "86400",
 });
 

@@ -80,7 +80,7 @@ const fetchMockQueue: FetchMockQueue = (() => {
   const key = "__uosFetchMockQueue";
   const globalRecord = globalThis as unknown as Record<string, unknown>;
   const existing = globalRecord[key];
-  if (existing && typeof existing === "object" && existing !== null) {
+  if (existing && typeof existing === "object") {
     const chain = (existing as { chain?: unknown }).chain;
     if (chain instanceof Promise) return existing as FetchMockQueue;
   }
