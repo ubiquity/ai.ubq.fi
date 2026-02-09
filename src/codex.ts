@@ -1,7 +1,7 @@
 import { config } from "./config.ts";
 import { kvPromise } from "./kv.ts";
 import { decodeBase64ToString, getString, isRecord } from "./utils.ts";
-import type { CodexAuthState, ResponseMessageItem } from "./types.ts";
+import type { CodexAuthState, ResponseInputItem } from "./types.ts";
 
 const CODEX_REFRESH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -487,7 +487,7 @@ export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): P
 
 export const buildCodexRequest = (
   model: string,
-  input: ResponseMessageItem[],
+  input: ResponseInputItem[],
   options: Readonly<{ reasoning?: Record<string, unknown> | null; instructions?: string | null }> = {},
 ): Record<string, unknown> => {
   const body: Record<string, unknown> = {

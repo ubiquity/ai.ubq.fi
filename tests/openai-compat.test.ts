@@ -237,6 +237,50 @@ Deno.test("openai: chat completions accept system-only messages", async () => {
   assert.equal(firstContent?.["type"], "input_text");
 });
 
+Deno.test("openai: responses accept non-message input items", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            input: [
+              {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: "ping" }],
+              },
+              { type: "reasoning", summary: "thinking..." },
+              { type: "function_call", name: "test", call_id: "call_1", arguments: "{}" },
+              { type: "function_call_output", call_id: "call_1", output: "ok" },
+            ],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+
+  const input = recordedBody["input"];
+  assert.ok(Array.isArray(input));
+
+  const types = (input as Array<Record<string, unknown>>)
+    .map((item) => (item && typeof item === "object") ? item["type"] : null)
+    .filter((value): value is string => typeof value === "string");
+
+  assert.ok(types.includes("reasoning"));
+  assert.ok(types.includes("function_call"));
+  assert.ok(types.includes("function_call_output"));
+});
+
 addEventListener("unload", () => {
   (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
 });

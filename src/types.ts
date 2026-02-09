@@ -173,3 +173,7 @@ export type ResponseMessageItem = Readonly<{
   role: "user" | "assistant" | "developer";
   content: MessageContentItem[];
 }>;
+
+// The Responses API can accept additional input item types beyond "message"
+// (e.g. tool-calling items like reasoning/function_call/function_call_output).
+export type ResponseInputItem = ResponseMessageItem | Readonly<Record<string, unknown> & { type: string }>;

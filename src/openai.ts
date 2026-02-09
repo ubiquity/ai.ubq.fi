@@ -20,7 +20,13 @@ import { json, openaiError } from "./http.ts";
 import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
-import type { ChatCompletionRequest, MessageContentItem, ResponseMessageItem, ResponsesRequest } from "./types.ts";
+import type {
+  ChatCompletionRequest,
+  MessageContentItem,
+  ResponseInputItem,
+  ResponseMessageItem,
+  ResponsesRequest,
+} from "./types.ts";
 
 const getDefaultModel = async (): Promise<string> => {
   const kv = await kvPromise;
@@ -2458,13 +2464,13 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const model = normalizeModelForCodex(modelRaw);
 
   const inputRaw = rawBody.input;
-  let input: ResponseMessageItem[];
+  let input: ResponseInputItem[];
   if (inputRaw === undefined) {
     input = [];
   } else if (typeof inputRaw === "string") {
     input = [{ type: "message", role: "user", content: [{ type: "input_text", text: inputRaw }] }];
   } else if (Array.isArray(inputRaw)) {
-    const converted: ResponseMessageItem[] = [];
+    const converted: ResponseInputItem[] = [];
     let contentBuffer: MessageContentItem[] = [];
 
     const flushContentBuffer = () => {
@@ -2473,24 +2479,49 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
       contentBuffer = [];
     };
 
-    let sawMessage = false;
+    let sawNonContentItem = false;
     for (const msg of inputRaw) {
       const mapped = normalizeResponseInputItem(msg);
       if (mapped) {
         flushContentBuffer();
         converted.push(mapped);
-        sawMessage = true;
+        sawNonContentItem = true;
         continue;
       }
-      const contentItem = normalizeResponseContentItem(msg);
-      if (!contentItem) return openaiError(400, "Invalid message in input[]", "invalid_request_error");
-      if (sawMessage) {
-        converted.push({ type: "message", role: "user", content: [contentItem] });
-      } else {
-        contentBuffer.push(contentItem);
+
+      if (typeof msg === "string") {
+        const contentItem: MessageContentItem = { type: "input_text", text: msg };
+        if (sawNonContentItem) {
+          converted.push({ type: "message", role: "user", content: [contentItem] });
+        } else {
+          contentBuffer.push(contentItem);
+        }
+        continue;
       }
+
+      const contentItem = normalizeResponseContentItem(msg);
+      if (contentItem) {
+        if (sawNonContentItem) {
+          converted.push({ type: "message", role: "user", content: [contentItem] });
+        } else {
+          contentBuffer.push(contentItem);
+        }
+        continue;
+      }
+
+      // Codex CLI uses the Responses API and can send additional input item types
+      // (e.g. reasoning + function_call + function_call_output). Pass them through
+      // so tool-calling conversations work end-to-end.
+      if (isRecord(msg) && typeof msg.type === "string" && msg.type !== "message") {
+        flushContentBuffer();
+        converted.push(msg as ResponseInputItem);
+        sawNonContentItem = true;
+        continue;
+      }
+
+      return openaiError(400, "Invalid message in input[]", "invalid_request_error");
     }
-    if (!sawMessage || contentBuffer.length) {
+    if (!sawNonContentItem || contentBuffer.length) {
       flushContentBuffer();
     }
     input = converted;
