@@ -3,6 +3,31 @@ import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults
 import { sha256Hex } from "../src/utils.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyHasPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => {
+  if (key.length < prefix.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (key[i] !== prefix[i]) return false;
+  }
+  return true;
+};
+
+const compareKeyPart = (a: unknown, b: unknown): number => {
+  if (a === b) return 0;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  if (typeof a === "string" && typeof b === "string") return a.localeCompare(b);
+  return String(a).localeCompare(String(b));
+};
+
+const compareKeys = (a: Deno.KvKey, b: Deno.KvKey): number => {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i += 1) {
+    if (i >= a.length) return -1;
+    if (i >= b.length) return 1;
+    const diff = compareKeyPart(a[i], b[i]);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+};
 
 const kvStore = new Map<string, unknown>();
 const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
@@ -21,6 +46,13 @@ kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
 const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv;
 
+let failNextAtomicCommit:
+  | ((
+    checks: ReadonlyArray<Deno.KvEntryMaybe<unknown>>,
+    ops: ReadonlyArray<{ type: string; key: Deno.KvKey }>,
+  ) => boolean)
+  | null = null;
+
 const kvStub = {
   get: (key: Deno.KvKey) =>
     Promise.resolve(({ key, value: kvStore.get(keyToString(key)) ?? null }) as Deno.KvEntryMaybe<unknown>),
@@ -32,13 +64,38 @@ const kvStub = {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: async function* (_selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
-    yield* [];
+  list: async function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
+    const prefix = "prefix" in selector ? selector.prefix : null;
+    if (!prefix) {
+      yield* [];
+      return;
+    }
+    const limit = Math.max(0, Math.trunc(options?.limit ?? Infinity));
+    const entries: Array<Deno.KvEntry<unknown>> = [];
+    for (const [rawKey, value] of kvStore.entries()) {
+      let key: unknown = null;
+      try {
+        key = JSON.parse(rawKey);
+      } catch {
+        key = null;
+      }
+      if (!Array.isArray(key)) continue;
+      if (!keyHasPrefix(key as Deno.KvKey, prefix)) continue;
+      entries.push({ key: key as Deno.KvKey, value } as Deno.KvEntry<unknown>);
+    }
+    entries.sort((a, b) => compareKeys(a.key, b.key));
+    for (const entry of entries.slice(0, limit)) {
+      yield entry;
+    }
   },
   atomic: () => {
+    const checks: Array<Deno.KvEntryMaybe<unknown>> = [];
     const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
     const chain = {
-      check: () => chain,
+      check: (entry: Deno.KvEntryMaybe<unknown>) => {
+        checks.push(entry);
+        return chain;
+      },
       set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
         ops.push({ type: "set", key, value });
         return chain;
@@ -48,6 +105,16 @@ const kvStub = {
         return chain;
       },
       commit: () => {
+        if (failNextAtomicCommit) {
+          const shouldFail = failNextAtomicCommit(
+            checks,
+            ops.map((op) => ({ type: op.type, key: op.key })),
+          );
+          if (shouldFail) {
+            failNextAtomicCommit = null;
+            return Promise.resolve({ ok: false } as const);
+          }
+        }
         for (const op of ops) {
           if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
           else kvStore.delete(keyToString(op.key));
@@ -198,7 +265,17 @@ Deno.test("embeddings: writes cache entries on upstream misses", async () => {
   const input = `cache-miss-${crypto.randomUUID()}`;
   const hash = await sha256Hex(input);
   const cacheKey: Deno.KvKey = ["embeddings", "v1", model.toLowerCase(), hash];
+  const cacheModelKey = model.toLowerCase();
+  const byHashKey: Deno.KvKey = ["embeddings", "v1", "cache_index_by_hash", cacheModelKey, hash];
+  const countKey: Deno.KvKey = ["embeddings", "v1", "cache_count", cacheModelKey];
+  const fixedNowMs = 1_700_000_000_000;
+  const indexKey: Deno.KvKey = ["embeddings", "v1", "cache_index", cacheModelKey, fixedNowMs, hash];
   kvStore.delete(keyToString(cacheKey));
+  kvStore.delete(keyToString(byHashKey));
+  kvStore.delete(keyToString(countKey));
+  kvStore.delete(keyToString(indexKey));
+  const originalNow = Date.now;
+  Date.now = () => fixedNowMs;
 
   try {
     const response = await withFetchMock(
@@ -221,8 +298,133 @@ Deno.test("embeddings: writes cache entries on upstream misses", async () => {
     const stored = kvStore.get(keyToString(cacheKey)) as { embedding?: unknown } | undefined;
     assert.ok(stored);
     assert.ok(Array.isArray(stored.embedding));
+    assert.equal(kvStore.get(keyToString(byHashKey)), fixedNowMs);
+    assert.equal(kvStore.get(keyToString(indexKey)), 1);
+    assert.equal(kvStore.get(keyToString(countKey)), 1);
   } finally {
+    Date.now = originalNow;
     kvStore.delete(keyToString(cacheKey));
+    kvStore.delete(keyToString(byHashKey));
+    kvStore.delete(keyToString(countKey));
+    kvStore.delete(keyToString(indexKey));
+  }
+});
+
+Deno.test("embeddings cache: retries cache write when atomic commit fails", async () => {
+  resetVoyageRateLimit();
+  const model = "text-embedding-3-small";
+  const cacheModelKey = model.toLowerCase();
+  const input = `cache-atomic-fail-${crypto.randomUUID()}`;
+  const hash = await sha256Hex(input);
+  const cacheKey: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hash];
+  const pointerMs = 1_700_000_000_000;
+  const byHashKey: Deno.KvKey = ["embeddings", "v1", "cache_index_by_hash", cacheModelKey, hash];
+  const indexKey: Deno.KvKey = ["embeddings", "v1", "cache_index", cacheModelKey, pointerMs, hash];
+  kvStore.set(keyToString(byHashKey), pointerMs);
+  kvStore.delete(keyToString(cacheKey));
+  kvStore.delete(keyToString(indexKey));
+
+  failNextAtomicCommit = (checks) => checks.some((entry) => keyToString(entry.key) === keyToString(byHashKey));
+
+  try {
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
+        const count = Array.isArray(body.input) ? body.input.length : 1;
+        return voyageOkResponse(count);
+      },
+      () =>
+        handleEmbeddings(
+          new Request("https://ai.ubq.fi/v1/embeddings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, input }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 200);
+    const stored = kvStore.get(keyToString(cacheKey)) as { embedding?: unknown; created_at?: unknown } | undefined;
+    assert.ok(stored);
+    assert.ok(Array.isArray(stored.embedding));
+    assert.equal(stored.created_at, new Date(pointerMs).toISOString());
+    assert.equal(kvStore.get(keyToString(byHashKey)), pointerMs);
+    assert.equal(kvStore.get(keyToString(indexKey)), 1);
+  } finally {
+    failNextAtomicCommit = null;
+    kvStore.delete(keyToString(byHashKey));
+    kvStore.delete(keyToString(cacheKey));
+    kvStore.delete(keyToString(indexKey));
+  }
+});
+
+Deno.test("embeddings cache: eviction cleans stale duplicate index keys without deleting embeddings", async () => {
+  resetVoyageRateLimit();
+  const model = "text-embedding-3-small";
+  const cacheModelKey = model.toLowerCase();
+  const maxCount = 50_000;
+  const nowMs = 1_700_000_000_000;
+
+  const countKey: Deno.KvKey = ["embeddings", "v1", "cache_count", cacheModelKey];
+  kvStore.set(keyToString(countKey), maxCount);
+
+  const hashA = await sha256Hex(`stale-index-${crypto.randomUUID()}`);
+  const pointerMs = nowMs - 1_000;
+  const staleMs = nowMs - 2_000;
+  const cacheKeyA: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hashA];
+  const byHashKeyA: Deno.KvKey = ["embeddings", "v1", "cache_index_by_hash", cacheModelKey, hashA];
+  const indexKeyStale: Deno.KvKey = ["embeddings", "v1", "cache_index", cacheModelKey, staleMs, hashA];
+  const indexKeyActive: Deno.KvKey = ["embeddings", "v1", "cache_index", cacheModelKey, pointerMs, hashA];
+  kvStore.set(keyToString(byHashKeyA), pointerMs);
+  kvStore.set(keyToString(cacheKeyA), { embedding: [1, 2, 3], created_at: new Date(pointerMs).toISOString() });
+  kvStore.set(keyToString(indexKeyStale), 1);
+  kvStore.set(keyToString(indexKeyActive), 1);
+
+  const originalNow = Date.now;
+  Date.now = () => nowMs;
+
+  const inputB = `evict-${crypto.randomUUID()}`;
+  const hashB = await sha256Hex(inputB);
+  const cacheKeyB: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hashB];
+  const byHashKeyB: Deno.KvKey = ["embeddings", "v1", "cache_index_by_hash", cacheModelKey, hashB];
+  const indexKeyB: Deno.KvKey = ["embeddings", "v1", "cache_index", cacheModelKey, nowMs, hashB];
+  kvStore.delete(keyToString(cacheKeyB));
+  kvStore.delete(keyToString(byHashKeyB));
+  kvStore.delete(keyToString(indexKeyB));
+
+  try {
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
+        const count = Array.isArray(body.input) ? body.input.length : 1;
+        return voyageOkResponse(count);
+      },
+      () =>
+        handleEmbeddings(
+          new Request("https://ai.ubq.fi/v1/embeddings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, input: inputB }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(kvStore.get(keyToString(indexKeyStale)), undefined);
+    assert.deepEqual(kvStore.get(keyToString(cacheKeyA)), {
+      embedding: [1, 2, 3],
+      created_at: new Date(pointerMs).toISOString(),
+    });
+    assert.equal(kvStore.get(keyToString(byHashKeyA)), pointerMs);
+    assert.equal(kvStore.get(keyToString(indexKeyActive)), 1);
+  } finally {
+    Date.now = originalNow;
+    kvStore.delete(keyToString(countKey));
+    kvStore.delete(keyToString(byHashKeyA));
+    kvStore.delete(keyToString(cacheKeyA));
+    kvStore.delete(keyToString(indexKeyStale));
+    kvStore.delete(keyToString(indexKeyActive));
+    kvStore.delete(keyToString(cacheKeyB));
+    kvStore.delete(keyToString(byHashKeyB));
+    kvStore.delete(keyToString(indexKeyB));
   }
 });
 

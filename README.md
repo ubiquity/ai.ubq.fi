@@ -129,8 +129,8 @@ Notes:
 - `input` can be a string or an array of strings (batching is strongly recommended).
 - Backed by Voyage (`voyage-4-large`) and cached in Deno KV (FIFO-bounded) to avoid repeat paid calls.
 - Embedding dimensionality may differ from OpenAI because the vectors come from Voyage.
-- When the provider rate limit is exceeded, the gateway returns `429` with `Retry-After`; clients should retry (or use
-  the async jobs API below).
+- When rate limited (by Voyage or the gateway's own KV throttling), the gateway returns `429` with `Retry-After`;
+  clients should retry (or use the async jobs API below).
 
 Embeddings jobs (async, gateway-specific):
 
@@ -165,8 +165,8 @@ Notes:
 
 - Jobs currently support `encoding_format="float"` only.
 - When queued, the gateway responds `202` with `Retry-After` and `retry_after_seconds`; poll until `status="succeeded"`.
-- Jobs are scoped to the authenticated client identity; poll using the same API key and auth headers used to create the
-  job (GitHub tokens must include the same kernel attestation headers + repo context).
+- Jobs are scoped to the authenticated client identity; poll using credentials that resolve to the same identity scope
+  used to create the job (same API key, or for GitHub/kernel auth the same `{owner, repo}` attestation context).
 - Inputs are stored encrypted in Deno KV for up to 24h to allow deferred processing, and deleted once the job completes.
 
 ## CLI (ubq-ai)

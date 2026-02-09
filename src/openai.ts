@@ -433,6 +433,11 @@ const normalizeEmbeddingsCacheTimestampMs = (value: unknown): number | null => {
   return ts;
 };
 
+type EmbeddingsCacheEvictResult = Readonly<{
+  evicted_embeddings: number;
+  deleted_stale_index_keys: number;
+}>;
+
 const writeEmbeddingsCacheEntry = async (
   kv: Deno.Kv,
   cacheModelKey: string,
@@ -445,39 +450,32 @@ const writeEmbeddingsCacheEntry = async (
 
   // Concurrency-safe: if multiple requests try to cache the same hash, only one
   // will win the "create index" CAS; the others will reuse the winner's index.
-  const entry = await kv.get<number>(byHashKey);
-  const existingCreatedAtMs = normalizeEmbeddingsCacheTimestampMs(entry.value);
-  if (existingCreatedAtMs !== null) {
-    const indexKey = embeddingsCacheIndexKey(cacheModelKey, existingCreatedAtMs, hash);
-    await kv.atomic()
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const entry = await kv.get<number>(byHashKey);
+    const existingCreatedAtMs = normalizeEmbeddingsCacheTimestampMs(entry.value);
+    if (existingCreatedAtMs !== null) {
+      const indexKey = embeddingsCacheIndexKey(cacheModelKey, existingCreatedAtMs, hash);
+      const updated = await kv.atomic()
+        .check(entry)
+        .set(cacheKey, { embedding, created_at: new Date(existingCreatedAtMs).toISOString() })
+        .set(indexKey, 1)
+        .commit();
+      if (updated.ok) return { isNew: false };
+      continue;
+    }
+
+    const createdAtIso = new Date(createdAtMs).toISOString();
+    const indexKey = embeddingsCacheIndexKey(cacheModelKey, createdAtMs, hash);
+    const created = await kv.atomic()
       .check(entry)
-      .set(cacheKey, { embedding, created_at: new Date(existingCreatedAtMs).toISOString() })
+      .set(cacheKey, { embedding, created_at: createdAtIso })
       .set(indexKey, 1)
-      .set(byHashKey, existingCreatedAtMs)
+      .set(byHashKey, createdAtMs)
       .commit();
-    return { isNew: false };
+    if (created.ok) return { isNew: true };
+    // CAS failed: `byHashKey` was updated/created in between, or was evicted and
+    // recreated concurrently. Retry to reuse the now-canonical pointer.
   }
-
-  const createdAtIso = new Date(createdAtMs).toISOString();
-  const indexKey = embeddingsCacheIndexKey(cacheModelKey, createdAtMs, hash);
-  const created = await kv.atomic()
-    .check(entry)
-    .set(cacheKey, { embedding, created_at: createdAtIso })
-    .set(indexKey, 1)
-    .set(byHashKey, createdAtMs)
-    .commit();
-  if (created.ok) return { isNew: true };
-
-  // CAS failed: someone else wrote `byHashKey`. Reuse the now-canonical index.
-  const raced = await kv.get<number>(byHashKey);
-  const racedCreatedAtMs = normalizeEmbeddingsCacheTimestampMs(raced.value);
-  if (racedCreatedAtMs === null) return { isNew: false };
-  await kv.atomic()
-    .check(raced)
-    .set(cacheKey, { embedding, created_at: new Date(racedCreatedAtMs).toISOString() })
-    .set(embeddingsCacheIndexKey(cacheModelKey, racedCreatedAtMs, hash), 1)
-    .set(byHashKey, racedCreatedAtMs)
-    .commit();
   return { isNew: false };
 };
 
@@ -485,7 +483,7 @@ const evictOldestEmbeddingsCacheEntries = async (
   kv: Deno.Kv,
   cacheModelKey: string,
   count: number,
-): Promise<number> => {
+): Promise<EmbeddingsCacheEvictResult> => {
   const prefix = embeddingsCacheIndexPrefix(cacheModelKey);
   const keys: Array<{ indexKey: Deno.KvKey; createdAtMs: number; hash: string }> = [];
   for await (const entry of kv.list({ prefix }, { limit: count })) {
@@ -496,35 +494,59 @@ const evictOldestEmbeddingsCacheEntries = async (
     if (typeof createdAtMs !== "number" || !Number.isFinite(createdAtMs)) continue;
     keys.push({ indexKey: key, createdAtMs: Math.trunc(createdAtMs), hash });
   }
-  if (!keys.length) return 0;
+  if (!keys.length) return { evicted_embeddings: 0, deleted_stale_index_keys: 0 };
 
   const byHashKeys = keys.map((item) => embeddingsCacheIndexByHashKey(cacheModelKey, item.hash));
   const byHashEntries = await Promise.all(byHashKeys.map((key) => kv.get<number>(key)));
 
-  let evicted = 0;
-  const deletions: Array<Promise<void>> = [];
+  let evictedEmbeddings = 0;
+  let deletedStaleIndexKeys = 0;
   for (let i = 0; i < keys.length; i += 1) {
     const { indexKey, createdAtMs, hash } = keys[i]!;
     const pointerEntry = byHashEntries[i]!;
     const pointer = normalizeEmbeddingsCacheTimestampMs(pointerEntry.value);
+    const cacheKey: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hash];
 
     if (pointer !== null && pointer !== createdAtMs) {
       // Stale duplicate index key for this hash; delete the index entry only.
-      deletions.push(kv.delete(indexKey));
+      const deleted = await kv.atomic().check(pointerEntry).delete(indexKey).commit();
+      if (deleted.ok) deletedStaleIndexKeys += 1;
       continue;
     }
 
-    // Active index entry (or missing pointer): evict embedding + index + pointer.
-    evicted += 1;
-    deletions.push(kv.delete(indexKey));
-    deletions.push(kv.delete(["embeddings", "v1", cacheModelKey, hash]));
-    deletions.push(kv.delete(embeddingsCacheIndexByHashKey(cacheModelKey, hash)));
-  }
+    if (pointer === null) {
+      // Missing pointer (legacy / partial state): only delete the embedding value
+      // if it still matches the index timestamp to avoid deleting a newer cache
+      // entry that happens to share the same hash.
+      const valueEntry = await kv.get<{ created_at?: unknown }>(cacheKey);
+      const value = valueEntry.value;
+      const createdAtIso = isRecord(value) && typeof value.created_at === "string" ? value.created_at : null;
+      const expectedIso = new Date(createdAtMs).toISOString();
+      if (createdAtIso !== expectedIso) {
+        const deleted = await kv.atomic().check(pointerEntry).delete(indexKey).commit();
+        if (deleted.ok) deletedStaleIndexKeys += 1;
+        continue;
+      }
 
-  // Best-effort deletes. If some deletes fail due to contention, subsequent writes
-  // will attempt eviction again.
-  await Promise.all(deletions);
-  return evicted;
+      const commit = await kv.atomic()
+        .check(pointerEntry)
+        .delete(indexKey)
+        .delete(cacheKey)
+        .commit();
+      if (commit.ok) evictedEmbeddings += 1;
+      continue;
+    }
+
+    // Canonical pointer match: evict embedding + index + pointer as an atomic unit.
+    const commit = await kv.atomic()
+      .check(pointerEntry)
+      .delete(indexKey)
+      .delete(cacheKey)
+      .delete(embeddingsCacheIndexByHashKey(cacheModelKey, hash))
+      .commit();
+    if (commit.ok) evictedEmbeddings += 1;
+  }
+  return { evicted_embeddings: evictedEmbeddings, deleted_stale_index_keys: deletedStaleIndexKeys };
 };
 
 const maybeEvictEmbeddingsCache = async (
@@ -537,22 +559,52 @@ const maybeEvictEmbeddingsCache = async (
   const countKey = embeddingsCacheCountKey(cacheModelKey);
 
   try {
-    const entry = await kv.get<number>(countKey);
-    const current = normalizeEmbeddingsCacheCount(entry.value);
-    let next = current + wroteCount;
-    if (next <= max) {
-      await kv.set(countKey, next);
+    let updated = false;
+    let next = 0;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const entry = await kv.get<number>(countKey);
+      const current = normalizeEmbeddingsCacheCount(entry.value);
+      next = current + wroteCount;
+      const commit = await kv.atomic().check(entry).set(countKey, next).commit();
+      if (commit.ok) {
+        updated = true;
+        break;
+      }
+    }
+    if (!updated) {
+      console.warn("[ai.ubq.fi] embeddings_cache count update failed after retries");
       return;
     }
+    if (next <= max) return;
 
     const over = next - max;
     const target = Math.min(EMBEDDINGS_CACHE_EVICT_BATCH, Math.max(1, over));
-    const deleted = await evictOldestEmbeddingsCacheEntries(kv, cacheModelKey, target);
-    next = Math.max(0, next - deleted);
-    await kv.set(countKey, next);
-    if (deleted > 0) {
+    const evicted = await evictOldestEmbeddingsCacheEntries(kv, cacheModelKey, target);
+    const removed = evicted.evicted_embeddings + evicted.deleted_stale_index_keys;
+    if (removed <= 0) {
+      // Counter may be inflated from past duplicate index keys; clamp so we don't
+      // spin eviction on every write when no work can be performed.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const entry = await kv.get<number>(countKey);
+        const current = normalizeEmbeddingsCacheCount(entry.value);
+        const clamped = Math.min(current, max);
+        const commit = await kv.atomic().check(entry).set(countKey, clamped).commit();
+        if (commit.ok) break;
+      }
+      return;
+    }
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const entry = await kv.get<number>(countKey);
+      const current = normalizeEmbeddingsCacheCount(entry.value);
+      next = Math.max(0, current - removed);
+      const commit = await kv.atomic().check(entry).set(countKey, next).commit();
+      if (commit.ok) break;
+    }
+
+    if (removed > 0) {
       console.info(
-        `[ai.ubq.fi] embeddings_cache model=${cacheModelKey} evicted=${deleted} next_count=${next} max=${max}`,
+        `[ai.ubq.fi] embeddings_cache model=${cacheModelKey} evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} next_count=${next} max=${max}`,
       );
     }
   } catch (error) {
