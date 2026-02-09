@@ -31,11 +31,24 @@ const kvStub = {
     yield* [];
   },
   atomic: () => {
+    const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
     const chain = {
       check: () => chain,
-      set: () => chain,
-      delete: () => chain,
-      commit: () => Promise.resolve({ ok: true } as const),
+      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+        ops.push({ type: "set", key, value });
+        return chain;
+      },
+      delete: (key: Deno.KvKey) => {
+        ops.push({ type: "delete", key });
+        return chain;
+      },
+      commit: () => {
+        for (const op of ops) {
+          if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
+          else kvStore.delete(keyToString(op.key));
+        }
+        return Promise.resolve({ ok: true } as const);
+      },
     };
     return chain;
   },

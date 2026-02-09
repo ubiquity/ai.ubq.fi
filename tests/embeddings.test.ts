@@ -33,11 +33,24 @@ const kvStub = {
     yield* [];
   },
   atomic: () => {
+    const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
     const chain = {
       check: () => chain,
-      set: () => chain,
-      delete: () => chain,
-      commit: () => Promise.resolve({ ok: true } as const),
+      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+        ops.push({ type: "set", key, value });
+        return chain;
+      },
+      delete: (key: Deno.KvKey) => {
+        ops.push({ type: "delete", key });
+        return chain;
+      },
+      commit: () => {
+        for (const op of ops) {
+          if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
+          else kvStore.delete(keyToString(op.key));
+        }
+        return Promise.resolve({ ok: true } as const);
+      },
     };
     return chain;
   },
@@ -96,7 +109,8 @@ const voyageOkResponse = (count: number): Response => {
   const vectors = Array.from({ length: count }, (_, i) => ({
     embedding: [i + 0.1, i + 0.2, i + 0.3],
   }));
-  return new Response(JSON.stringify({ data: vectors }), {
+  const totalTokens = count * 5;
+  return new Response(JSON.stringify({ data: vectors, usage: { total_tokens: totalTokens } }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
@@ -132,6 +146,8 @@ Deno.test("embeddings: normalizes string input", async () => {
   assert.equal(payload.model, "text-embedding-3-small");
   assert.equal(typeof payload.usage?.prompt_tokens, "number");
   assert.equal(typeof payload.usage?.total_tokens, "number");
+  assert.equal(payload.usage?.prompt_tokens, 5);
+  assert.equal(payload.usage?.total_tokens, 5);
   assert.ok(Array.isArray(payload.data));
   assert.equal(payload.data.length, 1);
   assert.equal(payload.data[0]?.object, "embedding");

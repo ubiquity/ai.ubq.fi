@@ -508,7 +508,13 @@ const applyVoyageRateLimit = async (
     }
     if (reserved.ok) return reserved;
     const waitMs = reserved.wait_ms;
-    if (waitMs <= 0) continue;
+    if (waitMs <= 0) {
+      // CAS contention without a concrete rate-limit wait; avoid tight spinning.
+      const now2 = Date.now();
+      const sleepMs = Math.min(25, Math.max(0, deadlineMs - now2));
+      if (sleepMs > 0) await sleep(sleepMs);
+      continue;
+    }
     if (now + waitMs > deadlineMs) return { ok: false, wait_ms: waitMs };
     await sleep(waitMs);
   }
@@ -1906,15 +1912,14 @@ export const handleEmbeddingsJobCreate = async (
     );
   }
 
-  const tokenSeed = authToken ?? "disabled";
-  const tokenHash = await sha256Hex(tokenSeed);
-
   const hashesByIndex = await Promise.all(inputs.map((text) => sha256Hex(text)));
   const uniqueTextsByHash = new Map<string, string>();
   for (let i = 0; i < inputs.length; i += 1) uniqueTextsByHash.set(hashesByIndex[i]!, inputs[i]!);
   const uniqueHashes = Array.from(uniqueTextsByHash.keys());
 
   const jobId = `embjob_${crypto.randomUUID().replace(/-/g, "")}`;
+  const tokenSeed = authToken ?? jobId;
+  const tokenHash = await sha256Hex(tokenSeed);
   const now = Date.now();
   const cacheModelKey = model.toLowerCase();
 
@@ -1985,7 +1990,7 @@ export const handleEmbeddingsJobGet = async (
     return openaiError(503, "Embeddings jobs require Deno KV", "server_error", { type: "server_error", param: null });
   }
 
-  const tokenSeed = authToken ?? "disabled";
+  const tokenSeed = authToken ?? jobId;
   const tokenHash = await sha256Hex(tokenSeed);
   const jobKey = embeddingsJobKey(tokenHash, jobId);
   const entry = await kv.get<EmbeddingsJobRecord>(jobKey);
