@@ -230,7 +230,7 @@ is `true`, the upstream SSE stream is passed through.
 
 `POST /v1/embeddings`
 
-OpenAI-compatible embeddings endpoint backed by Voyage (cached in Deno KV for 30 days).
+OpenAI-compatible embeddings endpoint backed by Voyage (cached in Deno KV, FIFO-bounded).
 
 Request:
 
