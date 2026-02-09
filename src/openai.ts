@@ -2013,10 +2013,22 @@ export const handleEmbeddingsJobGet = async (
       ? null
       : buildOpenAiEmbeddingsResult(job.model, vectorsByIndex, job.usage_total_tokens);
     if (!result) {
-      return openaiError(502, "Embeddings job result is unavailable.", "server_error", {
-        type: "server_error",
-        param: null,
-      });
+      // Cache misses are unexpected (cache TTL is longer than job TTL), but if it happens
+      // there's nothing the client can do besides resubmitting the job.
+      const failed: EmbeddingsJobRecord = {
+        ...job,
+        status: "failed",
+        updated_at_ms: Date.now(),
+        locked_until_ms: null,
+        retry_after_seconds: null,
+        error: {
+          message: "Embeddings job result was unavailable; please resubmit.",
+          type: "server_error",
+          code: "embeddings_job_result_missing",
+        },
+      };
+      await updateEmbeddingsJobRecord(kv, jobKey, failed);
+      return json(200, buildEmbeddingsJobBody(failed, null), { "x-ubq-upstream": failed.upstream });
     }
     return json(200, buildEmbeddingsJobBody(job, result), { "x-ubq-upstream": job.upstream });
   }
