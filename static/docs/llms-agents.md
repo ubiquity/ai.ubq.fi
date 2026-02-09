@@ -243,7 +243,7 @@ The gateway returns an OpenAI-style response with `object: "list"` and one `data
 Notes:
 
 - Batching is strongly recommended (send `input` as an array).
-- When rate limited, the gateway responds `429` with `Retry-After`.
+- When rate limited (by Voyage or the gateway's own KV throttling), the gateway responds `429` with `Retry-After`.
 
 ## Embeddings Jobs (Async)
 
@@ -256,8 +256,8 @@ Notes:
 
 - Jobs currently support `encoding_format="float"` only.
 - When queued, the gateway responds with `Retry-After` and `retry_after_seconds`.
-- Jobs are scoped to the authenticated client identity; poll using the same `Authorization` token and auth headers used
-  to create the job (GitHub tokens must include the same kernel attestation headers + repo context).
+- Jobs are scoped to the authenticated client identity; poll using credentials that resolve to the same identity scope
+  used to create the job (same API key, or for GitHub/kernel auth the same `{owner, repo}` attestation context).
 - Inputs are stored encrypted in Deno KV for up to 24h to allow deferred processing, and deleted once the job completes.
 
 ## Reasoning defaults
