@@ -129,7 +129,8 @@ Notes:
 - `input` can be a string or an array of strings (batching is strongly recommended).
 - Backed by Voyage (`voyage-4-large`) and cached in Deno KV for 30 days to avoid repeat paid calls.
 - Embedding dimensionality may differ from OpenAI because the vectors come from Voyage.
-- When the provider rate limit is exceeded, the gateway returns `429` with `Retry-After`; clients should retry.
+- When the provider rate limit is exceeded, the gateway returns `429` with `Retry-After`; clients should retry (or use
+  the async jobs API below).
 
 Embeddings jobs (async, gateway-specific):
 
@@ -164,6 +165,8 @@ Notes:
 
 - Jobs currently support `encoding_format="float"` only.
 - When queued, the gateway responds `202` with `Retry-After` and `retry_after_seconds`; poll until `status="succeeded"`.
+- Jobs are scoped to the authenticated client identity; poll using the same API key and auth headers used to create the
+  job (GitHub tokens must include the same kernel attestation headers + repo context).
 - Inputs are stored encrypted in Deno KV for up to 24h to allow deferred processing, and deleted once the job completes.
 
 ## CLI (ubq-ai)
@@ -230,7 +233,8 @@ ubq-ai admin keys list | jq
   gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
-- `VOYAGEAI_API_KEY` (optional, required for `/v1/embeddings`): Voyage API key used for embeddings.
+- `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
+  Deno KV at `["uos_ai","voyage_api_key"]`.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.
