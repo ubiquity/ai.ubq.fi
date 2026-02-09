@@ -50,7 +50,7 @@ let failNextAtomicCommit:
   | ((
     checks: ReadonlyArray<Deno.KvEntryMaybe<unknown>>,
     ops: ReadonlyArray<{ type: string; key: Deno.KvKey }>,
-  ) => boolean)
+  ) => boolean | Error)
   | null = null;
 
 const kvStub = {
@@ -106,12 +106,13 @@ const kvStub = {
       },
       commit: () => {
         if (failNextAtomicCommit) {
-          const shouldFail = failNextAtomicCommit(
+          const failure = failNextAtomicCommit(
             checks,
             ops.map((op) => ({ type: op.type, key: op.key })),
           );
-          if (shouldFail) {
+          if (failure) {
             failNextAtomicCommit = null;
+            if (failure instanceof Error) throw failure;
             return Promise.resolve({ ok: false } as const);
           }
         }
@@ -267,12 +268,10 @@ Deno.test("embeddings: writes cache entries on upstream misses", async () => {
   const cacheKey: Deno.KvKey = ["embeddings", "v1", model.toLowerCase(), hash];
   const cacheModelKey = model.toLowerCase();
   const byHashKey: Deno.KvKey = ["embeddings", "v1", "cache_index_by_hash", cacheModelKey, hash];
-  const countKey: Deno.KvKey = ["embeddings", "v1", "cache_count", cacheModelKey];
   const fixedNowMs = 1_700_000_000_000;
   const indexKey: Deno.KvKey = ["embeddings", "v1", "cache_index", cacheModelKey, fixedNowMs, hash];
   kvStore.delete(keyToString(cacheKey));
   kvStore.delete(keyToString(byHashKey));
-  kvStore.delete(keyToString(countKey));
   kvStore.delete(keyToString(indexKey));
   const originalNow = Date.now;
   Date.now = () => fixedNowMs;
@@ -300,12 +299,10 @@ Deno.test("embeddings: writes cache entries on upstream misses", async () => {
     assert.ok(Array.isArray(stored.embedding));
     assert.equal(kvStore.get(keyToString(byHashKey)), fixedNowMs);
     assert.equal(kvStore.get(keyToString(indexKey)), 1);
-    assert.equal(kvStore.get(keyToString(countKey)), 1);
   } finally {
     Date.now = originalNow;
     kvStore.delete(keyToString(cacheKey));
     kvStore.delete(keyToString(byHashKey));
-    kvStore.delete(keyToString(countKey));
     kvStore.delete(keyToString(indexKey));
   }
 });
@@ -361,11 +358,7 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   resetVoyageRateLimit();
   const model = "text-embedding-3-small";
   const cacheModelKey = model.toLowerCase();
-  const maxCount = 50_000;
   const nowMs = 1_700_000_000_000;
-
-  const countKey: Deno.KvKey = ["embeddings", "v1", "cache_count", cacheModelKey];
-  kvStore.set(keyToString(countKey), maxCount);
 
   const hashA = await sha256Hex(`stale-index-${crypto.randomUUID()}`);
   const pointerMs = nowMs - 1_000;
@@ -378,6 +371,21 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   kvStore.set(keyToString(cacheKeyA), { embedding: [1, 2, 3], created_at: new Date(pointerMs).toISOString() });
   kvStore.set(keyToString(indexKeyStale), 1);
   kvStore.set(keyToString(indexKeyActive), 1);
+
+  // Populate enough older entries so a quota-eviction batch cleans the stale index key
+  // without touching the active index key for hashA.
+  const oldKeyStrings: string[] = [];
+  for (let i = 0; i < 511; i += 1) {
+    const hashOld = `old_${i}_${crypto.randomUUID().replace(/-/g, "")}`;
+    const createdAtMs = nowMs - 100_000 - i;
+    const cacheKeyOld: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hashOld];
+    const byHashKeyOld: Deno.KvKey = ["embeddings", "v1", "cache_index_by_hash", cacheModelKey, hashOld];
+    const indexKeyOld: Deno.KvKey = ["embeddings", "v1", "cache_index", cacheModelKey, createdAtMs, hashOld];
+    kvStore.set(keyToString(cacheKeyOld), { embedding: [0, 0, 0], created_at: new Date(createdAtMs).toISOString() });
+    kvStore.set(keyToString(byHashKeyOld), createdAtMs);
+    kvStore.set(keyToString(indexKeyOld), 1);
+    oldKeyStrings.push(keyToString(cacheKeyOld), keyToString(byHashKeyOld), keyToString(indexKeyOld));
+  }
 
   const originalNow = Date.now;
   Date.now = () => nowMs;
@@ -392,6 +400,14 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   kvStore.delete(keyToString(indexKeyB));
 
   try {
+    // Simulate KV storage quota failure on the first attempt to cache inputB.
+    failNextAtomicCommit = (_checks, ops) => {
+      const hitsCacheWrite = ops.some(
+        (op) => op.type === "set" && keyToString(op.key) === keyToString(cacheKeyB),
+      );
+      return hitsCacheWrite ? new Error("KV quota exceeded") : false;
+    };
+
     const response = await withFetchMock(
       (_url, bodyText) => {
         const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
@@ -415,9 +431,12 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
     });
     assert.equal(kvStore.get(keyToString(byHashKeyA)), pointerMs);
     assert.equal(kvStore.get(keyToString(indexKeyActive)), 1);
+    assert.ok(kvStore.get(keyToString(cacheKeyB)));
+    assert.equal(kvStore.get(keyToString(byHashKeyB)), nowMs);
+    assert.equal(kvStore.get(keyToString(indexKeyB)), 1);
   } finally {
     Date.now = originalNow;
-    kvStore.delete(keyToString(countKey));
+    failNextAtomicCommit = null;
     kvStore.delete(keyToString(byHashKeyA));
     kvStore.delete(keyToString(cacheKeyA));
     kvStore.delete(keyToString(indexKeyStale));
@@ -425,6 +444,7 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
     kvStore.delete(keyToString(cacheKeyB));
     kvStore.delete(keyToString(byHashKeyB));
     kvStore.delete(keyToString(indexKeyB));
+    for (const key of oldKeyStrings) kvStore.delete(key);
   }
 });
 

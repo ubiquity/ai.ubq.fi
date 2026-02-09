@@ -347,10 +347,12 @@ const EMBEDDINGS_MAX_INPUTS_PER_REQUEST = 128;
 const EMBEDDINGS_MAX_CHARS_PER_INPUT = 20_000;
 const EMBEDDINGS_MAX_TOTAL_CHARS = 100_000;
 const EMBEDDINGS_TIMEOUT_MS = 20_000;
-// KV cache is bounded by a FIFO cap (no "last read" tracking). We keep the cap
-// conservative to avoid filling free-tier storage with large vectors.
-const EMBEDDINGS_CACHE_MAX_ITEMS_PER_MODEL = 50_000;
+// KV cache is best-effort and quota-driven: we cache embeddings until KV rejects
+// writes (storage/quota), then evict the oldest entries (FIFO index) and retry.
+// We do not track "last read" to keep writes minimal.
 const EMBEDDINGS_CACHE_EVICT_BATCH = 512;
+const EMBEDDINGS_CACHE_EVICT_MAX_BATCH = 8192;
+const EMBEDDINGS_CACHE_QUOTA_RETRY_ATTEMPTS = 4;
 const EMBEDDINGS_JOB_TTL_MS = 24 * 60 * 60_000;
 const EMBEDDINGS_JOB_LOCK_MS = 30_000;
 
@@ -400,9 +402,6 @@ const embeddingsJobInputKey = (tokenHash: string, jobId: string, hash: string): 
   hash,
 ];
 
-const embeddingsCacheCountKey = (
-  cacheModelKey: string,
-): Deno.KvKey => ["embeddings", "v1", "cache_count", cacheModelKey];
 const embeddingsCacheIndexPrefix = (
   cacheModelKey: string,
 ): Deno.KvKey => ["embeddings", "v1", "cache_index", cacheModelKey];
@@ -419,13 +418,6 @@ const embeddingsCacheIndexByHashKey = (cacheModelKey: string, hash: string): Den
   hash,
 ];
 
-const normalizeEmbeddingsCacheCount = (value: unknown): number => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
-  const count = Math.trunc(value);
-  if (count < 0) return 0;
-  return count;
-};
-
 const normalizeEmbeddingsCacheTimestampMs = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   const ts = Math.trunc(value);
@@ -437,6 +429,20 @@ type EmbeddingsCacheEvictResult = Readonly<{
   evicted_embeddings: number;
   deleted_stale_index_keys: number;
 }>;
+
+const isEmbeddingsCacheQuotaError = (error: unknown): boolean => {
+  const name = typeof (error as { name?: unknown })?.name === "string" ? String((error as { name: string }).name) : "";
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const combined = `${name} ${message}`.toLowerCase();
+  if (!combined) return false;
+  return combined.includes("quota") ||
+    combined.includes("insufficient") && combined.includes("storage") ||
+    combined.includes("insufficient") && combined.includes("space") ||
+    combined.includes("no space") ||
+    combined.includes("storage limit") ||
+    combined.includes("storage") && combined.includes("exceeded") ||
+    combined.includes("limit") && combined.includes("exceeded");
+};
 
 const writeEmbeddingsCacheEntry = async (
   kv: Deno.Kv,
@@ -475,6 +481,43 @@ const writeEmbeddingsCacheEntry = async (
     if (created.ok) return { isNew: true };
     // CAS failed: `byHashKey` was updated/created in between, or was evicted and
     // recreated concurrently. Retry to reuse the now-canonical pointer.
+  }
+  return { isNew: false };
+};
+
+const writeEmbeddingsCacheEntryBestEffort = async (
+  kv: Deno.Kv,
+  cacheModelKey: string,
+  hash: string,
+  embedding: number[],
+  createdAtMs: number,
+  deadlineMs: number,
+): Promise<{ isNew: boolean }> => {
+  let evictBatch = EMBEDDINGS_CACHE_EVICT_BATCH;
+  for (let attempt = 0; attempt <= EMBEDDINGS_CACHE_QUOTA_RETRY_ATTEMPTS; attempt += 1) {
+    if (Date.now() >= deadlineMs) return { isNew: false };
+    try {
+      return await writeEmbeddingsCacheEntry(kv, cacheModelKey, hash, embedding, createdAtMs);
+    } catch (error) {
+      if (!isEmbeddingsCacheQuotaError(error)) {
+        console.warn("[ai.ubq.fi] embeddings_cache write failed:", error);
+        return { isNew: false };
+      }
+
+      // KV rejected the write (likely storage quota). Evict oldest entries and retry.
+      try {
+        const evicted = await evictOldestEmbeddingsCacheEntries(kv, cacheModelKey, evictBatch);
+        console.warn(
+          `[ai.ubq.fi] embeddings_cache quota eviction model=${cacheModelKey} evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} batch=${evictBatch}`,
+        );
+        if (evicted.evicted_embeddings <= 0) return { isNew: false };
+      } catch (evictError) {
+        console.warn("[ai.ubq.fi] embeddings_cache quota eviction failed:", evictError);
+        return { isNew: false };
+      }
+
+      evictBatch = Math.min(EMBEDDINGS_CACHE_EVICT_MAX_BATCH, evictBatch * 2);
+    }
   }
   return { isNew: false };
 };
@@ -547,71 +590,6 @@ const evictOldestEmbeddingsCacheEntries = async (
     if (commit.ok) evictedEmbeddings += 1;
   }
   return { evicted_embeddings: evictedEmbeddings, deleted_stale_index_keys: deletedStaleIndexKeys };
-};
-
-const maybeEvictEmbeddingsCache = async (
-  kv: Deno.Kv,
-  cacheModelKey: string,
-  wroteCount: number,
-): Promise<void> => {
-  if (wroteCount <= 0) return;
-  const max = EMBEDDINGS_CACHE_MAX_ITEMS_PER_MODEL;
-  const countKey = embeddingsCacheCountKey(cacheModelKey);
-
-  try {
-    let updated = false;
-    let next = 0;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const entry = await kv.get<number>(countKey);
-      const current = normalizeEmbeddingsCacheCount(entry.value);
-      next = current + wroteCount;
-      const commit = await kv.atomic().check(entry).set(countKey, next).commit();
-      if (commit.ok) {
-        updated = true;
-        break;
-      }
-    }
-    if (!updated) {
-      console.warn("[ai.ubq.fi] embeddings_cache count update failed after retries");
-      return;
-    }
-    if (next <= max) return;
-
-    const over = next - max;
-    const target = Math.min(EMBEDDINGS_CACHE_EVICT_BATCH, Math.max(1, over));
-    const evicted = await evictOldestEmbeddingsCacheEntries(kv, cacheModelKey, target);
-    if (evicted.evicted_embeddings <= 0 && evicted.deleted_stale_index_keys <= 0) {
-      // Counter may be inflated from past duplicate index keys; clamp so we don't
-      // spin eviction on every write when no work can be performed.
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const entry = await kv.get<number>(countKey);
-        const current = normalizeEmbeddingsCacheCount(entry.value);
-        const clamped = Math.min(current, max);
-        const commit = await kv.atomic().check(entry).set(countKey, clamped).commit();
-        if (commit.ok) break;
-      }
-      return;
-    }
-
-    if (evicted.evicted_embeddings > 0) {
-      const removed = evicted.evicted_embeddings;
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const entry = await kv.get<number>(countKey);
-        const current = normalizeEmbeddingsCacheCount(entry.value);
-        next = Math.max(0, current - removed);
-        const commit = await kv.atomic().check(entry).set(countKey, next).commit();
-        if (commit.ok) break;
-      }
-    }
-
-    if (evicted.evicted_embeddings > 0 || evicted.deleted_stale_index_keys > 0) {
-      console.info(
-        `[ai.ubq.fi] embeddings_cache model=${cacheModelKey} evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} next_count=${next} max=${max}`,
-      );
-    }
-  } catch (error) {
-    console.warn("[ai.ubq.fi] embeddings_cache eviction failed:", error);
-  }
 };
 
 const resolveEmbeddingsJobTokenSeed = (
@@ -1626,19 +1604,22 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
         });
       }
 
-      const cacheWrites: Array<Promise<{ isNew: boolean }>> = [];
+      let wroteNew = 0;
       for (let i = 0; i < chunkItems.length; i += 1) {
         const item = chunkItems[i]!;
         const vec = vectors[i]!;
         for (const idx of item.indices) vectorsByIndex[idx] = vec;
         if (shouldCache && kv) {
-          cacheWrites.push(writeEmbeddingsCacheEntry(kv, cacheModelKey, item.hash, vec, Date.now()));
+          const result = await writeEmbeddingsCacheEntryBestEffort(
+            kv,
+            cacheModelKey,
+            item.hash,
+            vec,
+            Date.now(),
+            deadlineMs,
+          );
+          if (result.isNew) wroteNew += 1;
         }
-      }
-      if (cacheWrites.length) {
-        const results = await Promise.all(cacheWrites);
-        const wroteNew = results.reduce((sum, item) => sum + (item.isNew ? 1 : 0), 0);
-        if (kv && wroteNew > 0) await maybeEvictEmbeddingsCache(kv, cacheModelKey, wroteNew);
       }
     }
   }
@@ -1950,18 +1931,17 @@ const runEmbeddingsJobAttempt = async (params: {
         currentJob = { ...currentJob, usage_total_tokens: currentJob.usage_total_tokens + totalTokens };
       }
 
-      const cacheWrites: Array<Promise<{ isNew: boolean }>> = [];
       for (let i = 0; i < chunk.length; i += 1) {
         const item = chunk[i]!;
         const vec = vectors[i]!;
-        cacheWrites.push(
-          writeEmbeddingsCacheEntry(params.kv, currentJob.cache_model_key, item.hash, vec, Date.now()),
+        await writeEmbeddingsCacheEntryBestEffort(
+          params.kv,
+          currentJob.cache_model_key,
+          item.hash,
+          vec,
+          Date.now(),
+          params.deadlineMs,
         );
-      }
-      const results = await Promise.all(cacheWrites);
-      const wroteNew = results.reduce((sum, item) => sum + (item.isNew ? 1 : 0), 0);
-      if (wroteNew > 0) {
-        await maybeEvictEmbeddingsCache(params.kv, currentJob.cache_model_key, wroteNew);
       }
     }
 
