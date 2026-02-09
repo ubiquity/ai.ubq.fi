@@ -64,7 +64,7 @@ const stopBtn = mustGet("stop");
 const chatForm = mustGet("chat-form");
 const promptInput = mustGet("prompt");
 const sendBtn = mustGet("send");
-const panels = Array.from(document.querySelectorAll('details[data-chat-panel][data-panel-key]'));
+const panels = Array.from(document.querySelectorAll("details[data-chat-panel][data-panel-key]"));
 
 const DEFAULT_MODEL = "gpt-5.2-chat-latest";
 const DEFAULT_REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];

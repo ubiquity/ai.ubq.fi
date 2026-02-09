@@ -5,7 +5,8 @@ export const corsHeaders = (): HeadersInit => ({
   "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "Access-Control-Allow-Headers":
     "Authorization,Content-Type,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
-  "Access-Control-Expose-Headers": "x-uos-warning",
+  // Allow browser clients to read gateway warnings and backoff hints (Retry-After).
+  "Access-Control-Expose-Headers": "x-uos-warning,Retry-After",
   "Access-Control-Max-Age": "86400",
 });
 
@@ -38,14 +39,20 @@ export const openaiError = (
   status: number,
   message: string,
   code?: string,
+  options: { type?: string; param?: string | null } = {},
 ): Response => {
   console.trace(`[ai.ubq.fi] OpenAI API error (${status}):`, message);
+  const type = (options.type ?? "invalid_request_error").trim() || "invalid_request_error";
+  const error: Record<string, unknown> = {
+    message,
+    type,
+    code,
+  };
+  if (Object.prototype.hasOwnProperty.call(options, "param")) {
+    error.param = options.param ?? null;
+  }
   return json(status, {
-    error: {
-      message,
-      type: "invalid_request_error",
-      code,
-    },
+    error,
   });
 };
 

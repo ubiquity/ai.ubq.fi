@@ -222,8 +222,8 @@ const resetKernelPolicyState = () => {
 
 const getBaseChoice = () => (baseSelect.value === "ai" ? "ai" : "local");
 
-const resolveBaseUrl = () =>
-  (getBaseChoice() === "ai" ? "https://ai.ubq.fi" : globalThis.location?.origin ?? "http://localhost");
+const resolveBaseUrl =
+  () => (getBaseChoice() === "ai" ? "https://ai.ubq.fi" : globalThis.location?.origin ?? "http://localhost");
 
 const apiUrl = (path) => new URL(path, resolveBaseUrl()).toString();
 
@@ -369,7 +369,9 @@ const pad2 = (value) => String(value).padStart(2, "0");
 const toDateTimeLocalValue = (ms) => {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) return "";
   const date = new Date(ms);
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${
+    pad2(date.getMinutes())
+  }`;
 };
 
 const parseDateTimeLocalValue = (value) => {
@@ -988,7 +990,10 @@ const refreshKernelPolicyQueue = async () => {
     kernelQueueItems = records;
     kernelQueueLoadedAt = Date.now();
     renderKernelPolicyQueue(records);
-    setKernelQueueBadge("ok", records.length === 0 ? "No requests" : `${records.length} request${records.length === 1 ? "" : "s"}`);
+    setKernelQueueBadge(
+      "ok",
+      records.length === 0 ? "No requests" : `${records.length} request${records.length === 1 ? "" : "s"}`,
+    );
   } catch {
     kernelQueueItems = [];
     setKernelQueueBadge("bad", "Offline");
@@ -2413,7 +2418,9 @@ const buildUsageSparkline = (usage) => {
   svg.appendChild(linePathEl);
 
   const scaleMaxLabel = Math.max(1, Math.round(scaleMax));
-  const maxLabel = maxValue > scaleMax ? `Max ${formatCompactNumber(scaleMaxLabel)}+` : `Max ${formatCompactNumber(scaleMaxLabel)}`;
+  const maxLabel = maxValue > scaleMax
+    ? `Max ${formatCompactNumber(scaleMaxLabel)}+`
+    : `Max ${formatCompactNumber(scaleMaxLabel)}`;
 
   const container = document.createElement("div");
   container.dataset.usageSpark = "spark";
@@ -2555,9 +2562,9 @@ const renderKeys = (keys, view = "all") => {
   keysList.textContent = "";
   let filteredKeys = keys;
   if (view === "active") {
-    filteredKeys = keys.filter(k => !k.revoked_at_ms);
+    filteredKeys = keys.filter((k) => !k.revoked_at_ms);
   } else if (view === "revoked") {
-    filteredKeys = keys.filter(k => k.revoked_at_ms);
+    filteredKeys = keys.filter((k) => k.revoked_at_ms);
   }
   if (!filteredKeys.length) {
     setKeyListMessage(view === "all" ? "No API keys yet." : `No ${view} API keys.`);
@@ -2962,7 +2969,9 @@ const renderKeys = (keys, view = "all") => {
           ? data.usage_limit_requests
           : nextSnapshot.usage_limit_requests;
         const updatedWindowMs = typeof data?.window_ms === "number" ? data.window_ms : nextSnapshot.window_ms;
-        const updatedExpires = typeof data?.expires_at_ms === "number" ? data.expires_at_ms : nextSnapshot.expires_at_ms;
+        const updatedExpires = typeof data?.expires_at_ms === "number"
+          ? data.expires_at_ms
+          : nextSnapshot.expires_at_ms;
         const expiresMismatch = hasExpiresField &&
           typeof data?.expires_at_ms === "number" &&
           data.expires_at_ms !== nextSnapshot.expires_at_ms;
@@ -3528,8 +3537,9 @@ const updateDefaultsMeta = (snapshot, models) => {
   }
   const updatedAt = typeof snapshot.updated_at_ms === "number" ? formatDateWithZone(snapshot.updated_at_ms) : "unknown";
   const source = typeof snapshot.source === "string" ? snapshot.source : "unknown";
-  const version =
-    typeof snapshot.client_version === "string" && snapshot.client_version.trim() ? snapshot.client_version.trim() : "";
+  const version = typeof snapshot.client_version === "string" && snapshot.client_version.trim()
+    ? snapshot.client_version.trim()
+    : "";
   const sourceLabel = version ? `${source} v${version}` : source;
   defaultsMeta.textContent = `Models: ${models.length} · Source: ${sourceLabel} · Updated: ${updatedAt}`;
 };
@@ -3541,7 +3551,11 @@ const updateReasoningOptions = (modelSlug, preferred) => {
     { value: "none", label: "none" },
   ];
   const fallback = typeof model?.default_reasoning_level === "string" ? model.default_reasoning_level : "";
-  const nextPreferred = levels.includes(preferred) ? preferred : levels.includes(fallback) ? fallback : options[0].value;
+  const nextPreferred = levels.includes(preferred)
+    ? preferred
+    : levels.includes(fallback)
+    ? fallback
+    : options[0].value;
   const selected = setSelectOptions(defaultsReasoningSelect, options, nextPreferred, "No reasoning levels");
   defaultsReasoningSelect.disabled = levels.length === 0;
   return selected;
@@ -3596,7 +3610,9 @@ const loadDefaults = async () => {
       return;
     }
     const snapshot = modelsPayload?.data ?? null;
-    const models = Array.isArray(snapshot?.models) ? snapshot.models.filter((model) => typeof model?.slug === "string") : [];
+    const models = Array.isArray(snapshot?.models)
+      ? snapshot.models.filter((model) => typeof model?.slug === "string")
+      : [];
     defaultsModelMap = new Map(models.map((model) => [model.slug, model]));
     updateDefaultsMeta(snapshot, models);
     persistDefaultsModels(snapshot, models);
@@ -3618,8 +3634,9 @@ const loadDefaults = async () => {
 
     const serverDefaults = {
       model: typeof defaultsPayload?.defaults?.model === "string" ? defaultsPayload.defaults.model : "",
-      reasoning_effort:
-        typeof defaultsPayload?.defaults?.reasoning_effort === "string" ? defaultsPayload.defaults.reasoning_effort : "",
+      reasoning_effort: typeof defaultsPayload?.defaults?.reasoning_effort === "string"
+        ? defaultsPayload.defaults.reasoning_effort
+        : "",
       kernel_policy_limit_requests: typeof defaultsPayload?.defaults?.kernel_policy_limit_requests === "number"
         ? Math.trunc(defaultsPayload.defaults.kernel_policy_limit_requests)
         : DEFAULT_KERNEL_POLICY_LIMIT,
@@ -3697,8 +3714,9 @@ const saveDefaults = async () => {
     }
     persistDefaultsSnapshot({
       model: typeof saved?.model === "string" && saved.model ? saved.model : model,
-      reasoning_effort:
-        typeof saved?.reasoning_effort === "string" && saved.reasoning_effort ? saved.reasoning_effort : reasoning,
+      reasoning_effort: typeof saved?.reasoning_effort === "string" && saved.reasoning_effort
+        ? saved.reasoning_effort
+        : reasoning,
       kernel_policy_limit_requests: typeof saved?.kernel_policy_limit_requests === "number"
         ? Math.trunc(saved.kernel_policy_limit_requests)
         : limitValue,

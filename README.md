@@ -115,6 +115,57 @@ curl -sS https://ai.ubq.fi/v1/responses \
   }'
 ```
 
+Embeddings (OpenAI-compatible):
+
+```bash
+curl -sS https://ai.ubq.fi/v1/embeddings \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"model":"text-embedding-3-small","input":"hello"}'
+```
+
+Notes:
+
+- `input` can be a string or an array of strings (batching is strongly recommended).
+- Backed by Voyage (`voyage-4-large`) and cached in Deno KV for 30 days to avoid repeat paid calls.
+- Embedding dimensionality may differ from OpenAI because the vectors come from Voyage.
+- When the provider rate limit is exceeded, the gateway returns `429` with `Retry-After`; clients should retry.
+
+Embeddings jobs (async, gateway-specific):
+
+Use this when you might exceed Voyage's free-tier rate limits. The gateway will either return the embeddings immediately
+or queue the request and let you poll for completion.
+
+Create:
+
+```bash
+curl -sS https://ai.ubq.fi/v1/embeddings/jobs \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"model":"text-embedding-3-small","input":["hello","world"]}' \
+  | jq
+```
+
+Poll:
+
+```bash
+job_id="$(curl -sS https://ai.ubq.fi/v1/embeddings/jobs \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"model":"text-embedding-3-small","input":"hello"}' \
+  | jq -r .id)"
+
+curl -sS "https://ai.ubq.fi/v1/embeddings/jobs/${job_id}" \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  | jq
+```
+
+Notes:
+
+- Jobs currently support `encoding_format="float"` only.
+- When queued, the gateway responds `202` with `Retry-After` and `retry_after_seconds`; poll until `status="succeeded"`.
+- Inputs are stored encrypted in Deno KV for up to 24h to allow deferred processing, and deleted once the job completes.
+
 ## CLI (ubq-ai)
 
 Run from this repo:
@@ -179,6 +230,7 @@ ubq-ai admin keys list | jq
   gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
+- `VOYAGEAI_API_KEY` (optional, required for `/v1/embeddings`): Voyage API key used for embeddings.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.

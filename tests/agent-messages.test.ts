@@ -21,13 +21,12 @@ const jsonRequest = (url: string, body: unknown): Request =>
     body: JSON.stringify(body),
   });
 
-const makeAuth = (owner = "acme", repo = "demo", stateId = "state-1") =>
-  (_req: Request) =>
-    Promise.resolve({
-      ok: true as const,
-      token: "ghs_test_token",
-      method: { kind: "github_token" as const, owner, repo, state_id: stateId, limit_scope: "org" as const },
-    });
+const makeAuth = (owner = "acme", repo = "demo", stateId = "state-1") => (_req: Request) =>
+  Promise.resolve({
+    ok: true as const,
+    token: "ghs_test_token",
+    method: { kind: "github_token" as const, owner, repo, state_id: stateId, limit_scope: "org" as const },
+  });
 
 const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   if (left === right) return 0;

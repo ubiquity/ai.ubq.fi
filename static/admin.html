@@ -57,7 +57,13 @@
           </div>
         </section>
 
-        <section id="view-session" data-view="session" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-session">
+        <section
+          id="view-session"
+          data-view="session"
+          data-layout="grid"
+          role="tabpanel"
+          aria-labelledby="view-tab-session"
+        >
           <article data-card aria-labelledby="card-admin-auth">
             <header>
               <h2 id="card-admin-auth">Admin auth</h2>
@@ -92,12 +98,21 @@
                 </label>
               </div>
               <span id="admin-auth-badge" data-badge data-state="unknown">Not checked</span>
-              <p data-help data-tone="warning">Remember stores the token in this browser's localStorage in cleartext.</p>
+              <p data-help data-tone="warning">
+                Remember stores the token in this browser's localStorage in cleartext.
+              </p>
             </div>
           </article>
         </section>
 
-        <section id="view-keys" data-view="keys" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-keys" hidden>
+        <section
+          id="view-keys"
+          data-view="keys"
+          data-layout="grid"
+          role="tabpanel"
+          aria-labelledby="view-tab-keys"
+          hidden
+        >
           <article data-card data-span="half" aria-labelledby="card-create-key">
             <header>
               <h2 id="card-create-key">Create API key</h2>
@@ -168,16 +183,27 @@
               </div>
               <span id="keys-badge" data-badge data-state="unknown">Not loaded</span>
               <div id="keys-list" data-key-list role="list"></div>
-              <p data-help>Revoke API keys to invalidate them immediately. Analytics totals update when responses complete.</p>
+              <p data-help>
+                Revoke API keys to invalidate them immediately. Analytics totals update when responses complete.
+              </p>
             </div>
           </article>
         </section>
 
-        <section id="view-kernel" data-view="kernel" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-kernel" hidden>
+        <section
+          id="view-kernel"
+          data-view="kernel"
+          data-layout="grid"
+          role="tabpanel"
+          aria-labelledby="view-tab-kernel"
+          hidden
+        >
           <article data-card aria-labelledby="card-access-overview">
             <header>
               <h2 id="card-access-overview">Access overview</h2>
-              <p>GitHub tokens are managed in GitHub and never stored here. Use the tabs above to manage each surface.</p>
+              <p>
+                GitHub tokens are managed in GitHub and never stored here. Use the tabs above to manage each surface.
+              </p>
             </header>
             <div data-card-body>
               <div data-auth-grid>
@@ -319,14 +345,15 @@
                   <button id="kernel-new-save" type="button" data-variant="primary">Save</button>
                 </div>
                 <span id="kernel-new-badge" data-badge data-state="unknown">Idle</span>
-                <p data-help>Leave window blank for the default weekly interval (604800000 ms). Updates reset analytics.</p>
+                <p data-help>
+                  Leave window blank for the default weekly interval (604800000 ms). Updates reset analytics.
+                </p>
               </div>
               <div id="kernel-list" data-key-list role="list"></div>
               <p id="kernel-help" data-help>
-                Analytics and rate limits share the same list. Org tiles summarize repo activity and org rate limits; repo
-                tiles include analytics details and rate limit controls. Rate limit edits require Save/Cancel. Delete
-                removes the rate limit.
-                GitHub tokens are never stored.
+                Analytics and rate limits share the same list. Org tiles summarize repo activity and org rate limits;
+                repo tiles include analytics details and rate limit controls. Rate limit edits require Save/Cancel.
+                Delete removes the rate limit. GitHub tokens are never stored.
               </p>
               <p id="kernel-attention" data-help data-tone="warning" hidden></p>
             </div>
@@ -389,7 +416,14 @@
           </article>
         </section>
 
-        <section id="view-defaults" data-view="defaults" data-layout="grid" role="tabpanel" aria-labelledby="view-tab-defaults" hidden>
+        <section
+          id="view-defaults"
+          data-view="defaults"
+          data-layout="grid"
+          role="tabpanel"
+          aria-labelledby="view-tab-defaults"
+          hidden
+        >
           <article data-card aria-labelledby="card-defaults">
             <header>
               <h2 id="card-defaults">Defaults</h2>
@@ -419,7 +453,9 @@
               </div>
               <span id="defaults-badge" data-badge data-state="unknown">Idle</span>
               <p id="defaults-meta" data-help>Models load automatically.</p>
-              <p data-help>Applies when no org or repo rate limit exists. Use -1 for unlimited, 0 to deny by default.</p>
+              <p data-help>
+                Applies when no org or repo rate limit exists. Use -1 for unlimited, 0 to deny by default.
+              </p>
               <p data-help>Changes save automatically. Reasoning options depend on the selected model.</p>
             </div>
           </article>

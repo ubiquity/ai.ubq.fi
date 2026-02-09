@@ -12,6 +12,7 @@ kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
   account_id: "acct",
   updated_at_ms: Date.now(),
 });
+kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
 const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv;
 
@@ -30,11 +31,24 @@ const kvStub = {
     yield* [];
   },
   atomic: () => {
+    const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
     const chain = {
       check: () => chain,
-      set: () => chain,
-      delete: () => chain,
-      commit: () => Promise.resolve({ ok: true } as const),
+      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+        ops.push({ type: "set", key, value });
+        return chain;
+      },
+      delete: (key: Deno.KvKey) => {
+        ops.push({ type: "delete", key });
+        return chain;
+      },
+      commit: () => {
+        for (const op of ops) {
+          if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
+          else kvStore.delete(keyToString(op.key));
+        }
+        return Promise.resolve({ ok: true } as const);
+      },
     };
     return chain;
   },
@@ -71,10 +85,34 @@ const baseSseChunks = () => [
 const parseWarnings = (value: string | null): string[] =>
   value ? value.split(",").map((entry) => entry.trim()).filter(Boolean) : [];
 
+type FetchMockQueue = {
+  chain: Promise<void>;
+};
+
+const fetchMockQueue: FetchMockQueue = (() => {
+  const key = "__uosFetchMockQueue";
+  const globalRecord = globalThis as unknown as Record<string, unknown>;
+  const existing = globalRecord[key];
+  if (existing && typeof existing === "object") {
+    const chain = (existing as { chain?: unknown }).chain;
+    if (chain instanceof Promise) return existing as FetchMockQueue;
+  }
+  const created: FetchMockQueue = { chain: Promise.resolve() };
+  globalRecord[key] = created;
+  return created;
+})();
+
 const withFetchMock = async <T>(
   handler: (url: string, bodyText: string | null) => Response | Promise<Response>,
   fn: () => Promise<T>,
 ): Promise<T> => {
+  const prev = fetchMockQueue.chain;
+  let release = () => {};
+  fetchMockQueue.chain = new Promise<void>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  await prev;
+
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -85,6 +123,7 @@ const withFetchMock = async <T>(
     return await fn();
   } finally {
     globalThis.fetch = originalFetch;
+    release();
   }
 };
 
@@ -198,8 +237,6 @@ Deno.test("openai: chat completions accept system-only messages", async () => {
   assert.equal(firstContent?.["type"], "input_text");
 });
 
-if (originalOpenKv) {
-  Deno.test("openai: restore openKv", () => {
-    (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
-  });
-}
+addEventListener("unload", () => {
+  (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
+});
