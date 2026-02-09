@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
+import { sha256Hex } from "../src/utils.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 
 const kvStore = new Map<string, unknown>();
+const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
+const resetVoyageRateLimit = () => void kvStore.delete(keyToString(VOYAGE_RATE_LIMIT_KEY));
 // Keep these in sync with tests/openai-compat.test.ts so whichever test imports
 // src/openai.ts first doesn't change behavior.
 kvStore.set(keyToString(DEFAULT_MODEL_KEY), "gpt-5.2");
@@ -117,6 +120,7 @@ const voyageOkResponse = (count: number): Response => {
 };
 
 Deno.test("embeddings: normalizes string input", async () => {
+  resetVoyageRateLimit();
   const response = await withFetchMock(
     (url, bodyText, headers) => {
       assert.equal(url, "https://api.voyageai.com/v1/embeddings");
@@ -155,7 +159,71 @@ Deno.test("embeddings: normalizes string input", async () => {
   assert.ok(Array.isArray(payload.data[0]?.embedding));
 });
 
+Deno.test("embeddings: serves cache hits without calling upstream", async () => {
+  resetVoyageRateLimit();
+  const model = "text-embedding-3-small";
+  const input = `cache-hit-${crypto.randomUUID()}`;
+  const hash = await sha256Hex(input);
+  const cacheKey: Deno.KvKey = ["embeddings", "v1", model.toLowerCase(), hash];
+  const cachedEmbedding = [9.9, 8.8, 7.7];
+  kvStore.set(keyToString(cacheKey), { embedding: cachedEmbedding, created_at: new Date().toISOString() });
+
+  try {
+    const response = await withFetchMock(
+      () => {
+        throw new Error("Embeddings should not hit upstream when cache is populated");
+      },
+      () =>
+        handleEmbeddings(
+          new Request("https://ai.ubq.fi/v1/embeddings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, input }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { data?: Array<{ embedding?: unknown }> };
+    assert.ok(Array.isArray(payload.data));
+    assert.deepEqual(payload.data?.[0]?.embedding, cachedEmbedding);
+  } finally {
+    kvStore.delete(keyToString(cacheKey));
+  }
+});
+
+Deno.test("embeddings: writes cache entries on upstream misses", async () => {
+  resetVoyageRateLimit();
+  const model = "text-embedding-3-small";
+  const input = `cache-miss-${crypto.randomUUID()}`;
+  const hash = await sha256Hex(input);
+  const cacheKey: Deno.KvKey = ["embeddings", "v1", model.toLowerCase(), hash];
+  kvStore.delete(keyToString(cacheKey));
+
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
+      const count = Array.isArray(body.input) ? body.input.length : 1;
+      return voyageOkResponse(count);
+    },
+    () =>
+      handleEmbeddings(
+        new Request("https://ai.ubq.fi/v1/embeddings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model, input }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  const stored = kvStore.get(keyToString(cacheKey)) as { embedding?: unknown } | undefined;
+  assert.ok(stored);
+  assert.ok(Array.isArray(stored.embedding));
+});
+
 Deno.test("embeddings: returns one data item per array input", async () => {
+  resetVoyageRateLimit();
   const response = await withFetchMock(
     (_url, bodyText) => {
       const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
@@ -218,6 +286,7 @@ Deno.test("embeddings: rejects too-large inputs", async () => {
 });
 
 Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings", async () => {
+  resetVoyageRateLimit();
   const response = await withFetchMock(
     () =>
       new Response(
@@ -256,8 +325,7 @@ Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings",
 Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () => {
   const kv = await kvPromise;
   assert.ok(kv);
-  const rateKey: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
-  await kv.set(rateKey, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
+  await kv.set(VOYAGE_RATE_LIMIT_KEY, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
   try {
     const response = await withFetchMock(
       () => {
@@ -280,11 +348,12 @@ Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () 
     assert.ok(retryAfterSeconds >= 1);
     assert.ok(retryAfterSeconds <= 60);
   } finally {
-    await kv.delete(rateKey);
+    await kv.delete(VOYAGE_RATE_LIMIT_KEY);
   }
 });
 
 Deno.test("embeddings jobs: create returns job + result when not rate limited", async () => {
+  resetVoyageRateLimit();
   const input = `job-ok-${crypto.randomUUID()}`;
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -316,6 +385,58 @@ Deno.test("embeddings jobs: create returns job + result when not rate limited", 
   assert.equal(payload.result?.object, "list");
   assert.equal(payload.result?.model, "text-embedding-3-small");
   assert.ok(Array.isArray(payload.result?.data));
+});
+
+Deno.test("embeddings jobs: remain resolvable across token refresh when scoped to kernel repo", async () => {
+  resetVoyageRateLimit();
+  const usageContext = {
+    keyId: null,
+    kernelRepo: { owner: "ubiquity", repo: "ai.ubq.fi" },
+    kernelOrg: { owner: "ubiquity" },
+  };
+
+  const input = `job-token-refresh-${crypto.randomUUID()}`;
+  const created = await withFetchMock(
+    (_url, bodyText) => {
+      const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
+      const count = Array.isArray(body.input) ? body.input.length : 1;
+      return voyageOkResponse(count);
+    },
+    () =>
+      handleEmbeddingsJobCreate(
+        new Request("https://ai.ubq.fi/v1/embeddings/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "text-embedding-3-small", input }),
+        }),
+        "token_a",
+        usageContext,
+      ),
+  );
+
+  assert.equal(created.status, 200);
+  const createdPayload = await created.json() as { id?: unknown; status?: unknown };
+  assert.equal(createdPayload.status, "succeeded");
+  assert.equal(typeof createdPayload.id, "string");
+  const jobId = createdPayload.id as string;
+
+  const got = await withFetchMock(
+    () => {
+      throw new Error("Embeddings job get should not hit upstream when already succeeded");
+    },
+    () =>
+      handleEmbeddingsJobGet(
+        new Request(`https://ai.ubq.fi/v1/embeddings/jobs/${jobId}`),
+        "token_b",
+        jobId,
+        usageContext,
+      ),
+  );
+
+  assert.equal(got.status, 200);
+  const gotPayload = await got.json() as { id?: unknown; status?: unknown };
+  assert.equal(gotPayload.id, jobId);
+  assert.equal(gotPayload.status, "succeeded");
 });
 
 Deno.test("embeddings jobs: create queues with 202 + Retry-After when KV rate limited", async () => {
