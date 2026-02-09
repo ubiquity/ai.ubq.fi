@@ -387,6 +387,58 @@ Deno.test("embeddings jobs: create returns job + result when not rate limited", 
   assert.ok(Array.isArray(payload.result?.data));
 });
 
+Deno.test("embeddings jobs: remain resolvable across token refresh when scoped to kernel repo", async () => {
+  resetVoyageRateLimit();
+  const usageContext = {
+    keyId: null,
+    kernelRepo: { owner: "ubiquity", repo: "ai.ubq.fi" },
+    kernelOrg: { owner: "ubiquity" },
+  };
+
+  const input = `job-token-refresh-${crypto.randomUUID()}`;
+  const created = await withFetchMock(
+    (_url, bodyText) => {
+      const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
+      const count = Array.isArray(body.input) ? body.input.length : 1;
+      return voyageOkResponse(count);
+    },
+    () =>
+      handleEmbeddingsJobCreate(
+        new Request("https://ai.ubq.fi/v1/embeddings/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "text-embedding-3-small", input }),
+        }),
+        "token_a",
+        usageContext,
+      ),
+  );
+
+  assert.equal(created.status, 200);
+  const createdPayload = await created.json() as { id?: unknown; status?: unknown };
+  assert.equal(createdPayload.status, "succeeded");
+  assert.equal(typeof createdPayload.id, "string");
+  const jobId = createdPayload.id as string;
+
+  const got = await withFetchMock(
+    () => {
+      throw new Error("Embeddings job get should not hit upstream when already succeeded");
+    },
+    () =>
+      handleEmbeddingsJobGet(
+        new Request(`https://ai.ubq.fi/v1/embeddings/jobs/${jobId}`),
+        "token_b",
+        jobId,
+        usageContext,
+      ),
+  );
+
+  assert.equal(got.status, 200);
+  const gotPayload = await got.json() as { id?: unknown; status?: unknown };
+  assert.equal(gotPayload.id, jobId);
+  assert.equal(gotPayload.status, "succeeded");
+});
+
 Deno.test("embeddings jobs: create queues with 202 + Retry-After when KV rate limited", async () => {
   const kv = await kvPromise;
   assert.ok(kv);

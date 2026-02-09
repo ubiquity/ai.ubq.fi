@@ -397,6 +397,20 @@ const embeddingsJobInputKey = (tokenHash: string, jobId: string, hash: string): 
   hash,
 ];
 
+const resolveEmbeddingsJobTokenSeed = (
+  jobId: string,
+  authToken: string | null,
+  usageContext?: UsageContext,
+): string => {
+  // Prefer stable identities so queued jobs remain resolvable even if bearer tokens refresh/rotate.
+  if (usageContext?.keyId) return `uos_api_key_id:${usageContext.keyId}`;
+  if (usageContext?.kernelRepo) {
+    return `uos_kernel_repo:${usageContext.kernelRepo.owner}/${usageContext.kernelRepo.repo}`;
+  }
+  if (authToken) return authToken;
+  return jobId;
+};
+
 const TOKEN_ESTIMATOR = new TextEncoder();
 
 const getEnv = (key: string): string | undefined => {
@@ -1914,7 +1928,7 @@ export const handleEmbeddingsJobCreate = async (
   const uniqueHashes = Array.from(uniqueTextsByHash.keys());
 
   const jobId = `embjob_${crypto.randomUUID().replace(/-/g, "")}`;
-  const tokenSeed = authToken ?? jobId;
+  const tokenSeed = resolveEmbeddingsJobTokenSeed(jobId, authToken, usageContext);
   const tokenHash = await sha256Hex(tokenSeed);
   const now = Date.now();
   const cacheModelKey = model.toLowerCase();
@@ -1986,10 +2000,27 @@ export const handleEmbeddingsJobGet = async (
     return openaiError(503, "Embeddings jobs require Deno KV", "server_error", { type: "server_error", param: null });
   }
 
-  const tokenSeed = authToken ?? jobId;
-  const tokenHash = await sha256Hex(tokenSeed);
-  const jobKey = embeddingsJobKey(tokenHash, jobId);
-  const entry = await kv.get<EmbeddingsJobRecord>(jobKey);
+  const preferredSeed = resolveEmbeddingsJobTokenSeed(jobId, authToken, usageContext);
+  const preferredHash = await sha256Hex(preferredSeed);
+  let tokenSeed = preferredSeed;
+  let tokenHash = preferredHash;
+  let jobKey = embeddingsJobKey(preferredHash, jobId);
+  let entry = await kv.get<EmbeddingsJobRecord>(jobKey);
+
+  // Backwards compatibility: older versions keyed jobs to the raw bearer token.
+  if (!entry.value && authToken && preferredSeed !== authToken) {
+    const legacySeed = authToken;
+    const legacyHash = await sha256Hex(legacySeed);
+    const legacyKey = embeddingsJobKey(legacyHash, jobId);
+    const legacyEntry = await kv.get<EmbeddingsJobRecord>(legacyKey);
+    if (legacyEntry.value) {
+      tokenSeed = legacySeed;
+      tokenHash = legacyHash;
+      jobKey = legacyKey;
+      entry = legacyEntry;
+    }
+  }
+
   const job = entry.value;
   if (!job) {
     await recordErrorUsage(usageContext);
