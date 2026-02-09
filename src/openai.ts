@@ -580,8 +580,7 @@ const maybeEvictEmbeddingsCache = async (
     const over = next - max;
     const target = Math.min(EMBEDDINGS_CACHE_EVICT_BATCH, Math.max(1, over));
     const evicted = await evictOldestEmbeddingsCacheEntries(kv, cacheModelKey, target);
-    const removed = evicted.evicted_embeddings + evicted.deleted_stale_index_keys;
-    if (removed <= 0) {
+    if (evicted.evicted_embeddings <= 0 && evicted.deleted_stale_index_keys <= 0) {
       // Counter may be inflated from past duplicate index keys; clamp so we don't
       // spin eviction on every write when no work can be performed.
       for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -594,15 +593,18 @@ const maybeEvictEmbeddingsCache = async (
       return;
     }
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const entry = await kv.get<number>(countKey);
-      const current = normalizeEmbeddingsCacheCount(entry.value);
-      next = Math.max(0, current - removed);
-      const commit = await kv.atomic().check(entry).set(countKey, next).commit();
-      if (commit.ok) break;
+    if (evicted.evicted_embeddings > 0) {
+      const removed = evicted.evicted_embeddings;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const entry = await kv.get<number>(countKey);
+        const current = normalizeEmbeddingsCacheCount(entry.value);
+        next = Math.max(0, current - removed);
+        const commit = await kv.atomic().check(entry).set(countKey, next).commit();
+        if (commit.ok) break;
+      }
     }
 
-    if (removed > 0) {
+    if (evicted.evicted_embeddings > 0 || evicted.deleted_stale_index_keys > 0) {
       console.info(
         `[ai.ubq.fi] embeddings_cache model=${cacheModelKey} evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} next_count=${next} max=${max}`,
       );
