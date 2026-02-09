@@ -11,6 +11,18 @@ All requests are served from:
 https://ai.ubq.fi
 ```
 
+The gateway is also available via the Deno Deploy default domain:
+
+```
+https://ai-ubq-fi.deno.dev
+```
+
+OpenAI client base URL (example):
+
+```
+https://ai.ubq.fi/v1
+```
+
 ## Authentication
 
 Send a bearer token in `Authorization`:
@@ -228,6 +240,11 @@ Request:
 
 The gateway returns an OpenAI-style response with `object: "list"` and one `data[]` entry per input string.
 
+Notes:
+
+- Batching is strongly recommended (send `input` as an array).
+- When rate limited, the gateway responds `429` with `Retry-After`.
+
 ## Embeddings Jobs (Async)
 
 `POST /v1/embeddings/jobs` creates an async job. The gateway either completes it immediately (`200`) or queues it
@@ -239,6 +256,8 @@ Notes:
 
 - Jobs currently support `encoding_format="float"` only.
 - When queued, the gateway responds with `Retry-After` and `retry_after_seconds`.
+- Jobs are scoped to the authenticated client identity; poll using the same `Authorization` token and auth headers used
+  to create the job (GitHub tokens must include the same kernel attestation headers + repo context).
 - Inputs are stored encrypted in Deno KV for up to 24h to allow deferred processing, and deleted once the job completes.
 
 ## Reasoning defaults
