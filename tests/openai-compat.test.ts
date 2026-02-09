@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
+import { sha256Base64Url } from "../src/utils.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 
@@ -60,6 +61,23 @@ const kvStub = {
 const { handleChatCompletions, handleResponses } = await import("../src/openai.ts");
 
 const TEXT_ENCODER = new TextEncoder();
+
+const encodeBase64 = (bytes: Uint8Array): string => {
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+};
+
+const encodeBase64Url = (bytes: Uint8Array): string =>
+  encodeBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+
+const encodeJsonBase64Url = (value: unknown): string => encodeBase64Url(TEXT_ENCODER.encode(JSON.stringify(value)));
+
+const toPublicKeyPem = (spki: Uint8Array): string => {
+  const b64 = encodeBase64(spki);
+  const lines = b64.match(/.{1,64}/g) ?? [];
+  return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
+};
 
 const sseResponse = (chunks: string[]): Response => {
   const stream = new ReadableStream<Uint8Array>({
@@ -279,6 +297,61 @@ Deno.test("openai: responses accept non-message input items", async () => {
   assert.ok(types.includes("reasoning"));
   assert.ok(types.includes("function_call"));
   assert.ok(types.includes("function_call_output"));
+});
+
+Deno.test("auth: kernel attestation tokens are reusable within TTL", async () => {
+  const keyPair = await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+
+  const spki = new Uint8Array(await crypto.subtle.exportKey("spki", keyPair.publicKey));
+  const publicPem = toPublicKeyPem(spki);
+  kvStore.set(keyToString(["uos_ai", "kernel_pubkeys"]), [{ pem: publicPem }]);
+
+  const bearerToken = "ghs_test_token";
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: "ubiquity-os-kernel",
+    aud: "ai.ubq.fi",
+    iat: nowSeconds,
+    exp: nowSeconds + 600,
+    jti: `jti_${crypto.randomUUID()}`,
+    owner: "acme",
+    repo: "demo",
+    installation_id: null,
+    auth_token_sha256: await sha256Base64Url(bearerToken),
+    state_id: "state_test",
+  };
+
+  const header = { alg: "RS256", typ: "JWT" };
+  const headerB64 = encodeJsonBase64Url(header);
+  const payloadB64 = encodeJsonBase64Url(payload);
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const signature = new Uint8Array(
+    await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyPair.privateKey, TEXT_ENCODER.encode(signingInput)),
+  );
+  const kernelToken = `${signingInput}.${encodeBase64Url(signature)}`;
+
+  const { getKernelAttestationContext } = await import("../src/auth.ts");
+
+  const req = new Request("https://ai.ubq.fi/v1/responses", {
+    method: "POST",
+    headers: { "X-Ubiquity-Kernel-Token": kernelToken },
+    body: "{}",
+  });
+
+  const first = await getKernelAttestationContext(req, bearerToken);
+  const second = await getKernelAttestationContext(req, bearerToken);
+  assert.ok(first);
+  assert.ok(second);
+  assert.deepEqual(second, first);
 });
 
 addEventListener("unload", () => {

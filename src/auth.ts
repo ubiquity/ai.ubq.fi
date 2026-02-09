@@ -454,16 +454,10 @@ const verifyKernelAttestation = async (
   }
 
   pruneKernelTokenJtiCache();
-  const jti = payload.jti;
-  const nowMs = Date.now();
-  const cachedUntilMs = kernelTokenJtiCache.get(jti) ?? 0;
-  if (cachedUntilMs > nowMs) {
-    return {
-      ok: false,
-      response: openaiError(401, "Unauthorized (kernel attestation replayed)", "invalid_kernel_token"),
-    };
-  }
-  kernelTokenJtiCache.set(jti, payload.exp * 1000);
+  // This token is expected to be re-used within its TTL (e.g. Codex tool-calling
+  // results in multiple /v1/responses requests). Enforcing single-use "jti"
+  // semantics breaks legitimate traffic and is unreliable in serverless anyway.
+  kernelTokenJtiCache.set(payload.jti, payload.exp * 1000);
 
   return { ok: true, payload };
 };
