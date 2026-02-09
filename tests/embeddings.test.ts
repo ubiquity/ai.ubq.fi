@@ -200,26 +200,30 @@ Deno.test("embeddings: writes cache entries on upstream misses", async () => {
   const cacheKey: Deno.KvKey = ["embeddings", "v1", model.toLowerCase(), hash];
   kvStore.delete(keyToString(cacheKey));
 
-  const response = await withFetchMock(
-    (_url, bodyText) => {
-      const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
-      const count = Array.isArray(body.input) ? body.input.length : 1;
-      return voyageOkResponse(count);
-    },
-    () =>
-      handleEmbeddings(
-        new Request("https://ai.ubq.fi/v1/embeddings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model, input }),
-        }),
-      ),
-  );
+  try {
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        const body = JSON.parse(bodyText ?? "null") as { input?: unknown };
+        const count = Array.isArray(body.input) ? body.input.length : 1;
+        return voyageOkResponse(count);
+      },
+      () =>
+        handleEmbeddings(
+          new Request("https://ai.ubq.fi/v1/embeddings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, input }),
+          }),
+        ),
+    );
 
-  assert.equal(response.status, 200);
-  const stored = kvStore.get(keyToString(cacheKey)) as { embedding?: unknown } | undefined;
-  assert.ok(stored);
-  assert.ok(Array.isArray(stored.embedding));
+    assert.equal(response.status, 200);
+    const stored = kvStore.get(keyToString(cacheKey)) as { embedding?: unknown } | undefined;
+    assert.ok(stored);
+    assert.ok(Array.isArray(stored.embedding));
+  } finally {
+    kvStore.delete(keyToString(cacheKey));
+  }
 });
 
 Deno.test("embeddings: returns one data item per array input", async () => {
