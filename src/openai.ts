@@ -681,12 +681,8 @@ const fetchVoyageEmbeddings = async (params: {
     });
 
     if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      const snippet = text.trim().slice(0, 800);
-      const message = snippet
-        ? `Voyage embeddings failed (${resp.status}): ${snippet}`
-        : `Voyage embeddings failed (${resp.status}).`;
-      const err = new Error(message);
+      // Avoid echoing upstream bodies; they can contain provider details and may be surfaced to clients/logs.
+      const err = new Error(`Voyage embeddings failed (${resp.status}).`);
       (err as { status?: number; retry_after_ms?: number }).status = resp.status;
       (err as { retry_after_ms?: number }).retry_after_ms = extractRetryAfterMs(resp.headers.get("Retry-After")) ??
         undefined;
