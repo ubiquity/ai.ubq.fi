@@ -411,6 +411,13 @@ const embeddingsCacheIndexKey = (
   createdAtMs: number,
   hash: string,
 ): Deno.KvKey => ["embeddings", "v1", "cache_index", cacheModelKey, createdAtMs, hash];
+const embeddingsCacheIndexByHashKey = (cacheModelKey: string, hash: string): Deno.KvKey => [
+  "embeddings",
+  "v1",
+  "cache_index_by_hash",
+  cacheModelKey,
+  hash,
+];
 
 const normalizeEmbeddingsCacheCount = (value: unknown): number => {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
@@ -419,18 +426,59 @@ const normalizeEmbeddingsCacheCount = (value: unknown): number => {
   return count;
 };
 
+const normalizeEmbeddingsCacheTimestampMs = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const ts = Math.trunc(value);
+  if (ts < 0) return null;
+  return ts;
+};
+
 const writeEmbeddingsCacheEntry = async (
   kv: Deno.Kv,
   cacheModelKey: string,
   hash: string,
   embedding: number[],
   createdAtMs: number,
-): Promise<void> => {
+): Promise<{ isNew: boolean }> => {
+  const byHashKey = embeddingsCacheIndexByHashKey(cacheModelKey, hash);
+  const cacheKey: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hash];
+
+  // Concurrency-safe: if multiple requests try to cache the same hash, only one
+  // will win the "create index" CAS; the others will reuse the winner's index.
+  const entry = await kv.get<number>(byHashKey);
+  const existingCreatedAtMs = normalizeEmbeddingsCacheTimestampMs(entry.value);
+  if (existingCreatedAtMs !== null) {
+    const indexKey = embeddingsCacheIndexKey(cacheModelKey, existingCreatedAtMs, hash);
+    await kv.atomic()
+      .check(entry)
+      .set(cacheKey, { embedding, created_at: new Date(existingCreatedAtMs).toISOString() })
+      .set(indexKey, 1)
+      .set(byHashKey, existingCreatedAtMs)
+      .commit();
+    return { isNew: false };
+  }
+
   const createdAtIso = new Date(createdAtMs).toISOString();
-  await kv.atomic()
-    .set(["embeddings", "v1", cacheModelKey, hash], { embedding, created_at: createdAtIso })
-    .set(embeddingsCacheIndexKey(cacheModelKey, createdAtMs, hash), 1)
+  const indexKey = embeddingsCacheIndexKey(cacheModelKey, createdAtMs, hash);
+  const created = await kv.atomic()
+    .check(entry)
+    .set(cacheKey, { embedding, created_at: createdAtIso })
+    .set(indexKey, 1)
+    .set(byHashKey, createdAtMs)
     .commit();
+  if (created.ok) return { isNew: true };
+
+  // CAS failed: someone else wrote `byHashKey`. Reuse the now-canonical index.
+  const raced = await kv.get<number>(byHashKey);
+  const racedCreatedAtMs = normalizeEmbeddingsCacheTimestampMs(raced.value);
+  if (racedCreatedAtMs === null) return { isNew: false };
+  await kv.atomic()
+    .check(raced)
+    .set(cacheKey, { embedding, created_at: new Date(racedCreatedAtMs).toISOString() })
+    .set(embeddingsCacheIndexKey(cacheModelKey, racedCreatedAtMs, hash), 1)
+    .set(byHashKey, racedCreatedAtMs)
+    .commit();
+  return { isNew: false };
 };
 
 const evictOldestEmbeddingsCacheEntries = async (
@@ -439,21 +487,44 @@ const evictOldestEmbeddingsCacheEntries = async (
   count: number,
 ): Promise<number> => {
   const prefix = embeddingsCacheIndexPrefix(cacheModelKey);
-  const keys: Array<{ indexKey: Deno.KvKey; hash: string }> = [];
+  const keys: Array<{ indexKey: Deno.KvKey; createdAtMs: number; hash: string }> = [];
   for await (const entry of kv.list({ prefix }, { limit: count })) {
     const key = entry.key;
     const hash = key.at(-1);
+    const createdAtMs = key.at(-2);
     if (typeof hash !== "string" || !hash) continue;
-    keys.push({ indexKey: key, hash });
+    if (typeof createdAtMs !== "number" || !Number.isFinite(createdAtMs)) continue;
+    keys.push({ indexKey: key, createdAtMs: Math.trunc(createdAtMs), hash });
   }
   if (!keys.length) return 0;
 
+  const byHashKeys = keys.map((item) => embeddingsCacheIndexByHashKey(cacheModelKey, item.hash));
+  const byHashEntries = await Promise.all(byHashKeys.map((key) => kv.get<number>(key)));
+
+  let evicted = 0;
+  const deletions: Array<Promise<void>> = [];
+  for (let i = 0; i < keys.length; i += 1) {
+    const { indexKey, createdAtMs, hash } = keys[i]!;
+    const pointerEntry = byHashEntries[i]!;
+    const pointer = normalizeEmbeddingsCacheTimestampMs(pointerEntry.value);
+
+    if (pointer !== null && pointer !== createdAtMs) {
+      // Stale duplicate index key for this hash; delete the index entry only.
+      deletions.push(kv.delete(indexKey));
+      continue;
+    }
+
+    // Active index entry (or missing pointer): evict embedding + index + pointer.
+    evicted += 1;
+    deletions.push(kv.delete(indexKey));
+    deletions.push(kv.delete(["embeddings", "v1", cacheModelKey, hash]));
+    deletions.push(kv.delete(embeddingsCacheIndexByHashKey(cacheModelKey, hash)));
+  }
+
   // Best-effort deletes. If some deletes fail due to contention, subsequent writes
   // will attempt eviction again.
-  await Promise.all(
-    keys.flatMap(({ indexKey, hash }) => [kv.delete(indexKey), kv.delete(["embeddings", "v1", cacheModelKey, hash])]),
-  );
-  return keys.length;
+  await Promise.all(deletions);
+  return evicted;
 };
 
 const maybeEvictEmbeddingsCache = async (
@@ -1501,20 +1572,19 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
         });
       }
 
-      const cacheWrites: Promise<unknown>[] = [];
-      let wroteCacheEntries = 0;
+      const cacheWrites: Array<Promise<{ isNew: boolean }>> = [];
       for (let i = 0; i < chunkItems.length; i += 1) {
         const item = chunkItems[i]!;
         const vec = vectors[i]!;
         for (const idx of item.indices) vectorsByIndex[idx] = vec;
         if (shouldCache && kv) {
-          wroteCacheEntries += 1;
           cacheWrites.push(writeEmbeddingsCacheEntry(kv, cacheModelKey, item.hash, vec, Date.now()));
         }
       }
-      if (cacheWrites.length) await Promise.all(cacheWrites);
-      if (shouldCache && kv && wroteCacheEntries > 0) {
-        await maybeEvictEmbeddingsCache(kv, cacheModelKey, wroteCacheEntries);
+      if (cacheWrites.length) {
+        const results = await Promise.all(cacheWrites);
+        const wroteNew = results.reduce((sum, item) => sum + (item.isNew ? 1 : 0), 0);
+        if (kv && wroteNew > 0) await maybeEvictEmbeddingsCache(kv, cacheModelKey, wroteNew);
       }
     }
   }
@@ -1826,19 +1896,18 @@ const runEmbeddingsJobAttempt = async (params: {
         currentJob = { ...currentJob, usage_total_tokens: currentJob.usage_total_tokens + totalTokens };
       }
 
-      const cacheWrites: Promise<unknown>[] = [];
-      let wroteCacheEntries = 0;
+      const cacheWrites: Array<Promise<{ isNew: boolean }>> = [];
       for (let i = 0; i < chunk.length; i += 1) {
         const item = chunk[i]!;
         const vec = vectors[i]!;
-        wroteCacheEntries += 1;
         cacheWrites.push(
           writeEmbeddingsCacheEntry(params.kv, currentJob.cache_model_key, item.hash, vec, Date.now()),
         );
       }
-      await Promise.all(cacheWrites);
-      if (wroteCacheEntries > 0) {
-        await maybeEvictEmbeddingsCache(params.kv, currentJob.cache_model_key, wroteCacheEntries);
+      const results = await Promise.all(cacheWrites);
+      const wroteNew = results.reduce((sum, item) => sum + (item.isNew ? 1 : 0), 0);
+      if (wroteNew > 0) {
+        await maybeEvictEmbeddingsCache(params.kv, currentJob.cache_model_key, wroteNew);
       }
     }
 
