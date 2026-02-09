@@ -127,7 +127,8 @@ curl -sS https://ai.ubq.fi/v1/embeddings \
 Notes:
 
 - `input` can be a string or an array of strings (batching is strongly recommended).
-- Backed by Voyage (`voyage-4-large`) and cached in Deno KV (FIFO-bounded) to avoid repeat paid calls.
+- Backed by Voyage (`voyage-4-large`) and cached in Deno KV. The cache is quota-driven: it keeps writing until KV is
+  full, then evicts the oldest entries (FIFO) and retries.
 - Embedding dimensionality may differ from OpenAI because the vectors come from Voyage.
 - When rate limited (by Voyage or the gateway's own KV throttling), the gateway returns `429` with `Retry-After`;
   clients should retry (or use the async jobs API below).

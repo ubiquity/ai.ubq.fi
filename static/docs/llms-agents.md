@@ -230,7 +230,8 @@ is `true`, the upstream SSE stream is passed through.
 
 `POST /v1/embeddings`
 
-OpenAI-compatible embeddings endpoint backed by Voyage (cached in Deno KV, FIFO-bounded).
+OpenAI-compatible embeddings endpoint backed by Voyage (cached in Deno KV). The cache is quota-driven: it keeps writing
+until KV is full, then evicts the oldest entries (FIFO) and retries.
 
 Request:
 
