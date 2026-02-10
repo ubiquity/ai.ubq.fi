@@ -124,6 +124,51 @@ body[data-page="admin"] [data-view="kernel"] [data-sublist] {
   align-items: start;
 }
 
+body[data-page="admin"] [data-view="kernel"] details[data-kernel-repos] {
+  margin-top: 6px;
+}
+
+body[data-page="admin"] [data-view="kernel"] summary[data-kernel-repos-title] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+body[data-page="admin"] [data-view="kernel"] summary[data-kernel-repos-title]::-webkit-details-marker {
+  display: none;
+}
+
+body[data-page="admin"] [data-view="kernel"] summary[data-kernel-repos-title]::after {
+  content: "▾";
+  margin-left: 6px;
+  opacity: 0.6;
+  font-size: 11px;
+}
+
+body[data-page="admin"] [data-view="kernel"] details[data-kernel-repos][open] summary[data-kernel-repos-title]::after {
+  transform: rotate(180deg);
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-kernel-repos-label] {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--muted-2);
+}
+
+body[data-page="admin"] [data-view="kernel"] [data-kernel-repos-meta] {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 body[data-page="admin"] [data-view="kernel"] [data-sublist="repos"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

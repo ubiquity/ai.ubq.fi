@@ -176,6 +176,7 @@ let kernelPubKeys = [];
 let kernelPubKeysLoading = false;
 let kernelPubKeysLoadedAt = 0;
 let kernelPubKeysSaving = false;
+const kernelOrgRepoAccordionState = new Map();
 let kernelPolicyState = {
   available: false,
   message: "",
@@ -1906,7 +1907,30 @@ const renderKernelList = (records, policyState = kernelPolicyState) => {
           });
         if (tile) sublist.appendChild(tile);
       });
-      groupTile.appendChild(sublist);
+
+      const accordion = document.createElement("details");
+      accordion.dataset.kernelRepos = group.owner || "unknown";
+      const existing = kernelOrgRepoAccordionState.get(group.owner);
+      accordion.open = existing === undefined ? true : existing === true;
+
+      const summary = document.createElement("summary");
+      summary.dataset.kernelReposTitle = "title";
+      const label = document.createElement("span");
+      label.dataset.kernelReposLabel = "label";
+      label.textContent = "Repos";
+      const meta = document.createElement("span");
+      meta.dataset.kernelReposMeta = "meta";
+      meta.textContent = formatPlural(repos.length, "repo");
+      summary.appendChild(label);
+      summary.appendChild(meta);
+      accordion.appendChild(summary);
+      accordion.appendChild(sublist);
+
+      accordion.addEventListener("toggle", () => {
+        kernelOrgRepoAccordionState.set(group.owner, accordion.open);
+      });
+
+      groupTile.appendChild(accordion);
     }
     kernelList.appendChild(groupTile);
   });
