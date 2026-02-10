@@ -46,6 +46,8 @@ import {
   getKernelOrgUsageLimitSnapshot,
   getKernelUsage,
   getKernelUsageLimitSnapshot,
+  kernelLimitKey,
+  kernelOrgLimitKey,
   listKernelOrgUsageLimits,
   listKernelOrgUsageRecords,
   listKernelUsageLimits,
@@ -1100,7 +1102,38 @@ export const handleAdminKernelPubKeysDelete = async (req: Request): Promise<Resp
 export const handleAdminKernelPolicyQueueList = async (): Promise<Response> => {
   const records = await listKernelPolicyQueue();
   if (!records) return openaiError(500, "Deno KV is not available", "server_error");
-  return json(200, { data: records });
+  if (records.length === 0) return json(200, { data: records });
+
+  const kv = await kvPromise;
+  if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
+
+  // This queue is meant to surface *current* gaps. Once an org/repo rate limit policy exists,
+  // the corresponding queue entries should disappear automatically.
+  const orgPolicyOwners = new Set<string>();
+  const owners = [...new Set(records.map((record) => record.owner))];
+  await Promise.all(
+    owners.map(async (owner) => {
+      const entry = await kv.get(kernelOrgLimitKey(owner));
+      if (entry.value) orgPolicyOwners.add(owner);
+    }),
+  );
+
+  const repoPolicyPairs = new Set<string>();
+  await Promise.all(
+    records
+      .filter((record) => !orgPolicyOwners.has(record.owner))
+      .map(async (record) => {
+        const entry = await kv.get(kernelLimitKey(record.owner, record.repo));
+        if (entry.value) repoPolicyPairs.add(`${record.owner}/${record.repo}`);
+      }),
+  );
+
+  const pending = records.filter((record) => {
+    if (orgPolicyOwners.has(record.owner)) return false;
+    return !repoPolicyPairs.has(`${record.owner}/${record.repo}`);
+  });
+
+  return json(200, { data: pending });
 };
 
 export const handleAdminKernelUsageGet = async (req: Request): Promise<Response> => {

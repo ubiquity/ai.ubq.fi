@@ -1155,6 +1155,8 @@ const saveNewKernelLimit = async () => {
     setKernelNewBadge("ok", "Saved");
     setKernelNewPanelOpen(false);
     await loadKernelList();
+    kernelQueueLoadedAt = 0;
+    await ensureKernelPolicyQueueLoaded();
   } catch {
     setKernelNewBadge("bad", "Offline");
   } finally {
