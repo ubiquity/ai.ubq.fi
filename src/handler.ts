@@ -27,7 +27,7 @@ import {
   requireAdminAuth,
 } from "./auth.ts";
 import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
-import { corsHeaders, openaiError, withCors } from "./http.ts";
+import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
 import {
   getKernelUsageLimitSnapshot,
   incrementKernelOrgUsageLimit,
@@ -121,6 +121,10 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/admin.css") {
     return withCors(await handleAdminCss());
+  }
+
+  if (req.method === "GET" && path === "/favicon.ico") {
+    return withCors(await handleFavicon());
   }
 
   if (req.method === "GET" && path === "/app.js") {
@@ -268,7 +272,7 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   if (!path.startsWith("/v1/")) {
-    return withCors(openaiError(404, "Not found", "not_found"));
+    return withCors(notFound());
   }
 
   if (req.method === "GET" && path === "/v1/auth") {

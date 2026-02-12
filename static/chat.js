@@ -66,8 +66,7 @@ const promptInput = mustGet("prompt");
 const sendBtn = mustGet("send");
 const panels = Array.from(document.querySelectorAll("details[data-chat-panel][data-panel-key]"));
 
-const DEFAULT_MODEL = "gpt-5.2-chat-latest";
-const DEFAULT_REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
+const DEFAULT_MODEL = "";
 
 const setAuthBadge = (state, text) => {
   authBadge.dataset.state = state;
@@ -103,14 +102,25 @@ const setModelPlaceholder = (label) => {
   modelInput.disabled = true;
 };
 
+const setReasoningPlaceholder = (label) => {
+  reasoningSelect.textContent = "";
+  const option = document.createElement("option");
+  option.value = "";
+  option.textContent = label;
+  option.disabled = true;
+  reasoningSelect.appendChild(option);
+  reasoningSelect.disabled = true;
+};
+
 const setModelOptions = (models, preferred) => {
   modelInput.textContent = "";
-  const options = [];
-  models.forEach((model) => {
-    const id = normalizeModelId(model);
-    if (!id) return;
-    options.push({ value: id, label: formatModelLabel(model, id) });
-  });
+  const options = models
+    .map((model) => {
+      const id = normalizeModelId(model);
+      if (!id) return null;
+      return { value: id, label: formatModelLabel(model, id), model };
+    })
+    .filter(Boolean);
 
   if (!options.length) {
     setModelPlaceholder("No models available");
@@ -126,7 +136,9 @@ const setModelOptions = (models, preferred) => {
   });
 
   const preferredValue = typeof preferred === "string" ? preferred.trim() : "";
-  const next = options.some((option) => option.value === preferredValue) ? preferredValue : options[0].value;
+  const fallback = options[0].value;
+  const hasStored = options.some((option) => option.value === preferredValue);
+  const next = hasStored ? preferredValue : fallback;
   modelInput.value = next;
   return next;
 };
@@ -134,12 +146,7 @@ const setModelOptions = (models, preferred) => {
 const setReasoningOptions = (levels, preferred) => {
   const trimmedPreferred = (preferred ?? "").trim();
   const uniqueLevels = Array.from(
-    new Set(
-      levels
-        .filter((level) => typeof level === "string")
-        .map((level) => level.trim())
-        .filter(Boolean),
-    ),
+    new Set(levels.filter((level) => typeof level === "string").map((level) => level.trim()).filter(Boolean)),
   );
 
   reasoningSelect.textContent = "";
@@ -147,6 +154,14 @@ const setReasoningOptions = (levels, preferred) => {
   defaultOption.value = "";
   defaultOption.textContent = "Default";
   reasoningSelect.appendChild(defaultOption);
+
+  if (!uniqueLevels.length) {
+    reasoningSelect.disabled = true;
+    reasoningSelect.value = "";
+    return "";
+  }
+
+  reasoningSelect.disabled = false;
 
   uniqueLevels.forEach((level) => {
     const option = document.createElement("option");
@@ -161,19 +176,47 @@ const setReasoningOptions = (levels, preferred) => {
 const getReasoningLevelsForModel = (modelId) => {
   const model = modelCatalog.get(modelId);
   const levels = Array.isArray(model?.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
-  const normalized = levels.filter((level) => typeof level === "string" && level.trim().length > 0);
-  return normalized.length ? normalized : DEFAULT_REASONING_LEVELS;
+  const normalized = [];
+  levels.forEach((level) => {
+    if (typeof level === "string") {
+      const trimmed = level.trim();
+      if (trimmed) normalized.push(trimmed);
+      return;
+    }
+    if (level && typeof level === "object" && "effort" in level) {
+      const effort = typeof level.effort === "string" ? level.effort.trim() : "";
+      if (effort) normalized.push(effort);
+    }
+  });
+  const defaultReasoning = typeof model?.default_reasoning_level === "string"
+    ? model.default_reasoning_level.trim()
+    : "";
+  const unique = Array.from(new Set(normalized));
+  if (unique.length) return unique;
+  return defaultReasoning ? [defaultReasoning] : [];
 };
 
 const updateReasoningForModel = (modelId, preferred) => {
   const levels = getReasoningLevelsForModel(modelId);
-  setReasoningOptions(levels, preferred);
+  const model = modelCatalog.get(modelId);
+  const defaultReasoning = typeof model?.default_reasoning_level === "string"
+    ? model.default_reasoning_level.trim()
+    : "";
+  const selected = levels.includes(preferred)
+    ? preferred
+    : levels.includes(defaultReasoning)
+    ? defaultReasoning
+    : levels.length
+    ? levels[0]
+    : "";
+  return setReasoningOptions(levels, selected);
 };
 
 const resetModelCatalog = (label = "Authenticate to load models") => {
   modelCatalog = new Map();
   modelsLoadedToken = "";
   setModelPlaceholder(label);
+  setReasoningPlaceholder("No model selected");
 };
 
 const loadModels = async (token) => {
@@ -186,8 +229,18 @@ const loadModels = async (token) => {
     const data = await res.json().catch(() => null);
     if (requestId !== modelsRequestId) return;
     if (trimmed !== tokenInput.value.trim()) return;
-    if (!res.ok) return;
+    if (!res.ok) {
+      const message = typeof data?.error?.message === "string" && data?.error?.message.trim().length > 0
+        ? data.error.message
+        : `Failed to load models (${res.status} ${res.statusText})`;
+      setModelPlaceholder(message);
+      return;
+    }
     const models = Array.isArray(data?.data) ? data.data : [];
+    if (!models.length) {
+      setModelPlaceholder("No models available");
+      return;
+    }
     modelCatalog = new Map(
       models
         .map((model) => ({ id: normalizeModelId(model), model }))
@@ -214,7 +267,7 @@ const checkAuthToken = async () => {
   if (!token) {
     setAuthBadge("bad", "Missing token");
     resetModelCatalog();
-    setReasoningOptions(DEFAULT_REASONING_LEVELS, reasoningSelect.value);
+    setReasoningPlaceholder("Missing token");
     return;
   }
 
@@ -227,7 +280,7 @@ const checkAuthToken = async () => {
     if (!res.ok) {
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
       resetModelCatalog();
-      setReasoningOptions(DEFAULT_REASONING_LEVELS, reasoningSelect.value);
+      setReasoningPlaceholder("Invalid token");
       return;
     }
     const mode = data?.auth?.mode;
@@ -275,7 +328,7 @@ const restoreSettings = () => {
 
   preferredModel = storage.get(STORAGE_KEYS.model) ?? DEFAULT_MODEL;
   setModelPlaceholder("Loading models...");
-  setReasoningOptions(DEFAULT_REASONING_LEVELS, storage.get(STORAGE_KEYS.reasoningEffort) ?? "");
+  setReasoningPlaceholder("Loading models...");
   systemInput.value = storage.get(STORAGE_KEYS.systemPrompt) ?? "";
 };
 
@@ -322,7 +375,7 @@ tokenInput.addEventListener("input", () => {
   if (!token) {
     setAuthBadge("bad", "Missing token");
     resetModelCatalog();
-    setReasoningOptions(DEFAULT_REASONING_LEVELS, reasoningSelect.value);
+    setReasoningPlaceholder("No model selected");
     return;
   }
   if (token !== modelsLoadedToken) resetModelCatalog("Checking token...");

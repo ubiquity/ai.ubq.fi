@@ -6,7 +6,7 @@ import type { CodexAuthState, ResponseInputItem } from "./types.ts";
 const CODEX_REFRESH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
-const CODEX_USER_AGENT = "codex_cli_rs/0.99.0 (ai.ubq.fi)";
+const CODEX_USER_AGENT = "codex_cli_rs/0.100.0 (ai.ubq.fi)";
 const CODEX_CLIENT_VERSION = (() => {
   const match = CODEX_USER_AGENT.match(/codex_cli_rs\/([0-9]+(?:\.[0-9]+){1,2})/);
   return match ? match[1] : null;
@@ -111,44 +111,106 @@ export const cacheCodexAuth = (auth: CodexAuthState): void => {
 };
 
 const loadAuthSeedFromEnv = (): CodexAuthState => {
-  if (!config.codexAuthJsonB64) {
+  if (config.isDeploy) {
+    if (!config.codexAuthJsonB64) {
+      throw new CodexError(
+        "Codex auth missing: CODEX_AUTH_JSON_B64 unset and no KV entry.",
+        "codex_auth_missing",
+        503,
+      );
+    }
+  }
+
+  if (config.codexAuthJsonB64) {
+    let decoded: string;
+    try {
+      decoded = decodeBase64ToString(config.codexAuthJsonB64);
+    } catch (error) {
+      throw new CodexError(
+        "Codex auth invalid: CODEX_AUTH_JSON_B64 is not valid base64.",
+        "codex_auth_invalid",
+        503,
+        error,
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(decoded) as unknown;
+    } catch (error) {
+      throw new CodexError(
+        "Codex auth invalid: CODEX_AUTH_JSON_B64 is not valid JSON.",
+        "codex_auth_invalid",
+        503,
+        error,
+      );
+    }
+    const tokenData = parseCodexAuthFromAuthJson(parsed);
+    if (!tokenData) {
+      throw new CodexError(
+        "Codex auth invalid: CODEX_AUTH_JSON_B64 does not look like a Codex auth.json.",
+        "codex_auth_invalid",
+        503,
+      );
+    }
+    return { ...tokenData, updated_at_ms: Date.now() };
+  }
+
+  if (config.isDeploy) {
     throw new CodexError(
       "Codex auth missing: CODEX_AUTH_JSON_B64 unset and no KV entry.",
       "codex_auth_missing",
       503,
     );
   }
-  let decoded: string;
+
+  return loadAuthSeedFromDisk();
+};
+
+const loadAuthSeedFromDisk = (): CodexAuthState => {
+  if (!config.isDeploy) {
+    const home = (Deno as unknown as { homeDir?: () => string | null }).homeDir?.() ?? Deno.env.get("HOME");
+    if (!home) {
+      throw new CodexError("Could not resolve home directory for ~/.codex/auth.json.", "codex_auth_invalid", 503);
+    }
+    try {
+      const raw = Deno.readTextFileSync(`${home}/.codex/auth.json`);
+      const parsed = JSON.parse(raw) as unknown;
+      const tokenData = parseCodexAuthFromAuthJson(parsed);
+      if (!tokenData) {
+        throw new CodexError(
+          "Codex auth invalid: ~/.codex/auth.json does not look like a Codex auth.json.",
+          "codex_auth_invalid",
+          503,
+        );
+      }
+      return { ...tokenData, updated_at_ms: Date.now() };
+    } catch (error) {
+      if (error instanceof CodexError) throw error;
+      throw new CodexError(
+        "Codex auth invalid: ~/.codex/auth.json is missing or unreadable.",
+        "codex_auth_invalid",
+        503,
+        error,
+      );
+    }
+  }
+  throw new CodexError("Codex auth missing: CODEX_AUTH_JSON_B64 unset and no KV entry.", "codex_auth_missing", 503);
+};
+
+const getConfiguredCodexAuthSeed = (): CodexAuthState | null => {
+  if (!config.codexAuthJsonB64) {
+    return loadAuthSeedFromEnv(); // throws when unavailable in deploy or returns fallback in local
+  }
   try {
-    decoded = decodeBase64ToString(config.codexAuthJsonB64);
-  } catch (error) {
-    throw new CodexError(
-      "Codex auth invalid: CODEX_AUTH_JSON_B64 is not valid base64.",
-      "codex_auth_invalid",
-      503,
-      error,
-    );
+    return loadAuthSeedFromEnv();
+  } catch {
+    if (config.isDeploy) return null;
+    try {
+      return loadAuthSeedFromDisk();
+    } catch {
+      return null;
+    }
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(decoded) as unknown;
-  } catch (error) {
-    throw new CodexError(
-      "Codex auth invalid: CODEX_AUTH_JSON_B64 is not valid JSON.",
-      "codex_auth_invalid",
-      503,
-      error,
-    );
-  }
-  const tokenData = parseCodexAuthFromAuthJson(parsed);
-  if (!tokenData) {
-    throw new CodexError(
-      "Codex auth invalid: CODEX_AUTH_JSON_B64 does not look like a Codex auth.json.",
-      "codex_auth_invalid",
-      503,
-    );
-  }
-  return { ...tokenData, updated_at_ms: Date.now() };
 };
 
 const getAuthEntry = async (): Promise<{
@@ -158,18 +220,44 @@ const getAuthEntry = async (): Promise<{
 }> => {
   const kv = await kvPromise;
   if (!kv) {
-    const auth = cachedAuth ?? loadAuthSeedFromEnv();
+    const auth = cachedAuth ?? getConfiguredCodexAuthSeed();
+    if (!auth) {
+      throw new CodexError(
+        "Codex auth missing: CODEX_AUTH_JSON_B64 unset and no KV entry.",
+        "codex_auth_missing",
+        503,
+      );
+    }
     cachedAuth = auth;
     return { kv: null, entry: null, auth };
   }
 
   const entry = await kv.get<CodexAuthState>(CODEX_KV_KEY);
   if (entry.value) {
+    if (!config.isDeploy) {
+      try {
+        const localSeed = getConfiguredCodexAuthSeed();
+        if (localSeed) {
+          cachedAuth = localSeed;
+          await kv.set(CODEX_KV_KEY, localSeed);
+          return { kv, entry, auth: localSeed };
+        }
+      } catch {
+        // Keep working from persisted KV credentials when local seed loading fails.
+      }
+    }
     cachedAuth = entry.value;
     return { kv, entry, auth: entry.value };
   }
 
-  const seed = loadAuthSeedFromEnv();
+  const seed = getConfiguredCodexAuthSeed();
+  if (!seed) {
+    throw new CodexError(
+      "Codex auth missing: CODEX_AUTH_JSON_B64 unset and no KV entry.",
+      "codex_auth_missing",
+      503,
+    );
+  }
   await kv.set(CODEX_KV_KEY, seed);
   cachedAuth = seed;
   return { kv, entry: null, auth: seed };

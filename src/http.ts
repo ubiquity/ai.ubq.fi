@@ -56,6 +56,15 @@ export const openaiError = (
   });
 };
 
+export const notFound = (): Response =>
+  json(404, {
+    error: {
+      message: "Not found",
+      type: "not_found",
+      code: "not_found",
+    },
+  });
+
 export const getBearerToken = (req: Request): string | null => {
   const value = req.headers.get("Authorization");
   if (!value) return null;
