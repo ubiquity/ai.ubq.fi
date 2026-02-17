@@ -209,11 +209,13 @@ type PassthroughToolSchemaKey = "tools" | "tool_choice" | "parallel_tool_calls" 
 const normalizeCodexToolChoice = (value: unknown): unknown => {
   if (!isRecord(value)) return value;
   if (getString(value.type) !== "function") return value;
-  if (typeof value["name"] === "string" && value["name"].trim()) return value;
-  const fn = isRecord(value.function) ? value.function : null;
-  if (!fn) return value;
 
-  const name = getString(fn.name);
+  const topLevelName = getString(value.name);
+  const fn = isRecord(value.function) ? value.function : null;
+  if (!fn && !topLevelName) return value;
+
+  const functionName = fn ? getString(fn.name) : "";
+  const name = topLevelName || functionName;
   if (!name) return value;
 
   const normalized: Record<string, unknown> = { ...value, name };
@@ -229,11 +231,15 @@ const normalizeCodexTools = (value: unknown): unknown => {
     const nestedFunction = isRecord(tool.function) ? tool.function : null;
     if (!nestedFunction) return tool;
 
-    const name = getString(nestedFunction.name);
-    if (!name) return tool;
-    if (typeof tool.name === "string" && tool.name.trim()) return tool;
+    const nestedName = getString(nestedFunction.name);
+    if (!nestedName) return tool;
 
-    const normalized: Record<string, unknown> = { ...tool, name };
+    const normalized: Record<string, unknown> = { ...tool };
+
+    // Prefer existing top-level name if present and non-empty; otherwise use nested function name.
+    const existingName = getString(normalized.name);
+    if (!existingName) normalized.name = nestedName;
+
     if (!("description" in normalized) && nestedFunction.description !== undefined) {
       normalized.description = nestedFunction.description;
     }
