@@ -224,7 +224,7 @@ const normalizeCodexToolChoice = (value: unknown): unknown => {
 
   // Determine the name to use: prefer non-empty top-level name, fallback to function.name
   const functionName = fn ? getString(fn.name) : null;
-  const name = (topLevelName?.trim() || "") ? topLevelName : functionName;
+  const name = topLevelName?.trim() ? topLevelName : functionName;
   if (!name?.trim()) return value;
 
   const normalized: Record<string, unknown> = { ...value, name };
