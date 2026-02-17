@@ -204,6 +204,66 @@ const buildIgnoredWarnings = (record: Record<string, unknown>, usedKeys: Readonl
   return Array.from(warnings);
 };
 
+type PassthroughToolSchemaKey = "tools" | "tool_choice" | "parallel_tool_calls" | "prompt_cache_key" | "text" | "include";
+
+const normalizeCodexToolChoice = (value: unknown): unknown => {
+  if (!isRecord(value)) return value;
+  if (getString(value.type) !== "function") return value;
+  if (typeof value["name"] === "string" && value["name"].trim()) return value;
+  const fn = isRecord(value.function) ? value.function : null;
+  if (!fn) return value;
+
+  const name = getString(fn.name);
+  if (!name) return value;
+
+  const normalized: Record<string, unknown> = { ...value, name };
+  delete normalized.function;
+  return normalized;
+};
+
+const normalizeCodexTools = (value: unknown): unknown => {
+  if (!Array.isArray(value)) return value;
+  return value.map((tool) => {
+    if (!isRecord(tool)) return tool;
+    if (getString(tool.type) !== "function") return tool;
+    const nestedFunction = isRecord(tool.function) ? tool.function : null;
+    if (!nestedFunction) return tool;
+
+    const name = getString(nestedFunction.name);
+    if (!name) return tool;
+    if (typeof tool.name === "string" && tool.name.trim()) return tool;
+
+    const normalized: Record<string, unknown> = { ...tool, name };
+    if (!("description" in normalized) && nestedFunction.description !== undefined) {
+      normalized.description = nestedFunction.description;
+    }
+    if (!("parameters" in normalized)) {
+      const nestedParameters = nestedFunction.parameters;
+      if (nestedParameters !== undefined) normalized.parameters = nestedParameters;
+    }
+    delete normalized.function;
+    return normalized;
+  });
+};
+
+const normalizePassthroughForCodex = (key: PassthroughToolSchemaKey, value: unknown): unknown => {
+  if (key === "tools") return normalizeCodexTools(value);
+  if (key === "tool_choice") return normalizeCodexToolChoice(value);
+  return value;
+};
+
+const applyPassthroughToCodexRequest = (
+  codexBody: Record<string, unknown>,
+  rawRecord: Record<string, unknown>,
+  keys: readonly PassthroughToolSchemaKey[],
+): void => {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
+      codexBody[key] = normalizePassthroughForCodex(key, rawRecord[key]);
+    }
+  }
+};
+
 const withUosWarning = (response: Response, warnings: string[]): Response => {
   if (!warnings.length) return response;
   const headers = new Headers(response.headers);
@@ -2375,12 +2435,8 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     reasoning: reasoningValue,
     instructions,
   });
-  const passthroughKeys = ["tools", "tool_choice", "parallel_tool_calls", "prompt_cache_key"];
-  for (const key of passthroughKeys) {
-    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
-      codexBody[key] = rawRecord[key];
-    }
-  }
+  const passthroughKeys: PassthroughToolSchemaKey[] = ["tools", "tool_choice", "parallel_tool_calls", "prompt_cache_key"];
+  applyPassthroughToCodexRequest(codexBody, rawRecord, passthroughKeys);
   codexBody.store = false;
 
   const stream = Boolean(body.stream);
@@ -2550,12 +2606,15 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   }
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });
-  const passthroughKeys = ["tools", "tool_choice", "parallel_tool_calls", "prompt_cache_key", "text", "include"];
-  for (const key of passthroughKeys) {
-    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) {
-      codexBody[key] = rawRecord[key];
-    }
-  }
+  const passthroughKeys: PassthroughToolSchemaKey[] = [
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "prompt_cache_key",
+    "text",
+    "include",
+  ];
+  applyPassthroughToCodexRequest(codexBody, rawRecord, passthroughKeys);
   codexBody.model = model;
   codexBody.input = input;
   codexBody.stream = true;
