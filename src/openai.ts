@@ -220,13 +220,12 @@ const normalizeCodexToolChoice = (value: unknown): unknown => {
   const fn = isRecord(value.function) ? value.function : null;
 
   // If no function field and no valid top-level name, nothing to normalize
-  const hasValidTopName = topLevelName && topLevelName.trim();
-  if (!fn && !hasValidTopName) return value;
+  if (!fn && !topLevelName) return value;
 
   // Determine the name to use: prefer non-empty top-level name, fallback to function.name
   const functionName = fn ? getString(fn.name) : null;
-  const name = hasValidTopName ? topLevelName : functionName;
-  if (!name || !name.trim()) return value;
+  const name = (topLevelName?.trim() || "") ? topLevelName : functionName;
+  if (!name?.trim()) return value;
 
   const normalized: Record<string, unknown> = { ...value, name };
   delete normalized.function;
@@ -242,14 +241,13 @@ const normalizeCodexTools = (value: unknown): unknown => {
     if (!nestedFunction) return tool;
 
     const nestedName = getString(nestedFunction.name);
-    if (!nestedName || !nestedName.trim()) return tool;
+    if (!nestedName?.trim()) return tool;
 
     const normalized: Record<string, unknown> = { ...tool };
 
     // Prefer existing non-empty top-level name; otherwise use nested function name.
     const existingName = getString(normalized.name);
-    const hasValidExistingName = existingName && existingName.trim();
-    if (!hasValidExistingName) normalized.name = nestedName;
+    if (!existingName?.trim()) normalized.name = nestedName;
 
     if (!("description" in normalized) && nestedFunction.description !== undefined) {
       normalized.description = nestedFunction.description;
