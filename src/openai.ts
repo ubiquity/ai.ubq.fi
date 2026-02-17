@@ -204,7 +204,13 @@ const buildIgnoredWarnings = (record: Record<string, unknown>, usedKeys: Readonl
   return Array.from(warnings);
 };
 
-type PassthroughToolSchemaKey = "tools" | "tool_choice" | "parallel_tool_calls" | "prompt_cache_key" | "text" | "include";
+type PassthroughToolSchemaKey =
+  | "tools"
+  | "tool_choice"
+  | "parallel_tool_calls"
+  | "prompt_cache_key"
+  | "text"
+  | "include";
 
 const normalizeCodexToolChoice = (value: unknown): unknown => {
   if (!isRecord(value)) return value;
@@ -212,7 +218,7 @@ const normalizeCodexToolChoice = (value: unknown): unknown => {
 
   const topLevelName = getString(value.name);
   const fn = isRecord(value.function) ? value.function : null;
-  
+
   // If no function field and no valid top-level name, nothing to normalize
   const hasValidTopName = topLevelName && topLevelName.trim();
   if (!fn && !hasValidTopName) return value;
@@ -2446,7 +2452,12 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     reasoning: reasoningValue,
     instructions,
   });
-  const passthroughKeys: PassthroughToolSchemaKey[] = ["tools", "tool_choice", "parallel_tool_calls", "prompt_cache_key"];
+  const passthroughKeys: PassthroughToolSchemaKey[] = [
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "prompt_cache_key",
+  ];
   applyPassthroughToCodexRequest(codexBody, rawRecord, passthroughKeys);
   codexBody.store = false;
 
