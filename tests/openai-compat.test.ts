@@ -219,6 +219,116 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
   });
 });
 
+Deno.test("openai: normalize function-style tools for codex compatibility", async (t) => {
+  await t.step("chat completions flattens tools and tool_choice", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages: [{ role: "user", content: "get weather" }],
+              tools: [
+                {
+                  type: "function",
+                  function: {
+                    name: "fetch_weather",
+                    description: "Fetch weather for a city.",
+                    parameters: { type: "object", properties: { city: { type: "string" } } },
+                  },
+                },
+                {
+                  type: "function",
+                  name: "legacy_tool",
+                  description: "Already top-level tool name.",
+                  parameters: { type: "object", properties: {} },
+                  function: { strict: true },
+                },
+              ],
+              tool_choice: {
+                type: "function",
+                name: "forced_choice",
+                function: { name: "fetch_weather", strict: true },
+              },
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    const recordedTools = recorded["tools"] as Array<Record<string, unknown>> | undefined;
+    assert.ok(Array.isArray(recordedTools));
+    assert.equal(recordedTools.length, 2);
+    assert.equal(recordedTools[0]?.name, "fetch_weather");
+    assert.equal(recordedTools[1]?.name, "legacy_tool");
+    assert.equal(recordedTools[0]?.description, "Fetch weather for a city.");
+    assert.deepEqual(recordedTools[0]?.parameters, {
+      type: "object",
+      properties: { city: { type: "string" } },
+    });
+    assert.equal(recordedTools[1]?.strict, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedTools[0], "function"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedTools[1], "function"), false);
+    const recordedToolChoice = recorded["tool_choice"] as Record<string, unknown> | undefined;
+    assert.ok(recordedToolChoice);
+    assert.equal(recordedToolChoice.type, "function");
+    assert.equal(recordedToolChoice["name"], "forced_choice");
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedToolChoice, "strict"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedToolChoice, "function"), false);
+  });
+
+  await t.step("responses flattens tools", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              input: "get weather",
+              tools: [
+                {
+                  type: "function",
+                  function: {
+                    name: "fetch_weather",
+                    description: "Fetch weather for a city.",
+                    parameters: { type: "object", properties: { city: { type: "string" } } },
+                  },
+                },
+              ],
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    const recordedTools = recorded["tools"] as Array<Record<string, unknown>> | undefined;
+    assert.ok(Array.isArray(recordedTools));
+    assert.equal(recordedTools.length, 1);
+    assert.equal(recordedTools[0]?.name, "fetch_weather");
+    assert.equal(recordedTools[0]?.description, "Fetch weather for a city.");
+    assert.deepEqual(recordedTools[0]?.parameters, { type: "object", properties: { city: { type: "string" } } });
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedTools[0], "function"), false);
+  });
+});
+
 Deno.test("openai: chat completions accept system-only messages", async () => {
   let recordedBody: Record<string, unknown> | null = null;
 
