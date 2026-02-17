@@ -249,9 +249,14 @@ Deno.test("openai: normalize function-style tools for codex compatibility", asyn
                   name: "legacy_tool",
                   description: "Already top-level tool name.",
                   parameters: { type: "object", properties: {} },
+                  function: { strict: true },
                 },
               ],
-              tool_choice: { type: "function", function: { name: "fetch_weather" } },
+              tool_choice: {
+                type: "function",
+                name: "forced_choice",
+                function: { name: "fetch_weather", strict: true },
+              },
             }),
           }),
         ),
@@ -265,11 +270,19 @@ Deno.test("openai: normalize function-style tools for codex compatibility", asyn
     assert.equal(recordedTools.length, 2);
     assert.equal(recordedTools[0]?.name, "fetch_weather");
     assert.equal(recordedTools[1]?.name, "legacy_tool");
+    assert.equal(recordedTools[0]?.description, "Fetch weather for a city.");
+    assert.deepEqual(recordedTools[0]?.parameters, {
+      type: "object",
+      properties: { city: { type: "string" } },
+    });
+    assert.equal(recordedTools[1]?.strict, true);
     assert.equal(Object.prototype.hasOwnProperty.call(recordedTools[0], "function"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedTools[1], "function"), false);
     const recordedToolChoice = recorded["tool_choice"] as Record<string, unknown> | undefined;
     assert.ok(recordedToolChoice);
     assert.equal(recordedToolChoice.type, "function");
-    assert.equal(recordedToolChoice["name"], "fetch_weather");
+    assert.equal(recordedToolChoice["name"], "forced_choice");
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedToolChoice, "strict"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(recordedToolChoice, "function"), false);
   });
 
@@ -310,6 +323,8 @@ Deno.test("openai: normalize function-style tools for codex compatibility", asyn
     assert.ok(Array.isArray(recordedTools));
     assert.equal(recordedTools.length, 1);
     assert.equal(recordedTools[0]?.name, "fetch_weather");
+    assert.equal(recordedTools[0]?.description, "Fetch weather for a city.");
+    assert.deepEqual(recordedTools[0]?.parameters, { type: "object", properties: { city: { type: "string" } } });
     assert.equal(Object.prototype.hasOwnProperty.call(recordedTools[0], "function"), false);
   });
 });

@@ -209,14 +209,18 @@ type PassthroughToolSchemaKey = "tools" | "tool_choice" | "parallel_tool_calls" 
 const normalizeCodexToolChoice = (value: unknown): unknown => {
   if (!isRecord(value)) return value;
   if (getString(value.type) !== "function") return value;
-  if (typeof value["name"] === "string" && value["name"].trim()) return value;
+
+  const normalized: Record<string, unknown> = { ...value };
+  const topLevelName = getString(normalized.name);
   const fn = isRecord(value.function) ? value.function : null;
-  if (!fn) return value;
+  if (!fn && !topLevelName) return value;
 
-  const name = getString(fn.name);
-  if (!name) return value;
+  if (!topLevelName) {
+    const functionName = getString(fn?.name);
+    if (!functionName) return value;
+    normalized.name = functionName;
+  }
 
-  const normalized: Record<string, unknown> = { ...value, name };
   delete normalized.function;
   return normalized;
 };
@@ -229,17 +233,17 @@ const normalizeCodexTools = (value: unknown): unknown => {
     const nestedFunction = isRecord(tool.function) ? tool.function : null;
     if (!nestedFunction) return tool;
 
-    const name = getString(nestedFunction.name);
-    if (!name) return tool;
-    if (typeof tool.name === "string" && tool.name.trim()) return tool;
+    const normalized: Record<string, unknown> = { ...tool };
+    const topLevelName = getString(normalized.name);
+    const nestedName = getString(nestedFunction.name);
+    if (!topLevelName && !nestedName) return tool;
 
-    const normalized: Record<string, unknown> = { ...tool, name };
-    if (!("description" in normalized) && nestedFunction.description !== undefined) {
-      normalized.description = nestedFunction.description;
+    if (!topLevelName) {
+      normalized.name = nestedName;
     }
-    if (!("parameters" in normalized)) {
-      const nestedParameters = nestedFunction.parameters;
-      if (nestedParameters !== undefined) normalized.parameters = nestedParameters;
+    for (const [key, nestedValue] of Object.entries(nestedFunction)) {
+      if (key in normalized) continue;
+      normalized[key] = nestedValue;
     }
     delete normalized.function;
     return normalized;
