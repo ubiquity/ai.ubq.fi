@@ -1234,6 +1234,33 @@ const collectResponsesStreamUsage = async (
   }
 };
 
+const responseHasOutputText = (output: unknown): boolean => {
+  if (!Array.isArray(output)) return false;
+  for (const item of output) {
+    if (!isRecord(item) || !Array.isArray(item.content)) continue;
+    for (const contentItem of item.content) {
+      if (!isRecord(contentItem)) continue;
+      if (getString(contentItem.type) === "output_text" && (getString(contentItem.text) ?? "").length > 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+const withAccumulatedResponseText = (response: Record<string, unknown>, text: string): Record<string, unknown> => {
+  if (!text || responseHasOutputText(response.output)) return response;
+  const output = Array.isArray(response.output) ? [...response.output] : [];
+  output.push({
+    id: `msg_${crypto.randomUUID().replace(/-/g, "")}`,
+    type: "message",
+    status: "completed",
+    role: "assistant",
+    content: [{ type: "output_text", text, annotations: [] }],
+  });
+  return { ...response, output };
+};
+
 const streamChatCompletions = (upstream: Response, model: string, usageContext?: UsageContext): Response => {
   if (!upstream.body) {
     return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
@@ -2735,9 +2762,15 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   }
 
   let finalResponse: Record<string, unknown> | null = null;
+  let outputText = "";
   for await (const ev of parseSseEvents(upstream.body)) {
     if (!isRecord(ev)) continue;
-    if (getString(ev.type) === "response.completed" && isRecord(ev.response)) {
+    const type = getString(ev.type);
+    if (type === "response.output_text.delta") {
+      outputText += getString(ev.delta) ?? "";
+      continue;
+    }
+    if (type === "response.completed" && isRecord(ev.response)) {
       finalResponse = ev.response;
       break;
     }
@@ -2746,6 +2779,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     await recordErrorUsage(usageContext);
     return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error");
   }
+  finalResponse = withAccumulatedResponseText(finalResponse, outputText);
   const usageTokens = extractUsageTokens(finalResponse.usage);
   await recordCompletionUsage(usageContext, usageTokens);
   const response = json(200, finalResponse, { "x-ubq-upstream": "chatgpt_codex" });

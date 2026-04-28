@@ -107,13 +107,34 @@ const baseSseChunks = () => [
   `data: ${
     JSON.stringify({
       type: "response.completed",
-      response: { model: DEFAULT_TEST_MODEL, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+      response: {
+        model: DEFAULT_TEST_MODEL,
+        output: [],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      },
     })
   }\n\n`,
 ];
 
 const parseWarnings = (value: string | null): string[] =>
   value ? value.split(",").map((entry) => entry.trim()).filter(Boolean) : [];
+
+const extractResponseOutputText = (payload: Record<string, unknown>): string => {
+  const output = payload.output;
+  if (!Array.isArray(output)) return "";
+  const chunks: string[] = [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const contentItem of content) {
+      if (!contentItem || typeof contentItem !== "object") continue;
+      const part = contentItem as { type?: unknown; text?: unknown };
+      if (part.type === "output_text" && typeof part.text === "string") chunks.push(part.text);
+    }
+  }
+  return chunks.join("");
+};
 
 type FetchMockQueue = {
   chain: Promise<void>;
@@ -217,8 +238,9 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     );
 
     assert.equal(response.status, 200);
-    const payload = await response.json() as { model?: string; reasoning?: unknown };
+    const payload = await response.json() as Record<string, unknown> & { model?: string; reasoning?: unknown };
     assert.equal(payload.model, DEFAULT_TEST_MODEL);
+    assert.equal(extractResponseOutputText(payload), "pong");
     const warnings = parseWarnings(response.headers.get("x-uos-warning"));
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
@@ -285,8 +307,9 @@ Deno.test("openai: default model falls back to upstream models when snapshot is 
 
     assert.equal(response.status, 200);
     assert.ok(requestedModelsUrl.includes("/models"));
-    const payload = await response.json() as { model?: string };
+    const payload = await response.json() as Record<string, unknown> & { model?: string };
     assert.equal(payload.model, dynamicDefaultModel);
+    assert.equal(extractResponseOutputText(payload), "pong");
     assert.ok(recordedResponseBody);
     assert.equal((recordedResponseBody as Record<string, unknown>).model, dynamicDefaultModel);
   } finally {
