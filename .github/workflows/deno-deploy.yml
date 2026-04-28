@@ -87,7 +87,7 @@ jobs:
           action_path="$RUNNER_TEMP/deno-deploy-action"
           runtime_env_file="$RUNNER_TEMP/ai-runtime.env"
 
-          RUNTIME_ENV_FILE="$runtime_env_file" deno eval --allow-env --allow-write="$RUNNER_TEMP" '
+          RUNTIME_ENV_FILE="$runtime_env_file" deno eval '
             const keys = ["UOS_AI_KERNEL_PUBLIC_KEY", "UOS_AI_TOKEN", "VOYAGEAI_API_KEY"];
             const file = Deno.env.get("RUNTIME_ENV_FILE");
             if (!file) {
