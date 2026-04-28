@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 
+const EXPECTED_DEFAULT_MODEL = "gpt-5.5";
+
 const getBaseUrl = (): URL => {
   const value = Deno.env.get("BASE_URL")?.trim() || "https://ai.ubq.fi";
   return new URL(value);
@@ -31,8 +33,36 @@ const fetchJson = async (baseUrl: URL, path: string, init: RequestInit): Promise
   return payload as Record<string, unknown>;
 };
 
+const extractResponsesText = (payload: Record<string, unknown>): string => {
+  const output = payload.output;
+  if (!Array.isArray(output)) return "";
+  const chunks: string[] = [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const contentItem of content) {
+      if (!contentItem || typeof contentItem !== "object") continue;
+      const part = contentItem as { type?: unknown; text?: unknown };
+      if (part.type === "output_text" && typeof part.text === "string") chunks.push(part.text);
+    }
+  }
+  return chunks.join("");
+};
+
+const extractChatText = (payload: Record<string, unknown>): string => {
+  const choices = payload.choices;
+  if (!Array.isArray(choices)) return "";
+  const firstChoice = choices[0];
+  if (!firstChoice || typeof firstChoice !== "object") return "";
+  const message = (firstChoice as { message?: unknown }).message;
+  if (!message || typeof message !== "object") return "";
+  const content = (message as { content?: unknown }).content;
+  return typeof content === "string" ? content : "";
+};
+
 Deno.test({
-  name: "live: default model is listed and used by no-model requests",
+  name: "live: gpt-5.5 is listed and used by no-model requests",
   permissions: { env: ["BASE_URL", "UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"], net: true },
   async fn() {
     const baseUrl = getBaseUrl();
@@ -44,18 +74,17 @@ Deno.test({
       headers: { ...authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify({ input: "Reply exactly with pong." }),
     });
-    assert.equal(typeof responsesPayload.model, "string");
-    assert.notEqual((responsesPayload.model as string).trim(), "");
-    const defaultModel = responsesPayload.model as string;
+    assert.equal(responsesPayload.model, EXPECTED_DEFAULT_MODEL);
+    assert.equal(extractResponsesText(responsesPayload).trim(), "pong");
 
     const modelsPayload = await fetchJson(baseUrl, "/v1/models", { headers: authHeaders });
     const models = Array.isArray(modelsPayload.data) ? modelsPayload.data : [];
     assert.ok(
       models.some((model) =>
         typeof model === "object" && model !== null &&
-        (model as { id?: unknown }).id === defaultModel
+        (model as { id?: unknown }).id === EXPECTED_DEFAULT_MODEL
       ),
-      `/v1/models did not include default response model ${defaultModel}`,
+      `/v1/models did not include ${EXPECTED_DEFAULT_MODEL}`,
     );
 
     const chatPayload = await fetchJson(baseUrl, "/v1/chat/completions", {
@@ -63,6 +92,7 @@ Deno.test({
       headers: { ...authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify({ messages: [{ role: "user", content: "Reply exactly with pong." }] }),
     });
-    assert.equal(chatPayload.model, defaultModel);
+    assert.equal(chatPayload.model, EXPECTED_DEFAULT_MODEL);
+    assert.equal(extractChatText(chatPayload).trim(), "pong");
   },
 });
