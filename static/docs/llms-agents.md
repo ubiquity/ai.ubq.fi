@@ -74,7 +74,6 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
-    "model": "gpt-5.2-chat-latest",
     "messages": [
       {"role": "system", "content": "You are a helpful assistant."},
       {"role": "user", "content": "Tell me a short joke."}
@@ -159,7 +158,6 @@ curl -N https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
-    "model": "gpt-5.2-chat-latest",
     "stream": true,
     "messages": [
       {"role": "user", "content": "Say hello in 5 different ways."}
@@ -216,7 +214,6 @@ curl -sS https://ai.ubq.fi/v1/responses \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
-    "model": "gpt-5.2-chat-latest",
     "reasoning": { "effort": "high" },
     "instructions": "You are a helpful assistant.",
     "input": "Summarize this in 1 sentence: ..."
@@ -268,8 +265,8 @@ Notes:
 - Use `reasoning_effort: null` (chat completions) or `reasoning: null` (responses) to disable reasoning.
 - Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
 
-Defaults can be managed via `/admin/defaults` (admin auth required). The built-in defaults are `model = gpt-5.2-codex`
-and `reasoning_effort = medium`.
+Defaults can be managed via `/admin/defaults` (admin auth required). The built-in defaults are `model = gpt-5.5` and
+`reasoning_effort = medium`.
 
 ## Model normalization
 

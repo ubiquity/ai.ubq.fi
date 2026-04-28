@@ -3,15 +3,28 @@ import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults
 import { sha256Base64Url } from "../src/utils.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const DEFAULT_TEST_MODEL = "gpt-5.5";
+const TEST_CODEX_MODELS_KEY = ["ubq_ai", "codex_models"] as const;
 
 const kvStore = new Map<string, unknown>();
-kvStore.set(keyToString(DEFAULT_MODEL_KEY), "gpt-5.2");
+kvStore.set(keyToString(DEFAULT_MODEL_KEY), DEFAULT_TEST_MODEL);
 kvStore.set(keyToString(DEFAULT_REASONING_EFFORT_KEY), "low");
 kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
   access_token: "access",
   refresh_token: "refresh",
   account_id: "acct",
   updated_at_ms: Date.now(),
+});
+kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
+  source: "chatgpt_codex",
+  client_version: "0.125.0",
+  updated_at_ms: Date.now(),
+  models: [{
+    slug: DEFAULT_TEST_MODEL,
+    display_name: "GPT-5.5",
+    default_reasoning_level: "medium",
+    supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+  }],
 });
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
@@ -58,7 +71,7 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleChatCompletions, handleResponses } = await import("../src/openai.ts");
+const { handleChatCompletions, handleModels, handleResponses } = await import("../src/openai.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -95,7 +108,7 @@ const baseSseChunks = () => [
   `data: ${
     JSON.stringify({
       type: "response.completed",
-      response: { model: "gpt-5.2", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+      response: { model: DEFAULT_TEST_MODEL, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
     })
   }\n\n`,
 ];
@@ -170,13 +183,13 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
 
     assert.equal(response.status, 200);
     const payload = await response.json() as { model?: string };
-    assert.equal(payload.model, "gpt-5.2");
+    assert.equal(payload.model, DEFAULT_TEST_MODEL);
     const warnings = parseWarnings(response.headers.get("x-uos-warning"));
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
-    assert.equal(recorded["model"], "gpt-5.2");
+    assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
     assert.deepEqual(recorded["reasoning"], { effort: "low" });
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
@@ -206,17 +219,45 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
 
     assert.equal(response.status, 200);
     const payload = await response.json() as { model?: string; reasoning?: unknown };
-    assert.equal(payload.model, "gpt-5.2");
+    assert.equal(payload.model, DEFAULT_TEST_MODEL);
     const warnings = parseWarnings(response.headers.get("x-uos-warning"));
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
-    assert.equal(recorded["model"], "gpt-5.2");
+    assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
     assert.deepEqual(recorded["reasoning"], { effort: "low" });
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
   });
+});
+
+Deno.test("openai: models uses stored Codex client version", async () => {
+  let requestedUrl = "";
+
+  const response = await withFetchMock(
+    (url) => {
+      requestedUrl = url;
+      return new Response(
+        JSON.stringify({
+          models: [{
+            slug: DEFAULT_TEST_MODEL,
+            display_name: "GPT-5.5",
+            default_reasoning_level: "medium",
+            supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+          }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    },
+    () => handleModels(),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(new URL(requestedUrl).searchParams.get("client_version"), "0.125.0");
+  const payload = await response.json() as { data?: Array<{ id?: string }> };
+  assert.ok(Array.isArray(payload.data));
+  assert.ok(payload.data.some((model) => model.id === DEFAULT_TEST_MODEL));
 });
 
 Deno.test("openai: normalize function-style tools for codex compatibility", async (t) => {

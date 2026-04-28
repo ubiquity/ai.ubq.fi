@@ -204,7 +204,13 @@ const buildIgnoredWarnings = (record: Record<string, unknown>, usedKeys: Readonl
   return Array.from(warnings);
 };
 
-type PassthroughToolSchemaKey = "tools" | "tool_choice" | "parallel_tool_calls" | "prompt_cache_key" | "text" | "include";
+type PassthroughToolSchemaKey =
+  | "tools"
+  | "tool_choice"
+  | "parallel_tool_calls"
+  | "prompt_cache_key"
+  | "text"
+  | "include";
 
 const normalizeCodexToolChoice = (value: unknown): unknown => {
   if (!isRecord(value)) return value;
@@ -1342,16 +1348,20 @@ const completeChatCompletions = async (
 };
 
 export const handleModels = async (): Promise<Response> => {
+  const snapshot = await loadCodexModelsSnapshot();
+  const normalizedSnapshot = snapshot && snapshot.source !== "codex_cli" &&
+      Array.isArray(snapshot.models) && snapshot.models.length > 0
+    ? normalizeModelList({ models: snapshot.models })
+    : null;
+
   let upstream: Response | null = null;
   try {
-    upstream = await fetchCodexModels();
+    upstream = await fetchCodexModels({ clientVersion: snapshot?.client_version ?? null });
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream models fetch failed:", error);
     upstream = null;
-    const snapshot = await loadCodexModelsSnapshot();
-    if (snapshot && snapshot.source !== "codex_cli" && Array.isArray(snapshot.models) && snapshot.models.length > 0) {
-      const normalized = normalizeModelList({ models: snapshot.models });
-      if (normalized) return json(200, normalized, { "x-ubq-upstream": snapshot.source || "chatgpt_codex" });
+    if (snapshot && normalizedSnapshot) {
+      return json(200, normalizedSnapshot, { "x-ubq-upstream": snapshot.source || "chatgpt_codex" });
     }
     return toCodexErrorResponse(error);
   }
@@ -1359,10 +1369,8 @@ export const handleModels = async (): Promise<Response> => {
   if (!upstream.ok) {
     const text = await upstream.text().catch(() => "");
     if (upstream.status !== 400 && upstream.status !== 401 && upstream.status !== 403) {
-      const snapshot = await loadCodexModelsSnapshot();
-      if (snapshot && snapshot.source !== "codex_cli" && Array.isArray(snapshot.models) && snapshot.models.length > 0) {
-        const normalized = normalizeModelList({ models: snapshot.models });
-        if (normalized) return json(200, normalized, { "x-ubq-upstream": snapshot.source || "chatgpt_codex" });
+      if (snapshot && normalizedSnapshot) {
+        return json(200, normalizedSnapshot, { "x-ubq-upstream": snapshot.source || "chatgpt_codex" });
       }
     }
     return new Response(text || upstream.statusText, {
@@ -2439,7 +2447,12 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     reasoning: reasoningValue,
     instructions,
   });
-  const passthroughKeys: PassthroughToolSchemaKey[] = ["tools", "tool_choice", "parallel_tool_calls", "prompt_cache_key"];
+  const passthroughKeys: PassthroughToolSchemaKey[] = [
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "prompt_cache_key",
+  ];
   applyPassthroughToCodexRequest(codexBody, rawRecord, passthroughKeys);
   codexBody.store = false;
 

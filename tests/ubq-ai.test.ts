@@ -220,7 +220,8 @@ Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", asy
       if (!recorded.url.endsWith("/v1/chat/completions")) {
         return jsonResponse(404, { error: { message: "not found" } });
       }
-      const body = JSON.parse(recorded.bodyText ?? "null") as { stream?: unknown; messages?: unknown };
+      const body = JSON.parse(recorded.bodyText ?? "null") as Record<string, unknown>;
+      assert.equal("model" in body, false);
       assert.equal(body.stream, true);
       assert.ok(Array.isArray(body.messages));
       const first = (body.messages as Array<{ role?: unknown; content?: unknown }>)[0];
@@ -256,11 +257,13 @@ Deno.test("ubq-ai: chat (non-stream) prints assistant content", async () => {
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/chat/completions"));
+      const body = JSON.parse(recorded.bodyText ?? "null") as Record<string, unknown>;
+      assert.equal("model" in body, false);
       return jsonResponse(200, {
         id: "chatcmpl_test",
         object: "chat.completion",
         created: 0,
-        model: "gpt-5.2-chat-latest",
+        model: "gpt-5.5",
         choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
       });
     },
@@ -277,13 +280,14 @@ Deno.test("ubq-ai: chat passes --reasoning-effort through", async () => {
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/chat/completions"));
-      const body = JSON.parse(recorded.bodyText ?? "null") as { reasoning_effort?: unknown };
+      const body = JSON.parse(recorded.bodyText ?? "null") as Record<string, unknown>;
+      assert.equal("model" in body, false);
       assert.equal(body.reasoning_effort, "xhigh");
       return jsonResponse(200, {
         id: "chatcmpl_test",
         object: "chat.completion",
         created: 0,
-        model: "gpt-5.2-chat-latest",
+        model: "gpt-5.5",
         choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
       });
     },
@@ -305,11 +309,13 @@ Deno.test("ubq-ai: chat falls back to admin token when client token missing", as
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/chat/completions"));
       assert.equal(recorded.headers.authorization, "Bearer deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz");
+      const body = JSON.parse(recorded.bodyText ?? "null") as Record<string, unknown>;
+      assert.equal("model" in body, false);
       return jsonResponse(200, {
         id: "chatcmpl_test",
         object: "chat.completion",
         created: 0,
-        model: "gpt-5.2-chat-latest",
+        model: "gpt-5.5",
         choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
       });
     },
@@ -326,8 +332,9 @@ Deno.test("ubq-ai: responses (non-stream) prints extracted assistant text", asyn
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/responses"));
-      const body = JSON.parse(recorded.bodyText ?? "null") as { instructions?: unknown };
+      const body = JSON.parse(recorded.bodyText ?? "null") as Record<string, unknown>;
       assert.equal(body.instructions, "You are a helpful assistant.");
+      assert.equal(body.model, "gpt-5.2");
       return jsonResponse(200, {
         id: "resp_test",
         output: [
@@ -355,7 +362,8 @@ Deno.test("ubq-ai: responses maps --reasoning-effort to reasoning.effort", async
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/responses"));
-      const body = JSON.parse(recorded.bodyText ?? "null") as { reasoning?: unknown; instructions?: unknown };
+      const body = JSON.parse(recorded.bodyText ?? "null") as Record<string, unknown>;
+      assert.equal("model" in body, false);
       assert.deepEqual(body.reasoning, { effort: "high" });
       assert.equal(body.instructions, "You are a helpful assistant.");
       return jsonResponse(200, {
@@ -387,8 +395,9 @@ Deno.test("ubq-ai: responses falls back to admin token when client token missing
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/responses"));
       assert.equal(recorded.headers.authorization, "Bearer deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz");
-      const body = JSON.parse(recorded.bodyText ?? "null") as { instructions?: unknown };
+      const body = JSON.parse(recorded.bodyText ?? "null") as Record<string, unknown>;
       assert.equal(body.instructions, "You are a helpful assistant.");
+      assert.equal(body.model, "gpt-5.2");
       return jsonResponse(200, {
         id: "resp_test",
         output: [

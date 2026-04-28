@@ -12,6 +12,7 @@
     "keys:revoke": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys revoke",
     "health:check": "deno run --allow-net --allow-env scripts/health-check.ts",
     "test": "deno test --env",
+    "test:e2e": "deno test --env --allow-net=ai.ubq.fi --allow-env=UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
     "fmt": "deno fmt",
     "lint": "deno lint"
   },

@@ -75,7 +75,7 @@ Just the assistant message text:
 curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"model":"gpt-5.2-chat-latest","messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
+  --data '{"messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
   | jq -r '.choices[0].message.content'
 ```
 
@@ -84,8 +84,7 @@ Notes:
 - System/developer messages are optional. When present, the gateway combines them into upstream instructions.
 - The Codex upstream requires `stream: true`; when you set `"stream": false`, the gateway buffers the upstream stream
   and returns a normal JSON response.
-- Chat completions require `model` (per the OpenAI API). Responses allow omitting `model`; the gateway falls back to its
-  configured default.
+- Chat completions and responses allow omitting `model`; the gateway falls back to its configured default.
 - Use `reasoning_effort` for chat completions or `reasoning` for responses to control reasoning level.
 
 Streaming:
@@ -108,7 +107,6 @@ curl -sS https://ai.ubq.fi/v1/responses \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
-    "model": "gpt-5.2-chat-latest",
     "reasoning": { "effort": "high" },
     "instructions": "You are a helpful assistant.",
     "input": "Summarize this in 1 sentence: ..."

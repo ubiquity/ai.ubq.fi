@@ -813,7 +813,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       );
       return 2;
     }
-    const model = (getFlagString(flags, "model") ?? "gpt-5.2-chat-latest").trim() || "gpt-5.2-chat-latest";
+    const model = (getFlagString(flags, "model") ?? "").trim();
 
     const messagesFromJson = (raw: string): unknown | null => {
       try {
@@ -868,11 +868,8 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       messages = m;
     }
 
-    const body: Record<string, unknown> = {
-      model,
-      messages,
-      stream: wantsStream,
-    };
+    const body: Record<string, unknown> = { messages, stream: wantsStream };
+    if (model) body.model = model;
 
     const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
     if (reasoningEffortRaw) {
@@ -960,7 +957,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       );
       return 2;
     }
-    const model = (getFlagString(flags, "model") ?? "gpt-5.2-chat-latest").trim() || "gpt-5.2-chat-latest";
+    const model = (getFlagString(flags, "model") ?? "").trim();
     const instructionsRaw = getFlagString(flags, "instructions");
     const instructions = typeof instructionsRaw === "string" ? instructionsRaw.trim() : "";
 
@@ -1010,11 +1007,8 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       input = text;
     }
 
-    const body: Record<string, unknown> = {
-      model,
-      input,
-      stream: wantsStream,
-    };
+    const body: Record<string, unknown> = { input, stream: wantsStream };
+    if (model) body.model = model;
     if (instructionsRaw !== undefined) {
       body.instructions = instructions;
     }

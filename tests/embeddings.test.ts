@@ -34,13 +34,24 @@ const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"]
 const resetVoyageRateLimit = () => void kvStore.delete(keyToString(VOYAGE_RATE_LIMIT_KEY));
 // Keep these in sync with tests/openai-compat.test.ts so whichever test imports
 // src/openai.ts first doesn't change behavior.
-kvStore.set(keyToString(DEFAULT_MODEL_KEY), "gpt-5.2");
+kvStore.set(keyToString(DEFAULT_MODEL_KEY), "gpt-5.5");
 kvStore.set(keyToString(DEFAULT_REASONING_EFFORT_KEY), "low");
 kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
   access_token: "access",
   refresh_token: "refresh",
   account_id: "acct",
   updated_at_ms: Date.now(),
+});
+kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+  source: "chatgpt_codex",
+  client_version: "0.125.0",
+  updated_at_ms: Date.now(),
+  models: [{
+    slug: "gpt-5.5",
+    display_name: "GPT-5.5",
+    default_reasoning_level: "medium",
+    supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+  }],
 });
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
