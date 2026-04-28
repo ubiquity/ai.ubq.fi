@@ -3,11 +3,10 @@ import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults
 import { sha256Base64Url } from "../src/utils.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
-const DEFAULT_TEST_MODEL = "gpt-5.5";
+const DEFAULT_TEST_MODEL = "gpt-5-fixture-default";
 const TEST_CODEX_MODELS_KEY = ["ubq_ai", "codex_models"] as const;
 
 const kvStore = new Map<string, unknown>();
-kvStore.set(keyToString(DEFAULT_MODEL_KEY), DEFAULT_TEST_MODEL);
 kvStore.set(keyToString(DEFAULT_REASONING_EFFORT_KEY), "low");
 kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
   access_token: "access",
@@ -21,7 +20,7 @@ kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
   updated_at_ms: Date.now(),
   models: [{
     slug: DEFAULT_TEST_MODEL,
-    display_name: "GPT-5.5",
+    display_name: "GPT-5 Fixture Default",
     default_reasoning_level: "medium",
     supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
   }],
@@ -232,6 +231,72 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
   });
 });
 
+Deno.test("openai: default model falls back to upstream models when snapshot is missing", async () => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const defaultModelKey = keyToString(DEFAULT_MODEL_KEY);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  const previousDefault = kvStore.get(defaultModelKey);
+  const dynamicDefaultModel = "gpt-5-upstream-default";
+  kvStore.delete(snapshotKey);
+  kvStore.delete(defaultModelKey);
+
+  let requestedModelsUrl = "";
+  let recordedResponseBody: Record<string, unknown> | null = null;
+
+  try {
+    const response = await withFetchMock(
+      (url, bodyText) => {
+        if (url.includes("/models")) {
+          requestedModelsUrl = url;
+          return new Response(
+            JSON.stringify({
+              models: [{
+                slug: dynamicDefaultModel,
+                display_name: "GPT-5 Upstream Default",
+                default_reasoning_level: "medium",
+                supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+              }],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        recordedResponseBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse([
+          `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_dynamic", created_at: 0 } })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "pong" })}\n\n`,
+          `data: ${
+            JSON.stringify({
+              type: "response.completed",
+              response: { model: dynamicDefaultModel, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+            })
+          }\n\n`,
+        ]);
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ input: "ping" }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(requestedModelsUrl.includes("/models"));
+    const payload = await response.json() as { model?: string };
+    assert.equal(payload.model, dynamicDefaultModel);
+    assert.ok(recordedResponseBody);
+    assert.equal((recordedResponseBody as Record<string, unknown>).model, dynamicDefaultModel);
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+    if (previousDefault === undefined) kvStore.delete(defaultModelKey);
+    else kvStore.set(defaultModelKey, previousDefault);
+  }
+});
+
 Deno.test("openai: models uses stored Codex client version", async () => {
   let requestedUrl = "";
 
@@ -242,7 +307,7 @@ Deno.test("openai: models uses stored Codex client version", async () => {
         JSON.stringify({
           models: [{
             slug: DEFAULT_TEST_MODEL,
-            display_name: "GPT-5.5",
+            display_name: "GPT-5 Fixture Default",
             default_reasoning_level: "medium",
             supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
           }],

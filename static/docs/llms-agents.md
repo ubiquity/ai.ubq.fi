@@ -265,8 +265,8 @@ Notes:
 - Use `reasoning_effort: null` (chat completions) or `reasoning: null` (responses) to disable reasoning.
 - Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
 
-Defaults can be managed via `/admin/defaults` (admin auth required). The built-in defaults are `model = gpt-5.5` and
-`reasoning_effort = medium`.
+Defaults can be managed via `/admin/defaults` (admin auth required). When no model is explicitly configured, the gateway
+uses the first model in the current Codex model snapshot. The built-in reasoning default is `medium`.
 
 ## Model normalization
 

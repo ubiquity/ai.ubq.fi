@@ -813,7 +813,8 @@ export const requireClientAuth = async (req: Request): Promise<Response | null> 
   return result.ok ? null : result.response;
 };
 
-const DENO_API_BASE_URL = "https://api.deno.com/v1";
+const DENO_API_V1_BASE_URL = "https://api.deno.com/v1";
+const DENO_API_V2_BASE_URL = "https://api.deno.com/v2";
 const DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS = 10 * 60_000;
 const deployTokenAdminCache = new Map<string, number>();
 
@@ -829,10 +830,31 @@ const looksLikeDenoDeployToken = (token: string): boolean => {
 
 const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
   if (!config.isDeploy) return false;
+  const appSlug = (getEnv("DENO_DEPLOY_APP_SLUG") ?? "").trim();
+  if (appSlug) {
+    const appUrl = `${DENO_API_V2_BASE_URL}/apps/${encodeURIComponent(appSlug)}`;
+    const appRes = await fetch(appUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/json",
+      },
+      redirect: "manual",
+    });
+
+    try {
+      await appRes.body?.cancel();
+    } catch {
+      // ignore
+    }
+
+    if (appRes.ok) return true;
+  }
+
   const deploymentId = (getEnv("DENO_DEPLOYMENT_ID") ?? "").trim();
   if (!deploymentId) return false;
 
-  const url = `${DENO_API_BASE_URL}/deployments/${deploymentId}`;
+  const url = `${DENO_API_V1_BASE_URL}/deployments/${deploymentId}`;
   const res = await fetch(url, {
     method: "GET",
     headers: {

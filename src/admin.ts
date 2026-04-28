@@ -4,6 +4,7 @@ import {
   CodexError,
   type CodexModelsSnapshot,
   fetchCodexModels,
+  getCodexModelsSnapshotDefaultModel,
   getJwtExpMs,
   loadCodexModelsSnapshot,
   parseCodexAuthFromAuthJson,
@@ -15,7 +16,6 @@ import {
   DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS,
   DEFAULT_KERNEL_POLICY_WINDOW_KEY,
   DEFAULT_KERNEL_POLICY_WINDOW_MS,
-  DEFAULT_MODEL,
   DEFAULT_MODEL_KEY,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_REASONING_EFFORT_KEY,
@@ -64,6 +64,12 @@ import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "./types.ts"
 const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
 const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
 const UOS_CODEX_PROMPTS_CHUNK_PREFIX = ["uos_ai", "codex_instructions_chunk"] as const;
+
+const resolveDefaultModel = async (entryValue: unknown): Promise<string> => {
+  const configured = typeof entryValue === "string" ? entryValue.trim() : "";
+  if (configured) return configured;
+  return getCodexModelsSnapshotDefaultModel(await loadCodexModelsSnapshot()) ?? "";
+};
 
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
@@ -254,7 +260,7 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
     const reasoningEntry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
     const kernelLimitEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY);
     const kernelWindowEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY);
-    const model = typeof modelEntry.value === "string" && modelEntry.value.trim() ? modelEntry.value : DEFAULT_MODEL;
+    const model = await resolveDefaultModel(modelEntry.value);
     const reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
     const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
       DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
@@ -279,7 +285,7 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
     const kernelLimitEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY);
     const kernelWindowEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY);
 
-    let model = typeof modelEntry.value === "string" && modelEntry.value.trim() ? modelEntry.value : DEFAULT_MODEL;
+    let model = await resolveDefaultModel(modelEntry.value);
     let reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
     let kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
       DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;

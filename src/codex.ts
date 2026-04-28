@@ -70,6 +70,17 @@ export type CodexModelsSnapshot = Readonly<{
   client_version?: string | null;
 }>;
 
+export const getCodexModelsSnapshotDefaultModel = (snapshot: CodexModelsSnapshot | null): string | null => {
+  if (!snapshot || !Array.isArray(snapshot.models)) return null;
+  for (const model of snapshot.models) {
+    if (!isRecord(model)) continue;
+    const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
+    const trimmed = id?.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+};
+
 export const parseCodexAuthFromAuthJson = (value: unknown): Omit<CodexAuthState, "updated_at_ms"> | null => {
   if (!isRecord(value)) return null;
   const tokens = isRecord(value.tokens) ? value.tokens : null;

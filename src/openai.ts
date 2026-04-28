@@ -3,10 +3,10 @@ import {
   CodexError,
   fetchCodexModels,
   fetchCodexResponses,
+  getCodexModelsSnapshotDefaultModel,
   loadCodexModelsSnapshot,
 } from "./codex.ts";
 import {
-  DEFAULT_MODEL,
   DEFAULT_MODEL_KEY,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_REASONING_EFFORT_KEY,
@@ -28,13 +28,42 @@ import type {
   ResponsesRequest,
 } from "./types.ts";
 
-const getDefaultModel = async (): Promise<string> => {
-  const kv = await kvPromise;
-  if (!kv) return DEFAULT_MODEL;
-  const entry = await kv.get<string>(DEFAULT_MODEL_KEY);
-  const model = typeof entry.value === "string" ? entry.value.trim() : "";
-  return model || DEFAULT_MODEL;
+const getDefaultModelFromUpstream = async (clientVersion: string | null): Promise<string | null> => {
+  try {
+    const upstream = await fetchCodexModels({ clientVersion });
+    if (!upstream.ok) {
+      console.error("[ai.ubq.fi] Default model upstream fetch failed:", upstream.status, upstream.statusText);
+      return null;
+    }
+    const payload = await upstream.json().catch(() => null);
+    const normalized = normalizeModelList(payload);
+    const firstModel = normalized?.data.find((model) => typeof model.id === "string" && model.id.trim());
+    return typeof firstModel?.id === "string" ? firstModel.id.trim() : null;
+  } catch (error) {
+    console.error("[ai.ubq.fi] Default model upstream fetch failed:", error);
+    return null;
+  }
 };
+
+const getDefaultModel = async (): Promise<string | null> => {
+  const kv = await kvPromise;
+  if (kv) {
+    const entry = await kv.get<string>(DEFAULT_MODEL_KEY);
+    const model = typeof entry.value === "string" ? entry.value.trim() : "";
+    if (model) return model;
+  }
+  const snapshot = await loadCodexModelsSnapshot();
+  const snapshotDefault = getCodexModelsSnapshotDefaultModel(snapshot);
+  if (snapshotDefault) return snapshotDefault;
+  return await getDefaultModelFromUpstream(snapshot?.client_version ?? null);
+};
+
+const defaultModelUnavailableError = (): Response =>
+  openaiError(
+    503,
+    "Default model is unavailable: no configured default model, Codex model snapshot, or upstream model list.",
+    "server_error",
+  );
 
 const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
   const kv = await kvPromise;
@@ -2396,7 +2425,12 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   if (hasModel && modelRawValue === null && rawModelValue !== null && rawModelValue !== undefined) {
     return openaiError(400, "model must be a string", "invalid_request_error");
   }
-  const modelRaw = (modelRawValue ?? "").trim() || await getDefaultModel();
+  let modelRaw = (modelRawValue ?? "").trim();
+  if (!modelRaw) {
+    const defaultModel = await getDefaultModel();
+    if (!defaultModel) return defaultModelUnavailableError();
+    modelRaw = defaultModel;
+  }
   const model = normalizeModelForCodex(modelRaw);
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
@@ -2533,7 +2567,12 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   if (hasModel && modelRawValue === null && rawModelValue !== null && rawModelValue !== undefined) {
     return openaiError(400, "model must be a string", "invalid_request_error");
   }
-  const modelRaw = (modelRawValue ?? "").trim() || await getDefaultModel();
+  let modelRaw = (modelRawValue ?? "").trim();
+  if (!modelRaw) {
+    const defaultModel = await getDefaultModel();
+    if (!defaultModel) return defaultModelUnavailableError();
+    modelRaw = defaultModel;
+  }
   const model = normalizeModelForCodex(modelRaw);
 
   const inputRaw = rawBody.input;

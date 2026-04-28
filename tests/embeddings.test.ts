@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
+import { DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
 import { sha256Hex } from "../src/utils.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
@@ -34,7 +34,6 @@ const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"]
 const resetVoyageRateLimit = () => void kvStore.delete(keyToString(VOYAGE_RATE_LIMIT_KEY));
 // Keep these in sync with tests/openai-compat.test.ts so whichever test imports
 // src/openai.ts first doesn't change behavior.
-kvStore.set(keyToString(DEFAULT_MODEL_KEY), "gpt-5.5");
 kvStore.set(keyToString(DEFAULT_REASONING_EFFORT_KEY), "low");
 kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
   access_token: "access",
@@ -47,8 +46,8 @@ kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
   client_version: "0.125.0",
   updated_at_ms: Date.now(),
   models: [{
-    slug: "gpt-5.5",
-    display_name: "GPT-5.5",
+    slug: "gpt-5-fixture-default",
+    display_name: "GPT-5 Fixture Default",
     default_reasoning_level: "medium",
     supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
   }],

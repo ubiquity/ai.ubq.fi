@@ -263,7 +263,7 @@ Deno.test("ubq-ai: chat (non-stream) prints assistant content", async () => {
         id: "chatcmpl_test",
         object: "chat.completion",
         created: 0,
-        model: "gpt-5.5",
+        model: "gpt-5-fixture-default",
         choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
       });
     },
@@ -287,7 +287,7 @@ Deno.test("ubq-ai: chat passes --reasoning-effort through", async () => {
         id: "chatcmpl_test",
         object: "chat.completion",
         created: 0,
-        model: "gpt-5.5",
+        model: "gpt-5-fixture-default",
         choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
       });
     },
@@ -315,7 +315,7 @@ Deno.test("ubq-ai: chat falls back to admin token when client token missing", as
         id: "chatcmpl_test",
         object: "chat.completion",
         created: 0,
-        model: "gpt-5.5",
+        model: "gpt-5-fixture-default",
         choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
       });
     },

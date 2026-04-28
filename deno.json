@@ -12,20 +12,12 @@
     "keys:revoke": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys revoke",
     "health:check": "deno run --allow-net --allow-env scripts/health-check.ts",
     "test": "deno test --env",
-    "test:e2e": "deno test --env --allow-net=ai.ubq.fi --allow-env=UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
+    "test:e2e": "deno test --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
     "fmt": "deno fmt",
     "lint": "deno lint"
   },
   "fmt": {
     "lineWidth": 120,
     "semiColons": true
-  },
-  "deploy": {
-    "project": "40db2c10-0700-4d98-8f29-11f04743ff86",
-    "exclude": [
-      "**/node_modules"
-    ],
-    "include": [],
-    "entrypoint": "serve.ts"
   }
 }

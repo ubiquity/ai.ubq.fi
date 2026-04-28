@@ -11,7 +11,6 @@ export const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set([
   "xhigh",
 ]);
 
-export const DEFAULT_MODEL = "gpt-5.5";
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
 export const DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS = API_KEY_NO_USAGE_LIMIT;
 export const DEFAULT_KERNEL_POLICY_WINDOW_MS = USAGE_RESET_PERIOD_MS;

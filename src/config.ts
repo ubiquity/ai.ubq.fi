@@ -26,7 +26,7 @@ const getEnv = (key: string): string | undefined => {
 };
 
 const loadConfig = (): Config => {
-  const isDeploy = Boolean(getEnv("DENO_DEPLOYMENT_ID") ?? getEnv("DENO_REGION"));
+  const isDeploy = Boolean(getEnv("DENO_DEPLOY") ?? getEnv("DENO_DEPLOYMENT_ID") ?? getEnv("DENO_REGION"));
   const authTokens = parseTokens(getEnv("UOS_AI_TOKEN"));
   const adminTokens = parseTokens(getEnv("DENO_DEPLOY_TOKEN"));
   const allowOrigin = (getEnv("CORS_ALLOW_ORIGIN") ?? "*").trim() || "*";
