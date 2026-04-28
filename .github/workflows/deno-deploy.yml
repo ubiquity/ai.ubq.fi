@@ -125,6 +125,27 @@ jobs:
             --entrypoint serve.ts \
             --build-manifest=false
 
+      - name: Upload Codex auth to KV
+        shell: bash
+        env:
+          CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 || vars.CODEX_AUTH_JSON_B64 || '' }}
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$CODEX_AUTH_JSON_B64" ]; then
+            echo "::error::CODEX_AUTH_JSON_B64 is required to bootstrap Codex auth in KV."
+            exit 1
+          fi
+
+          auth_json_file="$RUNNER_TEMP/codex-auth.json"
+          printf '%s' "$CODEX_AUTH_JSON_B64" | base64 --decode > "$auth_json_file"
+
+          deno run --env --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts \
+            --url "https://${{ steps.deploy-target.outputs.app_slug }}.ubiquity-dao.deno.net" \
+            --auth-json "$auth_json_file" \
+            --admin-token "$DENO_DEPLOY_TOKEN"
+
   delete-branch-app:
     if: github.event_name == 'delete'
     runs-on: ubuntu-latest
