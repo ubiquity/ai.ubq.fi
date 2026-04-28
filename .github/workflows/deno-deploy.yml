@@ -20,6 +20,10 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Install Codex CLI
+        shell: bash
+        run: npm install --global --no-audit --no-fund @openai/codex@latest
+
       - name: Fetch Deno deploy helper
         shell: bash
         run: |
@@ -139,11 +143,13 @@ jobs:
           fi
 
           auth_json_file="$RUNNER_TEMP/codex-auth.json"
+          codex_bin="$(command -v codex)"
           printf '%s' "$CODEX_AUTH_JSON_B64" | base64 --decode > "$auth_json_file"
 
           deno run --env --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts \
             --url "https://${{ steps.deploy-target.outputs.app_slug }}.ubiquity-dao.deno.net" \
             --auth-json "$auth_json_file" \
+            --codex-bin "$codex_bin" \
             --admin-token "$DENO_DEPLOY_TOKEN"
 
   delete-branch-app:
