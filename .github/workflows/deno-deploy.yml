@@ -77,7 +77,6 @@ jobs:
       - name: Provision Deno app
         shell: bash
         env:
-          CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 || vars.CODEX_AUTH_JSON_B64 || '' }}
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UOS_AI_KERNEL_PUBLIC_KEY || secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY || vars.UOS_AI_KERNEL_PUBLIC_KEY || vars.UBIQUITY_AI_KERNEL_PUBLIC_KEY || '' }}
@@ -86,15 +85,35 @@ jobs:
         run: |
           set -euo pipefail
           action_path="$RUNNER_TEMP/deno-deploy-action"
+          runtime_env_file="$RUNNER_TEMP/ai-runtime.env"
+
+          RUNTIME_ENV_FILE="$runtime_env_file" deno eval --allow-env --allow-write="$RUNNER_TEMP" '
+            const keys = ["UOS_AI_KERNEL_PUBLIC_KEY", "UOS_AI_TOKEN", "VOYAGEAI_API_KEY"];
+            const file = Deno.env.get("RUNTIME_ENV_FILE");
+            if (!file) {
+              throw new Error("RUNTIME_ENV_FILE is required");
+            }
+            const lines = [];
+            for (const key of keys) {
+              const value = Deno.env.get(key)?.trim();
+              if (!value) {
+                continue;
+              }
+              lines.push(`${key}=${JSON.stringify(value)}`);
+            }
+            await Deno.writeTextFile(file, lines.join("\n") + (lines.length ? "\n" : ""));
+          '
+
           deno run \
             --allow-env \
             --allow-sys=osRelease \
-            --allow-read="$action_path,$GITHUB_WORKSPACE,/proc/version,/proc/sys/fs/binfmt_misc/WSLInterop,/run/WSL" \
+            --allow-read="$action_path,$runtime_env_file,$GITHUB_WORKSPACE,/proc/version,/proc/sys/fs/binfmt_misc/WSLInterop,/run/WSL" \
             --allow-write="$GITHUB_WORKSPACE,$GITHUB_OUTPUT${GITHUB_STEP_SUMMARY:+,$GITHUB_STEP_SUMMARY}" \
             --allow-run=git,deno \
             --allow-net=api.deno.com,api.github.com,console.deno.com \
             "$action_path/scripts/provision.js" \
             --repo-root "$GITHUB_WORKSPACE" \
+            --env-file "$runtime_env_file" \
             --token "$DENO_DEPLOY_TOKEN" \
             --organization ubiquity-dao \
             --github-owner "${GITHUB_REPOSITORY_OWNER}" \
