@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import { keyToJSON } from "@deno/kv-utils/json";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const stringEntryLine = (key: Deno.KvKey, value: string): string =>
+  JSON.stringify({
+    key: keyToJSON(key),
+    value: { type: "string", value },
+    versionstamp: "00000000000000000000",
+  });
 
 const kvStore = new Map<string, unknown>();
 
@@ -38,7 +45,7 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleAdminCodexAuth } = await import("../src/admin.ts");
+const { handleAdminCodexAuth, handleAdminKvMigrationImport } = await import("../src/admin.ts");
 const { handleHealthAuth } = await import("../src/health.ts");
 
 const authPayload = {
@@ -123,6 +130,23 @@ Deno.test("admin codex auth rejects uploads without CLI model snapshot", async (
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("admin KV migration import stays dry-run unless write is explicit", async () => {
+  kvStore.clear();
+
+  const response = await handleAdminKvMigrationImport(
+    new Request("https://ai.ubq.fi/admin/kv-migration/import?profile=prod&dry_run=false&overwrite=true", {
+      method: "POST",
+      body: stringEntryLine(["default", "model"], "gpt-5.5"),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { dry_run?: boolean; imported?: number };
+  assert.equal(payload.dry_run, true);
+  assert.equal(payload.imported, 1);
+  assert.equal(kvStore.has(keyToString(["default", "model"])), false);
 });
 
 Deno.test("health auth summary does not refresh Codex auth", async () => {

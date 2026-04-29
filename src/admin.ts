@@ -273,8 +273,11 @@ export const handleAdminKvMigrationImport = async (req: Request): Promise<Respon
   const includeLegacy = parseBooleanParam(url, "include_legacy") ?? defaultIncludeLegacyForProfile(profile);
   const overwrite = parseBooleanParam(url, "overwrite") === true;
   const write = parseBooleanParam(url, "write") === true;
-  const dryRun = parseBooleanParam(url, "dry_run") ?? !write;
-  if (dryRun && write) return openaiError(400, "dry_run and write are mutually exclusive", "invalid_request_error");
+  const dryRunParam = parseBooleanParam(url, "dry_run");
+  if (write && dryRunParam === true) {
+    return openaiError(400, "dry_run and write are mutually exclusive", "invalid_request_error");
+  }
+  const dryRun = !write;
 
   const result = await importKvMigrationLines(kv, splitNdjsonLines(body), {
     profile,
