@@ -7,6 +7,7 @@ import {
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
 } from "./auth.js";
+import { AUTH_RELAY_MESSAGE_TYPE, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "./auth-relay.js";
 
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
@@ -20,7 +21,6 @@ const STORAGE_KEYS = {
   defaultsModels: "uos_ai.admin.defaults_models",
 };
 
-const AUTH_RELAY_MESSAGE_TYPE = "uos_ai.admin_auth_relay";
 const AUTH_RELAY_TIMEOUT_MS = 120_000;
 
 const readStorageJson = (key) => {
@@ -244,24 +244,9 @@ const updateBasePreview = () => {
   basePreview.textContent = resolveBaseUrl();
 };
 
-const parseLocalRelayOrigin = (value) => {
-  const raw = String(value ?? "").trim();
-  if (!raw) return "";
-  try {
-    const url = new URL(raw);
-    const hostname = url.hostname.toLowerCase();
-    const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" ||
-      hostname === "[::1]";
-    if (!isLocal || (url.protocol !== "http:" && url.protocol !== "https:")) return "";
-    return url.origin;
-  } catch {
-    return "";
-  }
-};
-
 const pageUrl = new URL(globalThis.location.href);
-const authRelayOrigin = parseLocalRelayOrigin(pageUrl.searchParams.get("auth_relay_origin"));
-const authRelayAction = pageUrl.searchParams.get("auth_relay_action") === "passkey-login" ? "passkey-login" : "";
+const authRelayOrigin = parseTrustedAuthRelayOrigin(pageUrl.searchParams.get("auth_relay_origin"));
+const authRelayAction = parseAuthRelayAction(pageUrl.searchParams.get("auth_relay_action"));
 const isAuthRelayMode = Boolean(authRelayOrigin && authRelayAction && globalThis.opener);
 
 const getPasskeyBaseUrl = () => isAuthRelayMode ? globalThis.location.origin : resolveBaseUrl();
@@ -322,6 +307,22 @@ const postAuthRelayResult = (result) => {
   setPasskeyStatus("ok", "Signed in. Returning to local admin...");
   setTimeout(() => globalThis.close(), 300);
   return true;
+};
+
+const getValidCachedRelayAuth = async () => {
+  const token = getAdminToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(new URL("/v1/auth", globalThis.location.origin).toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.auth?.is_admin) return null;
+    return { token, handle: getPasskeyHandle() };
+  } catch {
+    return null;
+  }
 };
 
 let authRelayRequest = null;
@@ -4484,9 +4485,15 @@ const startAuthRelayIfRequested = async () => {
   setAdminView("session");
   passkeyRegisterBtn.hidden = true;
   setAuthBadge("unknown", "Relay sign-in");
-  setPasskeyStatus("unknown", "Sign in to continue on localhost...");
+  setPasskeyStatus("unknown", "Checking signed-in session...");
   passkeyLoginBtn.disabled = true;
   try {
+    const cachedAuth = await getValidCachedRelayAuth();
+    if (cachedAuth) {
+      postAuthRelayResult(cachedAuth);
+      return;
+    }
+    setPasskeyStatus("unknown", "Sign in to continue on the requesting admin page...");
     const result = await signInWithPasskey({ baseUrl: globalThis.location.origin });
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token);
