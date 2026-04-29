@@ -2,17 +2,38 @@ name: Deno Deploy
 
 on:
   push:
-    branches-ignore:
-      - dist/**
   workflow_dispatch:
-  delete:
 
 jobs:
-  provision:
-    if: github.event_name != 'delete'
+  deploy:
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ubiquity/deno-deploy-workflow/.github/workflows/deno-deploy-reusable.yml@codex/deno-2-programmatic
+    with:
+      project: ai-ubq-fi
+      deploy_platform: deno2
+      entrypoint: serve.ts
+      install_command: deno install
+      build_command: deno task build
+      runtime_env: |
+        DENO_DEPLOY_TOKEN=$DENO_DEPLOY_TOKEN
+        UOS_AI_TOKEN=$UBIQUITY_AI_USER_TOKEN
+      extra_paths: |
+        /docs
+      debug_fetch_fail: true
+      required_env: |
+        DENO_DEPLOY_TOKEN
+        CODEX_AUTH_JSON_B64
+    secrets: inherit
+
+  upload-codex-auth:
+    needs: deploy
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v6
 
@@ -24,116 +45,96 @@ jobs:
         shell: bash
         run: npm install --global --no-audit --no-fund @openai/codex@latest
 
-      - name: Fetch Deno deploy helper
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --depth=1 https://github.com/ubiquity-os/deno-deploy.git "$RUNNER_TEMP/deno-deploy-action"
-
-      - name: Resolve Deno app slug
+      - name: Resolve Deno app URL
         id: deploy-target
         shell: bash
         env:
-          BASE_APP: ai-ubq-fi
+          PROJECT: ai-ubq-fi
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REF_NAME: ${{ github.ref_name }}
+          DENO_DEPLOY_ORG: ubiquity-dao
         run: |
           set -euo pipefail
 
-          slugify() {
-            local value="$1"
-            value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
-            printf '%s' "$value"
-          }
-
-          trim_slug() {
-            local value="$1"
-            local limit="$2"
-            if [ "${#value}" -gt "$limit" ]; then
-              value="${value:0:$limit}"
-            fi
-            value="$(printf '%s' "$value" | sed -E 's/-+$//')"
-            printf '%s' "$value"
-          }
-
-          app_slug="$BASE_APP"
+          target="$PROJECT"
           if [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
-            suffix="$(slugify "$REF_NAME")"
-            if [ -z "$suffix" ]; then
-              suffix="branch"
+            base="${PROJECT%-ubq-fi}"
+            if [ ${#base} -gt 17 ]; then
+              hash="$(printf '%s' "$base" | sha1sum | cut -c1-4)"
+              base="${base:0:12}-${hash}"
             fi
-            suffix_budget=$((32 - ${#BASE_APP} - 1))
-            if [ "$suffix_budget" -gt 25 ]; then
-              suffix_budget=25
-            fi
-            if [ "$suffix_budget" -lt 1 ]; then
-              suffix_budget=1
-            fi
-            suffix="$(trim_slug "$suffix" "$suffix_budget")"
-            if [ -z "$suffix" ]; then
-              suffix="b"
-            fi
-            app_slug="${BASE_APP}-${suffix}"
+            target="p-${base}-ubq-fi"
           fi
 
-          echo "app_slug=$app_slug" >> "$GITHUB_OUTPUT"
+          echo "app=$target" >> "$GITHUB_OUTPUT"
+          echo "url=https://${target}.${DENO_DEPLOY_ORG}.deno.net" >> "$GITHUB_OUTPUT"
 
-      - name: Provision Deno app
+      - name: Wait for deployment
+        shell: bash
+        env:
+          DEPLOY_URL: ${{ steps.deploy-target.outputs.url }}
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3 4 5 6; do
+            http_code="$(curl -sS -L -o /dev/null -w "%{http_code}" "$DEPLOY_URL" || echo "000")"
+            if [ "$http_code" = "200" ]; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+
+          echo "::error::Deployment did not become reachable at $DEPLOY_URL"
+          exit 1
+
+      - name: Sync AI runtime env
         shell: bash
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DENO_DEPLOY_ORG: ubiquity-dao
+          DENO_DEPLOY_APP: ${{ steps.deploy-target.outputs.app }}
           UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UOS_AI_KERNEL_PUBLIC_KEY || secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY || vars.UOS_AI_KERNEL_PUBLIC_KEY || vars.UBIQUITY_AI_KERNEL_PUBLIC_KEY || '' }}
-          UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN || secrets.UBIQUITY_AI_USER_TOKEN || vars.UOS_AI_TOKEN || vars.UBIQUITY_AI_USER_TOKEN || '' }}
           VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY || vars.VOYAGEAI_API_KEY || '' }}
         run: |
           set -euo pipefail
-          action_path="$RUNNER_TEMP/deno-deploy-action"
-          runtime_env_file="$RUNNER_TEMP/ai-runtime.env"
 
-          RUNTIME_ENV_FILE="$runtime_env_file" deno eval '
-            const keys = ["UOS_AI_KERNEL_PUBLIC_KEY", "UOS_AI_TOKEN", "VOYAGEAI_API_KEY"];
-            const file = Deno.env.get("RUNTIME_ENV_FILE");
-            if (!file) {
-              throw new Error("RUNTIME_ENV_FILE is required");
-            }
-            const lines = [];
-            for (const key of keys) {
-              const value = Deno.env.get(key)?.trim();
-              if (!value) {
-                continue;
-              }
-              lines.push(`${key}=${JSON.stringify(value)}`);
-            }
-            await Deno.writeTextFile(file, lines.join("\n") + (lines.length ? "\n" : ""));
-          '
+          sync_secret() {
+            local key="$1"
+            local value="${!key:-}"
+            if [ -z "$value" ]; then
+              return 0
+            fi
 
-          deno run \
-            --allow-env \
-            --allow-sys=osRelease \
-            --allow-read="$action_path,$runtime_env_file,$GITHUB_WORKSPACE,/proc/version,/proc/sys/fs/binfmt_misc/WSLInterop,/run/WSL" \
-            --allow-write="$GITHUB_WORKSPACE,$GITHUB_OUTPUT${GITHUB_STEP_SUMMARY:+,$GITHUB_STEP_SUMMARY}" \
-            --allow-run=git,deno \
-            --allow-net=api.deno.com,api.github.com,console.deno.com \
-            "$action_path/scripts/provision.js" \
-            --repo-root "$GITHUB_WORKSPACE" \
-            --env-file "$runtime_env_file" \
-            --token "$DENO_DEPLOY_TOKEN" \
-            --organization ubiquity-dao \
-            --github-owner "${GITHUB_REPOSITORY_OWNER}" \
-            --github-repo "${GITHUB_REPOSITORY#*/}" \
-            --github-token "$GITHUB_TOKEN" \
-            --ref-name "${GITHUB_REF_NAME}" \
-            --default-branch "${{ github.event.repository.default_branch }}" \
-            --app "${{ steps.deploy-target.outputs.app_slug }}" \
-            --entrypoint serve.ts \
-            --build-manifest=false
+            while IFS= read -r mask_line; do
+              [ -n "$mask_line" ] && echo "::add-mask::$mask_line"
+            done <<< "$value"
+            set +e
+            output="$(deno deploy env update-value "$key" "$value" --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" --app "$DENO_DEPLOY_APP" 2>&1)"
+            status=$?
+            set -e
+            if [ $status -eq 0 ]; then
+              echo "$output"
+              return 0
+            fi
+
+            if printf '%s\n' "$output" | grep -qi "not found"; then
+              deno deploy env add "$key" "$value" --secret --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" --app "$DENO_DEPLOY_APP"
+              return 0
+            fi
+
+            echo "$output"
+            return $status
+          }
+
+          sync_secret UOS_AI_KERNEL_PUBLIC_KEY
+          sync_secret VOYAGEAI_API_KEY
 
       - name: Upload Codex auth to KV
         shell: bash
         env:
           CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 || vars.CODEX_AUTH_JSON_B64 || '' }}
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          DEPLOY_URL: ${{ steps.deploy-target.outputs.url }}
         run: |
           set -euo pipefail
 
@@ -147,91 +148,7 @@ jobs:
           printf '%s' "$CODEX_AUTH_JSON_B64" | base64 --decode > "$auth_json_file"
 
           deno run --env --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts \
-            --url "https://${{ steps.deploy-target.outputs.app_slug }}.ubiquity-dao.deno.net" \
+            --url "$DEPLOY_URL" \
             --auth-json "$auth_json_file" \
             --codex-bin "$codex_bin" \
             --admin-token "$DENO_DEPLOY_TOKEN"
-
-  delete-branch-app:
-    if: github.event_name == 'delete'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
-      - name: Fetch Deno deploy helper
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --depth=1 https://github.com/ubiquity-os/deno-deploy.git "$RUNNER_TEMP/deno-deploy-action"
-
-      - name: Resolve Deno app slug
-        id: delete-target
-        shell: bash
-        env:
-          BASE_APP: ai-ubq-fi
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          DELETED_REF: ${{ github.event.ref }}
-        run: |
-          set -euo pipefail
-
-          slugify() {
-            local value="$1"
-            value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
-            printf '%s' "$value"
-          }
-
-          trim_slug() {
-            local value="$1"
-            local limit="$2"
-            if [ "${#value}" -gt "$limit" ]; then
-              value="${value:0:$limit}"
-            fi
-            value="$(printf '%s' "$value" | sed -E 's/-+$//')"
-            printf '%s' "$value"
-          }
-
-          app_slug="$BASE_APP"
-          if [ "$DELETED_REF" != "$DEFAULT_BRANCH" ]; then
-            suffix="$(slugify "$DELETED_REF")"
-            if [ -z "$suffix" ]; then
-              suffix="branch"
-            fi
-            suffix_budget=$((32 - ${#BASE_APP} - 1))
-            if [ "$suffix_budget" -gt 25 ]; then
-              suffix_budget=25
-            fi
-            if [ "$suffix_budget" -lt 1 ]; then
-              suffix_budget=1
-            fi
-            suffix="$(trim_slug "$suffix" "$suffix_budget")"
-            if [ -z "$suffix" ]; then
-              suffix="b"
-            fi
-            app_slug="${BASE_APP}-${suffix}"
-          fi
-
-          echo "app_slug=$app_slug" >> "$GITHUB_OUTPUT"
-
-      - name: Delete Deno branch app
-        shell: bash
-        env:
-          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          action_path="$RUNNER_TEMP/deno-deploy-action"
-          deno run \
-            --allow-env \
-            --allow-read="$action_path" \
-            --allow-net=api.deno.com,api.github.com \
-            "$action_path/scripts/delete_dist_branch.js" \
-            --token "$DENO_DEPLOY_TOKEN" \
-            --github-owner "${GITHUB_REPOSITORY_OWNER}" \
-            --github-repo "${GITHUB_REPOSITORY#*/}" \
-            --github-token "$GITHUB_TOKEN" \
-            --artifact-ref "dist/${{ github.event.ref }}" \
-            --app "${{ steps.delete-target.outputs.app_slug }}"
