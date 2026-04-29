@@ -106,6 +106,7 @@ const {
   passkeySessionKey,
   passkeyUserKey,
   saveVerifiedPasskeyRegistration,
+  updatePasskeyCredentialSignCount,
 } = await import("../src/passkeys.ts");
 const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
 
@@ -493,9 +494,9 @@ Deno.test("passkey registration start can use an existing passkey session", asyn
   assert.equal(body.publicKey.authenticatorSelection.userVerification, "required");
 });
 
-Deno.test("passkey registration start keeps a session bound to its own user", async () => {
+Deno.test("passkey registration start rejects session claims for another user handle", async () => {
   kvStore.clear();
-  const { token, user } = seedPasskeySession();
+  const { token } = seedPasskeySession();
   const now = Date.now();
   const otherUser = {
     id: "user-other",
@@ -520,13 +521,41 @@ Deno.test("passkey registration start keeps a session bound to its own user", as
     }),
   );
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 409);
   const body = await response.json();
-  const encodedUserId = btoa(user.id).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-  assert.equal(body.handle, user.handle);
-  assert.equal(body.publicKey.user.id, encodedUserId);
-  assert.equal(body.publicKey.user.name, user.handle);
-  assert.deepEqual(body.publicKey.excludeCredentials, [{ id: "credential-test", type: "public-key" }]);
+  assert.match(body.error.message, /already exists/);
+});
+
+Deno.test("passkey registration start rejects token bootstrap claims for another user handle", async () => {
+  kvStore.clear();
+  const token = "ddo_bootstrap_claim_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const now = Date.now();
+  const otherUser = {
+    id: "user-claimed",
+    handle: "claimed-admin",
+    is_admin: true,
+    credential_ids: ["credential-claimed"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  kvStore.set(keyToString(passkeyUserKey(otherUser.id)), otherUser);
+  kvStore.set(keyToString(passkeyHandleKey(otherUser.handle)), otherUser.id);
+
+  const response = await handlePasskeyRegisterStart(
+    new Request("https://ai.ubq.fi/api/auth/register/start", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ handle: otherUser.handle }),
+    }),
+    { defaultIsAdmin: true },
+  );
+
+  assert.equal(response.status, 409);
+  const body = await response.json();
+  assert.match(body.error.message, /already exists/);
 });
 
 Deno.test("passkey registration start reuses an existing token-handle user", async () => {
@@ -671,6 +700,40 @@ Deno.test("passkey registration rejects concurrent handle claims", async () => {
   assert.equal(saved.response.status, 409);
   assert.equal(kvStore.has(keyToString(passkeyUserKey("user-race"))), false);
   assert.equal(kvStore.get(keyToString(passkeyHandleKey("race-name"))), "user-other");
+});
+
+Deno.test("passkey credential sign count update rejects concurrent writes", async () => {
+  kvStore.clear();
+  const credentialKey = passkeyCredentialKey("credential-counter");
+  kvStore.set(keyToString(credentialKey), {
+    credential_id: "credential-counter",
+    user_id: "user-counter",
+    public_key: "public-key",
+    sign_count: 4,
+    transports: [],
+    created_at_ms: Date.now(),
+  });
+  const entry = await kvStub.get(credentialKey) as Deno.KvEntryMaybe<{
+    credential_id: string;
+    user_id: string;
+    public_key: string;
+    sign_count: number;
+    transports: string[];
+    created_at_ms: number;
+  }>;
+  if (!entry.value || !entry.versionstamp) throw new Error("missing seeded credential");
+  beforeAtomicCommit = () => {
+    kvStore.set(keyToString(credentialKey), { ...entry.value, sign_count: 6 });
+  };
+
+  const updated = await updatePasskeyCredentialSignCount(kvStub, {
+    key: entry.key,
+    value: entry.value,
+    versionstamp: entry.versionstamp,
+  }, 5);
+
+  assert.equal(updated, false);
+  assert.equal((kvStore.get(keyToString(credentialKey)) as { sign_count: number }).sign_count, 6);
 });
 
 Deno.test("passkey logout deletes the cached session", async () => {

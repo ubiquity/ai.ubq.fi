@@ -191,9 +191,16 @@ export const hasPasskeyUsers = async (): Promise<boolean> => {
   return false;
 };
 
-const getCredential = async (kv: Deno.Kv, credentialId: string): Promise<PasskeyCredentialRecord | null> => {
-  const entry = await kv.get<PasskeyCredentialRecord>(passkeyCredentialKey(credentialId));
-  return entry.value ?? null;
+export const updatePasskeyCredentialSignCount = async (
+  kv: Deno.Kv,
+  entry: Readonly<{ key: Deno.KvKey; value: PasskeyCredentialRecord; versionstamp: string }>,
+  signCount: number,
+): Promise<boolean> => {
+  const commit = await kv.atomic()
+    .check({ key: entry.key, versionstamp: entry.versionstamp })
+    .set(entry.key, { ...entry.value, sign_count: signCount })
+    .commit();
+  return commit.ok;
 };
 
 const saveChallenge = async (
@@ -346,8 +353,11 @@ export const handlePasskeyRegisterStart = async (
   const requestedHandle = normalizePasskeyHandle(raw.handle);
   const tokenHandle = token ? await buildPasskeyHandle(token) : "";
   const requestedUser = requestedHandle ? await getUserByHandle(kv, requestedHandle) : null;
-  const tokenUser = !requestedHandle && tokenHandle ? await getUserByHandle(kv, tokenHandle) : null;
-  const existingUser = existingSession?.user ?? requestedUser ?? tokenUser;
+  const tokenUser = tokenHandle ? await getUserByHandle(kv, tokenHandle) : null;
+  if (requestedUser && requestedUser.id !== existingSession?.user.id && requestedUser.id !== tokenUser?.id) {
+    return openaiError(409, "A passkey account already exists for this username", "invalid_request_error");
+  }
+  const existingUser = existingSession?.user ?? tokenUser ?? requestedUser;
   const userId = existingUser?.id ?? crypto.randomUUID();
   const handle = existingSession?.user.handle || requestedHandle || tokenHandle || await buildPasskeyHandle(userId);
   if (!handle) return openaiError(400, "username is required", "invalid_request_error");
@@ -540,8 +550,11 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
     return openaiError(400, "Invalid passkey challenge", "invalid_request_error");
   }
 
-  const credential = await getCredential(kv, response.id);
-  if (!credential) return openaiError(400, "Unknown passkey", "invalid_request_error");
+  const credentialEntry = await kv.get<PasskeyCredentialRecord>(passkeyCredentialKey(response.id));
+  const credential = credentialEntry.value;
+  if (!credential || !credentialEntry.versionstamp) {
+    return openaiError(400, "Unknown passkey", "invalid_request_error");
+  }
   const userEntry = await kv.get<PasskeyUserRecord>(passkeyUserKey(credential.user_id));
   if (!userEntry.value) return openaiError(401, "Unauthorized", "invalid_api_key");
 
@@ -562,10 +575,14 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
       return openaiError(400, "Invalid passkey assertion", "invalid_request_error");
     }
 
-    await kv.set(passkeyCredentialKey(credential.credential_id), {
-      ...credential,
-      sign_count: verification.authenticationInfo.newCounter,
-    });
+    const updated = await updatePasskeyCredentialSignCount(kv, {
+      key: credentialEntry.key,
+      value: credential,
+      versionstamp: credentialEntry.versionstamp,
+    }, verification.authenticationInfo.newCounter);
+    if (!updated) {
+      return openaiError(409, "Passkey credential was modified concurrently; retry", "invalid_request_error");
+    }
 
     const session = await createSession(kv, credential.user_id);
     return json(
