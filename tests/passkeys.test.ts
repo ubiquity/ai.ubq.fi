@@ -640,6 +640,23 @@ Deno.test("passkey login start requires user verification for admin handles", as
   assert.equal((await memberResponse.json()).publicKey.userVerification, "preferred");
 });
 
+Deno.test("passkey login start without username remains discoverable", async () => {
+  kvStore.clear();
+
+  const response = await handlePasskeyLoginStart(
+    new Request("https://ai.ubq.fi/api/auth/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.publicKey.allowCredentials, undefined);
+  assert.equal(body.publicKey.userVerification, "preferred");
+});
+
 Deno.test("passkey registration deletes stale handle mapping when a user handle changes", async () => {
   kvStore.clear();
   const now = Date.now();
