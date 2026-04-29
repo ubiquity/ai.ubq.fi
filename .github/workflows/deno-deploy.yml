@@ -108,6 +108,36 @@ jobs:
             echo "$output"
           elif printf '%s\n' "$output" | grep -Eqi "already|exists"; then
             echo "$output"
+          elif printf '%s\n' "$output" | grep -qi "database instance limit"; then
+            echo "$output"
+            list_output="$(deno deploy database list --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" 2>&1)"
+            database="$(
+              LIST_OUTPUT="$list_output" python - <<'PY'
+          import os
+          import re
+
+          text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", os.environ.get("LIST_OUTPUT", ""))
+          for line in text.splitlines():
+              stripped = line.strip()
+              if not stripped:
+                  continue
+              if "│" in stripped:
+                  parts = [part.strip() for part in stripped.strip("│").split("│")]
+                  candidate = parts[0] if parts else ""
+              else:
+                  match = re.match(r"^([a-z0-9][a-z0-9-]*)\s+", stripped)
+                  candidate = match.group(1) if match else ""
+              if candidate and candidate.lower() not in {"name", "slug", "database"}:
+                  print(candidate)
+                  break
+          PY
+            )"
+            if [ -z "$database" ]; then
+              echo "::error::Could not find an existing Deno KV database to assign."
+              printf '%s\n' "$list_output"
+              exit 1
+            fi
+            echo "Using existing Deno KV database '$database'."
           else
             echo "$output"
             exit $status
