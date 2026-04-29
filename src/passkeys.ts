@@ -226,8 +226,8 @@ export const saveVerifiedPasskeyRegistration = async (
   kv: Deno.Kv,
   input: SaveVerifiedPasskeyRegistrationInput,
 ): Promise<{ ok: true; user: PasskeyUserRecord } | { ok: false; response: Response }> => {
-  const existingByHandle = await getUserByHandle(kv, input.handle);
-  if (existingByHandle && existingByHandle.id !== input.userId) {
+  const handleEntry = await kv.get<string>(passkeyHandleKey(input.handle));
+  if (handleEntry.value && handleEntry.value !== input.userId) {
     return {
       ok: false,
       response: openaiError(409, "A passkey account already exists for this username", "invalid_request_error"),
@@ -264,6 +264,7 @@ export const saveVerifiedPasskeyRegistration = async (
 
   let atomic = kv.atomic()
     .check(existingUserEntry)
+    .check(handleEntry)
     .set(passkeyUserKey(userRecord.id), userRecord)
     .set(passkeyHandleKey(input.handle), userRecord.id)
     .set(passkeyCredentialKey(input.credentialId), credentialRecord);
@@ -320,7 +321,9 @@ export const handlePasskeyRegisterStart = async (
   const existingSession = token ? await getPasskeySession(token) : null;
   const requestedHandle = normalizePasskeyHandle(raw.handle);
   const tokenHandle = token ? await buildPasskeyHandle(token) : "";
-  const existingUser = existingSession?.user ?? (requestedHandle ? await getUserByHandle(kv, requestedHandle) : null);
+  const requestedUser = requestedHandle ? await getUserByHandle(kv, requestedHandle) : null;
+  const tokenUser = !requestedHandle && tokenHandle ? await getUserByHandle(kv, tokenHandle) : null;
+  const existingUser = existingSession?.user ?? requestedUser ?? tokenUser;
   const userId = existingUser?.id ?? crypto.randomUUID();
   const handle = existingSession?.user.handle || requestedHandle || tokenHandle || await buildPasskeyHandle(userId);
   if (!handle) return openaiError(400, "username is required", "invalid_request_error");

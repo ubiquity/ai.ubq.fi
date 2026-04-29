@@ -1,11 +1,37 @@
 import assert from "node:assert/strict";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
-const kvStore = new Map<string, unknown>();
+const kvVersions = new Map<string, number>();
+let beforeAtomicCommit: (() => void) | null = null;
+
+class KvTestStore extends Map<string, unknown> {
+  override set(key: string, value: unknown): this {
+    kvVersions.set(key, (kvVersions.get(key) ?? 0) + 1);
+    return super.set(key, value);
+  }
+
+  override clear(): void {
+    beforeAtomicCommit = null;
+    kvVersions.clear();
+    super.clear();
+  }
+}
+
+const kvStore = new KvTestStore();
+const versionstampFor = (rawKey: string): string | null =>
+  kvStore.has(rawKey) ? String(kvVersions.get(rawKey) ?? 0).padStart(20, "0") : null;
 
 const kvStub = {
-  get: (key: Deno.KvKey) =>
-    Promise.resolve(({ key, value: kvStore.get(keyToString(key)) ?? null }) as Deno.KvEntryMaybe<unknown>),
+  get: (key: Deno.KvKey) => {
+    const rawKey = keyToString(key);
+    return Promise.resolve(
+      ({
+        key,
+        value: kvStore.has(rawKey) ? kvStore.get(rawKey) : null,
+        versionstamp: versionstampFor(rawKey),
+      }) as Deno.KvEntryMaybe<unknown>,
+    );
+  },
   set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
     kvStore.set(keyToString(key), value);
     return Promise.resolve({ ok: true } as const);
@@ -29,8 +55,12 @@ const kvStub = {
   },
   atomic: () => {
     const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
+    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
     const chain = {
-      check: () => chain,
+      check: (check: { key: Deno.KvKey; versionstamp: string | null }) => {
+        checks.push(check);
+        return chain;
+      },
       set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
         ops.push({ type: "set", key, value });
         return chain;
@@ -40,6 +70,13 @@ const kvStub = {
         return chain;
       },
       commit: () => {
+        beforeAtomicCommit?.();
+        beforeAtomicCommit = null;
+        for (const check of checks) {
+          if (versionstampFor(keyToString(check.key)) !== check.versionstamp) {
+            return Promise.resolve({ ok: false } as const);
+          }
+        }
         for (const op of ops) {
           if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
           else kvStore.delete(keyToString(op.key));
@@ -58,6 +95,7 @@ const {
   PASSKEY_SESSION_TTL_MS,
   buildPasskeyHandle,
   getPasskeyRequestMeta,
+  handlePasskeyRegisterStart,
   handlePasskeyUsersList,
   handlePasskeyUsersUpdate,
   hasPasskeyUsers,
@@ -444,6 +482,42 @@ Deno.test("passkey registration start keeps a session bound to its own user", as
   assert.deepEqual(body.publicKey.excludeCredentials, [{ id: "credential-test", type: "public-key" }]);
 });
 
+Deno.test("passkey registration start reuses an existing token-handle user", async () => {
+  kvStore.clear();
+  const token = "ddo_register_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const handle = await buildPasskeyHandle(token);
+  const now = Date.now();
+  const user = {
+    id: "user-token-handle",
+    handle,
+    is_admin: true,
+    credential_ids: ["credential-token"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  kvStore.set(keyToString(passkeyUserKey(user.id)), user);
+  kvStore.set(keyToString(passkeyHandleKey(handle)), user.id);
+
+  const response = await handlePasskeyRegisterStart(
+    new Request("https://ai.ubq.fi/api/auth/register/start", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    }),
+    { defaultIsAdmin: true },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  const encodedUserId = btoa(user.id).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  assert.equal(body.handle, handle);
+  assert.equal(body.publicKey.user.id, encodedUserId);
+  assert.deepEqual(body.publicKey.excludeCredentials, [{ id: "credential-token", type: "public-key" }]);
+});
+
 Deno.test("passkey registration deletes stale handle mapping when a user handle changes", async () => {
   kvStore.clear();
   const now = Date.now();
@@ -481,6 +555,29 @@ Deno.test("passkey registration deletes stale handle mapping when a user handle 
     (kvStore.get(keyToString(passkeyCredentialKey("credential-new"))) as { user_id: string }).user_id,
     user.id,
   );
+});
+
+Deno.test("passkey registration rejects concurrent handle claims", async () => {
+  kvStore.clear();
+  beforeAtomicCommit = () => {
+    kvStore.set(keyToString(passkeyHandleKey("race-name")), "user-other");
+  };
+
+  const saved = await saveVerifiedPasskeyRegistration(kvStub, {
+    userId: "user-race",
+    handle: "race-name",
+    isAdmin: true,
+    credentialId: "credential-race",
+    publicKey: "public-key",
+    signCount: 0,
+    transports: [],
+  });
+
+  assert.equal(saved.ok, false);
+  if (saved.ok) throw new Error("registration save unexpectedly succeeded");
+  assert.equal(saved.response.status, 409);
+  assert.equal(kvStore.has(keyToString(passkeyUserKey("user-race"))), false);
+  assert.equal(kvStore.get(keyToString(passkeyHandleKey("race-name"))), "user-other");
 });
 
 Deno.test("passkey logout deletes the cached session", async () => {
