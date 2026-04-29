@@ -95,6 +95,7 @@ export const resolveCodexBinaryPath = async (
   os: string,
   arch: string,
   realPath?: (path: string) => Promise<string>,
+  fileExists?: (path: string) => Promise<boolean>,
 ): Promise<string> => {
   let resolvedPath = codexPath;
   if (realPath) {
@@ -122,8 +123,34 @@ export const resolveCodexBinaryPath = async (
   if (wrapperText.includes("PLATFORM_PACKAGE_BY_TARGET")) {
     const packageName = platformPackageName(targetTriple);
     if (packageName) {
+      const packageRoot = joinPath(sep, wrapperDir, "..");
       const nodeModulesRoot = joinPath(sep, wrapperDir, "..", "..", "..");
-      return joinPath(sep, nodeModulesRoot, "@openai", packageName, "vendor", targetTriple, "codex", binaryName);
+      const nestedPath = joinPath(
+        sep,
+        packageRoot,
+        "node_modules",
+        "@openai",
+        packageName,
+        "vendor",
+        targetTriple,
+        "codex",
+        binaryName,
+      );
+      const siblingPath = joinPath(
+        sep,
+        nodeModulesRoot,
+        "@openai",
+        packageName,
+        "vendor",
+        targetTriple,
+        "codex",
+        binaryName,
+      );
+      if (fileExists) {
+        if (await fileExists(nestedPath)) return nestedPath;
+        if (await fileExists(siblingPath)) return siblingPath;
+      }
+      return siblingPath;
     }
   }
 

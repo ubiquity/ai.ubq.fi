@@ -103,6 +103,15 @@ const readPossiblyBinaryText = async (path: string): Promise<string> => {
   }
 };
 
+const fileExists = async (path: string): Promise<boolean> => {
+  try {
+    const stat = await Deno.stat(path);
+    return stat.isFile;
+  } catch {
+    return false;
+  }
+};
+
 const loadCodexBinaryModels = async (
   codexBinFlag?: string,
 ): Promise<
@@ -124,6 +133,7 @@ const loadCodexBinaryModels = async (
         Deno.build.os,
         Deno.build.arch,
         Deno.realPath,
+        fileExists,
       );
       const text = await readPossiblyBinaryText(resolved);
       const models = extractCodexModelsFromText(text);
