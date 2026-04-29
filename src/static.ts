@@ -73,6 +73,7 @@ textAsset(["/docs.js"], "docs.js", "text/javascript; charset=utf-8");
 textAsset(["/chat.js"], "chat.js", "text/javascript; charset=utf-8");
 textAsset(["/admin.js"], "admin.js", "text/javascript; charset=utf-8");
 textAsset(["/auth.js"], "auth.js", "text/javascript; charset=utf-8");
+textAsset(["/auth-relay.js"], "auth-relay.js", "text/javascript; charset=utf-8");
 textAsset(["/network.js"], "network.js", "text/javascript; charset=utf-8");
 
 textAsset(["/company-logo.svg"], "company-logo.svg", "image/svg+xml; charset=utf-8");
@@ -135,6 +136,8 @@ export const handleStaticAsset = async (path: string): Promise<Response | null> 
   if (!asset) return null;
   return await serveAsset(asset);
 };
+
+export const hasStaticAsset = (path: string): boolean => staticAssets.has(path);
 
 export const handleRoot = async (req: Request): Promise<Response> => {
   const url = new URL(req.url);
