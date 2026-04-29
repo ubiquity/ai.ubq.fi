@@ -3586,6 +3586,20 @@ const ensureKeysLoaded = async () => {
   await refreshKeys();
 };
 
+const updateKeyRevocationState = (id, revokedAtMs) => {
+  let updated = false;
+  allKeys = allKeys.map((key) => {
+    if (key?.id !== id) return key;
+    updated = true;
+    return { ...key, revoked_at_ms: revokedAtMs };
+  });
+  if (updated) {
+    keysLoadedAt = Date.now();
+    renderKeys(allKeys, currentKeyView);
+  }
+  return updated;
+};
+
 const revokeKey = async (id, name, button) => {
   const token = getAdminToken();
   if (!token) {
@@ -3593,7 +3607,6 @@ const revokeKey = async (id, name, button) => {
     tokenInput.focus();
     return;
   }
-  if (!confirm(`Revoke ${name}?`)) return;
 
   setKeysBadge("unknown", "Revoking...");
   if (button) button.disabled = true;
@@ -3612,7 +3625,9 @@ const revokeKey = async (id, name, button) => {
       setKeysBadge("bad", data?.error?.message ?? "Error");
       return;
     }
-    await refreshKeys();
+    updateKeyRevocationState(id, typeof data?.revoked_at_ms === "number" ? data.revoked_at_ms : Date.now());
+    setKeysBadge("ok", `Revoked ${name}`);
+    void refreshKeys();
   } catch {
     setKeysBadge("bad", "Offline");
   } finally {
@@ -3627,7 +3642,6 @@ const unrevokeKey = async (id, name, button) => {
     tokenInput.focus();
     return;
   }
-  if (!confirm(`Unrevoke ${name}?`)) return;
 
   setKeysBadge("unknown", "Unrevoking...");
   if (button) button.disabled = true;
@@ -3646,7 +3660,9 @@ const unrevokeKey = async (id, name, button) => {
       setKeysBadge("bad", data?.error?.message ?? "Error");
       return;
     }
-    await refreshKeys();
+    updateKeyRevocationState(id, null);
+    setKeysBadge("ok", `Unrevoked ${name}`);
+    void refreshKeys();
   } catch {
     setKeysBadge("bad", "Offline");
   } finally {
