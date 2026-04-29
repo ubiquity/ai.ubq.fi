@@ -45,6 +45,9 @@
             <button id="view-tab-keys" type="button" role="tab" aria-controls="view-keys" aria-selected="false">
               API keys
             </button>
+            <button id="view-tab-users" type="button" role="tab" aria-controls="view-users" aria-selected="false">
+              Users
+            </button>
             <button id="view-tab-kernel" type="button" role="tab" aria-controls="view-kernel" aria-selected="false">
               GitHub access
             </button>
@@ -77,30 +80,105 @@
                 </select>
               </label>
               <span id="base-preview" hidden></span>
-              <label data-field>
-                <span data-label>Admin token</span>
-                <input
-                  id="admin-token"
-                  type="password"
-                  inputmode="text"
-                  autocomplete="off"
-                  placeholder="Paste admin token"
-                />
-              </label>
               <div data-layout="row">
-                <label data-check>
-                  <input id="remember-admin-token" type="checkbox" />
-                  <span>Remember</span>
-                </label>
-                <label data-check>
-                  <input id="show-admin-token" type="checkbox" />
-                  <span>Show</span>
-                </label>
+                <button
+                  id="admin-passkey-login"
+                  type="button"
+                  data-tooltip="Use iCloud Keychain or another passkey provider to sign in"
+                >
+                  <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      d="M11 7 9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z"
+                    />
+                  </svg>
+                  <span>Sign in with passkey</span>
+                </button>
+                <button
+                  id="admin-passkey-register"
+                  type="button"
+                  data-tooltip="Create a passkey for this account on the current domain"
+                >
+                  <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zM7 20v-2c0-2.67 5.33-4 8-4 .32 0 .7.02 1.1.07-.7.86-1.1 1.94-1.1 3.13V20H7zm12-3v-3h-2v3h-3v2h3v3h2v-3h3v-2h-3z"
+                    />
+                  </svg>
+                  <span>Register this device</span>
+                </button>
+                <button id="admin-sign-out" type="button" data-tooltip="Clear this browser session" hidden>
+                  <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      d="M17 7 15.59 8.41 18.17 11H8v2h10.17l-2.58 2.59L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"
+                    />
+                  </svg>
+                  <span>Sign out</span>
+                </button>
               </div>
-              <span id="admin-auth-badge" data-badge data-state="unknown">Not checked</span>
-              <p data-help data-tone="warning">
-                Remember stores the token in this browser's localStorage in cleartext.
-              </p>
+              <span id="admin-passkey-status" data-badge data-state="unknown">Passkey idle</span>
+              <details data-passkey-advanced>
+                <summary>Advanced passkey options</summary>
+                <div data-passkey-advanced-body>
+                  <label data-field>
+                    <span data-label>Username</span>
+                    <input
+                      id="admin-passkey-handle"
+                      type="text"
+                      inputmode="text"
+                      autocomplete="off"
+                      placeholder="Optional account name"
+                    />
+                  </label>
+                </div>
+              </details>
+              <details data-token-fallback>
+                <summary>Fallback admin token</summary>
+                <div data-token-fallback-body>
+                  <label data-field>
+                    <span data-label>Admin token</span>
+                    <input
+                      id="admin-token"
+                      type="password"
+                      inputmode="text"
+                      autocomplete="off"
+                      placeholder="Paste admin token"
+                    />
+                  </label>
+                  <div data-layout="row">
+                    <label data-check>
+                      <input id="remember-admin-token" type="checkbox" />
+                      <span>Remember</span>
+                    </label>
+                    <label data-check>
+                      <input id="show-admin-token" type="checkbox" />
+                      <span>Show</span>
+                    </label>
+                  </div>
+                  <span id="admin-auth-badge" data-badge data-state="unknown">Not checked</span>
+                  <p data-help data-tone="warning">
+                    Remember stores the token in this browser's localStorage in cleartext.
+                  </p>
+                </div>
+              </details>
+            </div>
+          </article>
+        </section>
+
+        <section
+          id="view-users"
+          data-view="users"
+          data-layout="grid"
+          role="tabpanel"
+          aria-labelledby="view-tab-users"
+          hidden
+        >
+          <article data-card aria-labelledby="card-users">
+            <header>
+              <h2 id="card-users">Passkey users</h2>
+              <p>Use the fallback admin token to manage account roles.</p>
+            </header>
+            <div data-card-body>
+              <span id="passkey-users-badge" data-badge data-state="unknown">Not loaded</span>
+              <div id="passkey-users-list" data-key-list role="list"></div>
             </div>
           </article>
         </section>

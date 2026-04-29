@@ -24,6 +24,7 @@ const usage = () => {
   console.log(`ubq-ai health check
 
 Checks the upstream Codex health endpoint and exits non-zero when unhealthy.
+Use --auth for passive auth metadata without refreshing upstream auth.
 
 Usage:
   deno run --allow-net --allow-env scripts/health-check.ts [--url https://ai.ubq.fi] [--json] [--auth]

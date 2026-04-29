@@ -14,6 +14,7 @@ const ADMIN_CSS_URL = new URL("../static/admin.css", import.meta.url);
 const APP_JS_URL = new URL("../static/app.js", import.meta.url);
 const CHAT_JS_URL = new URL("../static/chat.js", import.meta.url);
 const ADMIN_JS_URL = new URL("../static/admin.js", import.meta.url);
+const AUTH_JS_URL = new URL("../static/auth.js", import.meta.url);
 const NETWORK_JS_URL = new URL("../static/network.js", import.meta.url);
 const DOCS_JS_URL = new URL("../static/docs.js", import.meta.url);
 const DOCS_LLM_AGENTS_MD_URL = new URL("../static/docs/llms-agents.md", import.meta.url);
@@ -30,45 +31,65 @@ const readTextFile = async (url: URL, label: string): Promise<string | null> => 
   }
 };
 
-const readBytesFile = async (url: URL, label: string): Promise<Uint8Array | null> => {
+const readBytesFile = async (url: URL, label: string): Promise<Uint8Array<ArrayBuffer> | null> => {
   try {
-    return await Deno.readFile(url);
+    const bytes = await Deno.readFile(url);
+    const copy: Uint8Array<ArrayBuffer> = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    return copy;
   } catch (error) {
     console.error(`[ai.ubq.fi] Failed to load ${label}:`, error);
     return null;
   }
 };
 
-const indexHtmlPromise = readTextFile(INDEX_HTML_URL, "static/index.html");
-const docsHtmlPromise = readTextFile(DOCS_HTML_URL, "static/docs.html");
-const chatHtmlPromise = readTextFile(CHAT_HTML_URL, "static/chat.html");
-const adminHtmlPromise = readTextFile(ADMIN_HTML_URL, "static/admin.html");
-const styleCssPromise = readTextFile(STYLE_CSS_URL, "static/style.css");
-const chatCssPromise = readTextFile(CHAT_CSS_URL, "static/chat.css");
-const homeCssPromise = readTextFile(HOME_CSS_URL, "static/home.css");
-const docsCssPromise = readTextFile(DOCS_CSS_URL, "static/docs.css");
-const adminCssPromise = readTextFile(ADMIN_CSS_URL, "static/admin.css");
-const appJsPromise = readTextFile(APP_JS_URL, "static/app.js");
-const chatJsPromise = readTextFile(CHAT_JS_URL, "static/chat.js");
-const adminJsPromise = readTextFile(ADMIN_JS_URL, "static/admin.js");
-const networkJsPromise = readTextFile(NETWORK_JS_URL, "static/network.js");
-const docsJsPromise = readTextFile(DOCS_JS_URL, "static/docs.js");
-const docsLlmAgentsMdPromise = readTextFile(DOCS_LLM_AGENTS_MD_URL, "static/docs/llms-agents.md");
-const companyLogoPromise = readTextFile(COMPANY_LOGO_URL, "static/company-logo.svg");
+const lazyTextFile = (url: URL, label: string): () => Promise<string | null> => {
+  let promise: Promise<string | null> | null = null;
+  return () => {
+    promise ??= readTextFile(url, label);
+    return promise;
+  };
+};
 
-const favicon32Promise = readBytesFile(FAVICON_32_URL, "favicon-32.png");
-const faviconPromise = readBytesFile(FAVICON_URL, "favicon.png");
+const lazyBytesFile = (url: URL, label: string): () => Promise<Uint8Array<ArrayBuffer> | null> => {
+  let promise: Promise<Uint8Array<ArrayBuffer> | null> | null = null;
+  return () => {
+    promise ??= readBytesFile(url, label);
+    return promise;
+  };
+};
+
+const getIndexHtml = lazyTextFile(INDEX_HTML_URL, "static/index.html");
+const getDocsHtml = lazyTextFile(DOCS_HTML_URL, "static/docs.html");
+const getChatHtml = lazyTextFile(CHAT_HTML_URL, "static/chat.html");
+const getAdminHtml = lazyTextFile(ADMIN_HTML_URL, "static/admin.html");
+const getStyleCss = lazyTextFile(STYLE_CSS_URL, "static/style.css");
+const getChatCss = lazyTextFile(CHAT_CSS_URL, "static/chat.css");
+const getHomeCss = lazyTextFile(HOME_CSS_URL, "static/home.css");
+const getDocsCss = lazyTextFile(DOCS_CSS_URL, "static/docs.css");
+const getAdminCss = lazyTextFile(ADMIN_CSS_URL, "static/admin.css");
+const getAppJs = lazyTextFile(APP_JS_URL, "static/app.js");
+const getChatJs = lazyTextFile(CHAT_JS_URL, "static/chat.js");
+const getAdminJs = lazyTextFile(ADMIN_JS_URL, "static/admin.js");
+const getAuthJs = lazyTextFile(AUTH_JS_URL, "static/auth.js");
+const getNetworkJs = lazyTextFile(NETWORK_JS_URL, "static/network.js");
+const getDocsJs = lazyTextFile(DOCS_JS_URL, "static/docs.js");
+const getDocsLlmAgentsMd = lazyTextFile(DOCS_LLM_AGENTS_MD_URL, "static/docs/llms-agents.md");
+const getCompanyLogo = lazyTextFile(COMPANY_LOGO_URL, "static/company-logo.svg");
+
+const getFavicon32 = lazyBytesFile(FAVICON_32_URL, "favicon-32.png");
+const getFavicon = lazyBytesFile(FAVICON_URL, "favicon.png");
 
 const staticCacheControl = config.isDeploy ? "public, max-age=300" : "no-store";
 
-const loadText = async (url: URL, label: string, cached: Promise<string | null>): Promise<string | null> =>
-  config.isDeploy ? await cached : await readTextFile(url, label);
+const loadText = async (url: URL, label: string, cached: () => Promise<string | null>): Promise<string | null> =>
+  config.isDeploy ? await cached() : await readTextFile(url, label);
 
 const loadBytes = async (
   url: URL,
   label: string,
-  cached: Promise<Uint8Array | null>,
-): Promise<Uint8Array | null> => (config.isDeploy ? await cached : await readBytesFile(url, label));
+  cached: () => Promise<Uint8Array<ArrayBuffer> | null>,
+): Promise<Uint8Array<ArrayBuffer> | null> => (config.isDeploy ? await cached() : await readBytesFile(url, label));
 
 const htmlSecurityHeaders = (): HeadersInit => ({
   "Cache-Control": staticCacheControl,
@@ -85,7 +106,7 @@ export const handleRoot = async (req: Request): Promise<Response> => {
   const accept = req.headers.get("Accept") ?? "";
   const wantsHtml = path === "/index.html" || accept.includes("text/html") || accept.includes("application/xhtml+xml");
   if (wantsHtml) {
-    const html = await loadText(INDEX_HTML_URL, "static/index.html", indexHtmlPromise);
+    const html = await loadText(INDEX_HTML_URL, "static/index.html", getIndexHtml);
     if (html) {
       return new Response(html, {
         status: 200,
@@ -122,7 +143,7 @@ export const handleRoot = async (req: Request): Promise<Response> => {
 };
 
 export const handleDocsPage = async (): Promise<Response> => {
-  const html = await loadText(DOCS_HTML_URL, "static/docs.html", docsHtmlPromise);
+  const html = await loadText(DOCS_HTML_URL, "static/docs.html", getDocsHtml);
   if (!html) {
     return new Response("Not found", {
       status: 404,
@@ -139,7 +160,7 @@ export const handleDocsPage = async (): Promise<Response> => {
 };
 
 export const handleChatPage = async (): Promise<Response> => {
-  const html = await loadText(CHAT_HTML_URL, "static/chat.html", chatHtmlPromise);
+  const html = await loadText(CHAT_HTML_URL, "static/chat.html", getChatHtml);
   if (!html) {
     return new Response("Not found", {
       status: 404,
@@ -156,7 +177,7 @@ export const handleChatPage = async (): Promise<Response> => {
 };
 
 export const handleAdminPage = async (): Promise<Response> => {
-  const html = await loadText(ADMIN_HTML_URL, "static/admin.html", adminHtmlPromise);
+  const html = await loadText(ADMIN_HTML_URL, "static/admin.html", getAdminHtml);
   if (!html) {
     return new Response("Not found", {
       status: 404,
@@ -173,7 +194,7 @@ export const handleAdminPage = async (): Promise<Response> => {
 };
 
 export const handleStyleCss = async (): Promise<Response> => {
-  const css = await loadText(STYLE_CSS_URL, "static/style.css", styleCssPromise);
+  const css = await loadText(STYLE_CSS_URL, "static/style.css", getStyleCss);
   if (!css) {
     return new Response("Not found", {
       status: 404,
@@ -191,7 +212,7 @@ export const handleStyleCss = async (): Promise<Response> => {
 };
 
 export const handleChatCss = async (): Promise<Response> => {
-  const css = await loadText(CHAT_CSS_URL, "static/chat.css", chatCssPromise);
+  const css = await loadText(CHAT_CSS_URL, "static/chat.css", getChatCss);
   if (!css) {
     return new Response("Not found", {
       status: 404,
@@ -209,7 +230,7 @@ export const handleChatCss = async (): Promise<Response> => {
 };
 
 export const handleHomeCss = async (): Promise<Response> => {
-  const css = await loadText(HOME_CSS_URL, "static/home.css", homeCssPromise);
+  const css = await loadText(HOME_CSS_URL, "static/home.css", getHomeCss);
   if (!css) {
     return new Response("Not found", {
       status: 404,
@@ -227,7 +248,7 @@ export const handleHomeCss = async (): Promise<Response> => {
 };
 
 export const handleDocsCss = async (): Promise<Response> => {
-  const css = await loadText(DOCS_CSS_URL, "static/docs.css", docsCssPromise);
+  const css = await loadText(DOCS_CSS_URL, "static/docs.css", getDocsCss);
   if (!css) {
     return new Response("Not found", {
       status: 404,
@@ -245,7 +266,7 @@ export const handleDocsCss = async (): Promise<Response> => {
 };
 
 export const handleAdminCss = async (): Promise<Response> => {
-  const css = await loadText(ADMIN_CSS_URL, "static/admin.css", adminCssPromise);
+  const css = await loadText(ADMIN_CSS_URL, "static/admin.css", getAdminCss);
   if (!css) {
     return new Response("Not found", {
       status: 404,
@@ -263,7 +284,7 @@ export const handleAdminCss = async (): Promise<Response> => {
 };
 
 export const handleAppJs = async (): Promise<Response> => {
-  const js = await loadText(APP_JS_URL, "static/app.js", appJsPromise);
+  const js = await loadText(APP_JS_URL, "static/app.js", getAppJs);
   if (!js) {
     return new Response("Not found", {
       status: 404,
@@ -281,7 +302,7 @@ export const handleAppJs = async (): Promise<Response> => {
 };
 
 export const handleChatJs = async (): Promise<Response> => {
-  const js = await loadText(CHAT_JS_URL, "static/chat.js", chatJsPromise);
+  const js = await loadText(CHAT_JS_URL, "static/chat.js", getChatJs);
   if (!js) {
     return new Response("Not found", {
       status: 404,
@@ -299,7 +320,25 @@ export const handleChatJs = async (): Promise<Response> => {
 };
 
 export const handleAdminJs = async (): Promise<Response> => {
-  const js = await loadText(ADMIN_JS_URL, "static/admin.js", adminJsPromise);
+  const js = await loadText(ADMIN_JS_URL, "static/admin.js", getAdminJs);
+  if (!js) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(js, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": staticCacheControl,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
+export const handleAuthJs = async (): Promise<Response> => {
+  const js = await loadText(AUTH_JS_URL, "static/auth.js", getAuthJs);
   if (!js) {
     return new Response("Not found", {
       status: 404,
@@ -317,7 +356,7 @@ export const handleAdminJs = async (): Promise<Response> => {
 };
 
 export const handleNetworkJs = async (): Promise<Response> => {
-  const js = await loadText(NETWORK_JS_URL, "static/network.js", networkJsPromise);
+  const js = await loadText(NETWORK_JS_URL, "static/network.js", getNetworkJs);
   if (!js) {
     return new Response("Not found", {
       status: 404,
@@ -335,7 +374,7 @@ export const handleNetworkJs = async (): Promise<Response> => {
 };
 
 export const handleDocsJs = async (): Promise<Response> => {
-  const js = await loadText(DOCS_JS_URL, "static/docs.js", docsJsPromise);
+  const js = await loadText(DOCS_JS_URL, "static/docs.js", getDocsJs);
   if (!js) {
     return new Response("Not found", {
       status: 404,
@@ -356,7 +395,7 @@ export const handleDocsLlmAgentsMd = async (): Promise<Response> => {
   const md = await loadText(
     DOCS_LLM_AGENTS_MD_URL,
     "static/docs/llms-agents.md",
-    docsLlmAgentsMdPromise,
+    getDocsLlmAgentsMd,
   );
   if (!md) {
     return new Response("Not found", {
@@ -375,7 +414,7 @@ export const handleDocsLlmAgentsMd = async (): Promise<Response> => {
 };
 
 export const handleCompanyLogo = async (): Promise<Response> => {
-  const svg = await loadText(COMPANY_LOGO_URL, "static/company-logo.svg", companyLogoPromise);
+  const svg = await loadText(COMPANY_LOGO_URL, "static/company-logo.svg", getCompanyLogo);
   if (!svg) {
     return new Response("Not found", {
       status: 404,
@@ -393,7 +432,7 @@ export const handleCompanyLogo = async (): Promise<Response> => {
 };
 
 export const handleFavicon32 = async (): Promise<Response> => {
-  const bytes = await loadBytes(FAVICON_32_URL, "favicon-32.png", favicon32Promise);
+  const bytes = await loadBytes(FAVICON_32_URL, "favicon-32.png", getFavicon32);
   if (!bytes) {
     return new Response("Not found", {
       status: 404,
@@ -411,7 +450,7 @@ export const handleFavicon32 = async (): Promise<Response> => {
 };
 
 export const handleFavicon = async (): Promise<Response> => {
-  const bytes = await loadBytes(FAVICON_URL, "favicon.png", faviconPromise);
+  const bytes = await loadBytes(FAVICON_URL, "favicon.png", getFavicon);
   if (!bytes) {
     return new Response("Not found", {
       status: 404,

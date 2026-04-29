@@ -1,14 +1,10 @@
 import { config } from "./config.ts";
-import {
-  checkCodexAuthRefresh,
-  CODEX_KV_KEY,
-  fetchCodexModels,
-  getJwtExpMs,
-  parseCodexAuthFromAuthJson,
-} from "./codex.ts";
+import { CODEX_KV_KEY, fetchCodexModels, getJwtExpMs, parseCodexAuthFromAuthJson } from "./codex.ts";
 import { json } from "./http.ts";
 import { kvPromise } from "./kv.ts";
 import { decodeBase64ToString } from "./utils.ts";
+
+const AUTH_REFRESH_WINDOW_MS = 2 * 60_000;
 
 export const handleHealth = async (): Promise<Response> => {
   const problems: string[] = [];
@@ -73,26 +69,19 @@ export const handleHealthAuth = async (): Promise<Response> => {
     });
   }
 
-  const result = await checkCodexAuthRefresh();
-  if (result.ok) {
-    return json(200, {
-      ok: true,
-      upstream: "chatgpt_codex",
-      refreshed: true,
-      auth: {
-        source: authMeta.source,
-        updated_at_ms: authMeta.updated_at_ms,
-        access_token_exp_ms: getJwtExpMs(result.auth.access_token),
-      },
-    });
-  }
+  const expMs = authMeta.access_token_exp_ms;
+  const now = Date.now();
+  const accessTokenExpired = typeof expMs === "number" ? expMs <= now : null;
+  const refreshRecommended = typeof expMs === "number" ? expMs - now < AUTH_REFRESH_WINDOW_MS : null;
 
-  return json(result.status ?? 503, {
-    ok: false,
+  return json(200, {
+    ok: true,
     upstream: "chatgpt_codex",
-    error: result.error,
-    code: result.code,
-    auth: authMeta,
+    auth: {
+      ...authMeta,
+      access_token_expired: accessTokenExpired,
+      refresh_recommended: refreshRecommended,
+    },
   });
 };
 

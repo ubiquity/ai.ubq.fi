@@ -17,14 +17,18 @@ import {
   handleAdminKernelUsageDelete,
   handleAdminKernelUsageGet,
   handleAdminKernelUsageSet,
+  handleAdminKvMigrationImport,
+  handleAdminKvMigrationValidate,
 } from "./admin.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
 import {
+  authenticateAdmin,
   authenticateClient,
   getKernelAttestationContext,
   handleV1Auth,
   incrementApiKeyUsage,
   requireAdminAuth,
+  requireSuperAdminAuth,
 } from "./auth.ts";
 import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
@@ -42,10 +46,21 @@ import {
   handleResponses,
 } from "./openai.ts";
 import {
+  handlePasskeyLoginFinish,
+  handlePasskeyLoginStart,
+  handlePasskeyLogout,
+  handlePasskeyRegisterFinish,
+  handlePasskeyRegisterStart,
+  handlePasskeySession,
+  handlePasskeyUsersList,
+  handlePasskeyUsersUpdate,
+} from "./passkeys.ts";
+import {
   handleAdminCss,
   handleAdminJs,
   handleAdminPage,
   handleAppJs,
+  handleAuthJs,
   handleChatCss,
   handleChatJs,
   handleChatPage,
@@ -97,6 +112,10 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/admin.js") {
     return withCors(await handleAdminJs());
+  }
+
+  if (req.method === "GET" && path === "/auth.js") {
+    return withCors(await handleAuthJs());
   }
 
   if (req.method === "GET" && path === "/network.js") {
@@ -163,6 +182,44 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleHealthUpstream());
   }
 
+  if (req.method === "POST" && path === "/api/auth/register/start") {
+    const auth = await authenticateAdmin(req);
+    if (!auth.ok) return withCors(auth.response);
+    return withCors(await handlePasskeyRegisterStart(req, { defaultIsAdmin: auth.is_super_admin }));
+  }
+
+  if (req.method === "POST" && path === "/api/auth/register/finish") {
+    return withCors(await handlePasskeyRegisterFinish(req));
+  }
+
+  if (req.method === "POST" && path === "/api/auth/login/start") {
+    return withCors(await handlePasskeyLoginStart(req));
+  }
+
+  if (req.method === "POST" && path === "/api/auth/login/finish") {
+    return withCors(await handlePasskeyLoginFinish(req));
+  }
+
+  if (req.method === "GET" && path === "/api/auth/session") {
+    return withCors(await handlePasskeySession(req));
+  }
+
+  if (req.method === "POST" && path === "/api/auth/logout") {
+    return withCors(await handlePasskeyLogout(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/passkey-users") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handlePasskeyUsersList());
+  }
+
+  if (req.method === "PATCH" && path === "/admin/passkey-users") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handlePasskeyUsersUpdate(req));
+  }
+
   if (req.method === "POST" && path === "/admin/codex/auth") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
@@ -185,6 +242,18 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminCodexPromptsPurge());
+  }
+
+  if (req.method === "POST" && path === "/admin/kv-migration/import") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKvMigrationImport(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/kv-migration/validate") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKvMigrationValidate());
   }
 
   if ((req.method === "GET" || req.method === "POST") && path === "/admin/defaults") {

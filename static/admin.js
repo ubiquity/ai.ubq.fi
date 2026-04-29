@@ -1,37 +1,23 @@
 import "./network.js";
+import {
+  hasStoredPasskeyCredentials,
+  registerPasskey,
+  signInWithPasskey,
+  signOut,
+  storage,
+  STORAGE_KEYS as AUTH_STORAGE_KEYS,
+} from "./auth.js";
 
 const STORAGE_KEYS = {
-  rememberToken: "uos_ai.admin.remember_token",
-  token: "uos_ai.admin.token",
+  rememberToken: AUTH_STORAGE_KEYS.rememberToken,
+  token: AUTH_STORAGE_KEYS.token,
+  passkeyHandle: AUTH_STORAGE_KEYS.passkeyHandle,
+  passkeyCredentialIds: AUTH_STORAGE_KEYS.passkeyCredentialIds,
   expiresPreset: "uos_ai.admin.expires_preset",
   base: "uos_ai.admin.base",
   view: "uos_ai.admin.view",
   defaultsSnapshot: "uos_ai.admin.defaults_snapshot",
   defaultsModels: "uos_ai.admin.defaults_models",
-};
-
-const storage = {
-  get(key) {
-    try {
-      return localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  },
-  set(key, value) {
-    try {
-      localStorage.setItem(key, value);
-    } catch {
-      // ignore
-    }
-  },
-  remove(key) {
-    try {
-      localStorage.removeItem(key);
-    } catch {
-      // ignore
-    }
-  },
 };
 
 const readStorageJson = (key) => {
@@ -73,6 +59,11 @@ const tokenInput = mustGet("admin-token");
 const rememberTokenInput = mustGet("remember-admin-token");
 const showTokenInput = mustGet("show-admin-token");
 const authBadge = mustGet("admin-auth-badge");
+const passkeyHandleInput = mustGet("admin-passkey-handle");
+const passkeyLoginBtn = mustGet("admin-passkey-login");
+const passkeyRegisterBtn = mustGet("admin-passkey-register");
+const signOutBtn = mustGet("admin-sign-out");
+const passkeyStatus = mustGet("admin-passkey-status");
 const baseSelect = mustGet("admin-base");
 const basePreview = mustGet("base-preview");
 
@@ -90,6 +81,8 @@ const keyWindowPreset1w = mustGet("key-window-1w");
 
 const keysBadge = mustGet("keys-badge");
 const keysList = mustGet("keys-list");
+const passkeyUsersBadge = mustGet("passkey-users-badge");
+const passkeyUsersList = mustGet("passkey-users-list");
 
 const keysTabAll = mustGet("keys-tab-all");
 const keysTabActive = mustGet("keys-tab-active");
@@ -97,12 +90,14 @@ const keysTabRevoked = mustGet("keys-tab-revoked");
 
 const viewTabSession = mustGet("view-tab-session");
 const viewTabKeys = mustGet("view-tab-keys");
+const viewTabUsers = mustGet("view-tab-users");
 const viewTabKernel = mustGet("view-tab-kernel");
 const viewTabPubkeys = mustGet("view-tab-pubkeys");
 const viewTabDefaults = mustGet("view-tab-defaults");
 
 const viewSession = mustGet("view-session");
 const viewKeys = mustGet("view-keys");
+const viewUsers = mustGet("view-users");
 const viewKernel = mustGet("view-kernel");
 const viewPubkeys = mustGet("view-pubkeys");
 const viewDefaults = mustGet("view-defaults");
@@ -112,6 +107,9 @@ let currentAdminView = "session";
 let allKeys = [];
 let keysLoading = false;
 let keysLoadedAt = 0;
+let passkeyUsers = [];
+let passkeyUsersLoading = false;
+let passkeyUsersLoadedAt = 0;
 
 const accessApiKeys = mustGet("access-api-keys");
 const accessGithubRepos = mustGet("access-github-repos");
@@ -192,8 +190,19 @@ const setBadge = (badge, state, text) => {
 };
 
 const setAuthBadge = (state, text) => setBadge(authBadge, state, text);
+const setPasskeyStatus = (state, text) => setBadge(passkeyStatus, state, text);
+
+const setSignedInState = (signedIn, options = {}) => {
+  const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
+  passkeyLoginBtn.hidden = signedIn;
+  passkeyRegisterBtn.hidden = deviceRegistered;
+  signOutBtn.hidden = !signedIn;
+  if (signedIn) setPasskeyStatus("ok", "Signed in");
+  else setPasskeyStatus("unknown", "Passkey idle");
+};
 const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
 const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
+const setPasskeyUsersBadge = (state, text) => setBadge(passkeyUsersBadge, state, text);
 const setDefaultsBadge = (state, text) => setBadge(defaultsBadge, state, text);
 const setKernelListBadge = (state, text) => setBadge(kernelListBadge, state, text);
 const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text);
@@ -232,7 +241,21 @@ const updateBasePreview = () => {
   basePreview.textContent = resolveBaseUrl();
 };
 
+const isPasskeySameOrigin = () => new URL(resolveBaseUrl()).origin === globalThis.location?.origin;
+
+const getPasskeyBaseUrl = () => {
+  if (isPasskeySameOrigin()) return resolveBaseUrl();
+  throw new Error("Open this target origin to use passkeys.");
+};
+
 const getAdminToken = () => tokenInput.value.trim();
+
+const getPasskeyHandle = () => passkeyHandleInput.value.trim();
+
+const logPasskeyUsername = (handle) => {
+  const username = (handle ?? "").trim();
+  if (username) console.info("[ai.ubq.fi] passkey username:", username);
+};
 
 const persistTokenIfEnabled = () => {
   if (!rememberTokenInput.checked) return;
@@ -241,10 +264,36 @@ const persistTokenIfEnabled = () => {
   else storage.remove(STORAGE_KEYS.token);
 };
 
+const persistPasskeyHandle = () => {
+  const handle = getPasskeyHandle();
+  if (handle) storage.set(STORAGE_KEYS.passkeyHandle, handle);
+  else storage.remove(STORAGE_KEYS.passkeyHandle);
+};
+
+const schedulePasskeyHandlePersist = debounce(() => {
+  persistPasskeyHandle();
+}, 500);
+
+const setPasskeyHandleValue = (handle) => {
+  passkeyHandleInput.value = handle ?? "";
+  persistPasskeyHandle();
+  logPasskeyUsername(handle);
+};
+
+const applySignedInToken = (token) => {
+  tokenInput.value = token;
+  rememberTokenInput.checked = true;
+  storage.set(STORAGE_KEYS.rememberToken, "1");
+  storage.set(STORAGE_KEYS.token, token);
+  setSignedInState(true);
+  tokenInput.dispatchEvent(new Event("input", { bubbles: true }));
+};
+
 const restoreSettings = () => {
   const remember = storage.get(STORAGE_KEYS.rememberToken) === "1";
   rememberTokenInput.checked = remember;
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
+  passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
   baseSelect.value = storage.get(STORAGE_KEYS.base) ?? "local";
   updateBasePreview();
@@ -261,6 +310,14 @@ const setKeyListMessage = (text) => {
   message.dataset.empty = "keys";
   message.textContent = text;
   keysList.appendChild(message);
+};
+
+const setPasskeyUsersMessage = (text) => {
+  passkeyUsersList.textContent = "";
+  const message = document.createElement("p");
+  message.dataset.empty = "passkey-users";
+  message.textContent = text;
+  passkeyUsersList.appendChild(message);
 };
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -361,6 +418,7 @@ const formatAuthMethodLabel = (method) => {
     auth_tokens_allowlist: "Allowlist token",
     kv_api_key: "API key",
     github_token: "GitHub token",
+    passkey_session: "Passkey",
   };
   return lookup[method] ?? method.replace(/_/g, " ");
 };
@@ -3114,6 +3172,163 @@ const renderKeys = (keys, view = "all") => {
   updateAccessApiKeysSummary();
 };
 
+const renderPasskeyUsers = (users) => {
+  passkeyUsersList.textContent = "";
+  if (!Array.isArray(users) || users.length === 0) {
+    setPasskeyUsersMessage("No passkey users yet.");
+    setPasskeyUsersBadge("ok", "No users");
+    return;
+  }
+
+  users.forEach((user, index) => {
+    const row = document.createElement("article");
+    row.dataset.key = "passkey-user";
+    row.dataset.state = user.is_admin ? "active" : "warning";
+    row.style.setProperty("--i", index);
+    row.setAttribute("role", "listitem");
+
+    const main = document.createElement("div");
+    main.dataset.keyMain = "main";
+
+    const header = document.createElement("header");
+    header.dataset.keyHeader = "header";
+
+    const title = document.createElement("h3");
+    title.dataset.keyTitle = "title";
+    title.textContent = typeof user.handle === "string" && user.handle ? user.handle : "Unknown username";
+
+    const controls = document.createElement("div");
+    controls.dataset.keyControls = "controls";
+
+    const status = document.createElement("span");
+    status.dataset.badge = "role";
+    status.dataset.state = user.is_admin ? "ok" : "unknown";
+    status.textContent = user.is_admin ? "Admin" : "User";
+
+    const adminLabel = document.createElement("label");
+    adminLabel.dataset.check = "admin";
+    const adminCheckbox = document.createElement("input");
+    adminCheckbox.type = "checkbox";
+    adminCheckbox.checked = user.is_admin === true;
+    adminCheckbox.dataset.passkeyUserAdmin = user.id;
+    const adminText = document.createElement("span");
+    adminText.textContent = "Admin";
+    adminLabel.appendChild(adminCheckbox);
+    adminLabel.appendChild(adminText);
+
+    adminCheckbox.addEventListener("change", () => {
+      void updatePasskeyUserAdmin(user.id, adminCheckbox.checked, adminCheckbox);
+    });
+
+    controls.appendChild(status);
+    controls.appendChild(adminLabel);
+    header.appendChild(title);
+    header.appendChild(controls);
+
+    const infoRow = document.createElement("div");
+    infoRow.dataset.keyInfo = "info";
+    appendKeyInfo(infoRow, "User ID", user.id ?? "unknown", { mono: true });
+    appendKeyInfo(infoRow, "Passkeys", formatNumber(user.credential_count ?? 0));
+    appendKeyInfo(infoRow, "Updated", formatDate(user.updated_at_ms));
+    appendKeyInfo(infoRow, "Created", formatDate(user.created_at_ms));
+
+    main.appendChild(header);
+    main.appendChild(infoRow);
+    row.appendChild(main);
+    passkeyUsersList.appendChild(row);
+  });
+
+  setPasskeyUsersBadge("ok", formatPlural(users.length, "user"));
+};
+
+const refreshPasskeyUsers = async () => {
+  const token = getAdminToken();
+  if (!token) {
+    setPasskeyUsersBadge("bad", "Missing token");
+    setPasskeyUsersMessage("Paste a fallback admin token to manage passkey users.");
+    return;
+  }
+
+  if (passkeyUsersLoading) return;
+  passkeyUsersLoading = true;
+  setPasskeyUsersBadge("unknown", "Loading...");
+
+  try {
+    const res = await fetch(apiUrl("/admin/passkey-users"), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setPasskeyUsersBadge("bad", data?.error?.message ?? "Error");
+      setPasskeyUsersMessage(
+        res.status === 403
+          ? "Super admin token required. Paste a Deno/admin token in the fallback token field."
+          : "Failed to load passkey users.",
+      );
+      return;
+    }
+
+    passkeyUsers = Array.isArray(data?.data) ? data.data : [];
+    passkeyUsersLoadedAt = Date.now();
+    renderPasskeyUsers(passkeyUsers);
+  } catch {
+    passkeyUsers = [];
+    setPasskeyUsersBadge("bad", "Offline");
+    setPasskeyUsersMessage("Failed to load passkey users.");
+  } finally {
+    passkeyUsersLoading = false;
+  }
+};
+
+const ensurePasskeyUsersLoaded = async () => {
+  if (currentAdminView !== "users") return;
+  if (passkeyUsersLoading) return;
+  if (passkeyUsersLoadedAt && Date.now() - passkeyUsersLoadedAt < 10_000) {
+    renderPasskeyUsers(passkeyUsers);
+    return;
+  }
+  await refreshPasskeyUsers();
+};
+
+const updatePasskeyUserAdmin = async (id, isAdmin, checkbox) => {
+  const token = getAdminToken();
+  if (!token) {
+    setPasskeyUsersBadge("bad", "Missing token");
+    checkbox.checked = !isAdmin;
+    tokenInput.focus();
+    return;
+  }
+
+  checkbox.disabled = true;
+  setPasskeyUsersBadge("unknown", "Saving...");
+  try {
+    const res = await fetch(apiUrl("/admin/passkey-users"), {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ id, is_admin: isAdmin }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      checkbox.checked = !isAdmin;
+      setPasskeyUsersBadge("bad", data?.error?.message ?? "Error");
+      return;
+    }
+    const updated = data?.user;
+    passkeyUsers = passkeyUsers.map((user) => (user.id === id && updated ? updated : user));
+    renderPasskeyUsers(passkeyUsers);
+    setPasskeyUsersBadge("ok", "Saved");
+  } catch {
+    checkbox.checked = !isAdmin;
+    setPasskeyUsersBadge("bad", "Offline");
+  } finally {
+    checkbox.disabled = false;
+  }
+};
+
 const setTabState = (tab, selected) => {
   tab.setAttribute("aria-selected", selected ? "true" : "false");
   tab.tabIndex = selected ? 0 : -1;
@@ -3122,6 +3337,7 @@ const setTabState = (tab, selected) => {
 const viewTabs = {
   session: viewTabSession,
   keys: viewTabKeys,
+  users: viewTabUsers,
   kernel: viewTabKernel,
   pubkeys: viewTabPubkeys,
   defaults: viewTabDefaults,
@@ -3130,6 +3346,7 @@ const viewTabs = {
 const viewSections = {
   session: viewSession,
   keys: viewKeys,
+  users: viewUsers,
   kernel: viewKernel,
   pubkeys: viewPubkeys,
   defaults: viewDefaults,
@@ -3147,6 +3364,9 @@ const setAdminView = (view) => {
   storage.set(STORAGE_KEYS.view, nextView);
   if (nextView === "keys") {
     void ensureKeysLoaded();
+  }
+  if (nextView === "users") {
+    void ensurePasskeyUsersLoaded();
   }
   if (nextView === "defaults") {
     void loadDefaults();
@@ -3198,6 +3418,7 @@ const testAdminToken = async () => {
   const token = getAdminToken();
   if (!token) {
     setAuthBadge("bad", "Missing token");
+    setSignedInState(false);
     tokenInput.focus();
     return;
   }
@@ -3211,22 +3432,27 @@ const testAdminToken = async () => {
     const data = await res.json().catch(() => null);
     if (!res.ok) {
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
+      setSignedInState(false);
       return;
     }
     if (!data?.auth?.is_admin) {
       setAuthBadge("bad", "Not admin");
+      setSignedInState(true);
       return;
     }
     const kind = data?.auth?.method?.kind;
     setAuthBadge("ok", kind ? `OK (${formatAuthMethodLabel(kind)})` : "OK");
+    setSignedInState(true, { deviceRegistered: kind === "passkey_session" || hasStoredPasskeyCredentials() });
   } catch {
     setAuthBadge("bad", "Offline");
+    setSignedInState(false);
   }
 };
 
 const scheduleTokenCheck = debounce(() => {
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
+    setSignedInState(false);
     return;
   }
   void testAdminToken();
@@ -3765,8 +3991,10 @@ const scheduleDefaultsSave = debounce(() => {
 
 restoreSettings();
 setAuthBadge("unknown", "Not checked");
+setSignedInState(false);
 setCreateBadge("unknown", "Idle");
 setKeysBadge("unknown", "Not loaded");
+setPasskeyUsersBadge("unknown", "Not loaded");
 setDefaultsBadge("unknown", "Idle");
 setKernelListBadge("unknown", "Not loaded");
 setKernelNewBadge("unknown", "Idle");
@@ -3774,6 +4002,7 @@ setKernelQueueBadge("unknown", "Not loaded");
 setKernelPubKeysBadge("unknown", "Not loaded");
 setKernelPubKeyCreateBadge("unknown", "Idle");
 setKeyListMessage("Paste an admin token to load API keys.");
+setPasskeyUsersMessage("Paste a fallback admin token to manage passkey users.");
 setKernelListMessage(getKernelListMissingTokenMessage());
 setKernelQueueMessage(getKernelQueueMissingTokenMessage());
 setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
@@ -3783,7 +4012,10 @@ switchKeysView("all");
 setKernelNewPanelOpen(false);
 resetKernelPubKeyForm();
 setAdminView(storage.get(STORAGE_KEYS.view) ?? "session");
-if (getAdminToken()) scheduleTokenCheck();
+if (getAdminToken()) {
+  setAuthBadge("unknown", "Checking...");
+  scheduleTokenCheck();
+}
 
 showTokenInput.addEventListener("change", () => {
   tokenInput.type = showTokenInput.checked ? "text" : "password";
@@ -3792,13 +4024,17 @@ showTokenInput.addEventListener("change", () => {
 tokenInput.addEventListener("input", () => {
   persistTokenIfEnabled();
   keysLoadedAt = 0;
+  passkeyUsersLoadedAt = 0;
   defaultsLoaded = false;
   kernelQueueLoadedAt = 0;
   kernelPubKeysLoadedAt = 0;
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
+    setSignedInState(false);
     setKeysBadge("unknown", "Not loaded");
     setKeyListMessage("Paste an admin token to load API keys.");
+    setPasskeyUsersBadge("unknown", "Not loaded");
+    setPasskeyUsersMessage("Paste a fallback admin token to manage passkey users.");
     setKernelListBadge("unknown", "Not loaded");
     setKernelListMessage(getKernelListMissingTokenMessage());
     setKernelQueueBadge("unknown", "Not loaded");
@@ -3806,6 +4042,7 @@ tokenInput.addEventListener("input", () => {
     setKernelPubKeysBadge("unknown", "Not loaded");
     setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
     allKeys = [];
+    passkeyUsers = [];
     kernelQueueItems = [];
     kernelPubKeys = [];
     kernelPubKeysLoadedAt = 0;
@@ -3815,6 +4052,9 @@ tokenInput.addEventListener("input", () => {
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
     void ensureKeysLoaded();
+  }
+  if (currentAdminView === "users") {
+    void ensurePasskeyUsersLoaded();
   }
   if (currentAdminView === "defaults") {
     void loadDefaults();
@@ -3837,14 +4077,103 @@ rememberTokenInput.addEventListener("change", () => {
   }
   storage.remove(STORAGE_KEYS.rememberToken);
   storage.remove(STORAGE_KEYS.token);
+  setSignedInState(false);
+});
+
+passkeyHandleInput.addEventListener("input", () => {
+  schedulePasskeyHandlePersist();
+});
+
+passkeyLoginBtn.addEventListener("click", async () => {
+  setPasskeyStatus("unknown", "Signing in...");
+  passkeyLoginBtn.disabled = true;
+  passkeyRegisterBtn.disabled = true;
+  try {
+    const result = await signInWithPasskey({
+      handle: passkeyHandleInput.value,
+      baseUrl: getPasskeyBaseUrl(),
+    });
+    if (result.handle) setPasskeyHandleValue(result.handle);
+    applySignedInToken(result.token);
+    setPasskeyStatus("ok", "Passkey signed in");
+  } catch (error) {
+    setPasskeyStatus("bad", error?.message ?? "Passkey sign-in failed");
+  } finally {
+    passkeyLoginBtn.disabled = false;
+    passkeyRegisterBtn.disabled = false;
+  }
+});
+
+passkeyRegisterBtn.addEventListener("click", async () => {
+  setPasskeyStatus("unknown", "Registering...");
+  passkeyLoginBtn.disabled = true;
+  passkeyRegisterBtn.disabled = true;
+  try {
+    const result = await registerPasskey({
+      handle: passkeyHandleInput.value,
+      token: tokenInput.value,
+      baseUrl: getPasskeyBaseUrl(),
+    });
+    if (result.handle) setPasskeyHandleValue(result.handle);
+    applySignedInToken(result.token);
+    setPasskeyStatus("ok", "Passkey registered");
+  } catch (error) {
+    setPasskeyStatus("bad", error?.message ?? "Passkey registration failed");
+  } finally {
+    passkeyLoginBtn.disabled = false;
+    passkeyRegisterBtn.disabled = false;
+  }
+});
+
+signOutBtn.addEventListener("click", async () => {
+  const token = getAdminToken();
+  signOutBtn.disabled = true;
+  try {
+    await signOut({ token, baseUrl: resolveBaseUrl() });
+  } finally {
+    tokenInput.value = "";
+    rememberTokenInput.checked = false;
+    setAuthBadge("bad", "Missing token");
+    setSignedInState(false);
+    tokenInput.dispatchEvent(new Event("input", { bubbles: true }));
+    signOutBtn.disabled = false;
+  }
+});
+
+globalThis.addEventListener("storage", (event) => {
+  if (event.key === STORAGE_KEYS.rememberToken) {
+    rememberTokenInput.checked = event.newValue === "1";
+    return;
+  }
+  if (event.key === STORAGE_KEYS.passkeyHandle) {
+    passkeyHandleInput.value = event.newValue ?? "";
+    return;
+  }
+  if (event.key === STORAGE_KEYS.passkeyCredentialIds) {
+    setSignedInState(Boolean(getAdminToken()));
+    return;
+  }
+  if (event.key !== STORAGE_KEYS.token) return;
+  if (event.newValue === null) {
+    tokenInput.value = "";
+    setAuthBadge("bad", "Missing token");
+    setSignedInState(false);
+    tokenInput.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+  if (!rememberTokenInput.checked) return;
+  tokenInput.value = event.newValue ?? "";
+  tokenInput.dispatchEvent(new Event("input", { bubbles: true }));
 });
 
 baseSelect.addEventListener("change", () => {
   storage.set(STORAGE_KEYS.base, getBaseChoice());
   updateBasePreview();
   setAuthBadge("unknown", "Not checked");
+  setSignedInState(false);
   setCreateBadge("unknown", "Idle");
   setKeysBadge("unknown", "Not loaded");
+  setPasskeyUsersBadge("unknown", "Not loaded");
   setDefaultsBadge("unknown", "Idle");
   setKernelListBadge("unknown", "Not loaded");
   setKernelNewBadge("unknown", "Idle");
@@ -3852,6 +4181,7 @@ baseSelect.addEventListener("change", () => {
   setKernelPubKeysBadge("unknown", "Not loaded");
   setKernelPubKeyCreateBadge("unknown", "Idle");
   setKeyListMessage("Target changed. Loading API keys...");
+  setPasskeyUsersMessage("Target changed. Loading passkey users...");
   setKernelListMessage(getKernelListTargetChangedMessage());
   setKernelQueueMessage(getKernelQueueTargetChangedMessage());
   setKernelPubKeysMessage("Target changed. Loading kernel attestation keys...");
@@ -3860,6 +4190,8 @@ baseSelect.addEventListener("change", () => {
   resetKernelPubKeyForm();
   allKeys = [];
   keysLoadedAt = 0;
+  passkeyUsers = [];
+  passkeyUsersLoadedAt = 0;
   defaultsLoaded = false;
   kernelQueueItems = [];
   kernelQueueLoadedAt = 0;
@@ -3868,6 +4200,9 @@ baseSelect.addEventListener("change", () => {
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
     void ensureKeysLoaded();
+  }
+  if (currentAdminView === "users") {
+    void ensurePasskeyUsersLoaded();
   }
   if (currentAdminView === "defaults") {
     void loadDefaults();
@@ -3900,6 +4235,7 @@ keyWindowPreset1w.addEventListener("click", () => {
 
 viewTabSession.addEventListener("click", () => setAdminView("session"));
 viewTabKeys.addEventListener("click", () => setAdminView("keys"));
+viewTabUsers.addEventListener("click", () => setAdminView("users"));
 viewTabKernel.addEventListener("click", () => setAdminView("kernel"));
 viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys"));
 viewTabDefaults.addEventListener("click", () => setAdminView("defaults"));

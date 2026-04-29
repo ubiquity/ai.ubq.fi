@@ -3,7 +3,6 @@ import {
   CODEX_KV_KEY,
   CodexError,
   type CodexModelsSnapshot,
-  fetchCodexModels,
   getCodexModelsSnapshotDefaultModel,
   getJwtExpMs,
   loadCodexModelsSnapshot,
@@ -56,6 +55,12 @@ import {
   setKernelUsageLimit,
 } from "./kernel_usage.ts";
 import { listKernelPolicyQueue } from "./kernel_policy_queue.ts";
+import {
+  defaultIncludeLegacyForProfile,
+  importKvMigrationLines,
+  type KvMigrationProfile,
+  validateKvMigrationTarget,
+} from "./kv_migration.ts";
 import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
@@ -64,6 +69,7 @@ import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "./types.ts"
 const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
 const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
 const UOS_CODEX_PROMPTS_CHUNK_PREFIX = ["uos_ai", "codex_instructions_chunk"] as const;
+const MAX_KV_MIGRATION_BODY_BYTES = 5 * 1024 * 1024;
 
 const resolveDefaultModel = async (entryValue: unknown): Promise<string> => {
   const configured = typeof entryValue === "string" ? entryValue.trim() : "";
@@ -89,6 +95,25 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   const clientVersion = isRecord(modelsPayload)
     ? getString(modelsPayload.client_version) ?? getString(modelsPayload.clientVersion)
     : null;
+  const snapshot = normalizeCodexModelsPayload(modelsPayload);
+  if (!snapshot) {
+    return openaiError(
+      400,
+      "models must include a non-empty Codex CLI models array",
+      "invalid_request_error",
+    );
+  }
+  const snapshotSize = estimateJsonSize(snapshot);
+  if (snapshotSize === null) {
+    return openaiError(400, "models payload could not be serialized", "invalid_request_error");
+  }
+  if (snapshotSize > SAFE_KV_BYTES) {
+    return openaiError(
+      413,
+      `models snapshot too large (${snapshotSize} bytes; max ${MAX_KV_BYTES}).`,
+      "invalid_request_error",
+    );
+  }
 
   let validated: Awaited<ReturnType<typeof validateCodexAuthJson>>;
   try {
@@ -114,60 +139,16 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   await kv.set(CODEX_KV_KEY, validated.auth);
   cacheCodexAuth(validated.auth);
 
-  let modelsStored:
-    | { count: number; source: string; updated_at_ms: number; client_version: string | null }
-    | null = null;
-  try {
-    const upstream = await fetchCodexModels({ clientVersion });
-    if (upstream.ok) {
-      const text = await upstream.text().catch(() => "");
-      let parsed: unknown = null;
-      try {
-        parsed = text ? JSON.parse(text) : null;
-      } catch {
-        parsed = null;
-      }
-      const snapshot = isRecord(parsed)
-        ? normalizeCodexModelsPayload({
-          ...parsed,
-          source: "chatgpt_codex",
-          client_version: clientVersion ?? undefined,
-          updated_at_ms: Date.now(),
-        })
-        : null;
-      if (!snapshot) {
-        console.warn("[ai.ubq.fi] Codex models payload did not include a model list; skipping KV store.");
-      } else {
-        const size = estimateJsonSize(snapshot);
-        if (size === null) {
-          return openaiError(400, "models payload could not be serialized", "invalid_request_error");
-        }
-        if (size > SAFE_KV_BYTES) {
-          return openaiError(
-            413,
-            `models snapshot too large (${size} bytes; max ${MAX_KV_BYTES}).`,
-            "invalid_request_error",
-          );
-        }
-        const stored = await storeCodexModelsSnapshot(snapshot);
-        if (!stored) {
-          return openaiError(500, "Deno KV is not available; cannot persist Codex models", "server_error");
-        }
-        modelsStored = {
-          count: snapshot.models.length,
-          source: snapshot.source,
-          updated_at_ms: snapshot.updated_at_ms,
-          client_version: snapshot.client_version ?? null,
-        };
-      }
-    } else {
-      const text = await upstream.text().catch(() => "");
-      const snippet = (text || upstream.statusText).trim().slice(0, 400);
-      console.warn(`[ai.ubq.fi] Codex models fetch failed (${upstream.status}): ${snippet}`);
-    }
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to fetch Codex models after auth upload:", error);
+  const storedModels = await storeCodexModelsSnapshot(snapshot);
+  if (!storedModels) {
+    return openaiError(500, "Deno KV is not available; cannot persist Codex models", "server_error");
   }
+  const modelsStored = {
+    count: snapshot.models.length,
+    source: snapshot.source,
+    updated_at_ms: snapshot.updated_at_ms,
+    client_version: snapshot.client_version ?? null,
+  };
 
   const expMs = getJwtExpMs(validated.auth.access_token);
   return json(
@@ -247,6 +228,76 @@ export const handleAdminCodexPromptsPurge = async (): Promise<Response> => {
   }
 
   return json(200, { deleted });
+};
+
+const parseBooleanParam = (url: URL, name: string): boolean | null => {
+  const value = url.searchParams.get(name);
+  if (value === null) return null;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
+};
+
+const parseMigrationProfile = (url: URL): KvMigrationProfile | null => {
+  const profile = url.searchParams.get("profile")?.trim() || "prod";
+  if (profile === "local" || profile === "prod") return profile;
+  return null;
+};
+
+function* splitNdjsonLines(text: string): Iterable<string> {
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim()) yield line;
+  }
+}
+
+export const handleAdminKvMigrationImport = async (req: Request): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) return openaiError(500, "Deno KV is not available; cannot import migration", "server_error");
+
+  const url = new URL(req.url);
+  const profile = parseMigrationProfile(url);
+  if (!profile) return openaiError(400, "profile must be local or prod", "invalid_request_error");
+
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_KV_MIGRATION_BODY_BYTES) {
+    return openaiError(413, "Migration body is too large", "invalid_request_error");
+  }
+
+  const body = await req.text();
+  if (new TextEncoder().encode(body).length > MAX_KV_MIGRATION_BODY_BYTES) {
+    return openaiError(413, "Migration body is too large", "invalid_request_error");
+  }
+
+  const includeCache = parseBooleanParam(url, "include_cache") === true;
+  const includeLegacy = parseBooleanParam(url, "include_legacy") ?? defaultIncludeLegacyForProfile(profile);
+  const overwrite = parseBooleanParam(url, "overwrite") === true;
+  const write = parseBooleanParam(url, "write") === true;
+  const dryRun = parseBooleanParam(url, "dry_run") ?? !write;
+  if (dryRun && write) return openaiError(400, "dry_run and write are mutually exclusive", "invalid_request_error");
+
+  const result = await importKvMigrationLines(kv, splitNdjsonLines(body), {
+    profile,
+    includeCache,
+    includeLegacy,
+    overwrite,
+    dryRun,
+  });
+
+  return json(200, {
+    profile,
+    include_cache: includeCache,
+    include_legacy: includeLegacy,
+    overwrite,
+    dry_run: dryRun,
+    ...result,
+  });
+};
+
+export const handleAdminKvMigrationValidate = async (): Promise<Response> => {
+  const kv = await kvPromise;
+  if (!kv) return openaiError(500, "Deno KV is not available; cannot validate migration", "server_error");
+  return json(200, await validateKvMigrationTarget(kv));
 };
 
 export const handleAdminDefaults = async (req: Request): Promise<Response> => {

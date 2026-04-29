@@ -1,35 +1,21 @@
 import "./network.js";
+import {
+  hasStoredPasskeyCredentials,
+  registerPasskey,
+  signInWithPasskey,
+  signOut,
+  storage,
+  STORAGE_KEYS as AUTH_STORAGE_KEYS,
+} from "./auth.js";
 
 const STORAGE_KEYS = {
-  rememberToken: "uos_ai.playground.remember_token",
-  token: "uos_ai.playground.token",
+  rememberToken: AUTH_STORAGE_KEYS.rememberToken,
+  token: AUTH_STORAGE_KEYS.token,
+  passkeyHandle: AUTH_STORAGE_KEYS.passkeyHandle,
+  passkeyCredentialIds: AUTH_STORAGE_KEYS.passkeyCredentialIds,
   model: "uos_ai.playground.model",
   reasoningEffort: "uos_ai.playground.reasoning_effort",
   systemPrompt: "uos_ai.playground.system_prompt",
-};
-
-const storage = {
-  get(key) {
-    try {
-      return localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  },
-  set(key, value) {
-    try {
-      localStorage.setItem(key, value);
-    } catch {
-      // ignore
-    }
-  },
-  remove(key) {
-    try {
-      localStorage.removeItem(key);
-    } catch {
-      // ignore
-    }
-  },
 };
 
 const PANEL_STATE_PREFIX = "uos_ai.playground.panel.";
@@ -54,6 +40,11 @@ const mustGet = (id) => {
 const tokenInput = mustGet("token");
 const rememberTokenInput = mustGet("remember-token");
 const showTokenInput = mustGet("show-token");
+const passkeyHandleInput = mustGet("passkey-handle");
+const passkeyLoginBtn = mustGet("passkey-login");
+const passkeyRegisterBtn = mustGet("passkey-register");
+const signOutBtn = mustGet("sign-out");
+const passkeyStatus = mustGet("passkey-status");
 const modelInput = mustGet("model");
 const reasoningSelect = mustGet("reasoning-effort");
 const systemInput = mustGet("system");
@@ -71,6 +62,25 @@ const DEFAULT_MODEL = "";
 const setAuthBadge = (state, text) => {
   authBadge.dataset.state = state;
   authBadge.textContent = text;
+};
+
+const setPasskeyStatus = (state, text) => {
+  passkeyStatus.dataset.state = state;
+  passkeyStatus.textContent = text;
+};
+
+const setSignedInState = (signedIn, options = {}) => {
+  const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
+  passkeyLoginBtn.hidden = signedIn;
+  passkeyRegisterBtn.hidden = deviceRegistered;
+  signOutBtn.hidden = !signedIn;
+  if (signedIn) setPasskeyStatus("ok", "Signed in");
+  else setPasskeyStatus("unknown", "Passkey idle");
+};
+
+const logPasskeyUsername = (handle) => {
+  const username = (handle ?? "").trim();
+  if (username) console.info("[ai.ubq.fi] passkey username:", username);
 };
 
 let modelsRequestId = 0;
@@ -266,6 +276,7 @@ const checkAuthToken = async () => {
   const token = tokenInput.value.trim();
   if (!token) {
     setAuthBadge("bad", "Missing token");
+    setSignedInState(false);
     resetModelCatalog();
     setReasoningPlaceholder("Missing token");
     return;
@@ -279,16 +290,20 @@ const checkAuthToken = async () => {
     if (requestId !== authCheckId) return;
     if (!res.ok) {
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
+      setSignedInState(false);
       resetModelCatalog();
       setReasoningPlaceholder("Invalid token");
       return;
     }
     const mode = data?.auth?.mode;
+    const methodKind = data?.auth?.method?.kind;
     setAuthBadge("ok", mode ? `OK (${mode})` : "OK");
+    setSignedInState(true, { deviceRegistered: methodKind === "passkey_session" || hasStoredPasskeyCredentials() });
     void loadModels(token);
   } catch {
     if (requestId !== authCheckId) return;
     setAuthBadge("bad", "Offline");
+    setSignedInState(false);
   }
 };
 
@@ -313,6 +328,20 @@ const scheduleTokenPersist = debounce(() => {
   persistTokenIfEnabled();
 }, 500);
 
+const persistPasskeyHandle = () => {
+  persistSetting(STORAGE_KEYS.passkeyHandle, passkeyHandleInput.value);
+};
+
+const schedulePasskeyHandlePersist = debounce(() => {
+  persistPasskeyHandle();
+}, 500);
+
+const setPasskeyHandleValue = (handle) => {
+  passkeyHandleInput.value = handle ?? "";
+  persistPasskeyHandle();
+  logPasskeyUsername(handle);
+};
+
 const scheduleModelPersist = debounce(() => {
   persistSetting(STORAGE_KEYS.model, modelInput.value);
 }, 500);
@@ -325,6 +354,7 @@ const restoreSettings = () => {
   const remember = storage.get(STORAGE_KEYS.rememberToken) === "1";
   rememberTokenInput.checked = remember;
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
+  passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
 
   preferredModel = storage.get(STORAGE_KEYS.model) ?? DEFAULT_MODEL;
   setModelPlaceholder("Loading models...");
@@ -355,6 +385,7 @@ const bindPanelPersistence = () => {
 restoreSettings();
 restorePanelStates();
 bindPanelPersistence();
+setSignedInState(false);
 if (tokenInput.value.trim()) {
   setAuthBadge("unknown", "Checking...");
   void checkAuthToken();
@@ -374,6 +405,7 @@ tokenInput.addEventListener("input", () => {
   const token = tokenInput.value.trim();
   if (!token) {
     setAuthBadge("bad", "Missing token");
+    setSignedInState(false);
     resetModelCatalog();
     setReasoningPlaceholder("No model selected");
     return;
@@ -391,6 +423,114 @@ rememberTokenInput.addEventListener("change", () => {
   }
   storage.remove(STORAGE_KEYS.rememberToken);
   storage.remove(STORAGE_KEYS.token);
+  setSignedInState(false);
+});
+
+passkeyHandleInput.addEventListener("input", () => {
+  schedulePasskeyHandlePersist();
+});
+
+const applySignedInToken = (token) => {
+  tokenInput.value = token;
+  rememberTokenInput.checked = true;
+  storage.set(STORAGE_KEYS.rememberToken, "1");
+  storage.set(STORAGE_KEYS.token, token);
+  setSignedInState(true);
+  authCheckId += 1;
+  modelsRequestId += 1;
+  setAuthBadge("unknown", "Checking...");
+  void checkAuthToken();
+};
+
+passkeyLoginBtn.addEventListener("click", async () => {
+  setPasskeyStatus("unknown", "Signing in...");
+  passkeyLoginBtn.disabled = true;
+  passkeyRegisterBtn.disabled = true;
+  try {
+    const result = await signInWithPasskey({ handle: passkeyHandleInput.value });
+    if (result.handle) setPasskeyHandleValue(result.handle);
+    applySignedInToken(result.token);
+    setPasskeyStatus("ok", "Passkey signed in");
+  } catch (error) {
+    setPasskeyStatus("bad", error?.message ?? "Passkey sign-in failed");
+  } finally {
+    passkeyLoginBtn.disabled = false;
+    passkeyRegisterBtn.disabled = false;
+  }
+});
+
+passkeyRegisterBtn.addEventListener("click", async () => {
+  setPasskeyStatus("unknown", "Registering...");
+  passkeyLoginBtn.disabled = true;
+  passkeyRegisterBtn.disabled = true;
+  try {
+    const result = await registerPasskey({
+      handle: passkeyHandleInput.value,
+      token: tokenInput.value,
+    });
+    if (result.handle) setPasskeyHandleValue(result.handle);
+    applySignedInToken(result.token);
+    setPasskeyStatus("ok", "Passkey registered");
+  } catch (error) {
+    setPasskeyStatus("bad", error?.message ?? "Passkey registration failed");
+  } finally {
+    passkeyLoginBtn.disabled = false;
+    passkeyRegisterBtn.disabled = false;
+  }
+});
+
+signOutBtn.addEventListener("click", async () => {
+  const token = tokenInput.value.trim();
+  signOutBtn.disabled = true;
+  try {
+    await signOut({ token });
+  } finally {
+    tokenInput.value = "";
+    rememberTokenInput.checked = false;
+    authCheckId += 1;
+    modelsRequestId += 1;
+    setAuthBadge("bad", "Missing token");
+    setSignedInState(false);
+    resetModelCatalog();
+    signOutBtn.disabled = false;
+  }
+});
+
+globalThis.addEventListener("storage", (event) => {
+  if (event.key === STORAGE_KEYS.rememberToken) {
+    rememberTokenInput.checked = event.newValue === "1";
+    return;
+  }
+  if (event.key === STORAGE_KEYS.passkeyHandle) {
+    passkeyHandleInput.value = event.newValue ?? "";
+    return;
+  }
+  if (event.key === STORAGE_KEYS.passkeyCredentialIds) {
+    setSignedInState(Boolean(tokenInput.value.trim()));
+    return;
+  }
+  if (event.key !== STORAGE_KEYS.token) return;
+  if (event.newValue === null) {
+    tokenInput.value = "";
+    authCheckId += 1;
+    modelsRequestId += 1;
+    setAuthBadge("bad", "Missing token");
+    setSignedInState(false);
+    resetModelCatalog();
+    return;
+  }
+  if (!rememberTokenInput.checked) return;
+  tokenInput.value = event.newValue ?? "";
+  authCheckId += 1;
+  modelsRequestId += 1;
+  if (tokenInput.value.trim()) {
+    setAuthBadge("unknown", "Checking...");
+    void checkAuthToken();
+    return;
+  }
+  setAuthBadge("bad", "Missing token");
+  setSignedInState(false);
+  resetModelCatalog();
 });
 
 const handleModelChange = () => {
@@ -471,8 +611,8 @@ const extractAssistantDelta = (payload) => {
 const sendPrompt = async () => {
   const token = tokenInput.value.trim();
   if (!token) {
-    appendMessage("error", "Missing gateway token. Paste one under “Auth” first.");
-    tokenInput.focus();
+    appendMessage("error", "Sign in with a passkey first, or use the fallback gateway token under Auth.");
+    passkeyLoginBtn.focus();
     return;
   }
 

@@ -253,44 +253,73 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
   });
 });
 
-Deno.test("openai: default model falls back to upstream models when snapshot is missing", async () => {
+Deno.test("openai: default model requires configured model or stored snapshot", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const defaultModelKey = keyToString(DEFAULT_MODEL_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
   const previousDefault = kvStore.get(defaultModelKey);
-  const dynamicDefaultModel = "gpt-5-upstream-default";
   kvStore.delete(snapshotKey);
   kvStore.delete(defaultModelKey);
 
-  let requestedModelsUrl = "";
-  let recordedResponseBody: Record<string, unknown> | null = null;
-
   try {
     const response = await withFetchMock(
-      (url, bodyText) => {
-        if (url.includes("/models")) {
-          requestedModelsUrl = url;
-          return new Response(
-            JSON.stringify({
-              models: [{
-                slug: dynamicDefaultModel,
-                display_name: "GPT-5 Upstream Default",
-                default_reasoning_level: "medium",
-                supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
-              }],
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
-        }
+      () => {
+        throw new Error("no-model requests should not fetch upstream defaults");
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ input: "ping" }),
+          }),
+        ),
+    );
 
-        recordedResponseBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+    assert.equal(response.status, 503);
+    const payload = await response.json() as { error?: { message?: string; code?: string } };
+    assert.equal(payload.error?.code, "server_error");
+    assert.match(payload.error?.message ?? "", /no configured default model or Codex model snapshot/);
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+    if (previousDefault === undefined) kvStore.delete(defaultModelKey);
+    else kvStore.set(defaultModelKey, previousDefault);
+  }
+});
+
+Deno.test("openai: default reasoning comes from stored model metadata, not model name", async () => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const defaultModelKey = keyToString(DEFAULT_MODEL_KEY);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  const previousDefault = kvStore.get(defaultModelKey);
+  const modelWithoutReasoningMetadata = "gpt-5-no-reasoning-metadata";
+  kvStore.set(snapshotKey, {
+    source: "codex_cli",
+    client_version: "0.126.0",
+    updated_at_ms: Date.now(),
+    models: [{ slug: modelWithoutReasoningMetadata, display_name: "No Reasoning Metadata" }],
+  });
+  kvStore.delete(defaultModelKey);
+
+  let recordedBody: Record<string, unknown> | null = null;
+  try {
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
         return sseResponse([
-          `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_dynamic", created_at: 0 } })}\n\n`,
+          `data: ${
+            JSON.stringify({ type: "response.created", response: { id: "resp_no_reasoning", created_at: 0 } })
+          }\n\n`,
           `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "pong" })}\n\n`,
           `data: ${
             JSON.stringify({
               type: "response.completed",
-              response: { model: dynamicDefaultModel, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+              response: {
+                model: modelWithoutReasoningMetadata,
+                output: [],
+                usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+              },
             })
           }\n\n`,
         ]);
@@ -306,12 +335,9 @@ Deno.test("openai: default model falls back to upstream models when snapshot is 
     );
 
     assert.equal(response.status, 200);
-    assert.ok(requestedModelsUrl.includes("/models"));
-    const payload = await response.json() as Record<string, unknown> & { model?: string };
-    assert.equal(payload.model, dynamicDefaultModel);
-    assert.equal(extractResponseOutputText(payload), "pong");
-    assert.ok(recordedResponseBody);
-    assert.equal((recordedResponseBody as Record<string, unknown>).model, dynamicDefaultModel);
+    assert.ok(recordedBody);
+    assert.equal((recordedBody as Record<string, unknown>).model, modelWithoutReasoningMetadata);
+    assert.equal("reasoning" in (recordedBody as Record<string, unknown>), false);
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
@@ -320,32 +346,41 @@ Deno.test("openai: default model falls back to upstream models when snapshot is 
   }
 });
 
-Deno.test("openai: models uses stored Codex client version", async () => {
-  let requestedUrl = "";
-
+Deno.test("openai: models returns stored Codex snapshot without upstream fetch", async () => {
   const response = await withFetchMock(
-    (url) => {
-      requestedUrl = url;
-      return new Response(
-        JSON.stringify({
-          models: [{
-            slug: DEFAULT_TEST_MODEL,
-            display_name: "GPT-5 Fixture Default",
-            default_reasoning_level: "medium",
-            supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
-          }],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
+    () => {
+      throw new Error("handleModels should not fetch upstream models");
     },
     () => handleModels(),
   );
 
   assert.equal(response.status, 200);
-  assert.equal(new URL(requestedUrl).searchParams.get("client_version"), "0.125.0");
   const payload = await response.json() as { data?: Array<{ id?: string }> };
   assert.ok(Array.isArray(payload.data));
   assert.ok(payload.data.some((model) => model.id === DEFAULT_TEST_MODEL));
+});
+
+Deno.test("openai: models returns an empty list when no snapshot is stored", async () => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  kvStore.delete(snapshotKey);
+
+  try {
+    const response = await withFetchMock(
+      () => {
+        throw new Error("handleModels should not fetch upstream models");
+      },
+      () => handleModels(),
+    );
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { object?: string; data?: unknown[] };
+    assert.equal(payload.object, "list");
+    assert.deepEqual(payload.data, []);
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+  }
 });
 
 Deno.test("openai: normalize function-style tools for codex compatibility", async (t) => {

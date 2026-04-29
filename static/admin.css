@@ -50,6 +50,55 @@ body[data-page="admin"] [data-card-body] {
   gap: 10px;
 }
 
+body[data-page="admin"] [data-passkey-advanced],
+body[data-page="admin"] [data-token-fallback] {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+body[data-page="admin"] [data-passkey-advanced] summary,
+body[data-page="admin"] [data-token-fallback] summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted-2);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+body[data-page="admin"] [data-passkey-advanced] summary::-webkit-details-marker,
+body[data-page="admin"] [data-token-fallback] summary::-webkit-details-marker {
+  display: none;
+}
+
+body[data-page="admin"] [data-passkey-advanced] summary::after,
+body[data-page="admin"] [data-token-fallback] summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 150ms ease;
+}
+
+body[data-page="admin"] [data-passkey-advanced][open] summary::after,
+body[data-page="admin"] [data-token-fallback][open] summary::after {
+  transform: rotate(45deg);
+}
+
+body[data-page="admin"] [data-passkey-advanced-body],
+body[data-page="admin"] [data-token-fallback-body] {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
 body[data-page="admin"] [data-auth-grid] {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -99,6 +148,21 @@ body[data-page="admin"] [data-auth-value] {
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
+}
+
+body[data-page="admin"] [data-view="users"] [data-key-list] {
+  gap: 10px;
+}
+
+body[data-page="admin"] [data-key="passkey-user"] [data-key-controls] {
+  align-items: center;
+}
+
+body[data-page="admin"] [data-key="passkey-user"] label[data-check] {
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 body[data-page="admin"] [data-view="kernel"] [data-key-list] {

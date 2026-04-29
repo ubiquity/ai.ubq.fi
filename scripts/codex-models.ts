@@ -166,7 +166,6 @@ export const extractCodexModelsFromText = (text: string): ExtractedCodexModels |
   while ((match = slugRegex.exec(text))) {
     const slug = match[1];
     if (!slug) continue;
-    if (!slug.includes("codex") && !slug.startsWith("gpt-") && !slug.startsWith("o")) continue;
     if (seen.has(slug)) continue;
     const objectText = extractJsonObjectAt(text, match.index);
     if (!objectText) continue;
