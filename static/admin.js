@@ -192,6 +192,11 @@ const setBadge = (badge, state, text) => {
 const setAuthBadge = (state, text) => setBadge(authBadge, state, text);
 const setPasskeyStatus = (state, text) => setBadge(passkeyStatus, state, text);
 
+const setButtonLabel = (button, label) => {
+  const labelEl = button.querySelector("span");
+  if (labelEl) labelEl.textContent = label;
+};
+
 const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
   passkeyLoginBtn.hidden = signedIn;
@@ -241,11 +246,32 @@ const updateBasePreview = () => {
   basePreview.textContent = resolveBaseUrl();
 };
 
+const getPasskeyTargetUrl = () => new URL("/admin", resolveBaseUrl()).toString();
+
+const getPasskeyTargetHost = () => new URL(resolveBaseUrl()).host;
+
 const isPasskeySameOrigin = () => new URL(resolveBaseUrl()).origin === globalThis.location?.origin;
+
+const updatePasskeyTargetUi = () => {
+  if (isPasskeySameOrigin()) {
+    setButtonLabel(passkeyLoginBtn, "Sign in with passkey");
+    setButtonLabel(passkeyRegisterBtn, "Register this device");
+    passkeyLoginBtn.dataset.tooltip = "Use iCloud Keychain or another passkey provider to sign in";
+    passkeyRegisterBtn.dataset.tooltip = "Create a passkey for this account on the current domain";
+    return;
+  }
+
+  const host = getPasskeyTargetHost();
+  setButtonLabel(passkeyLoginBtn, `Open ${host} for passkey`);
+  setButtonLabel(passkeyRegisterBtn, `Open ${host} to register`);
+  passkeyLoginBtn.dataset.tooltip = "Passkeys must be used from the target domain";
+  passkeyRegisterBtn.dataset.tooltip = "Passkeys must be registered from the target domain";
+};
 
 const getPasskeyBaseUrl = () => {
   if (isPasskeySameOrigin()) return resolveBaseUrl();
-  throw new Error("Open this target origin to use passkeys.");
+  globalThis.location.assign(getPasskeyTargetUrl());
+  return null;
 };
 
 const getAdminToken = () => tokenInput.value.trim();
@@ -297,6 +323,7 @@ const restoreSettings = () => {
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
   baseSelect.value = storage.get(STORAGE_KEYS.base) ?? "local";
   updateBasePreview();
+  updatePasskeyTargetUi();
 };
 
 const clearCreateResult = () => {
@@ -4101,13 +4128,18 @@ passkeyHandleInput.addEventListener("input", () => {
 });
 
 passkeyLoginBtn.addEventListener("click", async () => {
+  const passkeyBaseUrl = getPasskeyBaseUrl();
+  if (!passkeyBaseUrl) {
+    setPasskeyStatus("unknown", `Opening ${getPasskeyTargetHost()}...`);
+    return;
+  }
   setPasskeyStatus("unknown", "Signing in...");
   passkeyLoginBtn.disabled = true;
   passkeyRegisterBtn.disabled = true;
   try {
     const result = await signInWithPasskey({
       handle: passkeyHandleInput.value,
-      baseUrl: getPasskeyBaseUrl(),
+      baseUrl: passkeyBaseUrl,
     });
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token);
@@ -4121,6 +4153,11 @@ passkeyLoginBtn.addEventListener("click", async () => {
 });
 
 passkeyRegisterBtn.addEventListener("click", async () => {
+  const passkeyBaseUrl = getPasskeyBaseUrl();
+  if (!passkeyBaseUrl) {
+    setPasskeyStatus("unknown", `Opening ${getPasskeyTargetHost()}...`);
+    return;
+  }
   setPasskeyStatus("unknown", "Registering...");
   passkeyLoginBtn.disabled = true;
   passkeyRegisterBtn.disabled = true;
@@ -4128,7 +4165,7 @@ passkeyRegisterBtn.addEventListener("click", async () => {
     const result = await registerPasskey({
       handle: passkeyHandleInput.value,
       token: tokenInput.value,
-      baseUrl: getPasskeyBaseUrl(),
+      baseUrl: passkeyBaseUrl,
     });
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token);
@@ -4185,6 +4222,7 @@ globalThis.addEventListener("storage", (event) => {
 baseSelect.addEventListener("change", () => {
   storage.set(STORAGE_KEYS.base, getBaseChoice());
   updateBasePreview();
+  updatePasskeyTargetUi();
   setAuthBadge("unknown", "Not checked");
   setSignedInState(false);
   setCreateBadge("unknown", "Idle");
