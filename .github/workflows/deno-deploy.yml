@@ -21,7 +21,6 @@ jobs:
       runtime_env: |
         DENO_DEPLOY_TOKEN=$DENO_DEPLOY_TOKEN
         UOS_AI_TOKEN=$UBIQUITY_AI_USER_TOKEN
-        CODEX_AUTH_JSON_B64=$CODEX_AUTH_JSON_B64
       index_html_path: static/docs.html
       extra_paths: |
         /app.js
@@ -29,7 +28,6 @@ jobs:
       debug_fetch_fail: true
       required_env: |
         DENO_DEPLOY_TOKEN
-        CODEX_AUTH_JSON_B64
     secrets: inherit
 
   sync-ai-runtime-env:
@@ -90,14 +88,15 @@ jobs:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           DENO_DEPLOY_ORG: ubiquity-dao
           DENO_DEPLOY_APP: ${{ steps.deploy-target.outputs.app }}
+          CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 || vars.CODEX_AUTH_JSON_B64 || '' }}
           UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UOS_AI_KERNEL_PUBLIC_KEY || secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY || vars.UOS_AI_KERNEL_PUBLIC_KEY || vars.UBIQUITY_AI_KERNEL_PUBLIC_KEY || '' }}
           VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY || vars.VOYAGEAI_API_KEY || '' }}
         run: |
           set -euo pipefail
 
-          sync_secret() {
+          sync_value() {
             local key="$1"
-            local value="${!key:-}"
+            local value="$2"
             if [ -z "$value" ]; then
               return 0
             fi
@@ -128,5 +127,49 @@ jobs:
             return $status
           }
 
+          sync_secret() {
+            local key="$1"
+            sync_value "$key" "${!key:-}"
+          }
+
+          if [ -z "$CODEX_AUTH_JSON_B64" ]; then
+            echo "::error::CODEX_AUTH_JSON_B64 is required for Codex auth runtime env."
+            exit 1
+          fi
+
+          codex_auth_minified="$(
+            deno eval '
+            const raw = Deno.env.get("CODEX_AUTH_JSON_B64") ?? "";
+            const bytes = Uint8Array.from(atob(raw.trim().replace(/\s+/g, "")), (ch) => ch.charCodeAt(0));
+            const parsed = JSON.parse(new TextDecoder().decode(bytes));
+            const tokens = parsed?.tokens;
+            if (
+              typeof tokens?.access_token !== "string" ||
+              typeof tokens?.refresh_token !== "string" ||
+              typeof tokens?.account_id !== "string"
+            ) {
+              console.error("CODEX_AUTH_JSON_B64 does not look like a Codex auth.json.");
+              Deno.exit(1);
+            }
+            const minimal = {
+              tokens: {
+                access_token: tokens.access_token,
+                refresh_token: tokens.refresh_token,
+                account_id: tokens.account_id,
+              },
+            };
+            const encoded = new TextEncoder().encode(JSON.stringify(minimal));
+            let binary = "";
+            for (const byte of encoded) binary += String.fromCharCode(byte);
+            console.log(btoa(binary));
+            '
+          )"
+          echo "::add-mask::$codex_auth_minified"
+          if [ ${#codex_auth_minified} -gt 4096 ]; then
+            echo "::error::Minified CODEX_AUTH_JSON_B64 is still too large for Deno Deploy app env (${#codex_auth_minified} > 4096)."
+            exit 1
+          fi
+
+          sync_value CODEX_AUTH_JSON_B64 "$codex_auth_minified"
           sync_secret UOS_AI_KERNEL_PUBLIC_KEY
           sync_secret VOYAGEAI_API_KEY
