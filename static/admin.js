@@ -4213,10 +4213,7 @@ passkeyLoginBtn.addEventListener("click", async () => {
       return;
     }
 
-    const result = await signInWithPasskey({
-      handle: passkeyHandleInput.value,
-      baseUrl: passkeyBaseUrl,
-    });
+    const result = await signInWithPasskey({ baseUrl: passkeyBaseUrl });
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token);
     setPasskeyStatus("ok", "Passkey signed in");
@@ -4489,10 +4486,7 @@ const startAuthRelayIfRequested = async () => {
   setPasskeyStatus("unknown", "Sign in to continue on localhost...");
   passkeyLoginBtn.disabled = true;
   try {
-    const result = await signInWithPasskey({
-      handle: passkeyHandleInput.value,
-      baseUrl: globalThis.location.origin,
-    });
+    const result = await signInWithPasskey({ baseUrl: globalThis.location.origin });
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token);
     postAuthRelayResult(result);
