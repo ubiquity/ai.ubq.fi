@@ -94,12 +94,21 @@ const loadStoredCredentialIds = () => {
 
 export const hasStoredPasskeyCredentials = () => loadStoredCredentialIds().length > 0;
 
+export const clearStoredPasskeyMetadata = () => {
+  storage.remove(STORAGE_KEYS.passkeyHandle);
+  storage.remove(STORAGE_KEYS.passkeyCredentialIds);
+};
+
 const storeCredentialId = (credentialId) => {
   if (!credentialId) return;
   const next = new Set(loadStoredCredentialIds());
   next.add(credentialId);
   storage.set(STORAGE_KEYS.passkeyCredentialIds, JSON.stringify([...next]));
 };
+
+const apiErrorMessage = (body, fallback) => body?.error?.message ?? body?.error ?? fallback;
+
+const isUnknownPasskeyError = (body) => /unknown passkey/i.test(String(apiErrorMessage(body, "")));
 
 const requestJson = async (baseUrl, path, init) => {
   const endpoint = new URL(path, baseUrl || globalThis.location.origin).toString();
@@ -234,7 +243,8 @@ export const signInWithPasskey = async ({ handle = "", baseUrl = "", useHandle =
 
   const finish = await finishLogin(baseUrl, credential);
   if (!finish.res.ok || !finish.body?.token) {
-    throw new Error(finish.body?.error?.message ?? finish.body?.error ?? "Passkey sign-in failed.");
+    if (isUnknownPasskeyError(finish.body)) clearStoredPasskeyMetadata();
+    throw new Error(apiErrorMessage(finish.body, "Passkey sign-in failed."));
   }
 
   storeCredentialId(credential.id);

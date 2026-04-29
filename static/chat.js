@@ -452,6 +452,7 @@ passkeyLoginBtn.addEventListener("click", async () => {
     applySignedInToken(result.token);
     setPasskeyStatus("ok", "Passkey signed in");
   } catch (error) {
+    setSignedInState(false);
     setPasskeyStatus("bad", error?.message ?? "Passkey sign-in failed");
   } finally {
     passkeyLoginBtn.disabled = false;
