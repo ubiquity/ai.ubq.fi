@@ -423,7 +423,7 @@ rememberTokenInput.addEventListener("change", () => {
   }
   storage.remove(STORAGE_KEYS.rememberToken);
   storage.remove(STORAGE_KEYS.token);
-  setSignedInState(false);
+  setSignedInState(Boolean(tokenInput.value.trim()));
 });
 
 passkeyHandleInput.addEventListener("input", () => {

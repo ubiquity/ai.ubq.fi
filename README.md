@@ -371,17 +371,29 @@ deno task ubq-ai admin keys revoke --id "<id>"
 
 ## Supported routes
 
-- `GET /` and `GET /health`
+- `GET /`, `GET /docs`, `GET /chat`, `GET /admin`, and static assets
+- `GET /health`
 - `GET /health/auth` (Codex auth metadata; no upstream refresh and no chat tokens used)
 - `GET /health/upstream` (Codex chat probe)
+- `POST /api/auth/register/start`, `POST /api/auth/register/finish`
+- `POST /api/auth/login/start`, `POST /api/auth/login/finish`
+- `GET /api/auth/session`, `POST /api/auth/logout`
+- `GET /admin/passkey-users`, `PATCH /admin/passkey-users` (super-admin only)
 - `POST /admin/codex/auth` (admin only)
-- `POST /admin/api-keys` (admin only)
-- `GET /admin/api-keys` (admin only)
-- `POST /admin/api-keys/revoke` (admin only)
-- `GET /admin/kernel-usage` (admin only)
-- `POST /admin/kernel-usage` (admin only)
+- `GET /admin/codex/models`, `POST /admin/codex/models` (admin only)
+- `POST /admin/codex/prompts/purge` (admin only)
+- `GET /admin/defaults`, `POST /admin/defaults` (admin only)
+- `POST /admin/kv-migration/import`, `GET /admin/kv-migration/validate` (super-admin only)
+- `GET /admin/api-keys`, `POST /admin/api-keys`, `PATCH /admin/api-keys`, `DELETE /admin/api-keys` (admin only)
+- `POST /admin/api-keys/revoke`, `POST /admin/api-keys/unrevoke` (admin only)
+- `GET /admin/kernel-usage`, `POST /admin/kernel-usage`, `DELETE /admin/kernel-usage` (admin only)
+- `GET /admin/kernel-policy-queue` (admin only)
+- `GET /admin/kernel-pubkeys`, `POST /admin/kernel-pubkeys`, `DELETE /admin/kernel-pubkeys` (admin only)
 - `GET /v1/auth`
+- `GET /v1/agent-bus`, `POST /v1/agent-bus`
 - `GET /v1/models`
+- `POST /v1/embeddings`
+- `POST /v1/embeddings/jobs`, `GET /v1/embeddings/jobs/:id`
 - `POST /v1/chat/completions` (streaming and non-streaming)
 - `POST /v1/responses` (streaming and non-streaming; non-streaming buffers upstream SSE)
 

@@ -22,7 +22,8 @@ export const base64UrlEncode = (bytes: Uint8Array): string => {
 };
 
 export const base64UrlDecode = (value: string): Uint8Array<ArrayBuffer> => {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const cleaned = value.trim().replace(/\s+/g, "");
+  const normalized = cleaned.replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
   const binary = atob(padded);
   const bytes: Uint8Array<ArrayBuffer> = new Uint8Array(binary.length);
