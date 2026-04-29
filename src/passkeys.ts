@@ -386,7 +386,7 @@ export const handlePasskeyRegisterStart = async (
         attestation: "none",
         authenticatorSelection: {
           residentKey: "required",
-          userVerification: "preferred",
+          userVerification: isAdmin ? "required" : "preferred",
         },
         excludeCredentials: existingUser?.credential_ids.map((id) => ({ id, type: "public-key" })) ?? [],
       },
@@ -432,7 +432,7 @@ export const handlePasskeyRegisterFinish = async (req: Request): Promise<Respons
       expectedChallenge: challengeRecord.challenge,
       expectedOrigin: challengeRecord.origin,
       expectedRPID: challengeRecord.rp_id,
-      requireUserVerification: false,
+      requireUserVerification: challengeRecord.is_admin === true,
     });
     if (!verification.verified || !verification.registrationInfo) {
       return openaiError(400, "Invalid passkey attestation", "invalid_request_error");
@@ -490,11 +490,13 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
   const handle = normalizePasskeyHandle(raw.handle);
 
   let allowCredentials: Array<{ id: string; type: "public-key" }> | undefined;
+  let userVerification: "preferred" | "required" = "preferred";
   if (handle) {
     const user = await getUserByHandle(kv, handle);
     if (!user) return openaiError(404, "Passkey account not found", "not_found");
     if (!user.credential_ids.length) return openaiError(404, "No passkeys registered", "not_found");
     allowCredentials = user.credential_ids.map((id) => ({ id, type: "public-key" }));
+    if (isPasskeyUserAdmin(user)) userVerification = "required";
   }
 
   const { origin, rpId } = getPasskeyRequestMeta(req, raw.client_origin);
@@ -502,6 +504,7 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
     rpID: rpId,
     timeout: PASSKEY_CHALLENGE_TTL_MS,
     allowCredentials,
+    userVerification,
   });
 
   await saveChallenge(kv, { challenge: publicKey.challenge, type: "authentication", origin, rp_id: rpId });
@@ -539,6 +542,8 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
 
   const credential = await getCredential(kv, response.id);
   if (!credential) return openaiError(400, "Unknown passkey", "invalid_request_error");
+  const userEntry = await kv.get<PasskeyUserRecord>(passkeyUserKey(credential.user_id));
+  if (!userEntry.value) return openaiError(401, "Unauthorized", "invalid_api_key");
 
   try {
     const verification = await verifyAuthenticationResponse({
@@ -546,7 +551,7 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
       expectedChallenge: challengeRecord.challenge,
       expectedOrigin: challengeRecord.origin,
       expectedRPID: challengeRecord.rp_id,
-      requireUserVerification: false,
+      requireUserVerification: isPasskeyUserAdmin(userEntry.value),
       credential: {
         id: credential.credential_id,
         publicKey: base64UrlDecode(credential.public_key),
@@ -556,9 +561,6 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
     if (!verification.verified) {
       return openaiError(400, "Invalid passkey assertion", "invalid_request_error");
     }
-
-    const userEntry = await kv.get<PasskeyUserRecord>(passkeyUserKey(credential.user_id));
-    if (!userEntry.value) return openaiError(401, "Unauthorized", "invalid_api_key");
 
     await kv.set(passkeyCredentialKey(credential.credential_id), {
       ...credential,

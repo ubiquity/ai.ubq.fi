@@ -196,9 +196,11 @@ const extractSnapshotReasoningLevels = (model: Record<string, unknown> | null): 
 
 const getCodexModelReasoning = async (model: string): Promise<CodexModelReasoning> => {
   const record = await findSnapshotModelRecord(model);
+  const defaultLevel = normalizeReasoningEffort(record?.default_reasoning_level);
+  const levels = extractSnapshotReasoningLevels(record);
   return {
-    levels: extractSnapshotReasoningLevels(record),
-    defaultLevel: normalizeReasoningEffort(record?.default_reasoning_level),
+    levels: defaultLevel && !levels.includes(defaultLevel) ? [...levels, defaultLevel] : levels,
+    defaultLevel,
   };
 };
 

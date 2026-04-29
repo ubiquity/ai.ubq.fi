@@ -303,8 +303,8 @@ const getAuthToken = (flags: Args): string => {
   return token;
 };
 
-const appendBooleanParam = (url: URL, key: string, value: boolean): void => {
-  if (value) url.searchParams.set(key, "1");
+export const appendBooleanParam = (url: URL, key: string, value: boolean): void => {
+  url.searchParams.set(key, value ? "1" : "0");
 };
 
 const parseJsonOrText = (text: string): unknown => {

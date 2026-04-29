@@ -346,6 +346,66 @@ Deno.test("openai: default reasoning comes from stored model metadata, not model
   }
 });
 
+Deno.test("openai: default reasoning level is accepted when supported levels are absent", async () => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  const modelWithDefaultOnly = "gpt-5-default-reasoning-only";
+  kvStore.set(snapshotKey, {
+    source: "codex_cli",
+    client_version: "0.126.0",
+    updated_at_ms: Date.now(),
+    models: [{
+      slug: modelWithDefaultOnly,
+      display_name: "Default Reasoning Only",
+      default_reasoning_level: "medium",
+    }],
+  });
+
+  let recordedBody: Record<string, unknown> | null = null;
+  try {
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse([
+          `data: ${
+            JSON.stringify({ type: "response.created", response: { id: "resp_default_only", created_at: 0 } })
+          }\n\n`,
+          `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "pong" })}\n\n`,
+          `data: ${
+            JSON.stringify({
+              type: "response.completed",
+              response: {
+                model: modelWithDefaultOnly,
+                output: [],
+                usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+              },
+            })
+          }\n\n`,
+        ]);
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: modelWithDefaultOnly,
+              input: "ping",
+              reasoning: { effort: "medium" },
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "medium" });
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+  }
+});
+
 Deno.test("openai: models returns stored Codex snapshot without upstream fetch", async () => {
   const response = await withFetchMock(
     () => {

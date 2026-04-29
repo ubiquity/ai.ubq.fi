@@ -10,6 +10,7 @@ const stringEntryLine = (key: Deno.KvKey, value: string): string =>
   });
 
 const kvStore = new Map<string, unknown>();
+let failNextAtomicCommit = false;
 
 const kvStub = {
   get: (key: Deno.KvKey) =>
@@ -26,17 +27,28 @@ const kvStub = {
     yield* [];
   },
   atomic: () => {
+    const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
     const chain = {
       check: () => chain,
       set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
-        kvStore.set(keyToString(key), value);
+        ops.push({ type: "set", key, value });
         return chain;
       },
       delete: (key: Deno.KvKey) => {
-        kvStore.delete(keyToString(key));
+        ops.push({ type: "delete", key });
         return chain;
       },
-      commit: () => Promise.resolve({ ok: true } as const),
+      commit: () => {
+        if (failNextAtomicCommit) {
+          failNextAtomicCommit = false;
+          return Promise.resolve({ ok: false } as const);
+        }
+        for (const op of ops) {
+          if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
+          else kvStore.delete(keyToString(op.key));
+        }
+        return Promise.resolve({ ok: true } as const);
+      },
     };
     return chain;
   },
@@ -129,6 +141,40 @@ Deno.test("admin codex auth rejects uploads without CLI model snapshot", async (
     assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("admin codex auth stores auth and model snapshot atomically", async () => {
+  kvStore.clear();
+  failNextAtomicCommit = true;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+  try {
+    const response = await handleAdminCodexAuth(
+      makeRequest({
+        auth: authPayload,
+        models: {
+          source: "codex_cli",
+          client_version: "0.126.0",
+          updated_at_ms: 123,
+          models: [{ slug: "gpt-5.5", display_name: "GPT-5.5" }],
+        },
+      }),
+    );
+
+    assert.equal(response.status, 500);
+    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
+    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    failNextAtomicCommit = false;
   }
 });
 

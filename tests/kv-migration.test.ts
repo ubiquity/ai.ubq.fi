@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
-import { importKvMigrationLines } from "../src/kv_migration.ts";
+import { appendBooleanParam } from "../scripts/kv-migrate.ts";
+import { importKvMigrationLines, validateKvMigrationTarget } from "../src/kv_migration.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 
@@ -31,7 +32,28 @@ const makeKvStub = (store: Map<string, unknown>): Deno.Kv =>
       store.set(keyToString(key), value);
       return Promise.resolve({ ok: true } as const);
     },
+    list: async function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
+      const prefix = "prefix" in selector ? selector.prefix : [];
+      const limit = typeof options?.limit === "number" ? options.limit : Infinity;
+      let yielded = 0;
+      for (const [rawKey, value] of store.entries()) {
+        const key = JSON.parse(rawKey) as Deno.KvKey;
+        if (!prefix.every((part, index) => key[index] === part)) continue;
+        yield { key, value, versionstamp: "00000000000000000000" } as Deno.KvEntry<unknown>;
+        yielded += 1;
+        if (yielded >= limit) break;
+      }
+    },
   }) as unknown as Deno.Kv;
+
+Deno.test("KV migration HTTP CLI serializes explicit false flags", () => {
+  const url = new URL("https://ai.ubq.fi/admin/kv-migration/import");
+  appendBooleanParam(url, "include_legacy", false);
+  appendBooleanParam(url, "overwrite", true);
+
+  assert.equal(url.searchParams.get("include_legacy"), "0");
+  assert.equal(url.searchParams.get("overwrite"), "1");
+});
 
 Deno.test("prod KV migration imports only modern durable rows by default", async () => {
   const store = new Map<string, unknown>();
@@ -74,4 +96,33 @@ Deno.test("local KV migration keeps legacy and Codex bootstrap rows for replay",
   assert.equal(result.imported, 2);
   assert.equal(store.has(keyToString(["ubq_ai", "codex_models"])), true);
   assert.equal(store.has(keyToString(["key", "health", "1"])), true);
+});
+
+Deno.test("KV migration dry-run reports destination collisions like writes", async () => {
+  const store = new Map<string, unknown>();
+  store.set(keyToString(["default", "model"]), "existing-model");
+
+  const result = await importKvMigrationLines(makeKvStub(store), [
+    entryLine(["default", "model"], "new-model"),
+  ], {
+    profile: "prod",
+    includeCache: false,
+    includeLegacy: false,
+    overwrite: false,
+    dryRun: true,
+  });
+
+  assert.equal(result.imported, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(store.get(keyToString(["default", "model"])), "existing-model");
+});
+
+Deno.test("KV migration validation rejects unusable codex model snapshots for configured defaults", async () => {
+  const store = new Map<string, unknown>();
+  store.set(keyToString(["default", "model"]), "gpt-5.5");
+  store.set(keyToString(["ubq_ai", "codex_models"]), { models: [] });
+
+  const result = await validateKvMigrationTarget(makeKvStub(store));
+
+  assert.match(result.errors.join("\n"), /codex model snapshot is empty or malformed/);
 });

@@ -189,14 +189,14 @@ export async function importKvMigrationLines(
         counters.optional += 1;
         continue;
       }
-      if (!options.dryRun && kv) {
-        if (!options.overwrite) {
-          const existing = await kv.get(entry.key);
-          if (existing.value !== null) {
-            counters.skipped += 1;
-            continue;
-          }
+      if (kv && !options.overwrite) {
+        const existing = await kv.get(entry.key);
+        if (existing.value !== null) {
+          counters.skipped += 1;
+          continue;
         }
+      }
+      if (!options.dryRun && kv) {
         await kv.set(entry.key, entry.value);
       }
       counters.imported += 1;
@@ -257,6 +257,9 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
   const codexModels = await kv.get<Record<string, unknown>>(["ubq_ai", "codex_models"]);
   const defaultModel = await kv.get<string>(["default", "model"]);
   const modelList = Array.isArray(codexModels.value?.models) ? codexModels.value.models : [];
+  if (defaultModel.value && codexModels.value !== null && modelList.length === 0) {
+    errors.push(`codex model snapshot is empty or malformed; cannot validate default model: ${defaultModel.value}`);
+  }
   if (defaultModel.value && modelList.length) {
     const found = modelList.some((model) => {
       if (!model || typeof model !== "object") return false;

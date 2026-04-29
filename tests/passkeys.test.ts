@@ -95,6 +95,7 @@ const {
   PASSKEY_SESSION_TTL_MS,
   buildPasskeyHandle,
   getPasskeyRequestMeta,
+  handlePasskeyLoginStart,
   handlePasskeyRegisterStart,
   handlePasskeyUsersList,
   handlePasskeyUsersUpdate,
@@ -489,6 +490,7 @@ Deno.test("passkey registration start can use an existing passkey session", asyn
   assert.equal(body.handle, user.handle);
   assert.equal(body.publicKey.user.id, encodedUserId);
   assert.equal(body.publicKey.user.name, user.handle);
+  assert.equal(body.publicKey.authenticatorSelection.userVerification, "required");
 });
 
 Deno.test("passkey registration start keeps a session bound to its own user", async () => {
@@ -560,7 +562,53 @@ Deno.test("passkey registration start reuses an existing token-handle user", asy
   const encodedUserId = btoa(user.id).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
   assert.equal(body.handle, handle);
   assert.equal(body.publicKey.user.id, encodedUserId);
+  assert.equal(body.publicKey.authenticatorSelection.userVerification, "required");
   assert.deepEqual(body.publicKey.excludeCredentials, [{ id: "credential-token", type: "public-key" }]);
+});
+
+Deno.test("passkey login start requires user verification for admin handles", async () => {
+  kvStore.clear();
+  const now = Date.now();
+  const adminUser = {
+    id: "user-admin-login",
+    handle: "admin-login",
+    is_admin: true,
+    credential_ids: ["credential-admin-login"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  const memberUser = {
+    id: "user-member-login",
+    handle: "member-login",
+    is_admin: false,
+    credential_ids: ["credential-member-login"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  kvStore.set(keyToString(passkeyUserKey(adminUser.id)), adminUser);
+  kvStore.set(keyToString(passkeyHandleKey(adminUser.handle)), adminUser.id);
+  kvStore.set(keyToString(passkeyUserKey(memberUser.id)), memberUser);
+  kvStore.set(keyToString(passkeyHandleKey(memberUser.handle)), memberUser.id);
+
+  const adminResponse = await handlePasskeyLoginStart(
+    new Request("https://ai.ubq.fi/api/auth/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: adminUser.handle }),
+    }),
+  );
+  const memberResponse = await handlePasskeyLoginStart(
+    new Request("https://ai.ubq.fi/api/auth/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: memberUser.handle }),
+    }),
+  );
+
+  assert.equal(adminResponse.status, 200);
+  assert.equal(memberResponse.status, 200);
+  assert.equal((await adminResponse.json()).publicKey.userVerification, "required");
+  assert.equal((await memberResponse.json()).publicKey.userVerification, "preferred");
 });
 
 Deno.test("passkey registration deletes stale handle mapping when a user handle changes", async () => {

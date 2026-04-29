@@ -3536,7 +3536,7 @@ const testAdminToken = async () => {
     }
     if (!data?.auth?.is_admin) {
       setAuthBadge("bad", "Not admin");
-      setSignedInState(true);
+      setSignedInState(false);
       return;
     }
     const kind = data?.auth?.method?.kind;

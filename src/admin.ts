@@ -1,6 +1,7 @@
 import {
   cacheCodexAuth,
   CODEX_KV_KEY,
+  CODEX_MODELS_KV_KEY,
   CodexError,
   type CodexModelsSnapshot,
   getCodexModelsSnapshotDefaultModel,
@@ -136,13 +137,15 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     );
   }
 
-  await kv.set(CODEX_KV_KEY, validated.auth);
+  const stored = await kv.atomic()
+    .set(CODEX_KV_KEY, validated.auth)
+    .set(CODEX_MODELS_KV_KEY, snapshot)
+    .commit();
+  if (!stored.ok) {
+    return openaiError(500, "Deno KV could not persist Codex auth and models", "server_error");
+  }
   cacheCodexAuth(validated.auth);
 
-  const storedModels = await storeCodexModelsSnapshot(snapshot);
-  if (!storedModels) {
-    return openaiError(500, "Deno KV is not available; cannot persist Codex models", "server_error");
-  }
   const modelsStored = {
     count: snapshot.models.length,
     source: snapshot.source,

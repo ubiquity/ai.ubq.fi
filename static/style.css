@@ -368,7 +368,7 @@ button[data-icon-button] {
 button[data-icon-button] svg {
   width: 18px;
   height: 18px;
-  stroke: currentColor;
+  stroke: currentcolor;
   fill: none;
   stroke-width: 1.8;
   stroke-linecap: round;
@@ -380,14 +380,14 @@ a[data-button] [data-material-icon] {
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
-  fill: currentColor;
+  fill: currentcolor;
   stroke: none;
 }
 
 button[data-icon-button] svg[data-material-icon] {
   width: 22px;
   height: 22px;
-  fill: currentColor;
+  fill: currentcolor;
   stroke: none;
 }
 
