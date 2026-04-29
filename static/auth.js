@@ -94,6 +94,13 @@ const loadStoredCredentialIds = () => {
 
 export const hasStoredPasskeyCredentials = () => loadStoredCredentialIds().length > 0;
 
+export const hasAuthPasskeyCredential = (auth) => {
+  const method = auth?.method;
+  if (method?.kind === "passkey_session") return true;
+  const count = Number(method?.user?.credential_count ?? auth?.user?.credential_count ?? 0);
+  return Number.isFinite(count) && count > 0;
+};
+
 export const clearStoredPasskeyMetadata = () => {
   storage.remove(STORAGE_KEYS.passkeyHandle);
   storage.remove(STORAGE_KEYS.passkeyCredentialIds);

@@ -472,6 +472,7 @@ export const handlePasskeyRegisterFinish = async (req: Request): Promise<Respons
         token: session.token,
         user_id: saved.user.id,
         handle: saved.user.handle,
+        credential_count: saved.user.credential_ids.length,
         expires_at_ms: session.expires_at_ms,
       },
       { "Cache-Control": "no-store" },
@@ -591,6 +592,7 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
         token: session.token,
         user_id: userEntry.value.id,
         handle: userEntry.value.handle,
+        credential_count: userEntry.value.credential_ids.length,
         expires_at_ms: session.expires_at_ms,
       },
       { "Cache-Control": "no-store" },
@@ -610,6 +612,7 @@ export const handlePasskeySession = async (req: Request): Promise<Response> => {
         id: session.user.id,
         handle: session.user.handle,
         is_admin: isPasskeyUserAdmin(session.user),
+        credential_count: session.user.credential_ids.length,
       },
       session: {
         created_at_ms: session.session.created_at_ms,

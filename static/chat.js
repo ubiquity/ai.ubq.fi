@@ -1,5 +1,6 @@
 import "./network.js";
 import {
+  hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
   registerPasskey,
   signInWithPasskey,
@@ -296,9 +297,8 @@ const checkAuthToken = async () => {
       return;
     }
     const mode = data?.auth?.mode;
-    const methodKind = data?.auth?.method?.kind;
     setAuthBadge("ok", mode ? `OK (${mode})` : "OK");
-    setSignedInState(true, { deviceRegistered: methodKind === "passkey_session" || hasStoredPasskeyCredentials() });
+    setSignedInState(true, { deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials() });
     void loadModels(token);
   } catch {
     if (requestId !== authCheckId) return;
@@ -430,12 +430,12 @@ passkeyHandleInput.addEventListener("input", () => {
   schedulePasskeyHandlePersist();
 });
 
-const applySignedInToken = (token) => {
+const applySignedInToken = (token, options = {}) => {
   tokenInput.value = token;
   rememberTokenInput.checked = true;
   storage.set(STORAGE_KEYS.rememberToken, "1");
   storage.set(STORAGE_KEYS.token, token);
-  setSignedInState(true);
+  setSignedInState(true, options);
   authCheckId += 1;
   modelsRequestId += 1;
   setAuthBadge("unknown", "Checking...");
@@ -449,7 +449,7 @@ passkeyLoginBtn.addEventListener("click", async () => {
   try {
     const result = await signInWithPasskey();
     if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token);
+    applySignedInToken(result.token, { deviceRegistered: true });
     setPasskeyStatus("ok", "Passkey signed in");
   } catch (error) {
     setSignedInState(false);
@@ -470,7 +470,7 @@ passkeyRegisterBtn.addEventListener("click", async () => {
       token: tokenInput.value,
     });
     if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token);
+    applySignedInToken(result.token, { deviceRegistered: true });
     setPasskeyStatus("ok", "Passkey registered");
   } catch (error) {
     setPasskeyStatus("bad", error?.message ?? "Passkey registration failed");
