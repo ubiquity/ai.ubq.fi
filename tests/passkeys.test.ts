@@ -247,6 +247,42 @@ Deno.test("Deno Deploy console tokens are verified against the app page", async 
   }
 });
 
+Deno.test("Deno Deploy console fallback rejects path-only HTML", async () => {
+  kvStore.clear();
+  const originalFetch = globalThis.fetch;
+  const token = "ddo_console_path_token_1234567890abcdefghijklmnopqrstuvwxyz";
+
+  globalThis.fetch = (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    if (url.includes("https://api.deno.com/v2/apps/")) {
+      return Promise.resolve(new Response("{}", { status: 401 }));
+    }
+    return Promise.resolve(
+      new Response("Sign in to view /ubiquity-dao/ai-ubq-fi", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+  };
+
+  try {
+    await withEnv({
+      DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
+      DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
+      DENO_DEPLOYMENT_ID: null,
+    }, async () => {
+      const req = new Request("https://ai.ubq.fi/v1/auth", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const adminAuth = await authenticateAdmin(req);
+      assert.equal(adminAuth.ok, false);
+      if (!adminAuth.ok) assert.equal(adminAuth.response?.status, 401);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("Deno Deploy tokens do not fall back to the production app slug", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;

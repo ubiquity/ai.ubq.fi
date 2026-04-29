@@ -897,7 +897,8 @@ const fetchDenoConsoleAppOk = async (orgSlug: string, appSlug: string, token: st
   }
 
   const body = await res.text();
-  return body.includes(`| ${appSlug} | Deploy`) || body.includes(`/${orgSlug}/${appSlug}`);
+  const title = body.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ?? "";
+  return title.includes(`| ${appSlug} | Deploy`);
 };
 
 const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
