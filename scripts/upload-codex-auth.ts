@@ -1,3 +1,5 @@
+import { extractCodexModelsFromText, resolveCodexBinaryPath } from "./codex-models.ts";
+
 const parseArgs = (args: string[]): Record<string, string | boolean> => {
   const out: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {
@@ -88,11 +90,67 @@ const listCodexBinaryCandidates = (codexBinFlag?: string): string[] => {
   return candidates;
 };
 
+const readPossiblyBinaryText = async (path: string): Promise<string> => {
+  try {
+    return await Deno.readTextFile(path);
+  } catch (error) {
+    try {
+      const bytes = await Deno.readFile(path);
+      return new TextDecoder().decode(bytes);
+    } catch {
+      throw error;
+    }
+  }
+};
+
+const fileExists = async (path: string): Promise<boolean> => {
+  try {
+    const stat = await Deno.stat(path);
+    return stat.isFile;
+  } catch {
+    return false;
+  }
+};
+
+const loadCodexBinaryModels = async (
+  codexBinFlag?: string,
+): Promise<
+  | {
+    path: string;
+    sourcePath: string;
+    models: NonNullable<ReturnType<typeof extractCodexModelsFromText>>;
+  }
+  | null
+> => {
+  const seen = new Set<string>();
+  for (const candidate of listCodexBinaryCandidates(codexBinFlag)) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      const resolved = await resolveCodexBinaryPath(
+        candidate,
+        Deno.readTextFile,
+        Deno.build.os,
+        Deno.build.arch,
+        Deno.realPath,
+        fileExists,
+      );
+      const text = await readPossiblyBinaryText(resolved);
+      const models = extractCodexModelsFromText(text);
+      if (!models) continue;
+      return { path: resolved, sourcePath: candidate, models };
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return null;
+};
+
 const usage = () => {
   console.log(`upload-codex-auth.ts
 
 Uploads your local Codex ~/.codex/auth.json to ai.ubq.fi for validation + storage in Deno KV.
-Optionally includes the detected Codex CLI version so the server can query the upstream Codex model catalog.
+Extracts the Codex model catalog from the local Codex CLI and uploads it as the model snapshot.
 
 Usage:
   deno run --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts [--url https://ai.ubq.fi] [--auth-json ~/.codex/auth.json] [--codex-bin /path/to/codex]
@@ -112,7 +170,7 @@ const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
 const authJsonPath = expandTilde((parsed["auth-json"] as string | undefined) ?? "~/.codex/auth.json");
 const adminToken = (parsed["admin-token"] as string | undefined) ?? Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
 if (parsed["skip-models"] !== undefined || parsed["no-models"] !== undefined) {
-  console.error("--skip-models is no longer supported; this script no longer uploads model snapshots.");
+  console.error("--skip-models is no longer supported; Codex model extraction is required.");
   Deno.exit(2);
 }
 
@@ -139,8 +197,20 @@ try {
 const codexBinFlag = parsed["codex-bin"] as string | undefined;
 let modelsPayload: Record<string, unknown> | null = null;
 
-const clientVersion = await resolveCodexClientVersion(listCodexBinaryCandidates(codexBinFlag));
-modelsPayload = { source: "codex_cli", client_version: clientVersion ?? undefined, updated_at_ms: Date.now() };
+const binary = await loadCodexBinaryModels(codexBinFlag);
+if (!binary) {
+  console.error("Codex binary with model metadata not found on PATH. Pass --codex-bin to the real Codex binary.");
+  Deno.exit(2);
+}
+const clientVersion = binary.models.clientVersion ??
+  await resolveCodexClientVersion([binary.sourcePath, binary.path]) ??
+  undefined;
+modelsPayload = {
+  source: "codex_cli",
+  client_version: clientVersion,
+  updated_at_ms: Date.now(),
+  models: binary.models.models,
+};
 
 const endpoint = new URL("/admin/codex/auth", baseUrl);
 const requestPayload = { auth: authJson, models: modelsPayload };

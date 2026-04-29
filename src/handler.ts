@@ -17,14 +17,18 @@ import {
   handleAdminKernelUsageDelete,
   handleAdminKernelUsageGet,
   handleAdminKernelUsageSet,
+  handleAdminKvMigrationImport,
+  handleAdminKvMigrationValidate,
 } from "./admin.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
 import {
+  authenticateAdmin,
   authenticateClient,
   getKernelAttestationContext,
   handleV1Auth,
   incrementApiKeyUsage,
   requireAdminAuth,
+  requireSuperAdminAuth,
 } from "./auth.ts";
 import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
@@ -42,25 +46,16 @@ import {
   handleResponses,
 } from "./openai.ts";
 import {
-  handleAdminCss,
-  handleAdminJs,
-  handleAdminPage,
-  handleAppJs,
-  handleChatCss,
-  handleChatJs,
-  handleChatPage,
-  handleCompanyLogo,
-  handleDocsCss,
-  handleDocsJs,
-  handleDocsLlmAgentsMd,
-  handleDocsPage,
-  handleFavicon,
-  handleFavicon32,
-  handleHomeCss,
-  handleNetworkJs,
-  handleRoot,
-  handleStyleCss,
-} from "./static.ts";
+  handlePasskeyLoginFinish,
+  handlePasskeyLoginStart,
+  handlePasskeyLogout,
+  handlePasskeyRegisterFinish,
+  handlePasskeyRegisterStart,
+  handlePasskeySession,
+  handlePasskeyUsersList,
+  handlePasskeyUsersUpdate,
+} from "./passkeys.ts";
+import { handleRoot, handleStaticAsset } from "./static.ts";
 
 const normalizePath = (path: string): string => {
   if (path === "/") return path;
@@ -79,76 +74,9 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleRoot(req));
   }
 
-  if (req.method === "GET" && (path === "/docs" || path === "/docs.html")) {
-    return withCors(await handleDocsPage());
-  }
-
-  if (req.method === "GET" && (path === "/chat" || path === "/chat.html")) {
-    return withCors(await handleChatPage());
-  }
-
-  if (req.method === "GET" && (path === "/admin" || path === "/admin.html")) {
-    return withCors(await handleAdminPage());
-  }
-
-  if (req.method === "GET" && path === "/chat.js") {
-    return withCors(await handleChatJs());
-  }
-
-  if (req.method === "GET" && path === "/admin.js") {
-    return withCors(await handleAdminJs());
-  }
-
-  if (req.method === "GET" && path === "/network.js") {
-    return withCors(await handleNetworkJs());
-  }
-
-  if (req.method === "GET" && path === "/style.css") {
-    return withCors(await handleStyleCss());
-  }
-
-  if (req.method === "GET" && path === "/docs.css") {
-    return withCors(await handleDocsCss());
-  }
-
-  if (req.method === "GET" && path === "/chat.css") {
-    return withCors(await handleChatCss());
-  }
-
-  if (req.method === "GET" && path === "/home.css") {
-    return withCors(await handleHomeCss());
-  }
-
-  if (req.method === "GET" && path === "/admin.css") {
-    return withCors(await handleAdminCss());
-  }
-
-  if (req.method === "GET" && path === "/favicon.ico") {
-    return withCors(await handleFavicon());
-  }
-
-  if (req.method === "GET" && path === "/app.js") {
-    return withCors(await handleAppJs());
-  }
-
-  if (req.method === "GET" && path === "/docs.js") {
-    return withCors(await handleDocsJs());
-  }
-
-  if (req.method === "GET" && path === "/company-logo.svg") {
-    return withCors(await handleCompanyLogo());
-  }
-
-  if (req.method === "GET" && path === "/docs/llms-agents.md") {
-    return withCors(await handleDocsLlmAgentsMd());
-  }
-
-  if (req.method === "GET" && path === "/favicon-32.png") {
-    return withCors(await handleFavicon32());
-  }
-
-  if (req.method === "GET" && path === "/favicon.png") {
-    return withCors(await handleFavicon());
+  if (req.method === "GET") {
+    const staticResponse = await handleStaticAsset(path);
+    if (staticResponse) return withCors(staticResponse);
   }
 
   if (req.method === "GET" && path === "/health") {
@@ -161,6 +89,44 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/health/upstream") {
     return withCors(await handleHealthUpstream());
+  }
+
+  if (req.method === "POST" && path === "/api/auth/register/start") {
+    const auth = await authenticateAdmin(req);
+    if (!auth.ok) return withCors(auth.response);
+    return withCors(await handlePasskeyRegisterStart(req, { defaultIsAdmin: auth.is_super_admin }));
+  }
+
+  if (req.method === "POST" && path === "/api/auth/register/finish") {
+    return withCors(await handlePasskeyRegisterFinish(req));
+  }
+
+  if (req.method === "POST" && path === "/api/auth/login/start") {
+    return withCors(await handlePasskeyLoginStart(req));
+  }
+
+  if (req.method === "POST" && path === "/api/auth/login/finish") {
+    return withCors(await handlePasskeyLoginFinish(req));
+  }
+
+  if (req.method === "GET" && path === "/api/auth/session") {
+    return withCors(await handlePasskeySession(req));
+  }
+
+  if (req.method === "POST" && path === "/api/auth/logout") {
+    return withCors(await handlePasskeyLogout(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/passkey-users") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handlePasskeyUsersList());
+  }
+
+  if (req.method === "PATCH" && path === "/admin/passkey-users") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handlePasskeyUsersUpdate(req));
   }
 
   if (req.method === "POST" && path === "/admin/codex/auth") {
@@ -185,6 +151,18 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminCodexPromptsPurge());
+  }
+
+  if (req.method === "POST" && path === "/admin/kv-migration/import") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKvMigrationImport(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/kv-migration/validate") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminKvMigrationValidate());
   }
 
   if ((req.method === "GET" || req.method === "POST") && path === "/admin/defaults") {

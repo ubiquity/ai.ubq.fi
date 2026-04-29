@@ -28,6 +28,25 @@ const detectTargetTriple = (os: string, arch: string): string | null => {
   return null;
 };
 
+const platformPackageName = (targetTriple: string): string | null => {
+  switch (targetTriple) {
+    case "x86_64-unknown-linux-musl":
+      return "codex-linux-x64";
+    case "aarch64-unknown-linux-musl":
+      return "codex-linux-arm64";
+    case "x86_64-apple-darwin":
+      return "codex-darwin-x64";
+    case "aarch64-apple-darwin":
+      return "codex-darwin-arm64";
+    case "x86_64-pc-windows-msvc":
+      return "codex-win32-x64";
+    case "aarch64-pc-windows-msvc":
+      return "codex-win32-arm64";
+    default:
+      return null;
+  }
+};
+
 const detectSeparator = (path: string, os: string): string => {
   if (os === "windows") return "\\";
   return path.includes("\\") ? "\\" : "/";
@@ -76,6 +95,7 @@ export const resolveCodexBinaryPath = async (
   os: string,
   arch: string,
   realPath?: (path: string) => Promise<string>,
+  fileExists?: (path: string) => Promise<boolean>,
 ): Promise<string> => {
   let resolvedPath = codexPath;
   if (realPath) {
@@ -99,8 +119,42 @@ export const resolveCodexBinaryPath = async (
 
   const sep = detectSeparator(resolvedPath, os);
   const wrapperDir = dirname(resolvedPath, sep);
-  const vendorRoot = joinPath(sep, wrapperDir, "..", "vendor");
   const binaryName = os === "windows" ? "codex.exe" : "codex";
+  if (wrapperText.includes("PLATFORM_PACKAGE_BY_TARGET")) {
+    const packageName = platformPackageName(targetTriple);
+    if (packageName) {
+      const packageRoot = joinPath(sep, wrapperDir, "..");
+      const nodeModulesRoot = joinPath(sep, wrapperDir, "..", "..", "..");
+      const nestedPath = joinPath(
+        sep,
+        packageRoot,
+        "node_modules",
+        "@openai",
+        packageName,
+        "vendor",
+        targetTriple,
+        "codex",
+        binaryName,
+      );
+      const siblingPath = joinPath(
+        sep,
+        nodeModulesRoot,
+        "@openai",
+        packageName,
+        "vendor",
+        targetTriple,
+        "codex",
+        binaryName,
+      );
+      if (fileExists) {
+        if (await fileExists(nestedPath)) return nestedPath;
+        if (await fileExists(siblingPath)) return siblingPath;
+      }
+      return siblingPath;
+    }
+  }
+
+  const vendorRoot = joinPath(sep, wrapperDir, "..", "vendor");
   return joinPath(sep, vendorRoot, targetTriple, "codex", binaryName);
 };
 
@@ -166,7 +220,6 @@ export const extractCodexModelsFromText = (text: string): ExtractedCodexModels |
   while ((match = slugRegex.exec(text))) {
     const slug = match[1];
     if (!slug) continue;
-    if (!slug.includes("codex") && !slug.startsWith("gpt-") && !slug.startsWith("o")) continue;
     if (seen.has(slug)) continue;
     const objectText = extractJsonObjectAt(text, match.index);
     if (!objectText) continue;

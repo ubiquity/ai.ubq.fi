@@ -19,6 +19,7 @@ import {
 } from "./kernel_usage.ts";
 import { recordKernelPolicyQueue } from "./kernel_policy_queue.ts";
 import { kvPromise } from "./kv.ts";
+import { getPasskeySession, isPasskeyUserAdmin } from "./passkeys.ts";
 import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
 
@@ -513,7 +514,8 @@ type ClientAuthMethod =
   | { kind: "auth_tokens_allowlist" }
   | { kind: "kv_api_key"; key_id: string }
   | { kind: "admin_allowlist" }
-  | { kind: "deno_deploy_token" };
+  | { kind: "deno_deploy_token" }
+  | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean };
 
 type AuthenticateClientResult =
   | { ok: true; token: string | null; method: ClientAuthMethod }
@@ -522,6 +524,15 @@ type AuthenticateClientResult =
 type CheckAdminTokenResult =
   | { ok: true; kind: "admin_allowlist" | "deno_deploy_token" }
   | { ok: false; response: Response | null };
+
+type AdminAuthMethod =
+  | { kind: "admin_allowlist" }
+  | { kind: "deno_deploy_token" }
+  | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean };
+
+export type AdminAuthResult =
+  | { ok: true; token: string; method: AdminAuthMethod; is_super_admin: boolean }
+  | { ok: false; response: Response };
 
 const authenticateGitHubToken = async (
   req: Request,
@@ -610,6 +621,7 @@ const classifyToken = (token: string): string => {
   if (!trimmed) return "unset";
   if (trimmed.startsWith("ddw_")) return "deno_deploy_like(ddw_)";
   if (looksLikeGitHubToken(trimmed)) return "github_prefix";
+  if (trimmed.startsWith("uos_ai_session_")) return "uos_ai_session_prefix";
   if (trimmed.startsWith("ubq_ai_")) return "ubq_ai_prefix";
   if (/^[0-9a-fA-F]{64}$/.test(trimmed)) return "hex64";
   if (trimmed.includes("_")) return "has_underscore";
@@ -686,6 +698,21 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   if (config.authTokens.has(token)) {
     logClientAuth({ ok: true, method: "auth_tokens_allowlist" });
     return { ok: true, token, method: { kind: "auth_tokens_allowlist" } };
+  }
+
+  const passkeySession = await getPasskeySession(token);
+  if (passkeySession) {
+    logClientAuth({ ok: true, method: "passkey_session" });
+    return {
+      ok: true,
+      token,
+      method: {
+        kind: "passkey_session",
+        user_id: passkeySession.user.id,
+        handle: passkeySession.user.handle,
+        is_admin: isPasskeyUserAdmin(passkeySession.user),
+      },
+    };
   }
 
   const githubResult = await authenticateGitHubToken(req, token);
@@ -815,6 +842,7 @@ export const requireClientAuth = async (req: Request): Promise<Response | null> 
 
 const DENO_API_V1_BASE_URL = "https://api.deno.com/v1";
 const DENO_API_V2_BASE_URL = "https://api.deno.com/v2";
+const DENO_CONSOLE_BASE_URL = "https://console.deno.com";
 const DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS = 10 * 60_000;
 const deployTokenAdminCache = new Map<string, number>();
 
@@ -824,37 +852,12 @@ const looksLikeDenoDeployToken = (token: string): boolean => {
   if (trimmed.length > 500) return false;
   if (/\s/.test(trimmed)) return false;
   if (looksLikeUbqAiClientToken(trimmed)) return false;
+  if (trimmed.startsWith("uos_ai_session_")) return false;
   if (!trimmed.includes("_")) return false;
   return true;
 };
 
-const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
-  if (!config.isDeploy) return false;
-  const appSlug = (getEnv("DENO_DEPLOY_APP_SLUG") ?? "").trim();
-  if (appSlug) {
-    const appUrl = `${DENO_API_V2_BASE_URL}/apps/${encodeURIComponent(appSlug)}`;
-    const appRes = await fetch(appUrl, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Accept": "application/json",
-      },
-      redirect: "manual",
-    });
-
-    try {
-      await appRes.body?.cancel();
-    } catch {
-      // ignore
-    }
-
-    if (appRes.ok) return true;
-  }
-
-  const deploymentId = (getEnv("DENO_DEPLOYMENT_ID") ?? "").trim();
-  if (!deploymentId) return false;
-
-  const url = `${DENO_API_V1_BASE_URL}/deployments/${deploymentId}`;
+const fetchDenoApiOk = async (url: string, token: string): Promise<boolean> => {
   const res = await fetch(url, {
     method: "GET",
     headers: {
@@ -871,6 +874,47 @@ const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<bo
   }
 
   return res.ok;
+};
+
+const fetchDenoConsoleAppOk = async (orgSlug: string, appSlug: string, token: string): Promise<boolean> => {
+  const url = `${DENO_CONSOLE_BASE_URL}/${encodeURIComponent(orgSlug)}/${encodeURIComponent(appSlug)}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Accept": "text/html",
+      "Cookie": `token=${token}; deno_auth_ghid=force`,
+    },
+    redirect: "manual",
+  });
+
+  if (!res.ok) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // ignore
+    }
+    return false;
+  }
+
+  const body = await res.text();
+  const title = body.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ?? "";
+  return title.includes(`| ${appSlug} | Deploy`);
+};
+
+const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
+  const appSlug = (getEnv("DENO_DEPLOY_APP_SLUG") ?? "").trim();
+  if (appSlug) {
+    const appUrl = `${DENO_API_V2_BASE_URL}/apps/${encodeURIComponent(appSlug)}`;
+    if (await fetchDenoApiOk(appUrl, token)) return true;
+    const orgSlug = (getEnv("DENO_DEPLOY_ORG_SLUG") ?? "").trim();
+    if (orgSlug && await fetchDenoConsoleAppOk(orgSlug, appSlug, token)) return true;
+  }
+
+  const deploymentId = (getEnv("DENO_DEPLOYMENT_ID") ?? "").trim();
+  if (!deploymentId) return false;
+
+  const url = `${DENO_API_V1_BASE_URL}/deployments/${deploymentId}`;
+  return await fetchDenoApiOk(url, token);
 };
 
 const verifyDenoDeployTokenCached = async (token: string): Promise<
@@ -908,7 +952,7 @@ const checkAdminToken = async (token: string): Promise<CheckAdminTokenResult> =>
   return verified;
 };
 
-export const requireAdminAuth = async (req: Request): Promise<Response | null> => {
+export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> => {
   const token = getBearerToken(req);
   const tokenPresent = Boolean(token);
   const tokenShape = token ? classifyToken(token) : null;
@@ -921,18 +965,38 @@ export const requireAdminAuth = async (req: Request): Promise<Response | null> =
     });
   if (!token) {
     logAdminAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
-    return openaiError(401, "Unauthorized", "invalid_api_key");
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  }
+
+  const passkeySession = await getPasskeySession(token);
+  if (passkeySession) {
+    if (!isPasskeyUserAdmin(passkeySession.user)) {
+      logAdminAuth({ ok: false, method: "passkey_session", status: 403, reason: "passkey_user_not_admin" });
+      return { ok: false, response: openaiError(403, "Forbidden", "forbidden") };
+    }
+    logAdminAuth({ ok: true, method: "passkey_session" });
+    return {
+      ok: true,
+      token,
+      is_super_admin: false,
+      method: {
+        kind: "passkey_session",
+        user_id: passkeySession.user.id,
+        handle: passkeySession.user.handle,
+        is_admin: true,
+      },
+    };
   }
 
   if (config.adminTokens.size === 0 && !looksLikeDenoDeployToken(token)) {
     logAdminAuth({ ok: false, method: "admin_allowlist", status: 401, reason: "admin_tokens_unconfigured" });
-    return openaiError(401, "Unauthorized", "invalid_api_key");
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
 
   const result = await checkAdminToken(token);
   if (result.ok) {
     logAdminAuth({ ok: true, method: result.kind });
-    return null;
+    return { ok: true, token, is_super_admin: true, method: { kind: result.kind } };
   }
   if (result.response) {
     logAdminAuth({
@@ -941,10 +1005,22 @@ export const requireAdminAuth = async (req: Request): Promise<Response | null> =
       status: result.response.status,
       reason: "admin_token_verification_failed",
     });
-    return result.response;
+    return { ok: false, response: result.response };
   }
   logAdminAuth({ ok: false, method: "admin_allowlist", status: 401, reason: "invalid_admin_token" });
-  return openaiError(401, "Unauthorized", "invalid_api_key");
+  return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+};
+
+export const requireAdminAuth = async (req: Request): Promise<Response | null> => {
+  const result = await authenticateAdmin(req);
+  return result.ok ? null : result.response;
+};
+
+export const requireSuperAdminAuth = async (req: Request): Promise<Response | null> => {
+  const result = await authenticateAdmin(req);
+  if (!result.ok) return result.response;
+  if (result.is_super_admin) return null;
+  return openaiError(403, "Super admin token required", "forbidden");
 };
 
 export const incrementApiKeyUsage = async (keyId: string): Promise<void> => {
@@ -1019,7 +1095,8 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
     };
 
   const method: Record<string, unknown> = { kind: authResult.method.kind };
-  const isAdmin = authResult.method.kind === "admin_allowlist" || authResult.method.kind === "deno_deploy_token";
+  const isAdmin = authResult.method.kind === "admin_allowlist" || authResult.method.kind === "deno_deploy_token" ||
+    (authResult.method.kind === "passkey_session" && authResult.method.is_admin);
 
   if (authResult.method.kind === "github_token") {
     method.repo = { owner: authResult.method.owner, repo: authResult.method.repo };
@@ -1048,6 +1125,14 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
       }
     }
     method.key = key;
+  }
+
+  if (authResult.method.kind === "passkey_session") {
+    method.user = {
+      id: authResult.method.user_id,
+      handle: authResult.method.handle,
+      is_admin: authResult.method.is_admin,
+    };
   }
 
   return json(

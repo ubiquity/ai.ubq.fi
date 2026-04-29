@@ -62,7 +62,7 @@ body[data-page="chat"] [data-chat-panel] {
   gap: 10px;
 }
 
-body[data-page="chat"] [data-chat-panel] summary {
+body[data-page="chat"] [data-chat-panel] > summary {
   list-style: none;
   cursor: pointer;
   display: flex;
@@ -74,31 +74,83 @@ body[data-page="chat"] [data-chat-panel] summary {
   color: var(--muted-2);
 }
 
-body[data-page="chat"] [data-chat-panel] summary::-webkit-details-marker {
+body[data-page="chat"] [data-chat-panel] > summary::-webkit-details-marker {
   display: none;
 }
 
-body[data-page="chat"] [data-chat-panel] summary::marker {
+body[data-page="chat"] [data-chat-panel] > summary::marker {
   content: "";
 }
 
-body[data-page="chat"] [data-chat-panel] summary::after {
+body[data-page="chat"] [data-chat-panel] > summary::after {
   content: "";
   width: 8px;
   height: 8px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
+  border-right: 2px solid currentcolor;
+  border-bottom: 2px solid currentcolor;
   transform: rotate(-45deg);
   transition: transform 150ms ease;
 }
 
-body[data-page="chat"] [data-chat-panel][open] summary::after {
+body[data-page="chat"] [data-chat-panel][open] > summary::after {
   transform: rotate(45deg);
 }
 
 body[data-page="chat"] [data-panel-body] {
   display: grid;
   gap: 12px;
+}
+
+body[data-page="chat"] [data-passkey-advanced],
+body[data-page="chat"] [data-token-fallback] {
+  display: grid;
+  gap: 10px;
+}
+
+body[data-page="chat"] [data-passkey-advanced] summary,
+body[data-page="chat"] [data-token-fallback] summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted-2);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+body[data-page="chat"] [data-passkey-advanced] summary::-webkit-details-marker,
+body[data-page="chat"] [data-token-fallback] summary::-webkit-details-marker {
+  display: none;
+}
+
+body[data-page="chat"] [data-passkey-advanced] summary::marker,
+body[data-page="chat"] [data-token-fallback] summary::marker {
+  content: "";
+}
+
+body[data-page="chat"] [data-passkey-advanced] summary::after,
+body[data-page="chat"] [data-token-fallback] summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentcolor;
+  border-bottom: 2px solid currentcolor;
+  transform: rotate(-45deg);
+  transition: transform 150ms ease;
+}
+
+body[data-page="chat"] [data-passkey-advanced][open] summary::after,
+body[data-page="chat"] [data-token-fallback][open] summary::after {
+  transform: rotate(45deg);
+}
+
+body[data-page="chat"] [data-passkey-advanced-body],
+body[data-page="chat"] [data-token-fallback-body] {
+  display: grid;
+  gap: 12px;
+  padding-top: 2px;
 }
 
 body[data-page="chat"] [data-chat-main] {
@@ -327,7 +379,9 @@ body[data-page="chat"] [data-chat-sidebar] select {
     animation: none;
   }
 
-  body[data-page="chat"] [data-chat-panel] summary::after {
+  body[data-page="chat"] [data-chat-panel] > summary::after,
+  body[data-page="chat"] [data-passkey-advanced] summary::after,
+  body[data-page="chat"] [data-token-fallback] summary::after {
     transition: none;
   }
 }

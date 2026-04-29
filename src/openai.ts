@@ -1,7 +1,6 @@
 import {
   buildCodexRequest,
   CodexError,
-  fetchCodexModels,
   fetchCodexResponses,
   getCodexModelsSnapshotDefaultModel,
   loadCodexModelsSnapshot,
@@ -28,23 +27,6 @@ import type {
   ResponsesRequest,
 } from "./types.ts";
 
-const getDefaultModelFromUpstream = async (clientVersion: string | null): Promise<string | null> => {
-  try {
-    const upstream = await fetchCodexModels({ clientVersion });
-    if (!upstream.ok) {
-      console.error("[ai.ubq.fi] Default model upstream fetch failed:", upstream.status, upstream.statusText);
-      return null;
-    }
-    const payload = await upstream.json().catch(() => null);
-    const normalized = normalizeModelList(payload);
-    const firstModel = normalized?.data.find((model) => typeof model.id === "string" && model.id.trim());
-    return typeof firstModel?.id === "string" ? firstModel.id.trim() : null;
-  } catch (error) {
-    console.error("[ai.ubq.fi] Default model upstream fetch failed:", error);
-    return null;
-  }
-};
-
 const getDefaultModel = async (): Promise<string | null> => {
   const kv = await kvPromise;
   if (kv) {
@@ -55,13 +37,13 @@ const getDefaultModel = async (): Promise<string | null> => {
   const snapshot = await loadCodexModelsSnapshot();
   const snapshotDefault = getCodexModelsSnapshotDefaultModel(snapshot);
   if (snapshotDefault) return snapshotDefault;
-  return await getDefaultModelFromUpstream(snapshot?.client_version ?? null);
+  return null;
 };
 
 const defaultModelUnavailableError = (): Response =>
   openaiError(
     503,
-    "Default model is unavailable: no configured default model, Codex model snapshot, or upstream model list.",
+    "Default model is unavailable: no configured default model or Codex model snapshot.",
     "server_error",
   );
 
@@ -179,13 +161,60 @@ const toCodexErrorResponse = (error: unknown): Response => {
   return openaiError(502, message, "codex_upstream_unreachable");
 };
 
-const looksLikeReasoningModel = (model: string): boolean => {
-  const trimmed = model.trim().toLowerCase();
-  return trimmed.startsWith("gpt-5") || trimmed.startsWith("o");
+type CodexModelReasoning = Readonly<{
+  levels: ReasoningEffort[];
+  defaultLevel: ReasoningEffort | null;
+}>;
+
+const modelIdFromSnapshotRecord = (model: Record<string, unknown>): string | null => {
+  const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
+  return id?.trim() || null;
 };
 
-const resolveDefaultReasoningLabel = (model: string, defaultEffort: ReasoningEffort): ReasoningEffort => {
-  return looksLikeReasoningModel(model) ? defaultEffort : "none";
+const findSnapshotModelRecord = async (model: string): Promise<Record<string, unknown> | null> => {
+  const target = model.trim();
+  if (!target) return null;
+  const snapshot = await loadCodexModelsSnapshot();
+  if (!snapshot || !Array.isArray(snapshot.models)) return null;
+  return snapshot.models.find((entry) => {
+    if (!isRecord(entry)) return false;
+    return modelIdFromSnapshotRecord(entry) === target;
+  }) ?? null;
+};
+
+const extractSnapshotReasoningLevels = (model: Record<string, unknown> | null): ReasoningEffort[] => {
+  const raw = Array.isArray(model?.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
+  const levels = raw
+    .map((entry) => {
+      if (typeof entry === "string") return normalizeReasoningEffort(entry);
+      if (isRecord(entry)) return normalizeReasoningEffort(entry.effort);
+      return null;
+    })
+    .filter((entry): entry is ReasoningEffort => Boolean(entry));
+  return Array.from(new Set(levels));
+};
+
+const getCodexModelReasoning = async (model: string): Promise<CodexModelReasoning> => {
+  const record = await findSnapshotModelRecord(model);
+  const defaultLevel = normalizeReasoningEffort(record?.default_reasoning_level);
+  const levels = extractSnapshotReasoningLevels(record);
+  return {
+    levels: defaultLevel && !levels.includes(defaultLevel) ? [...levels, defaultLevel] : levels,
+    defaultLevel,
+  };
+};
+
+const resolveDefaultReasoningLabel = (
+  modelReasoning: CodexModelReasoning,
+  defaultEffort: ReasoningEffort,
+): ReasoningEffort => {
+  if (defaultEffort === "none") return "none";
+  if (modelReasoning.levels.includes(defaultEffort)) return defaultEffort;
+  if (modelReasoning.defaultLevel === "none") return "none";
+  if (modelReasoning.defaultLevel && modelReasoning.levels.includes(modelReasoning.defaultLevel)) {
+    return modelReasoning.defaultLevel;
+  }
+  return modelReasoning.levels[0] ?? "none";
 };
 
 const resolveReasoningLabelFromEffort = (
@@ -210,6 +239,42 @@ const resolveReasoningLabelFromParam = (
     if (effort) return effort;
   }
   return defaultLabel;
+};
+
+const reasoningErrorFieldLabel = (fieldName: "reasoning_effort" | "reasoning.effort"): string =>
+  fieldName === "reasoning.effort" ? "reasoning.effort" : "reasoning_effort";
+
+const validateModelReasoningEffort = (
+  effort: ReasoningEffort | null | undefined,
+  modelReasoning: CodexModelReasoning,
+  fieldName: "reasoning_effort" | "reasoning.effort",
+): Response | null => {
+  if (effort === undefined || effort === null || effort === "none") return null;
+  if (!modelReasoning.levels.length) {
+    return openaiError(
+      400,
+      `${reasoningErrorFieldLabel(fieldName)} is not supported by this model`,
+      "invalid_request_error",
+    );
+  }
+  if (!modelReasoning.levels.includes(effort)) {
+    return openaiError(
+      400,
+      `${reasoningErrorFieldLabel(fieldName)} must be one of: ${modelReasoning.levels.join(", ")}`,
+      "invalid_request_error",
+    );
+  }
+  return null;
+};
+
+const extractReasoningParamEffort = (
+  reasoning: Record<string, unknown> | null | undefined,
+): ReasoningEffort | null | undefined => {
+  if (reasoning === undefined) return undefined;
+  if (reasoning === null) return null;
+  if (!Object.prototype.hasOwnProperty.call(reasoning, "effort")) return undefined;
+  if (reasoning.effort === null) return null;
+  return normalizeReasoningEffort(reasoning.effort);
 };
 
 const UOS_WARNING_HEADER = "x-uos-warning";
@@ -1099,13 +1164,7 @@ const chatRoleToCodexRole = (role: string): ResponseMessageItem["role"] | null =
 };
 
 const normalizeModelForCodex = (model: string): string => {
-  const trimmed = model.trim();
-  if (!trimmed) return "gpt-5.1-codex-mini";
-  if (trimmed === "gpt-5.3-chat-latest") return "gpt-5.3";
-  if (trimmed === "gpt-5.2-chat-latest") return "gpt-5.2";
-  if (trimmed === "gpt-5.1-chat-latest") return "gpt-5.1";
-  if (trimmed === "gpt-5-chat-latest") return "gpt-5.2";
-  return trimmed;
+  return model.trim();
 };
 
 const normalizeModelEntry = (value: unknown): Record<string, unknown> | null => {
@@ -1405,53 +1464,15 @@ const completeChatCompletions = async (
 
 export const handleModels = async (): Promise<Response> => {
   const snapshot = await loadCodexModelsSnapshot();
-  const normalizedSnapshot = snapshot && snapshot.source !== "codex_cli" &&
-      Array.isArray(snapshot.models) && snapshot.models.length > 0
+  const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
     ? normalizeModelList({ models: snapshot.models })
     : null;
 
-  let upstream: Response | null = null;
-  try {
-    upstream = await fetchCodexModels({ clientVersion: snapshot?.client_version ?? null });
-  } catch (error) {
-    console.error("[ai.ubq.fi] Upstream models fetch failed:", error);
-    upstream = null;
-    if (snapshot && normalizedSnapshot) {
-      return json(200, normalizedSnapshot, { "x-ubq-upstream": snapshot.source || "chatgpt_codex" });
-    }
-    return toCodexErrorResponse(error);
-  }
-
-  if (!upstream.ok) {
-    const text = await upstream.text().catch(() => "");
-    if (upstream.status !== 400 && upstream.status !== 401 && upstream.status !== 403) {
-      if (snapshot && normalizedSnapshot) {
-        return json(200, normalizedSnapshot, { "x-ubq-upstream": snapshot.source || "chatgpt_codex" });
-      }
-    }
-    return new Response(text || upstream.statusText, {
-      status: upstream.status,
-      headers: {
-        "Content-Type": upstream.headers.get("Content-Type") ?? "text/plain",
-        "x-ubq-upstream": "chatgpt_codex",
-      },
-    });
-  }
-
-  const payloadText = await upstream.text().catch(() => "");
-  let parsed: unknown = null;
-  try {
-    parsed = payloadText ? JSON.parse(payloadText) : null;
-  } catch {
-    parsed = null;
-  }
-
-  const normalized = normalizeModelList(parsed);
-  if (!normalized) {
-    return openaiError(502, "Upstream models response did not include a model list.", "codex_upstream_invalid");
-  }
-
-  return json(200, normalized, { "x-ubq-upstream": "chatgpt_codex" });
+  return json(
+    200,
+    normalized ?? { object: "list", data: [] },
+    { "x-ubq-upstream": snapshot?.source || "stored_codex_models" },
+  );
 };
 
 export const handleEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
@@ -2495,10 +2516,13 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
 
   const instructions = instructionParts.join("\n\n").trim();
   const defaultEffort = await getDefaultReasoningEffort();
-  const defaultReasoningLabel = resolveDefaultReasoningLabel(model, defaultEffort);
+  const modelReasoning = await getCodexModelReasoning(model);
+  const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
+  const reasoningValidation = validateModelReasoningEffort(reasoningEffort.value, modelReasoning, "reasoning_effort");
+  if (reasoningValidation) return reasoningValidation;
   let reasoningValue: Record<string, unknown> | null | undefined;
   if (reasoningEffort.value === undefined) {
-    reasoningValue = looksLikeReasoningModel(model) ? { effort: defaultReasoningLabel } : undefined;
+    reasoningValue = defaultReasoningLabel !== "none" ? { effort: defaultReasoningLabel } : undefined;
   } else if (reasoningEffort.value === null) {
     reasoningValue = null;
   } else {
@@ -2680,11 +2704,18 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     instructions = rawInstructions;
   }
   const defaultEffort = await getDefaultReasoningEffort();
-  const defaultReasoningLabel = resolveDefaultReasoningLabel(model, defaultEffort);
+  const modelReasoning = await getCodexModelReasoning(model);
+  const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
+  const reasoningValidation = validateModelReasoningEffort(
+    extractReasoningParamEffort(reasoning.value),
+    modelReasoning,
+    "reasoning.effort",
+  );
+  if (reasoningValidation) return reasoningValidation;
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
 
   let reasoningValue = reasoning.value;
-  if (reasoningValue === undefined && looksLikeReasoningModel(model)) {
+  if (reasoningValue === undefined && defaultReasoningLabel !== "none") {
     reasoningValue = { effort: defaultReasoningLabel };
   }
 

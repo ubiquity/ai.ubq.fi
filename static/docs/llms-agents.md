@@ -107,8 +107,8 @@ curl -sS https://ai.ubq.fi/v1/embeddings \
 
 ## Models
 
-`GET /v1/models` returns a normalized OpenAI-style model list (`object: "list"`, `data: [...]`). The gateway may serve
-the upstream list or a cached snapshot when upstream is unavailable.
+`GET /v1/models` returns a normalized OpenAI-style model list (`object: "list"`, `data: [...]`) from the stored Codex
+CLI model snapshot. When no snapshot has been initialized, it returns an empty list.
 
 ## Chat Completions
 
@@ -260,22 +260,14 @@ Notes:
 
 ## Reasoning defaults
 
-- Reasoning models (model IDs starting with `gpt-5` or `o`) default to the configured reasoning effort.
+- Models with `supported_reasoning_levels` in the stored Codex CLI snapshot default to the configured reasoning effort.
 - Non-reasoning models default to `none`.
 - Use `reasoning_effort: null` (chat completions) or `reasoning: null` (responses) to disable reasoning.
 - Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
 
 Defaults can be managed via `/admin/defaults` (admin auth required). When no model is explicitly configured, the gateway
-uses the first model in the current Codex model snapshot. The built-in reasoning default is `medium`.
-
-## Model normalization
-
-The gateway normalizes some chat-latest aliases before sending upstream:
-
-- `gpt-5.3-chat-latest` -> `gpt-5.3`
-- `gpt-5.2-chat-latest` -> `gpt-5.2`
-- `gpt-5.1-chat-latest` -> `gpt-5.1`
-- `gpt-5-chat-latest` -> `gpt-5.2`
+uses the first model in the current Codex model snapshot. If neither a configured default nor a snapshot is available,
+no-model requests fail with `503` instead of fetching a live fallback catalog.
 
 ## Ignored parameters and warnings
 
@@ -360,7 +352,7 @@ If the auth method is a KV API key, the response includes key metadata and usage
 ## Health
 
 - `GET /health` verifies service configuration (Codex auth, token/KV availability).
-- `GET /health/auth` verifies Codex auth and refresh status.
+- `GET /health/auth` returns Codex auth metadata without refreshing upstream auth.
 - `GET /health/upstream` verifies upstream connectivity.
 
 ## Errors

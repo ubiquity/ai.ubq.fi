@@ -62,7 +62,6 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
-    "model": "gpt-5.1-codex-mini",
     "reasoning_effort": "high",
     "messages": [{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Tell me a short joke."}],
     "stream": false
@@ -94,7 +93,6 @@ curl -N https://ai.ubq.fi/v1/chat/completions \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
-    "model": "gpt-5.1-codex-mini",
     "stream": true,
     "messages": [{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Say hello in 5 different ways."}]
   }'
@@ -210,7 +208,7 @@ Health probe (cron-friendly):
 
 ```bash
 deno task health:check --url https://ai.ubq.fi
-# auth-only (does not consume chat tokens):
+# auth metadata only (does not refresh auth or consume chat tokens):
 deno task health:check --url https://ai.ubq.fi --auth
 # or: deno run --allow-net scripts/health-check.ts --url https://ai.ubq.fi --json --auth
 ```
@@ -241,8 +239,8 @@ ubq-ai admin keys list | jq
 ## Admin: upload/validate Codex auth.json
 
 This validates your posted `auth.json` against the upstream Codex endpoint and, if valid, stores the tokens in Deno KV
-(becoming the active upstream auth for subsequent requests). The gateway then fetches the upstream Codex model catalog
-and stores a snapshot in KV for fallback use if upstream is temporarily unavailable.
+(becoming the active upstream auth for subsequent requests). The helper extracts the Codex model catalog from your local
+Codex CLI binary and uploads that snapshot as the single source of truth for `/v1/models` and the default model picker.
 
 Treat `auth.json` as a secret (it contains refresh tokens). Use the repo helper CLI:
 
@@ -252,8 +250,8 @@ export DENO_DEPLOY_TOKEN="..."
 deno task upload:auth --url https://ai.ubq.fi
 ```
 
-The helper CLI uses `DENO_DEPLOY_TOKEN` and extracts the Codex CLI model list from your local `codex` binary (so
-`/v1/models` reflects Codex-native IDs). Use `--codex-bin` to point at a specific binary if it is not on your PATH.
+The helper CLI uses `DENO_DEPLOY_TOKEN` and requires a `codex` binary with embedded model metadata. Use `--codex-bin` to
+point at a specific binary if it is not on your PATH.
 
 ## Admin: create/manage UBQ API keys
 
@@ -374,7 +372,7 @@ deno task ubq-ai admin keys revoke --id "<id>"
 ## Supported routes
 
 - `GET /` and `GET /health`
-- `GET /health/auth` (Codex auth refresh check; no chat tokens used)
+- `GET /health/auth` (Codex auth metadata; no upstream refresh and no chat tokens used)
 - `GET /health/upstream` (Codex chat probe)
 - `POST /admin/codex/auth` (admin only)
 - `POST /admin/api-keys` (admin only)
@@ -394,3 +392,44 @@ export UOS_AI_TOKEN="dev-token"
 export CODEX_AUTH_JSON_B64="$(base64 < ~/.codex/auth.json | tr -d '\n')"
 deno task dev
 ```
+
+## Deno KV migration
+
+Use the KV migration helper to inspect a Deno 1/Classic KV database, export it, map it into a local Deno 2 KV, and
+validate it before any production import.
+
+```bash
+export DENO_KV_ACCESS_TOKEN="..."
+SOURCE_KV="https://api.deno.com/databases/<database-id>/connect"
+
+deno task kv:probe --source "$SOURCE_KV"
+deno task kv:export --source "$SOURCE_KV" --out .kv-migration/deno1.ndjson
+deno task kv:analyze --in .kv-migration/deno1.ndjson --profile local
+deno task kv:import-local --in .kv-migration/deno1.ndjson --db .kv-migration/deno1.sqlite3 --profile local --overwrite
+deno task kv:validate --db .kv-migration/deno1.sqlite3 --strict
+```
+
+For production, run the remote import as a dry run first. Remote imports do not write until `--write` is passed.
+
+```bash
+DEST_KV="https://api.deno.com/databases/<deno-2-database-id>/connect"
+deno task kv:analyze --in .kv-migration/deno1.ndjson --profile prod
+deno task kv:import-remote --in .kv-migration/deno1.ndjson --dest "$DEST_KV" --profile prod --overwrite
+deno task kv:import-remote --in .kv-migration/deno1.ndjson --dest "$DEST_KV" --profile prod --overwrite --write
+deno task kv:validate --target "$DEST_KV" --strict
+```
+
+If the new Deno Deploy database is only reachable from the app runtime, use the super-admin HTTP importer. It writes
+through the deployed app's own `Deno.openKv()` connection and is also dry-run by default:
+
+```bash
+BASE_URL="https://ai.ubq.fi"
+deno task kv:import-http --in .kv-migration/deno1.ndjson --base-url "$BASE_URL" --profile prod --overwrite
+deno task kv:import-http --in .kv-migration/deno1.ndjson --base-url "$BASE_URL" --profile prod --overwrite --write
+deno task kv:validate-http --base-url "$BASE_URL" --strict
+```
+
+The `local` profile imports durable settings plus Codex auth/model records and legacy rows for replay. The `prod`
+profile imports modern durable settings only: it skips `codex_auth` and `codex_models` because the deploy workflow
+refreshes those from the Codex CLI snapshot, and it skips legacy `["key", ...]` rows by default. Runtime-only state such
+as passkey sessions, WebAuthn challenges, embedding jobs, and rate windows is skipped.

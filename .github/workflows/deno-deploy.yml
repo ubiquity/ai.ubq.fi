@@ -14,6 +14,7 @@ jobs:
     uses: ubiquity/deno-deploy-workflow/.github/workflows/deno-deploy-reusable.yml@main
     with:
       project: ai-ubq-fi
+      preview_project: ai-ubq-fi
       deploy_platform: deno2
       entrypoint: serve.ts
       install_command: deno install
@@ -32,6 +33,7 @@ jobs:
 
   sync-ai-runtime-env:
     needs: deploy
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     permissions:
       contents: read

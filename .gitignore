@@ -1,1 +1,3 @@
 .env
+.codex-worktrees/
+.kv-migration/
