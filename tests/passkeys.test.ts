@@ -405,6 +405,35 @@ Deno.test("passkey RP ID uses client window location when headers are unavailabl
   });
 });
 
+Deno.test("passkey RP ID allows localhost client origin for remote target", () => {
+  const req = new Request("https://ai.ubq.fi/api/auth/register/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+
+  assert.deepEqual(getPasskeyRequestMeta(req, "http://localhost:8000"), {
+    origin: "http://localhost:8000",
+    rpId: "localhost",
+  });
+});
+
+Deno.test("passkey RP ID ignores untrusted client origin", () => {
+  const req = new Request("https://ai.ubq.fi/api/auth/register/start", {
+    method: "POST",
+    headers: {
+      "Origin": "https://evil.example",
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+
+  assert.deepEqual(getPasskeyRequestMeta(req, "https://evil.example"), {
+    origin: "https://ai.ubq.fi",
+    rpId: "ai.ubq.fi",
+  });
+});
+
 Deno.test("passkey RP ID ignores opaque origins", () => {
   const req = new Request("https://ai.ubq.fi/api/auth/register/start", {
     method: "POST",

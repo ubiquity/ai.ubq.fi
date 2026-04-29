@@ -56,6 +56,7 @@ export const PASSKEY_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export const PASSKEY_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const AUTH_PREFIX = ["uos_ai", "auth"] as const;
+const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
 const RP_NAME = "UbiquityOS AI Gateway";
 
 export const passkeyUserKey = (userId: string): Deno.KvKey => [...AUTH_PREFIX, "users", userId];
@@ -130,18 +131,40 @@ const parseOriginFromHost = (host: string | null, protocol: string): string | nu
   }
 };
 
+const isLoopbackHost = (hostname: string): boolean =>
+  hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+
+const isTrustedPasskeyOrigin = (origin: string): boolean => {
+  try {
+    const url = new URL(origin);
+    if (url.origin === PASSKEY_CANONICAL_ORIGIN) return true;
+    return (url.protocol === "http:" || url.protocol === "https:") && isLoopbackHost(url.hostname);
+  } catch {
+    return false;
+  }
+};
+
+const firstTrustedPasskeyOrigin = (origins: Array<string | null>): string => {
+  for (const origin of origins) {
+    if (origin && isTrustedPasskeyOrigin(origin)) return origin;
+  }
+  return PASSKEY_CANONICAL_ORIGIN;
+};
+
 export const getPasskeyRequestMeta = (req: Request, clientOrigin?: unknown): { origin: string; rpId: string } => {
   const url = new URL(req.url);
   const forwardedProtocol = firstHeaderValue(req.headers.get("x-forwarded-proto"));
   const protocol = forwardedProtocol || url.protocol.replace(/:$/, "");
   const forwardedHost = firstHeaderValue(req.headers.get("x-forwarded-host"));
   const host = firstHeaderValue(req.headers.get("host"));
-  const origin = parseOrigin(getString(clientOrigin) ?? null) ??
-    parseOrigin(req.headers.get("origin")) ??
-    parseOrigin(req.headers.get("referer")) ??
-    parseOriginFromHost(forwardedHost, protocol) ??
-    parseOriginFromHost(host, protocol) ??
-    url.origin;
+  const origin = firstTrustedPasskeyOrigin([
+    parseOrigin(getString(clientOrigin) ?? null),
+    parseOrigin(req.headers.get("origin")),
+    parseOrigin(req.headers.get("referer")),
+    parseOriginFromHost(forwardedHost, protocol),
+    parseOriginFromHost(host, protocol),
+    url.origin,
+  ]);
   const originUrl = new URL(origin);
   return { origin: originUrl.origin, rpId: originUrl.hostname };
 };
