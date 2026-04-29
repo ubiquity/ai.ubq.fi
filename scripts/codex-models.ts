@@ -28,6 +28,25 @@ const detectTargetTriple = (os: string, arch: string): string | null => {
   return null;
 };
 
+const platformPackageName = (targetTriple: string): string | null => {
+  switch (targetTriple) {
+    case "x86_64-unknown-linux-musl":
+      return "codex-linux-x64";
+    case "aarch64-unknown-linux-musl":
+      return "codex-linux-arm64";
+    case "x86_64-apple-darwin":
+      return "codex-darwin-x64";
+    case "aarch64-apple-darwin":
+      return "codex-darwin-arm64";
+    case "x86_64-pc-windows-msvc":
+      return "codex-win32-x64";
+    case "aarch64-pc-windows-msvc":
+      return "codex-win32-arm64";
+    default:
+      return null;
+  }
+};
+
 const detectSeparator = (path: string, os: string): string => {
   if (os === "windows") return "\\";
   return path.includes("\\") ? "\\" : "/";
@@ -99,8 +118,16 @@ export const resolveCodexBinaryPath = async (
 
   const sep = detectSeparator(resolvedPath, os);
   const wrapperDir = dirname(resolvedPath, sep);
-  const vendorRoot = joinPath(sep, wrapperDir, "..", "vendor");
   const binaryName = os === "windows" ? "codex.exe" : "codex";
+  if (wrapperText.includes("PLATFORM_PACKAGE_BY_TARGET")) {
+    const packageName = platformPackageName(targetTriple);
+    if (packageName) {
+      const nodeModulesRoot = joinPath(sep, wrapperDir, "..", "..", "..");
+      return joinPath(sep, nodeModulesRoot, "@openai", packageName, "vendor", targetTriple, "codex", binaryName);
+    }
+  }
+
+  const vendorRoot = joinPath(sep, wrapperDir, "..", "vendor");
   return joinPath(sep, vendorRoot, targetTriple, "codex", binaryName);
 };
 

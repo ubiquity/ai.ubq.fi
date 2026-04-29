@@ -47,6 +47,29 @@ const codexBinaryName = "codex";
   assert.equal(resolved, "/opt/lib/node_modules/@openai/codex/vendor/aarch64-apple-darwin/codex/codex");
 });
 
+Deno.test("resolveCodexBinaryPath uses platform package for current npm wrapper", async () => {
+  const wrapper = `#!/usr/bin/env node
+const PLATFORM_PACKAGE_BY_TARGET = {
+  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
+};
+let targetTriple = "x86_64-unknown-linux-musl";
+const codexBinaryName = "codex";
+const localVendorRoot = "vendor";
+let vendorRoot;
+`;
+  const resolved = await resolveCodexBinaryPath(
+    "/usr/local/bin/codex",
+    () => Promise.resolve(wrapper),
+    "linux",
+    "x86_64",
+    () => Promise.resolve("/usr/local/lib/node_modules/@openai/codex/bin/codex.js"),
+  );
+  assert.equal(
+    resolved,
+    "/usr/local/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex",
+  );
+});
+
 Deno.test("extractCodexModelsFromText parses slugs and reasoning levels", () => {
   const text =
     'codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}';
