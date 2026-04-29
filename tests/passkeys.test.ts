@@ -62,9 +62,11 @@ const {
   handlePasskeyUsersUpdate,
   hasPasskeyUsers,
   normalizePasskeyHandle,
+  passkeyCredentialKey,
   passkeyHandleKey,
   passkeySessionKey,
   passkeyUserKey,
+  saveVerifiedPasskeyRegistration,
 } = await import("../src/passkeys.ts");
 const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
 
@@ -368,6 +370,81 @@ Deno.test("passkey registration start can use an existing passkey session", asyn
   assert.equal(body.handle, user.handle);
   assert.equal(body.publicKey.user.id, encodedUserId);
   assert.equal(body.publicKey.user.name, user.handle);
+});
+
+Deno.test("passkey registration start keeps a session bound to its own user", async () => {
+  kvStore.clear();
+  const { token, user } = seedPasskeySession();
+  const now = Date.now();
+  const otherUser = {
+    id: "user-other",
+    handle: "other-admin",
+    is_admin: true,
+    credential_ids: ["credential-other"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  kvStore.set(keyToString(passkeyUserKey(otherUser.id)), otherUser);
+  kvStore.set(keyToString(passkeyHandleKey(otherUser.handle)), otherUser.id);
+  const { default: handler } = await import("../src/handler.ts");
+
+  const response = await handler(
+    new Request("https://ai.ubq.fi/api/auth/register/start", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ handle: otherUser.handle }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  const encodedUserId = btoa(user.id).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  assert.equal(body.handle, user.handle);
+  assert.equal(body.publicKey.user.id, encodedUserId);
+  assert.equal(body.publicKey.user.name, user.handle);
+  assert.deepEqual(body.publicKey.excludeCredentials, [{ id: "credential-test", type: "public-key" }]);
+});
+
+Deno.test("passkey registration deletes stale handle mapping when a user handle changes", async () => {
+  kvStore.clear();
+  const now = Date.now();
+  const user = {
+    id: "user-rename",
+    handle: "old-name",
+    is_admin: true,
+    credential_ids: ["credential-old"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  kvStore.set(keyToString(passkeyUserKey(user.id)), user);
+  kvStore.set(keyToString(passkeyHandleKey(user.handle)), user.id);
+
+  const saved = await saveVerifiedPasskeyRegistration(kvStub, {
+    userId: user.id,
+    handle: "new-name",
+    isAdmin: false,
+    credentialId: "credential-new",
+    publicKey: "public-key",
+    signCount: 0,
+    transports: [],
+  });
+
+  assert.equal(saved.ok, true);
+  if (!saved.ok) throw new Error("registration save failed");
+  assert.equal(saved.user.handle, "new-name");
+  assert.equal(kvStore.has(keyToString(passkeyHandleKey("old-name"))), false);
+  assert.equal(kvStore.get(keyToString(passkeyHandleKey("new-name"))), user.id);
+  assert.deepEqual(
+    (kvStore.get(keyToString(passkeyUserKey(user.id))) as { credential_ids: string[] }).credential_ids,
+    ["credential-old", "credential-new"],
+  );
+  assert.equal(
+    (kvStore.get(keyToString(passkeyCredentialKey("credential-new"))) as { user_id: string }).user_id,
+    user.id,
+  );
 });
 
 Deno.test("passkey logout deletes the cached session", async () => {

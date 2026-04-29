@@ -212,6 +212,75 @@ const createSession = async (kv: Deno.Kv, userId: string): Promise<PasskeySessio
   return record;
 };
 
+type SaveVerifiedPasskeyRegistrationInput = {
+  userId: string;
+  handle: string;
+  isAdmin: boolean;
+  credentialId: string;
+  publicKey: string;
+  signCount: number;
+  transports: string[];
+};
+
+export const saveVerifiedPasskeyRegistration = async (
+  kv: Deno.Kv,
+  input: SaveVerifiedPasskeyRegistrationInput,
+): Promise<{ ok: true; user: PasskeyUserRecord } | { ok: false; response: Response }> => {
+  const existingByHandle = await getUserByHandle(kv, input.handle);
+  if (existingByHandle && existingByHandle.id !== input.userId) {
+    return {
+      ok: false,
+      response: openaiError(409, "A passkey account already exists for this username", "invalid_request_error"),
+    };
+  }
+
+  const createdAtMs = nowMs();
+  const credentialRecord: PasskeyCredentialRecord = {
+    credential_id: input.credentialId,
+    user_id: input.userId,
+    public_key: input.publicKey,
+    sign_count: input.signCount,
+    transports: input.transports,
+    created_at_ms: createdAtMs,
+  };
+
+  const existingUserEntry = await kv.get<PasskeyUserRecord>(passkeyUserKey(input.userId));
+  const userRecord: PasskeyUserRecord = existingUserEntry.value
+    ? {
+      ...existingUserEntry.value,
+      handle: input.handle,
+      is_admin: isPasskeyUserAdmin(existingUserEntry.value),
+      credential_ids: Array.from(new Set([...existingUserEntry.value.credential_ids, input.credentialId])),
+      updated_at_ms: createdAtMs,
+    }
+    : {
+      id: input.userId,
+      handle: input.handle,
+      is_admin: input.isAdmin,
+      credential_ids: [input.credentialId],
+      created_at_ms: createdAtMs,
+      updated_at_ms: createdAtMs,
+    };
+
+  let atomic = kv.atomic()
+    .check(existingUserEntry)
+    .set(passkeyUserKey(userRecord.id), userRecord)
+    .set(passkeyHandleKey(input.handle), userRecord.id)
+    .set(passkeyCredentialKey(input.credentialId), credentialRecord);
+  if (existingUserEntry.value && existingUserEntry.value.handle !== input.handle) {
+    atomic = atomic.delete(passkeyHandleKey(existingUserEntry.value.handle));
+  }
+  const commit = await atomic.commit();
+  if (!commit.ok) {
+    return {
+      ok: false,
+      response: openaiError(409, "Passkey account was modified concurrently; retry", "invalid_request_error"),
+    };
+  }
+
+  return { ok: true, user: userRecord };
+};
+
 export const getPasskeySession = async (token: string): Promise<PasskeySession | null> => {
   const kv = await kvPromise;
   if (!kv) return null;
@@ -251,9 +320,9 @@ export const handlePasskeyRegisterStart = async (
   const existingSession = token ? await getPasskeySession(token) : null;
   const requestedHandle = normalizePasskeyHandle(raw.handle);
   const tokenHandle = token ? await buildPasskeyHandle(token) : "";
-  const existingUser = requestedHandle ? await getUserByHandle(kv, requestedHandle) : existingSession?.user ?? null;
+  const existingUser = existingSession?.user ?? (requestedHandle ? await getUserByHandle(kv, requestedHandle) : null);
   const userId = existingUser?.id ?? crypto.randomUUID();
-  const handle = requestedHandle || existingSession?.user.handle || tokenHandle || await buildPasskeyHandle(userId);
+  const handle = existingSession?.user.handle || requestedHandle || tokenHandle || await buildPasskeyHandle(userId);
   if (!handle) return openaiError(400, "username is required", "invalid_request_error");
   const isAdmin = existingUser ? isPasskeyUserAdmin(existingUser) : options.defaultIsAdmin === true;
   const { origin, rpId } = getPasskeyRequestMeta(req, raw.client_origin);
@@ -345,58 +414,27 @@ export const handlePasskeyRegisterFinish = async (req: Request): Promise<Respons
     const registrationInfo = verification.registrationInfo;
     const credentialId = registrationInfo.credential.id;
     const publicKey = base64UrlEncode(new Uint8Array(registrationInfo.credential.publicKey));
-    const handle = normalizePasskeyHandle(raw.handle) || challengeRecord.handle;
+    const handle = normalizePasskeyHandle(challengeRecord.handle);
     if (!handle) return openaiError(400, "username is required", "invalid_request_error");
 
-    const existingByHandle = await getUserByHandle(kv, handle);
-    if (existingByHandle && existingByHandle.id !== challengeRecord.user_id) {
-      return openaiError(409, "A passkey account already exists for this username", "invalid_request_error");
-    }
-
-    const credentialRecord: PasskeyCredentialRecord = {
-      credential_id: credentialId,
-      user_id: challengeRecord.user_id,
-      public_key: publicKey,
-      sign_count: registrationInfo.credential.counter,
+    const saved = await saveVerifiedPasskeyRegistration(kv, {
+      userId: challengeRecord.user_id,
+      handle,
+      isAdmin: challengeRecord.is_admin === true,
+      credentialId,
+      publicKey,
+      signCount: registrationInfo.credential.counter,
       transports: registrationInfo.credential.transports ?? [],
-      created_at_ms: nowMs(),
-    };
+    });
+    if (!saved.ok) return saved.response;
 
-    const existingUserEntry = await kv.get<PasskeyUserRecord>(passkeyUserKey(challengeRecord.user_id));
-    const userRecord: PasskeyUserRecord = existingUserEntry.value
-      ? {
-        ...existingUserEntry.value,
-        handle,
-        is_admin: isPasskeyUserAdmin(existingUserEntry.value),
-        credential_ids: Array.from(new Set([...existingUserEntry.value.credential_ids, credentialId])),
-        updated_at_ms: nowMs(),
-      }
-      : {
-        id: challengeRecord.user_id,
-        handle,
-        is_admin: challengeRecord.is_admin === true,
-        credential_ids: [credentialId],
-        created_at_ms: nowMs(),
-        updated_at_ms: nowMs(),
-      };
-
-    const commit = await kv.atomic()
-      .check(existingUserEntry)
-      .set(passkeyUserKey(userRecord.id), userRecord)
-      .set(passkeyHandleKey(handle), userRecord.id)
-      .set(passkeyCredentialKey(credentialId), credentialRecord)
-      .commit();
-    if (!commit.ok) {
-      return openaiError(409, "Passkey account was modified concurrently; retry", "invalid_request_error");
-    }
-
-    const session = await createSession(kv, userRecord.id);
+    const session = await createSession(kv, saved.user.id);
     return json(
       200,
       {
         token: session.token,
-        user_id: userRecord.id,
-        handle: userRecord.handle,
+        user_id: saved.user.id,
+        handle: saved.user.handle,
         expires_at_ms: session.expires_at_ms,
       },
       { "Cache-Control": "no-store" },
