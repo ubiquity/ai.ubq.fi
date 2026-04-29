@@ -21,7 +21,9 @@ jobs:
       runtime_env: |
         DENO_DEPLOY_TOKEN=$DENO_DEPLOY_TOKEN
         UOS_AI_TOKEN=$UBIQUITY_AI_USER_TOKEN
+      index_html_path: static/docs.html
       extra_paths: |
+        /app.js
         /docs
       debug_fetch_fail: true
       required_env: |
