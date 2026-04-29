@@ -55,27 +55,7 @@ import {
   handlePasskeyUsersList,
   handlePasskeyUsersUpdate,
 } from "./passkeys.ts";
-import {
-  handleAdminCss,
-  handleAdminJs,
-  handleAdminPage,
-  handleAppJs,
-  handleAuthJs,
-  handleChatCss,
-  handleChatJs,
-  handleChatPage,
-  handleCompanyLogo,
-  handleDocsCss,
-  handleDocsJs,
-  handleDocsLlmAgentsMd,
-  handleDocsPage,
-  handleFavicon,
-  handleFavicon32,
-  handleHomeCss,
-  handleNetworkJs,
-  handleRoot,
-  handleStyleCss,
-} from "./static.ts";
+import { handleRoot, handleStaticAsset } from "./static.ts";
 
 const normalizePath = (path: string): string => {
   if (path === "/") return path;
@@ -94,80 +74,9 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleRoot(req));
   }
 
-  if (req.method === "GET" && (path === "/docs" || path === "/docs.html")) {
-    return withCors(await handleDocsPage());
-  }
-
-  if (req.method === "GET" && (path === "/chat" || path === "/chat.html")) {
-    return withCors(await handleChatPage());
-  }
-
-  if (req.method === "GET" && (path === "/admin" || path === "/admin.html")) {
-    return withCors(await handleAdminPage());
-  }
-
-  if (req.method === "GET" && path === "/chat.js") {
-    return withCors(await handleChatJs());
-  }
-
-  if (req.method === "GET" && path === "/admin.js") {
-    return withCors(await handleAdminJs());
-  }
-
-  if (req.method === "GET" && path === "/auth.js") {
-    return withCors(await handleAuthJs());
-  }
-
-  if (req.method === "GET" && path === "/network.js") {
-    return withCors(await handleNetworkJs());
-  }
-
-  if (req.method === "GET" && path === "/style.css") {
-    return withCors(await handleStyleCss());
-  }
-
-  if (req.method === "GET" && path === "/docs.css") {
-    return withCors(await handleDocsCss());
-  }
-
-  if (req.method === "GET" && path === "/chat.css") {
-    return withCors(await handleChatCss());
-  }
-
-  if (req.method === "GET" && path === "/home.css") {
-    return withCors(await handleHomeCss());
-  }
-
-  if (req.method === "GET" && path === "/admin.css") {
-    return withCors(await handleAdminCss());
-  }
-
-  if (req.method === "GET" && path === "/favicon.ico") {
-    return withCors(await handleFavicon());
-  }
-
-  if (req.method === "GET" && path === "/app.js") {
-    return withCors(await handleAppJs());
-  }
-
-  if (req.method === "GET" && path === "/docs.js") {
-    return withCors(await handleDocsJs());
-  }
-
-  if (req.method === "GET" && path === "/company-logo.svg") {
-    return withCors(await handleCompanyLogo());
-  }
-
-  if (req.method === "GET" && path === "/docs/llms-agents.md") {
-    return withCors(await handleDocsLlmAgentsMd());
-  }
-
-  if (req.method === "GET" && path === "/favicon-32.png") {
-    return withCors(await handleFavicon32());
-  }
-
-  if (req.method === "GET" && path === "/favicon.png") {
-    return withCors(await handleFavicon());
+  if (req.method === "GET") {
+    const staticResponse = await handleStaticAsset(path);
+    if (staticResponse) return withCors(staticResponse);
   }
 
   if (req.method === "GET" && path === "/health") {
