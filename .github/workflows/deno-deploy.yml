@@ -110,8 +110,13 @@ jobs:
             while IFS= read -r mask_line; do
               [ -n "$mask_line" ] && echo "::add-mask::$mask_line"
             done <<< "$value"
+            local cli_value="$value"
+            case "$cli_value" in
+              -*) cli_value=" $cli_value" ;;
+            esac
+
             set +e
-            output="$(deno deploy env update-value "$key" "$value" --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" --app "$DENO_DEPLOY_APP" 2>&1)"
+            output="$(deno deploy env update-value "$key" "$cli_value" --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" --app "$DENO_DEPLOY_APP" 2>&1)"
             status=$?
             set -e
             if [ $status -eq 0 ]; then
@@ -120,7 +125,7 @@ jobs:
             fi
 
             if printf '%s\n' "$output" | grep -qi "not found"; then
-              deno deploy env add "$key" "$value" --secret --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" --app "$DENO_DEPLOY_APP"
+              deno deploy env add "$key" "$cli_value" --secret --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" --app "$DENO_DEPLOY_APP"
               return 0
             fi
 
