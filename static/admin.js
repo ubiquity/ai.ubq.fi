@@ -1,5 +1,6 @@
 import "./network.js";
 import {
+  formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
   registerPasskey,
@@ -198,10 +199,11 @@ const setPasskeyStatus = (state, text) => setBadge(passkeyStatus, state, text);
 
 const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
+  const canRegisterPasskey = options.canRegisterPasskey ?? true;
   passkeyLoginBtn.hidden = signedIn;
-  passkeyRegisterBtn.hidden = deviceRegistered;
+  passkeyRegisterBtn.hidden = deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
-  if (signedIn) setPasskeyStatus("ok", "Signed in");
+  if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
   else setPasskeyStatus("unknown", "Passkey idle");
 };
 const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
@@ -3543,7 +3545,11 @@ const testAdminToken = async () => {
     }
     const kind = data?.auth?.method?.kind;
     setAuthBadge("ok", kind ? `OK (${formatAuthMethodLabel(kind)})` : "OK");
-    setSignedInState(true, { deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials() });
+    setSignedInState(true, {
+      canRegisterPasskey: true,
+      deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials(),
+      statusText: formatAuthSessionLabel(data?.auth),
+    });
   } catch {
     setAuthBadge("bad", "Offline");
     setSignedInState(false);
