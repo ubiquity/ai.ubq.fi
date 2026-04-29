@@ -89,6 +89,43 @@ jobs:
           echo "::error::Deployment did not become reachable at $DEPLOY_URL"
           exit 1
 
+      - name: Ensure Deno KV database
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          DENO_DEPLOY_ORG: ubiquity-dao
+          DENO_DEPLOY_APP: ${{ steps.deploy-target.outputs.app }}
+        run: |
+          set -euo pipefail
+
+          database="${DENO_DEPLOY_APP}-kv"
+
+          set +e
+          output="$(deno deploy database provision "$database" --kind denokv --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" 2>&1)"
+          status=$?
+          set -e
+          if [ $status -eq 0 ]; then
+            echo "$output"
+          elif printf '%s\n' "$output" | grep -Eqi "already|exists"; then
+            echo "$output"
+          else
+            echo "$output"
+            exit $status
+          fi
+
+          set +e
+          output="$(deno deploy database assign "$database" --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" --app "$DENO_DEPLOY_APP" 2>&1)"
+          status=$?
+          set -e
+          if [ $status -eq 0 ]; then
+            echo "$output"
+          elif printf '%s\n' "$output" | grep -Eqi "already|assigned"; then
+            echo "$output"
+          else
+            echo "$output"
+            exit $status
+          fi
+
       - name: Sync AI runtime env
         shell: bash
         env:
