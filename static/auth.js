@@ -249,7 +249,7 @@ export const signInWithPasskey = async ({ handle = "", baseUrl = "" }) => {
 
 export const registerPasskey = async ({ handle = "", token = "", baseUrl = "" }) => {
   const adminToken = token.trim();
-  const normalizedHandle = normalizePasskeyHandle(handle) || (adminToken ? await buildPasskeyHandle(adminToken) : "");
+  const normalizedHandle = normalizePasskeyHandle(handle);
   const unavailable = getPasskeyUnavailableMessage("register");
   if (unavailable) throw new Error(unavailable);
 
