@@ -843,8 +843,6 @@ export const requireClientAuth = async (req: Request): Promise<Response | null> 
 const DENO_API_V1_BASE_URL = "https://api.deno.com/v1";
 const DENO_API_V2_BASE_URL = "https://api.deno.com/v2";
 const DENO_CONSOLE_BASE_URL = "https://console.deno.com";
-const DEFAULT_DENO_DEPLOY_APP_SLUG = "ai-ubq-fi";
-const DEFAULT_DENO_DEPLOY_ORG_SLUG = "ubiquity-dao";
 const DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS = 10 * 60_000;
 const deployTokenAdminCache = new Map<string, number>();
 
@@ -903,13 +901,12 @@ const fetchDenoConsoleAppOk = async (orgSlug: string, appSlug: string, token: st
 };
 
 const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<boolean> => {
-  const appSlug = (getEnv("DENO_DEPLOY_APP_SLUG") ?? DEFAULT_DENO_DEPLOY_APP_SLUG).trim() ||
-    DEFAULT_DENO_DEPLOY_APP_SLUG;
-  const orgSlug = DEFAULT_DENO_DEPLOY_ORG_SLUG;
+  const appSlug = (getEnv("DENO_DEPLOY_APP_SLUG") ?? "").trim();
   if (appSlug) {
     const appUrl = `${DENO_API_V2_BASE_URL}/apps/${encodeURIComponent(appSlug)}`;
     if (await fetchDenoApiOk(appUrl, token)) return true;
-    if (await fetchDenoConsoleAppOk(orgSlug, appSlug, token)) return true;
+    const orgSlug = (getEnv("DENO_DEPLOY_ORG_SLUG") ?? "").trim();
+    if (orgSlug && await fetchDenoConsoleAppOk(orgSlug, appSlug, token)) return true;
   }
 
   const deploymentId = (getEnv("DENO_DEPLOYMENT_ID") ?? "").trim();

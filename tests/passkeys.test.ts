@@ -68,6 +68,19 @@ const {
 } = await import("../src/passkeys.ts");
 const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
 
+const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
+  const originalGet = Deno.env.get;
+  Deno.env.get = (key: string): string | undefined => {
+    if (Object.prototype.hasOwnProperty.call(updates, key)) return updates[key] ?? undefined;
+    return originalGet.call(Deno.env, key);
+  };
+  try {
+    await fn();
+  } finally {
+    Deno.env.get = originalGet;
+  }
+};
+
 const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true } = {}) => {
   const now = Date.now();
   const user = {
@@ -161,23 +174,25 @@ Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed ru
   };
 
   try {
-    const req = new Request("https://ai.ubq.fi/v1/auth", {
-      headers: { Authorization: `Bearer ${token}` },
+    await withEnv({ DENO_DEPLOY_APP_SLUG: "ai-ubq-fi-test" }, async () => {
+      const req = new Request("https://ai.ubq.fi/v1/auth", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const adminAuth = await authenticateAdmin(req);
+      assert.equal(adminAuth.ok, true);
+      if (adminAuth.ok) {
+        assert.equal(adminAuth.is_super_admin, true);
+        assert.equal(adminAuth.method.kind, "deno_deploy_token");
+      }
+
+      const clientAuth = await authenticateClient(req);
+      assert.equal(clientAuth.ok, true);
+      if (clientAuth.ok) assert.equal(clientAuth.method.kind, "deno_deploy_token");
+
+      assert.equal(requested.length, 1);
+      assert.equal(requested[0].url, "https://api.deno.com/v2/apps/ai-ubq-fi-test");
+      assert.equal(requested[0].authorization, `Bearer ${token}`);
     });
-    const adminAuth = await authenticateAdmin(req);
-    assert.equal(adminAuth.ok, true);
-    if (adminAuth.ok) {
-      assert.equal(adminAuth.is_super_admin, true);
-      assert.equal(adminAuth.method.kind, "deno_deploy_token");
-    }
-
-    const clientAuth = await authenticateClient(req);
-    assert.equal(clientAuth.ok, true);
-    if (clientAuth.ok) assert.equal(clientAuth.method.kind, "deno_deploy_token");
-
-    assert.equal(requested.length, 1);
-    assert.equal(requested[0].url.includes("https://api.deno.com/v2/apps/"), true);
-    assert.equal(requested[0].authorization, `Bearer ${token}`);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -209,17 +224,54 @@ Deno.test("Deno Deploy console tokens are verified against the app page", async 
   };
 
   try {
-    const req = new Request("https://ai.ubq.fi/v1/auth", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const adminAuth = await authenticateAdmin(req);
-    assert.equal(adminAuth.ok, true);
-    if (adminAuth.ok) assert.equal(adminAuth.method.kind, "deno_deploy_token");
+    await withEnv({
+      DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
+      DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
+    }, async () => {
+      const req = new Request("https://ai.ubq.fi/v1/auth", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const adminAuth = await authenticateAdmin(req);
+      assert.equal(adminAuth.ok, true);
+      if (adminAuth.ok) assert.equal(adminAuth.method.kind, "deno_deploy_token");
 
-    assert.equal(requested.length, 2);
-    assert.equal(requested[0].authorization, `Bearer ${token}`);
-    assert.equal(requested[1].url, "https://console.deno.com/ubiquity-dao/ai-ubq-fi");
-    assert.equal(requested[1].cookie, `token=${token}; deno_auth_ghid=force`);
+      assert.equal(requested.length, 2);
+      assert.equal(requested[0].authorization, `Bearer ${token}`);
+      assert.equal(requested[1].url, "https://console.deno.com/ubiquity-dao/ai-ubq-fi");
+      assert.equal(requested[1].cookie, `token=${token}; deno_auth_ghid=force`);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Deno Deploy tokens do not fall back to the production app slug", async () => {
+  kvStore.clear();
+  const originalFetch = globalThis.fetch;
+  const requested: string[] = [];
+  const token = "ddo_deployment_token_1234567890abcdefghijklmnopqrstuvwxyz";
+
+  globalThis.fetch = (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    requested.push(url);
+    return Promise.resolve(new Response("{}", { status: url.includes("/v1/deployments/dep_test") ? 200 : 401 }));
+  };
+
+  try {
+    await withEnv({
+      DENO_DEPLOY_APP_SLUG: null,
+      DENO_DEPLOY_ORG_SLUG: null,
+      DENO_DEPLOYMENT_ID: "dep_test",
+    }, async () => {
+      const req = new Request("https://ai.ubq.fi/v1/auth", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const adminAuth = await authenticateAdmin(req);
+      assert.equal(adminAuth.ok, true);
+      if (adminAuth.ok) assert.equal(adminAuth.method.kind, "deno_deploy_token");
+
+      assert.deepEqual(requested, ["https://api.deno.com/v1/deployments/dep_test"]);
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }
