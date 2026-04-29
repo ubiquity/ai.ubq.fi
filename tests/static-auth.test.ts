@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 
-const { STORAGE_KEYS, signInWithPasskey, registerPasskey } = await import("../static/auth.js");
+const { STORAGE_KEYS, hasAuthPasskeyCredential, signInWithPasskey, registerPasskey } = await import(
+  "../static/auth.js"
+);
 
 type Restore = () => void;
 
@@ -63,6 +65,18 @@ const withLocalStorage = async (
 };
 
 const bufferFromText = (value: string): ArrayBuffer => new TextEncoder().encode(value).buffer;
+
+Deno.test("hasAuthPasskeyCredential recognizes passkey sessions and credential counts", () => {
+  assert.equal(hasAuthPasskeyCredential({ method: { kind: "passkey_session" } }), true);
+  assert.equal(
+    hasAuthPasskeyCredential({ method: { kind: "passkey_session", user: { credential_count: 0 } } }),
+    true,
+  );
+  assert.equal(hasAuthPasskeyCredential({ method: { kind: "admin_allowlist" } }), false);
+  assert.equal(hasAuthPasskeyCredential({ method: { user: { credential_count: 1 } } }), true);
+  assert.equal(hasAuthPasskeyCredential({ user: { credential_count: 1 } }), true);
+  assert.equal(hasAuthPasskeyCredential({ user: { credential_count: 0 } }), false);
+});
 
 const captureRegisterStartBody = async (
   input: { handle?: string; token: string; baseUrl?: string },

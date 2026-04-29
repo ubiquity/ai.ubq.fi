@@ -1,5 +1,6 @@
 import "./network.js";
 import {
+  hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
   registerPasskey,
   signInWithPasskey,
@@ -287,12 +288,12 @@ const setPasskeyHandleValue = (handle) => {
   logPasskeyUsername(handle);
 };
 
-const applySignedInToken = (token) => {
+const applySignedInToken = (token, options = {}) => {
   tokenInput.value = token;
   rememberTokenInput.checked = true;
   storage.set(STORAGE_KEYS.rememberToken, "1");
   storage.set(STORAGE_KEYS.token, token);
-  setSignedInState(true);
+  setSignedInState(true, options);
   tokenInput.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
@@ -385,7 +386,7 @@ const getRegistrationAdminToken = async () => {
   setPasskeyStatus("unknown", "Sign in on ai.ubq.fi to authorize registration...");
   const relay = await requestRemotePasskeySession();
   if (relay.handle) setPasskeyHandleValue(relay.handle);
-  applySignedInToken(relay.token);
+  applySignedInToken(relay.token, { deviceRegistered: true });
   return relay.token;
 };
 
@@ -3542,7 +3543,7 @@ const testAdminToken = async () => {
     }
     const kind = data?.auth?.method?.kind;
     setAuthBadge("ok", kind ? `OK (${formatAuthMethodLabel(kind)})` : "OK");
-    setSignedInState(true, { deviceRegistered: kind === "passkey_session" || hasStoredPasskeyCredentials() });
+    setSignedInState(true, { deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials() });
   } catch {
     setAuthBadge("bad", "Offline");
     setSignedInState(false);
@@ -4209,14 +4210,14 @@ passkeyLoginBtn.addEventListener("click", async () => {
     if (!isAuthRelayMode && isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()) {
       const relay = await requestRemotePasskeySession();
       if (relay.handle) setPasskeyHandleValue(relay.handle);
-      applySignedInToken(relay.token);
+      applySignedInToken(relay.token, { deviceRegistered: true });
       setPasskeyStatus("ok", "Passkey signed in");
       return;
     }
 
     const result = await signInWithPasskey({ baseUrl: passkeyBaseUrl });
     if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token);
+    applySignedInToken(result.token, { deviceRegistered: true });
     setPasskeyStatus("ok", "Passkey signed in");
     postAuthRelayResult(result);
   } catch (error) {
@@ -4241,7 +4242,7 @@ passkeyRegisterBtn.addEventListener("click", async () => {
       baseUrl: passkeyBaseUrl,
     });
     if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token);
+    applySignedInToken(result.token, { deviceRegistered: true });
     setPasskeyStatus("ok", "Passkey registered");
     postAuthRelayResult(result);
   } catch (error) {
@@ -4496,7 +4497,7 @@ const startAuthRelayIfRequested = async () => {
     setPasskeyStatus("unknown", "Sign in to continue on the requesting admin page...");
     const result = await signInWithPasskey({ baseUrl: globalThis.location.origin });
     if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token);
+    applySignedInToken(result.token, { deviceRegistered: true });
     postAuthRelayResult(result);
   } catch (error) {
     setPasskeyStatus("bad", `${error?.message ?? "Passkey sign-in failed"} Use the sign-in button to try again.`);

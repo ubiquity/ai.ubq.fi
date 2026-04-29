@@ -515,7 +515,7 @@ type ClientAuthMethod =
   | { kind: "kv_api_key"; key_id: string }
   | { kind: "admin_allowlist" }
   | { kind: "deno_deploy_token" }
-  | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean };
+  | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean; credential_count: number };
 
 type AuthenticateClientResult =
   | { ok: true; token: string | null; method: ClientAuthMethod }
@@ -528,7 +528,7 @@ type CheckAdminTokenResult =
 type AdminAuthMethod =
   | { kind: "admin_allowlist" }
   | { kind: "deno_deploy_token" }
-  | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean };
+  | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean; credential_count: number };
 
 export type AdminAuthResult =
   | { ok: true; token: string; method: AdminAuthMethod; is_super_admin: boolean }
@@ -711,6 +711,7 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
         user_id: passkeySession.user.id,
         handle: passkeySession.user.handle,
         is_admin: isPasskeyUserAdmin(passkeySession.user),
+        credential_count: passkeySession.user.credential_ids.length,
       },
     };
   }
@@ -984,6 +985,7 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
         user_id: passkeySession.user.id,
         handle: passkeySession.user.handle,
         is_admin: true,
+        credential_count: passkeySession.user.credential_ids.length,
       },
     };
   }
@@ -1132,6 +1134,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
       id: authResult.method.user_id,
       handle: authResult.method.handle,
       is_admin: authResult.method.is_admin,
+      credential_count: authResult.method.credential_count,
     };
   }
 

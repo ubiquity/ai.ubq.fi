@@ -97,6 +97,7 @@ const {
   getPasskeyRequestMeta,
   handlePasskeyLoginStart,
   handlePasskeyRegisterStart,
+  handlePasskeySession,
   handlePasskeyUsersList,
   handlePasskeyUsersUpdate,
   hasPasskeyUsers,
@@ -156,6 +157,7 @@ Deno.test("passkey session authenticates as client and admin", async () => {
   if (clientAuth.ok) {
     assert.equal(clientAuth.method.kind, "passkey_session");
     assert.equal(clientAuth.method.handle, user.handle);
+    assert.equal(clientAuth.method.credential_count, 1);
   }
 
   const adminError = await requireAdminAuth(req);
@@ -168,6 +170,13 @@ Deno.test("passkey session authenticates as client and admin", async () => {
   assert.equal(body.auth.method.kind, "passkey_session");
   assert.equal(body.auth.method.user.handle, user.handle);
   assert.equal(body.auth.method.user.is_admin, true);
+  assert.equal(body.auth.method.user.credential_count, 1);
+
+  const sessionResponse = await handlePasskeySession(req);
+  assert.equal(sessionResponse.status, 200);
+  const sessionBody = await sessionResponse.json();
+  assert.equal(sessionBody.user.handle, user.handle);
+  assert.equal(sessionBody.user.credential_count, 1);
 });
 
 Deno.test("non-admin passkey session authenticates as client but not admin", async () => {
@@ -183,6 +192,7 @@ Deno.test("non-admin passkey session authenticates as client but not admin", asy
     assert.equal(clientAuth.method.kind, "passkey_session");
     assert.equal(clientAuth.method.handle, user.handle);
     assert.equal(clientAuth.method.is_admin, false);
+    assert.equal(clientAuth.method.credential_count, 1);
   }
 
   const adminError = await requireAdminAuth(req);
@@ -193,6 +203,7 @@ Deno.test("non-admin passkey session authenticates as client but not admin", asy
   const body = await whoami.json();
   assert.equal(body.auth.is_admin, false);
   assert.equal(body.auth.method.user.is_admin, false);
+  assert.equal(body.auth.method.user.credential_count, 1);
 });
 
 Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed runtime", async () => {
