@@ -4192,7 +4192,7 @@ rememberTokenInput.addEventListener("change", () => {
   }
   storage.remove(STORAGE_KEYS.rememberToken);
   storage.remove(STORAGE_KEYS.token);
-  setSignedInState(false);
+  setSignedInState(Boolean(getAdminToken()));
 });
 
 passkeyHandleInput.addEventListener("input", () => {
