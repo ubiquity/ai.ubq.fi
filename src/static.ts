@@ -30,7 +30,7 @@ const readTextFile = async (url: URL, label: string): Promise<string | null> => 
   }
 };
 
-const readBytesFile = async (url: URL, label: string): Promise<Uint8Array | null> => {
+const readBytesFile = async (url: URL, label: string): Promise<Uint8Array<ArrayBuffer> | null> => {
   try {
     return await Deno.readFile(url);
   } catch (error) {
@@ -67,8 +67,8 @@ const loadText = async (url: URL, label: string, cached: Promise<string | null>)
 const loadBytes = async (
   url: URL,
   label: string,
-  cached: Promise<Uint8Array | null>,
-): Promise<Uint8Array | null> => (config.isDeploy ? await cached : await readBytesFile(url, label));
+  cached: Promise<Uint8Array<ArrayBuffer> | null>,
+): Promise<Uint8Array<ArrayBuffer> | null> => (config.isDeploy ? await cached : await readBytesFile(url, label));
 
 const htmlSecurityHeaders = (): HeadersInit => ({
   "Cache-Control": staticCacheControl,
