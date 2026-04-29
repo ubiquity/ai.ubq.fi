@@ -447,7 +447,7 @@ passkeyLoginBtn.addEventListener("click", async () => {
   passkeyLoginBtn.disabled = true;
   passkeyRegisterBtn.disabled = true;
   try {
-    const result = await signInWithPasskey({ handle: passkeyHandleInput.value });
+    const result = await signInWithPasskey();
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token);
     setPasskeyStatus("ok", "Passkey signed in");

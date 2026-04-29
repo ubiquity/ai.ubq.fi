@@ -210,12 +210,14 @@ const finishRegister = async (baseUrl, credential, handle) => {
   });
 };
 
-export const signInWithPasskey = async ({ handle = "", baseUrl = "" }) => {
+export const signInWithPasskey = async ({ handle = "", baseUrl = "", useHandle = false } = {}) => {
   const normalizedHandle = normalizePasskeyHandle(handle);
   const unavailable = getPasskeyUnavailableMessage("login");
   if (unavailable) throw new Error(unavailable);
 
-  const body = normalizedHandle ? { ...getClientOriginPayload(), handle: normalizedHandle } : getClientOriginPayload();
+  const body = useHandle && normalizedHandle
+    ? { ...getClientOriginPayload(), handle: normalizedHandle }
+    : getClientOriginPayload();
   const start = await requestJson(baseUrl, "/api/auth/login/start", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -226,13 +228,6 @@ export const signInWithPasskey = async ({ handle = "", baseUrl = "" }) => {
   }
 
   const options = toRequestOptions(start.body.publicKey);
-  const storedIds = loadStoredCredentialIds();
-  if (!options.allowCredentials && storedIds.length > 0) {
-    options.allowCredentials = storedIds.map((id) => ({
-      id: b64urlToBuf(id),
-      type: "public-key",
-    }));
-  }
 
   const credential = await globalThis.navigator.credentials.get({ publicKey: options });
   if (!credential) throw new Error("No passkey was returned.");
