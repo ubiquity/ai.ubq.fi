@@ -405,6 +405,22 @@ Deno.test("passkey RP ID uses client window location when headers are unavailabl
   });
 });
 
+Deno.test("passkey RP ID ignores opaque origins", () => {
+  const req = new Request("https://ai.ubq.fi/api/auth/register/start", {
+    method: "POST",
+    headers: {
+      "Origin": "foo://bar",
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+
+  assert.deepEqual(getPasskeyRequestMeta(req), {
+    origin: "https://ai.ubq.fi",
+    rpId: "ai.ubq.fi",
+  });
+});
+
 Deno.test("passkey registration start requires admin proof", async () => {
   kvStore.clear();
   const { default: handler } = await import("../src/handler.ts");

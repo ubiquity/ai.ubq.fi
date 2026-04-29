@@ -114,7 +114,8 @@ const parseOrigin = (value: string | null): string | null => {
   const trimmed = value?.trim() ?? "";
   if (!trimmed || trimmed === "null") return null;
   try {
-    return new URL(trimmed).origin;
+    const origin = new URL(trimmed).origin;
+    return origin === "null" ? null : origin;
   } catch {
     return null;
   }
