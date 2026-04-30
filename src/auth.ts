@@ -1099,6 +1099,8 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   const method: Record<string, unknown> = { kind: authResult.method.kind };
   const isAdmin = authResult.method.kind === "admin_allowlist" || authResult.method.kind === "deno_deploy_token" ||
     (authResult.method.kind === "passkey_session" && authResult.method.is_admin);
+  const isSuperAdmin = authResult.method.kind === "admin_allowlist" ||
+    authResult.method.kind === "deno_deploy_token";
 
   if (authResult.method.kind === "github_token") {
     method.repo = { owner: authResult.method.owner, repo: authResult.method.repo };
@@ -1146,6 +1148,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
       auth: {
         mode,
         is_admin: isAdmin,
+        is_super_admin: isSuperAdmin,
         method,
         token: tokenInfo,
       },

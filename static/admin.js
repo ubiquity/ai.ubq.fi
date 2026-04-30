@@ -71,6 +71,19 @@ const signOutBtn = mustGet("admin-sign-out");
 const passkeyStatus = mustGet("admin-passkey-status");
 const baseSelect = mustGet("admin-base");
 const basePreview = mustGet("base-preview");
+const authWidget = mustGet("view-session");
+const authWidgetPanel = mustGet("auth-widget-panel");
+const authWidgetToggle = mustGet("auth-widget-toggle");
+const authWidgetClose = mustGet("auth-widget-close");
+const lobbySummary = mustGet("admin-lobby-summary");
+const lobbyAuthStatus = mustGet("lobby-auth-status");
+const lobbyKeysStatus = mustGet("lobby-keys-status");
+const lobbyUsersStatus = mustGet("lobby-users-status");
+const lobbyKernelStatus = mustGet("lobby-kernel-status");
+const lobbyQueueStatus = mustGet("lobby-queue-status");
+const lobbyPubkeysStatus = mustGet("lobby-pubkeys-status");
+const lobbyDefaultsStatus = mustGet("lobby-defaults-status");
+const lobbyUpstreamStatus = mustGet("lobby-upstream-status");
 
 const keyNameInput = mustGet("key-name");
 const keyUsageLimitInput = mustGet("key-usage-limit");
@@ -93,14 +106,13 @@ const keysTabAll = mustGet("keys-tab-all");
 const keysTabActive = mustGet("keys-tab-active");
 const keysTabRevoked = mustGet("keys-tab-revoked");
 
-const viewTabSession = mustGet("view-tab-session");
 const viewTabKeys = mustGet("view-tab-keys");
 const viewTabUsers = mustGet("view-tab-users");
 const viewTabKernel = mustGet("view-tab-kernel");
 const viewTabPubkeys = mustGet("view-tab-pubkeys");
 const viewTabDefaults = mustGet("view-tab-defaults");
 
-const viewSession = mustGet("view-session");
+const viewLobby = mustGet("view-lobby");
 const viewKeys = mustGet("view-keys");
 const viewUsers = mustGet("view-users");
 const viewKernel = mustGet("view-kernel");
@@ -108,7 +120,13 @@ const viewPubkeys = mustGet("view-pubkeys");
 const viewDefaults = mustGet("view-defaults");
 
 let currentKeyView = "all";
-let currentAdminView = "session";
+let currentAdminView = "lobby";
+let pendingAdminView = null;
+let adminAccessState = { checked: false, isAdmin: false, isSuperAdmin: false };
+let adminPrefetchRunId = 0;
+let adminPrefetchSignature = "";
+let adminPrefetchPromise = null;
+let authWidgetAutoOpened = false;
 let allKeys = [];
 let keysLoading = false;
 let keysLoadedAt = 0;
@@ -132,7 +150,6 @@ const defaultsKernelWindowPreset1h = mustGet("defaults-kernel-window-1h");
 const defaultsKernelWindowPreset1d = mustGet("defaults-kernel-window-1d");
 const defaultsKernelWindowPreset1w = mustGet("defaults-kernel-window-1w");
 const defaultsBadge = mustGet("defaults-badge");
-const defaultsMeta = mustGet("defaults-meta");
 let defaultsLoaded = false;
 let defaultsSaving = false;
 let defaultsModelMap = new Map();
@@ -146,7 +163,6 @@ const kernelQueueList = mustGet("kernel-queue-list");
 const kernelFilterInput = mustGet("kernel-filter");
 const kernelShowSelect = mustGet("kernel-show");
 const kernelSortSelect = mustGet("kernel-sort");
-const kernelAttention = mustGet("kernel-attention");
 const kernelNewToggle = mustGet("kernel-new-toggle");
 const kernelNewPanel = mustGet("kernel-new-panel");
 const kernelNewOwnerInput = mustGet("kernel-new-owner");
@@ -170,6 +186,7 @@ const kernelPubKeyPemInput = mustGet("kernel-pubkey-pem");
 const kernelPubKeyCreateBtn = mustGet("kernel-pubkey-create");
 const kernelPubKeyCreateBadge = mustGet("kernel-pubkey-create-badge");
 let kernelListLoadId = 0;
+let kernelListLoadedAt = 0;
 let kernelNewSaving = false;
 let kernelListRecords = { org: [], repo: [] };
 let kernelQueueItems = [];
@@ -194,8 +211,65 @@ const setBadge = (badge, state, text) => {
   badge.textContent = text;
 };
 
+const lobbyStatusElements = {
+  auth: lobbyAuthStatus,
+  keys: lobbyKeysStatus,
+  users: lobbyUsersStatus,
+  kernel: lobbyKernelStatus,
+  queue: lobbyQueueStatus,
+  pubkeys: lobbyPubkeysStatus,
+  defaults: lobbyDefaultsStatus,
+  upstream: lobbyUpstreamStatus,
+};
+
+const setLobbyStatus = (key, state, text) => {
+  const el = lobbyStatusElements[key];
+  if (!el) return;
+  setBadge(el, state, text);
+};
+
+const setLobbySummary = (text) => {
+  lobbySummary.textContent = text;
+};
+
+const updateLobbyAuthStatus = () => {
+  if (!adminAccessState.checked) {
+    setLobbyStatus("auth", "unknown", "Checking");
+    return;
+  }
+  if (adminAccessState.isSuperAdmin) {
+    setLobbyStatus("auth", "ok", "Super admin");
+    return;
+  }
+  if (adminAccessState.isAdmin) {
+    setLobbyStatus("auth", "ok", "Admin");
+    return;
+  }
+  setLobbyStatus("auth", "bad", "Sign in");
+};
+
+const resetLobbyPrefetchStatuses = (text = "Waiting") => {
+  ["keys", "users", "kernel", "queue", "pubkeys", "defaults", "upstream"].forEach((key) => {
+    setLobbyStatus(key, "unknown", text);
+  });
+};
+
 const setAuthBadge = (state, text) => setBadge(authBadge, state, text);
 const setPasskeyStatus = (state, text) => setBadge(passkeyStatus, state, text);
+
+const setAuthWidgetOpen = (open, options = {}) => {
+  const expanded = Boolean(open);
+  authWidgetAutoOpened = expanded && options.auto === true;
+  document.body.dataset.authWidget = expanded ? "expanded" : "collapsed";
+  authWidget.setAttribute("aria-expanded", expanded ? "true" : "false");
+  authWidgetPanel.hidden = !expanded;
+  authWidgetToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  authWidgetToggle.setAttribute("aria-label", expanded ? "Collapse authentication" : "Open authentication");
+  authWidgetToggle.dataset.tooltip = expanded ? "Collapse authentication" : "Open authentication";
+  if (expanded && options.focus) {
+    globalThis.requestAnimationFrame(() => authWidgetPanel.focus({ preventScroll: true }));
+  }
+};
 
 const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
@@ -215,15 +289,7 @@ const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text)
 const setKernelQueueBadge = (state, text) => setBadge(kernelQueueBadge, state, text);
 const setKernelPubKeysBadge = (state, text) => setBadge(kernelPubKeysBadge, state, text);
 const setKernelPubKeyCreateBadge = (state, text) => setBadge(kernelPubKeyCreateBadge, state, text);
-const setKernelAttention = (text) => {
-  if (!text) {
-    kernelAttention.textContent = "";
-    kernelAttention.hidden = true;
-    return;
-  }
-  kernelAttention.textContent = text;
-  kernelAttention.hidden = false;
-};
+const setKernelAttention = () => {};
 
 const resetKernelPolicyState = () => {
   kernelPolicyState = {
@@ -259,6 +325,14 @@ const isRemoteAiTarget = () => new URL(resolveBaseUrl()).origin === "https://ai.
 const isCrossOriginTarget = () => new URL(resolveBaseUrl()).origin !== globalThis.location.origin;
 
 const getAdminToken = () => tokenInput.value.trim();
+
+const isAdminAuthCheckPending = () => Boolean(getAdminToken()) && !adminAccessState.checked;
+
+const openAuthWidgetForAuth = (options = {}) => setAuthWidgetOpen(true, { ...options, auto: true });
+
+const closeAutoOpenedAuthWidget = () => {
+  if (authWidgetAutoOpened) setAuthWidgetOpen(false);
+};
 
 const getPasskeyHandle = () => passkeyHandleInput.value.trim();
 
@@ -418,7 +492,33 @@ const clearCreateResult = () => {
   createResult.hidden = true;
 };
 
+const clearKeysListLoading = () => {
+  delete keysList.dataset.loading;
+  keysList.removeAttribute("aria-busy");
+};
+
+const setKeysListLoading = () => {
+  keysList.textContent = "";
+  keysList.dataset.loading = "true";
+  keysList.setAttribute("aria-busy", "true");
+  for (let i = 0; i < 3; i++) {
+    const row = document.createElement("article");
+    row.dataset.keySkeleton = "row";
+    row.setAttribute("aria-hidden", "true");
+
+    const title = document.createElement("span");
+    title.dataset.keySkeletonLine = "title";
+    const meta = document.createElement("span");
+    meta.dataset.keySkeletonLine = "meta";
+
+    row.appendChild(title);
+    row.appendChild(meta);
+    keysList.appendChild(row);
+  }
+};
+
 const setKeyListMessage = (text) => {
+  clearKeysListLoading();
   keysList.textContent = "";
   const message = document.createElement("p");
   message.dataset.empty = "keys";
@@ -441,22 +541,10 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "2-digit",
   minute: "2-digit",
 });
-const dateFormatterWithZone = new Intl.DateTimeFormat(undefined, {
-  year: "numeric",
-  month: "short",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  timeZoneName: "short",
-});
 
 const formatDate = (ms) => {
   if (typeof ms !== "number" || !Number.isFinite(ms)) return "unknown";
   return dateFormatter.format(new Date(ms));
-};
-const formatDateWithZone = (ms) => {
-  if (typeof ms !== "number" || !Number.isFinite(ms)) return "unknown";
-  return dateFormatterWithZone.format(new Date(ms));
 };
 
 const formatExpires = (ms) => (ms === -1 ? "Never" : formatDate(ms));
@@ -698,6 +786,7 @@ const updateAccessPubkeysSummary = () => {
 };
 
 let accessUpstreamLoading = false;
+let accessUpstreamLoadedAt = 0;
 const refreshAccessUpstreamSummary = async () => {
   if (accessUpstreamLoading) return;
   accessUpstreamLoading = true;
@@ -715,6 +804,7 @@ const refreshAccessUpstreamSummary = async () => {
     }
     setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
     setAccessValue(accessUpstreamExpiry, typeof expMs === "number" ? formatDate(expMs) : "Unknown");
+    accessUpstreamLoadedAt = Date.now();
   } catch {
     setAccessValue(accessUpstreamSource, "Offline");
     setAccessValue(accessUpstreamExpiry, "Offline");
@@ -1520,6 +1610,7 @@ const loadKernelList = async () => {
       ),
     };
     const result = renderKernelList(kernelListRecords, kernelPolicyState);
+    kernelListLoadedAt = Date.now();
     const badgeText = formatKernelListBadge(result);
     const warnings = [];
     if (!orgUsageResult.ok) warnings.push(`Org analytics ${orgUsageResult.message}`);
@@ -1606,17 +1697,6 @@ const buildKernelPolicyPlaceholder = (record, options = {}) => {
   appendKeyInfo(infoRow, "Expires", "—");
   appendKeyInfo(infoRow, "Updated", "—");
   main.appendChild(infoRow);
-
-  const help = document.createElement("p");
-  help.dataset.help = "true";
-  if (options.helpText) {
-    help.textContent = options.helpText;
-  } else if (!policyAvailable) {
-    help.textContent = "Rate limit data unavailable.";
-  } else {
-    help.textContent = scope === "repo" ? "No repo rate limit set yet." : "No org rate limit set yet.";
-  }
-  main.appendChild(help);
 
   if (showDetails) {
     main.appendChild(buildUsageDetails(usage, KERNEL_ANALYTICS_DETAILS));
@@ -1791,16 +1871,11 @@ const buildKernelPolicyTile = (record, options = {}) => {
   editBadge.dataset.state = "unknown";
   editBadge.textContent = "Idle";
 
-  const editHelp = document.createElement("p");
-  editHelp.dataset.help = "true";
-  editHelp.textContent = "Leave window blank to keep the current interval. Updates reset analytics.";
-
   editPanel.appendChild(editFields);
   editPanel.appendChild(neverLabel);
   editPanel.appendChild(presetRow);
   editPanel.appendChild(editActions);
   editPanel.appendChild(editBadge);
-  editPanel.appendChild(editHelp);
 
   main.appendChild(editPanel);
   const hasUsageField = Object.prototype.hasOwnProperty.call(record, "usage");
@@ -2757,6 +2832,7 @@ const buildUsageDetails = (usage, options = {}) => {
 };
 
 const renderKeys = (keys, view = "all") => {
+  clearKeysListLoading();
   keysList.textContent = "";
   let filteredKeys = keys;
   if (view === "active") {
@@ -2987,12 +3063,7 @@ const renderKeys = (keys, view = "all") => {
     editBadge.dataset.state = "unknown";
     editBadge.textContent = "Idle";
 
-    const editHelp = document.createElement("p");
-    editHelp.dataset.help = "true";
-    editHelp.textContent = "Edits save automatically. Window updates reset usage.";
-
     editPanel.appendChild(editBadge);
-    editPanel.appendChild(editHelp);
 
     const setEditBadge = (state, text) => setBadge(editBadge, state, text);
 
@@ -3443,13 +3514,67 @@ const updatePasskeyUserAdmin = async (id, isAdmin, checkbox) => {
   }
 };
 
-const setTabState = (tab, selected) => {
+const ADMIN_VIEW_DEFAULT = "lobby";
+const VIEW_HASHES = {
+  lobby: "lobby",
+  keys: "keys",
+  users: "users",
+  kernel: "kernel",
+  pubkeys: "pubkeys",
+  defaults: "defaults",
+};
+const VIEW_REQUIREMENTS = {
+  keys: "admin",
+  users: "super-admin",
+  kernel: "admin",
+  pubkeys: "admin",
+  defaults: "admin",
+};
+const VIEW_HASH_ALIASES = new Map([
+  ["lobby", "lobby"],
+  ["view-lobby", "lobby"],
+  ["api-keys", "keys"],
+  ["keys", "keys"],
+  ["view-keys", "keys"],
+  ["users", "users"],
+  ["view-users", "users"],
+  ["github-access", "kernel"],
+  ["kernel", "kernel"],
+  ["view-kernel", "kernel"],
+  ["kernel-attestation", "pubkeys"],
+  ["pubkeys", "pubkeys"],
+  ["view-pubkeys", "pubkeys"],
+  ["defaults", "defaults"],
+  ["view-defaults", "defaults"],
+  ["auth", "session"],
+  ["session", "session"],
+  ["view-session", "session"],
+]);
+
+const normalizeAdminView = (view) => viewSections[view] ? view : ADMIN_VIEW_DEFAULT;
+
+const canAccessView = (view) => {
+  if (view === "lobby") return true;
+  const requirement = VIEW_REQUIREMENTS[view];
+  if (requirement === "super-admin") return adminAccessState.isSuperAdmin === true;
+  if (requirement === "admin") return adminAccessState.isAdmin === true;
+  return false;
+};
+
+const setTabState = (tab, selected, enabled = true) => {
   tab.setAttribute("aria-selected", selected ? "true" : "false");
-  tab.tabIndex = selected ? 0 : -1;
+  tab.setAttribute("aria-disabled", enabled ? "false" : "true");
+  tab.disabled = !enabled;
+  tab.tabIndex = selected && enabled ? 0 : -1;
+  if (!enabled) {
+    const label = tab.id === "view-tab-users" ? "Super admin required" : "Admin sign-in required";
+    tab.title = label;
+  } else {
+    tab.removeAttribute("title");
+  }
 };
 
 const viewTabs = {
-  session: viewTabSession,
   keys: viewTabKeys,
   users: viewTabUsers,
   kernel: viewTabKernel,
@@ -3458,7 +3583,7 @@ const viewTabs = {
 };
 
 const viewSections = {
-  session: viewSession,
+  lobby: viewLobby,
   keys: viewKeys,
   users: viewUsers,
   kernel: viewKernel,
@@ -3466,33 +3591,237 @@ const viewSections = {
   defaults: viewDefaults,
 };
 
-const setAdminView = (view) => {
-  const nextView = viewSections[view] ? view : "session";
-  currentAdminView = nextView;
-  Object.entries(viewSections).forEach(([key, section]) => {
-    section.hidden = key !== nextView;
+const getHashView = () => {
+  const raw = globalThis.location.hash.replace(/^#/, "").trim().toLowerCase();
+  if (!raw) return null;
+  return VIEW_HASH_ALIASES.get(raw) ?? null;
+};
+
+const syncAdminHash = (view, mode) => {
+  if (!mode) return;
+  const hash = VIEW_HASHES[view];
+  if (!hash) return;
+  const nextUrl = `${globalThis.location.pathname}${globalThis.location.search}#${hash}`;
+  const current = `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`;
+  if (current === nextUrl) return;
+  const fn = mode === "push" ? "pushState" : "replaceState";
+  globalThis.history[fn](null, "", nextUrl);
+};
+
+const getAdminPrefetchSignature = () => `${resolveBaseUrl()}::${getAdminToken()}`;
+
+const resetAdminPrefetchState = (summary = "Sign in to prepare the admin views.") => {
+  adminPrefetchRunId += 1;
+  adminPrefetchSignature = "";
+  adminPrefetchPromise = null;
+  setLobbySummary(summary);
+  updateLobbyAuthStatus();
+  resetLobbyPrefetchStatuses();
+};
+
+const runAdminPrefetchTask = async (runId, task) => {
+  if (typeof task.allowed === "function" && !task.allowed()) {
+    setLobbyStatus(task.key, "unknown", task.skippedText ?? "Skipped");
+    return "skipped";
+  }
+  setLobbyStatus(task.key, "unknown", "Loading");
+  try {
+    await task.load();
+  } catch {
+    // The loaders normally own their error UI. This keeps prefetch progress isolated.
+  }
+  if (runId !== adminPrefetchRunId) return "stale";
+  if (task.ready()) {
+    setLobbyStatus(task.key, "ok", "Ready");
+    return "ready";
+  }
+  setLobbyStatus(task.key, "bad", "Unavailable");
+  return "failed";
+};
+
+const startAdminPrefetch = () => {
+  const token = getAdminToken();
+  if (!adminAccessState.isAdmin || !token) {
+    return Promise.resolve({ ready: 0, failed: 0, skipped: 0 });
+  }
+
+  const signature = getAdminPrefetchSignature();
+  if (adminPrefetchSignature === signature && adminPrefetchPromise) return adminPrefetchPromise;
+
+  const runId = ++adminPrefetchRunId;
+  adminPrefetchSignature = signature;
+  setLobbySummary("Preparing admin views...");
+  updateLobbyAuthStatus();
+  resetLobbyPrefetchStatuses("Queued");
+
+  const tasks = [
+    {
+      key: "keys",
+      load: refreshKeys,
+      ready: () => keysLoadedAt > 0,
+    },
+    {
+      key: "users",
+      allowed: () => adminAccessState.isSuperAdmin === true,
+      skippedText: "Super admin",
+      load: refreshPasskeyUsers,
+      ready: () => passkeyUsersLoadedAt > 0,
+    },
+    {
+      key: "kernel",
+      load: loadKernelList,
+      ready: () => kernelListLoadedAt > 0,
+    },
+    {
+      key: "queue",
+      load: refreshKernelPolicyQueue,
+      ready: () => kernelQueueLoadedAt > 0,
+    },
+    {
+      key: "pubkeys",
+      load: refreshKernelPubKeys,
+      ready: () => kernelPubKeysLoadedAt > 0,
+    },
+    {
+      key: "defaults",
+      load: loadDefaults,
+      ready: () => defaultsLoaded === true,
+    },
+    {
+      key: "upstream",
+      load: refreshAccessUpstreamSummary,
+      ready: () => accessUpstreamLoadedAt > 0,
+    },
+  ];
+
+  adminPrefetchPromise = Promise.all(tasks.map((task) => runAdminPrefetchTask(runId, task))).then((results) => {
+    if (runId !== adminPrefetchRunId) return { ready: 0, failed: 0, skipped: 0 };
+    updateAccessApiKeysSummary();
+    updateAccessGithubSummary();
+    updateAccessPubkeysSummary();
+    const ready = results.filter((result) => result === "ready").length;
+    const failed = results.filter((result) => result === "failed").length;
+    const skipped = results.filter((result) => result === "skipped").length;
+    setLobbySummary(failed > 0 ? "Admin views prepared with unavailable data." : "Admin views prepared.");
+    return { ready, failed, skipped };
   });
+
+  return adminPrefetchPromise;
+};
+
+const showPendingAdminViewAfterPrefetch = (view) => {
+  startAdminPrefetch().finally(() => {
+    if (pendingAdminView !== view || !canAccessView(view)) return;
+    pendingAdminView = null;
+    setAdminView(view, { hashMode: "replace", allowInaccessible: false });
+  });
+};
+
+const updateViewAccess = () => {
   Object.entries(viewTabs).forEach(([key, tab]) => {
-    setTabState(tab, key === nextView);
+    setTabState(tab, key === currentAdminView, canAccessView(key));
   });
-  storage.set(STORAGE_KEYS.view, nextView);
-  if (nextView === "keys") {
+};
+
+const syncVisibleAdminView = () => {
+  const visibleView = canAccessView(currentAdminView) ? currentAdminView : ADMIN_VIEW_DEFAULT;
+  Object.entries(viewSections).forEach(([key, section]) => {
+    section.hidden = key !== visibleView;
+  });
+};
+
+const loadAdminView = (view) => {
+  if (!canAccessView(view)) return;
+  if (view === "keys") {
     void ensureKeysLoaded();
   }
-  if (nextView === "users") {
+  if (view === "users") {
     void ensurePasskeyUsersLoaded();
   }
-  if (nextView === "defaults") {
+  if (view === "defaults") {
     void loadDefaults();
   }
-  if (nextView === "kernel") {
+  if (view === "kernel") {
     void loadKernelList();
     void ensureKernelPolicyQueueLoaded();
     void refreshAccessOverview();
   }
-  if (nextView === "pubkeys") {
+  if (view === "pubkeys") {
     void ensureKernelPubKeysLoaded();
   }
+};
+
+const setAdminAccessState = (next) => {
+  adminAccessState = {
+    checked: next?.checked === true,
+    isAdmin: next?.isAdmin === true,
+    isSuperAdmin: next?.isSuperAdmin === true,
+  };
+  document.body.dataset.authScope = adminAccessState.isSuperAdmin
+    ? "super-admin"
+    : adminAccessState.isAdmin
+    ? "admin"
+    : "none";
+  updateLobbyAuthStatus();
+  updateViewAccess();
+  let prefetchPromise = null;
+  if (adminAccessState.isAdmin) {
+    closeAutoOpenedAuthWidget();
+    prefetchPromise = startAdminPrefetch();
+  } else if (adminAccessState.checked) {
+    openAuthWidgetForAuth();
+  }
+  if (pendingAdminView && canAccessView(pendingAdminView)) {
+    const view = pendingAdminView;
+    if (prefetchPromise) {
+      showPendingAdminViewAfterPrefetch(view);
+      return;
+    }
+    pendingAdminView = null;
+    setAdminView(view, { hashMode: "replace" });
+    return;
+  }
+  if (pendingAdminView && adminAccessState.checked && adminAccessState.isAdmin && !canAccessView(pendingAdminView)) {
+    pendingAdminView = null;
+    setAdminView(ADMIN_VIEW_DEFAULT, { hashMode: "replace", allowInaccessible: false });
+    return;
+  }
+  if (adminAccessState.checked && !adminAccessState.isAdmin && !canAccessView(currentAdminView)) {
+    currentAdminView = ADMIN_VIEW_DEFAULT;
+  } else if (adminAccessState.checked && adminAccessState.isAdmin && !canAccessView(currentAdminView)) {
+    setAdminView(ADMIN_VIEW_DEFAULT, { hashMode: "replace", allowInaccessible: false });
+    return;
+  }
+  syncVisibleAdminView();
+  loadAdminView(currentAdminView);
+};
+
+const setAdminView = (view, options = {}) => {
+  const nextView = normalizeAdminView(view);
+  const allowInaccessible = options.allowInaccessible === true;
+  if (!allowInaccessible && !canAccessView(nextView)) {
+    if (adminAccessState.checked && adminAccessState.isAdmin) {
+      pendingAdminView = null;
+      setAdminView(ADMIN_VIEW_DEFAULT, { hashMode: "replace", allowInaccessible: false });
+      return false;
+    }
+    pendingAdminView = nextView;
+    if (!canAccessView(currentAdminView)) currentAdminView = ADMIN_VIEW_DEFAULT;
+    syncVisibleAdminView();
+    updateViewAccess();
+    if (!isAdminAuthCheckPending()) {
+      openAuthWidgetForAuth({ focus: options.focusAuth === true });
+    }
+    return false;
+  }
+  currentAdminView = nextView;
+  pendingAdminView = null;
+  syncVisibleAdminView();
+  updateViewAccess();
+  storage.set(STORAGE_KEYS.view, nextView);
+  syncAdminHash(nextView, options.hashMode);
+  loadAdminView(nextView);
+  return true;
 };
 
 const switchKeysView = (view) => {
@@ -3532,6 +3861,7 @@ const testAdminToken = async () => {
   const token = getAdminToken();
   if (!token) {
     setAuthBadge("bad", "Missing token");
+    setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
     tokenInput.focus();
     return;
@@ -3546,16 +3876,20 @@ const testAdminToken = async () => {
     const data = await res.json().catch(() => null);
     if (!res.ok) {
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
+      setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
       setSignedInState(false);
       return;
     }
     if (!data?.auth?.is_admin) {
       setAuthBadge("bad", "Not admin");
+      setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
       setSignedInState(false);
       return;
     }
     const kind = data?.auth?.method?.kind;
+    const isSuperAdmin = data?.auth?.is_super_admin === true;
     setAuthBadge("ok", kind ? `OK (${formatAuthMethodLabel(kind)})` : "OK");
+    setAdminAccessState({ checked: true, isAdmin: true, isSuperAdmin });
     setSignedInState(true, {
       canRegisterPasskey: true,
       deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials(),
@@ -3563,6 +3897,7 @@ const testAdminToken = async () => {
     });
   } catch {
     setAuthBadge("bad", "Offline");
+    setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
   }
 };
@@ -3570,6 +3905,7 @@ const testAdminToken = async () => {
 const scheduleTokenCheck = debounce(() => {
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
+    setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
     return;
   }
@@ -3662,6 +3998,7 @@ const refreshKeys = async () => {
   if (keysLoading) return;
   keysLoading = true;
   setKeysBadge("unknown", "Loading...");
+  setKeysListLoading();
 
   try {
     const res = await fetch(apiUrl("/admin/api-keys?include_usage=1"), {
@@ -3916,19 +4253,7 @@ const getModelReasoningLevels = (model) => {
   return levels.filter((level) => typeof level === "string" && level.trim().length > 0);
 };
 
-const updateDefaultsMeta = (snapshot, models) => {
-  if (!snapshot) {
-    defaultsMeta.textContent = "No model snapshot available.";
-    return;
-  }
-  const updatedAt = typeof snapshot.updated_at_ms === "number" ? formatDateWithZone(snapshot.updated_at_ms) : "unknown";
-  const source = typeof snapshot.source === "string" ? snapshot.source : "unknown";
-  const version = typeof snapshot.client_version === "string" && snapshot.client_version.trim()
-    ? snapshot.client_version.trim()
-    : "";
-  const sourceLabel = version ? `${source} v${version}` : source;
-  defaultsMeta.textContent = `Models: ${models.length} · Source: ${sourceLabel} · Updated: ${updatedAt}`;
-};
+const updateDefaultsMeta = () => {};
 
 const updateReasoningOptions = (modelSlug, preferred) => {
   const model = defaultsModelMap.get(modelSlug);
@@ -3973,10 +4298,6 @@ const loadDefaults = async () => {
       setDefaultsBadge("unknown", "Cached");
     }
   }
-  if (!cacheApplied) {
-    defaultsMeta.textContent = "Loading model list...";
-  }
-
   try {
     const [modelsRes, defaultsRes] = await Promise.all([
       fetch(apiUrl("/admin/codex/models"), {
@@ -3992,7 +4313,6 @@ const loadDefaults = async () => {
     const modelsPayload = await modelsRes.json().catch(() => null);
     if (!modelsRes.ok) {
       setDefaultsBadge("bad", modelsPayload?.error?.message ?? "Error");
-      if (!cacheApplied) defaultsMeta.textContent = "Failed to load models.";
       return;
     }
     const snapshot = modelsPayload?.data ?? null;
@@ -4042,7 +4362,6 @@ const loadDefaults = async () => {
     }
   } catch {
     setDefaultsBadge("bad", "Offline");
-    defaultsMeta.textContent = "Offline.";
   }
 };
 
@@ -4145,11 +4464,28 @@ kernelShowSelect.value = "all";
 switchKeysView("all");
 setKernelNewPanelOpen(false);
 resetKernelPubKeyForm();
-setAdminView(storage.get(STORAGE_KEYS.view) ?? "session");
-if (getAdminToken()) {
+const initialHashView = getHashView();
+if (initialHashView === "session") setAuthWidgetOpen(true);
+const hasInitialAdminToken = Boolean(getAdminToken());
+resetAdminPrefetchState(hasInitialAdminToken ? "Checking admin session..." : "Sign in to prepare the admin views.");
+setAdminView(ADMIN_VIEW_DEFAULT, { allowInaccessible: true });
+if (initialHashView && initialHashView !== "session") setAdminView(initialHashView, { focusAuth: false });
+if (hasInitialAdminToken) {
   setAuthBadge("unknown", "Checking...");
   scheduleTokenCheck();
+} else {
+  setAuthBadge("bad", "Missing token");
+  setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
 }
+
+authWidgetToggle.addEventListener("click", () => {
+  setAuthWidgetOpen(authWidgetPanel.hidden, { focus: authWidgetPanel.hidden });
+});
+
+authWidgetClose.addEventListener("click", () => {
+  setAuthWidgetOpen(false);
+  authWidgetToggle.focus();
+});
 
 showTokenInput.addEventListener("change", () => {
   tokenInput.type = showTokenInput.checked ? "text" : "password";
@@ -4160,10 +4496,13 @@ tokenInput.addEventListener("input", () => {
   keysLoadedAt = 0;
   passkeyUsersLoadedAt = 0;
   defaultsLoaded = false;
+  kernelListLoadedAt = 0;
   kernelQueueLoadedAt = 0;
   kernelPubKeysLoadedAt = 0;
+  accessUpstreamLoadedAt = 0;
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
+    setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
     setKeysBadge("unknown", "Not loaded");
     setKeyListMessage("Paste an admin token to load API keys.");
@@ -4180,8 +4519,11 @@ tokenInput.addEventListener("input", () => {
     kernelQueueItems = [];
     kernelPubKeys = [];
     kernelPubKeysLoadedAt = 0;
+    resetAdminPrefetchState("Sign in to prepare the admin views.");
   } else {
     setAuthBadge("unknown", "Checking...");
+    setAdminAccessState({ checked: false, isAdmin: false, isSuperAdmin: false });
+    resetAdminPrefetchState("Checking admin session...");
   }
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
@@ -4302,19 +4644,32 @@ globalThis.addEventListener("storage", (event) => {
   if (event.newValue === null) {
     tokenInput.value = "";
     setAuthBadge("bad", "Missing token");
+    setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
     tokenInput.dispatchEvent(new Event("input", { bubbles: true }));
     return;
   }
   if (!rememberTokenInput.checked) return;
   tokenInput.value = event.newValue ?? "";
+  setAdminAccessState({ checked: false, isAdmin: false, isSuperAdmin: false });
   tokenInput.dispatchEvent(new Event("input", { bubbles: true }));
+});
+
+globalThis.addEventListener("hashchange", () => {
+  const hashView = getHashView();
+  if (!hashView) return;
+  if (hashView === "session") {
+    setAuthWidgetOpen(true, { focus: true });
+    return;
+  }
+  setAdminView(hashView, { focusAuth: true });
 });
 
 baseSelect.addEventListener("change", () => {
   storage.set(STORAGE_KEYS.base, getBaseChoice());
   updateBasePreview();
   setAuthBadge("unknown", "Not checked");
+  setAdminAccessState({ checked: false, isAdmin: false, isSuperAdmin: false });
   setSignedInState(false);
   setCreateBadge("unknown", "Idle");
   setKeysBadge("unknown", "Not loaded");
@@ -4338,10 +4693,15 @@ baseSelect.addEventListener("change", () => {
   passkeyUsers = [];
   passkeyUsersLoadedAt = 0;
   defaultsLoaded = false;
+  defaultsLoadId += 1;
+  kernelListLoadedAt = 0;
+  kernelListLoadId += 1;
   kernelQueueItems = [];
   kernelQueueLoadedAt = 0;
   kernelPubKeys = [];
   kernelPubKeysLoadedAt = 0;
+  accessUpstreamLoadedAt = 0;
+  resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
     void ensureKeysLoaded();
@@ -4378,12 +4738,11 @@ keyWindowPreset1w.addEventListener("click", () => {
   keyUsageWindowInput.value = "604800000";
 });
 
-viewTabSession.addEventListener("click", () => setAdminView("session"));
-viewTabKeys.addEventListener("click", () => setAdminView("keys"));
-viewTabUsers.addEventListener("click", () => setAdminView("users"));
-viewTabKernel.addEventListener("click", () => setAdminView("kernel"));
-viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys"));
-viewTabDefaults.addEventListener("click", () => setAdminView("defaults"));
+viewTabKeys.addEventListener("click", () => setAdminView("keys", { hashMode: "push", focusAuth: true }));
+viewTabUsers.addEventListener("click", () => setAdminView("users", { hashMode: "push", focusAuth: true }));
+viewTabKernel.addEventListener("click", () => setAdminView("kernel", { hashMode: "push", focusAuth: true }));
+viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys", { hashMode: "push", focusAuth: true }));
+viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashMode: "push", focusAuth: true }));
 
 createKeyBtn.addEventListener("click", () => {
   void createKey();
@@ -4500,7 +4859,7 @@ defaultsKernelWindowPreset1w.addEventListener("click", () => {
 
 const startAuthRelayIfRequested = async () => {
   if (!isAuthRelayMode) return;
-  setAdminView("session");
+  setAuthWidgetOpen(true);
   passkeyRegisterBtn.hidden = true;
   setAuthBadge("unknown", "Relay sign-in");
   setPasskeyStatus("unknown", "Checking signed-in session...");
