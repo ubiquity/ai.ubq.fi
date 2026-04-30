@@ -597,7 +597,15 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
       },
       { "Cache-Control": "no-store" },
     );
-  } catch {
+  } catch (error) {
+    console.warn("[ai.ubq.fi] passkey assertion verification failed", {
+      message: error instanceof Error ? error.message : String(error),
+      expected_origin: challengeRecord.origin,
+      expected_rp_id: challengeRecord.rp_id,
+      credential_id_prefix: response.id.slice(0, 12),
+      user_handle: userEntry.value.handle,
+      require_user_verification: isPasskeyUserAdmin(userEntry.value),
+    });
     return openaiError(400, "Invalid passkey assertion", "invalid_request_error");
   }
 };

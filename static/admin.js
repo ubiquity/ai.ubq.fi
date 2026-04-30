@@ -1,5 +1,6 @@
 import "./network.js";
 import {
+  formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
   registerPasskey,
@@ -198,10 +199,11 @@ const setPasskeyStatus = (state, text) => setBadge(passkeyStatus, state, text);
 
 const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
+  const canRegisterPasskey = options.canRegisterPasskey ?? true;
   passkeyLoginBtn.hidden = signedIn;
-  passkeyRegisterBtn.hidden = deviceRegistered;
+  passkeyRegisterBtn.hidden = isAuthRelayMode || deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
-  if (signedIn) setPasskeyStatus("ok", "Signed in");
+  if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
   else setPasskeyStatus("unknown", "Passkey idle");
 };
 const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
@@ -308,6 +310,17 @@ const postAuthRelayResult = (result) => {
   setPasskeyStatus("ok", "Signed in. Returning to local admin...");
   setTimeout(() => globalThis.close(), 300);
   return true;
+};
+
+const formatPasskeyLoginError = (error) => {
+  const message = error?.message ?? "Passkey sign-in failed";
+  if (
+    !isAuthRelayMode && !isRemoteAiTarget() &&
+    /invalid passkey assertion|unknown passkey|passkey account not found|no passkeys registered/i.test(message)
+  ) {
+    return `${message}. This origin uses localhost passkeys; choose ai.ubq.fi or add a local passkey with the fallback token.`;
+  }
+  return message;
 };
 
 const getValidCachedRelayAuth = async () => {
@@ -3543,7 +3556,11 @@ const testAdminToken = async () => {
     }
     const kind = data?.auth?.method?.kind;
     setAuthBadge("ok", kind ? `OK (${formatAuthMethodLabel(kind)})` : "OK");
-    setSignedInState(true, { deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials() });
+    setSignedInState(true, {
+      canRegisterPasskey: true,
+      deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials(),
+      statusText: formatAuthSessionLabel(data?.auth),
+    });
   } catch {
     setAuthBadge("bad", "Offline");
     setSignedInState(false);
@@ -4222,7 +4239,7 @@ passkeyLoginBtn.addEventListener("click", async () => {
     postAuthRelayResult(result);
   } catch (error) {
     setSignedInState(false);
-    setPasskeyStatus("bad", error?.message ?? "Passkey sign-in failed");
+    setPasskeyStatus("bad", formatPasskeyLoginError(error));
   } finally {
     passkeyLoginBtn.disabled = false;
     passkeyRegisterBtn.disabled = false;
@@ -4494,11 +4511,7 @@ const startAuthRelayIfRequested = async () => {
       postAuthRelayResult(cachedAuth);
       return;
     }
-    setPasskeyStatus("unknown", "Sign in to continue on the requesting admin page...");
-    const result = await signInWithPasskey({ baseUrl: globalThis.location.origin });
-    if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token, { deviceRegistered: true });
-    postAuthRelayResult(result);
+    setPasskeyStatus("unknown", "Use the sign-in button to continue.");
   } catch (error) {
     setPasskeyStatus("bad", `${error?.message ?? "Passkey sign-in failed"} Use the sign-in button to try again.`);
   } finally {

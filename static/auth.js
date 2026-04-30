@@ -101,6 +101,23 @@ export const hasAuthPasskeyCredential = (auth) => {
   return Number.isFinite(count) && count > 0;
 };
 
+export const formatAuthSessionLabel = (auth) => {
+  switch (auth?.method?.kind) {
+    case "passkey_session":
+      return "Passkey signed in";
+    case "admin_allowlist":
+      return "Fallback token active";
+    case "deno_deploy_token":
+      return "Deno token active";
+    case "kv_api_key":
+      return "API key active";
+    case "github_token":
+      return "GitHub token active";
+    default:
+      return "Token active";
+  }
+};
+
 export const clearStoredPasskeyMetadata = () => {
   storage.remove(STORAGE_KEYS.passkeyHandle);
   storage.remove(STORAGE_KEYS.passkeyCredentialIds);
