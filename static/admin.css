@@ -43,8 +43,14 @@ body[data-page="admin"] [data-key-info] {
 body[data-page="admin"] main {
   min-height: 0;
   min-width: 0;
-  align-content: center;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
   gap: 18px;
+}
+
+body[data-page="admin"] main > [data-view] {
+  width: 100%;
+  align-self: safe center;
 }
 
 body[data-page="admin"] [data-hero],
@@ -175,22 +181,22 @@ body[data-page="admin"] [data-layout="grid"] {
   gap: 14px;
 }
 
-body[data-page="admin"] [data-view="lobby"] {
+body[data-page="admin"] [data-view="loading"] {
   align-content: center;
   min-height: clamp(320px, 48svh, 520px);
 }
 
-body[data-page="admin"] [data-view="lobby"] > [data-card] {
+body[data-page="admin"] [data-view="loading"] > [data-card] {
   align-self: center;
 }
 
-body[data-page="admin"] [data-lobby-grid] {
+body[data-page="admin"] [data-loading-grid] {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 10px;
 }
 
-body[data-page="admin"] [data-lobby-item] {
+body[data-page="admin"] [data-loading-item] {
   min-width: 0;
   min-height: 44px;
   display: flex;
@@ -202,7 +208,7 @@ body[data-page="admin"] [data-lobby-item] {
   background: rgba(255, 255, 255, 0.045);
 }
 
-body[data-page="admin"] [data-lobby-item] [data-badge] {
+body[data-page="admin"] [data-loading-item] [data-badge] {
   flex: 0 0 auto;
 }
 

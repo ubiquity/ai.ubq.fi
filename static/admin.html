@@ -37,7 +37,6 @@
 
       <main>
         <section data-hero>
-          <h1>AI Admin Console</h1>
           <div data-tabs role="tablist" aria-label="Admin views">
             <button id="view-tab-keys" type="button" role="tab" aria-controls="view-keys" aria-selected="true">
               API keys
@@ -57,45 +56,51 @@
           </div>
         </section>
 
-        <section id="view-lobby" data-view="lobby" data-layout="grid" role="region" aria-labelledby="admin-lobby-title">
-          <article data-card aria-labelledby="admin-lobby-title">
+        <section
+          id="view-loading"
+          data-view="loading"
+          data-layout="grid"
+          role="region"
+          aria-labelledby="admin-loading-title"
+        >
+          <article data-card aria-labelledby="admin-loading-title">
             <header>
-              <h2 id="admin-lobby-title">Admin lobby</h2>
-              <p id="admin-lobby-summary">Sign in to prepare the admin views.</p>
+              <h2 id="admin-loading-title">Admin loading</h2>
+              <p id="admin-loading-summary">Sign in to prepare the admin views.</p>
             </header>
             <div data-card-body>
-              <div data-lobby-grid>
-                <div data-lobby-item>
+              <div data-loading-grid>
+                <div data-loading-item>
                   <span data-auth-label>Session</span>
-                  <span id="lobby-auth-status" data-badge data-state="unknown">Not checked</span>
+                  <span id="loading-auth-status" data-badge data-state="unknown">Not checked</span>
                 </div>
-                <div data-lobby-item>
+                <div data-loading-item>
                   <span data-auth-label>API keys</span>
-                  <span id="lobby-keys-status" data-badge data-state="unknown">Waiting</span>
+                  <span id="loading-keys-status" data-badge data-state="unknown">Waiting</span>
                 </div>
-                <div data-lobby-item>
+                <div data-loading-item>
                   <span data-auth-label>Users</span>
-                  <span id="lobby-users-status" data-badge data-state="unknown">Waiting</span>
+                  <span id="loading-users-status" data-badge data-state="unknown">Waiting</span>
                 </div>
-                <div data-lobby-item>
+                <div data-loading-item>
                   <span data-auth-label>GitHub access</span>
-                  <span id="lobby-kernel-status" data-badge data-state="unknown">Waiting</span>
+                  <span id="loading-kernel-status" data-badge data-state="unknown">Waiting</span>
                 </div>
-                <div data-lobby-item>
+                <div data-loading-item>
                   <span data-auth-label>Rate limit queue</span>
-                  <span id="lobby-queue-status" data-badge data-state="unknown">Waiting</span>
+                  <span id="loading-queue-status" data-badge data-state="unknown">Waiting</span>
                 </div>
-                <div data-lobby-item>
+                <div data-loading-item>
                   <span data-auth-label>Attestation</span>
-                  <span id="lobby-pubkeys-status" data-badge data-state="unknown">Waiting</span>
+                  <span id="loading-pubkeys-status" data-badge data-state="unknown">Waiting</span>
                 </div>
-                <div data-lobby-item>
+                <div data-loading-item>
                   <span data-auth-label>Defaults</span>
-                  <span id="lobby-defaults-status" data-badge data-state="unknown">Waiting</span>
+                  <span id="loading-defaults-status" data-badge data-state="unknown">Waiting</span>
                 </div>
-                <div data-lobby-item>
+                <div data-loading-item>
                   <span data-auth-label>Upstream auth</span>
-                  <span id="lobby-upstream-status" data-badge data-state="unknown">Waiting</span>
+                  <span id="loading-upstream-status" data-badge data-state="unknown">Waiting</span>
                 </div>
               </div>
             </div>
@@ -191,9 +196,9 @@
             </header>
             <div data-card-body>
               <div data-tabs role="tablist" aria-label="API keys view">
-                <button id="keys-tab-all" type="button" role="tab" aria-selected="true">All</button>
-                <button id="keys-tab-active" type="button" role="tab" aria-selected="false">Active</button>
+                <button id="keys-tab-active" type="button" role="tab" aria-selected="true">Active</button>
                 <button id="keys-tab-revoked" type="button" role="tab" aria-selected="false">Revoked</button>
+                <button id="keys-tab-all" type="button" role="tab" aria-selected="false">All</button>
               </div>
               <span id="keys-badge" data-badge data-state="unknown">Not loaded</span>
               <div id="keys-list" data-key-list role="list"></div>

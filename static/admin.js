@@ -75,15 +75,15 @@ const authWidget = mustGet("view-session");
 const authWidgetPanel = mustGet("auth-widget-panel");
 const authWidgetToggle = mustGet("auth-widget-toggle");
 const authWidgetClose = mustGet("auth-widget-close");
-const lobbySummary = mustGet("admin-lobby-summary");
-const lobbyAuthStatus = mustGet("lobby-auth-status");
-const lobbyKeysStatus = mustGet("lobby-keys-status");
-const lobbyUsersStatus = mustGet("lobby-users-status");
-const lobbyKernelStatus = mustGet("lobby-kernel-status");
-const lobbyQueueStatus = mustGet("lobby-queue-status");
-const lobbyPubkeysStatus = mustGet("lobby-pubkeys-status");
-const lobbyDefaultsStatus = mustGet("lobby-defaults-status");
-const lobbyUpstreamStatus = mustGet("lobby-upstream-status");
+const loadingSummary = mustGet("admin-loading-summary");
+const loadingAuthStatus = mustGet("loading-auth-status");
+const loadingKeysStatus = mustGet("loading-keys-status");
+const loadingUsersStatus = mustGet("loading-users-status");
+const loadingKernelStatus = mustGet("loading-kernel-status");
+const loadingQueueStatus = mustGet("loading-queue-status");
+const loadingPubkeysStatus = mustGet("loading-pubkeys-status");
+const loadingDefaultsStatus = mustGet("loading-defaults-status");
+const loadingUpstreamStatus = mustGet("loading-upstream-status");
 
 const keyNameInput = mustGet("key-name");
 const keyUsageLimitInput = mustGet("key-usage-limit");
@@ -112,15 +112,15 @@ const viewTabKernel = mustGet("view-tab-kernel");
 const viewTabPubkeys = mustGet("view-tab-pubkeys");
 const viewTabDefaults = mustGet("view-tab-defaults");
 
-const viewLobby = mustGet("view-lobby");
+const viewLoading = mustGet("view-loading");
 const viewKeys = mustGet("view-keys");
 const viewUsers = mustGet("view-users");
 const viewKernel = mustGet("view-kernel");
 const viewPubkeys = mustGet("view-pubkeys");
 const viewDefaults = mustGet("view-defaults");
 
-let currentKeyView = "all";
-let currentAdminView = "lobby";
+let currentKeyView = "active";
+let currentAdminView = "loading";
 let pendingAdminView = null;
 let adminAccessState = { checked: false, isAdmin: false, isSuperAdmin: false };
 let adminPrefetchRunId = 0;
@@ -211,46 +211,46 @@ const setBadge = (badge, state, text) => {
   badge.textContent = text;
 };
 
-const lobbyStatusElements = {
-  auth: lobbyAuthStatus,
-  keys: lobbyKeysStatus,
-  users: lobbyUsersStatus,
-  kernel: lobbyKernelStatus,
-  queue: lobbyQueueStatus,
-  pubkeys: lobbyPubkeysStatus,
-  defaults: lobbyDefaultsStatus,
-  upstream: lobbyUpstreamStatus,
+const loadingStatusElements = {
+  auth: loadingAuthStatus,
+  keys: loadingKeysStatus,
+  users: loadingUsersStatus,
+  kernel: loadingKernelStatus,
+  queue: loadingQueueStatus,
+  pubkeys: loadingPubkeysStatus,
+  defaults: loadingDefaultsStatus,
+  upstream: loadingUpstreamStatus,
 };
 
-const setLobbyStatus = (key, state, text) => {
-  const el = lobbyStatusElements[key];
+const setLoadingStatus = (key, state, text) => {
+  const el = loadingStatusElements[key];
   if (!el) return;
   setBadge(el, state, text);
 };
 
-const setLobbySummary = (text) => {
-  lobbySummary.textContent = text;
+const setLoadingSummary = (text) => {
+  loadingSummary.textContent = text;
 };
 
-const updateLobbyAuthStatus = () => {
+const updateLoadingAuthStatus = () => {
   if (!adminAccessState.checked) {
-    setLobbyStatus("auth", "unknown", "Checking");
+    setLoadingStatus("auth", "unknown", "Checking");
     return;
   }
   if (adminAccessState.isSuperAdmin) {
-    setLobbyStatus("auth", "ok", "Super admin");
+    setLoadingStatus("auth", "ok", "Super admin");
     return;
   }
   if (adminAccessState.isAdmin) {
-    setLobbyStatus("auth", "ok", "Admin");
+    setLoadingStatus("auth", "ok", "Admin");
     return;
   }
-  setLobbyStatus("auth", "bad", "Sign in");
+  setLoadingStatus("auth", "bad", "Sign in");
 };
 
-const resetLobbyPrefetchStatuses = (text = "Waiting") => {
+const resetLoadingPrefetchStatuses = (text = "Waiting") => {
   ["keys", "users", "kernel", "queue", "pubkeys", "defaults", "upstream"].forEach((key) => {
-    setLobbyStatus(key, "unknown", text);
+    setLoadingStatus(key, "unknown", text);
   });
 };
 
@@ -3514,9 +3514,9 @@ const updatePasskeyUserAdmin = async (id, isAdmin, checkbox) => {
   }
 };
 
-const ADMIN_VIEW_DEFAULT = "lobby";
+const ADMIN_VIEW_DEFAULT = "loading";
 const VIEW_HASHES = {
-  lobby: "lobby",
+  loading: "loading",
   keys: "keys",
   users: "users",
   kernel: "kernel",
@@ -3531,8 +3531,8 @@ const VIEW_REQUIREMENTS = {
   defaults: "admin",
 };
 const VIEW_HASH_ALIASES = new Map([
-  ["lobby", "lobby"],
-  ["view-lobby", "lobby"],
+  ["loading", "loading"],
+  ["view-loading", "loading"],
   ["api-keys", "keys"],
   ["keys", "keys"],
   ["view-keys", "keys"],
@@ -3554,7 +3554,7 @@ const VIEW_HASH_ALIASES = new Map([
 const normalizeAdminView = (view) => viewSections[view] ? view : ADMIN_VIEW_DEFAULT;
 
 const canAccessView = (view) => {
-  if (view === "lobby") return true;
+  if (view === "loading") return true;
   const requirement = VIEW_REQUIREMENTS[view];
   if (requirement === "super-admin") return adminAccessState.isSuperAdmin === true;
   if (requirement === "admin") return adminAccessState.isAdmin === true;
@@ -3583,7 +3583,7 @@ const viewTabs = {
 };
 
 const viewSections = {
-  lobby: viewLobby,
+  loading: viewLoading,
   keys: viewKeys,
   users: viewUsers,
   kernel: viewKernel,
@@ -3614,17 +3614,17 @@ const resetAdminPrefetchState = (summary = "Sign in to prepare the admin views."
   adminPrefetchRunId += 1;
   adminPrefetchSignature = "";
   adminPrefetchPromise = null;
-  setLobbySummary(summary);
-  updateLobbyAuthStatus();
-  resetLobbyPrefetchStatuses();
+  setLoadingSummary(summary);
+  updateLoadingAuthStatus();
+  resetLoadingPrefetchStatuses();
 };
 
 const runAdminPrefetchTask = async (runId, task) => {
   if (typeof task.allowed === "function" && !task.allowed()) {
-    setLobbyStatus(task.key, "unknown", task.skippedText ?? "Skipped");
+    setLoadingStatus(task.key, "unknown", task.skippedText ?? "Skipped");
     return "skipped";
   }
-  setLobbyStatus(task.key, "unknown", "Loading");
+  setLoadingStatus(task.key, "unknown", "Loading");
   try {
     await task.load();
   } catch {
@@ -3632,10 +3632,10 @@ const runAdminPrefetchTask = async (runId, task) => {
   }
   if (runId !== adminPrefetchRunId) return "stale";
   if (task.ready()) {
-    setLobbyStatus(task.key, "ok", "Ready");
+    setLoadingStatus(task.key, "ok", "Ready");
     return "ready";
   }
-  setLobbyStatus(task.key, "bad", "Unavailable");
+  setLoadingStatus(task.key, "bad", "Unavailable");
   return "failed";
 };
 
@@ -3650,9 +3650,9 @@ const startAdminPrefetch = () => {
 
   const runId = ++adminPrefetchRunId;
   adminPrefetchSignature = signature;
-  setLobbySummary("Preparing admin views...");
-  updateLobbyAuthStatus();
-  resetLobbyPrefetchStatuses("Queued");
+  setLoadingSummary("Preparing admin views...");
+  updateLoadingAuthStatus();
+  resetLoadingPrefetchStatuses("Queued");
 
   const tasks = [
     {
@@ -3702,7 +3702,7 @@ const startAdminPrefetch = () => {
     const ready = results.filter((result) => result === "ready").length;
     const failed = results.filter((result) => result === "failed").length;
     const skipped = results.filter((result) => result === "skipped").length;
-    setLobbySummary(failed > 0 ? "Admin views prepared with unavailable data." : "Admin views prepared.");
+    setLoadingSummary(failed > 0 ? "Admin views prepared with unavailable data." : "Admin views prepared.");
     return { ready, failed, skipped };
   });
 
@@ -3762,7 +3762,7 @@ const setAdminAccessState = (next) => {
     : adminAccessState.isAdmin
     ? "admin"
     : "none";
-  updateLobbyAuthStatus();
+  updateLoadingAuthStatus();
   updateViewAccess();
   let prefetchPromise = null;
   if (adminAccessState.isAdmin) {
@@ -4461,7 +4461,7 @@ setKernelQueueMessage(getKernelQueueMissingTokenMessage());
 setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
 kernelFilterInput.value = "";
 kernelShowSelect.value = "all";
-switchKeysView("all");
+switchKeysView("active");
 setKernelNewPanelOpen(false);
 resetKernelPubKeyForm();
 const initialHashView = getHashView();
