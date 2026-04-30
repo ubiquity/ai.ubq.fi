@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/admin.css" />
   </head>
-  <body data-page="admin" data-role="admin">
+  <body data-page="admin" data-role="admin" data-auth-widget="collapsed" data-auth-scope="none">
     <div data-shell>
       <header data-shared-header>
         <div data-brand>
@@ -39,10 +39,7 @@
         <section data-hero>
           <h1>AI Admin Console</h1>
           <div data-tabs role="tablist" aria-label="Admin views">
-            <button id="view-tab-session" type="button" role="tab" aria-controls="view-session" aria-selected="true">
-              Session
-            </button>
-            <button id="view-tab-keys" type="button" role="tab" aria-controls="view-keys" aria-selected="false">
+            <button id="view-tab-keys" type="button" role="tab" aria-controls="view-keys" aria-selected="true">
               API keys
             </button>
             <button id="view-tab-users" type="button" role="tab" aria-controls="view-users" aria-selected="false">
@@ -60,105 +57,47 @@
           </div>
         </section>
 
-        <section
-          id="view-session"
-          data-view="session"
-          data-layout="grid"
-          role="tabpanel"
-          aria-labelledby="view-tab-session"
-        >
-          <article data-card aria-labelledby="card-admin-auth">
+        <section id="view-lobby" data-view="lobby" data-layout="grid" role="region" aria-labelledby="admin-lobby-title">
+          <article data-card aria-labelledby="admin-lobby-title">
             <header>
-              <h2 id="card-admin-auth">Admin auth</h2>
+              <h2 id="admin-lobby-title">Admin lobby</h2>
+              <p id="admin-lobby-summary">Sign in to prepare the admin views.</p>
             </header>
             <div data-card-body>
-              <label data-field>
-                <span data-label>Target</span>
-                <select id="admin-base">
-                  <option value="local">This origin</option>
-                  <option value="ai">ai.ubq.fi</option>
-                </select>
-              </label>
-              <span id="base-preview" hidden></span>
-              <div data-layout="row">
-                <button
-                  id="admin-passkey-login"
-                  type="button"
-                  data-tooltip="Use iCloud Keychain or another passkey provider to sign in"
-                >
-                  <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      d="M11 7 9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z"
-                    />
-                  </svg>
-                  <span>Sign in with passkey</span>
-                </button>
-                <button
-                  id="admin-passkey-register"
-                  type="button"
-                  data-tooltip="Create a passkey for this account on the current domain"
-                >
-                  <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zM7 20v-2c0-2.67 5.33-4 8-4 .32 0 .7.02 1.1.07-.7.86-1.1 1.94-1.1 3.13V20H7zm12-3v-3h-2v3h-3v2h3v3h2v-3h3v-2h-3z"
-                    />
-                  </svg>
-                  <span>Add passkey</span>
-                </button>
-                <button id="admin-sign-out" type="button" data-tooltip="Clear this browser session" hidden>
-                  <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      d="M17 7 15.59 8.41 18.17 11H8v2h10.17l-2.58 2.59L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"
-                    />
-                  </svg>
-                  <span>Sign out</span>
-                </button>
+              <div data-lobby-grid>
+                <div data-lobby-item>
+                  <span data-auth-label>Session</span>
+                  <span id="lobby-auth-status" data-badge data-state="unknown">Not checked</span>
+                </div>
+                <div data-lobby-item>
+                  <span data-auth-label>API keys</span>
+                  <span id="lobby-keys-status" data-badge data-state="unknown">Waiting</span>
+                </div>
+                <div data-lobby-item>
+                  <span data-auth-label>Users</span>
+                  <span id="lobby-users-status" data-badge data-state="unknown">Waiting</span>
+                </div>
+                <div data-lobby-item>
+                  <span data-auth-label>GitHub access</span>
+                  <span id="lobby-kernel-status" data-badge data-state="unknown">Waiting</span>
+                </div>
+                <div data-lobby-item>
+                  <span data-auth-label>Rate limit queue</span>
+                  <span id="lobby-queue-status" data-badge data-state="unknown">Waiting</span>
+                </div>
+                <div data-lobby-item>
+                  <span data-auth-label>Attestation</span>
+                  <span id="lobby-pubkeys-status" data-badge data-state="unknown">Waiting</span>
+                </div>
+                <div data-lobby-item>
+                  <span data-auth-label>Defaults</span>
+                  <span id="lobby-defaults-status" data-badge data-state="unknown">Waiting</span>
+                </div>
+                <div data-lobby-item>
+                  <span data-auth-label>Upstream auth</span>
+                  <span id="lobby-upstream-status" data-badge data-state="unknown">Waiting</span>
+                </div>
               </div>
-              <span id="admin-passkey-status" data-badge data-state="unknown">Passkey idle</span>
-              <details data-passkey-advanced>
-                <summary>Advanced passkey options</summary>
-                <div data-passkey-advanced-body>
-                  <label data-field>
-                    <span data-label>Username</span>
-                    <input
-                      id="admin-passkey-handle"
-                      type="text"
-                      inputmode="text"
-                      autocomplete="off"
-                      placeholder="Optional account name"
-                    />
-                  </label>
-                </div>
-              </details>
-              <details data-token-fallback>
-                <summary>Fallback admin token</summary>
-                <div data-token-fallback-body>
-                  <label data-field>
-                    <span data-label>Admin token</span>
-                    <input
-                      id="admin-token"
-                      type="password"
-                      inputmode="text"
-                      autocomplete="off"
-                      placeholder="Paste admin token"
-                    />
-                  </label>
-                  <div data-layout="row">
-                    <label data-check>
-                      <input id="remember-admin-token" type="checkbox" />
-                      <span>Remember</span>
-                    </label>
-                    <label data-check>
-                      <input id="show-admin-token" type="checkbox" />
-                      <span>Show</span>
-                    </label>
-                  </div>
-                  <span id="admin-auth-badge" data-badge data-state="unknown">Not checked</span>
-                  <p data-help data-tone="warning">
-                    Remember stores the token in this browser's localStorage in cleartext.
-                  </p>
-                </div>
-              </details>
             </div>
           </article>
         </section>
@@ -219,14 +158,12 @@
                 <span data-label>Window (ms)</span>
                 <input id="key-usage-window" type="number" inputmode="numeric" placeholder="604800000" />
               </label>
-              <p data-help>Default limit is 50. Use -1 for unlimited.</p>
               <div data-layout="row">
                 <button id="key-window-1m" type="button">1m</button>
                 <button id="key-window-1h" type="button">1h</button>
                 <button id="key-window-1d" type="button">1d</button>
                 <button id="key-window-1w" type="button">1w</button>
               </div>
-              <p data-help>Leave window blank for the default weekly interval (604800000 ms).</p>
               <div data-layout="row">
                 <button
                   id="create-key"
@@ -245,7 +182,6 @@
                 <span id="create-badge" data-badge data-state="unknown">Idle</span>
               </div>
               <pre id="create-result" data-code hidden></pre>
-              <p data-help>Created tokens are only shown once. Store them safely.</p>
             </div>
           </article>
 
@@ -261,9 +197,6 @@
               </div>
               <span id="keys-badge" data-badge data-state="unknown">Not loaded</span>
               <div id="keys-list" data-key-list role="list"></div>
-              <p data-help>
-                Revoke API keys to invalidate them immediately. Analytics totals update when responses complete.
-              </p>
             </div>
           </article>
         </section>
@@ -289,7 +222,6 @@
                   <div data-auth-head>
                     <h3 data-auth-title>API keys</h3>
                   </div>
-                  <p data-help>Gateway-issued API keys (u_tokens) for client access.</p>
                   <div data-auth-meta>
                     <span data-auth-label>Keys</span>
                     <span data-auth-value id="access-api-keys">—</span>
@@ -299,7 +231,6 @@
                   <div data-auth-head>
                     <h3 data-auth-title>GitHub tokens</h3>
                   </div>
-                  <p data-help>Verified per request using repo headers or kernel attestation.</p>
                   <div data-auth-meta>
                     <span data-auth-label>Repos with analytics</span>
                     <span data-auth-value id="access-github-repos">—</span>
@@ -313,7 +244,6 @@
                   <div data-auth-head>
                     <h3 data-auth-title>Kernel attestation</h3>
                   </div>
-                  <p data-help>Kernel attestation keys used to verify kernel-issued tokens.</p>
                   <div data-auth-meta>
                     <span data-auth-label>Keys</span>
                     <span data-auth-value id="access-kernel-pubkeys">—</span>
@@ -323,7 +253,6 @@
                   <div data-auth-head>
                     <h3 data-auth-title>Upstream (Codex)</h3>
                   </div>
-                  <p data-help>Used to fetch upstream models and responses.</p>
                   <div data-auth-meta>
                     <span data-auth-label>Source</span>
                     <span data-auth-value id="access-upstream-source">—</span>
@@ -344,7 +273,6 @@
             <div data-card-body>
               <span id="kernel-queue-badge" data-badge data-state="unknown">Not loaded</span>
               <div id="kernel-queue-list" data-key-list role="list"></div>
-              <p data-help>Set org or repo rate limits to remove entries from the queue.</p>
             </div>
           </article>
           <article data-card aria-labelledby="card-kernel-limits">
@@ -408,7 +336,6 @@
                     <input id="kernel-new-expires" type="datetime-local" disabled />
                   </label>
                 </div>
-                <p data-help>Use -1 for unlimited. Org + repo rate limits are enforced together.</p>
                 <label data-check>
                   <input id="kernel-new-never" type="checkbox" checked />
                   <span>Never expires</span>
@@ -423,17 +350,8 @@
                   <button id="kernel-new-save" type="button" data-variant="primary">Save</button>
                 </div>
                 <span id="kernel-new-badge" data-badge data-state="unknown">Idle</span>
-                <p data-help>
-                  Leave window blank for the default weekly interval (604800000 ms). Updates reset analytics.
-                </p>
               </div>
               <div id="kernel-list" data-key-list role="list"></div>
-              <p id="kernel-help" data-help>
-                Analytics and rate limits share the same list. Org tiles summarize repo activity and org rate limits;
-                repo tiles include analytics details and rate limit controls. Rate limit edits require Save/Cancel.
-                Delete removes the rate limit. GitHub tokens are never stored.
-              </p>
-              <p id="kernel-attention" data-help data-tone="warning" hidden></p>
             </div>
           </article>
         </section>
@@ -473,7 +391,6 @@
                   placeholder="-----BEGIN PUBLIC KEY-----&#10;...&#10;-----END PUBLIC KEY-----"
                 ></textarea>
               </label>
-              <p data-help>App ID must match the GitHub App. PEM must include the begin/end lines.</p>
               <div data-layout="row">
                 <button id="kernel-pubkey-create" type="button" data-variant="primary"></button>
                 <span id="kernel-pubkey-create-badge" data-badge data-state="unknown">Idle</span>
@@ -489,7 +406,6 @@
             <div data-card-body>
               <span id="kernel-pubkeys-badge" data-badge data-state="unknown">Not loaded</span>
               <div id="kernel-pubkeys-list" data-key-list role="list"></div>
-              <p data-help>Delete keys to revoke access for an app.</p>
             </div>
           </article>
         </section>
@@ -530,15 +446,123 @@
                 <button id="defaults-kernel-window-1w" type="button">1w</button>
               </div>
               <span id="defaults-badge" data-badge data-state="unknown">Idle</span>
-              <p id="defaults-meta" data-help>Models load automatically.</p>
-              <p data-help>
-                Applies when no org or repo rate limit exists. Use -1 for unlimited, 0 to deny by default.
-              </p>
-              <p data-help>Changes save automatically. Reasoning options depend on the selected model.</p>
             </div>
           </article>
         </section>
       </main>
+
+      <section id="view-session" data-auth-widget aria-label="Admin authentication" aria-expanded="false">
+        <article id="auth-widget-panel" data-card aria-labelledby="card-admin-auth" tabindex="-1" hidden>
+          <header data-auth-widget-header>
+            <h2 id="card-admin-auth">Admin auth</h2>
+            <button id="auth-widget-close" type="button" data-icon-button aria-label="Collapse authentication">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
+          </header>
+          <div data-card-body>
+            <label data-field>
+              <span data-label>Target</span>
+              <select id="admin-base">
+                <option value="local">This origin</option>
+                <option value="ai">ai.ubq.fi</option>
+              </select>
+            </label>
+            <span id="base-preview" hidden></span>
+            <div data-layout="row">
+              <button
+                id="admin-passkey-login"
+                type="button"
+                data-tooltip="Use iCloud Keychain or another passkey provider to sign in"
+              >
+                <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    d="M11 7 9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z"
+                  />
+                </svg>
+                <span>Sign in with passkey</span>
+              </button>
+              <button
+                id="admin-passkey-register"
+                type="button"
+                data-tooltip="Create a passkey for this account on the current domain"
+              >
+                <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zM7 20v-2c0-2.67 5.33-4 8-4 .32 0 .7.02 1.1.07-.7.86-1.1 1.94-1.1 3.13V20H7zm12-3v-3h-2v3h-3v2h3v3h2v-3h3v-2h-3z"
+                  />
+                </svg>
+                <span>Add passkey</span>
+              </button>
+              <button id="admin-sign-out" type="button" data-tooltip="Clear this browser session" hidden>
+                <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    d="M17 7 15.59 8.41 18.17 11H8v2h10.17l-2.58 2.59L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"
+                  />
+                </svg>
+                <span>Sign out</span>
+              </button>
+            </div>
+            <span id="admin-passkey-status" data-badge data-state="unknown">Passkey idle</span>
+            <details data-passkey-advanced>
+              <summary>Advanced passkey options</summary>
+              <div data-passkey-advanced-body>
+                <label data-field>
+                  <span data-label>Username</span>
+                  <input
+                    id="admin-passkey-handle"
+                    type="text"
+                    inputmode="text"
+                    autocomplete="off"
+                    placeholder="Optional account name"
+                  />
+                </label>
+              </div>
+            </details>
+            <details data-token-fallback>
+              <summary>Fallback admin token</summary>
+              <div data-token-fallback-body>
+                <label data-field>
+                  <span data-label>Admin token</span>
+                  <input
+                    id="admin-token"
+                    type="password"
+                    inputmode="text"
+                    autocomplete="off"
+                    placeholder="Paste admin token"
+                  />
+                </label>
+                <div data-layout="row">
+                  <label data-check>
+                    <input id="remember-admin-token" type="checkbox" />
+                    <span>Remember</span>
+                  </label>
+                  <label data-check>
+                    <input id="show-admin-token" type="checkbox" />
+                    <span>Show</span>
+                  </label>
+                </div>
+                <span id="admin-auth-badge" data-badge data-state="unknown">Not checked</span>
+              </div>
+            </details>
+          </div>
+        </article>
+        <button
+          id="auth-widget-toggle"
+          type="button"
+          data-tooltip="Open authentication"
+          aria-controls="auth-widget-panel"
+          aria-expanded="false"
+          aria-label="Open authentication"
+        >
+          <svg data-material-icon viewBox="0 -960 960 960" aria-hidden="true" focusable="false">
+            <path
+              d="M251.5-451.5Q240-463 240-480t11.5-28.5Q263-520 280-520t28.5 11.5Q320-497 320-480t-11.5 28.5Q297-440 280-440t-28.5-11.5ZM280-292q-78 0-133-55T92-480q0-78 55-133t133-55q60 0 108 33.5t68 86.5h373l68 68-112 110-65-49-70 51-67-44H456q-20 52-68 86t-108 34Zm0-28q60 0 101.5-36t52.5-84h158l57 38 72-51 63 47 74-74-40-40H434q-11-48-52.5-84T280-640q-66 0-113 47t-47 113q0 66 47 113t113 47Z"
+            />
+          </svg>
+        </button>
+      </section>
     </div>
     <script type="module" src="/admin.js"></script>
   </body>

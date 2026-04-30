@@ -167,6 +167,7 @@ Deno.test("passkey session authenticates as client and admin", async () => {
   assert.equal(whoami.status, 200);
   const body = await whoami.json();
   assert.equal(body.auth.is_admin, true);
+  assert.equal(body.auth.is_super_admin, false);
   assert.equal(body.auth.method.kind, "passkey_session");
   assert.equal(body.auth.method.user.handle, user.handle);
   assert.equal(body.auth.method.user.is_admin, true);
@@ -202,6 +203,7 @@ Deno.test("non-admin passkey session authenticates as client but not admin", asy
   assert.equal(whoami.status, 200);
   const body = await whoami.json();
   assert.equal(body.auth.is_admin, false);
+  assert.equal(body.auth.is_super_admin, false);
   assert.equal(body.auth.method.user.is_admin, false);
   assert.equal(body.auth.method.user.credential_count, 1);
 });
@@ -241,6 +243,12 @@ Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed ru
       const clientAuth = await authenticateClient(req);
       assert.equal(clientAuth.ok, true);
       if (clientAuth.ok) assert.equal(clientAuth.method.kind, "deno_deploy_token");
+
+      const whoami = await handleV1Auth(req);
+      assert.equal(whoami.status, 200);
+      const body = await whoami.json();
+      assert.equal(body.auth.is_admin, true);
+      assert.equal(body.auth.is_super_admin, true);
 
       assert.equal(requested.length, 1);
       assert.equal(requested[0].url, "https://api.deno.com/v2/apps/ai-ubq-fi-test");
