@@ -1,5 +1,6 @@
 import "./network.js";
 import {
+  formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
   registerPasskey,
@@ -72,10 +73,11 @@ const setPasskeyStatus = (state, text) => {
 
 const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
+  const canRegisterPasskey = options.canRegisterPasskey ?? true;
   passkeyLoginBtn.hidden = signedIn;
-  passkeyRegisterBtn.hidden = deviceRegistered;
+  passkeyRegisterBtn.hidden = deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
-  if (signedIn) setPasskeyStatus("ok", "Signed in");
+  if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
   else setPasskeyStatus("unknown", "Passkey idle");
 };
 
@@ -298,7 +300,11 @@ const checkAuthToken = async () => {
     }
     const mode = data?.auth?.mode;
     setAuthBadge("ok", mode ? `OK (${mode})` : "OK");
-    setSignedInState(true, { deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials() });
+    setSignedInState(true, {
+      canRegisterPasskey: data?.auth?.is_admin === true,
+      deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials(),
+      statusText: formatAuthSessionLabel(data?.auth),
+    });
     void loadModels(token);
   } catch {
     if (requestId !== authCheckId) return;

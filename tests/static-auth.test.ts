@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 
-const { STORAGE_KEYS, hasAuthPasskeyCredential, signInWithPasskey, registerPasskey } = await import(
-  "../static/auth.js"
-);
+const { STORAGE_KEYS, formatAuthSessionLabel, hasAuthPasskeyCredential, signInWithPasskey, registerPasskey } =
+  await import(
+    "../static/auth.js"
+  );
 
 type Restore = () => void;
 
@@ -76,6 +77,14 @@ Deno.test("hasAuthPasskeyCredential recognizes passkey sessions and credential c
   assert.equal(hasAuthPasskeyCredential({ method: { user: { credential_count: 1 } } }), true);
   assert.equal(hasAuthPasskeyCredential({ user: { credential_count: 1 } }), true);
   assert.equal(hasAuthPasskeyCredential({ user: { credential_count: 0 } }), false);
+});
+
+Deno.test("formatAuthSessionLabel distinguishes fallback token and passkey auth", () => {
+  assert.equal(formatAuthSessionLabel({ method: { kind: "passkey_session" } }), "Passkey signed in");
+  assert.equal(formatAuthSessionLabel({ method: { kind: "admin_allowlist" } }), "Fallback token active");
+  assert.equal(formatAuthSessionLabel({ method: { kind: "deno_deploy_token" } }), "Deno token active");
+  assert.equal(formatAuthSessionLabel({ method: { kind: "kv_api_key" } }), "API key active");
+  assert.equal(formatAuthSessionLabel({}), "Token active");
 });
 
 const captureRegisterStartBody = async (
