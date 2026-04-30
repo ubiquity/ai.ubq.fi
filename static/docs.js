@@ -162,7 +162,7 @@ const parseMarkdown = (markdown) => {
 const renderToc = (toc) => {
   if (!tocEl) return;
   if (!toc.length) {
-    tocEl.innerHTML = "<p data-help>No sections found.</p>";
+    tocEl.innerHTML = "<p data-empty>No sections found.</p>";
     return;
   }
   tocEl.innerHTML = toc
