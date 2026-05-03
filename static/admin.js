@@ -157,6 +157,7 @@ let defaultsTouched = false;
 let defaultsLoadId = 0;
 
 const kernelListBadge = mustGet("kernel-list-badge");
+const kernelAttention = mustGet("kernel-attention");
 const kernelList = mustGet("kernel-list");
 const kernelQueueBadge = mustGet("kernel-queue-badge");
 const kernelQueueList = mustGet("kernel-queue-list");
@@ -273,7 +274,7 @@ const setAuthWidgetOpen = (open, options = {}) => {
 
 const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
-  const canRegisterPasskey = options.canRegisterPasskey ?? true;
+  const canRegisterPasskey = options.canRegisterPasskey ?? false;
   passkeyLoginBtn.hidden = signedIn;
   passkeyRegisterBtn.hidden = isAuthRelayMode || deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
@@ -289,7 +290,15 @@ const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text)
 const setKernelQueueBadge = (state, text) => setBadge(kernelQueueBadge, state, text);
 const setKernelPubKeysBadge = (state, text) => setBadge(kernelPubKeysBadge, state, text);
 const setKernelPubKeyCreateBadge = (state, text) => setBadge(kernelPubKeyCreateBadge, state, text);
-const setKernelAttention = () => {};
+const setKernelAttention = (text) => {
+  if (!text) {
+    kernelAttention.textContent = "";
+    kernelAttention.hidden = true;
+    return;
+  }
+  kernelAttention.textContent = text;
+  kernelAttention.hidden = false;
+};
 
 const resetKernelPolicyState = () => {
   kernelPolicyState = {
@@ -3565,7 +3574,7 @@ const setTabState = (tab, selected, enabled = true) => {
   tab.setAttribute("aria-selected", selected ? "true" : "false");
   tab.setAttribute("aria-disabled", enabled ? "false" : "true");
   tab.disabled = !enabled;
-  tab.tabIndex = selected && enabled ? 0 : -1;
+  tab.tabIndex = enabled ? 0 : -1;
   if (!enabled) {
     const label = tab.id === "view-tab-users" ? "Super admin required" : "Admin sign-in required";
     tab.title = label;
@@ -4034,8 +4043,8 @@ const ensureKeysLoaded = async () => {
     setKeyListMessage("Paste an admin token to load API keys.");
     return;
   }
-  if (allKeys.length && Date.now() - keysLoadedAt < 10_000) {
-    setKeysBadge("ok", `${formatPlural(allKeys.length, "API key")}`);
+  if (keysLoadedAt && Date.now() - keysLoadedAt < 10_000) {
+    renderKeys(allKeys, currentKeyView);
     return;
   }
   await refreshKeys();
@@ -4574,7 +4583,12 @@ passkeyLoginBtn.addEventListener("click", async () => {
       return;
     }
 
-    const result = await signInWithPasskey({ baseUrl: passkeyBaseUrl });
+    const passkeyHandle = getPasskeyHandle();
+    const result = await signInWithPasskey({
+      baseUrl: passkeyBaseUrl,
+      handle: passkeyHandle,
+      useHandle: Boolean(passkeyHandle),
+    });
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token, { deviceRegistered: true });
     setPasskeyStatus("ok", "Passkey signed in");

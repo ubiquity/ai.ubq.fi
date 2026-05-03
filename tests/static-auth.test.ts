@@ -82,6 +82,8 @@ Deno.test("hasAuthPasskeyCredential recognizes passkey sessions and credential c
 Deno.test("formatAuthSessionLabel distinguishes fallback token and passkey auth", () => {
   assert.equal(formatAuthSessionLabel({ method: { kind: "passkey_session" } }), "Passkey signed in");
   assert.equal(formatAuthSessionLabel({ method: { kind: "admin_allowlist" } }), "Fallback token active");
+  assert.equal(formatAuthSessionLabel({ method: { kind: "auth_tokens_allowlist" } }), "Allowlist token active");
+  assert.equal(formatAuthSessionLabel({ method: { kind: "disabled" } }), "Auth disabled");
   assert.equal(formatAuthSessionLabel({ method: { kind: "deno_deploy_token" } }), "Deno token active");
   assert.equal(formatAuthSessionLabel({ method: { kind: "kv_api_key" } }), "API key active");
   assert.equal(formatAuthSessionLabel({}), "Token active");

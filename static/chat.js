@@ -73,7 +73,7 @@ const setPasskeyStatus = (state, text) => {
 
 const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
-  const canRegisterPasskey = options.canRegisterPasskey ?? true;
+  const canRegisterPasskey = options.canRegisterPasskey ?? false;
   passkeyLoginBtn.hidden = signedIn;
   passkeyRegisterBtn.hidden = deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
@@ -453,7 +453,11 @@ passkeyLoginBtn.addEventListener("click", async () => {
   passkeyLoginBtn.disabled = true;
   passkeyRegisterBtn.disabled = true;
   try {
-    const result = await signInWithPasskey();
+    const passkeyHandle = passkeyHandleInput.value.trim();
+    const result = await signInWithPasskey({
+      handle: passkeyHandle,
+      useHandle: Boolean(passkeyHandle),
+    });
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token, { deviceRegistered: true });
     setPasskeyStatus("ok", "Passkey signed in");

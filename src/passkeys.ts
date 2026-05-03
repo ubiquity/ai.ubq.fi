@@ -603,7 +603,7 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
       expected_origin: challengeRecord.origin,
       expected_rp_id: challengeRecord.rp_id,
       credential_id_prefix: response.id.slice(0, 12),
-      user_handle: userEntry.value.handle,
+      has_user_handle: Boolean(userEntry.value.handle),
       require_user_verification: isPasskeyUserAdmin(userEntry.value),
     });
     return openaiError(400, "Invalid passkey assertion", "invalid_request_error");

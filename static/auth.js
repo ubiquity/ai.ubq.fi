@@ -107,6 +107,10 @@ export const formatAuthSessionLabel = (auth) => {
       return "Passkey signed in";
     case "admin_allowlist":
       return "Fallback token active";
+    case "auth_tokens_allowlist":
+      return "Allowlist token active";
+    case "disabled":
+      return "Auth disabled";
     case "deno_deploy_token":
       return "Deno token active";
     case "kv_api_key":
