@@ -10,6 +10,11 @@ Deno.test("auth relay accepts local development origins", () => {
 
 Deno.test("auth relay accepts ai gateway production and preview origins", () => {
   assert.equal(parseTrustedAuthRelayOrigin("https://ai.ubq.fi"), "https://ai.ubq.fi");
+  assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi.deno.dev"), "https://ai-ubq-fi.deno.dev");
+  assert.equal(
+    parseTrustedAuthRelayOrigin("https://ai-ubq-fi.ubiquity-dao.deno.net"),
+    "https://ai-ubq-fi.ubiquity-dao.deno.net",
+  );
   assert.equal(
     parseTrustedAuthRelayOrigin("https://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net"),
     "https://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
@@ -22,6 +27,8 @@ Deno.test("auth relay accepts ai gateway production and preview origins", () => 
 
 Deno.test("auth relay rejects untrusted or malformed origins", () => {
   assert.equal(parseTrustedAuthRelayOrigin("https://example.com"), "");
+  assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi-evil.deno.dev"), "");
+  assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi-evil.ubiquity-dao.deno.net"), "");
   assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi-cv5fc93pzb5a.evil.example"), "");
   assert.equal(parseTrustedAuthRelayOrigin("http://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net"), "");
   assert.equal(parseTrustedAuthRelayOrigin("https://ai.ubq.fi/admin"), "");

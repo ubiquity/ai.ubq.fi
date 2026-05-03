@@ -4,10 +4,14 @@ export const AUTH_RELAY_ACTION_PASSKEY_LOGIN = "passkey-login";
 const isLocalHost = (hostname) =>
   hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 
+const DENO_PREVIEW_SUFFIX = "[a-z0-9]{12}";
+
 const isAiGatewayDeployHost = (hostname) =>
   hostname === "ai.ubq.fi" ||
-  /^ai-ubq-fi(?:-[a-z0-9]+)*\.deno\.dev$/.test(hostname) ||
-  /^ai-ubq-fi(?:-[a-z0-9]+)*\.ubiquity-dao\.deno\.net$/.test(hostname);
+  hostname === "ai-ubq-fi.deno.dev" ||
+  hostname === "ai-ubq-fi.ubiquity-dao.deno.net" ||
+  new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.deno\\.dev$`).test(hostname) ||
+  new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.ubiquity-dao\\.deno\\.net$`).test(hostname);
 
 export const parseTrustedAuthRelayOrigin = (value) => {
   const raw = String(value ?? "").trim();

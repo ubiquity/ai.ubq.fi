@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 
+const encodeBase64Url = (value: string): string =>
+  btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 const kvVersions = new Map<string, number>();
 let beforeAtomicCommit: (() => void) | null = null;
@@ -95,6 +98,7 @@ const {
   PASSKEY_SESSION_TTL_MS,
   buildPasskeyHandle,
   getPasskeyRequestMeta,
+  handlePasskeyLoginFinish,
   handlePasskeyLoginStart,
   handlePasskeyRegisterStart,
   handlePasskeySession,
@@ -102,6 +106,7 @@ const {
   handlePasskeyUsersUpdate,
   hasPasskeyUsers,
   normalizePasskeyHandle,
+  passkeyChallengeKey,
   passkeyCredentialKey,
   passkeyHandleKey,
   passkeySessionKey,
@@ -674,6 +679,77 @@ Deno.test("passkey login start without username remains discoverable", async () 
   const body = await response.json();
   assert.equal(body.publicKey.allowCredentials, undefined);
   assert.equal(body.publicKey.userVerification, "preferred");
+});
+
+Deno.test("passkey login finish does not log raw user handles on assertion failure", async () => {
+  kvStore.clear();
+  const now = Date.now();
+  const challenge = "auth-log-challenge";
+  const user = {
+    id: "user-log",
+    handle: "sensitive-admin-handle",
+    is_admin: true,
+    credential_ids: ["credential-log"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  kvStore.set(keyToString(passkeyUserKey(user.id)), user);
+  kvStore.set(keyToString(passkeyCredentialKey("credential-log")), {
+    credential_id: "credential-log",
+    user_id: user.id,
+    public_key: encodeBase64Url("not a valid public key"),
+    sign_count: 0,
+    transports: [],
+    created_at_ms: now,
+  });
+  kvStore.set(keyToString(passkeyChallengeKey(challenge)), {
+    challenge,
+    type: "authentication",
+    origin: "https://ai.ubq.fi",
+    rp_id: "ai.ubq.fi",
+    created_at_ms: now,
+    expires_at_ms: now + 300_000,
+  });
+
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+  try {
+    const response = await handlePasskeyLoginFinish(
+      new Request("https://ai.ubq.fi/api/auth/login/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          response: {
+            id: "credential-log",
+            rawId: "credential-log",
+            type: "public-key",
+            response: {
+              clientDataJSON: encodeBase64Url(JSON.stringify({
+                type: "webauthn.get",
+                challenge,
+                origin: "https://ai.ubq.fi",
+              })),
+              authenticatorData: encodeBase64Url("invalid authenticator data"),
+              signature: encodeBase64Url("invalid signature"),
+              userHandle: encodeBase64Url(user.id),
+            },
+          },
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 400);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  const details = warnings[0][1] as Record<string, unknown>;
+  assert.equal(details.has_user_handle, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(details, "user_handle"), false);
 });
 
 Deno.test("passkey registration deletes stale handle mapping when a user handle changes", async () => {
