@@ -58,7 +58,6 @@ export const PASSKEY_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AUTH_PREFIX = ["uos_ai", "auth"] as const;
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
 const RP_NAME = "UbiquityOS AI Gateway";
-const DENO_PREVIEW_SUFFIX = "[a-z0-9]{12}";
 
 export const passkeyUserKey = (userId: string): Deno.KvKey => [...AUTH_PREFIX, "users", userId];
 export const passkeyHandleKey = (handle: string): Deno.KvKey => [...AUTH_PREFIX, "handles", handle];
@@ -135,17 +134,10 @@ const parseOriginFromHost = (host: string | null, protocol: string): string | nu
 const isLoopbackHost = (hostname: string): boolean =>
   hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 
-const isAiGatewayDeployHost = (hostname: string): boolean =>
-  hostname === "ai.ubq.fi" ||
-  hostname === "ai-ubq-fi.deno.dev" ||
-  hostname === "ai-ubq-fi.ubiquity-dao.deno.net" ||
-  new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.deno\\.dev$`).test(hostname) ||
-  new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.ubiquity-dao\\.deno\\.net$`).test(hostname);
-
 const isTrustedPasskeyOrigin = (origin: string): boolean => {
   try {
     const url = new URL(origin);
-    if (url.protocol === "https:" && isAiGatewayDeployHost(url.hostname)) return true;
+    if (url.origin === PASSKEY_CANONICAL_ORIGIN) return true;
     return (url.protocol === "http:" || url.protocol === "https:") && isLoopbackHost(url.hostname);
   } catch {
     return false;
