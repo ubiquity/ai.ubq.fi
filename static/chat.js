@@ -105,6 +105,39 @@ const formatModelLabel = (model, fallback) => {
   return fallback;
 };
 
+const mergeModelCapabilities = (models, capabilities) => {
+  const capabilitiesById = new Map(
+    capabilities
+      .map((capability) => ({ id: normalizeModelId(capability), capability }))
+      .filter((entry) => entry.id)
+      .map((entry) => [entry.id, entry.capability]),
+  );
+
+  return models.map((model) => {
+    const id = normalizeModelId(model);
+    const capability = capabilitiesById.get(id);
+    if (!capability) return model;
+
+    const merged = { ...model };
+    if (typeof capability.display_name === "string" && capability.display_name.trim()) {
+      merged.display_name = capability.display_name;
+    }
+    if (Array.isArray(capability.supported_reasoning_levels)) {
+      merged.supported_reasoning_levels = capability.supported_reasoning_levels;
+    }
+    const defaultReasoning = typeof capability.default_reasoning_effort === "string"
+      ? capability.default_reasoning_effort.trim()
+      : typeof capability.default_reasoning_level === "string"
+      ? capability.default_reasoning_level.trim()
+      : "";
+    if (defaultReasoning) {
+      merged.default_reasoning_effort = defaultReasoning;
+      merged.default_reasoning_level = defaultReasoning;
+    }
+    return merged;
+  });
+};
+
 const setModelPlaceholder = (label) => {
   modelInput.textContent = "";
   const option = document.createElement("option");
@@ -201,7 +234,9 @@ const getReasoningLevelsForModel = (modelId) => {
       if (effort) normalized.push(effort);
     }
   });
-  const defaultReasoning = typeof model?.default_reasoning_level === "string"
+  const defaultReasoning = typeof model?.default_reasoning_effort === "string"
+    ? model.default_reasoning_effort.trim()
+    : typeof model?.default_reasoning_level === "string"
     ? model.default_reasoning_level.trim()
     : "";
   const unique = Array.from(new Set(normalized));
@@ -212,7 +247,9 @@ const getReasoningLevelsForModel = (modelId) => {
 const updateReasoningForModel = (modelId, preferred) => {
   const levels = getReasoningLevelsForModel(modelId);
   const model = modelCatalog.get(modelId);
-  const defaultReasoning = typeof model?.default_reasoning_level === "string"
+  const defaultReasoning = typeof model?.default_reasoning_effort === "string"
+    ? model.default_reasoning_effort.trim()
+    : typeof model?.default_reasoning_level === "string"
     ? model.default_reasoning_level.trim()
     : "";
   const selected = levels.includes(preferred)
@@ -238,8 +275,15 @@ const loadModels = async (token) => {
   if (trimmed === modelsLoadedToken) return;
   const requestId = ++modelsRequestId;
   try {
-    const res = await fetch("/v1/models", { headers: { Authorization: `Bearer ${trimmed}` }, cache: "no-store" });
-    const data = await res.json().catch(() => null);
+    const [modelsResponse, capabilitiesResponse] = await Promise.all([
+      fetch("/v1/models", { headers: { Authorization: `Bearer ${trimmed}` }, cache: "no-store" }).then(
+        async (res) => ({ res, data: await res.json().catch(() => null) }),
+      ),
+      fetch("/uos/models/capabilities", { headers: { Authorization: `Bearer ${trimmed}` }, cache: "no-store" }).then(
+        async (res) => ({ res, data: await res.json().catch(() => null) }),
+      ).catch((error) => ({ error })),
+    ]);
+    const { res, data } = modelsResponse;
     if (requestId !== modelsRequestId) return;
     if (trimmed !== tokenInput.value.trim()) return;
     if (!res.ok) {
@@ -249,7 +293,17 @@ const loadModels = async (token) => {
       setModelPlaceholder(message);
       return;
     }
-    const models = Array.isArray(data?.data) ? data.data : [];
+    const rawModels = Array.isArray(data?.data) ? data.data : [];
+    const capabilities = "res" in capabilitiesResponse && capabilitiesResponse.res.ok &&
+        Array.isArray(capabilitiesResponse.data?.data)
+      ? capabilitiesResponse.data.data
+      : [];
+    if (!capabilities.length && "res" in capabilitiesResponse && !capabilitiesResponse.res.ok) {
+      console.warn("[ai.ubq.fi] model capabilities unavailable:", capabilitiesResponse.res.status);
+    } else if ("error" in capabilitiesResponse) {
+      console.warn("[ai.ubq.fi] model capabilities unavailable:", capabilitiesResponse.error);
+    }
+    const models = mergeModelCapabilities(rawModels, capabilities);
     if (!models.length) {
       setModelPlaceholder("No models available");
       return;
