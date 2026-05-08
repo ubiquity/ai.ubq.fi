@@ -431,6 +431,32 @@ Deno.test("passkey RP ID uses client window location when headers are unavailabl
   });
 });
 
+Deno.test("passkey RP ID follows Deno preview client origins", () => {
+  const req = new Request("https://ai-ubq-fi-bymgq1mnv06z.ubiquity-dao.deno.net/api/auth/register/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+
+  assert.deepEqual(getPasskeyRequestMeta(req, "https://ai-ubq-fi-bymgq1mnv06z.ubiquity-dao.deno.net"), {
+    origin: "https://ai-ubq-fi-bymgq1mnv06z.ubiquity-dao.deno.net",
+    rpId: "ai-ubq-fi-bymgq1mnv06z.ubiquity-dao.deno.net",
+  });
+});
+
+Deno.test("passkey RP ID can fall back to Deno preview request hosts", () => {
+  const req = new Request("https://ai-ubq-fi-bymgq1mnv06z.ubiquity-dao.deno.net/api/auth/register/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+
+  assert.deepEqual(getPasskeyRequestMeta(req), {
+    origin: "https://ai-ubq-fi-bymgq1mnv06z.ubiquity-dao.deno.net",
+    rpId: "ai-ubq-fi-bymgq1mnv06z.ubiquity-dao.deno.net",
+  });
+});
+
 Deno.test("passkey RP ID allows localhost client origin for remote target", () => {
   const req = new Request("https://ai.ubq.fi/api/auth/register/start", {
     method: "POST",
