@@ -12,7 +12,7 @@
     "ubq-ai": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts",
     "admin:models": "sh -c 'BASE_URL=${BASE_URL:-http://localhost:8000}; if [ -z \"${DENO_DEPLOY_TOKEN:-}\" ]; then echo \"DENO_DEPLOY_TOKEN is required for admin endpoints.\" >&2; exit 1; fi; curl -sS -H \"Authorization: Bearer ${DENO_DEPLOY_TOKEN}\" ${BASE_URL}/admin/codex/models'",
     "admin:models:spark": "sh -c 'BASE_URL=${BASE_URL:-http://localhost:8000}; if [ -z \"${DENO_DEPLOY_TOKEN:-}\" ]; then echo \"DENO_DEPLOY_TOKEN is required for admin endpoints.\" >&2; exit 1; fi; curl -sS -H \"Authorization: Bearer ${DENO_DEPLOY_TOKEN}\" ${BASE_URL}/admin/codex/models | jq -r \".data.models[]?.slug // empty | select(contains(\\\"-spark\\\"))\"'",
-    "upload:auth": "deno run --env --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts",
+    "upload:auth": "sh -c 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; deno run --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts \"$@\"' --",
     "keys:create": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys create",
     "keys:list": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys list",
     "keys:revoke": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys revoke",
