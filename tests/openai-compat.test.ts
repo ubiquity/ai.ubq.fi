@@ -218,6 +218,34 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("max_output_tokens" in recorded, false);
   });
 
+  await t.step("chat accepts null reasoning effort", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages: [{ role: "user", content: "ping" }],
+              reasoning_effort: null,
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    assert.equal(Object.prototype.hasOwnProperty.call(recorded, "reasoning"), true);
+    assert.equal(recorded["reasoning"], null);
+  });
+
   await t.step("responses uses default model/reasoning and ignores temperature", async () => {
     let recordedBody: Record<string, unknown> | null = null;
 

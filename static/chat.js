@@ -60,6 +60,7 @@ const sendBtn = mustGet("send");
 const panels = Array.from(document.querySelectorAll("details[data-chat-panel][data-panel-key]"));
 
 const DEFAULT_MODEL = "";
+const REASONING_NONE_VALUE = "__uos_reasoning_none__";
 
 const setAuthBadge = (state, text) => {
   authBadge.dataset.state = state;
@@ -90,6 +91,7 @@ let modelsRequestId = 0;
 let modelsLoadedToken = "";
 let modelCatalog = new Map();
 let preferredModel = DEFAULT_MODEL;
+let preferredReasoningEffort = "";
 
 const normalizeModelId = (model) => {
   if (!model || typeof model !== "object") return "";
@@ -201,11 +203,10 @@ const setReasoningOptions = (levels, preferred) => {
   defaultOption.textContent = "Default";
   reasoningSelect.appendChild(defaultOption);
 
-  if (!uniqueLevels.length) {
-    reasoningSelect.disabled = true;
-    reasoningSelect.value = "";
-    return "";
-  }
+  const noneOption = document.createElement("option");
+  noneOption.value = REASONING_NONE_VALUE;
+  noneOption.textContent = "None";
+  reasoningSelect.appendChild(noneOption);
 
   reasoningSelect.disabled = false;
 
@@ -216,7 +217,13 @@ const setReasoningOptions = (levels, preferred) => {
     reasoningSelect.appendChild(option);
   });
 
-  reasoningSelect.value = uniqueLevels.includes(trimmedPreferred) ? trimmedPreferred : "";
+  const next = trimmedPreferred === REASONING_NONE_VALUE
+    ? REASONING_NONE_VALUE
+    : uniqueLevels.includes(trimmedPreferred)
+    ? trimmedPreferred
+    : "";
+  reasoningSelect.value = next;
+  return next;
 };
 
 const getReasoningLevelsForModel = (modelId) => {
@@ -247,13 +254,16 @@ const getReasoningLevelsForModel = (modelId) => {
 const updateReasoningForModel = (modelId, preferred) => {
   const levels = getReasoningLevelsForModel(modelId);
   const model = modelCatalog.get(modelId);
+  const preferredValue = typeof preferred === "string" ? preferred.trim() : "";
   const defaultReasoning = typeof model?.default_reasoning_effort === "string"
     ? model.default_reasoning_effort.trim()
     : typeof model?.default_reasoning_level === "string"
     ? model.default_reasoning_level.trim()
     : "";
-  const selected = levels.includes(preferred)
-    ? preferred
+  if (preferredValue === REASONING_NONE_VALUE) return setReasoningOptions(levels, REASONING_NONE_VALUE);
+  if (!preferredValue) return setReasoningOptions(levels, "");
+  const selected = levels.includes(preferredValue)
+    ? preferredValue
     : levels.includes(defaultReasoning)
     ? defaultReasoning
     : levels.length
@@ -322,7 +332,8 @@ const loadModels = async (token) => {
       preferredModel = selected;
     }
     modelsLoadedToken = trimmed;
-    updateReasoningForModel(selected || modelInput.value.trim(), reasoningSelect.value);
+    preferredReasoningEffort = updateReasoningForModel(selected || modelInput.value.trim(), preferredReasoningEffort) ??
+      "";
   } catch {
     if (requestId !== modelsRequestId) return;
   }
@@ -417,6 +428,7 @@ const restoreSettings = () => {
   passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
 
   preferredModel = storage.get(STORAGE_KEYS.model) ?? DEFAULT_MODEL;
+  preferredReasoningEffort = storage.get(STORAGE_KEYS.reasoningEffort) ?? "";
   setModelPlaceholder("Loading models...");
   setReasoningPlaceholder("Loading models...");
   systemInput.value = storage.get(STORAGE_KEYS.systemPrompt) ?? "";
@@ -602,13 +614,16 @@ const handleModelChange = () => {
   const nextModel = modelInput.value.trim();
   if (nextModel) preferredModel = nextModel;
   scheduleModelPersist();
-  updateReasoningForModel(nextModel, reasoningSelect.value);
+  preferredReasoningEffort = updateReasoningForModel(nextModel, reasoningSelect.value) ?? "";
 };
 
 modelInput.addEventListener("input", handleModelChange);
 modelInput.addEventListener("change", handleModelChange);
 systemInput.addEventListener("input", () => scheduleSystemPersist());
-reasoningSelect.addEventListener("change", () => persistSetting(STORAGE_KEYS.reasoningEffort, reasoningSelect.value));
+reasoningSelect.addEventListener("change", () => {
+  preferredReasoningEffort = reasoningSelect.value;
+  persistSetting(STORAGE_KEYS.reasoningEffort, reasoningSelect.value);
+});
 
 const appendMessage = (role, text) => {
   const el = document.createElement("div");
@@ -701,7 +716,8 @@ const sendPrompt = async () => {
   };
 
   const reasoningEffort = reasoningSelect.value.trim();
-  if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
+  if (reasoningEffort === REASONING_NONE_VALUE) payload.reasoning_effort = null;
+  else if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
   if (!payload.model) delete payload.model;
 
   const assistantEl = appendMessage("assistant", "");

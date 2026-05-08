@@ -323,6 +323,7 @@ Notes:
 - Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
 - If a model rejects reasoning, retry with `reasoning_effort: null` for chat completions or `reasoning: null` for
   responses.
+- In the browser chat playground, `Default` omits `reasoning_effort`; `None` sends `reasoning_effort: null`.
 
 Defaults can be managed via `/admin/defaults` (admin auth required). When no model is explicitly configured, the gateway
 uses the first model in the current Codex model snapshot. If neither a configured default nor a snapshot is available,
