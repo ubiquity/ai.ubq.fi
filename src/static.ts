@@ -73,6 +73,7 @@ textAsset(["/docs.js"], "docs.js", "text/javascript; charset=utf-8");
 textAsset(["/chat.js"], "chat.js", "text/javascript; charset=utf-8");
 textAsset(["/admin.js"], "admin.js", "text/javascript; charset=utf-8");
 textAsset(["/auth.js"], "auth.js", "text/javascript; charset=utf-8");
+textAsset(["/auth-relay.js"], "auth-relay.js", "text/javascript; charset=utf-8");
 textAsset(["/network.js"], "network.js", "text/javascript; charset=utf-8");
 
 textAsset(["/company-logo.svg"], "company-logo.svg", "image/svg+xml; charset=utf-8");
@@ -106,7 +107,7 @@ const notFoundResponse = (): Response =>
 const htmlSecurityHeaders = (): HeadersInit => ({
   "Cache-Control": staticCacheControl,
   "Content-Security-Policy":
-    "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'",
+    "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self' https://ai.ubq.fi",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
 });

@@ -16,8 +16,6 @@ LLM and app integration notes live in [`static/docs/llms-agents.md`](static/docs
   - Upstream usage/limits are tied to that OpenAI account + plan; client-provided OpenAI API keys are ignored.
   - The OAuth `client_id` used for refresh-token rotation is **public** (not a secret); the secrets are the tokens in
     `CODEX_AUTH_JSON_B64` and your client/admin tokens.
-- Browser passkey sign-in is supported only on `https://ai.ubq.fi` and loopback development origins. Preview deployments
-  use same-origin API calls and should use gateway/admin token auth instead of passkeys.
 
 ## Quickstart (curl)
 
@@ -390,8 +388,6 @@ deno task ubq-ai admin keys revoke --id "<id>"
 - `POST /api/auth/register/start`, `POST /api/auth/register/finish`
 - `POST /api/auth/login/start`, `POST /api/auth/login/finish`
 - `GET /api/auth/session`, `POST /api/auth/logout`
-- Browser passkey flows are intended for `https://ai.ubq.fi` and loopback development origins only; preview deployment
-  URLs should use token auth.
 - `GET /admin/passkey-users`, `PATCH /admin/passkey-users` (super-admin only)
 - `POST /admin/codex/auth` (admin only)
 - `GET /admin/codex/models`, `POST /admin/codex/models` (admin only)

@@ -17,9 +17,6 @@ The gateway is also available via the Deno Deploy default domain:
 https://ai-ubq-fi.deno.dev
 ```
 
-First-party browser pages call APIs on the same origin they were loaded from. Preview deployments should therefore use
-tokens issued for that preview target instead of silently calling `https://ai.ubq.fi`.
-
 OpenAI client base URL (example):
 
 ```
@@ -49,14 +46,6 @@ For app integrations, name the client credential `UOS_AI_TOKEN` or another gatew
 `DENO_DEPLOY_TOKEN` for Deno Deploy admin operations.
 
 The gateway never forwards your client token upstream. It uses Codex CLI auth configured on the server.
-
-### Browser passkeys
-
-Passkey sign-in is supported only on `https://ai.ubq.fi` and loopback development origins such as
-`http://localhost:8000`. Deno preview deployment URLs do not support passkey sign-in; use a gateway/admin token there.
-
-This is intentional because WebAuthn relying party IDs are origin-scoped. A passkey registered for `ai.ubq.fi` is not
-valid on `*.deno.dev` or `*.ubiquity-dao.deno.net` preview domains.
 
 ### GitHub token headers (kernel auth)
 
@@ -428,9 +417,6 @@ If the auth method is a KV API key, the response includes key metadata and usage
 
 This is the best first check when an integration fails. It confirms whether the presented token resolved as a gateway
 token, a KV API key, an admin token, a passkey session, or a GitHub/kernel token.
-
-For preview deployments, check `/uos/auth` on the preview origin itself. The hosted admin and chat pages intentionally
-use same-origin API calls.
 
 ## Health
 

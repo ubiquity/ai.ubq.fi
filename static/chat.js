@@ -3,7 +3,6 @@ import {
   formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
-  isPasskeyOriginSupported,
   registerPasskey,
   signInWithPasskey,
   signOut,
@@ -48,7 +47,6 @@ const passkeyLoginBtn = mustGet("passkey-login");
 const passkeyRegisterBtn = mustGet("passkey-register");
 const signOutBtn = mustGet("sign-out");
 const passkeyStatus = mustGet("passkey-status");
-const passkeyAdvanced = document.querySelector("[data-passkey-advanced]");
 const modelInput = mustGet("model");
 const reasoningSelect = mustGet("reasoning-effort");
 const systemInput = mustGet("system");
@@ -74,15 +72,12 @@ const setPasskeyStatus = (state, text) => {
 };
 
 const setSignedInState = (signedIn, options = {}) => {
-  const passkeySupported = isPasskeyOriginSupported();
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
   const canRegisterPasskey = options.canRegisterPasskey ?? false;
-  passkeyLoginBtn.hidden = signedIn || !passkeySupported;
-  passkeyRegisterBtn.hidden = !passkeySupported || deviceRegistered || (signedIn && !canRegisterPasskey);
+  passkeyLoginBtn.hidden = signedIn;
+  passkeyRegisterBtn.hidden = deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
-  if (passkeyAdvanced) passkeyAdvanced.hidden = !passkeySupported;
   if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
-  else if (!passkeySupported) setPasskeyStatus("unknown", "Passkeys unavailable on this origin");
   else setPasskeyStatus("unknown", "Passkey idle");
 };
 
