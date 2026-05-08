@@ -153,7 +153,7 @@ const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true } = 
 Deno.test("passkey session authenticates as client and admin", async () => {
   kvStore.clear();
   const { token, user } = seedPasskeySession();
-  const req = new Request("https://ai.ubq.fi/v1/auth", {
+  const req = new Request("https://ai.ubq.fi/uos/auth", {
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -188,7 +188,7 @@ Deno.test("passkey session authenticates as client and admin", async () => {
 Deno.test("non-admin passkey session authenticates as client but not admin", async () => {
   kvStore.clear();
   const { token, user } = seedPasskeySession("uos_ai_session_user", { isAdmin: false });
-  const req = new Request("https://ai.ubq.fi/v1/auth", {
+  const req = new Request("https://ai.ubq.fi/uos/auth", {
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -235,7 +235,7 @@ Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed ru
 
   try {
     await withEnv({ DENO_DEPLOY_APP_SLUG: "ai-ubq-fi-test" }, async () => {
-      const req = new Request("https://ai.ubq.fi/v1/auth", {
+      const req = new Request("https://ai.ubq.fi/uos/auth", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const adminAuth = await authenticateAdmin(req);
@@ -294,7 +294,7 @@ Deno.test("Deno Deploy console tokens are verified against the app page", async 
       DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
       DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
     }, async () => {
-      const req = new Request("https://ai.ubq.fi/v1/auth", {
+      const req = new Request("https://ai.ubq.fi/uos/auth", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const adminAuth = await authenticateAdmin(req);
@@ -335,7 +335,7 @@ Deno.test("Deno Deploy console fallback rejects path-only HTML", async () => {
       DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
       DENO_DEPLOYMENT_ID: null,
     }, async () => {
-      const req = new Request("https://ai.ubq.fi/v1/auth", {
+      const req = new Request("https://ai.ubq.fi/uos/auth", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const adminAuth = await authenticateAdmin(req);
@@ -365,7 +365,7 @@ Deno.test("Deno Deploy tokens do not fall back to the production app slug", asyn
       DENO_DEPLOY_ORG_SLUG: null,
       DENO_DEPLOYMENT_ID: "dep_test",
     }, async () => {
-      const req = new Request("https://ai.ubq.fi/v1/auth", {
+      const req = new Request("https://ai.ubq.fi/uos/auth", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const adminAuth = await authenticateAdmin(req);
@@ -863,7 +863,7 @@ Deno.test("passkey logout deletes the cached session", async () => {
   assert.equal(response.status, 204);
   assert.equal(kvStore.has(keyToString(passkeySessionKey(token))), false);
 
-  const req = new Request("https://ai.ubq.fi/v1/auth", {
+  const req = new Request("https://ai.ubq.fi/uos/auth", {
     headers: { Authorization: `Bearer ${token}` },
   });
   const clientAuth = await authenticateClient(req);

@@ -6,12 +6,13 @@ export const corsHeaders = (): HeadersInit => ({
   "Access-Control-Allow-Headers":
     "Authorization,Content-Type,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
   // Allow browser clients to read gateway warnings and backoff hints (Retry-After).
-  "Access-Control-Expose-Headers": "x-uos-warning,Retry-After",
+  "Access-Control-Expose-Headers": "x-uos-warning,x-uos-request-id,x-ubq-upstream,x-uos-router-revision,Retry-After",
   "Access-Control-Max-Age": "86400",
 });
 
 export const withCors = (response: Response): Response => {
   const headers = new Headers(response.headers);
+  if (!headers.has("x-uos-request-id")) headers.set("x-uos-request-id", crypto.randomUUID());
   for (const [key, value] of Object.entries(corsHeaders())) {
     headers.set(key, value);
   }
@@ -39,7 +40,7 @@ export const openaiError = (
   status: number,
   message: string,
   code?: string,
-  options: { type?: string; param?: string | null } = {},
+  options: { type?: string; param?: string | null; headers?: HeadersInit } = {},
 ): Response => {
   console.trace(`[ai.ubq.fi] OpenAI API error (${status}):`, message);
   const type = (options.type ?? "invalid_request_error").trim() || "invalid_request_error";
@@ -53,7 +54,7 @@ export const openaiError = (
   }
   return json(status, {
     error,
-  });
+  }, options.headers);
 };
 
 export const notFound = (): Response =>

@@ -70,7 +70,10 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleChatCompletions, handleModels, handleResponses } = await import("../src/openai.ts");
+const { handleChatCompletions, handleModelCapabilities, handleModels, handleResponses } = await import(
+  "../src/openai.ts"
+);
+const { withCors } = await import("../src/http.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -415,9 +418,47 @@ Deno.test("openai: models returns stored Codex snapshot without upstream fetch",
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as { data?: Array<{ id?: string }> };
+  const payload = await response.json() as { data?: Array<Record<string, unknown> & { id?: string }> };
   assert.ok(Array.isArray(payload.data));
-  assert.ok(payload.data.some((model) => model.id === DEFAULT_TEST_MODEL));
+  const model = payload.data.find((entry) => entry.id === DEFAULT_TEST_MODEL);
+  assert.ok(model);
+  assert.deepEqual(Object.keys(model).sort(), ["created", "id", "object", "owned_by"]);
+  assert.equal(model.object, "model");
+  assert.equal(typeof model.created, "number");
+  assert.equal(Object.prototype.hasOwnProperty.call(model, "supported_reasoning_levels"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(model, "display_name"), false);
+});
+
+Deno.test("openai: model capabilities are exposed outside /v1 model objects", async () => {
+  const response = await withFetchMock(
+    () => {
+      throw new Error("handleModelCapabilities should not fetch upstream models");
+    },
+    () => handleModelCapabilities(),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    object?: string;
+    data?: Array<{
+      id?: string;
+      object?: string;
+      upstream_provider?: string;
+      supported_endpoints?: string[];
+      supported_reasoning_levels?: string[];
+      default_reasoning_effort?: string | null;
+    }>;
+  };
+  assert.equal(payload.object, "list");
+  assert.ok(Array.isArray(payload.data));
+  const model = payload.data.find((entry) => entry.id === DEFAULT_TEST_MODEL);
+  assert.ok(model);
+  assert.equal(model.object, "uos.model_capabilities");
+  assert.equal(model.upstream_provider, "codex_chatgpt");
+  assert.deepEqual(model.supported_reasoning_levels, ["low", "medium", "high", "xhigh"]);
+  assert.equal(model.default_reasoning_effort, "medium");
+  assert.ok(model.supported_endpoints?.includes("/v1/chat/completions"));
+  assert.ok(model.supported_endpoints?.includes("/v1/responses"));
 });
 
 Deno.test("openai: models returns an empty list when no snapshot is stored", async () => {
@@ -441,6 +482,92 @@ Deno.test("openai: models returns an empty list when no snapshot is stored", asy
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
   }
+});
+
+Deno.test("openai: unsupported snapshot model is rejected before upstream fetch", async () => {
+  const response = await withFetchMock(
+    () => {
+      throw new Error("unsupported model requests should not fetch upstream");
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "gpt-5-chat-latest",
+            messages: [{ role: "user", content: "ping" }],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 404);
+  const payload = await response.json() as { error?: { message?: string; code?: string; param?: string | null } };
+  assert.equal(payload.error?.code, "model_not_found");
+  assert.equal(payload.error?.param, "model");
+  assert.match(payload.error?.message ?? "", /Use \/v1\/models/);
+});
+
+Deno.test("openai: reasoning validation returns OpenAI-style parameter errors", async () => {
+  const response = await withFetchMock(
+    () => {
+      throw new Error("unsupported reasoning requests should not fetch upstream");
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "ping" }],
+            reasoning_effort: "minimal",
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 400);
+  const payload = await response.json() as { error?: { code?: string; param?: string | null; type?: string } };
+  assert.equal(payload.error?.type, "invalid_request_error");
+  assert.equal(payload.error?.code, "invalid_request_error");
+  assert.equal(payload.error?.param, "reasoning_effort");
+});
+
+Deno.test("openai: upstream detail errors are normalized to OpenAI-style envelopes", async () => {
+  const response = await withFetchMock(
+    () =>
+      new Response(
+        JSON.stringify({
+          detail: "The 'gpt-5-chat-latest' model is not supported when using Codex with a ChatGPT account.",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "ping" }],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get("x-ubq-upstream"), "chatgpt_codex");
+  const payload = await response.json() as { error?: { message?: string; code?: string; type?: string } };
+  assert.equal(payload.error?.type, "invalid_request_error");
+  assert.equal(payload.error?.code, "upstream_error");
+  assert.match(payload.error?.message ?? "", /not supported when using Codex/);
+});
+
+Deno.test("http: CORS wrapper exposes a gateway request id", () => {
+  const response = withCors(new Response("{}", { headers: { "Content-Type": "application/json" } }));
+  assert.ok(response.headers.get("x-uos-request-id"));
+  assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-request-id/);
+  assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-ubq-upstream/);
 });
 
 Deno.test("openai: normalize function-style tools for codex compatibility", async (t) => {

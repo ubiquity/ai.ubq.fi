@@ -141,7 +141,7 @@ export const handleAgentMessagesPost = async (req: Request, deps: AgentMessagesD
   const key = ["agent_messages", record.owner, record.repo, record.state_id, createdAtMs, id] as const;
   await kv.set(key, record);
 
-  return json(200, { ok: true, message: record }, { "Cache-Control": "no-store" });
+  return json(200, { message: record }, { "Cache-Control": "no-store" });
 };
 
 export const handleAgentMessagesList = async (req: Request, deps: AgentMessagesDeps = {}): Promise<Response> => {
@@ -190,7 +190,6 @@ export const handleAgentMessagesList = async (req: Request, deps: AgentMessagesD
   return json(
     200,
     {
-      ok: true,
       messages,
       next_since: nextSince,
       next_cursor: nextCursor,

@@ -59,7 +59,21 @@ export const canUsePasskeyCreate = () =>
   Boolean(globalThis.navigator?.credentials) &&
   typeof globalThis.navigator.credentials.create === "function";
 
+const isLoopbackHost = (hostname) =>
+  hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+
+export const isPasskeyOriginSupported = (origin = globalThis.location?.origin) => {
+  try {
+    const url = new URL(origin);
+    if (url.protocol === "https:" && url.hostname === "ai.ubq.fi") return true;
+    return (url.protocol === "http:" || url.protocol === "https:") && isLoopbackHost(url.hostname);
+  } catch {
+    return false;
+  }
+};
+
 export const getPasskeyUnavailableMessage = (action = "login") => {
+  if (!isPasskeyOriginSupported()) return "Passkeys are only supported on ai.ubq.fi and localhost.";
   if (!globalThis.isSecureContext) return "Passkeys require HTTPS or localhost.";
   const supported = action === "register" ? canUsePasskeyCreate() : canUsePasskeyGet();
   return supported ? "" : "Passkeys are not available in this browser.";

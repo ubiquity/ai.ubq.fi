@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 
-const { STORAGE_KEYS, formatAuthSessionLabel, hasAuthPasskeyCredential, signInWithPasskey, registerPasskey } =
-  await import(
-    "../static/auth.js"
-  );
+const {
+  STORAGE_KEYS,
+  formatAuthSessionLabel,
+  getPasskeyUnavailableMessage,
+  hasAuthPasskeyCredential,
+  isPasskeyOriginSupported,
+  signInWithPasskey,
+  registerPasskey,
+} = await import(
+  "../static/auth.js"
+);
 
 type Restore = () => void;
 
@@ -87,6 +94,26 @@ Deno.test("formatAuthSessionLabel distinguishes fallback token and passkey auth"
   assert.equal(formatAuthSessionLabel({ method: { kind: "deno_deploy_token" } }), "Deno token active");
   assert.equal(formatAuthSessionLabel({ method: { kind: "kv_api_key" } }), "API key active");
   assert.equal(formatAuthSessionLabel({}), "Token active");
+});
+
+Deno.test("isPasskeyOriginSupported allows production and loopback only", () => {
+  assert.equal(isPasskeyOriginSupported("https://ai.ubq.fi"), true);
+  assert.equal(isPasskeyOriginSupported("http://localhost:8000"), true);
+  assert.equal(isPasskeyOriginSupported("http://127.0.0.1:8000"), true);
+  assert.equal(isPasskeyOriginSupported("https://ai-ubq-fi-bymgq1mnv06z.ubiquity-dao.deno.net"), false);
+  assert.equal(isPasskeyOriginSupported("https://ai-ubq-fi-bymgq1mnv06z.deno.dev"), false);
+  assert.equal(isPasskeyOriginSupported("https://example.com"), false);
+});
+
+Deno.test("getPasskeyUnavailableMessage rejects preview origins", () => {
+  const restoreLocation = setGlobal("location", {
+    origin: "https://ai-ubq-fi-bymgq1mnv06z.ubiquity-dao.deno.net",
+  });
+  try {
+    assert.equal(getPasskeyUnavailableMessage(), "Passkeys are only supported on ai.ubq.fi and localhost.");
+  } finally {
+    restoreLocation();
+  }
 });
 
 const captureRegisterStartBody = async (

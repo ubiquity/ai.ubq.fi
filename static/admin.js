@@ -3,13 +3,13 @@ import {
   formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
+  isPasskeyOriginSupported,
   registerPasskey,
   signInWithPasskey,
   signOut,
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
 } from "./auth.js";
-import { AUTH_RELAY_MESSAGE_TYPE, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "./auth-relay.js";
 
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
@@ -17,13 +17,10 @@ const STORAGE_KEYS = {
   passkeyHandle: AUTH_STORAGE_KEYS.passkeyHandle,
   passkeyCredentialIds: AUTH_STORAGE_KEYS.passkeyCredentialIds,
   expiresPreset: "uos_ai.admin.expires_preset",
-  base: "uos_ai.admin.base",
   view: "uos_ai.admin.view",
   defaultsSnapshot: "uos_ai.admin.defaults_snapshot",
   defaultsModels: "uos_ai.admin.defaults_models",
 };
-
-const AUTH_RELAY_TIMEOUT_MS = 120_000;
 
 const readStorageJson = (key) => {
   const raw = storage.get(key);
@@ -69,6 +66,7 @@ const passkeyLoginBtn = mustGet("admin-passkey-login");
 const passkeyRegisterBtn = mustGet("admin-passkey-register");
 const signOutBtn = mustGet("admin-sign-out");
 const passkeyStatus = mustGet("admin-passkey-status");
+const passkeyAdvanced = document.querySelector("[data-passkey-advanced]");
 const baseSelect = mustGet("admin-base");
 const basePreview = mustGet("base-preview");
 const authWidget = mustGet("view-session");
@@ -273,12 +271,15 @@ const setAuthWidgetOpen = (open, options = {}) => {
 };
 
 const setSignedInState = (signedIn, options = {}) => {
+  const passkeySupported = isPasskeyOriginSupported();
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
   const canRegisterPasskey = options.canRegisterPasskey ?? false;
-  passkeyLoginBtn.hidden = signedIn;
-  passkeyRegisterBtn.hidden = isAuthRelayMode || deviceRegistered || (signedIn && !canRegisterPasskey);
+  passkeyLoginBtn.hidden = signedIn || !passkeySupported;
+  passkeyRegisterBtn.hidden = !passkeySupported || deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
+  if (passkeyAdvanced) passkeyAdvanced.hidden = !passkeySupported;
   if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
+  else if (!passkeySupported) setPasskeyStatus("unknown", "Passkeys unavailable on this origin");
   else setPasskeyStatus("unknown", "Passkey idle");
 };
 const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
@@ -311,10 +312,7 @@ const resetKernelPolicyState = () => {
   };
 };
 
-const getBaseChoice = () => (baseSelect.value === "ai" ? "ai" : "local");
-
-const resolveBaseUrl =
-  () => (getBaseChoice() === "ai" ? "https://ai.ubq.fi" : globalThis.location?.origin ?? "http://localhost");
+const resolveBaseUrl = () => globalThis.location?.origin ?? "http://localhost";
 
 const apiUrl = (path) => new URL(path, resolveBaseUrl()).toString();
 
@@ -322,16 +320,7 @@ const updateBasePreview = () => {
   basePreview.textContent = resolveBaseUrl();
 };
 
-const pageUrl = new URL(globalThis.location.href);
-const authRelayOrigin = parseTrustedAuthRelayOrigin(pageUrl.searchParams.get("auth_relay_origin"));
-const authRelayAction = parseAuthRelayAction(pageUrl.searchParams.get("auth_relay_action"));
-const isAuthRelayMode = Boolean(authRelayOrigin && authRelayAction && globalThis.opener);
-
-const getPasskeyBaseUrl = () => isAuthRelayMode ? globalThis.location.origin : resolveBaseUrl();
-
-const isRemoteAiTarget = () => new URL(resolveBaseUrl()).origin === "https://ai.ubq.fi";
-
-const isCrossOriginTarget = () => new URL(resolveBaseUrl()).origin !== globalThis.location.origin;
+const getPasskeyBaseUrl = () => resolveBaseUrl();
 
 const getAdminToken = () => tokenInput.value.trim();
 
@@ -382,108 +371,12 @@ const applySignedInToken = (token, options = {}) => {
   tokenInput.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
-const postAuthRelayResult = (result) => {
-  if (!isAuthRelayMode || !result?.token) return false;
-  globalThis.opener.postMessage({
-    type: AUTH_RELAY_MESSAGE_TYPE,
-    token: result.token,
-    handle: result.handle ?? getPasskeyHandle(),
-    expires_at_ms: result.expires_at_ms ?? null,
-  }, authRelayOrigin);
-  setPasskeyStatus("ok", "Signed in. Returning to local admin...");
-  setTimeout(() => globalThis.close(), 300);
-  return true;
-};
-
 const formatPasskeyLoginError = (error) => {
-  const message = error?.message ?? "Passkey sign-in failed";
-  if (
-    !isAuthRelayMode && !isRemoteAiTarget() &&
-    /invalid passkey assertion|unknown passkey|passkey account not found|no passkeys registered/i.test(message)
-  ) {
-    return `${message}. This origin uses localhost passkeys; choose ai.ubq.fi or add a local passkey with the fallback token.`;
-  }
-  return message;
+  return error?.message ?? "Passkey sign-in failed";
 };
 
-const getValidCachedRelayAuth = async () => {
-  const token = getAdminToken();
-  if (!token) return null;
-  try {
-    const res = await fetch(new URL("/v1/auth", globalThis.location.origin).toString(), {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data?.auth?.is_admin) return null;
-    return { token, handle: getPasskeyHandle() };
-  } catch {
-    return null;
-  }
-};
-
-let authRelayRequest = null;
-const requestRemotePasskeySession = () => {
-  if (authRelayRequest) return authRelayRequest;
-  const targetOrigin = new URL(resolveBaseUrl()).origin;
-  const relayUrl = new URL("/admin", targetOrigin);
-  relayUrl.searchParams.set("auth_relay_origin", globalThis.location.origin);
-  relayUrl.searchParams.set("auth_relay_action", "passkey-login");
-
-  const popup = globalThis.open(relayUrl.toString(), "uos_ai_admin_auth_relay", "popup,width=520,height=720");
-  if (!popup) {
-    return Promise.reject(new Error("Allow the ai.ubq.fi sign-in popup, then try again."));
-  }
-
-  authRelayRequest = new Promise((resolve, reject) => {
-    let finished = false;
-    let closedTimer = 0;
-    let timeout = 0;
-    const cleanup = () => {
-      globalThis.removeEventListener("message", onMessage);
-      if (closedTimer) globalThis.clearInterval(closedTimer);
-      if (timeout) globalThis.clearTimeout(timeout);
-    };
-    const finish = (fn, value) => {
-      if (finished) return;
-      finished = true;
-      cleanup();
-      fn(value);
-    };
-    const onMessage = (event) => {
-      if (event.origin !== targetOrigin) return;
-      const data = event.data;
-      if (!data || data.type !== AUTH_RELAY_MESSAGE_TYPE || typeof data.token !== "string") return;
-      try {
-        popup.close();
-      } catch {
-        // ignore
-      }
-      finish(resolve, data);
-    };
-    globalThis.addEventListener("message", onMessage);
-    closedTimer = globalThis.setInterval(() => {
-      if (!popup.closed) return;
-      finish(reject, new Error("The ai.ubq.fi sign-in window was closed."));
-    }, 1000);
-    timeout = globalThis.setTimeout(() => {
-      finish(reject, new Error("Timed out waiting for ai.ubq.fi sign-in."));
-    }, AUTH_RELAY_TIMEOUT_MS);
-  }).finally(() => {
-    authRelayRequest = null;
-  });
-
-  return authRelayRequest;
-};
-
-const getRegistrationAdminToken = async () => {
-  const token = getAdminToken();
-  if (token || !isCrossOriginTarget() || !isRemoteAiTarget()) return token;
-  setPasskeyStatus("unknown", "Sign in on ai.ubq.fi to authorize registration...");
-  const relay = await requestRemotePasskeySession();
-  if (relay.handle) setPasskeyHandleValue(relay.handle);
-  applySignedInToken(relay.token, { deviceRegistered: true });
-  return relay.token;
+const getRegistrationAdminToken = () => {
+  return getAdminToken();
 };
 
 const restoreSettings = () => {
@@ -492,7 +385,7 @@ const restoreSettings = () => {
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
   passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
-  baseSelect.value = storage.get(STORAGE_KEYS.base) ?? "local";
+  baseSelect.value = "local";
   updateBasePreview();
 };
 
@@ -3878,7 +3771,7 @@ const testAdminToken = async () => {
 
   setAuthBadge("unknown", "Checking...");
   try {
-    const res = await fetch(apiUrl("/v1/auth"), {
+    const res = await fetch(apiUrl("/uos/auth"), {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
@@ -4575,14 +4468,6 @@ passkeyLoginBtn.addEventListener("click", async () => {
   passkeyLoginBtn.disabled = true;
   passkeyRegisterBtn.disabled = true;
   try {
-    if (!isAuthRelayMode && isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()) {
-      const relay = await requestRemotePasskeySession();
-      if (relay.handle) setPasskeyHandleValue(relay.handle);
-      applySignedInToken(relay.token, { deviceRegistered: true });
-      setPasskeyStatus("ok", "Passkey signed in");
-      return;
-    }
-
     const passkeyHandle = getPasskeyHandle();
     const result = await signInWithPasskey({
       baseUrl: passkeyBaseUrl,
@@ -4592,7 +4477,6 @@ passkeyLoginBtn.addEventListener("click", async () => {
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token, { deviceRegistered: true });
     setPasskeyStatus("ok", "Passkey signed in");
-    postAuthRelayResult(result);
   } catch (error) {
     setSignedInState(false);
     setPasskeyStatus("bad", formatPasskeyLoginError(error));
@@ -4617,7 +4501,6 @@ passkeyRegisterBtn.addEventListener("click", async () => {
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token, { deviceRegistered: true });
     setPasskeyStatus("ok", "Passkey registered");
-    postAuthRelayResult(result);
   } catch (error) {
     setPasskeyStatus("bad", error?.message ?? "Passkey registration failed");
   } finally {
@@ -4680,7 +4563,7 @@ globalThis.addEventListener("hashchange", () => {
 });
 
 baseSelect.addEventListener("change", () => {
-  storage.set(STORAGE_KEYS.base, getBaseChoice());
+  baseSelect.value = "local";
   updateBasePreview();
   setAuthBadge("unknown", "Not checked");
   setAdminAccessState({ checked: false, isAdmin: false, isSuperAdmin: false });
@@ -4870,26 +4753,3 @@ defaultsKernelWindowPreset1w.addEventListener("click", () => {
   defaultsKernelWindowInput.value = "604800000";
   markDefaultsEditing();
 });
-
-const startAuthRelayIfRequested = async () => {
-  if (!isAuthRelayMode) return;
-  setAuthWidgetOpen(true);
-  passkeyRegisterBtn.hidden = true;
-  setAuthBadge("unknown", "Relay sign-in");
-  setPasskeyStatus("unknown", "Checking signed-in session...");
-  passkeyLoginBtn.disabled = true;
-  try {
-    const cachedAuth = await getValidCachedRelayAuth();
-    if (cachedAuth) {
-      postAuthRelayResult(cachedAuth);
-      return;
-    }
-    setPasskeyStatus("unknown", "Use the sign-in button to continue.");
-  } catch (error) {
-    setPasskeyStatus("bad", `${error?.message ?? "Passkey sign-in failed"} Use the sign-in button to try again.`);
-  } finally {
-    passkeyLoginBtn.disabled = false;
-  }
-};
-
-void startAuthRelayIfRequested();
