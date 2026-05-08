@@ -106,9 +106,9 @@ class MemoryKvListIterator<T> implements Deno.KvListIterator<T> {
   }
 }
 
-Deno.test("agent-bus: post stores a message", async () => {
+Deno.test("agent-messages: post stores a message", async () => {
   const kv = new MemoryKv();
-  const req = jsonRequest("https://ai.ubq.fi/uos/agent-bus", {
+  const req = jsonRequest("https://ai.ubq.fi/uos/agent-messages", {
     agent_id: "agent-1",
     body: "hello",
     channel: "general",
@@ -124,8 +124,8 @@ Deno.test("agent-bus: post stores a message", async () => {
   });
 
   assert.equal(res.status, 200);
-  const payload = (await res.json()) as { ok: boolean; message: AgentMessage };
-  assert.equal(payload.ok, true);
+  const payload = (await res.json()) as { ok?: boolean; message: AgentMessage };
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
   assert.equal(payload.message.id, "msg-1");
   assert.equal(payload.message.owner, "acme");
   assert.equal(payload.message.repo, "demo");
@@ -138,33 +138,33 @@ Deno.test("agent-bus: post stores a message", async () => {
   assert.equal(kv.entries.length, 1);
 });
 
-Deno.test("agent-bus: list returns messages and cursor info", async () => {
+Deno.test("agent-messages: list returns messages and cursor info", async () => {
   const kv = new MemoryKv();
   const auth = makeAuth();
 
   await handleAgentMessagesPost(
-    jsonRequest("https://ai.ubq.fi/uos/agent-bus", { agent_id: "agent-1", body: "one" }),
+    jsonRequest("https://ai.ubq.fi/uos/agent-messages", { agent_id: "agent-1", body: "one" }),
     { authenticateClient: auth, kv, now: () => 1000, uuid: () => "msg-1" },
   );
   await handleAgentMessagesPost(
-    jsonRequest("https://ai.ubq.fi/uos/agent-bus", { agent_id: "agent-1", body: "two" }),
+    jsonRequest("https://ai.ubq.fi/uos/agent-messages", { agent_id: "agent-1", body: "two" }),
     { authenticateClient: auth, kv, now: () => 2000, uuid: () => "msg-2" },
   );
 
-  const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/uos/agent-bus?limit=1"), {
+  const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/uos/agent-messages?limit=1"), {
     authenticateClient: auth,
     kv,
   });
 
   assert.equal(res.status, 200);
   const payload = (await res.json()) as {
-    ok: boolean;
+    ok?: boolean;
     messages: AgentMessage[];
     next_since: number | null;
     next_cursor: string | null;
     has_more: boolean;
   };
-  assert.equal(payload.ok, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
   assert.equal(payload.messages.length, 1);
   assert.equal(payload.messages[0].id, "msg-1");
   assert.equal(payload.next_since, 1000);
@@ -172,9 +172,9 @@ Deno.test("agent-bus: list returns messages and cursor info", async () => {
   assert.equal(payload.next_cursor, "next");
 });
 
-Deno.test("agent-bus: list returns null next_since when empty", async () => {
+Deno.test("agent-messages: list returns null next_since when empty", async () => {
   const kv = new MemoryKv();
-  const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/uos/agent-bus"), {
+  const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/uos/agent-messages"), {
     authenticateClient: makeAuth(),
     kv,
   });

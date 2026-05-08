@@ -260,14 +260,14 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleModelCapabilities());
   }
 
-  if (path === "/uos/agent-bus") {
+  if (path === "/uos/agent-messages") {
     if (req.method === "GET") return withCors(await handleAgentMessagesList(req));
     if (req.method === "POST") return withCors(await handleAgentMessagesPost(req));
     return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
   }
 
-  const isUosEmbeddingsJobPath = path === "/uos/embeddings/jobs" || path.startsWith("/uos/embeddings/jobs/");
-  if (!path.startsWith("/v1/") && !isUosEmbeddingsJobPath) {
+  const isUosEmbeddingJobPath = path === "/uos/embedding-jobs" || path.startsWith("/uos/embedding-jobs/");
+  if (!path.startsWith("/v1/") && !isUosEmbeddingJobPath) {
     return withCors(notFound());
   }
 
@@ -307,7 +307,7 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleModels());
   }
 
-  if (req.method === "POST" && path === "/uos/embeddings/jobs") {
+  if (req.method === "POST" && path === "/uos/embedding-jobs") {
     const response = await handleEmbeddingsJobCreate(req, authResult.token, usageContext);
     if (response.ok) {
       if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
@@ -316,8 +316,8 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(response);
   }
 
-  if (req.method === "GET" && path.startsWith("/uos/embeddings/jobs/")) {
-    const jobId = path.slice("/uos/embeddings/jobs/".length).trim();
+  if (req.method === "GET" && path.startsWith("/uos/embedding-jobs/")) {
+    const jobId = path.slice("/uos/embedding-jobs/".length).trim();
     if (!jobId) return withCors(openaiError(404, "Not found", "not_found"));
     const response = await handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext);
     return withCors(response);

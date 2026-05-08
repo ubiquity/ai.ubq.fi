@@ -147,7 +147,7 @@ or queue the request and let you poll for completion.
 Create:
 
 ```bash
-curl -sS https://ai.ubq.fi/uos/embeddings/jobs \
+curl -sS https://ai.ubq.fi/uos/embedding-jobs \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"model":"text-embedding-3-small","input":["hello","world"]}' \
@@ -157,13 +157,13 @@ curl -sS https://ai.ubq.fi/uos/embeddings/jobs \
 Poll:
 
 ```bash
-job_id="$(curl -sS https://ai.ubq.fi/uos/embeddings/jobs \
+job_id="$(curl -sS https://ai.ubq.fi/uos/embedding-jobs \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"model":"text-embedding-3-small","input":"hello"}' \
   | jq -r .id)"
 
-curl -sS "https://ai.ubq.fi/uos/embeddings/jobs/${job_id}" \
+curl -sS "https://ai.ubq.fi/uos/embedding-jobs/${job_id}" \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   | jq
 ```
@@ -401,8 +401,8 @@ deno task ubq-ai admin keys revoke --id "<id>"
 - `GET /admin/kernel-pubkeys`, `POST /admin/kernel-pubkeys`, `DELETE /admin/kernel-pubkeys` (admin only)
 - `GET /uos/auth`
 - `GET /uos/models/capabilities`
-- `POST /uos/embeddings/jobs`, `GET /uos/embeddings/jobs/:id`
-- `GET /uos/agent-bus`, `POST /uos/agent-bus`
+- `POST /uos/embedding-jobs`, `GET /uos/embedding-jobs/:id`
+- `GET /uos/agent-messages`, `POST /uos/agent-messages`
 - `GET /v1/models`
 - `POST /v1/embeddings`
 - `POST /v1/chat/completions` (streaming and non-streaming)

@@ -1,7 +1,7 @@
 # LLMs and Agents
 
-UbiquityOS AI Gateway provides OpenAI-compatible endpoints for chat and responses, plus an agent message bus for
-kernel-driven workflows. This page focuses on LLM usage and the agent bus.
+UbiquityOS AI Gateway provides OpenAI-compatible endpoints for chat and responses, plus agent message storage for
+kernel-driven workflows. This page focuses on LLM usage and agent messages.
 
 ## Base URL
 
@@ -113,10 +113,10 @@ UOS gateway endpoints:
 
 - `GET /uos/auth`
 - `GET /uos/models/capabilities`
-- `POST /uos/embeddings/jobs`
-- `GET /uos/embeddings/jobs/{id}`
-- `GET /uos/agent-bus`
-- `POST /uos/agent-bus`
+- `POST /uos/embedding-jobs`
+- `GET /uos/embedding-jobs/{id}`
+- `GET /uos/agent-messages`
+- `POST /uos/agent-messages`
 
 Health endpoints:
 
@@ -300,12 +300,12 @@ Notes:
 - Batching is strongly recommended (send `input` as an array).
 - When rate limited (by Voyage or the gateway's own KV throttling), the gateway responds `429` with `Retry-After`.
 
-## Embeddings Jobs (Async)
+## Embedding Jobs (Async)
 
-`POST /uos/embeddings/jobs` creates an async job. The gateway either completes it immediately (`200`) or queues it
+`POST /uos/embedding-jobs` creates an async job. The gateway either completes it immediately (`200`) or queues it
 (`202`) when Voyage is rate limited.
 
-`GET /uos/embeddings/jobs/{id}` polls the job until `status="succeeded"` or `status="failed"`.
+`GET /uos/embedding-jobs/{id}` polls the job until `status="succeeded"` or `status="failed"`.
 
 Notes:
 
@@ -363,9 +363,10 @@ Keys forwarded for responses:
 
 Any other accepted-but-unused key will emit a `<key>_ignored` warning.
 
-## Agent Bus (LLM agents)
+## Agent Messages (LLM agents)
 
-`/uos/agent-bus` stores and retrieves agent messages in Deno KV. It requires GitHub token auth with kernel attestation.
+`/uos/agent-messages` stores and retrieves agent messages in Deno KV. It requires GitHub token auth with kernel
+attestation.
 
 Required headers:
 
@@ -378,7 +379,7 @@ If the kernel attestation includes `installation_id`, also send:
 
 - `X-GitHub-Installation-Id: <id>`
 
-### POST /uos/agent-bus
+### POST /uos/agent-messages
 
 Body:
 
@@ -390,7 +391,7 @@ Body:
 
 The server assigns `id`, `created_at_ms`, `owner`, `repo`, and `state_id` from the kernel attestation.
 
-### GET /uos/agent-bus
+### GET /uos/agent-messages
 
 Query parameters:
 
@@ -452,7 +453,7 @@ const message = body?.error?.message ??
 Common status codes:
 
 - `401` invalid or missing auth
-- `403` forbidden (e.g., GitHub token required for agent bus)
+- `403` forbidden (e.g., GitHub token required for agent messages)
 - `429` rate limit exceeded for KV API keys
 - `5xx` upstream or server errors
 
