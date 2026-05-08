@@ -72,6 +72,9 @@ const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
 const UOS_CODEX_PROMPTS_CHUNK_PREFIX = ["uos_ai", "codex_instructions_chunk"] as const;
 const MAX_KV_MIGRATION_BODY_BYTES = 5 * 1024 * 1024;
 
+const isHiddenCodexModel = (value: Record<string, unknown>): boolean =>
+  getString(value.visibility)?.trim().toLowerCase() === "hide";
+
 const resolveDefaultModel = async (entryValue: unknown): Promise<string> => {
   const configured = typeof entryValue === "string" ? entryValue.trim() : "";
   if (configured) return configured;
@@ -600,6 +603,7 @@ const normalizeCodexModelsPayload = (value: unknown): CodexModelsSnapshot | null
   if (!modelsRaw || !Array.isArray(modelsRaw)) return null;
 
   const normalizeModel = (item: Record<string, unknown>): Record<string, unknown> | null => {
+    if (isHiddenCodexModel(item)) return null;
     const slug = getString(item.slug) ?? getString(item.id) ?? getString(item.model) ?? getString(item.name);
     if (!slug) return null;
     const normalized: Record<string, unknown> = { slug };

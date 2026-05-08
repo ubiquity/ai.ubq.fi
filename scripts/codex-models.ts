@@ -209,6 +209,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const getString = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
+const isHiddenCodexModel = (value: Record<string, unknown>): boolean =>
+  getString(value.visibility)?.trim().toLowerCase() === "hide";
+
 export const extractCodexModelsFromText = (text: string): ExtractedCodexModels | null => {
   const versionMatch = text.match(/codex_cli_rs\/([0-9]+(?:\.[0-9]+){1,2})/);
   const clientVersion = versionMatch ? versionMatch[1] : null;
@@ -230,6 +233,7 @@ export const extractCodexModelsFromText = (text: string): ExtractedCodexModels |
       continue;
     }
     if (!isRecord(parsed)) continue;
+    if (isHiddenCodexModel(parsed)) continue;
     const normalizedSlug = getString(parsed.slug) ?? getString(parsed.id) ?? getString(parsed.model) ?? slug;
     if (!normalizedSlug || seen.has(normalizedSlug)) continue;
     const normalized: Record<string, unknown> = { slug: normalizedSlug };

@@ -113,3 +113,13 @@ Deno.test("extractCodexModelsFromText trims large fields", () => {
   assert.equal(model?.description, "desc");
   assert.equal("base_instructions" in model, false);
 });
+
+Deno.test("extractCodexModelsFromText skips hidden catalog models", () => {
+  const text = [
+    'codex_cli_rs/0.99.0 {"slug":"codex-auto-review","display_name":"Codex Auto Review","visibility":"hide","supported_in_api":true}',
+    '{"slug":"gpt-5.5","display_name":"GPT-5.5","supported_reasoning_levels":["low"]}',
+  ].join("\n");
+  const extracted = extractCodexModelsFromText(text);
+  assert.ok(extracted);
+  assert.deepEqual(extracted?.models.map((model) => model.slug), ["gpt-5.5"]);
+});

@@ -103,6 +103,11 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
             slug: "gpt-5.5",
             display_name: "GPT-5.5",
             supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+          }, {
+            slug: "codex-auto-review",
+            display_name: "Codex Auto Review",
+            visibility: "hide",
+            supported_in_api: true,
           }],
         },
       }),

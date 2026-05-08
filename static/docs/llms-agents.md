@@ -132,6 +132,7 @@ no snapshot has been initialized, it returns an empty list.
 
 Use `/v1/models` as the source of truth instead of assuming OpenAI public API aliases are supported. The gateway is
 backed by Codex with a ChatGPT account, so some OpenAI API model aliases may not be available through this gateway.
+Hidden Codex catalog entries such as internal review models are filtered during snapshot upload and are not exposed.
 
 Use `GET /uos/models/capabilities` for gateway-specific model metadata such as `supported_reasoning_levels`,
 `default_reasoning_effort`, `supported_endpoints`, and `upstream_provider`. This metadata is intentionally not included
