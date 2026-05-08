@@ -42,6 +42,7 @@ import {
   handleEmbeddings,
   handleEmbeddingsJobCreate,
   handleEmbeddingsJobGet,
+  handleModelCapabilities,
   handleModels,
   handleResponses,
 } from "./openai.ts";
@@ -249,18 +250,25 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleAdminKernelPubKeysDelete(req));
   }
 
-  if (!path.startsWith("/v1/")) {
-    return withCors(notFound());
-  }
-
-  if (req.method === "GET" && path === "/v1/auth") {
+  if (req.method === "GET" && path === "/uos/auth") {
     return withCors(await handleV1Auth(req));
   }
 
-  if (path === "/v1/agent-bus") {
+  if (req.method === "GET" && path === "/uos/models/capabilities") {
+    const authResult = await authenticateClient(req);
+    if (!authResult.ok) return withCors(authResult.response);
+    return withCors(await handleModelCapabilities());
+  }
+
+  if (path === "/uos/agent-bus") {
     if (req.method === "GET") return withCors(await handleAgentMessagesList(req));
     if (req.method === "POST") return withCors(await handleAgentMessagesPost(req));
     return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+  }
+
+  const isUosEmbeddingsJobPath = path === "/uos/embeddings/jobs" || path.startsWith("/uos/embeddings/jobs/");
+  if (!path.startsWith("/v1/") && !isUosEmbeddingsJobPath) {
+    return withCors(notFound());
   }
 
   const authResult = await authenticateClient(req);
@@ -299,7 +307,7 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleModels());
   }
 
-  if (req.method === "POST" && path === "/v1/embeddings/jobs") {
+  if (req.method === "POST" && path === "/uos/embeddings/jobs") {
     const response = await handleEmbeddingsJobCreate(req, authResult.token, usageContext);
     if (response.ok) {
       if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
@@ -308,8 +316,8 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(response);
   }
 
-  if (req.method === "GET" && path.startsWith("/v1/embeddings/jobs/")) {
-    const jobId = path.slice("/v1/embeddings/jobs/".length).trim();
+  if (req.method === "GET" && path.startsWith("/uos/embeddings/jobs/")) {
+    const jobId = path.slice("/uos/embeddings/jobs/".length).trim();
     if (!jobId) return withCors(openaiError(404, "Not found", "not_found"));
     const response = await handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext);
     return withCors(response);

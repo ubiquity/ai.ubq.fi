@@ -761,7 +761,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       );
       return 2;
     }
-    const req = new Request(endpoint("/v1/auth"), {
+    const req = new Request(endpoint("/uos/auth"), {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${token}`,

@@ -288,7 +288,7 @@ const checkAuthToken = async () => {
   const requestId = ++authCheckId;
   setAuthBadge("unknown", "Checking...");
   try {
-    const res = await fetch("/v1/auth", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+    const res = await fetch("/uos/auth", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
     const data = await res.json().catch(() => null);
     if (requestId !== authCheckId) return;
     if (!res.ok) {

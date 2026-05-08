@@ -55,6 +55,8 @@ kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
 const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv;
+const originalVoyageApiKey = Deno.env.get("VOYAGEAI_API_KEY");
+Deno.env.delete("VOYAGEAI_API_KEY");
 
 let failNextAtomicCommit:
   | ((
@@ -599,7 +601,7 @@ Deno.test("embeddings jobs: create returns job + result when not rate limited", 
     },
     () =>
       handleEmbeddingsJobCreate(
-        new Request("https://ai.ubq.fi/v1/embeddings/jobs", {
+        new Request("https://ai.ubq.fi/uos/embeddings/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "text-embedding-3-small", input }),
@@ -640,7 +642,7 @@ Deno.test("embeddings jobs: remain resolvable across token refresh when scoped t
     },
     () =>
       handleEmbeddingsJobCreate(
-        new Request("https://ai.ubq.fi/v1/embeddings/jobs", {
+        new Request("https://ai.ubq.fi/uos/embeddings/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "text-embedding-3-small", input }),
@@ -662,7 +664,7 @@ Deno.test("embeddings jobs: remain resolvable across token refresh when scoped t
     },
     () =>
       handleEmbeddingsJobGet(
-        new Request(`https://ai.ubq.fi/v1/embeddings/jobs/${jobId}`),
+        new Request(`https://ai.ubq.fi/uos/embeddings/jobs/${jobId}`),
         "token_b",
         jobId,
         usageContext,
@@ -688,7 +690,7 @@ Deno.test("embeddings jobs: create queues with 202 + Retry-After when KV rate li
       },
       () =>
         handleEmbeddingsJobCreate(
-          new Request("https://ai.ubq.fi/v1/embeddings/jobs", {
+          new Request("https://ai.ubq.fi/uos/embeddings/jobs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model: "text-embedding-3-small", input }),
@@ -726,7 +728,7 @@ Deno.test("embeddings jobs: poll runs queued job to completion", async () => {
     },
     () =>
       handleEmbeddingsJobCreate(
-        new Request("https://ai.ubq.fi/v1/embeddings/jobs", {
+        new Request("https://ai.ubq.fi/uos/embeddings/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "text-embedding-3-small", input }),
@@ -747,7 +749,7 @@ Deno.test("embeddings jobs: poll runs queued job to completion", async () => {
       const count = Array.isArray(body.input) ? body.input.length : 1;
       return voyageOkResponse(count);
     },
-    () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/v1/embeddings/jobs/${jobId}`), "test_token", jobId),
+    () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embeddings/jobs/${jobId}`), "test_token", jobId),
   );
 
   assert.equal(polled.status, 200);
@@ -758,4 +760,6 @@ Deno.test("embeddings jobs: poll runs queued job to completion", async () => {
 
 addEventListener("unload", () => {
   (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
+  if (originalVoyageApiKey === undefined) Deno.env.delete("VOYAGEAI_API_KEY");
+  else Deno.env.set("VOYAGEAI_API_KEY", originalVoyageApiKey);
 });

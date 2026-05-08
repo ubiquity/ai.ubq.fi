@@ -108,7 +108,7 @@ class MemoryKvListIterator<T> implements Deno.KvListIterator<T> {
 
 Deno.test("agent-bus: post stores a message", async () => {
   const kv = new MemoryKv();
-  const req = jsonRequest("https://ai.ubq.fi/v1/agent-bus", {
+  const req = jsonRequest("https://ai.ubq.fi/uos/agent-bus", {
     agent_id: "agent-1",
     body: "hello",
     channel: "general",
@@ -143,15 +143,15 @@ Deno.test("agent-bus: list returns messages and cursor info", async () => {
   const auth = makeAuth();
 
   await handleAgentMessagesPost(
-    jsonRequest("https://ai.ubq.fi/v1/agent-bus", { agent_id: "agent-1", body: "one" }),
+    jsonRequest("https://ai.ubq.fi/uos/agent-bus", { agent_id: "agent-1", body: "one" }),
     { authenticateClient: auth, kv, now: () => 1000, uuid: () => "msg-1" },
   );
   await handleAgentMessagesPost(
-    jsonRequest("https://ai.ubq.fi/v1/agent-bus", { agent_id: "agent-1", body: "two" }),
+    jsonRequest("https://ai.ubq.fi/uos/agent-bus", { agent_id: "agent-1", body: "two" }),
     { authenticateClient: auth, kv, now: () => 2000, uuid: () => "msg-2" },
   );
 
-  const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/v1/agent-bus?limit=1"), {
+  const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/uos/agent-bus?limit=1"), {
     authenticateClient: auth,
     kv,
   });
@@ -174,7 +174,7 @@ Deno.test("agent-bus: list returns messages and cursor info", async () => {
 
 Deno.test("agent-bus: list returns null next_since when empty", async () => {
   const kv = new MemoryKv();
-  const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/v1/agent-bus"), {
+  const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/uos/agent-bus"), {
     authenticateClient: makeAuth(),
     kv,
   });

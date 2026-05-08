@@ -2,9 +2,12 @@
 
 OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 
+LLM and app integration notes live in [`static/docs/llms-agents.md`](static/docs/llms-agents.md) and are served at
+`https://ai.ubq.fi/docs/llms-agents.md`.
+
 ## How auth works
 
-- Clients authenticate to `ai.ubq.fi` with a **UBQ gateway token**: `Authorization: Bearer <token>`.
+- Clients authenticate to `ai.ubq.fi` with a **UOS gateway token**: `Authorization: Bearer <token>`.
   - Accepted tokens come from `UOS_AI_TOKEN` and/or API keys stored in Deno KV (created via `/admin/api-keys`).
   - Admin tokens (including Deno Deploy tokens) also grant access to client routes (`/v1/*`).
 - The gateway **does not use or forward your client token upstream**.
@@ -47,10 +50,17 @@ curl -sS https://ai.ubq.fi/v1/models \
   -H "Authorization: Bearer $UOS_AI_TOKEN"
 ```
 
+Inspect gateway-specific model capabilities:
+
+```bash
+curl -sS https://ai.ubq.fi/uos/models/capabilities \
+  -H "Authorization: Bearer $UOS_AI_TOKEN"
+```
+
 Whoami (debug which auth method was used; never returns raw secrets):
 
 ```bash
-curl -sS https://ai.ubq.fi/v1/auth \
+curl -sS https://ai.ubq.fi/uos/auth \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   | jq
 ```
@@ -137,7 +147,7 @@ or queue the request and let you poll for completion.
 Create:
 
 ```bash
-curl -sS https://ai.ubq.fi/v1/embeddings/jobs \
+curl -sS https://ai.ubq.fi/uos/embeddings/jobs \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"model":"text-embedding-3-small","input":["hello","world"]}' \
@@ -147,13 +157,13 @@ curl -sS https://ai.ubq.fi/v1/embeddings/jobs \
 Poll:
 
 ```bash
-job_id="$(curl -sS https://ai.ubq.fi/v1/embeddings/jobs \
+job_id="$(curl -sS https://ai.ubq.fi/uos/embeddings/jobs \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"model":"text-embedding-3-small","input":"hello"}' \
   | jq -r .id)"
 
-curl -sS "https://ai.ubq.fi/v1/embeddings/jobs/${job_id}" \
+curl -sS "https://ai.ubq.fi/uos/embeddings/jobs/${job_id}" \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   | jq
 ```
@@ -389,11 +399,12 @@ deno task ubq-ai admin keys revoke --id "<id>"
 - `GET /admin/kernel-usage`, `POST /admin/kernel-usage`, `DELETE /admin/kernel-usage` (admin only)
 - `GET /admin/kernel-policy-queue` (admin only)
 - `GET /admin/kernel-pubkeys`, `POST /admin/kernel-pubkeys`, `DELETE /admin/kernel-pubkeys` (admin only)
-- `GET /v1/auth`
-- `GET /v1/agent-bus`, `POST /v1/agent-bus`
+- `GET /uos/auth`
+- `GET /uos/models/capabilities`
+- `POST /uos/embeddings/jobs`, `GET /uos/embeddings/jobs/:id`
+- `GET /uos/agent-bus`, `POST /uos/agent-bus`
 - `GET /v1/models`
 - `POST /v1/embeddings`
-- `POST /v1/embeddings/jobs`, `GET /v1/embeddings/jobs/:id`
 - `POST /v1/chat/completions` (streaming and non-streaming)
 - `POST /v1/responses` (streaming and non-streaming; non-streaming buffers upstream SSE)
 

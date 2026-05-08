@@ -410,7 +410,7 @@ const getValidCachedRelayAuth = async () => {
   const token = getAdminToken();
   if (!token) return null;
   try {
-    const res = await fetch(new URL("/v1/auth", globalThis.location.origin).toString(), {
+    const res = await fetch(new URL("/uos/auth", globalThis.location.origin).toString(), {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
@@ -3878,7 +3878,7 @@ const testAdminToken = async () => {
 
   setAuthBadge("unknown", "Checking...");
   try {
-    const res = await fetch(apiUrl("/v1/auth"), {
+    const res = await fetch(apiUrl("/uos/auth"), {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
