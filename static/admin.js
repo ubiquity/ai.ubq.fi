@@ -10,6 +10,7 @@ import {
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
 } from "./auth.js";
 import { AUTH_RELAY_MESSAGE_TYPE, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "./auth-relay.js";
+import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
@@ -4257,28 +4258,11 @@ const setSelectOptions = (select, options, selected, emptyLabel) => {
   return next;
 };
 
-const getModelReasoningLevels = (model) => {
-  const levels = Array.isArray(model?.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
-  return levels.filter((level) => typeof level === "string" && level.trim().length > 0);
-};
-
 const updateDefaultsMeta = () => {};
 
 const updateReasoningOptions = (modelSlug, preferred) => {
   const model = defaultsModelMap.get(modelSlug);
-  const levels = getModelReasoningLevels(model);
-  const options = levels.length ? levels.map((level) => ({ value: level, label: level })) : [
-    { value: "none", label: "none" },
-  ];
-  const fallback = typeof model?.default_reasoning_level === "string" ? model.default_reasoning_level : "";
-  const nextPreferred = levels.includes(preferred)
-    ? preferred
-    : levels.includes(fallback)
-    ? fallback
-    : options[0].value;
-  const selected = setSelectOptions(defaultsReasoningSelect, options, nextPreferred, "No reasoning levels");
-  defaultsReasoningSelect.disabled = levels.length === 0;
-  return selected;
+  return updateReasoningSelectForModel(defaultsReasoningSelect, model, preferred);
 };
 
 const loadDefaults = async () => {
@@ -4342,7 +4326,7 @@ const loadDefaults = async () => {
       setDefaultsBadge("bad", "No models");
       if (!cacheApplied) {
         setSelectOptions(defaultsModelSelect, [], "", "No models available");
-        setSelectOptions(defaultsReasoningSelect, [], "", "No reasoning levels");
+        setReasoningPlaceholder(defaultsReasoningSelect, "No reasoning levels");
       }
       return;
     }

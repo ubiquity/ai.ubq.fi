@@ -368,8 +368,14 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
         return openaiError(400, "model is not in the stored Codex model list", "invalid_request_error");
       }
 
-      let nextReasoning = normalizeReasoningEffort(raw.reasoning_effort ?? reasoningEffort);
-      const modelDefault = normalizeReasoningEffort(modelRecord.default_reasoning_level);
+      const wantsReasoningUpdate = Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
+      if (wantsReasoningUpdate && raw.reasoning_effort === null) {
+        return openaiError(400, "reasoning_effort must be a string", "invalid_request_error");
+      }
+      let nextReasoning = normalizeReasoningEffort(wantsReasoningUpdate ? raw.reasoning_effort : reasoningEffort);
+      const modelDefault = modelRecord.default_reasoning_level === null
+        ? "none"
+        : normalizeReasoningEffort(modelRecord.default_reasoning_level);
       if (!nextReasoning) {
         nextReasoning = modelDefault ?? DEFAULT_REASONING_EFFORT;
       }
@@ -573,8 +579,9 @@ const extractModelReasoningLevels = (model: Record<string, unknown> | null): Rea
   const raw = Array.isArray(model.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
   const levels = raw
     .map((entry) => {
+      if (entry === null) return "none";
       if (typeof entry === "string") return normalizeReasoningEffort(entry);
-      if (isRecord(entry)) return normalizeReasoningEffort(entry.effort);
+      if (isRecord(entry)) return entry.effort === null ? "none" : normalizeReasoningEffort(entry.effort);
       return null;
     })
     .filter((entry): entry is ReasoningEffort => Boolean(entry));
@@ -611,13 +618,14 @@ const normalizeCodexModelsPayload = (value: unknown): CodexModelsSnapshot | null
     if (displayName) normalized.display_name = displayName;
     const description = getString(item.description);
     if (description) normalized.description = description;
-    const defaultReasoning = getString(item.default_reasoning_level);
+    const defaultReasoning = item.default_reasoning_level === null ? "none" : getString(item.default_reasoning_level);
     if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
     if (Array.isArray(item.supported_reasoning_levels)) {
       const levels = item.supported_reasoning_levels
         .map((entry) => {
+          if (entry === null) return "none";
           if (typeof entry === "string") return entry;
-          if (isRecord(entry)) return getString(entry.effort);
+          if (isRecord(entry)) return entry.effort === null ? "none" : getString(entry.effort);
           return null;
         })
         .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);

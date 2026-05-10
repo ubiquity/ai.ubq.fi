@@ -256,14 +256,14 @@ Optional fields:
 
 - `model` (defaults to the configured model).
 - `instructions` (string).
-- `reasoning` (object or `null`).
+- `reasoning` (object).
 - `stream` (defaults to `false`).
 
 `reasoning` object fields:
 
-- `effort` (string or `null`).
-- `summary` (string or `null`).
-- `generate_summary` (string or `null`).
+- `effort` (string).
+- `summary` (string).
+- `generate_summary` (string).
 
 Example:
 
@@ -320,11 +320,12 @@ Notes:
 
 - Models with `supported_reasoning_levels` in the stored Codex CLI snapshot default to the configured reasoning effort.
 - Non-reasoning models default to `none`.
-- Use `reasoning_effort: null` (chat completions) or `reasoning: null` (responses) to disable reasoning.
 - Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
-- If a model rejects reasoning, retry with `reasoning_effort: null` for chat completions or `reasoning: null` for
-  responses.
-- In the browser chat playground, `Default` omits `reasoning_effort`; `None` sends `reasoning_effort: null`.
+- Use `reasoning_effort: "none"` (chat completions) or `reasoning: { "effort": "none" }` (responses) to disable
+  reasoning when the selected model supports `none`.
+- If a model rejects a reasoning effort, inspect `/uos/models/capabilities` and retry with one of that model's listed
+  values; omit reasoning controls when the model does not list reasoning support.
+- In the browser chat playground, `Default` omits `reasoning_effort`; `None` sends `reasoning_effort: "none"`.
 
 Defaults can be managed via `/admin/defaults` (admin auth required). When no model is explicitly configured, the gateway
 uses the first model in the current Codex model snapshot. If neither a configured default nor a snapshot is available,

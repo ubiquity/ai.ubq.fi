@@ -95,12 +95,12 @@ let vendorRoot;
 
 Deno.test("extractCodexModelsFromText parses slugs and reasoning levels", () => {
   const text =
-    'codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}';
+    'codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","supported_reasoning_levels":[{"effort":null},{"effort":"low"},{"effort":"high"}]}';
   const extracted = extractCodexModelsFromText(text);
   assert.ok(extracted);
   assert.equal(extracted?.clientVersion, "0.99.0");
   assert.equal(extracted?.models[0]?.slug, "gpt-5.2-codex");
-  assert.deepEqual(extracted?.models[0]?.supported_reasoning_levels, ["low", "high"]);
+  assert.deepEqual(extracted?.models[0]?.supported_reasoning_levels, ["none", "low", "high"]);
 });
 
 Deno.test("extractCodexModelsFromText trims large fields", () => {

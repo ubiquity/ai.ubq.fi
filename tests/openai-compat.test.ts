@@ -22,7 +22,7 @@ kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
     slug: DEFAULT_TEST_MODEL,
     display_name: "GPT-5 Fixture Default",
     default_reasoning_level: "medium",
-    supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+    supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
   }],
 });
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
@@ -218,7 +218,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("max_output_tokens" in recorded, false);
   });
 
-  await t.step("chat accepts null reasoning effort", async () => {
+  await t.step("chat accepts none reasoning effort", async () => {
     let recordedBody: Record<string, unknown> | null = null;
 
     const response = await withFetchMock(
@@ -233,7 +233,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               messages: [{ role: "user", content: "ping" }],
-              reasoning_effort: null,
+              reasoning_effort: "none",
             }),
           }),
         ),
@@ -243,7 +243,31 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(Object.prototype.hasOwnProperty.call(recorded, "reasoning"), true);
-    assert.equal(recorded["reasoning"], null);
+    assert.deepEqual(recorded["reasoning"], { effort: "none" });
+  });
+
+  await t.step("chat rejects null reasoning effort", async () => {
+    const response = await withFetchMock(
+      () => {
+        throw new Error("invalid reasoning requests should not fetch upstream");
+      },
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages: [{ role: "user", content: "ping" }],
+              reasoning_effort: null,
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { error?: { message?: string; param?: string | null } };
+    assert.equal(payload.error?.param, "reasoning_effort");
+    assert.match(payload.error?.message ?? "", /must be a string/);
   });
 
   await t.step("responses uses default model/reasoning and ignores temperature", async () => {
@@ -483,7 +507,7 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
   assert.ok(model);
   assert.equal(model.object, "uos.model_capabilities");
   assert.equal(model.upstream_provider, "codex_chatgpt");
-  assert.deepEqual(model.supported_reasoning_levels, ["low", "medium", "high", "xhigh"]);
+  assert.deepEqual(model.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh"]);
   assert.equal(model.default_reasoning_effort, "medium");
   assert.ok(model.supported_endpoints?.includes("/v1/chat/completions"));
   assert.ok(model.supported_endpoints?.includes("/v1/responses"));

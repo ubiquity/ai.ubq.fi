@@ -241,13 +241,16 @@ export const extractCodexModelsFromText = (text: string): ExtractedCodexModels |
     if (displayName) normalized.display_name = displayName;
     const description = getString(parsed.description);
     if (description) normalized.description = description;
-    const defaultReasoning = getString(parsed.default_reasoning_level);
+    const defaultReasoning = parsed.default_reasoning_level === null
+      ? "none"
+      : getString(parsed.default_reasoning_level);
     if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
     if (Array.isArray(parsed.supported_reasoning_levels)) {
       const levels = parsed.supported_reasoning_levels
         .map((entry) => {
+          if (entry === null) return "none";
           if (typeof entry === "string") return entry;
-          if (isRecord(entry)) return getString(entry.effort);
+          if (isRecord(entry)) return entry.effort === null ? "none" : getString(entry.effort);
           return null;
         })
         .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
