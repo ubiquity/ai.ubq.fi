@@ -21,6 +21,9 @@ kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
   models: [{
     slug: DEFAULT_TEST_MODEL,
     display_name: "GPT-5 Fixture Default",
+    context_window: 272000,
+    max_context_window: 1000000,
+    auto_compact_token_limit: null,
     default_reasoning_level: "medium",
     supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
   }],
@@ -475,6 +478,9 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
       supported_endpoints?: string[];
       supported_reasoning_levels?: string[];
       default_reasoning_effort?: string | null;
+      context_window_tokens?: number | null;
+      max_context_window_tokens?: number | null;
+      auto_compact_token_limit_tokens?: number | null;
     }>;
   };
   assert.equal(payload.object, "list");
@@ -485,6 +491,9 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
   assert.equal(model.upstream_provider, "codex_chatgpt");
   assert.deepEqual(model.supported_reasoning_levels, ["low", "medium", "high", "xhigh"]);
   assert.equal(model.default_reasoning_effort, "medium");
+  assert.equal(model.context_window_tokens, 272000);
+  assert.equal(model.max_context_window_tokens, 1000000);
+  assert.equal(model.auto_compact_token_limit_tokens, null);
   assert.ok(model.supported_endpoints?.includes("/v1/chat/completions"));
   assert.ok(model.supported_endpoints?.includes("/v1/responses"));
 });

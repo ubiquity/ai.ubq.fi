@@ -135,8 +135,9 @@ backed by Codex with a ChatGPT account, so some OpenAI API model aliases may not
 Hidden Codex catalog entries such as internal review models are filtered during snapshot upload and are not exposed.
 
 Use `GET /uos/models/capabilities` for gateway-specific model metadata such as `supported_reasoning_levels`,
-`default_reasoning_effort`, `supported_endpoints`, and `upstream_provider`. This metadata is intentionally not included
-in `/v1/models` so OpenAI-compatible SDKs receive an OpenAI-shaped response.
+`default_reasoning_effort`, `context_window_tokens`, `max_context_window_tokens`, `auto_compact_token_limit_tokens`,
+`supported_endpoints`, and `upstream_provider`. This metadata is intentionally not included in `/v1/models` so
+OpenAI-compatible SDKs receive an OpenAI-shaped response.
 
 Observed integration behavior:
 
@@ -330,8 +331,8 @@ Defaults can be managed via `/admin/defaults` (admin auth required). When no mod
 uses the first model in the current Codex model snapshot. If neither a configured default nor a snapshot is available,
 no-model requests fail with `503` instead of fetching a live fallback catalog.
 
-`GET /uos/models/capabilities` is the endpoint to inspect reasoning support programmatically. `/v1/models` remains
-OpenAI-compatible and does not include reasoning metadata.
+`GET /uos/models/capabilities` is the endpoint to inspect reasoning support and token-window limits programmatically.
+`/v1/models` remains OpenAI-compatible and does not include gateway metadata.
 
 ## Ignored parameters and warnings
 

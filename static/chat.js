@@ -136,6 +136,17 @@ const mergeModelCapabilities = (models, capabilities) => {
       merged.default_reasoning_effort = defaultReasoning;
       merged.default_reasoning_level = defaultReasoning;
     }
+    for (
+      const key of [
+        "context_window_tokens",
+        "max_context_window_tokens",
+        "auto_compact_token_limit_tokens",
+      ]
+    ) {
+      if (typeof capability[key] === "number" || capability[key] === null) {
+        merged[key] = capability[key];
+      }
+    }
     return merged;
   });
 };

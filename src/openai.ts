@@ -1308,6 +1308,9 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
     supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
     supported_reasoning_levels: reasoning.levels,
     default_reasoning_effort: reasoning.defaultLevel,
+    context_window_tokens: normalizeTokenCount(value.context_window),
+    max_context_window_tokens: normalizeTokenCount(value.max_context_window),
+    auto_compact_token_limit_tokens: normalizeTokenCount(value.auto_compact_token_limit),
   };
 };
 
