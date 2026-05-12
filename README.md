@@ -57,6 +57,10 @@ curl -sS https://ai.ubq.fi/uos/models/capabilities \
   -H "Authorization: Bearer $UOS_AI_TOKEN"
 ```
 
+Use this endpoint, not `/v1/models`, when clients need gateway-specific fields such as reasoning support or token-window
+limits (`context_window_tokens`, `max_context_window_tokens`, and `auto_compact_token_limit_tokens`). `/v1/models` keeps
+the strict OpenAI model-object shape.
+
 Whoami (debug which auth method was used; never returns raw secrets):
 
 ```bash
