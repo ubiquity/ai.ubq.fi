@@ -1216,20 +1216,32 @@ const extractMessageContentItems = (role: ResponseMessageItem["role"], content: 
     if (partType === "image_url" || partType === "input_image") {
       if (isAssistant) continue;
       let url: string | null = null;
+      let detail: string | undefined;
       if (partType === "image_url") {
         const image = isRecord(part.image_url) ? part.image_url : null;
         url = image ? getString(image.url) : null;
+        detail = normalizeImageDetail(image?.detail ?? part.detail);
       } else {
         url = getString(part.image_url);
+        detail = normalizeImageDetail(part.detail);
       }
       const trimmed = (url ?? "").trim();
-      if (trimmed) items.push({ type: "input_image", image_url: trimmed });
+      if (trimmed) {
+        items.push(
+          detail ? { type: "input_image", image_url: trimmed, detail } : { type: "input_image", image_url: trimmed },
+        );
+      }
       continue;
     }
   }
 
   if (items.length > 0) return items;
   return [{ type: textItemType, text: "" }];
+};
+
+const normalizeImageDetail = (value: unknown): string | undefined => {
+  const detail = getString(value)?.trim();
+  return detail || undefined;
 };
 
 const messageContentToText = (items: MessageContentItem[]): string =>
@@ -1337,15 +1349,18 @@ const normalizeResponseContentItem = (value: unknown): MessageContentItem | null
 
   if (partType === "input_image" || partType === "image_url") {
     let url: string | null = null;
+    let detail: string | undefined;
     if (partType === "image_url") {
       const image = isRecord(value.image_url) ? value.image_url : null;
       url = image ? getString(image.url) : null;
+      detail = normalizeImageDetail(image?.detail ?? value.detail);
     } else {
       url = getString(value.image_url);
+      detail = normalizeImageDetail(value.detail);
     }
     const trimmed = (url ?? "").trim();
     if (!trimmed) return null;
-    return { type: "input_image", image_url: trimmed };
+    return detail ? { type: "input_image", image_url: trimmed, detail } : { type: "input_image", image_url: trimmed };
   }
 
   return null;
