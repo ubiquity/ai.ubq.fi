@@ -14,7 +14,6 @@ const getReasoningLevelValue = (level) => {
 const isNoneReasoningValue = (value) => getTrimmedString(value).toLowerCase() === REASONING_NONE_VALUE;
 const getRawReasoningLevels = (model) =>
   Array.isArray(model?.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
-const hasNoneReasoningLevel = (levels) => levels.some((level) => isNoneReasoningValue(getReasoningLevelValue(level)));
 
 const uniqueReasoningLevels = (levels) => {
   const unique = [];
@@ -44,8 +43,6 @@ export const getModelReasoningLevels = (model) => {
   return fallback && !isNoneReasoningValue(fallback) ? [fallback] : [];
 };
 
-export const modelSupportsNoneReasoning = (model) => hasNoneReasoningLevel(getRawReasoningLevels(model));
-
 export const isReasoningNoneSelection = (value, noneValue = REASONING_NONE_VALUE) => {
   const trimmed = getTrimmedString(value);
   if (!trimmed) return false;
@@ -72,9 +69,7 @@ export const setReasoningOptions = (select, levels, preferred, options = {}) => 
   const sourceLevels = Array.isArray(levels) ? levels : [];
   const noneValue = getTrimmedString(options.noneValue) || REASONING_NONE_VALUE;
   const includeDefault = options.includeDefault !== false;
-  const includeNone = options.includeNone === undefined
-    ? hasNoneReasoningLevel(sourceLevels)
-    : options.includeNone === true;
+  const includeNone = options.includeNone !== false;
   const defaultLabel = getTrimmedString(options.defaultLabel) || "Default";
   const noneLabel = getTrimmedString(options.noneLabel) || "None";
   const uniqueLevels = uniqueReasoningLevels(sourceLevels);
@@ -116,7 +111,7 @@ export const updateReasoningSelectForModel = (select, model, preferred, options 
   const rawLevels = getRawReasoningLevels(model);
   const levels = getModelReasoningLevels(model);
   const trimmedPreferred = getTrimmedString(preferred);
-  const includeNone = options.includeNone ?? modelSupportsNoneReasoning(model);
+  const includeNone = options.includeNone !== false;
   const selectOptions = { ...options, includeNone };
 
   if (includeNone && isReasoningNoneSelection(trimmedPreferred, noneValue)) {

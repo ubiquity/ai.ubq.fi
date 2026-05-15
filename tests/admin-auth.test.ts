@@ -226,7 +226,7 @@ Deno.test("admin defaults accepts none for reasoning models", async () => {
       slug: "gpt-5.5",
       display_name: "GPT-5.5",
       default_reasoning_level: "medium",
-      supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
+      supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
     }],
   });
 
