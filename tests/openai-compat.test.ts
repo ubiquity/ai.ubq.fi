@@ -396,6 +396,34 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     const recorded = recordedBody as Record<string, unknown>;
     assert.deepEqual(recorded["reasoning"], { effort: "low" });
   });
+
+  await t.step("responses accepts official context_management parameter", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+    const contextManagement = [{ type: "compaction", compact_threshold: 2000 }];
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              input: "ping",
+              context_management: contextManagement,
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    assert.deepEqual(recorded["context_management"], contextManagement);
+  });
 });
 
 Deno.test("openai: default model requires configured model or stored snapshot", async () => {

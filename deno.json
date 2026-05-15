@@ -2,7 +2,8 @@
   "imports": {
     "@deno/kv-utils/import-export": "jsr:@deno/kv-utils@0.1.4/import-export",
     "@deno/kv-utils/json": "jsr:@deno/kv-utils@0.1.4/json",
-    "@simplewebauthn/server": "jsr:@simplewebauthn/server@13.2.2"
+    "@simplewebauthn/server": "jsr:@simplewebauthn/server@13.2.2",
+    "@std/yaml": "jsr:@std/yaml@1.0.9"
   },
   "tasks": {
     "build": "deno check serve.ts",

@@ -18,6 +18,7 @@ import { recordApiKeyUsage } from "./analytics.ts";
 import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
 import { json, openaiError } from "./http.ts";
 import { kvPromise } from "./kv.ts";
+import { CHAT_COMPLETIONS_REQUEST_KEYS, EMBEDDINGS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type {
@@ -399,7 +400,8 @@ type PassthroughToolSchemaKey =
   | "parallel_tool_calls"
   | "prompt_cache_key"
   | "text"
-  | "include";
+  | "include"
+  | "context_management";
 
 const normalizeCodexToolChoice = (value: unknown): unknown => {
   if (!isRecord(value)) return value;
@@ -519,82 +521,9 @@ const parseReasoningParam = (
   return { ok: true, value: Object.keys(normalized).length ? normalized : undefined };
 };
 
-const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set([
-  "messages",
-  "model",
-  "audio",
-  "frequency_penalty",
-  "function_call",
-  "functions",
-  "logit_bias",
-  "logprobs",
-  "max_completion_tokens",
-  "max_tokens",
-  "metadata",
-  "modalities",
-  "n",
-  "parallel_tool_calls",
-  "prediction",
-  "presence_penalty",
-  "prompt_cache_key",
-  "prompt_cache_retention",
-  "reasoning_effort",
-  "response_format",
-  "safety_identifier",
-  "seed",
-  "service_tier",
-  "stop",
-  "store",
-  "stream",
-  "stream_options",
-  "temperature",
-  "tool_choice",
-  "tools",
-  "top_logprobs",
-  "top_p",
-  "user",
-  "verbosity",
-  "web_search_options",
-]);
-
-const RESPONSES_ALLOWED_KEYS = new Set([
-  "background",
-  "conversation",
-  "include",
-  "input",
-  "instructions",
-  "max_output_tokens",
-  "max_tool_calls",
-  "metadata",
-  "model",
-  "parallel_tool_calls",
-  "previous_response_id",
-  "prompt",
-  "prompt_cache_key",
-  "prompt_cache_retention",
-  "reasoning",
-  "safety_identifier",
-  "service_tier",
-  "store",
-  "stream",
-  "stream_options",
-  "temperature",
-  "text",
-  "tool_choice",
-  "tools",
-  "top_logprobs",
-  "top_p",
-  "truncation",
-  "user",
-]);
-
-const EMBEDDINGS_ALLOWED_KEYS = new Set([
-  "model",
-  "input",
-  "encoding_format",
-  "dimensions",
-  "user",
-]);
+const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
+const RESPONSES_ALLOWED_KEYS = new Set(RESPONSES_REQUEST_KEYS);
+const EMBEDDINGS_ALLOWED_KEYS = new Set(EMBEDDINGS_REQUEST_KEYS);
 
 const findUnknownKey = (record: Record<string, unknown>, allowed: ReadonlySet<string>): string | null => {
   for (const key of Object.keys(record)) {
@@ -2773,6 +2702,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
       "prompt_cache_key",
       "text",
       "include",
+      "context_management",
     ]),
   );
 
@@ -2897,6 +2827,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     "prompt_cache_key",
     "text",
     "include",
+    "context_management",
   ];
   applyPassthroughToCodexRequest(codexBody, rawRecord, passthroughKeys);
   codexBody.model = model;

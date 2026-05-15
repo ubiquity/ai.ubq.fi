@@ -30,6 +30,7 @@
     "jsr:@std/streams@^1.0.17": "1.0.17",
     "jsr:@std/tar@~0.1.9": "0.1.10",
     "jsr:@std/text@^1.0.17": "1.0.17",
+    "jsr:@std/yaml@1.0.9": "1.0.9",
     "npm:@hexagon/base64@^1.1.27": "1.1.28",
     "npm:@levischuck/tiny-cbor@~0.2.2": "0.2.11",
     "npm:@peculiar/asn1-android@^2.3.10": "2.6.0",
@@ -203,6 +204,9 @@
     },
     "@std/text@1.0.17": {
       "integrity": "4b2c4ef67ae5b6c1dfd447c81c83a43718f52e3c7e748d8b33f694aba9895f95"
+    },
+    "@std/yaml@1.0.9": {
+      "integrity": "6bad3dc766dd85b4b37eabcba81b6aa4eac7a392792ae29abcfb0f90602d55bb"
     }
   },
   "npm": {
@@ -493,7 +497,8 @@
   "workspace": {
     "dependencies": [
       "jsr:@deno/kv-utils@0.1.4",
-      "jsr:@simplewebauthn/server@13.2.2"
+      "jsr:@simplewebauthn/server@13.2.2",
+      "jsr:@std/yaml@1.0.9"
     ]
   }
 }
