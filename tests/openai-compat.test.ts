@@ -797,6 +797,52 @@ Deno.test("openai: responses accept non-message input items", async () => {
   assert.ok(types.includes("function_call_output"));
 });
 
+Deno.test("openai: responses preserve image detail on normalized input images", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            reasoning: { effort: "low" },
+            input: [
+              {
+                role: "user",
+                content: [
+                  { type: "input_text", text: "Read this." },
+                  {
+                    type: "input_image",
+                    image_url: "data:image/jpeg;base64,/9j/4AAQ",
+                    detail: "high",
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  const input = recordedBody["input"];
+  assert.ok(Array.isArray(input));
+  const message = (input as Record<string, unknown>[])[0];
+  const content = message?.content;
+  assert.ok(Array.isArray(content));
+  const image = (content as Record<string, unknown>[]).find((part) => part.type === "input_image");
+  assert.equal(image?.image_url, "data:image/jpeg;base64,/9j/4AAQ");
+  assert.equal(image?.detail, "high");
+});
+
 Deno.test("auth: kernel attestation tokens are reusable within TTL", async () => {
   const keyPair = await crypto.subtle.generateKey(
     {
