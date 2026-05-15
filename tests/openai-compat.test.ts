@@ -464,7 +464,7 @@ Deno.test("openai: default reasoning level is accepted when supported levels are
   }
 });
 
-Deno.test("openai: none reasoning disables reasoning even when snapshot levels omit none", async () => {
+Deno.test("openai: none reasoning is not injected when snapshot levels omit none", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
 
@@ -491,18 +491,15 @@ Deno.test("openai: none reasoning disables reasoning even when snapshot levels o
       data?: Array<{ supported_reasoning_levels?: string[] }>;
     };
     assert.deepEqual(capabilitiesPayload.data?.[0]?.supported_reasoning_levels, [
-      "none",
       "low",
       "medium",
       "high",
       "xhigh",
     ]);
 
-    let recordedBody: Record<string, unknown> | null = null;
     const chatResponse = await withFetchMock(
-      (_url, bodyText) => {
-        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
-        return sseResponse(baseSseChunks());
+      () => {
+        throw new Error("unsupported none reasoning should not fetch upstream");
       },
       () =>
         handleChatCompletions(
@@ -517,10 +514,10 @@ Deno.test("openai: none reasoning disables reasoning even when snapshot levels o
         ),
     );
 
-    assert.equal(chatResponse.status, 200);
-    assert.ok(recordedBody);
-    const recorded = recordedBody as Record<string, unknown>;
-    assert.deepEqual(recorded.reasoning, { effort: "none" });
+    assert.equal(chatResponse.status, 400);
+    const payload = await chatResponse.json() as { error?: { message?: string; param?: string | null } };
+    assert.equal(payload.error?.param, "reasoning_effort");
+    assert.match(payload.error?.message ?? "", /reasoning_effort must be one of: low, medium, high, xhigh/);
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
