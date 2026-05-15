@@ -57,7 +57,7 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleAdminCodexAuth, handleAdminKvMigrationImport } = await import("../src/admin.ts");
+const { handleAdminCodexAuth, handleAdminDefaults, handleAdminKvMigrationImport } = await import("../src/admin.ts");
 const { handleHealthAuth } = await import("../src/health.ts");
 
 const authPayload = {
@@ -105,7 +105,7 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
             context_window: 272000,
             max_context_window: 1000000,
             auto_compact_token_limit: null,
-            supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+            supported_reasoning_levels: [{ effort: null }, "low", "medium", "high", "xhigh"],
           }, {
             slug: "codex-auto-review",
             display_name: "Codex Auto Review",
@@ -131,6 +131,7 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
           context_window?: number;
           max_context_window?: number;
           auto_compact_token_limit?: number | null;
+          supported_reasoning_levels?: string[];
         }>;
       }
       | undefined;
@@ -140,6 +141,7 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
     assert.equal(stored?.models?.[0]?.context_window, 272000);
     assert.equal(stored?.models?.[0]?.max_context_window, 1000000);
     assert.equal(stored?.models?.[0]?.auto_compact_token_limit, null);
+    assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -213,6 +215,66 @@ Deno.test("admin KV migration import stays dry-run unless write is explicit", as
   assert.equal(payload.dry_run, true);
   assert.equal(payload.imported, 1);
   assert.equal(kvStore.has(keyToString(["default", "model"])), false);
+});
+
+Deno.test("admin defaults accepts none for reasoning models", async () => {
+  kvStore.clear();
+  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+    source: "codex_cli",
+    updated_at_ms: 123,
+    models: [{
+      slug: "gpt-5.5",
+      display_name: "GPT-5.5",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
+    }],
+  });
+
+  const response = await handleAdminDefaults(
+    new Request("https://ai.ubq.fi/admin/defaults", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        reasoning_effort: "none",
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
+  assert.equal(payload.defaults?.reasoning_effort, "none");
+  assert.equal(kvStore.get(keyToString(["default", "reasoning_effort"])), "none");
+});
+
+Deno.test("admin defaults rejects null reasoning effort", async () => {
+  kvStore.clear();
+  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+    source: "codex_cli",
+    updated_at_ms: 123,
+    models: [{
+      slug: "gpt-5.5",
+      display_name: "GPT-5.5",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
+    }],
+  });
+
+  const response = await handleAdminDefaults(
+    new Request("https://ai.ubq.fi/admin/defaults", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        reasoning_effort: null,
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  const payload = await response.json() as { error?: { message?: string } };
+  assert.match(payload.error?.message ?? "", /reasoning_effort must be a string/);
+  assert.equal(kvStore.has(keyToString(["default", "reasoning_effort"])), false);
 });
 
 Deno.test("health auth summary does not refresh Codex auth", async () => {

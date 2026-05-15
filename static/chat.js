@@ -9,6 +9,11 @@ import {
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
 } from "./auth.js";
+import {
+  getReasoningEffortForChatRequest,
+  setReasoningPlaceholder as setSharedReasoningPlaceholder,
+  updateReasoningSelectForModel,
+} from "./reasoning-select.js";
 
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
@@ -60,7 +65,6 @@ const sendBtn = mustGet("send");
 const panels = Array.from(document.querySelectorAll("details[data-chat-panel][data-panel-key]"));
 
 const DEFAULT_MODEL = "";
-const REASONING_NONE_VALUE = "__uos_reasoning_none__";
 
 const setAuthBadge = (state, text) => {
   authBadge.dataset.state = state;
@@ -162,13 +166,7 @@ const setModelPlaceholder = (label) => {
 };
 
 const setReasoningPlaceholder = (label) => {
-  reasoningSelect.textContent = "";
-  const option = document.createElement("option");
-  option.value = "";
-  option.textContent = label;
-  option.disabled = true;
-  reasoningSelect.appendChild(option);
-  reasoningSelect.disabled = true;
+  setSharedReasoningPlaceholder(reasoningSelect, label);
 };
 
 const setModelOptions = (models, preferred) => {
@@ -202,85 +200,9 @@ const setModelOptions = (models, preferred) => {
   return next;
 };
 
-const setReasoningOptions = (levels, preferred) => {
-  const trimmedPreferred = (preferred ?? "").trim();
-  const uniqueLevels = Array.from(
-    new Set(levels.filter((level) => typeof level === "string").map((level) => level.trim()).filter(Boolean)),
-  );
-
-  reasoningSelect.textContent = "";
-  const defaultOption = document.createElement("option");
-  defaultOption.value = "";
-  defaultOption.textContent = "Default";
-  reasoningSelect.appendChild(defaultOption);
-
-  const noneOption = document.createElement("option");
-  noneOption.value = REASONING_NONE_VALUE;
-  noneOption.textContent = "None";
-  reasoningSelect.appendChild(noneOption);
-
-  reasoningSelect.disabled = false;
-
-  uniqueLevels.forEach((level) => {
-    const option = document.createElement("option");
-    option.value = level;
-    option.textContent = level;
-    reasoningSelect.appendChild(option);
-  });
-
-  const next = trimmedPreferred === REASONING_NONE_VALUE
-    ? REASONING_NONE_VALUE
-    : uniqueLevels.includes(trimmedPreferred)
-    ? trimmedPreferred
-    : "";
-  reasoningSelect.value = next;
-  return next;
-};
-
-const getReasoningLevelsForModel = (modelId) => {
-  const model = modelCatalog.get(modelId);
-  const levels = Array.isArray(model?.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
-  const normalized = [];
-  levels.forEach((level) => {
-    if (typeof level === "string") {
-      const trimmed = level.trim();
-      if (trimmed) normalized.push(trimmed);
-      return;
-    }
-    if (level && typeof level === "object" && "effort" in level) {
-      const effort = typeof level.effort === "string" ? level.effort.trim() : "";
-      if (effort) normalized.push(effort);
-    }
-  });
-  const defaultReasoning = typeof model?.default_reasoning_effort === "string"
-    ? model.default_reasoning_effort.trim()
-    : typeof model?.default_reasoning_level === "string"
-    ? model.default_reasoning_level.trim()
-    : "";
-  const unique = Array.from(new Set(normalized));
-  if (unique.length) return unique;
-  return defaultReasoning ? [defaultReasoning] : [];
-};
-
 const updateReasoningForModel = (modelId, preferred) => {
-  const levels = getReasoningLevelsForModel(modelId);
   const model = modelCatalog.get(modelId);
-  const preferredValue = typeof preferred === "string" ? preferred.trim() : "";
-  const defaultReasoning = typeof model?.default_reasoning_effort === "string"
-    ? model.default_reasoning_effort.trim()
-    : typeof model?.default_reasoning_level === "string"
-    ? model.default_reasoning_level.trim()
-    : "";
-  if (preferredValue === REASONING_NONE_VALUE) return setReasoningOptions(levels, REASONING_NONE_VALUE);
-  if (!preferredValue) return setReasoningOptions(levels, "");
-  const selected = levels.includes(preferredValue)
-    ? preferredValue
-    : levels.includes(defaultReasoning)
-    ? defaultReasoning
-    : levels.length
-    ? levels[0]
-    : "";
-  return setReasoningOptions(levels, selected);
+  return updateReasoningSelectForModel(reasoningSelect, model, preferred);
 };
 
 const resetModelCatalog = (label = "Authenticate to load models") => {
@@ -726,9 +648,8 @@ const sendPrompt = async () => {
     stream: true,
   };
 
-  const reasoningEffort = reasoningSelect.value.trim();
-  if (reasoningEffort === REASONING_NONE_VALUE) payload.reasoning_effort = null;
-  else if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
+  const reasoningEffort = getReasoningEffortForChatRequest(reasoningSelect.value);
+  if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
   if (!payload.model) delete payload.model;
 
   const assistantEl = appendMessage("assistant", "");

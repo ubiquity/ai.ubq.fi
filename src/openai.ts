@@ -250,12 +250,15 @@ const findSnapshotModelRecord = (
   }) ?? null;
 };
 
+const normalizeSnapshotReasoningEffort = (value: unknown): ReasoningEffort | null =>
+  value === null ? "none" : normalizeReasoningEffort(value);
+
 const extractSnapshotReasoningLevels = (model: Record<string, unknown> | null): ReasoningEffort[] => {
   const raw = Array.isArray(model?.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
   const levels = raw
     .map((entry) => {
-      if (typeof entry === "string") return normalizeReasoningEffort(entry);
-      if (isRecord(entry)) return normalizeReasoningEffort(entry.effort);
+      if (entry === null || typeof entry === "string") return normalizeSnapshotReasoningEffort(entry);
+      if (isRecord(entry)) return normalizeSnapshotReasoningEffort(entry.effort);
       return null;
     })
     .filter((entry): entry is ReasoningEffort => Boolean(entry));
@@ -263,7 +266,7 @@ const extractSnapshotReasoningLevels = (model: Record<string, unknown> | null): 
 };
 
 const getCodexModelReasoning = (record: Record<string, unknown> | null): CodexModelReasoning => {
-  const defaultLevel = normalizeReasoningEffort(record?.default_reasoning_level);
+  const defaultLevel = normalizeSnapshotReasoningEffort(record?.default_reasoning_level);
   const levels = extractSnapshotReasoningLevels(record);
   return {
     levels: defaultLevel && !levels.includes(defaultLevel) ? [...levels, defaultLevel] : levels,
@@ -291,7 +294,9 @@ const resolveDefaultReasoningLabel = (
   modelReasoning: CodexModelReasoning,
   defaultEffort: ReasoningEffort,
 ): ReasoningEffort => {
-  if (defaultEffort === "none") return "none";
+  if (defaultEffort === "none" && (!modelReasoning.levels.length || modelReasoning.levels.includes("none"))) {
+    return "none";
+  }
   if (modelReasoning.levels.includes(defaultEffort)) return defaultEffort;
   if (modelReasoning.defaultLevel === "none") return "none";
   if (modelReasoning.defaultLevel && modelReasoning.levels.includes(modelReasoning.defaultLevel)) {
@@ -301,23 +306,20 @@ const resolveDefaultReasoningLabel = (
 };
 
 const resolveReasoningLabelFromEffort = (
-  effort: ReasoningEffort | null | undefined,
+  effort: ReasoningEffort | undefined,
   defaultLabel: ReasoningEffort,
 ): ReasoningEffort => {
   if (effort === undefined) return defaultLabel;
-  if (effort === null) return "none";
   return effort;
 };
 
 const resolveReasoningLabelFromParam = (
-  reasoning: Record<string, unknown> | null | undefined,
+  reasoning: Record<string, unknown> | undefined,
   defaultLabel: ReasoningEffort,
 ): ReasoningEffort => {
   if (reasoning === undefined) return defaultLabel;
-  if (reasoning === null) return "none";
   if (!isRecord(reasoning)) return defaultLabel;
   if ("effort" in reasoning) {
-    if (reasoning.effort === null) return "none";
     const effort = normalizeReasoningEffort(reasoning.effort);
     if (effort) return effort;
   }
@@ -328,11 +330,11 @@ const reasoningErrorFieldLabel = (fieldName: "reasoning_effort" | "reasoning.eff
   fieldName === "reasoning.effort" ? "reasoning.effort" : "reasoning_effort";
 
 const validateModelReasoningEffort = (
-  effort: ReasoningEffort | null | undefined,
+  effort: ReasoningEffort | undefined,
   modelReasoning: CodexModelReasoning,
   fieldName: "reasoning_effort" | "reasoning.effort",
 ): Response | null => {
-  if (effort === undefined || effort === null || effort === "none") return null;
+  if (effort === undefined) return null;
   if (!modelReasoning.levels.length) {
     return openaiError(
       400,
@@ -353,13 +355,11 @@ const validateModelReasoningEffort = (
 };
 
 const extractReasoningParamEffort = (
-  reasoning: Record<string, unknown> | null | undefined,
-): ReasoningEffort | null | undefined => {
+  reasoning: Record<string, unknown> | undefined,
+): ReasoningEffort | undefined => {
   if (reasoning === undefined) return undefined;
-  if (reasoning === null) return null;
   if (!Object.prototype.hasOwnProperty.call(reasoning, "effort")) return undefined;
-  if (reasoning.effort === null) return null;
-  return normalizeReasoningEffort(reasoning.effort);
+  return normalizeReasoningEffort(reasoning.effort) ?? undefined;
 };
 
 const UOS_WARNING_HEADER = "x-uos-warning";
@@ -466,14 +466,13 @@ const withUosWarning = (response: Response, warnings: string[]): Response => {
 const parseReasoningEffortField = (
   value: unknown,
   fieldName: string,
-): { ok: true; value: ReasoningEffort | null | undefined } | { ok: false; message: string } => {
+): { ok: true; value: ReasoningEffort | undefined } | { ok: false; message: string } => {
   if (value === undefined) return { ok: true, value: undefined };
-  if (value === null) return { ok: true, value: null };
   if (typeof value !== "string") {
-    return { ok: false, message: `${fieldName} must be a string or null` };
+    return { ok: false, message: `${fieldName} must be a string` };
   }
   const normalized = value.trim().toLowerCase();
-  if (!normalized) return { ok: false, message: `${fieldName} must be a non-empty string or null` };
+  if (!normalized) return { ok: false, message: `${fieldName} must be a non-empty string` };
   if (!REASONING_EFFORTS.has(normalized as ReasoningEffort)) {
     return { ok: false, message: `${fieldName} must be one of: none, minimal, low, medium, high, xhigh` };
   }
@@ -482,24 +481,23 @@ const parseReasoningEffortField = (
 
 const parseReasoningParam = (
   value: unknown,
-): { ok: true; value: Record<string, unknown> | null | undefined } | { ok: false; message: string } => {
+): { ok: true; value: Record<string, unknown> | undefined } | { ok: false; message: string } => {
   if (value === undefined) return { ok: true, value: undefined };
-  if (value === null) return { ok: true, value: null };
-  if (!isRecord(value)) return { ok: false, message: "reasoning must be an object or null" };
+  if (!isRecord(value)) return { ok: false, message: "reasoning must be an object" };
   if ("effort" in value) {
     const effort = parseReasoningEffortField(value.effort, "reasoning.effort");
     if (!effort.ok) return effort;
   }
   if ("summary" in value) {
     const summary = value.summary;
-    if (summary !== undefined && summary !== null && typeof summary !== "string") {
-      return { ok: false, message: "reasoning.summary must be a string or null" };
+    if (summary !== undefined && typeof summary !== "string") {
+      return { ok: false, message: "reasoning.summary must be a string" };
     }
   }
   if ("generate_summary" in value) {
     const generateSummary = value.generate_summary;
-    if (generateSummary !== undefined && generateSummary !== null && typeof generateSummary !== "string") {
-      return { ok: false, message: "reasoning.generate_summary must be a string or null" };
+    if (generateSummary !== undefined && typeof generateSummary !== "string") {
+      return { ok: false, message: "reasoning.generate_summary must be a string" };
     }
   }
 
@@ -2643,7 +2641,9 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   if (messagesRaw.length === 0) return openaiError(400, "messages must be a non-empty array", "invalid_request_error");
 
   const reasoningEffort = parseReasoningEffortField(body.reasoning_effort, "reasoning_effort");
-  if (!reasoningEffort.ok) return openaiError(400, reasoningEffort.message, "invalid_request_error");
+  if (!reasoningEffort.ok) {
+    return openaiError(400, reasoningEffort.message, "invalid_request_error", { param: "reasoning_effort" });
+  }
 
   const input: ResponseMessageItem[] = [];
   const instructionParts: string[] = [];
@@ -2678,11 +2678,9 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
   const reasoningValidation = validateModelReasoningEffort(reasoningEffort.value, modelReasoning, "reasoning_effort");
   if (reasoningValidation) return reasoningValidation;
-  let reasoningValue: Record<string, unknown> | null | undefined;
+  let reasoningValue: Record<string, unknown> | undefined;
   if (reasoningEffort.value === undefined) {
     reasoningValue = defaultReasoningLabel !== "none" ? { effort: defaultReasoningLabel } : undefined;
-  } else if (reasoningEffort.value === null) {
-    reasoningValue = null;
   } else {
     reasoningValue = { effort: reasoningEffort.value };
   }
@@ -2847,7 +2845,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   }
 
   const reasoning = parseReasoningParam(rawBody.reasoning);
-  if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error");
+  if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error", { param: "reasoning" });
 
   let instructions = "";
   if (Object.prototype.hasOwnProperty.call(rawRecord, "instructions")) {

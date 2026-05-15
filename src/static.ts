@@ -75,6 +75,7 @@ textAsset(["/admin.js"], "admin.js", "text/javascript; charset=utf-8");
 textAsset(["/auth.js"], "auth.js", "text/javascript; charset=utf-8");
 textAsset(["/auth-relay.js"], "auth-relay.js", "text/javascript; charset=utf-8");
 textAsset(["/network.js"], "network.js", "text/javascript; charset=utf-8");
+textAsset(["/reasoning-select.js"], "reasoning-select.js", "text/javascript; charset=utf-8");
 
 textAsset(["/company-logo.svg"], "company-logo.svg", "image/svg+xml; charset=utf-8");
 textAsset(["/docs/llms-agents.md"], "docs/llms-agents.md", "text/markdown; charset=utf-8");
