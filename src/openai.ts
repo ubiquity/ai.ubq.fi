@@ -362,6 +362,16 @@ const extractReasoningParamEffort = (
   return normalizeReasoningEffort(reasoning.effort) ?? undefined;
 };
 
+const normalizeReasoningParamForCodex = (
+  reasoning: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  if (reasoning === undefined) return undefined;
+  const effort = extractReasoningParamEffort(reasoning);
+  if (effort === "none") return undefined;
+  if (effort === undefined) return reasoning;
+  return { ...reasoning, effort };
+};
+
 const UOS_WARNING_HEADER = "x-uos-warning";
 const TEMPERATURE_IGNORED_WARNING = "temperature_ignored";
 const MAX_OUTPUT_TOKENS_IGNORED_WARNING = "max_output_tokens_ignored";
@@ -2681,6 +2691,8 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   let reasoningValue: Record<string, unknown> | undefined;
   if (reasoningEffort.value === undefined) {
     reasoningValue = defaultReasoningLabel !== "none" ? { effort: defaultReasoningLabel } : undefined;
+  } else if (reasoningEffort.value === "none") {
+    reasoningValue = undefined;
   } else {
     reasoningValue = { effort: reasoningEffort.value };
   }
@@ -2858,17 +2870,18 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const defaultEffort = await getDefaultReasoningEffort();
   const modelReasoning = modelMetadata.reasoning;
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
+  const requestedReasoningEffort = extractReasoningParamEffort(reasoning.value);
   const reasoningValidation = validateModelReasoningEffort(
-    extractReasoningParamEffort(reasoning.value),
+    requestedReasoningEffort,
     modelReasoning,
     "reasoning.effort",
   );
   if (reasoningValidation) return reasoningValidation;
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
 
-  let reasoningValue = reasoning.value;
+  let reasoningValue = normalizeReasoningParamForCodex(reasoning.value);
   if (reasoningValue === undefined && defaultReasoningLabel !== "none") {
-    reasoningValue = { effort: defaultReasoningLabel };
+    reasoningValue = reasoning.value === undefined ? { effort: defaultReasoningLabel } : undefined;
   }
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });

@@ -221,7 +221,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("max_output_tokens" in recorded, false);
   });
 
-  await t.step("chat accepts none reasoning effort", async () => {
+  await t.step("chat accepts none reasoning effort without forwarding upstream reasoning", async () => {
     let recordedBody: Record<string, unknown> | null = null;
 
     const response = await withFetchMock(
@@ -245,8 +245,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal(response.status, 200);
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
-    assert.equal(Object.prototype.hasOwnProperty.call(recorded, "reasoning"), true);
-    assert.deepEqual(recorded["reasoning"], { effort: "none" });
+    assert.equal(Object.prototype.hasOwnProperty.call(recorded, "reasoning"), false);
   });
 
   await t.step("chat rejects null reasoning effort", async () => {
@@ -308,6 +307,33 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.deepEqual(recorded["reasoning"], { effort: "low" });
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
+  });
+
+  await t.step("responses accepts none reasoning without forwarding upstream reasoning", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              input: "ping",
+              reasoning: { effort: "none" },
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    assert.equal(Object.prototype.hasOwnProperty.call(recorded, "reasoning"), false);
   });
 });
 
