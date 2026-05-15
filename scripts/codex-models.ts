@@ -209,6 +209,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const getString = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
+const getNonNegativeInteger = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const normalized = Math.trunc(value);
+  return normalized >= 0 ? normalized : null;
+};
+
 const isHiddenCodexModel = (value: Record<string, unknown>): boolean =>
   getString(value.visibility)?.trim().toLowerCase() === "hide";
 
@@ -241,6 +247,14 @@ export const extractCodexModelsFromText = (text: string): ExtractedCodexModels |
     if (displayName) normalized.display_name = displayName;
     const description = getString(parsed.description);
     if (description) normalized.description = description;
+    for (const key of ["context_window", "max_context_window", "auto_compact_token_limit"]) {
+      if (parsed[key] === null) {
+        normalized[key] = null;
+        continue;
+      }
+      const count = getNonNegativeInteger(parsed[key]);
+      if (count !== null) normalized[key] = count;
+    }
     const defaultReasoning = parsed.default_reasoning_level === null
       ? "none"
       : getString(parsed.default_reasoning_level);

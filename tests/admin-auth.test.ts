@@ -102,6 +102,9 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
           models: [{
             slug: "gpt-5.5",
             display_name: "GPT-5.5",
+            context_window: 272000,
+            max_context_window: 1000000,
+            auto_compact_token_limit: null,
             supported_reasoning_levels: [{ effort: null }, "low", "medium", "high", "xhigh"],
           }, {
             slug: "codex-auto-review",
@@ -123,12 +126,21 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
       | {
         source?: string;
         client_version?: string;
-        models?: Array<{ slug?: string; supported_reasoning_levels?: string[] }>;
+        models?: Array<{
+          slug?: string;
+          context_window?: number;
+          max_context_window?: number;
+          auto_compact_token_limit?: number | null;
+          supported_reasoning_levels?: string[];
+        }>;
       }
       | undefined;
     assert.equal(stored?.source, "codex_cli");
     assert.equal(stored?.client_version, "0.126.0");
     assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.5"]);
+    assert.equal(stored?.models?.[0]?.context_window, 272000);
+    assert.equal(stored?.models?.[0]?.max_context_window, 1000000);
+    assert.equal(stored?.models?.[0]?.auto_compact_token_limit, null);
     assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh"]);
   } finally {
     globalThis.fetch = originalFetch;

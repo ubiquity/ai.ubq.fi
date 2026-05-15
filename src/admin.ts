@@ -75,6 +75,12 @@ const MAX_KV_MIGRATION_BODY_BYTES = 5 * 1024 * 1024;
 const isHiddenCodexModel = (value: Record<string, unknown>): boolean =>
   getString(value.visibility)?.trim().toLowerCase() === "hide";
 
+const normalizeNonNegativeInteger = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const normalized = Math.trunc(value);
+  return normalized >= 0 ? normalized : null;
+};
+
 const resolveDefaultModel = async (entryValue: unknown): Promise<string> => {
   const configured = typeof entryValue === "string" ? entryValue.trim() : "";
   if (configured) return configured;
@@ -618,6 +624,14 @@ const normalizeCodexModelsPayload = (value: unknown): CodexModelsSnapshot | null
     if (displayName) normalized.display_name = displayName;
     const description = getString(item.description);
     if (description) normalized.description = description;
+    for (const key of ["context_window", "max_context_window", "auto_compact_token_limit"]) {
+      if (item[key] === null) {
+        normalized[key] = null;
+        continue;
+      }
+      const count = normalizeNonNegativeInteger(item[key]);
+      if (count !== null) normalized[key] = count;
+    }
     const defaultReasoning = item.default_reasoning_level === null ? "none" : getString(item.default_reasoning_level);
     if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
     if (Array.isArray(item.supported_reasoning_levels)) {

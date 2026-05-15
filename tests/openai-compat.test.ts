@@ -21,6 +21,9 @@ kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
   models: [{
     slug: DEFAULT_TEST_MODEL,
     display_name: "GPT-5 Fixture Default",
+    context_window: 272000,
+    max_context_window: 1000000,
+    auto_compact_token_limit: null,
     default_reasoning_level: "medium",
     supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
   }],
@@ -499,6 +502,9 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
       supported_endpoints?: string[];
       supported_reasoning_levels?: string[];
       default_reasoning_effort?: string | null;
+      context_window_tokens?: number | null;
+      max_context_window_tokens?: number | null;
+      auto_compact_token_limit_tokens?: number | null;
     }>;
   };
   assert.equal(payload.object, "list");
@@ -509,6 +515,9 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
   assert.equal(model.upstream_provider, "codex_chatgpt");
   assert.deepEqual(model.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh"]);
   assert.equal(model.default_reasoning_effort, "medium");
+  assert.equal(model.context_window_tokens, 272000);
+  assert.equal(model.max_context_window_tokens, 1000000);
+  assert.equal(model.auto_compact_token_limit_tokens, null);
   assert.ok(model.supported_endpoints?.includes("/v1/chat/completions"));
   assert.ok(model.supported_endpoints?.includes("/v1/responses"));
 });
@@ -810,6 +819,52 @@ Deno.test("openai: responses accept non-message input items", async () => {
   assert.ok(types.includes("reasoning"));
   assert.ok(types.includes("function_call"));
   assert.ok(types.includes("function_call_output"));
+});
+
+Deno.test("openai: responses preserve image detail on normalized input images", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            reasoning: { effort: "low" },
+            input: [
+              {
+                role: "user",
+                content: [
+                  { type: "input_text", text: "Read this." },
+                  {
+                    type: "input_image",
+                    image_url: "data:image/jpeg;base64,/9j/4AAQ",
+                    detail: "high",
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  const input = recordedBody["input"];
+  assert.ok(Array.isArray(input));
+  const message = (input as Record<string, unknown>[])[0];
+  const content = message?.content;
+  assert.ok(Array.isArray(content));
+  const image = (content as Record<string, unknown>[]).find((part) => part.type === "input_image");
+  assert.equal(image?.image_url, "data:image/jpeg;base64,/9j/4AAQ");
+  assert.equal(image?.detail, "high");
 });
 
 Deno.test("auth: kernel attestation tokens are reusable within TTL", async () => {

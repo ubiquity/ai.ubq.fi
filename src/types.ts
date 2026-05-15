@@ -165,7 +165,7 @@ export type ResponsesRequest = Readonly<{
 export type MessageContentItem = Readonly<
   | { type: "input_text"; text: string }
   | { type: "output_text"; text: string }
-  | { type: "input_image"; image_url: string }
+  | { type: "input_image"; image_url: string; detail?: string }
 >;
 
 export type ResponseMessageItem = Readonly<{

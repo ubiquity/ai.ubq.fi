@@ -69,6 +69,26 @@ Deno.test("reasoning select includes default and none before model levels", () =
   });
 });
 
+Deno.test("reasoning select hides none when model does not list it", () => {
+  withFakeDocument(() => {
+    const select = createSelect();
+    const selected = updateReasoningSelectForModel(select, {
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+    }, "none");
+
+    assert.equal(selected, "medium");
+    assert.equal(select.disabled, false);
+    assert.deepEqual(select.options.map((option) => [option.value, option.textContent]), [
+      ["", "Default"],
+      ["low", "low"],
+      ["medium", "medium"],
+      ["high", "high"],
+      ["xhigh", "xhigh"],
+    ]);
+  });
+});
+
 Deno.test("chat reasoning none selection uses OpenAI wire value", () => {
   assert.equal(getReasoningEffortForChatRequest("none"), "none");
 });
