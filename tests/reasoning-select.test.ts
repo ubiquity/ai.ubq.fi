@@ -69,12 +69,32 @@ Deno.test("reasoning select includes default and none before model levels", () =
   });
 });
 
-Deno.test("reasoning select keeps none when model levels omit it", () => {
+Deno.test("reasoning select hides none when model levels omit it", () => {
   withFakeDocument(() => {
     const select = createSelect();
     const selected = updateReasoningSelectForModel(select, {
       default_reasoning_level: "medium",
       supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+    }, "none");
+
+    assert.equal(selected, "medium");
+    assert.equal(select.disabled, false);
+    assert.deepEqual(select.options.map((option) => [option.value, option.textContent]), [
+      ["", "Default"],
+      ["low", "low"],
+      ["medium", "medium"],
+      ["high", "high"],
+      ["xhigh", "xhigh"],
+    ]);
+  });
+});
+
+Deno.test("reasoning select shows none when model default is none", () => {
+  withFakeDocument(() => {
+    const select = createSelect();
+    const selected = updateReasoningSelectForModel(select, {
+      default_reasoning_level: null,
+      supported_reasoning_levels: ["low", "medium", "high"],
     }, "none");
 
     assert.equal(selected, "none");
@@ -85,7 +105,6 @@ Deno.test("reasoning select keeps none when model levels omit it", () => {
       ["low", "low"],
       ["medium", "medium"],
       ["high", "high"],
-      ["xhigh", "xhigh"],
     ]);
   });
 });

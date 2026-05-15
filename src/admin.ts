@@ -387,14 +387,15 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
       }
 
       const levels = extractModelReasoningLevels(modelRecord);
-      if (nextReasoning !== "none" && levels.length > 0 && !levels.includes(nextReasoning)) {
+      const supportedLevels = modelDefault && !levels.includes(modelDefault) ? [...levels, modelDefault] : levels;
+      if (supportedLevels.length > 0 && !supportedLevels.includes(nextReasoning)) {
         return openaiError(
           400,
-          `reasoning_effort must be one of: ${levels.join(", ")}`,
+          `reasoning_effort must be one of: ${supportedLevels.join(", ")}`,
           "invalid_request_error",
         );
       }
-      if (levels.length === 0) {
+      if (supportedLevels.length === 0) {
         nextReasoning = "none";
       }
 

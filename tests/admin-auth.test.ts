@@ -217,7 +217,37 @@ Deno.test("admin KV migration import stays dry-run unless write is explicit", as
   assert.equal(kvStore.has(keyToString(["default", "model"])), false);
 });
 
-Deno.test("admin defaults accepts none for reasoning models", async () => {
+Deno.test("admin defaults accepts none when the model supports none", async () => {
+  kvStore.clear();
+  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+    source: "codex_cli",
+    updated_at_ms: 123,
+    models: [{
+      slug: "gpt-5.5",
+      display_name: "GPT-5.5",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
+    }],
+  });
+
+  const response = await handleAdminDefaults(
+    new Request("https://ai.ubq.fi/admin/defaults", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        reasoning_effort: "none",
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
+  assert.equal(payload.defaults?.reasoning_effort, "none");
+  assert.equal(kvStore.get(keyToString(["default", "reasoning_effort"])), "none");
+});
+
+Deno.test("admin defaults rejects none when the model does not support none", async () => {
   kvStore.clear();
   kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
     source: "codex_cli",
@@ -241,10 +271,10 @@ Deno.test("admin defaults accepts none for reasoning models", async () => {
     }),
   );
 
-  assert.equal(response.status, 200);
-  const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
-  assert.equal(payload.defaults?.reasoning_effort, "none");
-  assert.equal(kvStore.get(keyToString(["default", "reasoning_effort"])), "none");
+  assert.equal(response.status, 400);
+  const payload = await response.json() as { error?: { message?: string } };
+  assert.match(payload.error?.message ?? "", /reasoning_effort must be one of: low, medium, high, xhigh/);
+  assert.equal(kvStore.has(keyToString(["default", "reasoning_effort"])), false);
 });
 
 Deno.test("admin defaults rejects null reasoning effort", async () => {

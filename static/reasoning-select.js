@@ -14,6 +14,9 @@ const getReasoningLevelValue = (level) => {
 const isNoneReasoningValue = (value) => getTrimmedString(value).toLowerCase() === REASONING_NONE_VALUE;
 const getRawReasoningLevels = (model) =>
   Array.isArray(model?.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
+const hasNoneReasoningLevel = (levels) =>
+  Array.isArray(levels) &&
+  levels.some((level) => isNoneReasoningValue(getReasoningLevelValue(level)));
 
 const uniqueReasoningLevels = (levels) => {
   const unique = [];
@@ -33,6 +36,9 @@ export const getModelDefaultReasoning = (model) => {
   if (defaultReasoningEffort) return defaultReasoningEffort;
   return getReasoningEffortValue(model?.default_reasoning_level);
 };
+
+const modelSupportsNoneReasoning = (model) =>
+  hasNoneReasoningLevel(getRawReasoningLevels(model)) || isNoneReasoningValue(getModelDefaultReasoning(model));
 
 export const getModelReasoningLevels = (model) => {
   const rawLevels = getRawReasoningLevels(model);
@@ -69,7 +75,9 @@ export const setReasoningOptions = (select, levels, preferred, options = {}) => 
   const sourceLevels = Array.isArray(levels) ? levels : [];
   const noneValue = getTrimmedString(options.noneValue) || REASONING_NONE_VALUE;
   const includeDefault = options.includeDefault !== false;
-  const includeNone = options.includeNone !== false;
+  const includeNone = options.includeNone === undefined
+    ? hasNoneReasoningLevel(sourceLevels)
+    : options.includeNone === true;
   const defaultLabel = getTrimmedString(options.defaultLabel) || "Default";
   const noneLabel = getTrimmedString(options.noneLabel) || "None";
   const uniqueLevels = uniqueReasoningLevels(sourceLevels);
@@ -111,7 +119,9 @@ export const updateReasoningSelectForModel = (select, model, preferred, options 
   const rawLevels = getRawReasoningLevels(model);
   const levels = getModelReasoningLevels(model);
   const trimmedPreferred = getTrimmedString(preferred);
-  const includeNone = options.includeNone !== false;
+  const includeNone = options.includeNone === undefined
+    ? modelSupportsNoneReasoning(model)
+    : options.includeNone === true;
   const selectOptions = { ...options, includeNone };
 
   if (includeNone && isReasoningNoneSelection(trimmedPreferred, noneValue)) {
@@ -128,7 +138,7 @@ export const updateReasoningSelectForModel = (select, model, preferred, options 
     : levels.includes(defaultReasoning)
     ? defaultReasoning
     : options.includeDefault === false
-    ? levels[0] ?? noneValue
+    ? levels[0] ?? (includeNone ? noneValue : "")
     : "";
   return setReasoningOptions(select, rawLevels.length ? rawLevels : levels, selected, selectOptions);
 };
