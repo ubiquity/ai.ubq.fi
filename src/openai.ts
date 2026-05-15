@@ -268,8 +268,9 @@ const extractSnapshotReasoningLevels = (model: Record<string, unknown> | null): 
 const getCodexModelReasoning = (record: Record<string, unknown> | null): CodexModelReasoning => {
   const defaultLevel = normalizeSnapshotReasoningEffort(record?.default_reasoning_level);
   const levels = extractSnapshotReasoningLevels(record);
+  const levelsWithNone: ReasoningEffort[] = levels.includes("none") ? levels : ["none", ...levels];
   return {
-    levels: defaultLevel && !levels.includes(defaultLevel) ? [...levels, defaultLevel] : levels,
+    levels: defaultLevel && !levelsWithNone.includes(defaultLevel) ? [...levelsWithNone, defaultLevel] : levelsWithNone,
     defaultLevel,
   };
 };
@@ -294,9 +295,7 @@ const resolveDefaultReasoningLabel = (
   modelReasoning: CodexModelReasoning,
   defaultEffort: ReasoningEffort,
 ): ReasoningEffort => {
-  if (defaultEffort === "none" && (!modelReasoning.levels.length || modelReasoning.levels.includes("none"))) {
-    return "none";
-  }
+  if (defaultEffort === "none") return "none";
   if (modelReasoning.levels.includes(defaultEffort)) return defaultEffort;
   if (modelReasoning.defaultLevel === "none") return "none";
   if (modelReasoning.defaultLevel && modelReasoning.levels.includes(modelReasoning.defaultLevel)) {
@@ -335,6 +334,7 @@ const validateModelReasoningEffort = (
   fieldName: "reasoning_effort" | "reasoning.effort",
 ): Response | null => {
   if (effort === undefined) return null;
+  if (effort === "none") return null;
   if (!modelReasoning.levels.length) {
     return openaiError(
       400,

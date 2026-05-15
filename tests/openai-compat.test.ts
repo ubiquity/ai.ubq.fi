@@ -464,6 +464,69 @@ Deno.test("openai: default reasoning level is accepted when supported levels are
   }
 });
 
+Deno.test("openai: none reasoning disables reasoning even when snapshot levels omit none", async () => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const previousSnapshot = kvStore.get(snapshotKey);
+
+  kvStore.set(snapshotKey, {
+    source: "chatgpt_codex",
+    updated_at_ms: Date.now(),
+    models: [{
+      slug: DEFAULT_TEST_MODEL,
+      display_name: "GPT-5 Fixture Default",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+    }],
+  });
+
+  try {
+    const capabilitiesResponse = await withFetchMock(
+      () => {
+        throw new Error("model capability reads should not fetch upstream");
+      },
+      () => handleModelCapabilities(),
+    );
+    assert.equal(capabilitiesResponse.status, 200);
+    const capabilitiesPayload = await capabilitiesResponse.json() as {
+      data?: Array<{ supported_reasoning_levels?: string[] }>;
+    };
+    assert.deepEqual(capabilitiesPayload.data?.[0]?.supported_reasoning_levels, [
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+
+    let recordedBody: Record<string, unknown> | null = null;
+    const chatResponse = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages: [{ role: "user", content: "ping" }],
+              reasoning_effort: "none",
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(chatResponse.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    assert.deepEqual(recorded.reasoning, { effort: "none" });
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+  }
+});
+
 Deno.test("openai: models returns stored Codex snapshot without upstream fetch", async () => {
   const response = await withFetchMock(
     () => {

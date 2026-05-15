@@ -387,7 +387,7 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
       }
 
       const levels = extractModelReasoningLevels(modelRecord);
-      if (levels.length > 0 && !levels.includes(nextReasoning)) {
+      if (nextReasoning !== "none" && levels.length > 0 && !levels.includes(nextReasoning)) {
         return openaiError(
           400,
           `reasoning_effort must be one of: ${levels.join(", ")}`,

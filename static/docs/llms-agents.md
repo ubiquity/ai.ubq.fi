@@ -323,7 +323,7 @@ Notes:
 - Non-reasoning models default to `none`.
 - Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
 - Use `reasoning_effort: "none"` (chat completions) or `reasoning: { "effort": "none" }` (responses) to disable
-  reasoning when the selected model supports `none`.
+  reasoning.
 - If a model rejects a reasoning effort, inspect `/uos/models/capabilities` and retry with one of that model's listed
   values; omit reasoning controls when the model does not list reasoning support.
 - In the browser chat playground, `Default` omits `reasoning_effort`; `None` sends `reasoning_effort: "none"`.
