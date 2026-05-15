@@ -248,10 +248,13 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal(Object.prototype.hasOwnProperty.call(recorded, "reasoning"), false);
   });
 
-  await t.step("chat rejects null reasoning effort", async () => {
+  await t.step("chat accepts null reasoning effort as unspecified", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
     const response = await withFetchMock(
-      () => {
-        throw new Error("invalid reasoning requests should not fetch upstream");
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
       },
       () =>
         handleChatCompletions(
@@ -266,10 +269,10 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
         ),
     );
 
-    assert.equal(response.status, 400);
-    const payload = await response.json() as { error?: { message?: string; param?: string | null } };
-    assert.equal(payload.error?.param, "reasoning_effort");
-    assert.match(payload.error?.message ?? "", /must be a string/);
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    assert.deepEqual(recorded["reasoning"], { effort: "low" });
   });
 
   await t.step("responses uses default model/reasoning and ignores temperature", async () => {
@@ -334,6 +337,64 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(Object.prototype.hasOwnProperty.call(recorded, "reasoning"), false);
+  });
+
+  await t.step("responses accepts null reasoning as unspecified", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              input: "ping",
+              reasoning: null,
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    assert.deepEqual(recorded["reasoning"], { effort: "low" });
+  });
+
+  await t.step("responses accepts null reasoning fields as unspecified", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              input: "ping",
+              reasoning: {
+                effort: null,
+                summary: null,
+                generate_summary: null,
+              },
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    assert.deepEqual(recorded["reasoning"], { effort: "low" });
   });
 });
 

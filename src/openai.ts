@@ -477,7 +477,7 @@ const parseReasoningEffortField = (
   value: unknown,
   fieldName: string,
 ): { ok: true; value: ReasoningEffort | undefined } | { ok: false; message: string } => {
-  if (value === undefined) return { ok: true, value: undefined };
+  if (value === undefined || value === null) return { ok: true, value: undefined };
   if (typeof value !== "string") {
     return { ok: false, message: `${fieldName} must be a string` };
   }
@@ -492,26 +492,31 @@ const parseReasoningEffortField = (
 const parseReasoningParam = (
   value: unknown,
 ): { ok: true; value: Record<string, unknown> | undefined } | { ok: false; message: string } => {
-  if (value === undefined) return { ok: true, value: undefined };
+  if (value === undefined || value === null) return { ok: true, value: undefined };
   if (!isRecord(value)) return { ok: false, message: "reasoning must be an object" };
-  if ("effort" in value) {
-    const effort = parseReasoningEffortField(value.effort, "reasoning.effort");
+  const normalized = { ...value };
+  if ("effort" in normalized) {
+    const effort = parseReasoningEffortField(normalized.effort, "reasoning.effort");
     if (!effort.ok) return effort;
+    if (effort.value === undefined) delete normalized.effort;
+    else normalized.effort = effort.value;
   }
-  if ("summary" in value) {
-    const summary = value.summary;
-    if (summary !== undefined && typeof summary !== "string") {
+  if ("summary" in normalized) {
+    const summary = normalized.summary;
+    if (summary === undefined || summary === null) delete normalized.summary;
+    else if (typeof summary !== "string") {
       return { ok: false, message: "reasoning.summary must be a string" };
     }
   }
-  if ("generate_summary" in value) {
-    const generateSummary = value.generate_summary;
-    if (generateSummary !== undefined && typeof generateSummary !== "string") {
+  if ("generate_summary" in normalized) {
+    const generateSummary = normalized.generate_summary;
+    if (generateSummary === undefined || generateSummary === null) delete normalized.generate_summary;
+    else if (typeof generateSummary !== "string") {
       return { ok: false, message: "reasoning.generate_summary must be a string" };
     }
   }
 
-  return { ok: true, value };
+  return { ok: true, value: Object.keys(normalized).length ? normalized : undefined };
 };
 
 const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set([
