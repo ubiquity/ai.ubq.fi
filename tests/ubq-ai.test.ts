@@ -561,7 +561,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
-  const codexText = `codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex"}\nnext`;
   const { runtime, outText, errText, requests } = makeRuntime({
     env: {
       DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz",
@@ -570,7 +569,6 @@ Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
     },
     readTextFile: (path: string) => {
       if (path === "/home/test/.codex/auth.json") return Promise.resolve(authJson);
-      if (path === "/opt/bin/codex") return Promise.resolve(codexText);
       return Promise.reject(new Error(`unexpected path ${path}`));
     },
     fetch: (_req, recorded) => {
@@ -580,6 +578,9 @@ Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
       const parsed = JSON.parse(recorded.bodyText ?? "null") as { auth?: unknown; models?: unknown };
       assert.deepEqual(parsed.auth, authObject);
       assert.equal(isRecord(parsed.models), true);
+      const models = parsed.models as Record<string, unknown>;
+      assert.equal(models.source, "chatgpt_codex");
+      assert.equal("models" in models, false);
       return jsonResponse(200, { ok: true });
     },
   });
@@ -591,19 +592,20 @@ Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: admin upload-auth includes codex model snapshot", async () => {
+Deno.test("ubq-ai: admin upload-auth includes codex client version hint", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
-  const codexText = `codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","supported_reasoning_levels":["low","high"]}\nnext`;
   const { runtime, outText, errText, requests } = makeRuntime({
     env: {
       DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz",
       HOME: "/home/test",
-      PATH: "/opt/bin",
+      PATH: "/opt/lib/node_modules/@openai/codex/bin",
     },
     readTextFile: (path: string) => {
       if (path === "/home/test/.codex/auth.json") return Promise.resolve(authJson);
-      if (path === "/opt/bin/codex") return Promise.resolve(codexText);
+      if (path === "/opt/lib/node_modules/@openai/codex/package.json") {
+        return Promise.resolve(JSON.stringify({ version: "0.99.0" }));
+      }
       return Promise.reject(new Error(`unexpected path ${path}`));
     },
     fetch: (_req, recorded) => {
@@ -618,13 +620,10 @@ Deno.test("ubq-ai: admin upload-auth includes codex model snapshot", async () =>
       assert.equal(isRecord(parsed.models), true);
       assert.equal("instructions" in parsed, false);
       const models = parsed.models as Record<string, unknown>;
-      assert.equal(models.source, "codex_cli");
+      assert.equal(models.source, "chatgpt_codex");
       assert.equal(models.client_version, "0.99.0");
       assert.ok(typeof models.updated_at_ms === "number");
-      assert.ok(Array.isArray(models.models));
-      const first = (models.models as Record<string, unknown>[])[0] ?? {};
-      assert.equal(first.slug, "gpt-5.2-codex");
-      assert.deepEqual(first.supported_reasoning_levels, ["low", "high"]);
+      assert.equal("models" in models, false);
       return jsonResponse(200, { ok: true, models: { count: 1 } });
     },
   });
@@ -639,7 +638,6 @@ Deno.test("ubq-ai: admin upload-auth includes codex model snapshot", async () =>
 Deno.test("ubq-ai: admin upload-auth falls back to local version file", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
-  const codexText = `{"slug":"gpt-5.2-codex","supported_reasoning_levels":["low","high"]}\nnext`;
   const versionJson = JSON.stringify({ latest_version: "0.88.1" });
   const { runtime, outText, errText, requests } = makeRuntime({
     env: {
@@ -650,7 +648,6 @@ Deno.test("ubq-ai: admin upload-auth falls back to local version file", async ()
     readTextFile: (path: string) => {
       if (path === "/home/test/.codex/auth.json") return Promise.resolve(authJson);
       if (path === "/home/test/.codex/version.json") return Promise.resolve(versionJson);
-      if (path === "/opt/bin/codex") return Promise.resolve(codexText);
       return Promise.reject(new Error(`unexpected path ${path}`));
     },
     fetch: (_req, recorded) => {
@@ -664,9 +661,10 @@ Deno.test("ubq-ai: admin upload-auth falls back to local version file", async ()
       assert.equal(isRecord(parsed.models), true);
       assert.equal("instructions" in parsed, false);
       const models = parsed.models as Record<string, unknown>;
-      assert.equal(models.source, "codex_cli");
+      assert.equal(models.source, "chatgpt_codex");
       assert.equal(models.client_version, "0.88.1");
       assert.ok(typeof models.updated_at_ms === "number");
+      assert.equal("models" in models, false);
       return jsonResponse(200, { ok: true, models: { count: 1 } });
     },
   });

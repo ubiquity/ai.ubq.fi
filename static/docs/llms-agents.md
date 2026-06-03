@@ -126,8 +126,8 @@ Health endpoints:
 
 ## Models
 
-`GET /v1/models` returns a strict OpenAI-style model list (`object: "list"`, `data: [...]`) from the stored Codex CLI
-model snapshot. Each model object contains only the OpenAI model fields: `id`, `object`, `created`, and `owned_by`. When
+`GET /v1/models` returns a strict OpenAI-style model list (`object: "list"`, `data: [...]`) from the stored live Codex
+model catalog. Each model object contains only the OpenAI model fields: `id`, `object`, `created`, and `owned_by`. When
 no snapshot has been initialized, it returns an empty list.
 
 Use `/v1/models` as the source of truth instead of assuming OpenAI public API aliases are supported. The gateway is
@@ -319,7 +319,7 @@ Notes:
 
 ## Reasoning defaults
 
-- Models with `supported_reasoning_levels` in the stored Codex CLI snapshot default to the configured reasoning effort.
+- Models with `supported_reasoning_levels` in the stored Codex catalog default to the configured reasoning effort.
 - Non-reasoning models default to `none`.
 - Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
 - Use `reasoning_effort: "none"` (chat completions) or `reasoning: { "effort": "none" }` (responses) to disable

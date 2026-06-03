@@ -1,5 +1,3 @@
-import { extractCodexModelsFromText, resolveCodexBinaryPath } from "./codex-models.ts";
-
 export type FlagValue = string | boolean | string[];
 
 export type ParsedArgs = Readonly<{
@@ -103,19 +101,11 @@ const resolveCodexClientVersion = async (
   return await readCodexVersionFile(runtime, homeDir);
 };
 
-const loadCodexBinaryText = async (
+const listCodexBinaryCandidates = (
   runtime: UbqAiRuntime,
   codexBinFlag: string | null,
   homeDir: string | undefined,
-): Promise<
-  | {
-    path: string;
-    sourcePath: string;
-    text: string;
-    models: NonNullable<ReturnType<typeof extractCodexModelsFromText>>;
-  }
-  | null
-> => {
+): string[] => {
   const candidates: string[] = [];
   if (codexBinFlag) candidates.push(expandTilde(codexBinFlag, homeDir));
   const pathValue = runtime.envGet("PATH") ?? "";
@@ -123,39 +113,7 @@ const loadCodexBinaryText = async (
   for (const segment of pathValue.split(separator).filter(Boolean)) {
     candidates.push(`${segment.replace(/\/$/, "")}/codex`);
   }
-
-  const seen = new Set<string>();
-
-  for (const candidate of candidates) {
-    if (seen.has(candidate)) continue;
-    seen.add(candidate);
-    try {
-      const resolved = await resolveCodexBinaryPath(
-        candidate,
-        runtime.readTextFile,
-        Deno.build.os,
-        Deno.build.arch,
-        Deno.realPath,
-      );
-      let text: string;
-      try {
-        text = await runtime.readTextFile(resolved);
-      } catch (error) {
-        try {
-          const bytes = await Deno.readFile(resolved);
-          text = new TextDecoder().decode(bytes);
-        } catch {
-          throw error;
-        }
-      }
-      const models = extractCodexModelsFromText(text);
-      if (!models) continue;
-      return { path: resolved, sourcePath: candidate, text, models };
-    } catch {
-      // ignore
-    }
-  }
-  return null;
+  return candidates;
 };
 
 const pushFlag = (flags: Record<string, FlagValue>, key: string, value: string | boolean): void => {
@@ -380,7 +338,7 @@ Commands:
   admin kernel-usage set --owner <name> [--repo <name>] --usage-limit <requests> [--window-ms <ms>] [--scope repo|org] [--reset-usage]
 
 Admin notes:
-  upload-auth extracts Codex models from the local codex binary.
+  upload-auth stores the live Codex model catalog returned by upstream auth validation.
 
 Admin key expiration:
   --expires <preset>           day|week|month|quarter|year|forever (sets expires_at_ms)
@@ -1125,27 +1083,22 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       }
 
       if (flags["skip-models"] !== undefined || flags["no-models"] !== undefined) {
-        await writeErrText(runtime, "--skip-models is no longer supported; Codex model extraction is required.\n");
-        return 2;
-      }
-      const codexBinFlag = getFlagString(flags, "codex-bin");
-      let modelsPayload: Record<string, unknown> | null = null;
-      const binary = await loadCodexBinaryText(runtime, codexBinFlag, homeDir);
-      if (!binary) {
         await writeErrText(
           runtime,
-          "Codex binary with model metadata not found on PATH. Pass --codex-bin to the real Codex binary.\n",
+          "--skip-models is obsolete; upload-auth always stores the live upstream Codex model catalog.\n",
         );
         return 2;
       }
-      const extractedModels = binary.models;
-      const fallbackVersion = await resolveCodexClientVersion(runtime, [binary.sourcePath, binary.path], homeDir);
-      const clientVersion = extractedModels.clientVersion ?? fallbackVersion ?? undefined;
-      modelsPayload = {
-        source: "codex_cli",
+      const codexBinFlag = getFlagString(flags, "codex-bin");
+      const clientVersion = await resolveCodexClientVersion(
+        runtime,
+        listCodexBinaryCandidates(runtime, codexBinFlag, homeDir),
+        homeDir,
+      ) ?? undefined;
+      const modelsPayload: Record<string, unknown> = {
+        source: "chatgpt_codex",
         client_version: clientVersion,
         updated_at_ms: Date.now(),
-        models: extractedModels.models,
       };
 
       const payload = { auth: authJson, models: modelsPayload };

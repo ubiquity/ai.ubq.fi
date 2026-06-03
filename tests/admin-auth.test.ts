@@ -75,7 +75,7 @@ const makeRequest = (body: unknown): Request =>
     body: JSON.stringify(body),
   });
 
-Deno.test("admin codex auth stores CLI model snapshot as source of truth", async () => {
+Deno.test("admin codex auth stores live upstream model catalog as source of truth", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
   const fetchUrls: string[] = [];
@@ -84,10 +84,27 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     fetchUrls.push(url);
     return Promise.resolve(
-      new Response(JSON.stringify({ models: [{ slug: "stale-live-model" }] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({
+          models: [{
+            slug: "gpt-5.3-codex-spark",
+            display_name: "GPT-5.3-Codex-Spark",
+            visibility: "list",
+            supported_in_api: false,
+            default_reasoning_level: "high",
+            supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+          }, {
+            slug: "codex-auto-review",
+            display_name: "Codex Auto Review",
+            visibility: "hide",
+            supported_in_api: true,
+          }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
     );
   };
 
@@ -100,8 +117,8 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
           client_version: "0.126.0",
           updated_at_ms: 123,
           models: [{
-            slug: "gpt-5.5",
-            display_name: "GPT-5.5",
+            slug: "stale-local-model",
+            display_name: "Stale Local Model",
             context_window: 272000,
             max_context_window: 1000000,
             auto_compact_token_limit: null,
@@ -119,7 +136,7 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
     assert.equal(response.status, 200);
     const payload = await response.json() as { models?: { count?: number; source?: string } };
     assert.equal(payload.models?.count, 1);
-    assert.equal(payload.models?.source, "codex_cli");
+    assert.equal(payload.models?.source, "chatgpt_codex");
     assert.equal(fetchUrls.length, 1);
 
     const stored = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as
@@ -131,36 +148,39 @@ Deno.test("admin codex auth stores CLI model snapshot as source of truth", async
           context_window?: number;
           max_context_window?: number;
           auto_compact_token_limit?: number | null;
+          supported_in_api?: boolean;
+          default_reasoning_level?: string;
           supported_reasoning_levels?: string[];
         }>;
       }
       | undefined;
-    assert.equal(stored?.source, "codex_cli");
+    assert.equal(stored?.source, "chatgpt_codex");
     assert.equal(stored?.client_version, "0.126.0");
-    assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.5"]);
-    assert.equal(stored?.models?.[0]?.context_window, 272000);
-    assert.equal(stored?.models?.[0]?.max_context_window, 1000000);
-    assert.equal(stored?.models?.[0]?.auto_compact_token_limit, null);
-    assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh"]);
+    assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.3-codex-spark"]);
+    assert.equal(stored?.models?.[0]?.supported_in_api, false);
+    assert.equal(stored?.models?.[0]?.default_reasoning_level, "high");
+    assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, ["low", "medium", "high", "xhigh"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("admin codex auth rejects uploads without CLI model snapshot", async () => {
+Deno.test("admin codex auth stores live model catalog without caller model snapshot", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
-    throw new Error("auth upload without models should fail before upstream validation");
-  };
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: "gpt-5.3-codex-spark", visibility: "list" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
 
   try {
     const response = await handleAdminCodexAuth(makeRequest({ auth: authPayload }));
-    assert.equal(response.status, 400);
-    const payload = await response.json() as { error?: { message?: string } };
-    assert.match(payload.error?.message ?? "", /Codex CLI models array/);
-    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
-    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
+    assert.equal(response.status, 200);
+    const stored = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as { models?: Array<{ slug?: string }> };
+    assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.3-codex-spark"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -606,7 +606,14 @@ export const validateCodexAuthJson = async (
   auth: CodexAuthState,
   options: Readonly<{ clientVersion?: string | null }> = {},
 ): Promise<
-  { ok: true; auth: CodexAuthState; refreshed: boolean; status: number; contentType: string | null } | {
+  {
+    ok: true;
+    auth: CodexAuthState;
+    refreshed: boolean;
+    status: number;
+    contentType: string | null;
+    models: unknown;
+  } | {
     ok: false;
     status: number;
     body: string;
@@ -636,12 +643,21 @@ export const validateCodexAuthJson = async (
 
     const contentType = res.headers.get("Content-Type");
     if (res.ok) {
+      const text = await res.text().catch(() => "");
+      let models: unknown = null;
+      if (contentType?.includes("application/json") && text) {
+        try {
+          models = JSON.parse(text) as unknown;
+        } catch {
+          models = null;
+        }
+      }
       try {
         await res.body?.cancel();
       } catch {
         // ignore
       }
-      return { ok: true, auth, refreshed, status: res.status, contentType };
+      return { ok: true, auth, refreshed, status: res.status, contentType, models };
     }
 
     const text = await res.text().catch(() => "");

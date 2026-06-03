@@ -253,8 +253,8 @@ ubq-ai admin keys list | jq
 ## Admin: upload/validate Codex auth.json
 
 This validates your posted `auth.json` against the upstream Codex endpoint and, if valid, stores the tokens in Deno KV
-(becoming the active upstream auth for subsequent requests). The helper extracts the Codex model catalog from your local
-Codex CLI binary and uploads that snapshot as the single source of truth for `/v1/models` and the default model picker.
+(becoming the active upstream auth for subsequent requests). During validation, the server stores the live Codex model
+catalog returned by upstream as the single source of truth for `/v1/models` and the default model picker.
 
 Treat `auth.json` as a secret (it contains refresh tokens). Use the repo helper CLI:
 
@@ -264,8 +264,8 @@ export DENO_DEPLOY_TOKEN="..."
 deno task upload:auth --url https://ai.ubq.fi
 ```
 
-The helper CLI uses `DENO_DEPLOY_TOKEN` and requires a `codex` binary with embedded model metadata. Use `--codex-bin` to
-point at a specific binary if it is not on your PATH.
+The helper CLI uses `DENO_DEPLOY_TOKEN`. If a local `codex` package is available, the helper sends its client version as
+a hint so upstream returns the current Codex product catalog.
 
 ## Admin: create/manage UBQ API keys
 

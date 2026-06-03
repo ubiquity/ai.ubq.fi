@@ -105,26 +105,6 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   const clientVersion = isRecord(modelsPayload)
     ? getString(modelsPayload.client_version) ?? getString(modelsPayload.clientVersion)
     : null;
-  const snapshot = normalizeCodexModelsPayload(modelsPayload);
-  if (!snapshot) {
-    return openaiError(
-      400,
-      "models must include a non-empty Codex CLI models array",
-      "invalid_request_error",
-    );
-  }
-  const snapshotSize = estimateJsonSize(snapshot);
-  if (snapshotSize === null) {
-    return openaiError(400, "models payload could not be serialized", "invalid_request_error");
-  }
-  if (snapshotSize > SAFE_KV_BYTES) {
-    return openaiError(
-      413,
-      `models snapshot too large (${snapshotSize} bytes; max ${MAX_KV_BYTES}).`,
-      "invalid_request_error",
-    );
-  }
-
   let validated: Awaited<ReturnType<typeof validateCodexAuthJson>>;
   try {
     validated = await validateCodexAuthJson(seed, { clientVersion });
@@ -143,6 +123,29 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       401,
       `Invalid Codex auth.json (upstream ${validated.status}): ${validated.body}`,
       "invalid_api_key",
+    );
+  }
+
+  const snapshot = normalizeCodexModelsPayload(validated.models, {
+    source: "chatgpt_codex",
+    clientVersion,
+  });
+  if (!snapshot) {
+    return openaiError(
+      502,
+      "Codex upstream models response did not include a non-empty model catalog",
+      "codex_upstream_unreachable",
+    );
+  }
+  const snapshotSize = estimateJsonSize(snapshot);
+  if (snapshotSize === null) {
+    return openaiError(400, "models payload could not be serialized", "invalid_request_error");
+  }
+  if (snapshotSize > SAFE_KV_BYTES) {
+    return openaiError(
+      413,
+      `models snapshot too large (${snapshotSize} bytes; max ${MAX_KV_BYTES}).`,
+      "invalid_request_error",
     );
   }
 
@@ -595,7 +598,10 @@ const extractModelReasoningLevels = (model: Record<string, unknown> | null): Rea
   return Array.from(new Set(levels));
 };
 
-const normalizeCodexModelsPayload = (value: unknown): CodexModelsSnapshot | null => {
+const normalizeCodexModelsPayload = (
+  value: unknown,
+  overrides: Readonly<{ source?: string; clientVersion?: string | null; updatedAtMs?: number | null }> = {},
+): CodexModelsSnapshot | null => {
   let modelsRaw: unknown = null;
   let source = "codex_cli";
   let clientVersion: string | null = null;
@@ -613,6 +619,11 @@ const normalizeCodexModelsPayload = (value: unknown): CodexModelsSnapshot | null
       updatedAtMs = Math.trunc(value.updated_at_ms);
     }
   }
+  if (overrides.source) source = overrides.source;
+  if (overrides.clientVersion) clientVersion = overrides.clientVersion;
+  if (typeof overrides.updatedAtMs === "number" && Number.isFinite(overrides.updatedAtMs)) {
+    updatedAtMs = Math.trunc(overrides.updatedAtMs);
+  }
 
   if (!modelsRaw || !Array.isArray(modelsRaw)) return null;
 
@@ -625,6 +636,9 @@ const normalizeCodexModelsPayload = (value: unknown): CodexModelsSnapshot | null
     if (displayName) normalized.display_name = displayName;
     const description = getString(item.description);
     if (description) normalized.description = description;
+    const visibility = getString(item.visibility);
+    if (visibility) normalized.visibility = visibility;
+    if (typeof item.supported_in_api === "boolean") normalized.supported_in_api = item.supported_in_api;
     for (const key of ["context_window", "max_context_window", "auto_compact_token_limit"]) {
       if (item[key] === null) {
         normalized[key] = null;
