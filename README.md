@@ -38,8 +38,8 @@ curl -sS https://ai.ubq.fi/admin/api-keys \
 Health:
 
 ```bash
-curl -sS https://ai.ubq.fi/health
-curl -sS https://ai.ubq.fi/health/upstream
+curl -sS https://ai.ubq.fi/health         # readiness probe: auth + upstream
+curl -sS https://ai.ubq.fi/health/upstream  # upstream probe only
 curl -sS https://ai.ubq.fi/health/auth
 ```
 
@@ -386,9 +386,9 @@ deno task ubq-ai admin keys revoke --id "<id>"
 ## Supported routes
 
 - `GET /`, `GET /docs`, `GET /chat`, `GET /admin`, and static assets
-- `GET /health`
+- `GET /health` (readiness: Codex auth presence + upstream probe)
 - `GET /health/auth` (Codex auth metadata; no upstream refresh and no chat tokens used)
-- `GET /health/upstream` (Codex chat probe)
+- `GET /health/upstream` (upstream connectivity check; same auth probe logic as `/health`)
 - `POST /api/auth/register/start`, `POST /api/auth/register/finish`
 - `POST /api/auth/login/start`, `POST /api/auth/login/finish`
 - `GET /api/auth/session`, `POST /api/auth/logout`

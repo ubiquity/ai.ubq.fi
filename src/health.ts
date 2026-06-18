@@ -5,43 +5,56 @@ import { kvPromise } from "./kv.ts";
 import { decodeBase64ToString } from "./utils.ts";
 
 const AUTH_REFRESH_WINDOW_MS = 2 * 60_000;
+const AUTH_NOT_CONFIGURED = "No Codex auth configured (CODEX_AUTH_JSON_B64 or KV entry missing).";
 
-export const handleHealth = async (): Promise<Response> => {
-  const problems: string[] = [];
-  const kv = await kvPromise;
-  let hasCodexAuth = Boolean(config.codexAuthJsonB64);
-  if (!hasCodexAuth && kv) {
-    const entry = await kv.get(CODEX_KV_KEY);
-    hasCodexAuth = Boolean(entry.value);
-  }
-  if (!hasCodexAuth) problems.push("CODEX_AUTH_JSON_B64 missing");
-  if (config.isDeploy && config.authTokens.size === 0 && !kv) {
-    problems.push("No UOS_AI_TOKEN and Deno KV unavailable");
-  }
-  return json(problems.length === 0 ? 200 : 500, {
-    ok: problems.length === 0,
-    problems,
-  });
+type HealthAuthMetaBase = {
+  source: "kv" | "env" | "none";
+  updated_at_ms: number | null;
+  access_token_exp_ms: number | null;
 };
 
-const loadEnvCodexAuth = (): { source: "env"; access_token_exp_ms: number | null } | null => {
+type HealthAuthMeta = HealthAuthMetaBase & {
+  access_token_expired: boolean | null;
+  refresh_recommended: boolean | null;
+};
+
+type HealthUpstreamProbe = {
+  ok: boolean;
+  status: number;
+  upstream: "chatgpt_codex";
+  content_type: string | null;
+  auth: HealthAuthMeta;
+  error?: string;
+  details?: string;
+  problems: string[];
+};
+
+const nowMs = (): number => Date.now();
+
+const enrichAuthMeta = (meta: HealthAuthMetaBase): HealthAuthMeta => {
+  const now = nowMs();
+  const expMs = meta.access_token_exp_ms;
+  return {
+    ...meta,
+    access_token_expired: typeof expMs === "number" ? expMs <= now : null,
+    refresh_recommended: typeof expMs === "number" ? expMs - now < AUTH_REFRESH_WINDOW_MS : null,
+  };
+};
+
+const loadEnvCodexAuth = (): HealthAuthMetaBase | null => {
   if (!config.codexAuthJsonB64) return null;
   try {
     const decoded = decodeBase64ToString(config.codexAuthJsonB64);
     const parsed = JSON.parse(decoded);
     const auth = parseCodexAuthFromAuthJson(parsed);
     if (!auth) return null;
-    return { source: "env", access_token_exp_ms: getJwtExpMs(auth.access_token) };
+    return { source: "env", updated_at_ms: null, access_token_exp_ms: getJwtExpMs(auth.access_token) };
   } catch {
     return null;
   }
 };
 
-const getCodexAuthMeta = async (): Promise<
-  | { source: "kv"; updated_at_ms: number; access_token_exp_ms: number | null }
-  | { source: "env"; updated_at_ms: null; access_token_exp_ms: number | null }
-  | { source: "none"; updated_at_ms: null; access_token_exp_ms: null }
-> => {
+const getCodexAuthMeta = async (): Promise<HealthAuthMetaBase> => {
   const kv = await kvPromise;
   if (kv) {
     const entry = await kv.get<{ access_token: string; updated_at_ms: number }>(CODEX_KV_KEY);
@@ -53,88 +66,118 @@ const getCodexAuthMeta = async (): Promise<
       };
     }
   }
+
   const envMeta = loadEnvCodexAuth();
   if (envMeta) return { ...envMeta, updated_at_ms: null };
+
   return { source: "none", updated_at_ms: null, access_token_exp_ms: null };
 };
 
+const probeUpstream = async (): Promise<HealthUpstreamProbe> => {
+  const auth = enrichAuthMeta(await getCodexAuthMeta());
+
+  if (auth.source === "none") {
+    return {
+      ok: false,
+      status: 503,
+      upstream: "chatgpt_codex",
+      content_type: null,
+      auth,
+      error: AUTH_NOT_CONFIGURED,
+      details: AUTH_NOT_CONFIGURED,
+      problems: [AUTH_NOT_CONFIGURED],
+    };
+  }
+
+  try {
+    const res = await fetchCodexModels();
+    const contentType = res.headers.get("Content-Type");
+    if (res.ok) {
+      try {
+        await res.body?.cancel();
+      } catch {
+        // ignore
+      }
+      return {
+        ok: true,
+        status: 200,
+        upstream: "chatgpt_codex",
+        content_type: contentType,
+        auth,
+        problems: [],
+      };
+    }
+
+    const text = await res.text().catch(() => "");
+    const snippet = text.trim().slice(0, 800) || res.statusText;
+    const status = res.status === 401 ? 401 : 503;
+    return {
+      ok: false,
+      status,
+      upstream: "chatgpt_codex",
+      content_type: contentType,
+      auth,
+      error: snippet,
+      details: `Codex upstream models endpoint returned ${res.status}.`,
+      problems: status === 401 ? ["Upstream auth is invalid."] : ["Upstream unavailable."],
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      status: 503,
+      upstream: "chatgpt_codex",
+      content_type: null,
+      auth,
+      error: "Upstream fetch failed",
+      details: detail,
+      problems: [`Upstream fetch failed: ${detail || "network error"}`],
+    };
+  }
+};
+
+export const handleHealth = async (): Promise<Response> => {
+  const probe = await probeUpstream();
+
+  return json(probe.status, {
+    ok: probe.ok,
+    problems: probe.problems,
+    upstream: probe.upstream,
+    status: probe.status,
+    content_type: probe.content_type,
+    ...(probe.error !== undefined ? { error: probe.error } : {}),
+    ...(probe.details !== undefined ? { details: probe.details } : {}),
+    auth: probe.auth,
+  });
+};
+
 export const handleHealthAuth = async (): Promise<Response> => {
-  const authMeta = await getCodexAuthMeta();
-  if (authMeta.source === "none") {
+  const auth = enrichAuthMeta(await getCodexAuthMeta());
+  if (auth.source === "none") {
     return json(503, {
       ok: false,
       upstream: "chatgpt_codex",
-      error: "No Codex auth configured (CODEX_AUTH_JSON_B64 or KV entry missing).",
-      auth: authMeta,
+      error: AUTH_NOT_CONFIGURED,
+      auth,
     });
   }
-
-  const expMs = authMeta.access_token_exp_ms;
-  const now = Date.now();
-  const accessTokenExpired = typeof expMs === "number" ? expMs <= now : null;
-  const refreshRecommended = typeof expMs === "number" ? expMs - now < AUTH_REFRESH_WINDOW_MS : null;
 
   return json(200, {
     ok: true,
     upstream: "chatgpt_codex",
-    auth: {
-      ...authMeta,
-      access_token_expired: accessTokenExpired,
-      refresh_recommended: refreshRecommended,
-    },
+    auth,
   });
 };
 
 export const handleHealthUpstream = async (): Promise<Response> => {
-  const authMeta = await getCodexAuthMeta();
-  if (authMeta.source === "none") {
-    return json(503, {
-      ok: false,
-      upstream: "chatgpt_codex",
-      error: "No Codex auth configured (CODEX_AUTH_JSON_B64 or KV entry missing).",
-      auth: authMeta,
-    });
-  }
-
-  let res: Response;
-  try {
-    res = await fetchCodexModels();
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return json(503, {
-      ok: false,
-      upstream: "chatgpt_codex",
-      error: detail || "Upstream fetch failed",
-      auth: authMeta,
-    });
-  }
-
-  const contentType = res.headers.get("Content-Type");
-
-  if (res.ok) {
-    try {
-      await res.body?.cancel();
-    } catch {
-      // ignore
-    }
-    return json(200, {
-      ok: true,
-      upstream: "chatgpt_codex",
-      status: res.status,
-      content_type: contentType,
-      auth: authMeta,
-    });
-  }
-
-  const text = await res.text().catch(() => "");
-  const snippet = text.trim().slice(0, 800) || res.statusText;
-
-  return json(res.status === 401 ? 401 : 503, {
-    ok: false,
-    upstream: "chatgpt_codex",
-    status: res.status,
-    content_type: contentType,
-    error: snippet,
-    auth: authMeta,
+  const probe = await probeUpstream();
+  return json(probe.status, {
+    ok: probe.ok,
+    upstream: probe.upstream,
+    status: probe.status,
+    content_type: probe.content_type,
+    ...(probe.error !== undefined ? { error: probe.error } : {}),
+    ...(probe.details !== undefined ? { details: probe.details } : {}),
+    auth: probe.auth,
   });
 };
