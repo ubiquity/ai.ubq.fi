@@ -1,8 +1,10 @@
 import "./network.js";
 import {
+  buildBackendUrl,
   formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
+  resolveBackendBase,
   registerPasskey,
   signInWithPasskey,
   signOut,
@@ -74,6 +76,21 @@ const setAuthBadge = (state, text) => {
 const setPasskeyStatus = (state, text) => {
   passkeyStatus.dataset.state = state;
   passkeyStatus.textContent = text;
+};
+
+const getActiveBackendBase = () => resolveBackendBase();
+
+const formatBackendLabel = (baseUrl) => {
+  try {
+    return new URL(baseUrl).origin;
+  } catch {
+    return baseUrl;
+  }
+};
+
+const buildBackendAwareMessage = (baseUrl, fallback) => {
+  const target = formatBackendLabel(baseUrl);
+  return `${fallback} Re-sign in on the active backend at ${target}.`;
 };
 
 const setSignedInState = (signedIn, options = {}) => {
@@ -169,7 +186,24 @@ const setReasoningPlaceholder = (label) => {
   setSharedReasoningPlaceholder(reasoningSelect, label);
 };
 
-const setModelOptions = (models, preferred) => {
+const loadDefaultModelFromAdmin = async (token, baseUrl) => {
+  try {
+    const response = await fetch(buildBackendUrl("/admin/defaults", baseUrl), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!response.ok) return "";
+    const payload = await response.json().catch(() => null);
+    const raw = payload?.defaults?.model;
+    if (typeof raw !== "string") return "";
+    const model = raw.trim();
+    return model;
+  } catch {
+    return "";
+  }
+};
+
+const setModelOptions = (models, preferred, fallbackModel = "") => {
   modelInput.textContent = "";
   const options = models
     .map((model) => {
@@ -193,9 +227,11 @@ const setModelOptions = (models, preferred) => {
   });
 
   const preferredValue = typeof preferred === "string" ? preferred.trim() : "";
-  const fallback = options[0].value;
+  const fallbackValue = typeof fallbackModel === "string" ? fallbackModel.trim() : "";
+  const firstValue = options[0].value;
   const hasStored = options.some((option) => option.value === preferredValue);
-  const next = hasStored ? preferredValue : fallback;
+  const hasFallback = fallbackValue ? options.some((option) => option.value === fallbackValue) : false;
+  const next = hasStored ? preferredValue : hasFallback ? fallbackValue : firstValue;
   modelInput.value = next;
   return next;
 };
@@ -217,19 +253,31 @@ const loadModels = async (token) => {
   if (!trimmed) return;
   if (trimmed === modelsLoadedToken) return;
   const requestId = ++modelsRequestId;
+  const backendBase = getActiveBackendBase();
   try {
-    const [modelsResponse, capabilitiesResponse] = await Promise.all([
-      fetch("/v1/models", { headers: { Authorization: `Bearer ${trimmed}` }, cache: "no-store" }).then(
+    const [modelsResponse, capabilitiesResponse, defaultsResponse] = await Promise.all([
+      fetch(buildBackendUrl("/v1/models", backendBase), {
+        headers: { Authorization: `Bearer ${trimmed}` },
+        cache: "no-store",
+      }).then(
         async (res) => ({ res, data: await res.json().catch(() => null) }),
       ),
-      fetch("/uos/models/capabilities", { headers: { Authorization: `Bearer ${trimmed}` }, cache: "no-store" }).then(
+      fetch(
+        buildBackendUrl("/uos/models/capabilities", backendBase),
+        { headers: { Authorization: `Bearer ${trimmed}` }, cache: "no-store" },
+      ).then(
         async (res) => ({ res, data: await res.json().catch(() => null) }),
       ).catch((error) => ({ error })),
+      loadDefaultModelFromAdmin(trimmed, backendBase).then((model) => ({ ok: true, model })).catch(() => ({ ok: false, model: "" })),
     ]);
     const { res, data } = modelsResponse;
     if (requestId !== modelsRequestId) return;
     if (trimmed !== tokenInput.value.trim()) return;
     if (!res.ok) {
+      if (res.status === 401) {
+        setModelPlaceholder(buildBackendAwareMessage(backendBase, "Auth failed for the configured backend."));
+        return;
+      }
       const message = typeof data?.error?.message === "string" && data?.error?.message.trim().length > 0
         ? data.error.message
         : `Failed to load models (${res.status} ${res.statusText})`;
@@ -257,7 +305,8 @@ const loadModels = async (token) => {
         .filter((entry) => entry.id)
         .map((entry) => [entry.id, entry.model]),
     );
-    const selected = setModelOptions(models, preferredModel);
+    const defaultsModel = defaultsResponse.ok ? defaultsResponse.model : "";
+    const selected = setModelOptions(models, preferredModel, defaultsModel);
     if (selected && selected !== preferredModel) {
       preferredModel = selected;
       persistSetting(STORAGE_KEYS.model, selected);
@@ -285,12 +334,20 @@ const checkAuthToken = async () => {
 
   const requestId = ++authCheckId;
   setAuthBadge("unknown", "Checking...");
+  const backendBase = getActiveBackendBase();
   try {
-    const res = await fetch("/uos/auth", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+    const res = await fetch(buildBackendUrl("/uos/auth", backendBase), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
     const data = await res.json().catch(() => null);
     if (requestId !== authCheckId) return;
     if (!res.ok) {
-      setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
+      if (res.status === 401) {
+        setAuthBadge("bad", buildBackendAwareMessage(backendBase, "Token was rejected by the active backend."));
+      } else {
+        setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
+      }
       setSignedInState(false);
       resetModelCatalog();
       setReasoningPlaceholder("Invalid token");
@@ -454,6 +511,7 @@ passkeyLoginBtn.addEventListener("click", async () => {
   try {
     const passkeyHandle = passkeyHandleInput.value.trim();
     const result = await signInWithPasskey({
+      baseUrl: getActiveBackendBase(),
       handle: passkeyHandle,
       useHandle: Boolean(passkeyHandle),
     });
@@ -477,6 +535,7 @@ passkeyRegisterBtn.addEventListener("click", async () => {
     const result = await registerPasskey({
       handle: passkeyHandleInput.value,
       token: tokenInput.value,
+      baseUrl: getActiveBackendBase(),
     });
     if (result.handle) setPasskeyHandleValue(result.handle);
     applySignedInToken(result.token, { deviceRegistered: true });
@@ -493,7 +552,7 @@ signOutBtn.addEventListener("click", async () => {
   const token = tokenInput.value.trim();
   signOutBtn.disabled = true;
   try {
-    await signOut({ token });
+    await signOut({ token, baseUrl: getActiveBackendBase() });
   } finally {
     tokenInput.value = "";
     rememberTokenInput.checked = false;
@@ -656,8 +715,9 @@ const sendPrompt = async () => {
   setBusy(true);
 
   abortController = new AbortController();
+  const backendBase = getActiveBackendBase();
   try {
-    const res = await fetch("/v1/chat/completions", {
+    const res = await fetch(buildBackendUrl("/v1/chat/completions", backendBase), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -670,7 +730,11 @@ const sendPrompt = async () => {
     if (!res.ok) {
       const errorPayload = await res.json().catch(() => null);
       assistantEl.dataset.message = "error";
-      assistantEl.textContent = errorPayload?.error?.message ?? `${res.status} ${res.statusText}`;
+      if (res.status === 401) {
+        assistantEl.textContent = buildBackendAwareMessage(backendBase, "Auth failed for this chat request.");
+      } else {
+        assistantEl.textContent = errorPayload?.error?.message ?? `${res.status} ${res.statusText}`;
+      }
       return;
     }
 

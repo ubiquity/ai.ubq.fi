@@ -1,8 +1,10 @@
 import "./network.js";
 import {
+  buildBackendUrl,
   formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
+  resolveBackendBase,
   registerPasskey,
   signInWithPasskey,
   signOut,
@@ -18,7 +20,7 @@ const STORAGE_KEYS = {
   passkeyHandle: AUTH_STORAGE_KEYS.passkeyHandle,
   passkeyCredentialIds: AUTH_STORAGE_KEYS.passkeyCredentialIds,
   expiresPreset: "uos_ai.admin.expires_preset",
-  base: "uos_ai.admin.base",
+  base: AUTH_STORAGE_KEYS.base,
   view: "uos_ai.admin.view",
   defaultsSnapshot: "uos_ai.admin.defaults_snapshot",
   defaultsModels: "uos_ai.admin.defaults_models",
@@ -314,10 +316,9 @@ const resetKernelPolicyState = () => {
 
 const getBaseChoice = () => (baseSelect.value === "ai" ? "ai" : "local");
 
-const resolveBaseUrl =
-  () => (getBaseChoice() === "ai" ? "https://ai.ubq.fi" : globalThis.location?.origin ?? "http://localhost");
+const resolveBaseUrl = () => resolveBackendBase(getBaseChoice());
 
-const apiUrl = (path) => new URL(path, resolveBaseUrl()).toString();
+const apiUrl = (path) => buildBackendUrl(path, resolveBaseUrl());
 
 const updateBasePreview = () => {
   basePreview.textContent = resolveBaseUrl();
@@ -411,7 +412,7 @@ const getValidCachedRelayAuth = async () => {
   const token = getAdminToken();
   if (!token) return null;
   try {
-    const res = await fetch(new URL("/uos/auth", globalThis.location.origin).toString(), {
+    const res = await fetch(apiUrl("/uos/auth"), {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });

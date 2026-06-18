@@ -3,6 +3,31 @@ export const STORAGE_KEYS = {
   token: "uos_ai.auth.token",
   passkeyHandle: "uos_ai.auth.passkey_handle",
   passkeyCredentialIds: "uos_ai.auth.passkey_credential_ids",
+  base: "uos_ai.admin.base",
+};
+
+const LOCAL_BACKEND_BASE = () => globalThis.location?.origin ?? "http://localhost";
+const REMOTE_BACKEND_BASE = "https://ai.ubq.fi";
+
+const normalizeBaseChoice = (value) => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "local";
+  if (normalized === "ai") return "ai";
+  if (normalized === "local") return "local";
+  if (/^https?:\/\//i.test(normalized)) return normalized.replace(/\/+$/, "");
+  return "local";
+};
+
+export const resolveBackendBase = (baseUrl = "") => {
+  const normalized = normalizeBaseChoice(baseUrl || storage.get(STORAGE_KEYS.base) || "local");
+  if (normalized === "ai") return REMOTE_BACKEND_BASE;
+  if (normalized === "local") return LOCAL_BACKEND_BASE();
+  if (/^https?:\/\//i.test(normalized)) return normalized.replace(/\/+$/, "");
+  return LOCAL_BACKEND_BASE();
+};
+
+export const buildBackendUrl = (path, baseUrl = "") => {
+  return new URL(path, resolveBackendBase(baseUrl)).toString();
 };
 
 export const storage = {
@@ -139,7 +164,7 @@ const apiErrorMessage = (body, fallback) => body?.error?.message ?? body?.error 
 const isUnknownPasskeyError = (body) => /unknown passkey/i.test(String(apiErrorMessage(body, "")));
 
 const requestJson = async (baseUrl, path, init) => {
-  const endpoint = new URL(path, baseUrl || globalThis.location.origin).toString();
+  const endpoint = buildBackendUrl(path, baseUrl);
   const res = await fetch(endpoint, init);
   const text = await res.text();
   let body = null;
@@ -162,7 +187,7 @@ export const signOut = async ({ baseUrl = "", token = "" } = {}) => {
   const bearer = token.trim();
   if (bearer) {
     try {
-      await fetch(new URL("/api/auth/logout", baseUrl || globalThis.location.origin).toString(), {
+      await fetch(buildBackendUrl("/api/auth/logout", baseUrl), {
         method: "POST",
         headers: { Authorization: `Bearer ${bearer}` },
         cache: "no-store",
