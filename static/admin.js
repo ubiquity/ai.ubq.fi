@@ -27,6 +27,8 @@ const STORAGE_KEYS = {
 };
 
 const AUTH_RELAY_TIMEOUT_MS = 120_000;
+const API_KEY_REQUEST_LOGS_LIMIT = 20;
+const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
 
 const readStorageJson = (key) => {
   const raw = storage.get(key);
@@ -133,6 +135,20 @@ let authWidgetAutoOpened = false;
 let allKeys = [];
 let keysLoading = false;
 let keysLoadedAt = 0;
+const apiKeyRequestLogCache = new Map();
+const apiKeyRequestLogPromises = new Map();
+const API_KEY_REQUEST_LOG_STATUS_OK = "OK";
+const API_KEY_REQUEST_LOG_STATUS_ERROR = "Error";
+const API_KEY_REQUEST_LOG_STATUS_UNAVAILABLE = "Unavailable";
+const getApiKeyRequestLogCacheKey = (keyId) => {
+  if (typeof keyId !== "string") return "";
+  const normalized = keyId.trim();
+  return normalized || "";
+};
+const clearApiKeyRequestLogCaches = () => {
+  apiKeyRequestLogCache.clear();
+  apiKeyRequestLogPromises.clear();
+};
 let passkeyUsers = [];
 let passkeyUsersLoading = false;
 let passkeyUsersLoadedAt = 0;
@@ -2842,6 +2858,207 @@ const buildUsageDetails = (usage, options = {}) => {
   return usageSection;
 };
 
+const normalizeApiKeyRequestLogRecord = (record) => {
+  if (!record || typeof record !== "object") return null;
+
+  const createdAtMs = typeof record.created_at_ms === "number" && Number.isFinite(record.created_at_ms)
+    ? Math.trunc(record.created_at_ms)
+    : null;
+  const statusCode = typeof record.status_code === "number" && Number.isFinite(record.status_code)
+    ? Math.trunc(record.status_code)
+    : null;
+  const method = typeof record.method === "string" ? record.method.trim().toUpperCase() : "";
+  const route = typeof record.route === "string" ? record.route.trim() : "";
+  const path = typeof record.path === "string" ? record.path.trim() : "";
+  const stream = record.stream === true;
+  const model = typeof record.model === "string" ? record.model.trim() : "";
+  const reasoning = typeof record.reasoning === "string" ? record.reasoning.trim() : "";
+
+  return {
+    id: typeof record.id === "string" && record.id.trim() ? record.id.trim() : `${route || "request"}-${createdAtMs || Date.now()}`,
+    created_at_ms: createdAtMs,
+    status_code: statusCode,
+    method: method || "GET",
+    route: route || "unknown",
+    path: path || null,
+    stream,
+    model: model || null,
+    reasoning: reasoning || null,
+  };
+};
+
+const buildApiKeyRequestLogsPanel = (keyId) => {
+  const panel = document.createElement("details");
+  panel.dataset.usage = "details";
+  panel.dataset.apiKeyRequestLogs = "panel";
+  panel.dataset.keyId = keyId;
+
+  const title = document.createElement("summary");
+  title.dataset.usageTitle = "title";
+
+  const label = document.createElement("span");
+  label.dataset.usageLabel = "label";
+  label.textContent = "Recent requests";
+
+  const summary = document.createElement("span");
+  summary.dataset.usageSummary = "summary";
+  summary.textContent = "Not loaded";
+
+  const list = document.createElement("div");
+  list.dataset.apiKeyRequestList = "list";
+
+  title.appendChild(label);
+  title.appendChild(summary);
+  panel.appendChild(title);
+  panel.appendChild(list);
+
+  return { panel, summary, list };
+};
+
+const setRequestLogsPanelMessage = (list, summary, text, status = API_KEY_REQUEST_LOG_STATUS_OK) => {
+  list.textContent = "";
+  const message = document.createElement("div");
+  message.dataset.usageEmpty = "empty";
+  message.textContent = text;
+  list.appendChild(message);
+  summary.textContent = text;
+  if (status === API_KEY_REQUEST_LOG_STATUS_ERROR) {
+    summary.dataset.state = "bad";
+  } else {
+    delete summary.dataset.state;
+  }
+};
+
+const createRequestLogRow = (record) => {
+  const row = document.createElement("div");
+  row.dataset.apiKeyRequestLog = "row";
+
+  const statusCode = typeof record.status_code === "number" && Number.isFinite(record.status_code)
+    ? Math.trunc(record.status_code)
+    : 0;
+  const statusState = statusCode >= 400 ? "bad" : "";
+
+  const routeText = record.path ? `${record.method} ${record.route} (${record.path})` : `${record.method} ${record.route}`;
+
+  appendMetaItem(row, "Request", routeText, { mono: true });
+  appendMetaItem(row, "Time", formatDate(record.created_at_ms));
+  appendMetaItem(row, "Status", `${formatNumber(statusCode)}${record.stream ? " · stream" : " · single"}`, {
+    state: statusState,
+  });
+  appendMetaItem(row, "Model", formatOptionalText(record.model));
+  appendMetaItem(row, "Reasoning", formatOptionalText(record.reasoning));
+
+  return row;
+};
+
+const loadApiKeyRequestLogs = async (keyId) => {
+  const cacheKey = getApiKeyRequestLogCacheKey(keyId);
+  if (!cacheKey) return { ok: false, records: [], error: "Missing key id" };
+
+  const token = getAdminToken();
+  if (!token) return { ok: false, records: [], error: "Missing token" };
+
+  const now = Date.now();
+  const cached = apiKeyRequestLogCache.get(cacheKey);
+  if (cached && now - cached.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS) {
+    return { ok: true, records: cached.records, fromCache: true };
+  }
+
+  const inFlight = apiKeyRequestLogPromises.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const request = (async () => {
+    try {
+      const url = new URL(apiUrl(`/admin/api-keys/${encodeURIComponent(cacheKey)}/requests`));
+      url.searchParams.set("limit", String(API_KEY_REQUEST_LOGS_LIMIT));
+
+      const res = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        return {
+          ok: false,
+          records: [],
+          error: data?.error?.message || API_KEY_REQUEST_LOG_STATUS_UNAVAILABLE,
+        };
+      }
+
+      const rawRecords = Array.isArray(data?.data) ? data.data : [];
+      const records = rawRecords
+        .map((record) => normalizeApiKeyRequestLogRecord(record))
+        .filter((record) => record && record.created_at_ms !== null);
+
+      apiKeyRequestLogCache.set(cacheKey, {
+        records,
+        fetchedAt: Date.now(),
+      });
+
+      return { ok: true, records };
+    } catch {
+      return { ok: false, records: [], error: API_KEY_REQUEST_LOG_STATUS_UNAVAILABLE };
+    } finally {
+      apiKeyRequestLogPromises.delete(cacheKey);
+    }
+  })();
+
+  apiKeyRequestLogPromises.set(cacheKey, request);
+  return request;
+};
+
+const hydrateApiKeyRequestLogs = async (panel, keyId) => {
+  if (!panel?.dataset) return;
+  const currentKeyId = panel.dataset.keyId;
+  if (!currentKeyId || currentKeyId !== keyId) return;
+
+  const summary = panel.querySelector("[data-usage-summary]");
+  const list = panel.querySelector("[data-api-key-request-list]");
+  if (!summary || !list) return;
+  if (panel.dataset.requestLogsState === "ready" && panel.dataset.requestLogsLoading !== "1") {
+    const cacheKey = getApiKeyRequestLogCacheKey(currentKeyId);
+    if (cacheKey) {
+      const cached = apiKeyRequestLogCache.get(cacheKey);
+      if (cached && Date.now() - cached.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS) return;
+    }
+  }
+
+  if (panel.dataset.requestLogsLoading === "1") return;
+  panel.dataset.requestLogsLoading = "1";
+  setRequestLogsPanelMessage(list, summary, "Loading...", API_KEY_REQUEST_LOG_STATUS_OK);
+  const response = await loadApiKeyRequestLogs(currentKeyId);
+
+  if (!panel.isConnected || panel.dataset.keyId !== currentKeyId) {
+    panel.dataset.requestLogsLoading = "0";
+    return;
+  }
+
+  if (!response.ok) {
+    panel.dataset.requestLogsState = "error";
+    setRequestLogsPanelMessage(list, summary, response.error || API_KEY_REQUEST_LOG_STATUS_ERROR, API_KEY_REQUEST_LOG_STATUS_ERROR);
+    panel.dataset.requestLogsLoading = "0";
+    return;
+  }
+
+  panel.dataset.requestLogsState = "ready";
+  const records = response.records || [];
+  if (!records.length) {
+    setRequestLogsPanelMessage(list, summary, `No requests in the last ${API_KEY_REQUEST_LOGS_LIMIT} calls`);
+    panel.dataset.requestLogsLoading = "0";
+    return;
+  }
+
+  const countText = records.length === 1 ? "1 request" : `${records.length} requests`;
+  summary.textContent = `${countText} (showing last ${API_KEY_REQUEST_LOGS_LIMIT})`;
+  list.textContent = "";
+  records.forEach((record) => {
+    list.appendChild(createRequestLogRow(record));
+  });
+  panel.dataset.requestLogsLoading = "0";
+};
+
 const renderKeys = (keys, view = "all") => {
   clearKeysListLoading();
   keysList.textContent = "";
@@ -3353,6 +3570,16 @@ const renderKeys = (keys, view = "all") => {
     });
 
     main.appendChild(editPanel);
+
+    if (key?.id) {
+      const { panel } = buildApiKeyRequestLogsPanel(key.id);
+      panel.addEventListener("toggle", () => {
+        if (panel.open) {
+          void hydrateApiKeyRequestLogs(panel, key.id);
+        }
+      });
+      main.appendChild(panel);
+    }
 
     const hasUsageField = Object.prototype.hasOwnProperty.call(key, "usage");
     const usage = hasUsageField ? key.usage : undefined;
@@ -3918,6 +4145,7 @@ const scheduleTokenCheck = debounce(() => {
     setAuthBadge("bad", "Missing token");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
+    clearApiKeyRequestLogCaches();
     return;
   }
   void testAdminToken();
@@ -4494,6 +4722,7 @@ tokenInput.addEventListener("input", () => {
   kernelQueueLoadedAt = 0;
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
+  clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
@@ -4513,6 +4742,7 @@ tokenInput.addEventListener("input", () => {
     kernelQueueItems = [];
     kernelPubKeys = [];
     kernelPubKeysLoadedAt = 0;
+    keysLoadedAt = 0;
     resetAdminPrefetchState("Sign in to prepare the admin views.");
   } else {
     setAuthBadge("unknown", "Checking...");

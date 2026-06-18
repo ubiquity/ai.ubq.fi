@@ -1,6 +1,7 @@
 import {
   handleAdminApiKeysCreate,
   handleAdminApiKeysDelete,
+  handleAdminApiKeysRequests,
   handleAdminApiKeysList,
   handleAdminApiKeysRevoke,
   handleAdminApiKeysUnrevoke,
@@ -56,6 +57,7 @@ import {
   handlePasskeyUsersList,
   handlePasskeyUsersUpdate,
 } from "./passkeys.ts";
+import { recordApiKeyRequestLog } from "./analytics.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
 
 const normalizePath = (path: string): string => {
@@ -184,6 +186,25 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleAdminApiKeysList(req));
   }
 
+  const apiKeyRequestsPathMatch = path.match(/^\/admin\/api-keys\/([^/]+)\/requests$/);
+  if (apiKeyRequestsPathMatch && req.method === "GET") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    const pathKeyId = apiKeyRequestsPathMatch[1] ?? "";
+    let keyId: string;
+    try {
+      keyId = decodeURIComponent(pathKeyId);
+    } catch {
+      return withCors(openaiError(400, "Invalid API key id", "invalid_request_error"));
+    }
+
+    return withCors(await handleAdminApiKeysRequests(req, keyId));
+  }
+
+  if (apiKeyRequestsPathMatch) {
+    return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+  }
+
   if (req.method === "PATCH" && path === "/admin/api-keys") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
@@ -303,6 +324,28 @@ export default async function handler(req: Request): Promise<Response> {
     if (kernelOrg) await incrementKernelOrgUsageLimit(kernelOrg.owner);
   };
 
+  const logApiKeyRequest = async (details: {
+    route: string;
+    path: string;
+    method: string;
+    status_code: number;
+    stream: boolean;
+    model?: string | null;
+    reasoning?: string | null;
+  }): Promise<void> => {
+    if (!usageKeyId) return;
+    await recordApiKeyRequestLog(usageKeyId, {
+      route: details.route,
+      path: details.path,
+      method: details.method,
+      status_code: details.status_code,
+      stream: details.stream,
+      model: details.model ?? null,
+      reasoning: details.reasoning ?? null,
+      created_at_ms: Date.now(),
+    });
+  };
+
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(await handleModels());
   }
@@ -313,6 +356,13 @@ export default async function handler(req: Request): Promise<Response> {
       if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
       await incrementKernelLimitUsage();
     }
+    await logApiKeyRequest({
+      route: "embeddings.jobs.create",
+      path,
+      method: req.method,
+      status_code: response.status,
+      stream: false,
+    });
     return withCors(response);
   }
 
@@ -320,6 +370,13 @@ export default async function handler(req: Request): Promise<Response> {
     const jobId = path.slice("/uos/embedding-jobs/".length).trim();
     if (!jobId) return withCors(openaiError(404, "Not found", "not_found"));
     const response = await handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext);
+    await logApiKeyRequest({
+      route: "embeddings.jobs.get",
+      path,
+      method: req.method,
+      status_code: response.status,
+      stream: false,
+    });
     return withCors(response);
   }
 
@@ -329,24 +386,47 @@ export default async function handler(req: Request): Promise<Response> {
       if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
       await incrementKernelLimitUsage();
     }
+    await logApiKeyRequest({
+      route: "embeddings",
+      path,
+      method: req.method,
+      status_code: response.status,
+      stream: false,
+    });
     return withCors(response);
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
     const response = await handleChatCompletions(req, usageContext);
+    const isStream = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
     if (response.ok) {
       if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
       await incrementKernelLimitUsage();
     }
+    await logApiKeyRequest({
+      route: "chat.completions",
+      path,
+      method: req.method,
+      status_code: response.status,
+      stream: isStream,
+    });
     return withCors(response);
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
     const response = await handleResponses(req, usageContext);
+    const isStream = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
     if (response.ok) {
       if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
       await incrementKernelLimitUsage();
     }
+    await logApiKeyRequest({
+      route: "responses",
+      path,
+      method: req.method,
+      status_code: response.status,
+      stream: isStream,
+    });
     return withCors(response);
   }
 
