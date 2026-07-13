@@ -653,8 +653,8 @@ const normalizeCodexModelsPayload = (
       const levels = item.supported_reasoning_levels
         .map((entry) => {
           if (entry === null) return "none";
-          if (typeof entry === "string") return entry;
-          if (isRecord(entry)) return entry.effort === null ? "none" : getString(entry.effort);
+          if (typeof entry === "string") return normalizeReasoningEffort(entry);
+          if (isRecord(entry)) return entry.effort === null ? "none" : normalizeReasoningEffort(entry.effort);
           return null;
         })
         .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);

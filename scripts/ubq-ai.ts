@@ -55,6 +55,20 @@ const normalizeVersion = (value: unknown): string | null => {
   return trimmed ? trimmed : null;
 };
 
+const readCodexModelsCacheVersion = async (
+  runtime: UbqAiRuntime,
+  homeDir: string | undefined,
+): Promise<string | null> => {
+  if (!homeDir) return null;
+  try {
+    const text = await runtime.readTextFile(`${homeDir}/.codex/models_cache.json`);
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return normalizeVersion(parsed.client_version);
+  } catch {
+    return null;
+  }
+};
+
 const readCodexVersionFile = async (runtime: UbqAiRuntime, homeDir: string | undefined): Promise<string | null> => {
   if (!homeDir) return null;
   try {
@@ -93,12 +107,16 @@ const resolveCodexClientVersion = async (
   codexPaths: (string | null | undefined)[],
   homeDir: string | undefined,
 ): Promise<string | null> => {
+  const cachedVersion = await readCodexModelsCacheVersion(runtime, homeDir);
+  if (cachedVersion) return cachedVersion;
+  const versionFile = await readCodexVersionFile(runtime, homeDir);
+  if (versionFile) return versionFile;
   for (const codexPath of codexPaths) {
     if (!codexPath) continue;
     const pkgVersion = await readCodexPackageVersion(runtime, codexPath);
     if (pkgVersion) return pkgVersion;
   }
-  return await readCodexVersionFile(runtime, homeDir);
+  return null;
 };
 
 const listCodexBinaryCandidates = (

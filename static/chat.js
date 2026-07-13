@@ -16,6 +16,7 @@ import {
   setReasoningPlaceholder as setSharedReasoningPlaceholder,
   updateReasoningSelectForModel,
 } from "./reasoning-select.js";
+import { bindForegroundRefresh } from "./foreground-refresh.js";
 
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
@@ -248,10 +249,10 @@ const resetModelCatalog = (label = "Authenticate to load models") => {
   setReasoningPlaceholder("No model selected");
 };
 
-const loadModels = async (token) => {
+const loadModels = async (token, options = {}) => {
   const trimmed = token.trim();
   if (!trimmed) return;
-  if (trimmed === modelsLoadedToken) return;
+  if (!options.force && trimmed === modelsLoadedToken) return;
   const requestId = ++modelsRequestId;
   const backendBase = getActiveBackendBase();
   try {
@@ -455,6 +456,11 @@ if (tokenInput.value.trim()) {
   setAuthBadge("bad", "Missing token");
   resetModelCatalog();
 }
+
+bindForegroundRefresh(() => {
+  const token = tokenInput.value.trim();
+  if (token) void loadModels(token, { force: true });
+});
 
 showTokenInput.addEventListener("change", () => {
   tokenInput.type = showTokenInput.checked ? "text" : "password";

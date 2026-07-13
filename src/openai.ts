@@ -486,7 +486,7 @@ const parseReasoningEffortField = (
   const normalized = value.trim().toLowerCase();
   if (!normalized) return { ok: false, message: `${fieldName} must be a non-empty string` };
   if (!REASONING_EFFORTS.has(normalized as ReasoningEffort)) {
-    return { ok: false, message: `${fieldName} must be one of: none, minimal, low, medium, high, xhigh` };
+    return { ok: false, message: `${fieldName} must be one of: ${Array.from(REASONING_EFFORTS).join(", ")}` };
   }
   return { ok: true, value: normalized as ReasoningEffort };
 };

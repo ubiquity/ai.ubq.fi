@@ -35,6 +35,18 @@ const normalizeVersion = (value: unknown): string | null => {
   return trimmed ? trimmed : null;
 };
 
+const readCodexModelsCacheVersion = async (): Promise<string | null> => {
+  const home = Deno.env.get("HOME");
+  if (!home) return null;
+  try {
+    const text = await Deno.readTextFile(`${home}/.codex/models_cache.json`);
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return normalizeVersion(parsed.client_version);
+  } catch {
+    return null;
+  }
+};
+
 const readCodexVersionFile = async (): Promise<string | null> => {
   const home = Deno.env.get("HOME");
   if (!home) return null;
@@ -70,11 +82,15 @@ const readCodexPackageVersion = async (codexPath: string): Promise<string | null
 };
 
 const resolveCodexClientVersion = async (paths: string[]): Promise<string | null> => {
+  const cachedVersion = await readCodexModelsCacheVersion();
+  if (cachedVersion) return cachedVersion;
+  const versionFile = await readCodexVersionFile();
+  if (versionFile) return versionFile;
   for (const candidate of paths) {
     const version = await readCodexPackageVersion(candidate);
     if (version) return version;
   }
-  return await readCodexVersionFile();
+  return null;
 };
 
 const listCodexBinaryCandidates = (codexBinFlag?: string): string[] => {

@@ -92,7 +92,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
             visibility: "list",
             supported_in_api: false,
             default_reasoning_level: "high",
-            supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+            supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"],
           }, {
             slug: "codex-auto-review",
             display_name: "Codex Auto Review",
@@ -159,7 +159,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
     assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.3-codex-spark"]);
     assert.equal(stored?.models?.[0]?.supported_in_api, false);
     assert.equal(stored?.models?.[0]?.default_reasoning_level, "high");
-    assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, ["low", "medium", "high", "xhigh"]);
+    assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, ["low", "medium", "high", "xhigh", "max"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

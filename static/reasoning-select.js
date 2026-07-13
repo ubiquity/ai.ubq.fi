@@ -1,7 +1,21 @@
 export const REASONING_NONE_VALUE = "none";
+export const REASONING_EFFORT_VALUES = Object.freeze([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
+const reasoningEfforts = new Set(REASONING_EFFORT_VALUES);
 
 const getTrimmedString = (value) => (typeof value === "string" ? value.trim() : "");
-const getReasoningEffortValue = (value) => value === null ? REASONING_NONE_VALUE : getTrimmedString(value);
+const getReasoningEffortValue = (value) => {
+  const normalized = value === null ? REASONING_NONE_VALUE : getTrimmedString(value).toLowerCase();
+  return reasoningEfforts.has(normalized) ? normalized : "";
+};
 
 const getReasoningLevelValue = (level) => {
   if (level === null || typeof level === "string") return getReasoningEffortValue(level);
@@ -144,7 +158,7 @@ export const updateReasoningSelectForModel = (select, model, preferred, options 
 };
 
 export const getReasoningEffortForChatRequest = (selected) => {
-  const value = getTrimmedString(selected);
+  const value = getReasoningEffortValue(selected);
   if (!value) return undefined;
   return value;
 };

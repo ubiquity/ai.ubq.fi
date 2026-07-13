@@ -25,7 +25,7 @@ kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
     max_context_window: 1000000,
     auto_compact_token_limit: null,
     default_reasoning_level: "medium",
-    supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
+    supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
   }],
 });
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
@@ -688,7 +688,7 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
   assert.ok(model);
   assert.equal(model.object, "uos.model_capabilities");
   assert.equal(model.upstream_provider, "codex_chatgpt");
-  assert.deepEqual(model.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh"]);
+  assert.deepEqual(model.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh", "max"]);
   assert.equal(model.default_reasoning_effort, "medium");
   assert.equal(model.context_window_tokens, 272000);
   assert.equal(model.max_context_window_tokens, 1000000);
@@ -768,6 +768,56 @@ Deno.test("openai: reasoning validation returns OpenAI-style parameter errors", 
   assert.equal(payload.error?.type, "invalid_request_error");
   assert.equal(payload.error?.code, "invalid_request_error");
   assert.equal(payload.error?.param, "reasoning_effort");
+});
+
+Deno.test("openai: max reasoning is forwarded for models that support it", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "ping" }],
+            reasoning_effort: "max",
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
+});
+
+Deno.test("openai: internal ultra reasoning is rejected before upstream fetch", async () => {
+  const response = await withFetchMock(
+    () => {
+      throw new Error("internal reasoning levels should not fetch upstream");
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "ping" }],
+            reasoning_effort: "ultra",
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 400);
+  const payload = await response.json() as { error?: { message?: string; param?: string | null } };
+  assert.equal(payload.error?.param, "reasoning_effort");
+  assert.match(payload.error?.message ?? "", /none, minimal, low, medium, high, xhigh, max/);
+  assert.doesNotMatch(payload.error?.message ?? "", /ultra/);
 });
 
 Deno.test("openai: upstream detail errors are normalized to OpenAI-style envelopes", async () => {

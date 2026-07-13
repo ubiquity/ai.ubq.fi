@@ -1,6 +1,6 @@
 import { API_KEY_NO_USAGE_LIMIT, USAGE_RESET_PERIOD_MS } from "./api_keys.ts";
 
-export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set([
   "none",
@@ -9,6 +9,7 @@ export const REASONING_EFFORTS: ReadonlySet<ReasoningEffort> = new Set([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]);
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";

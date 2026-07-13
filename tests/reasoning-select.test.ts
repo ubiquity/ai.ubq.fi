@@ -48,12 +48,12 @@ const createSelect = (): FakeSelect => ({
   },
 });
 
-Deno.test("reasoning select includes default and none before model levels", () => {
+Deno.test("reasoning select includes public model levels and filters internal levels", () => {
   withFakeDocument(() => {
     const select = createSelect();
     const selected = updateReasoningSelectForModel(select, {
       default_reasoning_level: "medium",
-      supported_reasoning_levels: [{ effort: null }, "low", "medium", "high", "xhigh"],
+      supported_reasoning_levels: [{ effort: null }, "low", "medium", "high", "xhigh", "max", "ultra"],
     }, "none");
 
     assert.equal(selected, "none");
@@ -65,6 +65,7 @@ Deno.test("reasoning select includes default and none before model levels", () =
       ["medium", "medium"],
       ["high", "high"],
       ["xhigh", "xhigh"],
+      ["max", "max"],
     ]);
   });
 });
@@ -111,4 +112,6 @@ Deno.test("reasoning select shows none when model default is none", () => {
 
 Deno.test("chat reasoning none selection uses OpenAI wire value", () => {
   assert.equal(getReasoningEffortForChatRequest("none"), "none");
+  assert.equal(getReasoningEffortForChatRequest("max"), "max");
+  assert.equal(getReasoningEffortForChatRequest("ultra"), undefined);
 });

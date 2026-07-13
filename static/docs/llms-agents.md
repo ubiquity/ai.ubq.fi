@@ -321,7 +321,7 @@ Notes:
 
 - Models with `supported_reasoning_levels` in the stored Codex catalog default to the configured reasoning effort.
 - Non-reasoning models default to `none`.
-- Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
+- Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
 - Use `reasoning_effort: "none"` (chat completions) or `reasoning: { "effort": "none" }` (responses) to disable
   reasoning only when the selected model lists or defaults to `none`.
 - If a model rejects a reasoning effort, inspect `/uos/models/capabilities` and retry with one of that model's listed

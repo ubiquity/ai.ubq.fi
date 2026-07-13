@@ -12,6 +12,7 @@ import {
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
 } from "./auth.js";
 import { AUTH_RELAY_MESSAGE_TYPE, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "./auth-relay.js";
+import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
 const STORAGE_KEYS = {
@@ -4494,7 +4495,7 @@ const updateReasoningOptions = (modelSlug, preferred) => {
   return updateReasoningSelectForModel(defaultsReasoningSelect, model, preferred);
 };
 
-const loadDefaults = async () => {
+const loadDefaults = async (options = {}) => {
   const token = getAdminToken();
   if (!token) {
     setDefaultsBadge("bad", "Missing token");
@@ -4502,7 +4503,8 @@ const loadDefaults = async () => {
   }
 
   const loadId = ++defaultsLoadId;
-  defaultsTouched = false;
+  const preserveInputs = options.preserveInputs === true;
+  if (!preserveInputs) defaultsTouched = false;
   defaultsLoaded = false;
   setDefaultsBadge("unknown", "Loading...");
   let cacheApplied = false;
@@ -4513,7 +4515,9 @@ const loadDefaults = async () => {
       models: cachedModels.models,
       meta: cachedModels.snapshot,
     };
-    const cachedResult = applyDefaultsSnapshot(cachedSnapshot, cachedDefaults);
+    const cachedResult = applyDefaultsSnapshot(cachedSnapshot, cachedDefaults, {
+      preserveInputs: preserveInputs || defaultsTouched,
+    });
     if (cachedResult) {
       cacheApplied = true;
       defaultsLoaded = true;
@@ -4576,7 +4580,7 @@ const loadDefaults = async () => {
     const result = applyDefaultsSnapshot(
       { models, meta: snapshot },
       serverDefaults,
-      { preserveInputs: defaultsTouched },
+      { preserveInputs: preserveInputs || defaultsTouched },
     );
     defaultsLoaded = true;
     if (!defaultsTouched && result) {
@@ -4699,6 +4703,11 @@ if (hasInitialAdminToken) {
   setAuthBadge("bad", "Missing token");
   setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
 }
+
+bindForegroundRefresh(() => {
+  if (currentAdminView !== "defaults" || !adminAccessState.isAdmin || !getAdminToken()) return;
+  void loadDefaults({ preserveInputs: true });
+});
 
 authWidgetToggle.addEventListener("click", () => {
   setAuthWidgetOpen(authWidgetPanel.hidden, { focus: authWidgetPanel.hidden });

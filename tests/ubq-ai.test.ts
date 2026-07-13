@@ -635,6 +635,41 @@ Deno.test("ubq-ai: admin upload-auth includes codex client version hint", async 
   assert.equal(requests.length, 1);
 });
 
+Deno.test("ubq-ai: admin upload-auth prefers Codex model cache version over stale npm metadata", async () => {
+  const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
+  const authJson = JSON.stringify(authObject);
+  let packageMetadataRead = false;
+  const { runtime, errText, requests } = makeRuntime({
+    env: {
+      DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz",
+      HOME: "/home/test",
+      PATH: "/opt/lib/node_modules/@openai/codex/bin",
+    },
+    readTextFile: (path: string) => {
+      if (path === "/home/test/.codex/auth.json") return Promise.resolve(authJson);
+      if (path === "/home/test/.codex/models_cache.json") {
+        return Promise.resolve(JSON.stringify({ client_version: "0.144.3" }));
+      }
+      if (path === "/opt/lib/node_modules/@openai/codex/package.json") {
+        packageMetadataRead = true;
+        return Promise.resolve(JSON.stringify({ version: "0.135.0" }));
+      }
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    },
+    fetch: (_req, recorded) => {
+      const parsed = JSON.parse(recorded.bodyText ?? "null") as { models?: Record<string, unknown> };
+      assert.equal(parsed.models?.client_version, "0.144.3");
+      return jsonResponse(200, { stored: true, models: { count: 7 } });
+    },
+  });
+
+  const code = await runUbqAi(["admin", "upload-auth"], runtime);
+  assert.equal(code, 0);
+  assert.equal(errText(), "");
+  assert.equal(packageMetadataRead, false);
+  assert.equal(requests.length, 1);
+});
+
 Deno.test("ubq-ai: admin upload-auth falls back to local version file", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
