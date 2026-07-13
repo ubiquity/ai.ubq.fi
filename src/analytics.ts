@@ -1,12 +1,16 @@
 import { kvPromise } from "./kv.ts";
 import { getString, isRecord } from "./utils.ts";
-import type { ApiKeyUsageDailyRecord, ApiKeyUsageDay, ApiKeyUsageRecord } from "./types.ts";
+import type { ApiKeyRequestLogRecord, ApiKeyUsageDailyRecord, ApiKeyUsageDay, ApiKeyUsageRecord } from "./types.ts";
 
 export const API_KEY_USAGE_PREFIX = ["ubq_ai", "api_keys", "usage"] as const;
 export const API_KEY_USAGE_DAILY_PREFIX = ["ubq_ai", "api_keys", "usage_daily"] as const;
+export const API_KEY_REQUEST_LOG_PREFIX = ["ubq_ai", "api_keys", "request_log"] as const;
 
 export const apiKeyUsageKey = (id: string) => [...API_KEY_USAGE_PREFIX, id] as const;
 export const apiKeyUsageDailyKey = (id: string) => [...API_KEY_USAGE_DAILY_PREFIX, id] as const;
+export const apiKeyRequestLogPrefix = (id: string) => [...API_KEY_REQUEST_LOG_PREFIX, id] as const;
+export const apiKeyRequestLogKey = (id: string, createdAtMs: number, requestId: string) =>
+  [...apiKeyRequestLogPrefix(id), createdAtMs, requestId] as const;
 
 type ApiKeyUsageDelta = Readonly<{
   request_count?: number;
@@ -23,11 +27,26 @@ type ApiKeyUsageDelta = Readonly<{
   seen_at_ms?: number;
 }>;
 
+type ApiKeyRequestLogInput = Readonly<{
+  route: string;
+  path: string;
+  method: string;
+  status_code: number;
+  stream: boolean;
+  model: string | null;
+  reasoning: string | null;
+  created_at_ms: number;
+}>;
+
 const MAX_LABEL_LENGTH = 120;
 const MAX_KV_RETRIES = 3;
 const DAILY_SERIES_DAYS = 30;
 const DAILY_HISTORY_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const REQUEST_LOG_RETENTION_MS = 30 * DAY_MS;
+const MAX_REQUEST_LOGS = 100;
+const MAX_PATH_LENGTH = 1024;
+const MAX_METHOD_LENGTH = 16;
 
 const coerceNumber = (value: unknown, fallback = 0): number => {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -41,6 +60,35 @@ const normalizeLabel = (value: unknown): string | null => {
   if (!trimmed) return null;
   if (trimmed.length > MAX_LABEL_LENGTH) return trimmed.slice(0, MAX_LABEL_LENGTH);
   return trimmed;
+};
+
+const normalizeBoundedString = (value: unknown, maxLength: number, fallback = ""): string => {
+  const raw = getString(value)?.trim() ?? "";
+  const normalized = raw || fallback;
+  return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
+};
+
+const normalizeRequestLogRecord = (
+  value: unknown,
+  keyId: string,
+  fallbackId: string,
+  fallbackCreatedAtMs: number,
+): ApiKeyRequestLogRecord | null => {
+  if (!isRecord(value)) return null;
+  const createdAtMs = coerceNumber(value.created_at_ms, fallbackCreatedAtMs);
+  const statusCode = coerceNumber(value.status_code);
+  return {
+    id: normalizeBoundedString(value.id, MAX_LABEL_LENGTH, fallbackId),
+    key_id: normalizeKeyId(value.key_id, keyId),
+    route: normalizeBoundedString(value.route, MAX_LABEL_LENGTH, "unknown"),
+    path: normalizeBoundedString(value.path, MAX_PATH_LENGTH),
+    method: normalizeBoundedString(value.method, MAX_METHOD_LENGTH, "UNKNOWN").toUpperCase(),
+    status_code: Math.max(0, Math.min(599, statusCode)),
+    stream: value.stream === true,
+    model: normalizeLabel(value.model),
+    reasoning: normalizeLabel(value.reasoning),
+    created_at_ms: createdAtMs > 0 ? createdAtMs : fallbackCreatedAtMs,
+  };
 };
 
 const normalizeKeyId = (value: unknown, fallback: string): string => {
@@ -273,4 +321,68 @@ export const getApiKeyUsage = async (
     console.warn("[ai.ubq.fi] Failed to load api key usage:", error);
     return null;
   }
+};
+
+export const recordApiKeyRequestLog = async (
+  keyId: string,
+  input: ApiKeyRequestLogInput,
+  kvOverride?: Deno.Kv | null,
+): Promise<void> => {
+  try {
+    const normalizedKeyId = keyId.trim();
+    if (!normalizedKeyId) return;
+    const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+    if (!kv) return;
+
+    const nowMs = Date.now();
+    const requestId = crypto.randomUUID();
+    const record = normalizeRequestLogRecord(
+      { ...input, id: requestId, key_id: normalizedKeyId },
+      normalizedKeyId,
+      requestId,
+      nowMs,
+    );
+    if (!record) return;
+
+    await kv.set(
+      apiKeyRequestLogKey(normalizedKeyId, record.created_at_ms, requestId),
+      record,
+      { expireIn: REQUEST_LOG_RETENTION_MS },
+    );
+  } catch (error) {
+    console.warn("[ai.ubq.fi] Failed to record api key request log:", error);
+  }
+};
+
+export const listApiKeyRequestLogs = async (
+  keyId: string,
+  options: { limit?: number; kv?: Deno.Kv | null } = {},
+): Promise<ApiKeyRequestLogRecord[]> => {
+  const normalizedKeyId = keyId.trim();
+  if (!normalizedKeyId) return [];
+  const kv = options.kv === undefined ? await kvPromise : options.kv;
+  if (!kv) return [];
+
+  const requestedLimit = typeof options.limit === "number" && Number.isFinite(options.limit)
+    ? Math.trunc(options.limit)
+    : 20;
+  const limit = Math.max(1, Math.min(MAX_REQUEST_LOGS, requestedLimit));
+  const records: ApiKeyRequestLogRecord[] = [];
+  for await (
+    const entry of kv.list<ApiKeyRequestLogRecord>(
+      { prefix: apiKeyRequestLogPrefix(normalizedKeyId) },
+      { reverse: true, limit },
+    )
+  ) {
+    const keyRequestId = getString(entry.key.at(-1)) ?? "request";
+    const keyCreatedAtMs = coerceNumber(entry.key.at(-2), Date.now());
+    const record = normalizeRequestLogRecord(
+      entry.value,
+      normalizedKeyId,
+      keyRequestId,
+      keyCreatedAtMs,
+    );
+    if (record) records.push(record);
+  }
+  return records;
 };

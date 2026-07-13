@@ -37,7 +37,7 @@ import {
   getDefaultExpiryMs,
   USAGE_RESET_PERIOD_MS,
 } from "./api_keys.ts";
-import { getApiKeyUsage } from "./analytics.ts";
+import { getApiKeyUsage, listApiKeyRequestLogs } from "./analytics.ts";
 import { reloadKernelPublicKeys } from "./auth.ts";
 import {
   deleteKernelOrgUsageLimit,
@@ -647,7 +647,9 @@ const normalizeCodexModelsPayload = (
       const count = normalizeNonNegativeInteger(item[key]);
       if (count !== null) normalized[key] = count;
     }
-    const defaultReasoning = item.default_reasoning_level === null ? "none" : getString(item.default_reasoning_level);
+    const defaultReasoning = item.default_reasoning_level === null
+      ? "none"
+      : normalizeReasoningEffort(item.default_reasoning_level);
     if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
     if (Array.isArray(item.supported_reasoning_levels)) {
       const levels = item.supported_reasoning_levels
@@ -657,7 +659,7 @@ const normalizeCodexModelsPayload = (
           if (isRecord(entry)) return entry.effort === null ? "none" : normalizeReasoningEffort(entry.effort);
           return null;
         })
-        .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+        .filter((entry): entry is ReasoningEffort => entry !== null);
       if (levels.length) normalized.supported_reasoning_levels = levels;
     }
     return normalized;
@@ -837,6 +839,47 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
+};
+
+export const handleAdminApiKeysRequests = async (
+  req: Request,
+  keyId: string,
+  kvOverride?: Deno.Kv | null,
+): Promise<Response> => {
+  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+  if (!kv) {
+    return openaiError(500, "Deno KV is not available; cannot load API key requests", "server_error");
+  }
+
+  const normalizedKeyId = keyId.trim();
+  if (!normalizedKeyId || normalizedKeyId.length > 200) {
+    return openaiError(400, "Invalid API key id", "invalid_request_error");
+  }
+
+  const keyEntry = await kv.get<ApiKeyRecord>(apiKeyIdKey(normalizedKeyId));
+  if (!keyEntry.value) return openaiError(404, "Not found", "not_found");
+
+  const rawLimit = new URL(req.url).searchParams.get("limit");
+  if (rawLimit !== null && !/^\d+$/.test(rawLimit.trim())) {
+    return openaiError(400, "limit must be a positive integer", "invalid_request_error");
+  }
+  const requestedLimit = rawLimit === null ? 20 : Number(rawLimit);
+  if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1) {
+    return openaiError(400, "limit must be a positive integer", "invalid_request_error");
+  }
+  const limit = Math.min(requestedLimit, 100);
+
+  try {
+    const records = await listApiKeyRequestLogs(normalizedKeyId, { limit, kv });
+    return json(
+      200,
+      { object: "list", data: records },
+      { "Cache-Control": "no-store" },
+    );
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to load api key request logs:", error);
+    return openaiError(500, "Failed to load API key requests", "server_error");
+  }
 };
 
 export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> => {

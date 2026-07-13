@@ -57,6 +57,19 @@ export type ApiKeyUsageDailyRecord = Readonly<{
   updated_at_ms: number;
 }>;
 
+export type ApiKeyRequestLogRecord = Readonly<{
+  id: string;
+  key_id: string;
+  route: string;
+  path: string;
+  method: string;
+  status_code: number;
+  stream: boolean;
+  model: string | null;
+  reasoning: string | null;
+  created_at_ms: number;
+}>;
+
 export type KernelAuthUsageRecord = Readonly<{
   owner: string;
   repo: string;
