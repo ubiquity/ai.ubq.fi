@@ -26,6 +26,7 @@ kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
     auto_compact_token_limit: null,
     default_reasoning_level: "medium",
     supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
+    reasoning_effort_wire_map: { ultra: "max" },
   }],
 });
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
@@ -160,7 +161,7 @@ const fetchMockQueue: FetchMockQueue = (() => {
 })();
 
 const withFetchMock = async <T>(
-  handler: (url: string, bodyText: string | null) => Response | Promise<Response>,
+  handler: (url: string, bodyText: string | null, init?: RequestInit) => Response | Promise<Response>,
   fn: () => Promise<T>,
 ): Promise<T> => {
   const prev = fetchMockQueue.chain;
@@ -174,7 +175,7 @@ const withFetchMock = async <T>(
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const bodyText = typeof init?.body === "string" ? init.body : null;
-    return await handler(url, bodyText);
+    return await handler(url, bodyText, init);
   };
   try {
     return await fn();
@@ -221,7 +222,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("max_output_tokens" in recorded, false);
   });
 
-  await t.step("chat accepts none reasoning effort without forwarding upstream reasoning", async () => {
+  await t.step("chat preserves none reasoning effort upstream", async () => {
     let recordedBody: Record<string, unknown> | null = null;
 
     const response = await withFetchMock(
@@ -245,7 +246,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal(response.status, 200);
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
-    assert.equal(Object.prototype.hasOwnProperty.call(recorded, "reasoning"), false);
+    assert.deepEqual(recorded["reasoning"], { effort: "none" });
   });
 
   await t.step("chat accepts null reasoning effort as unspecified", async () => {
@@ -312,7 +313,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("max_output_tokens" in recorded, false);
   });
 
-  await t.step("responses accepts none reasoning without forwarding upstream reasoning", async () => {
+  await t.step("responses preserves none reasoning upstream", async () => {
     let recordedBody: Record<string, unknown> | null = null;
 
     const response = await withFetchMock(
@@ -336,7 +337,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal(response.status, 200);
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
-    assert.equal(Object.prototype.hasOwnProperty.call(recorded, "reasoning"), false);
+    assert.deepEqual(recorded["reasoning"], { effort: "none" });
   });
 
   await t.step("responses accepts null reasoning as unspecified", async () => {
@@ -510,7 +511,7 @@ Deno.test("openai: default reasoning comes from stored model metadata, not model
     assert.equal(response.status, 200);
     assert.ok(recordedBody);
     assert.equal((recordedBody as Record<string, unknown>).model, modelWithoutReasoningMetadata);
-    assert.equal("reasoning" in (recordedBody as Record<string, unknown>), false);
+    assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "none" });
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
@@ -606,6 +607,7 @@ Deno.test("openai: none remains a gateway special case when snapshot levels omit
       data?: Array<{ supported_reasoning_levels?: string[] }>;
     };
     assert.deepEqual(capabilitiesPayload.data?.[0]?.supported_reasoning_levels, [
+      "none",
       "low",
       "medium",
       "high",
@@ -633,7 +635,7 @@ Deno.test("openai: none remains a gateway special case when snapshot levels omit
 
     assert.equal(chatResponse.status, 200);
     assert.ok(recordedBody);
-    assert.equal(Object.prototype.hasOwnProperty.call(recordedBody, "reasoning"), false);
+    assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "none" });
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
@@ -678,6 +680,7 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
       supported_endpoints?: string[];
       supported_reasoning_levels?: string[];
       default_reasoning_effort?: string | null;
+      reasoning_effort_wire_map?: Record<string, string>;
       context_window_tokens?: number | null;
       max_context_window_tokens?: number | null;
       auto_compact_token_limit_tokens?: number | null;
@@ -691,6 +694,7 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
   assert.equal(model.upstream_provider, "codex_chatgpt");
   assert.deepEqual(model.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh", "max", "ultra"]);
   assert.equal(model.default_reasoning_effort, "medium");
+  assert.deepEqual(model.reasoning_effort_wire_map, { ultra: "max" });
   assert.equal(model.context_window_tokens, 272000);
   assert.equal(model.max_context_window_tokens, 1000000);
   assert.equal(model.auto_compact_token_limit_tokens, null);
@@ -796,11 +800,13 @@ Deno.test("openai: max reasoning is forwarded for models that support it", async
   assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
 });
 
-Deno.test("openai: Codex CLI ultra reasoning is forwarded upstream", async () => {
+Deno.test("openai: catalog wire metadata maps Codex CLI ultra to upstream max", async () => {
   let recordedBody: Record<string, unknown> | null = null;
+  let recordedUserAgent: string | null = null;
   const response = await withFetchMock(
-    (_url, bodyText) => {
+    (_url, bodyText, init) => {
       recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      recordedUserAgent = new Headers(init?.headers).get("user-agent");
       return sseResponse(baseSseChunks());
     },
     () =>
@@ -818,10 +824,11 @@ Deno.test("openai: Codex CLI ultra reasoning is forwarded upstream", async () =>
 
   assert.equal(response.status, 200);
   assert.ok(recordedBody);
-  assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "ultra" });
+  assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
+  assert.equal(recordedUserAgent, "codex_cli_rs/0.125.0 (ai.ubq.fi)");
 });
 
-Deno.test("openai: responses forwards Codex CLI reasoning tiers upstream", async () => {
+Deno.test("openai: responses applies catalog reasoning wire metadata", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -843,7 +850,7 @@ Deno.test("openai: responses forwards Codex CLI reasoning tiers upstream", async
 
   assert.equal(response.status, 200);
   assert.ok(recordedBody);
-  assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "ultra" });
+  assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
 });
 
 Deno.test("openai: upstream detail errors are normalized to OpenAI-style envelopes", async () => {

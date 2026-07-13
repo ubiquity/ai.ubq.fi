@@ -131,7 +131,14 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
             visibility: "list",
             supported_in_api: false,
             default_reasoning_level: "high",
-            supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+            supported_reasoning_levels: [
+              { effort: "low", description: "Fast responses" },
+              { effort: "medium", description: "Balanced reasoning" },
+              { effort: "high", description: "Greater reasoning depth" },
+              { effort: "xhigh", description: "Extra high reasoning depth" },
+              { effort: "max", description: "Maximum reasoning depth" },
+              { effort: "ultra", description: "Maximum reasoning with automatic task delegation" },
+            ],
           }, {
             slug: "codex-auto-review",
             display_name: "Codex Auto Review",
@@ -190,6 +197,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
           supported_in_api?: boolean;
           default_reasoning_level?: string;
           supported_reasoning_levels?: string[];
+          reasoning_effort_wire_map?: Record<string, string>;
         }>;
       }
       | undefined;
@@ -206,6 +214,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
       "max",
       "ultra",
     ]);
+    assert.deepEqual(stored?.models?.[0]?.reasoning_effort_wire_map, { ultra: "max" });
   } finally {
     globalThis.fetch = originalFetch;
   }

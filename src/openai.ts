@@ -222,6 +222,7 @@ const toOpenAiUpstreamErrorResponse = async (upstream: Response): Promise<Respon
 type CodexModelReasoning = Readonly<{
   levels: ReasoningEffort[];
   defaultLevel: ReasoningEffort | null;
+  wireEfforts: ReadonlyMap<ReasoningEffort, ReasoningEffort>;
 }>;
 
 type CodexModelMetadata = Readonly<{
@@ -263,12 +264,25 @@ const extractSnapshotReasoningLevels = (model: Record<string, unknown> | null): 
   return Array.from(new Set(levels));
 };
 
+const extractSnapshotReasoningEffortWireMap = (
+  model: Record<string, unknown> | null,
+): ReadonlyMap<ReasoningEffort, ReasoningEffort> => {
+  const raw = model?.reasoning_effort_wire_map;
+  if (!isRecord(raw)) return new Map();
+  const entries = Object.entries(raw)
+    .map(([effort, wireEffort]) => [normalizeReasoningEffort(effort), normalizeReasoningEffort(wireEffort)] as const)
+    .filter((entry): entry is readonly [ReasoningEffort, ReasoningEffort] => entry[0] !== null && entry[1] !== null);
+  return new Map(entries);
+};
+
 const getCodexModelReasoning = (record: Record<string, unknown> | null): CodexModelReasoning => {
   const defaultLevel = normalizeSnapshotReasoningEffort(record?.default_reasoning_level);
-  const levels = extractSnapshotReasoningLevels(record);
+  const catalogLevels = extractSnapshotReasoningLevels(record);
+  const levels = catalogLevels.includes("none") ? catalogLevels : ["none", ...catalogLevels];
   return {
     levels: defaultLevel && !levels.includes(defaultLevel) ? [...levels, defaultLevel] : levels,
     defaultLevel,
+    wireEfforts: extractSnapshotReasoningEffortWireMap(record),
   };
 };
 
@@ -292,9 +306,7 @@ const resolveDefaultReasoningLabel = (
   modelReasoning: CodexModelReasoning,
   defaultEffort: ReasoningEffort,
 ): ReasoningEffort => {
-  if (defaultEffort === "none") {
-    if (!modelReasoning.levels.length || modelReasoning.levels.includes("none")) return "none";
-  }
+  if (defaultEffort === "none") return "none";
   if (modelReasoning.levels.includes(defaultEffort)) return defaultEffort;
   if (modelReasoning.defaultLevel === "none") return "none";
   if (modelReasoning.defaultLevel && modelReasoning.levels.includes(modelReasoning.defaultLevel)) {
@@ -332,14 +344,19 @@ const extractReasoningParamEffort = (
   return normalizeReasoningEffort(reasoning.effort) ?? undefined;
 };
 
+const reasoningEffortForCodexRequest = (
+  effort: ReasoningEffort,
+  modelReasoning: CodexModelReasoning,
+): ReasoningEffort => modelReasoning.wireEfforts.get(effort) ?? effort;
+
 const normalizeReasoningParamForCodex = (
   reasoning: Record<string, unknown> | undefined,
+  modelReasoning: CodexModelReasoning,
 ): Record<string, unknown> | undefined => {
   if (reasoning === undefined) return undefined;
   const effort = extractReasoningParamEffort(reasoning);
-  if (effort === "none") return undefined;
   if (effort === undefined) return reasoning;
-  return { ...reasoning, effort };
+  return { ...reasoning, effort: reasoningEffortForCodexRequest(effort, modelReasoning) };
 };
 
 const UOS_WARNING_HEADER = "x-uos-warning";
@@ -1228,6 +1245,7 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
     supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
     supported_reasoning_levels: reasoning.levels,
     default_reasoning_effort: reasoning.defaultLevel,
+    reasoning_effort_wire_map: Object.fromEntries(reasoning.wireEfforts),
     context_window_tokens: normalizeTokenCount(value.context_window),
     max_context_window_tokens: normalizeTokenCount(value.max_context_window),
     auto_compact_token_limit_tokens: normalizeTokenCount(value.auto_compact_token_limit),
@@ -2588,11 +2606,9 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
   let reasoningValue: Record<string, unknown> | undefined;
   if (reasoningEffort.value === undefined) {
-    reasoningValue = defaultReasoningLabel !== "none" ? { effort: defaultReasoningLabel } : undefined;
-  } else if (reasoningEffort.value === "none") {
-    reasoningValue = undefined;
+    reasoningValue = { effort: reasoningEffortForCodexRequest(defaultReasoningLabel, modelReasoning) };
   } else {
-    reasoningValue = { effort: reasoningEffort.value };
+    reasoningValue = { effort: reasoningEffortForCodexRequest(reasoningEffort.value, modelReasoning) };
   }
   const codexBody = await buildCodexRequest(model, input, {
     reasoning: reasoningValue,
@@ -2618,7 +2634,7 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
 
   let upstream: Response;
   try {
-    upstream = await fetchCodexResponses(codexBody);
+    upstream = await fetchCodexResponses(codexBody, { clientVersion: modelMetadata.snapshot?.client_version });
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
@@ -2771,9 +2787,9 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
 
-  let reasoningValue = normalizeReasoningParamForCodex(reasoning.value);
-  if (reasoningValue === undefined && defaultReasoningLabel !== "none") {
-    reasoningValue = reasoning.value === undefined ? { effort: defaultReasoningLabel } : undefined;
+  let reasoningValue = normalizeReasoningParamForCodex(reasoning.value, modelReasoning);
+  if (reasoningValue === undefined && reasoning.value === undefined) {
+    reasoningValue = { effort: reasoningEffortForCodexRequest(defaultReasoningLabel, modelReasoning) };
   }
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });
@@ -2801,7 +2817,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
 
   let upstream: Response;
   try {
-    upstream = await fetchCodexResponses(codexBody);
+    upstream = await fetchCodexResponses(codexBody, { clientVersion: modelMetadata.snapshot?.client_version });
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);

@@ -2,8 +2,10 @@
 
 - Keep OpenAI-compatible endpoints and request bodies aligned with the official OpenAI API schema. Do not add
   gateway-only aliases, sentinel values, or alternate wire formats.
-- Treat the uploaded Codex CLI model catalog as the source of truth for reasoning tier strings. Preserve every non-empty
-  advertised tier and do not enforce a hard-coded tier allowlist or tier membership check.
-- Represent no reasoning publicly as `none`. Normalize null efforts in upstream model metadata to `none`, and omit the
-  reasoning field only when translating `none` at the Codex upstream request boundary; never use `null` as the public
-  no-reasoning wire value.
+- Treat the uploaded Codex CLI model catalog as the source of truth for reasoning tier strings other than `none`.
+  Preserve every non-empty advertised tier and do not enforce a hard-coded tier allowlist or tier membership check.
+- Treat `none` as the sole gateway-known reasoning special case and expose it even when the uploaded catalog omits it.
+  Normalize null efforts in upstream model metadata to `none`, preserve `none` verbatim at the Codex upstream request
+  boundary, and never translate an explicit no-reasoning request to an omitted field or `null`.
+- Mirror Codex CLI wire translation for advanced presets: send `ultra` upstream as `max`. Treat Codex's automatic
+  multi-agent delegation for `ultra` as client-side orchestration, not as a distinct upstream reasoning effort.

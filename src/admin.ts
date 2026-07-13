@@ -589,6 +589,34 @@ const extractModelReasoningLevels = (model: Record<string, unknown> | null): Rea
   return Array.from(new Set(levels));
 };
 
+const reasoningLevelEffort = (value: unknown): ReasoningEffort | null => {
+  if (value === null) return "none";
+  if (typeof value === "string") return normalizeReasoningEffort(value);
+  if (!isRecord(value)) return null;
+  return value.effort === null ? "none" : normalizeReasoningEffort(value.effort);
+};
+
+const deriveReasoningEffortWireMap = (levels: unknown[]): Record<string, ReasoningEffort> => {
+  const wireMap = new Map<ReasoningEffort, ReasoningEffort>();
+  let previousWireEffort: ReasoningEffort | null = null;
+
+  for (const level of levels) {
+    const effort = reasoningLevelEffort(level);
+    if (!effort) continue;
+
+    const explicitWireEffort = isRecord(level) ? normalizeReasoningEffort(level.wire_effort) : null;
+    const description = isRecord(level) ? getString(level.description)?.trim().toLowerCase() ?? "" : "";
+    const delegatesAutomatically = description.includes("automatic task delegation");
+    const wireEffort: ReasoningEffort = explicitWireEffort ??
+      (delegatesAutomatically ? previousWireEffort : effort) ?? effort;
+
+    if (wireEffort !== effort) wireMap.set(effort, wireEffort);
+    previousWireEffort = wireEffort;
+  }
+
+  return Object.fromEntries(wireMap);
+};
+
 const normalizeCodexModelsPayload = (
   value: unknown,
   overrides: Readonly<{ source?: string; clientVersion?: string | null; updatedAtMs?: number | null }> = {},
@@ -643,15 +671,11 @@ const normalizeCodexModelsPayload = (
       : normalizeReasoningEffort(item.default_reasoning_level);
     if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
     if (Array.isArray(item.supported_reasoning_levels)) {
-      const levels = item.supported_reasoning_levels
-        .map((entry) => {
-          if (entry === null) return "none";
-          if (typeof entry === "string") return normalizeReasoningEffort(entry);
-          if (isRecord(entry)) return entry.effort === null ? "none" : normalizeReasoningEffort(entry.effort);
-          return null;
-        })
+      const levels = item.supported_reasoning_levels.map(reasoningLevelEffort)
         .filter((entry): entry is ReasoningEffort => entry !== null);
       if (levels.length) normalized.supported_reasoning_levels = levels;
+      const wireMap = deriveReasoningEffortWireMap(item.supported_reasoning_levels);
+      if (Object.keys(wireMap).length) normalized.reasoning_effort_wire_map = wireMap;
     }
     return normalized;
   };

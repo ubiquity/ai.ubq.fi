@@ -71,7 +71,7 @@ Deno.test("reasoning select preserves every tier advertised by the model catalog
   });
 });
 
-Deno.test("reasoning select hides none when model levels omit it", () => {
+Deno.test("reasoning select preserves none when model levels omit it", () => {
   withFakeDocument(() => {
     const select = createSelect();
     const selected = updateReasoningSelectForModel(select, {
@@ -79,10 +79,11 @@ Deno.test("reasoning select hides none when model levels omit it", () => {
       supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
     }, "none");
 
-    assert.equal(selected, "medium");
+    assert.equal(selected, "none");
     assert.equal(select.disabled, false);
     assert.deepEqual(select.options.map((option) => [option.value, option.textContent]), [
       ["", "Default"],
+      ["none", "None"],
       ["low", "low"],
       ["medium", "medium"],
       ["high", "high"],

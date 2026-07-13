@@ -4,8 +4,8 @@ import {
   formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
-  resolveBackendBase,
   registerPasskey,
+  resolveBackendBase,
   signInWithPasskey,
   signOut,
   storage,
@@ -15,7 +15,7 @@ import {
   getReasoningEffortForChatRequest,
   setReasoningPlaceholder as setSharedReasoningPlaceholder,
   updateReasoningSelectForModel,
-} from "./reasoning-select.js";
+} from "./reasoning-select.js?v=20260713-none-ultra";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 
 const STORAGE_KEYS = {
@@ -269,7 +269,10 @@ const loadModels = async (token, options = {}) => {
       ).then(
         async (res) => ({ res, data: await res.json().catch(() => null) }),
       ).catch((error) => ({ error })),
-      loadDefaultModelFromAdmin(trimmed, backendBase).then((model) => ({ ok: true, model })).catch(() => ({ ok: false, model: "" })),
+      loadDefaultModelFromAdmin(trimmed, backendBase).then((model) => ({ ok: true, model })).catch(() => ({
+        ok: false,
+        model: "",
+      })),
     ]);
     const { res, data } = modelsResponse;
     if (requestId !== modelsRequestId) return;

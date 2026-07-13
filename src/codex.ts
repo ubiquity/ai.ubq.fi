@@ -6,11 +6,7 @@ import type { CodexAuthState, ResponseInputItem } from "./types.ts";
 const CODEX_REFRESH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
-const CODEX_USER_AGENT = "codex_cli_rs/0.100.0 (ai.ubq.fi)";
-const CODEX_CLIENT_VERSION = (() => {
-  const match = CODEX_USER_AGENT.match(/codex_cli_rs\/([0-9]+(?:\.[0-9]+){1,2})/);
-  return match ? match[1] : null;
-})();
+const CODEX_CLIENT_VERSION = "0.100.0";
 
 const parseSemverTriplet = (value: string): [number, number, number] | null => {
   const parts = value.trim().split(".");
@@ -36,6 +32,11 @@ const pickHigherSemver = (a: string | null | undefined, b: string | null | undef
     if (aParsed[i] < bParsed[i]) return bNorm;
   }
   return aNorm;
+};
+
+const codexUserAgent = (clientVersion?: string | null): string => {
+  const version = pickHigherSemver(clientVersion, CODEX_CLIENT_VERSION) ?? CODEX_CLIENT_VERSION;
+  return `codex_cli_rs/${version} (ai.ubq.fi)`;
 };
 
 export type CodexErrorCode =
@@ -431,26 +432,6 @@ const getValidAuth = async (): Promise<CodexAuthState> => {
   return await refreshInFlight;
 };
 
-const _fetchCodexResponsesWithAuth = async (auth: CodexAuthState, body: unknown): Promise<Response> => {
-  const url = `${config.codexBaseUrl}/responses`;
-
-  const headers = new Headers();
-  headers.set("Authorization", `Bearer ${auth.access_token}`);
-  headers.set("ChatGPT-Account-ID", auth.account_id);
-  headers.set("originator", CODEX_ORIGINATOR);
-  headers.set("user-agent", CODEX_USER_AGENT);
-  headers.set("Content-Type", "application/json");
-  headers.set("Accept", "text/event-stream");
-  headers.set("conversation_id", crypto.randomUUID());
-
-  return await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    redirect: "manual",
-  });
-};
-
 const codexModelsBaseUrls = (clientVersion: string | null): string[] => {
   const base = config.codexBaseUrl.replace(/\/+$/, "");
   const urls = new Set<string>();
@@ -467,12 +448,16 @@ const codexModelsBaseUrls = (clientVersion: string | null): string[] => {
   return Array.from(urls);
 };
 
-const fetchCodexModelsWithAuth = async (auth: CodexAuthState, url: string): Promise<Response> => {
+const fetchCodexModelsWithAuth = async (
+  auth: CodexAuthState,
+  url: string,
+  clientVersion: string | null,
+): Promise<Response> => {
   const headers = new Headers();
   headers.set("Authorization", `Bearer ${auth.access_token}`);
   headers.set("ChatGPT-Account-ID", auth.account_id);
   headers.set("originator", CODEX_ORIGINATOR);
-  headers.set("user-agent", CODEX_USER_AGENT);
+  headers.set("user-agent", codexUserAgent(clientVersion));
   headers.set("Accept", "application/json");
 
   try {
@@ -491,7 +476,10 @@ const fetchCodexModelsWithAuth = async (auth: CodexAuthState, url: string): Prom
   }
 };
 
-export const fetchCodexResponses = async (body: unknown): Promise<Response> => {
+export const fetchCodexResponses = async (
+  body: unknown,
+  options: Readonly<{ clientVersion?: string | null }> = {},
+): Promise<Response> => {
   const auth = await getValidAuth();
   const url = `${config.codexBaseUrl}/responses`;
 
@@ -499,7 +487,7 @@ export const fetchCodexResponses = async (body: unknown): Promise<Response> => {
   headers.set("Authorization", `Bearer ${auth.access_token}`);
   headers.set("ChatGPT-Account-ID", auth.account_id);
   headers.set("originator", CODEX_ORIGINATOR);
-  headers.set("user-agent", CODEX_USER_AGENT);
+  headers.set("user-agent", codexUserAgent(options.clientVersion));
   headers.set("Content-Type", "application/json");
   headers.set("Accept", "text/event-stream");
   headers.set("conversation_id", crypto.randomUUID());
@@ -554,11 +542,11 @@ export const fetchCodexModels = async (
   let lastResponse: Response | null = null;
 
   for (const url of urls) {
-    let res = await fetchCodexModelsWithAuth(auth, url);
+    let res = await fetchCodexModelsWithAuth(auth, url, clientVersion);
     if (res.status === 401) {
       await refreshAuth(await getAuthEntry());
       const auth2 = await getValidAuth();
-      res = await fetchCodexModelsWithAuth(auth2, url);
+      res = await fetchCodexModelsWithAuth(auth2, url, clientVersion);
     }
     if ((res.status === 404 || res.status === 400) && urls.length > 1) {
       lastResponse = res;
@@ -625,12 +613,12 @@ export const validateCodexAuthJson = async (
   let lastResponse: Response | null = null;
 
   for (const url of urls) {
-    let res = await fetchCodexModelsWithAuth(auth, url);
+    let res = await fetchCodexModelsWithAuth(auth, url, clientVersion);
     if (res.status === 401) {
       try {
         const next = await refreshAuthStateless(auth);
         refreshed = true;
-        res = await fetchCodexModelsWithAuth(next, url);
+        res = await fetchCodexModelsWithAuth(next, url, clientVersion);
         auth = next;
       } catch {
         // ignore and return the original 401 response
