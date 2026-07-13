@@ -378,28 +378,19 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
       }
 
       const wantsReasoningUpdate = Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
-      if (wantsReasoningUpdate && raw.reasoning_effort === null) {
-        return openaiError(400, "reasoning_effort must be a string", "invalid_request_error");
-      }
-      let nextReasoning = normalizeReasoningEffort(wantsReasoningUpdate ? raw.reasoning_effort : reasoningEffort);
       const modelDefault = modelRecord.default_reasoning_level === null
         ? "none"
         : normalizeReasoningEffort(modelRecord.default_reasoning_level);
-      if (!nextReasoning) {
-        nextReasoning = modelDefault ?? DEFAULT_REASONING_EFFORT;
-      }
-
       const levels = extractModelReasoningLevels(modelRecord);
-      const supportedLevels = modelDefault && !levels.includes(modelDefault) ? [...levels, modelDefault] : levels;
-      if (supportedLevels.length > 0 && !supportedLevels.includes(nextReasoning)) {
-        return openaiError(
-          400,
-          `reasoning_effort must be one of: ${supportedLevels.join(", ")}`,
-          "invalid_request_error",
-        );
-      }
-      if (supportedLevels.length === 0) {
-        nextReasoning = "none";
+      let nextReasoning: ReasoningEffort;
+      if (wantsReasoningUpdate) {
+        const explicitReasoning = normalizeReasoningEffort(raw.reasoning_effort);
+        if (!explicitReasoning) {
+          return openaiError(400, "reasoning_effort must be a non-empty string", "invalid_request_error");
+        }
+        nextReasoning = explicitReasoning;
+      } else {
+        nextReasoning = modelDefault ?? levels[0] ?? "none";
       }
 
       model = nextModel;

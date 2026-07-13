@@ -156,18 +156,8 @@ Observed integration behavior:
 }
 ```
 
-When a model does not support reasoning, the gateway may return:
-
-```json
-{
-  "error": {
-    "message": "reasoning_effort is not supported by this model",
-    "type": "invalid_request_error",
-    "param": "reasoning_effort",
-    "code": "unsupported_parameter"
-  }
-}
-```
+The gateway does not reject non-empty reasoning tier strings before contacting Codex. Codex upstream remains
+authoritative and any upstream rejection is returned in the normal OpenAI-style error envelope.
 
 ## Chat Completions
 
@@ -321,12 +311,14 @@ Notes:
 
 - Models with `supported_reasoning_levels` in the stored Codex catalog default to the configured reasoning effort.
 - Non-reasoning models default to `none`.
-- Allowed effort values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+- Reasoning tier strings come from each model's uploaded Codex CLI metadata; inspect `/uos/models/capabilities` instead
+  of relying on a hard-coded tier list.
 - Use `reasoning_effort: "none"` (chat completions) or `reasoning: { "effort": "none" }` (responses) to disable
-  reasoning only when the selected model lists or defaults to `none`.
-- If a model rejects a reasoning effort, inspect `/uos/models/capabilities` and retry with one of that model's listed
-  values; omit reasoning controls when the model does not list reasoning support.
-- In the browser chat playground, `Default` omits `reasoning_effort`; `None` sends `reasoning_effort: "none"`.
+  reasoning. The gateway translates `none` by omitting reasoning at the Codex upstream boundary.
+- Other non-empty tier strings pass through to Codex upstream without gateway validation. If upstream rejects one,
+  inspect `/uos/models/capabilities` and retry with a tier advertised for that model.
+- In the browser chat playground, `Default` omits `reasoning_effort`; `None` sends `reasoning_effort: "none"` and is
+  offered only when the uploaded model metadata advertises no-reasoning support.
 
 Defaults can be managed via `/admin/defaults` (admin auth required). When no model is explicitly configured, the gateway
 uses the first model in the current Codex model snapshot. If neither a configured default nor a snapshot is available,

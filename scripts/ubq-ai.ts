@@ -159,8 +159,6 @@ const BOOLEAN_FLAGS = new Set([
   "verbose",
 ]);
 
-const REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-
 export const parseArgs = (args: string[]): ParsedArgs => {
   const flags: Record<string, FlagValue> = {};
   const positional: string[] = [];
@@ -849,15 +847,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
 
     const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
     if (reasoningEffortRaw) {
-      const normalized = reasoningEffortRaw.toLowerCase();
-      if (!REASONING_EFFORTS.has(normalized)) {
-        await writeErrText(
-          runtime,
-          "Invalid --reasoning-effort. Expected one of: none, minimal, low, medium, high, xhigh.\n",
-        );
-        return 2;
-      }
-      body.reasoning_effort = normalized;
+      body.reasoning_effort = reasoningEffortRaw;
     }
 
     const req = new Request(endpoint("/v1/chat/completions"), {
@@ -991,15 +981,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
 
     const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
     if (reasoningEffortRaw) {
-      const normalized = reasoningEffortRaw.toLowerCase();
-      if (!REASONING_EFFORTS.has(normalized)) {
-        await writeErrText(
-          runtime,
-          "Invalid --reasoning-effort. Expected one of: none, minimal, low, medium, high, xhigh.\n",
-        );
-        return 2;
-      }
-      body.reasoning = { effort: normalized };
+      body.reasoning = { effort: reasoningEffortRaw };
     }
 
     const req = new Request(endpoint("/v1/responses"), {

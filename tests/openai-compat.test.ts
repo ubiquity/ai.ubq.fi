@@ -579,7 +579,7 @@ Deno.test("openai: default reasoning level is accepted when supported levels are
   }
 });
 
-Deno.test("openai: none reasoning is not injected when snapshot levels omit none", async () => {
+Deno.test("openai: none remains a gateway special case when snapshot levels omit it", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
 
@@ -612,9 +612,11 @@ Deno.test("openai: none reasoning is not injected when snapshot levels omit none
       "xhigh",
     ]);
 
+    let recordedBody: Record<string, unknown> | null = null;
     const chatResponse = await withFetchMock(
-      () => {
-        throw new Error("unsupported none reasoning should not fetch upstream");
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
       },
       () =>
         handleChatCompletions(
@@ -629,10 +631,9 @@ Deno.test("openai: none reasoning is not injected when snapshot levels omit none
         ),
     );
 
-    assert.equal(chatResponse.status, 400);
-    const payload = await chatResponse.json() as { error?: { message?: string; param?: string | null } };
-    assert.equal(payload.error?.param, "reasoning_effort");
-    assert.match(payload.error?.message ?? "", /reasoning_effort must be one of: low, medium, high, xhigh/);
+    assert.equal(chatResponse.status, 200);
+    assert.ok(recordedBody);
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedBody, "reasoning"), false);
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
@@ -688,7 +689,7 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
   assert.ok(model);
   assert.equal(model.object, "uos.model_capabilities");
   assert.equal(model.upstream_provider, "codex_chatgpt");
-  assert.deepEqual(model.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(model.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh", "max", "ultra"]);
   assert.equal(model.default_reasoning_effort, "medium");
   assert.equal(model.context_window_tokens, 272000);
   assert.equal(model.max_context_window_tokens, 1000000);
@@ -745,10 +746,12 @@ Deno.test("openai: unsupported snapshot model is rejected before upstream fetch"
   assert.match(payload.error?.message ?? "", /Use \/v1\/models/);
 });
 
-Deno.test("openai: reasoning validation returns OpenAI-style parameter errors", async () => {
+Deno.test("openai: unlisted reasoning tiers pass through for upstream validation", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
-    () => {
-      throw new Error("unsupported reasoning requests should not fetch upstream");
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
     },
     () =>
       handleChatCompletions(
@@ -763,11 +766,9 @@ Deno.test("openai: reasoning validation returns OpenAI-style parameter errors", 
       ),
   );
 
-  assert.equal(response.status, 400);
-  const payload = await response.json() as { error?: { code?: string; param?: string | null; type?: string } };
-  assert.equal(payload.error?.type, "invalid_request_error");
-  assert.equal(payload.error?.code, "invalid_request_error");
-  assert.equal(payload.error?.param, "reasoning_effort");
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "minimal" });
 });
 
 Deno.test("openai: max reasoning is forwarded for models that support it", async () => {
@@ -795,10 +796,12 @@ Deno.test("openai: max reasoning is forwarded for models that support it", async
   assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
 });
 
-Deno.test("openai: internal ultra reasoning is rejected before upstream fetch", async () => {
+Deno.test("openai: Codex CLI ultra reasoning is forwarded upstream", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
-    () => {
-      throw new Error("internal reasoning levels should not fetch upstream");
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
     },
     () =>
       handleChatCompletions(
@@ -813,11 +816,34 @@ Deno.test("openai: internal ultra reasoning is rejected before upstream fetch", 
       ),
   );
 
-  assert.equal(response.status, 400);
-  const payload = await response.json() as { error?: { message?: string; param?: string | null } };
-  assert.equal(payload.error?.param, "reasoning_effort");
-  assert.match(payload.error?.message ?? "", /none, minimal, low, medium, high, xhigh, max/);
-  assert.doesNotMatch(payload.error?.message ?? "", /ultra/);
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "ultra" });
+});
+
+Deno.test("openai: responses forwards Codex CLI reasoning tiers upstream", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            input: "ping",
+            reasoning: { effort: "ultra" },
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "ultra" });
 });
 
 Deno.test("openai: upstream detail errors are normalized to OpenAI-style envelopes", async () => {

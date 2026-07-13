@@ -275,14 +275,14 @@ Deno.test("ubq-ai: chat (non-stream) prints assistant content", async () => {
   assert.equal(outText(), "hi\n");
 });
 
-Deno.test("ubq-ai: chat passes --reasoning-effort through", async () => {
+Deno.test("ubq-ai: chat passes a Codex CLI reasoning tier through", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/chat/completions"));
       const body = JSON.parse(recorded.bodyText ?? "null") as Record<string, unknown>;
       assert.equal("model" in body, false);
-      assert.equal(body.reasoning_effort, "xhigh");
+      assert.equal(body.reasoning_effort, "ultra");
       return jsonResponse(200, {
         id: "chatcmpl_test",
         object: "chat.completion",
@@ -294,7 +294,7 @@ Deno.test("ubq-ai: chat passes --reasoning-effort through", async () => {
   });
 
   const code = await runUbqAi(
-    ["chat", "--reasoning-effort", "xhigh", "--system", "You are a helpful assistant.", "Tell me a short joke."],
+    ["chat", "--reasoning-effort", "ultra", "--system", "You are a helpful assistant.", "Tell me a short joke."],
     runtime,
   );
   assert.equal(code, 0);
@@ -357,14 +357,14 @@ Deno.test("ubq-ai: responses (non-stream) prints extracted assistant text", asyn
   assert.equal(outText(), "Summary.\n");
 });
 
-Deno.test("ubq-ai: responses maps --reasoning-effort to reasoning.effort", async () => {
+Deno.test("ubq-ai: responses passes a Codex CLI reasoning tier through", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/v1/responses"));
       const body = JSON.parse(recorded.bodyText ?? "null") as Record<string, unknown>;
       assert.equal("model" in body, false);
-      assert.deepEqual(body.reasoning, { effort: "high" });
+      assert.deepEqual(body.reasoning, { effort: "ultra" });
       assert.equal(body.instructions, "You are a helpful assistant.");
       return jsonResponse(200, {
         id: "resp_test",
@@ -380,7 +380,7 @@ Deno.test("ubq-ai: responses maps --reasoning-effort to reasoning.effort", async
   });
 
   const code = await runUbqAi(
-    ["responses", "--reasoning-effort", "high", "--instructions", "You are a helpful assistant.", "Summarize this."],
+    ["responses", "--reasoning-effort", "ultra", "--instructions", "You are a helpful assistant.", "Summarize this."],
     runtime,
   );
   assert.equal(code, 0);

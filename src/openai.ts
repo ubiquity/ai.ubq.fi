@@ -11,7 +11,6 @@ import {
   DEFAULT_REASONING_EFFORT,
   DEFAULT_REASONING_EFFORT_KEY,
   normalizeReasoningEffort,
-  REASONING_EFFORTS,
   type ReasoningEffort,
 } from "./defaults.ts";
 import { recordApiKeyUsage } from "./analytics.ts";
@@ -53,9 +52,7 @@ const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
   const kv = await kvPromise;
   if (!kv) return DEFAULT_REASONING_EFFORT;
   const entry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
-  const effort = entry.value;
-  if (effort && REASONING_EFFORTS.has(effort as ReasoningEffort)) return effort as ReasoningEffort;
-  return DEFAULT_REASONING_EFFORT;
+  return normalizeReasoningEffort(entry.value) ?? DEFAULT_REASONING_EFFORT;
 };
 
 type UsageContext = Readonly<{
@@ -327,34 +324,6 @@ const resolveReasoningLabelFromParam = (
   return defaultLabel;
 };
 
-const reasoningErrorFieldLabel = (fieldName: "reasoning_effort" | "reasoning.effort"): string =>
-  fieldName === "reasoning.effort" ? "reasoning.effort" : "reasoning_effort";
-
-const validateModelReasoningEffort = (
-  effort: ReasoningEffort | undefined,
-  modelReasoning: CodexModelReasoning,
-  fieldName: "reasoning_effort" | "reasoning.effort",
-): Response | null => {
-  if (effort === undefined) return null;
-  if (!modelReasoning.levels.length) {
-    return openaiError(
-      400,
-      `${reasoningErrorFieldLabel(fieldName)} is not supported by this model`,
-      "unsupported_parameter",
-      { param: fieldName },
-    );
-  }
-  if (!modelReasoning.levels.includes(effort)) {
-    return openaiError(
-      400,
-      `${reasoningErrorFieldLabel(fieldName)} must be one of: ${modelReasoning.levels.join(", ")}`,
-      "invalid_request_error",
-      { param: fieldName },
-    );
-  }
-  return null;
-};
-
 const extractReasoningParamEffort = (
   reasoning: Record<string, unknown> | undefined,
 ): ReasoningEffort | undefined => {
@@ -483,12 +452,9 @@ const parseReasoningEffortField = (
   if (typeof value !== "string") {
     return { ok: false, message: `${fieldName} must be a string` };
   }
-  const normalized = value.trim().toLowerCase();
+  const normalized = normalizeReasoningEffort(value);
   if (!normalized) return { ok: false, message: `${fieldName} must be a non-empty string` };
-  if (!REASONING_EFFORTS.has(normalized as ReasoningEffort)) {
-    return { ok: false, message: `${fieldName} must be one of: ${Array.from(REASONING_EFFORTS).join(", ")}` };
-  }
-  return { ok: true, value: normalized as ReasoningEffort };
+  return { ok: true, value: normalized };
 };
 
 const parseReasoningParam = (
@@ -2620,8 +2586,6 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   const defaultEffort = await getDefaultReasoningEffort();
   const modelReasoning = modelMetadata.reasoning;
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
-  const reasoningValidation = validateModelReasoningEffort(reasoningEffort.value, modelReasoning, "reasoning_effort");
-  if (reasoningValidation) return reasoningValidation;
   let reasoningValue: Record<string, unknown> | undefined;
   if (reasoningEffort.value === undefined) {
     reasoningValue = defaultReasoningLabel !== "none" ? { effort: defaultReasoningLabel } : undefined;
@@ -2805,13 +2769,6 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const defaultEffort = await getDefaultReasoningEffort();
   const modelReasoning = modelMetadata.reasoning;
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
-  const requestedReasoningEffort = extractReasoningParamEffort(reasoning.value);
-  const reasoningValidation = validateModelReasoningEffort(
-    requestedReasoningEffort,
-    modelReasoning,
-    "reasoning.effort",
-  );
-  if (reasoningValidation) return reasoningValidation;
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
 
   let reasoningValue = normalizeReasoningParamForCodex(reasoning.value);

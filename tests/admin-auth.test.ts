@@ -198,7 +198,14 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
     assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.3-codex-spark"]);
     assert.equal(stored?.models?.[0]?.supported_in_api, false);
     assert.equal(stored?.models?.[0]?.default_reasoning_level, "high");
-    assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, ["low", "medium", "high", "xhigh", "max"]);
+    assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -306,7 +313,37 @@ Deno.test("admin defaults accepts none when the model supports none", async () =
   assert.equal(kvStore.get(keyToString(["default", "reasoning_effort"])), "none");
 });
 
-Deno.test("admin defaults rejects none when the model does not support none", async () => {
+Deno.test("admin defaults accepts a tier advertised by the Codex CLI catalog", async () => {
+  kvStore.clear();
+  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+    source: "codex_cli",
+    updated_at_ms: 123,
+    models: [{
+      slug: "gpt-5.6-sol",
+      display_name: "GPT-5.6 Sol",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    }],
+  });
+
+  const response = await handleAdminDefaults(
+    new Request("https://ai.ubq.fi/admin/defaults", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-5.6-sol",
+        reasoning_effort: "ultra",
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
+  assert.equal(payload.defaults?.reasoning_effort, "ultra");
+  assert.equal(kvStore.get(keyToString(["default", "reasoning_effort"])), "ultra");
+});
+
+Deno.test("admin defaults does not reject an unlisted reasoning tier", async () => {
   kvStore.clear();
   kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
     source: "codex_cli",
@@ -325,15 +362,15 @@ Deno.test("admin defaults rejects none when the model does not support none", as
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "gpt-5.5",
-        reasoning_effort: "none",
+        reasoning_effort: "future-tier",
       }),
     }),
   );
 
-  assert.equal(response.status, 400);
-  const payload = await response.json() as { error?: { message?: string } };
-  assert.match(payload.error?.message ?? "", /reasoning_effort must be one of: low, medium, high, xhigh/);
-  assert.equal(kvStore.has(keyToString(["default", "reasoning_effort"])), false);
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
+  assert.equal(payload.defaults?.reasoning_effort, "future-tier");
+  assert.equal(kvStore.get(keyToString(["default", "reasoning_effort"])), "future-tier");
 });
 
 Deno.test("admin defaults rejects null reasoning effort", async () => {
@@ -362,7 +399,7 @@ Deno.test("admin defaults rejects null reasoning effort", async () => {
 
   assert.equal(response.status, 400);
   const payload = await response.json() as { error?: { message?: string } };
-  assert.match(payload.error?.message ?? "", /reasoning_effort must be a string/);
+  assert.match(payload.error?.message ?? "", /reasoning_effort must be a non-empty string/);
   assert.equal(kvStore.has(keyToString(["default", "reasoning_effort"])), false);
 });
 

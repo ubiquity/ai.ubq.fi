@@ -48,7 +48,7 @@ const createSelect = (): FakeSelect => ({
   },
 });
 
-Deno.test("reasoning select includes public model levels and filters internal levels", () => {
+Deno.test("reasoning select preserves every tier advertised by the model catalog", () => {
   withFakeDocument(() => {
     const select = createSelect();
     const selected = updateReasoningSelectForModel(select, {
@@ -66,6 +66,7 @@ Deno.test("reasoning select includes public model levels and filters internal le
       ["high", "high"],
       ["xhigh", "xhigh"],
       ["max", "max"],
+      ["ultra", "ultra"],
     ]);
   });
 });
@@ -113,5 +114,5 @@ Deno.test("reasoning select shows none when model default is none", () => {
 Deno.test("chat reasoning none selection uses OpenAI wire value", () => {
   assert.equal(getReasoningEffortForChatRequest("none"), "none");
   assert.equal(getReasoningEffortForChatRequest("max"), "max");
-  assert.equal(getReasoningEffortForChatRequest("ultra"), undefined);
+  assert.equal(getReasoningEffortForChatRequest("ultra"), "ultra");
 });
