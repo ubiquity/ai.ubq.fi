@@ -68,6 +68,12 @@ const embeddingsCacheKey = (
   hash,
 ];
 
+const embeddingsCacheGlobalIndexKey = (
+  createdAtMs: number,
+  cacheProfileKey: string,
+  hash: string,
+): Deno.KvKey => ["embeddings", "v2", "cache_index_global", createdAtMs, cacheProfileKey, hash];
+
 const embeddingsJobKey = (
   tokenHash: string,
   cacheProfileKey: string,
@@ -812,6 +818,8 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   const byHashKeyA: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hashA];
   const indexKeyStale: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, staleMs, hashA];
   const indexKeyActive: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, pointerMs, hashA];
+  const globalIndexKeyStale = embeddingsCacheGlobalIndexKey(staleMs, cacheProfileKey, hashA);
+  const globalIndexKeyActive = embeddingsCacheGlobalIndexKey(pointerMs, cacheProfileKey, hashA);
   kvStore.set(keyToString(byHashKeyA), pointerMs);
   const activeEmbedding = testVector(1024, 1);
   kvStore.set(keyToString(cacheKeyA), {
@@ -820,6 +828,8 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   });
   kvStore.set(keyToString(indexKeyStale), 1);
   kvStore.set(keyToString(indexKeyActive), 1);
+  kvStore.set(keyToString(globalIndexKeyStale), 1);
+  kvStore.set(keyToString(globalIndexKeyActive), 1);
 
   // Populate enough older entries so a quota-eviction batch cleans the stale index key
   // without touching the active index key for hashA.
@@ -830,13 +840,20 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
     const cacheKeyOld = embeddingsCacheKey(hashOld);
     const byHashKeyOld: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hashOld];
     const indexKeyOld: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, createdAtMs, hashOld];
+    const globalIndexKeyOld = embeddingsCacheGlobalIndexKey(createdAtMs, cacheProfileKey, hashOld);
     kvStore.set(keyToString(cacheKeyOld), {
       embedding: testVector(1024),
       created_at: new Date(createdAtMs).toISOString(),
     });
     kvStore.set(keyToString(byHashKeyOld), createdAtMs);
     kvStore.set(keyToString(indexKeyOld), 1);
-    oldKeyStrings.push(keyToString(cacheKeyOld), keyToString(byHashKeyOld), keyToString(indexKeyOld));
+    kvStore.set(keyToString(globalIndexKeyOld), 1);
+    oldKeyStrings.push(
+      keyToString(cacheKeyOld),
+      keyToString(byHashKeyOld),
+      keyToString(indexKeyOld),
+      keyToString(globalIndexKeyOld),
+    );
   }
 
   const originalNow = Date.now;
@@ -847,9 +864,11 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   const cacheKeyB = embeddingsCacheKey(hashB);
   const byHashKeyB: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hashB];
   const indexKeyB: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, nowMs, hashB];
+  const globalIndexKeyB = embeddingsCacheGlobalIndexKey(nowMs, cacheProfileKey, hashB);
   kvStore.delete(keyToString(cacheKeyB));
   kvStore.delete(keyToString(byHashKeyB));
   kvStore.delete(keyToString(indexKeyB));
+  kvStore.delete(keyToString(globalIndexKeyB));
 
   try {
     // Simulate KV storage quota failure on the first attempt to cache inputB.
@@ -877,15 +896,18 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
     );
     assert.equal(response.status, 200);
     assert.equal(kvStore.get(keyToString(indexKeyStale)), undefined);
+    assert.equal(kvStore.get(keyToString(globalIndexKeyStale)), undefined);
     assert.deepEqual(kvStore.get(keyToString(cacheKeyA)), {
       embedding: activeEmbedding,
       created_at: new Date(pointerMs).toISOString(),
     });
     assert.equal(kvStore.get(keyToString(byHashKeyA)), pointerMs);
     assert.equal(kvStore.get(keyToString(indexKeyActive)), 1);
+    assert.equal(kvStore.get(keyToString(globalIndexKeyActive)), 1);
     assert.ok(kvStore.get(keyToString(cacheKeyB)));
     assert.equal(kvStore.get(keyToString(byHashKeyB)), nowMs);
     assert.equal(kvStore.get(keyToString(indexKeyB)), 1);
+    assert.equal(kvStore.get(keyToString(globalIndexKeyB)), 1);
   } finally {
     Date.now = originalNow;
     failNextAtomicCommit = null;
@@ -893,10 +915,111 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
     kvStore.delete(keyToString(cacheKeyA));
     kvStore.delete(keyToString(indexKeyStale));
     kvStore.delete(keyToString(indexKeyActive));
+    kvStore.delete(keyToString(globalIndexKeyStale));
+    kvStore.delete(keyToString(globalIndexKeyActive));
     kvStore.delete(keyToString(cacheKeyB));
     kvStore.delete(keyToString(byHashKeyB));
     kvStore.delete(keyToString(indexKeyB));
+    kvStore.delete(keyToString(globalIndexKeyB));
     for (const key of oldKeyStrings) kvStore.delete(key);
+  }
+});
+
+Deno.test("embeddings cache: quota eviction frees entries owned by another profile", async () => {
+  resetVoyageRateLimit();
+  const oldProfileKey = embeddingsProfileKey("document", 1024, "float", false);
+  const newProfileKey = embeddingsProfileKey("query", 256, "float", false);
+  const oldCreatedAtMs = 1;
+  const newCreatedAtMs = 2;
+
+  const oldHash = await sha256Hex(`old-document-profile-${crypto.randomUUID()}`);
+  const oldCacheKey = embeddingsCacheKey(oldHash, "document", 1024, "float", false);
+  const oldByHashKey: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", oldProfileKey, oldHash];
+  const oldProfileIndexKey: Deno.KvKey = [
+    "embeddings",
+    "v2",
+    "cache_index",
+    oldProfileKey,
+    oldCreatedAtMs,
+    oldHash,
+  ];
+  const oldGlobalIndexKey = embeddingsCacheGlobalIndexKey(oldCreatedAtMs, oldProfileKey, oldHash);
+  kvStore.set(keyToString(oldCacheKey), {
+    embedding: testVector(1024),
+    created_at: new Date(oldCreatedAtMs).toISOString(),
+  });
+  kvStore.set(keyToString(oldByHashKey), oldCreatedAtMs);
+  kvStore.set(keyToString(oldProfileIndexKey), 1);
+  kvStore.set(keyToString(oldGlobalIndexKey), 1);
+
+  const input = `new-query-profile-${crypto.randomUUID()}`;
+  const newHash = await sha256Hex(input);
+  const newCacheKey = embeddingsCacheKey(newHash, "query", 256, "float", false);
+  const newByHashKey: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", newProfileKey, newHash];
+  const newProfileIndexKey: Deno.KvKey = [
+    "embeddings",
+    "v2",
+    "cache_index",
+    newProfileKey,
+    newCreatedAtMs,
+    newHash,
+  ];
+  const newGlobalIndexKey = embeddingsCacheGlobalIndexKey(newCreatedAtMs, newProfileKey, newHash);
+  const originalNow = Date.now;
+  Date.now = () => newCreatedAtMs;
+
+  try {
+    failNextAtomicCommit = (_checks, ops) => {
+      const hitsNewProfileWrite = ops.some(
+        (op) => op.type === "set" && keyToString(op.key) === keyToString(newCacheKey),
+      );
+      return hitsNewProfileWrite ? new Error("KV quota exceeded") : false;
+    };
+
+    const response = await withFetchMock(
+      () => voyageOkResponse(1, 256),
+      () =>
+        handleUosEmbeddings(
+          new Request("https://ai.ubq.fi/uos/embeddings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "voyage-4-large",
+              input,
+              input_type: "query",
+              dimensions: 256,
+              truncation: false,
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(kvStore.get(keyToString(oldCacheKey)), undefined);
+    assert.equal(kvStore.get(keyToString(oldByHashKey)), undefined);
+    assert.equal(kvStore.get(keyToString(oldProfileIndexKey)), undefined);
+    assert.equal(kvStore.get(keyToString(oldGlobalIndexKey)), undefined);
+    assert.ok(kvStore.get(keyToString(newCacheKey)));
+    assert.equal(kvStore.get(keyToString(newByHashKey)), newCreatedAtMs);
+    assert.equal(kvStore.get(keyToString(newProfileIndexKey)), 1);
+    assert.equal(kvStore.get(keyToString(newGlobalIndexKey)), 1);
+  } finally {
+    Date.now = originalNow;
+    failNextAtomicCommit = null;
+    for (
+      const key of [
+        oldCacheKey,
+        oldByHashKey,
+        oldProfileIndexKey,
+        oldGlobalIndexKey,
+        newCacheKey,
+        newByHashKey,
+        newProfileIndexKey,
+        newGlobalIndexKey,
+      ]
+    ) {
+      kvStore.delete(keyToString(key));
+    }
   }
 });
 

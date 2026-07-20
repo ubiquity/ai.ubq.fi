@@ -866,14 +866,17 @@ const embeddingsJobInputKey = (
   hash,
 ];
 
-const embeddingsCacheIndexPrefix = (
-  cacheProfileKey: string,
-): Deno.KvKey => ["embeddings", "v2", "cache_index", cacheProfileKey];
 const embeddingsCacheIndexKey = (
   cacheProfileKey: string,
   createdAtMs: number,
   hash: string,
 ): Deno.KvKey => ["embeddings", "v2", "cache_index", cacheProfileKey, createdAtMs, hash];
+const embeddingsCacheGlobalIndexPrefix: Deno.KvKey = ["embeddings", "v2", "cache_index_global"];
+const embeddingsCacheGlobalIndexKey = (
+  createdAtMs: number,
+  cacheProfileKey: string,
+  hash: string,
+): Deno.KvKey => [...embeddingsCacheGlobalIndexPrefix, createdAtMs, cacheProfileKey, hash];
 const embeddingsCacheIndexByHashKey = (cacheProfileKey: string, hash: string): Deno.KvKey => [
   "embeddings",
   "v2",
@@ -937,6 +940,7 @@ const writeEmbeddingsCacheEntry = async (
         .check(entry)
         .set(cacheKey, { embedding, created_at: new Date(existingCreatedAtMs).toISOString() })
         .set(indexKey, 1)
+        .set(embeddingsCacheGlobalIndexKey(existingCreatedAtMs, cacheProfileKey, hash), 1)
         .commit();
       if (updated.ok) return { isNew: false };
       continue;
@@ -948,6 +952,7 @@ const writeEmbeddingsCacheEntry = async (
       .check(entry)
       .set(cacheKey, { embedding, created_at: createdAtIso })
       .set(indexKey, 1)
+      .set(embeddingsCacheGlobalIndexKey(createdAtMs, cacheProfileKey, hash), 1)
       .set(byHashKey, createdAtMs)
       .commit();
     if (created.ok) return { isNew: true };
@@ -977,11 +982,13 @@ const writeEmbeddingsCacheEntryBestEffort = async (
         return { isNew: false };
       }
 
-      // KV rejected the write (likely storage quota). Evict oldest entries and retry.
+      // KV rejected the write (likely storage quota). Evict the oldest entries
+      // across every embedding profile so a newly introduced profile cannot be
+      // starved by cache entries owned by another profile.
       try {
-        const evicted = await evictOldestEmbeddingsCacheEntries(kv, cacheProfileKey, evictBatch);
+        const evicted = await evictOldestEmbeddingsCacheEntries(kv, evictBatch);
         console.warn(
-          `[ai.ubq.fi] embeddings_cache quota eviction profile=${cacheProfileKey} evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} batch=${evictBatch}`,
+          `[ai.ubq.fi] embeddings_cache quota eviction requesting_profile=${cacheProfileKey} scope=global evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} batch=${evictBatch}`,
         );
         if (evicted.evicted_embeddings <= 0 && evicted.deleted_stale_index_keys <= 0) return { isNew: false };
       } catch (evictError) {
@@ -997,35 +1004,50 @@ const writeEmbeddingsCacheEntryBestEffort = async (
 
 const evictOldestEmbeddingsCacheEntries = async (
   kv: Deno.Kv,
-  cacheProfileKey: string,
   count: number,
 ): Promise<EmbeddingsCacheEvictResult> => {
-  const prefix = embeddingsCacheIndexPrefix(cacheProfileKey);
-  const keys: Array<{ indexKey: Deno.KvKey; createdAtMs: number; hash: string }> = [];
-  for await (const entry of kv.list({ prefix }, { limit: count })) {
+  const keys: Array<{
+    globalIndexKey: Deno.KvKey;
+    cacheProfileKey: string;
+    createdAtMs: number;
+    hash: string;
+  }> = [];
+  for await (const entry of kv.list({ prefix: embeddingsCacheGlobalIndexPrefix }, { limit: count })) {
     const key = entry.key;
     const hash = key.at(-1);
-    const createdAtMs = key.at(-2);
+    const cacheProfileKey = key.at(-2);
+    const createdAtMs = key.at(-3);
     if (typeof hash !== "string" || !hash) continue;
+    if (typeof cacheProfileKey !== "string" || !cacheProfileKey) continue;
     if (typeof createdAtMs !== "number" || !Number.isFinite(createdAtMs)) continue;
-    keys.push({ indexKey: key, createdAtMs: Math.trunc(createdAtMs), hash });
+    keys.push({
+      globalIndexKey: key,
+      cacheProfileKey,
+      createdAtMs: Math.trunc(createdAtMs),
+      hash,
+    });
   }
   if (!keys.length) return { evicted_embeddings: 0, deleted_stale_index_keys: 0 };
 
-  const byHashKeys = keys.map((item) => embeddingsCacheIndexByHashKey(cacheProfileKey, item.hash));
+  const byHashKeys = keys.map((item) => embeddingsCacheIndexByHashKey(item.cacheProfileKey, item.hash));
   const byHashEntries = await Promise.all(byHashKeys.map((key) => kv.get<number>(key)));
 
   let evictedEmbeddings = 0;
   let deletedStaleIndexKeys = 0;
   for (let i = 0; i < keys.length; i += 1) {
-    const { indexKey, createdAtMs, hash } = keys[i]!;
+    const { globalIndexKey, cacheProfileKey, createdAtMs, hash } = keys[i]!;
     const pointerEntry = byHashEntries[i]!;
     const pointer = normalizeEmbeddingsCacheTimestampMs(pointerEntry.value);
     const cacheKey = embeddingsCacheKey(cacheProfileKey, hash);
+    const profileIndexKey = embeddingsCacheIndexKey(cacheProfileKey, createdAtMs, hash);
 
     if (pointer !== null && pointer !== createdAtMs) {
-      // Stale duplicate index key for this hash; delete the index entry only.
-      const deleted = await kv.atomic().check(pointerEntry).delete(indexKey).commit();
+      // Stale duplicate index keys for this hash; delete only the indexes.
+      const deleted = await kv.atomic()
+        .check(pointerEntry)
+        .delete(globalIndexKey)
+        .delete(profileIndexKey)
+        .commit();
       if (deleted.ok) deletedStaleIndexKeys += 1;
       continue;
     }
@@ -1039,14 +1061,19 @@ const evictOldestEmbeddingsCacheEntries = async (
       const createdAtIso = isRecord(value) && typeof value.created_at === "string" ? value.created_at : null;
       const expectedIso = new Date(createdAtMs).toISOString();
       if (createdAtIso !== expectedIso) {
-        const deleted = await kv.atomic().check(pointerEntry).delete(indexKey).commit();
+        const deleted = await kv.atomic()
+          .check(pointerEntry)
+          .delete(globalIndexKey)
+          .delete(profileIndexKey)
+          .commit();
         if (deleted.ok) deletedStaleIndexKeys += 1;
         continue;
       }
 
       const commit = await kv.atomic()
         .check(pointerEntry)
-        .delete(indexKey)
+        .delete(globalIndexKey)
+        .delete(profileIndexKey)
         .delete(cacheKey)
         .commit();
       if (commit.ok) evictedEmbeddings += 1;
@@ -1056,7 +1083,8 @@ const evictOldestEmbeddingsCacheEntries = async (
     // Canonical pointer match: evict embedding + index + pointer as an atomic unit.
     const commit = await kv.atomic()
       .check(pointerEntry)
-      .delete(indexKey)
+      .delete(globalIndexKey)
+      .delete(profileIndexKey)
       .delete(cacheKey)
       .delete(embeddingsCacheIndexByHashKey(cacheProfileKey, hash))
       .commit();
