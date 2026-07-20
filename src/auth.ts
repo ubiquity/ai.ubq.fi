@@ -19,6 +19,7 @@ import {
 } from "./kernel_usage.ts";
 import { recordKernelPolicyQueue } from "./kernel_policy_queue.ts";
 import { kvPromise } from "./kv.ts";
+import { hasStrictPaidFallbackPolicy, paidFallbackHashFields } from "./paid_fallback.ts";
 import { getPasskeySession, isPasskeyUserAdmin } from "./passkeys.ts";
 import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
@@ -736,6 +737,13 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
     const hashKey = apiKeyHashKey(hash);
     const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
     if (hashEntry.value && hashEntry.value.revoked_at_ms == null) {
+      if (!hasStrictPaidFallbackPolicy(hashEntry.value)) {
+        logClientAuth({ ok: false, method: "kv_api_key", status: 503, reason: "paid_fallback_migration_incomplete" });
+        return {
+          ok: false,
+          response: openaiError(503, "API key migration is incomplete", "server_error", { type: "server_error" }),
+        };
+      }
       const now = Date.now();
       const expiresAtMs = typeof hashEntry.value.expires_at_ms === "number" &&
           Number.isFinite(hashEntry.value.expires_at_ms)
@@ -762,12 +770,14 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
             usage_requests: 0,
             usage_reset_at_ms: newResetAtMs,
             window_ms: resolvedWindowMs,
+            paid_fallback_spent_microcredits: 0,
           };
           const updatedHash: ApiKeyHashRecord = {
             ...hashEntry.value,
             usage_requests: 0,
             usage_reset_at_ms: newResetAtMs,
             window_ms: resolvedWindowMs,
+            paid_fallback_spent_microcredits: 0,
           };
           await kv.atomic()
             .check(idEntry)
@@ -1059,6 +1069,7 @@ export const incrementApiKeyUsage = async (keyId: string): Promise<void> => {
       usage_requests: idEntry.value.usage_requests + 1,
       usage_reset_at_ms: idEntry.value.usage_reset_at_ms,
       window_ms: normalizeApiKeyWindowMs(idEntry.value.window_ms),
+      ...paidFallbackHashFields(idEntry.value),
     };
 
   const atomic = kv.atomic()

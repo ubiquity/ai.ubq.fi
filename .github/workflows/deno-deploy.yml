@@ -93,6 +93,7 @@ jobs:
           CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 || vars.CODEX_AUTH_JSON_B64 || '' }}
           UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UOS_AI_KERNEL_PUBLIC_KEY || secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY || vars.UOS_AI_KERNEL_PUBLIC_KEY || vars.UBIQUITY_AI_KERNEL_PUBLIC_KEY || '' }}
           VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY || vars.VOYAGEAI_API_KEY || '' }}
+          YUNWU_API_KEY: ${{ secrets.YUNWU_API_KEY || vars.YUNWU_API_KEY || '' }}
         run: |
           set -euo pipefail
 
@@ -175,3 +176,4 @@ jobs:
           sync_value CODEX_AUTH_JSON_B64 "$codex_auth_minified"
           sync_secret UOS_AI_KERNEL_PUBLIC_KEY
           sync_secret VOYAGEAI_API_KEY
+          sync_secret YUNWU_API_KEY

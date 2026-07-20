@@ -4,8 +4,8 @@ import {
   formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
-  resolveBackendBase,
   registerPasskey,
+  resolveBackendBase,
   signInWithPasskey,
   signOut,
   storage,
@@ -95,6 +95,9 @@ const keyNameInput = mustGet("key-name");
 const keyUsageLimitInput = mustGet("key-usage-limit");
 const keyUsageWindowInput = mustGet("key-usage-window");
 const keyExpiresSelect = mustGet("key-expires");
+const keyPaidFallbackEnabledInput = mustGet("key-paid-fallback-enabled");
+const keyPaidFallbackLimitInput = mustGet("key-paid-fallback-limit");
+const keyPaidFallbackSettings = mustGet("key-paid-fallback-settings");
 const createKeyBtn = mustGet("create-key");
 const createBadge = mustGet("create-badge");
 const createResult = mustGet("create-result");
@@ -520,6 +523,13 @@ const clearCreateResult = () => {
   createResult.hidden = true;
 };
 
+const syncCreatePaidFallbackControls = () => {
+  const enabled = keyPaidFallbackEnabledInput.checked;
+  keyPaidFallbackSettings.hidden = !enabled;
+  keyPaidFallbackLimitInput.disabled = !enabled;
+  keyPaidFallbackLimitInput.required = enabled;
+};
+
 const clearKeysListLoading = () => {
   delete keysList.dataset.loading;
   keysList.removeAttribute("aria-busy");
@@ -581,6 +591,15 @@ const isExpiredAt = (ms) => typeof ms === "number" && Number.isFinite(ms) && ms 
 
 const numberFormatter = new Intl.NumberFormat();
 const compactNumberFormatter = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+const creditFormatter = new Intl.NumberFormat(undefined, {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 6,
+});
+const decimalFormatter = new Intl.NumberFormat(undefined, {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 6,
+});
+const MICROCREDITS_PER_CREDIT = 1_000_000;
 
 const toNumber = (value) => {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
@@ -589,6 +608,23 @@ const toNumber = (value) => {
 
 const formatNumber = (value) => numberFormatter.format(toNumber(value));
 const formatCompactNumber = (value) => compactNumberFormatter.format(toNumber(value));
+const formatDecimal = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
+  return decimalFormatter.format(value);
+};
+const formatCredits = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
+  return `${creditFormatter.format(value)} credits`;
+};
+const formatPaidFallbackLimit = (value) => value === -1 ? "Unlimited" : formatCredits(value);
+const formatMicrocreditsAsCredits = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
+  return formatCredits(value / MICROCREDITS_PER_CREDIT);
+};
+const formatLatency = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  return `${numberFormatter.format(Math.trunc(value))} ms`;
+};
 
 const formatOptionalText = (value) => {
   if (typeof value !== "string") return "unknown";
@@ -2557,8 +2593,9 @@ const SPARKLINE_MIN_WIDTH = 240;
 const SPARKLINE_HEIGHT = 96;
 const SPARKLINE_PAD_Y = 6;
 let sparklineCounter = 0;
-const buildUsageSparkline = (usage) => {
-  const daily = Array.isArray(usage?.daily_requests) ? usage.daily_requests : null;
+const buildUsageSparkline = (usage, options = {}) => {
+  const dailyKey = options.dailyKey ?? "daily_requests";
+  const daily = Array.isArray(usage?.[dailyKey]) ? usage[dailyKey] : null;
   if (!daily || daily.length === 0) return null;
 
   const values = daily.map((value) =>
@@ -2622,7 +2659,7 @@ const buildUsageSparkline = (usage) => {
   svg.setAttribute("height", String(height));
   svg.setAttribute("preserveAspectRatio", "none");
   svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", `Last ${count} days requests`);
+  svg.setAttribute("aria-label", `Last ${count} days ${options.ariaLabel ?? "requests"}`);
 
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
   const gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
@@ -2719,9 +2756,10 @@ const buildUsageSparkline = (usage) => {
   svg.appendChild(linePathEl);
 
   const scaleMaxLabel = Math.max(1, Math.round(scaleMax));
-  const maxLabel = maxValue > scaleMax
-    ? `Max ${formatCompactNumber(scaleMaxLabel)}+`
-    : `Max ${formatCompactNumber(scaleMaxLabel)}`;
+  const formattedScaleMax = typeof options.formatScaleMax === "function"
+    ? options.formatScaleMax(scaleMaxLabel)
+    : formatCompactNumber(scaleMaxLabel);
+  const maxLabel = maxValue > scaleMax ? `Max ${formattedScaleMax}+` : `Max ${formattedScaleMax}`;
 
   const container = document.createElement("div");
   container.dataset.usageSpark = "spark";
@@ -2754,6 +2792,20 @@ const buildUsageSparkline = (usage) => {
   return container;
 };
 
+const appendUsageSeries = (container, label, sparkline) => {
+  if (!sparkline) return;
+  const section = document.createElement("section");
+  section.dataset.usageSeries = "series";
+
+  const title = document.createElement("h4");
+  title.dataset.usageSeriesTitle = "title";
+  title.textContent = label;
+
+  section.appendChild(title);
+  section.appendChild(sparkline);
+  container.appendChild(section);
+};
+
 const buildUsageSummary = (usage) => {
   const summary = document.createElement("div");
   summary.dataset.usageSummary = "summary";
@@ -2783,6 +2835,17 @@ const buildUsageSummary = (usage) => {
     title: formatNumber(usage.total_tokens),
   });
   appendUsagePill(summary, "Last", formatDate(usage.last_seen_at_ms));
+
+  if (Object.prototype.hasOwnProperty.call(usage, "yunwu_fallback_requests")) {
+    appendUsagePill(summary, "YunWu", formatCompactNumber(usage.yunwu_fallback_requests), {
+      title: `${formatNumber(usage.yunwu_fallback_requests)} fallback requests`,
+    });
+  }
+  if (Object.prototype.hasOwnProperty.call(usage, "yunwu_spend_microcredits")) {
+    appendUsagePill(summary, "Spend", formatMicrocreditsAsCredits(usage.yunwu_spend_microcredits), {
+      title: `${formatNumber(usage.yunwu_spend_microcredits)} microcredits`,
+    });
+  }
 
   const errorCount = toNumber(usage.error_requests);
   if (errorCount > 0) {
@@ -2816,6 +2879,23 @@ const buildUsageDetails = (usage, options = {}) => {
 
   const sparkline = buildUsageSparkline(usage);
   if (sparkline) usageSection.appendChild(sparkline);
+  appendUsageSeries(
+    usageSection,
+    "Daily YunWu fallbacks",
+    buildUsageSparkline(usage, {
+      dailyKey: "daily_yunwu_fallback_requests",
+      ariaLabel: "YunWu fallback requests",
+    }),
+  );
+  appendUsageSeries(
+    usageSection,
+    "Daily YunWu spend",
+    buildUsageSparkline(usage, {
+      dailyKey: "daily_yunwu_spend_microcredits",
+      ariaLabel: "YunWu spend",
+      formatScaleMax: formatMicrocreditsAsCredits,
+    }),
+  );
 
   if (usage === undefined) {
     const empty = document.createElement("div");
@@ -2853,21 +2933,50 @@ const buildUsageDetails = (usage, options = {}) => {
     appendMetaItem(usageList, "Last model", formatOptionalText(usage.last_model), { mono: true });
     appendMetaItem(usageList, "Last reasoning", formatOptionalText(usage.last_reasoning), { mono: true });
     appendMetaItem(usageList, "Last route", formatOptionalText(usage.last_route));
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_fallback_requests")) {
+      appendMetaItem(usageList, "YunWu fallbacks", formatNumber(usage.yunwu_fallback_requests));
+    }
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_input_tokens")) {
+      appendMetaItem(usageList, "YunWu tokens in", formatNumber(usage.yunwu_input_tokens));
+    }
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_output_tokens")) {
+      appendMetaItem(usageList, "YunWu tokens out", formatNumber(usage.yunwu_output_tokens));
+    }
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_total_tokens")) {
+      appendMetaItem(usageList, "YunWu tokens total", formatNumber(usage.yunwu_total_tokens));
+    }
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_spend_microcredits")) {
+      appendMetaItem(
+        usageList,
+        "YunWu spend",
+        formatMicrocreditsAsCredits(usage.yunwu_spend_microcredits),
+        { title: `${formatNumber(usage.yunwu_spend_microcredits)} microcredits` },
+      );
+    }
     usageSection.appendChild(usageList);
   }
 
   return usageSection;
 };
 
+const normalizeFiniteNumber = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
+};
+
+const normalizeOptionalString = (value) => {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized || null;
+};
+
 const normalizeApiKeyRequestLogRecord = (record) => {
   if (!record || typeof record !== "object") return null;
 
-  const createdAtMs = typeof record.created_at_ms === "number" && Number.isFinite(record.created_at_ms)
-    ? Math.trunc(record.created_at_ms)
-    : null;
-  const statusCode = typeof record.status_code === "number" && Number.isFinite(record.status_code)
-    ? Math.trunc(record.status_code)
-    : null;
+  const startedAtMs = normalizeFiniteNumber(record.started_at_ms);
+  const createdAtMs = normalizeFiniteNumber(record.created_at_ms) ?? startedAtMs;
+  const completedAtMs = normalizeFiniteNumber(record.completed_at_ms);
+  const statusCode = normalizeFiniteNumber(record.status_code);
   const method = typeof record.method === "string" ? record.method.trim().toUpperCase() : "";
   const route = typeof record.route === "string" ? record.route.trim() : "";
   const path = typeof record.path === "string" ? record.path.trim() : "";
@@ -2876,15 +2985,28 @@ const normalizeApiKeyRequestLogRecord = (record) => {
   const reasoning = typeof record.reasoning === "string" ? record.reasoning.trim() : "";
 
   return {
-    id: typeof record.id === "string" && record.id.trim() ? record.id.trim() : `${route || "request"}-${createdAtMs || Date.now()}`,
-    created_at_ms: createdAtMs,
-    status_code: statusCode,
+    id: typeof record.id === "string" && record.id.trim()
+      ? record.id.trim()
+      : `${route || "request"}-${createdAtMs || Date.now()}`,
+    created_at_ms: createdAtMs === null ? null : Math.trunc(createdAtMs),
+    started_at_ms: startedAtMs === null ? null : Math.trunc(startedAtMs),
+    completed_at_ms: completedAtMs === null ? null : Math.trunc(completedAtMs),
+    latency_ms: normalizeFiniteNumber(record.latency_ms),
+    status_code: statusCode === null ? null : Math.trunc(statusCode),
     method: method || "GET",
     route: route || "unknown",
     path: path || null,
     stream,
     model: model || null,
     reasoning: reasoning || null,
+    provider: normalizeOptionalString(record.provider),
+    fallback_reason: normalizeOptionalString(record.fallback_reason),
+    provider_request_id: normalizeOptionalString(record.provider_request_id),
+    input_tokens: normalizeFiniteNumber(record.input_tokens),
+    output_tokens: normalizeFiniteNumber(record.output_tokens),
+    provider_quota: normalizeFiniteNumber(record.provider_quota),
+    spend_microcredits: normalizeFiniteNumber(record.spend_microcredits),
+    billing_status: normalizeOptionalString(record.billing_status),
   };
 };
 
@@ -2934,25 +3056,70 @@ const createRequestLogRow = (record) => {
   const row = document.createElement("div");
   row.dataset.apiKeyRequestLog = "row";
 
-  const statusCode = typeof record.status_code === "number" && Number.isFinite(record.status_code)
-    ? Math.trunc(record.status_code)
-    : 0;
-  const statusState = statusCode >= 400 ? "bad" : "";
+  const statusCode = normalizeFiniteNumber(record.status_code);
+  const statusState = statusCode !== null && statusCode >= 400 ? "bad" : "";
+  const provider = formatOptionalText(record.provider);
+  const billingStatus = formatOptionalText(record.billing_status);
+  const normalizedBillingStatus = billingStatus.toLowerCase();
+  const billingState = normalizedBillingStatus === "pending"
+    ? "warning"
+    : (/failed|error/.test(normalizedBillingStatus) ? "bad" : "");
+  row.dataset.provider = provider.toLowerCase();
+  if (record.billing_status) row.dataset.billingStatus = normalizedBillingStatus;
 
-  const routeText = record.path ? `${record.method} ${record.route} (${record.path})` : `${record.method} ${record.route}`;
+  const routeText = record.path
+    ? `${record.method} ${record.route} (${record.path})`
+    : `${record.method} ${record.route}`;
 
   appendMetaItem(row, "Request", routeText, { mono: true });
-  appendMetaItem(row, "Time", formatDate(record.created_at_ms));
-  appendMetaItem(row, "Status", `${formatNumber(statusCode)}${record.stream ? " · stream" : " · single"}`, {
-    state: statusState,
-  });
+  appendMetaItem(row, "Started", formatDate(record.started_at_ms ?? record.created_at_ms));
+  appendMetaItem(
+    row,
+    "Status",
+    `${statusCode === null ? "unknown" : formatNumber(statusCode)}${record.stream ? " · stream" : " · single"}`,
+    {
+      state: statusState,
+    },
+  );
+  appendMetaItem(row, "Provider", provider);
   appendMetaItem(row, "Model", formatOptionalText(record.model));
   appendMetaItem(row, "Reasoning", formatOptionalText(record.reasoning));
+  if (record.completed_at_ms !== null) {
+    appendMetaItem(row, "Completed", formatDate(record.completed_at_ms));
+  }
+  if (record.latency_ms !== null) {
+    appendMetaItem(row, "Latency", formatLatency(record.latency_ms));
+  }
+  if (record.fallback_reason) {
+    appendMetaItem(row, "Fallback reason", record.fallback_reason);
+  }
+  if (record.provider_request_id) {
+    appendMetaItem(row, "Provider request", record.provider_request_id, { mono: true });
+  }
+  if (record.input_tokens !== null) {
+    appendMetaItem(row, "Tokens in", formatNumber(record.input_tokens));
+  }
+  if (record.output_tokens !== null) {
+    appendMetaItem(row, "Tokens out", formatNumber(record.output_tokens));
+  }
+  if (record.provider_quota !== null) {
+    appendMetaItem(row, "Provider quota", formatDecimal(record.provider_quota));
+  }
+  if (record.spend_microcredits !== null) {
+    appendMetaItem(row, "Exact spend", formatMicrocreditsAsCredits(record.spend_microcredits), {
+      title: `${formatNumber(record.spend_microcredits)} microcredits`,
+    });
+  }
+  if (record.billing_status) {
+    appendMetaItem(row, "Billing", billingStatus, {
+      state: billingState,
+    });
+  }
 
   return row;
 };
 
-const loadApiKeyRequestLogs = async (keyId) => {
+const loadApiKeyRequestLogs = (keyId) => {
   const cacheKey = getApiKeyRequestLogCacheKey(keyId);
   if (!cacheKey) return { ok: false, records: [], error: "Missing key id" };
 
@@ -3038,7 +3205,12 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
 
   if (!response.ok) {
     panel.dataset.requestLogsState = "error";
-    setRequestLogsPanelMessage(list, summary, response.error || API_KEY_REQUEST_LOG_STATUS_ERROR, API_KEY_REQUEST_LOG_STATUS_ERROR);
+    setRequestLogsPanelMessage(
+      list,
+      summary,
+      response.error || API_KEY_REQUEST_LOG_STATUS_ERROR,
+      API_KEY_REQUEST_LOG_STATUS_ERROR,
+    );
     panel.dataset.requestLogsLoading = "0";
     return;
   }
@@ -3141,6 +3313,69 @@ const renderKeys = (keys, view = "all") => {
     });
     const resetInfo = appendKeyInfo(infoRow, "Reset at", formatDate(key.usage_reset_at_ms));
 
+    const paidFallbackSummary = document.createElement("section");
+    paidFallbackSummary.dataset.paidFallbackSummary = "summary";
+
+    const paidFallbackHeader = document.createElement("header");
+    paidFallbackHeader.dataset.paidFallbackHeader = "header";
+    const paidFallbackTitle = document.createElement("span");
+    paidFallbackTitle.dataset.paidFallbackTitle = "title";
+    paidFallbackTitle.textContent = "YunWu paid overflow";
+    const paidFallbackStatus = document.createElement("span");
+    paidFallbackStatus.dataset.badge = "status";
+    paidFallbackHeader.appendChild(paidFallbackTitle);
+    paidFallbackHeader.appendChild(paidFallbackStatus);
+
+    const paidFallbackInfo = document.createElement("div");
+    paidFallbackInfo.dataset.keyInfo = "info";
+    paidFallbackInfo.dataset.paidFallbackInfo = "info";
+    const paidLimitInfo = appendKeyInfo(paidFallbackInfo, "Window limit", "unknown");
+    const paidSpentInfo = appendKeyInfo(paidFallbackInfo, "Window spent", "unknown");
+    const paidReservedInfo = appendKeyInfo(paidFallbackInfo, "Window reserved", "unknown");
+    const paidResetInfo = appendKeyInfo(paidFallbackInfo, "Window resets", "unknown");
+    const lifetimeSpendInfo = appendKeyInfo(paidFallbackInfo, "Lifetime spend", "unknown");
+    const fallbackCountInfo = appendKeyInfo(paidFallbackInfo, "Fallbacks", "unknown");
+
+    paidFallbackSummary.appendChild(paidFallbackHeader);
+    paidFallbackSummary.appendChild(paidFallbackInfo);
+
+    const updatePaidFallbackInfo = () => {
+      const enabled = key.paid_fallback_enabled === true;
+      const limit = normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0;
+      const spent = normalizeFiniteNumber(key.paid_fallback_spent_credits) ?? 0;
+      const reserved = normalizeFiniteNumber(key.paid_fallback_reserved_credits) ?? 0;
+      const usage = key.usage && typeof key.usage === "object" ? key.usage : null;
+
+      paidFallbackSummary.hidden = !enabled;
+      paidFallbackStatus.dataset.state = enabled ? "ok" : "unknown";
+      paidFallbackStatus.textContent = enabled ? "Enabled" : "Disabled";
+      paidFallbackSummary.dataset.state = enabled ? "enabled" : "disabled";
+      paidLimitInfo.valueEl.textContent = formatPaidFallbackLimit(limit);
+      paidSpentInfo.valueEl.textContent = formatCredits(spent);
+      paidReservedInfo.valueEl.textContent = formatCredits(reserved);
+      paidResetInfo.valueEl.textContent = formatDate(key.usage_reset_at_ms);
+      lifetimeSpendInfo.valueEl.textContent = usage &&
+          Object.prototype.hasOwnProperty.call(usage, "yunwu_spend_microcredits")
+        ? formatMicrocreditsAsCredits(usage.yunwu_spend_microcredits)
+        : "unknown";
+      fallbackCountInfo.valueEl.textContent = usage &&
+          Object.prototype.hasOwnProperty.call(usage, "yunwu_fallback_requests")
+        ? formatNumber(usage.yunwu_fallback_requests)
+        : "unknown";
+
+      if (enabled && limit !== -1 && limit <= 0) {
+        paidLimitInfo.item.dataset.state = "bad";
+      } else {
+        delete paidLimitInfo.item.dataset.state;
+      }
+      if (reserved > 0) {
+        paidReservedInfo.item.dataset.state = "warning";
+      } else {
+        delete paidReservedInfo.item.dataset.state;
+      }
+    };
+    updatePaidFallbackInfo();
+
     const status = document.createElement("span");
     status.dataset.badge = "status";
     status.dataset.state = key.revoked_at_ms ? "bad" : "ok";
@@ -3190,6 +3425,7 @@ const renderKeys = (keys, view = "all") => {
 
     main.appendChild(header);
     main.appendChild(infoRow);
+    main.appendChild(paidFallbackSummary);
 
     const editPanel = document.createElement("div");
     editPanel.dataset.keyEdit = "panel";
@@ -3259,6 +3495,63 @@ const renderKeys = (keys, view = "all") => {
     neverLabel.appendChild(neverInput);
     neverLabel.appendChild(neverText);
 
+    const paidFallbackEditor = document.createElement("section");
+    paidFallbackEditor.dataset.paidFallbackEditor = "editor";
+
+    const paidFallbackToggle = document.createElement("label");
+    paidFallbackToggle.dataset.check = "true";
+    paidFallbackToggle.dataset.paidFallbackToggle = "toggle";
+    const paidFallbackToggleCopy = document.createElement("span");
+    const paidFallbackToggleTitle = document.createElement("strong");
+    paidFallbackToggleTitle.textContent = "YunWu paid overflow";
+    const paidFallbackToggleHint = document.createElement("small");
+    paidFallbackToggleHint.textContent = "Fallback after the final Codex 429.";
+    paidFallbackToggleCopy.appendChild(paidFallbackToggleTitle);
+    paidFallbackToggleCopy.appendChild(paidFallbackToggleHint);
+    const paidFallbackInput = document.createElement("input");
+    paidFallbackInput.type = "checkbox";
+    paidFallbackInput.setAttribute("role", "switch");
+    paidFallbackInput.checked = key.paid_fallback_enabled === true;
+    paidFallbackToggle.appendChild(paidFallbackToggleCopy);
+    paidFallbackToggle.appendChild(paidFallbackInput);
+
+    const paidFallbackSettings = document.createElement("div");
+    paidFallbackSettings.dataset.paidFallbackSettings = "settings";
+    const paidFallbackLimitField = document.createElement("label");
+    paidFallbackLimitField.dataset.field = "true";
+    const paidFallbackLimitLabel = document.createElement("span");
+    paidFallbackLimitLabel.dataset.label = "label";
+    paidFallbackLimitLabel.textContent = "Window cap (credits; -1 = unlimited)";
+    const paidFallbackLimitInput = document.createElement("input");
+    paidFallbackLimitInput.type = "number";
+    paidFallbackLimitInput.inputMode = "decimal";
+    paidFallbackLimitInput.min = "-1";
+    paidFallbackLimitInput.step = "0.000001";
+    paidFallbackLimitInput.placeholder = "-1 or 1";
+    paidFallbackLimitInput.value = typeof key.paid_fallback_limit_credits === "number"
+      ? String(key.paid_fallback_limit_credits)
+      : "0";
+    paidFallbackLimitField.appendChild(paidFallbackLimitLabel);
+    paidFallbackLimitField.appendChild(paidFallbackLimitInput);
+
+    const paidFallbackWarning = document.createElement("p");
+    paidFallbackWarning.dataset.paidFallbackWarning = "warning";
+    paidFallbackWarning.textContent =
+      "Enabling fallback can send prompts, code, tools, and attachments to YunWu. Pricing is checked only when this key is enabled; re-enabling checks it again. Ordinary requests never recheck it.";
+
+    paidFallbackSettings.appendChild(paidFallbackLimitField);
+    paidFallbackSettings.appendChild(paidFallbackWarning);
+    paidFallbackEditor.appendChild(paidFallbackToggle);
+    paidFallbackEditor.appendChild(paidFallbackSettings);
+
+    const syncPaidFallbackEditorVisibility = () => {
+      const enabled = paidFallbackInput.checked;
+      paidFallbackSettings.hidden = !enabled;
+      paidFallbackLimitInput.disabled = !enabled;
+      paidFallbackLimitInput.required = enabled;
+    };
+    syncPaidFallbackEditorVisibility();
+
     editFields.appendChild(nameField);
     editFields.appendChild(limitField);
     editFields.appendChild(windowField);
@@ -3286,6 +3579,7 @@ const renderKeys = (keys, view = "all") => {
 
     editPanel.appendChild(presetRow);
     editPanel.appendChild(neverLabel);
+    editPanel.appendChild(paidFallbackEditor);
 
     const editBadge = document.createElement("span");
     editBadge.dataset.badge = "status";
@@ -3304,6 +3598,8 @@ const renderKeys = (keys, view = "all") => {
       usage_limit_requests: typeof key.usage_limit_requests === "number" ? key.usage_limit_requests : -1,
       window_ms: resolveKeyWindowMs(),
       expires_at_ms: typeof key.expires_at_ms === "number" ? key.expires_at_ms : -1,
+      paid_fallback_enabled: key.paid_fallback_enabled === true,
+      paid_fallback_limit_credits: normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0,
     };
 
     const getEditInputState = () => ({
@@ -3312,6 +3608,8 @@ const renderKeys = (keys, view = "all") => {
       window: windowInput.value,
       expires: expiresInput.value,
       never: neverInput.checked,
+      paidFallbackEnabled: paidFallbackInput.checked,
+      paidFallbackLimit: paidFallbackLimitInput.value,
     });
 
     const isSameEditInputState = (left, right) =>
@@ -3319,7 +3617,9 @@ const renderKeys = (keys, view = "all") => {
       left.limit === right.limit &&
       left.window === right.window &&
       left.expires === right.expires &&
-      left.never === right.never;
+      left.never === right.never &&
+      left.paidFallbackEnabled === right.paidFallbackEnabled &&
+      left.paidFallbackLimit === right.paidFallbackLimit;
 
     const syncEditInputsFromKey = () => {
       nameInput.value = key.name || "";
@@ -3328,6 +3628,9 @@ const renderKeys = (keys, view = "all") => {
       neverInput.checked = key.expires_at_ms === -1;
       expiresInput.disabled = neverInput.checked;
       expiresInput.value = neverInput.checked ? "" : toDateTimeLocalValue(key.expires_at_ms);
+      paidFallbackInput.checked = key.paid_fallback_enabled === true;
+      paidFallbackLimitInput.value = String(normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0);
+      syncPaidFallbackEditorVisibility();
     };
 
     const updateUsageInfo = () => {
@@ -3348,6 +3651,7 @@ const renderKeys = (keys, view = "all") => {
       }
       usageInfo.valueEl.title = usageData.title;
       resetInfo.valueEl.textContent = formatDate(key.usage_reset_at_ms);
+      updatePaidFallbackInfo();
     };
 
     const buildEditPayload = () => {
@@ -3414,6 +3718,39 @@ const renderKeys = (keys, view = "all") => {
         changed = true;
       }
 
+      const nextPaidFallbackEnabled = paidFallbackInput.checked;
+      const paidFallbackLimitRaw = paidFallbackLimitInput.value.trim();
+      let nextPaidFallbackLimit = editSnapshot.paid_fallback_limit_credits;
+      if (nextPaidFallbackEnabled && !paidFallbackLimitRaw) {
+        setEditBadge("bad", "Fallback cap or -1 required");
+        return null;
+      }
+      if (paidFallbackLimitRaw) {
+        const parsed = Number(paidFallbackLimitRaw);
+        const scaled = parsed * MICROCREDITS_PER_CREDIT;
+        if (!Number.isFinite(parsed) || (parsed !== -1 && parsed < 0)) {
+          setEditBadge("bad", "Invalid fallback cap");
+          return null;
+        }
+        if (parsed !== -1 && Math.abs(scaled - Math.round(scaled)) > 0.000001) {
+          setEditBadge("bad", "Fallback cap supports 6 decimals");
+          return null;
+        }
+        nextPaidFallbackLimit = parsed === -1 ? -1 : Math.round(scaled) / MICROCREDITS_PER_CREDIT;
+      }
+      if (nextPaidFallbackEnabled && nextPaidFallbackLimit !== -1 && nextPaidFallbackLimit <= 0) {
+        setEditBadge("bad", "Fallback cap must be positive or -1");
+        return null;
+      }
+      if (nextPaidFallbackEnabled !== editSnapshot.paid_fallback_enabled) {
+        payload.paid_fallback_enabled = nextPaidFallbackEnabled;
+        changed = true;
+      }
+      if (nextPaidFallbackLimit !== editSnapshot.paid_fallback_limit_credits) {
+        payload.paid_fallback_limit_credits = nextPaidFallbackLimit;
+        changed = true;
+      }
+
       if (!changed) {
         editDirty = false;
         setEditBadge("ok", "Saved");
@@ -3427,6 +3764,8 @@ const renderKeys = (keys, view = "all") => {
           usage_limit_requests: nextLimit,
           window_ms: nextWindowMs,
           expires_at_ms: nextExpiresAtMs,
+          paid_fallback_enabled: nextPaidFallbackEnabled,
+          paid_fallback_limit_credits: nextPaidFallbackLimit,
         },
       };
     };
@@ -3445,8 +3784,10 @@ const renderKeys = (keys, view = "all") => {
       const { payload, nextSnapshot } = result;
       const hasExpiresField = Object.prototype.hasOwnProperty.call(payload, "expires_at_ms");
       const requestInputs = getEditInputState();
+      const initializingPaidFallback = payload.paid_fallback_enabled === true &&
+        editSnapshot.paid_fallback_enabled === false;
       editSaving = true;
-      setEditBadge("unknown", "Saving...");
+      setEditBadge("unknown", initializingPaidFallback ? "Initializing YunWu..." : "Saving...");
       try {
         const res = await fetch(apiUrl("/admin/api-keys"), {
           method: "PATCH",
@@ -3470,6 +3811,12 @@ const renderKeys = (keys, view = "all") => {
         const updatedExpires = typeof data?.expires_at_ms === "number"
           ? data.expires_at_ms
           : nextSnapshot.expires_at_ms;
+        const updatedPaidFallbackEnabled = typeof data?.paid_fallback_enabled === "boolean"
+          ? data.paid_fallback_enabled
+          : nextSnapshot.paid_fallback_enabled;
+        const updatedPaidFallbackLimit = typeof data?.paid_fallback_limit_credits === "number"
+          ? data.paid_fallback_limit_credits
+          : nextSnapshot.paid_fallback_limit_credits;
         const expiresMismatch = hasExpiresField &&
           typeof data?.expires_at_ms === "number" &&
           data.expires_at_ms !== nextSnapshot.expires_at_ms;
@@ -3479,8 +3826,16 @@ const renderKeys = (keys, view = "all") => {
         key.usage_limit_requests = updatedLimit;
         key.window_ms = updatedWindowMs;
         key.expires_at_ms = resolvedExpires;
+        key.paid_fallback_enabled = updatedPaidFallbackEnabled;
+        key.paid_fallback_limit_credits = updatedPaidFallbackLimit;
         if (typeof data?.usage_requests === "number") key.usage_requests = data.usage_requests;
         if (typeof data?.usage_reset_at_ms === "number") key.usage_reset_at_ms = data.usage_reset_at_ms;
+        if (typeof data?.paid_fallback_spent_credits === "number") {
+          key.paid_fallback_spent_credits = data.paid_fallback_spent_credits;
+        }
+        if (typeof data?.paid_fallback_reserved_credits === "number") {
+          key.paid_fallback_reserved_credits = data.paid_fallback_reserved_credits;
+        }
 
         title.textContent = key.name || "Untitled";
         expiresInfo.valueEl.textContent = formatExpires(key.expires_at_ms);
@@ -3496,6 +3851,8 @@ const renderKeys = (keys, view = "all") => {
           usage_limit_requests: key.usage_limit_requests,
           window_ms: resolveKeyWindowMs(),
           expires_at_ms: key.expires_at_ms,
+          paid_fallback_enabled: key.paid_fallback_enabled === true,
+          paid_fallback_limit_credits: normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0,
         };
         editDirty = expiresMismatch || !inputsUnchanged;
         if (expiresMismatch) {
@@ -3550,6 +3907,17 @@ const renderKeys = (keys, view = "all") => {
     neverInput.addEventListener("change", () => {
       expiresInput.disabled = neverInput.checked;
       if (neverInput.checked) expiresInput.value = "";
+      markEditDirty();
+    });
+    paidFallbackInput.addEventListener("change", () => {
+      syncPaidFallbackEditorVisibility();
+      markEditDirty();
+      const paidFallbackLimit = Number(paidFallbackLimitInput.value);
+      if (paidFallbackInput.checked && paidFallbackLimit !== -1 && !(paidFallbackLimit > 0)) {
+        paidFallbackLimitInput.focus();
+      }
+    });
+    paidFallbackLimitInput.addEventListener("input", () => {
       markEditDirty();
     });
 
@@ -4173,15 +4541,35 @@ const createKey = async () => {
   const usageLimit = parseInt(keyUsageLimitInput.value, 10);
   const windowResult = parseKernelWindowValue(keyUsageWindowInput.value, setCreateBadge);
   if (!windowResult.ok) return;
+  const paidFallbackEnabled = keyPaidFallbackEnabledInput.checked;
+  let paidFallbackLimitCredits = 0;
+  if (paidFallbackEnabled) {
+    const paidFallbackLimitRaw = keyPaidFallbackLimitInput.value.trim();
+    const parsed = Number(paidFallbackLimitRaw);
+    const scaled = parsed * MICROCREDITS_PER_CREDIT;
+    if (!paidFallbackLimitRaw || !Number.isFinite(parsed) || (parsed !== -1 && parsed <= 0)) {
+      setCreateBadge("bad", "Fallback cap must be positive or -1");
+      keyPaidFallbackLimitInput.focus();
+      return;
+    }
+    if (parsed !== -1 && Math.abs(scaled - Math.round(scaled)) > 0.000001) {
+      setCreateBadge("bad", "Fallback cap supports 6 decimals");
+      keyPaidFallbackLimitInput.focus();
+      return;
+    }
+    paidFallbackLimitCredits = parsed === -1 ? -1 : Math.round(scaled) / MICROCREDITS_PER_CREDIT;
+  }
   const payload = {
     name,
     expires_at_ms: expiresAtMs,
     usage_limit_requests: isNaN(usageLimit) ? 50 : usageLimit,
+    paid_fallback_enabled: paidFallbackEnabled,
+    paid_fallback_limit_credits: paidFallbackLimitCredits,
   };
   if (windowResult.value !== null) payload.window_ms = windowResult.value;
 
   clearCreateResult();
-  setCreateBadge("unknown", "Creating...");
+  setCreateBadge("unknown", paidFallbackEnabled ? "Initializing YunWu..." : "Creating...");
   createKeyBtn.disabled = true;
 
   try {
@@ -4208,6 +4596,18 @@ const createKey = async () => {
       `prefix: ${data?.prefix ?? ""}`,
       `rate_limit: ${data?.usage_limit_requests === -1 ? "unlimited" : (data?.usage_limit_requests ?? "")}`,
       `window_ms: ${formatWindowMs(data?.window_ms)}`,
+      `paid_fallback: ${
+        (typeof data?.paid_fallback_enabled === "boolean" ? data.paid_fallback_enabled : paidFallbackEnabled)
+          ? "enabled"
+          : "disabled"
+      }`,
+      `paid_fallback_limit: ${
+        formatPaidFallbackLimit(
+          typeof data?.paid_fallback_limit_credits === "number"
+            ? data.paid_fallback_limit_credits
+            : paidFallbackLimitCredits,
+        )
+      }`,
       `created_at: ${formatDate(data?.created_at_ms)}`,
       `expires_at: ${formatExpires(data?.expires_at_ms)}`,
     ];
@@ -4216,6 +4616,9 @@ const createKey = async () => {
     setCreateBadge("ok", "Created");
     keyNameInput.value = "";
     keyUsageWindowInput.value = "";
+    keyPaidFallbackEnabledInput.checked = false;
+    keyPaidFallbackLimitInput.value = "";
+    syncCreatePaidFallbackControls();
     void refreshKeys();
   } catch {
     setCreateBadge("bad", "Error");
@@ -4669,6 +5072,7 @@ const scheduleDefaultsSave = debounce(() => {
 }, 500);
 
 restoreSettings();
+syncCreatePaidFallbackControls();
 setAuthBadge("unknown", "Not checked");
 setSignedInState(false);
 setCreateBadge("unknown", "Idle");
@@ -4974,6 +5378,11 @@ keyWindowPreset1d.addEventListener("click", () => {
 });
 keyWindowPreset1w.addEventListener("click", () => {
   keyUsageWindowInput.value = "604800000";
+});
+keyPaidFallbackEnabledInput.addEventListener("change", () => {
+  syncCreatePaidFallbackControls();
+  setCreateBadge("unknown", "Editing...");
+  if (keyPaidFallbackEnabledInput.checked) keyPaidFallbackLimitInput.focus();
 });
 
 viewTabKeys.addEventListener("click", () => setAdminView("keys", { hashMode: "push", focusAuth: true }));

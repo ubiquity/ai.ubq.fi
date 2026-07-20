@@ -13,12 +13,20 @@ import {
   normalizeReasoningEffort,
   type ReasoningEffort,
 } from "./defaults.ts";
-import { recordApiKeyUsage } from "./analytics.ts";
+import { recordApiKeyRequestLog, recordApiKeyUsage, updateApiKeyRequestLog } from "./analytics.ts";
 import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
 import { json, openaiError } from "./http.ts";
 import { kvPromise } from "./kv.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, EMBEDDINGS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
 import { readJsonBody } from "./request.ts";
+import {
+  type PaidFallbackReservation,
+  reconcileApiKeyPaidFallbacks,
+  recordYunwuAmbiguousFailure,
+  recordYunwuUndispatchedCancellation,
+  recordYunwuUpstreamResponse,
+  reservePaidFallback,
+} from "./paid_fallback.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type {
   ChatCompletionRequest,
@@ -27,6 +35,7 @@ import type {
   ResponseMessageItem,
   ResponsesRequest,
 } from "./types.ts";
+import { fetchYunwuResponses, YunwuError } from "./yunwu.ts";
 
 const getDefaultModel = async (): Promise<string | null> => {
   const kv = await kvPromise;
@@ -59,6 +68,17 @@ type UsageContext = Readonly<{
   keyId: string | null;
   kernelRepo: { owner: string; repo: string } | null;
   kernelOrg: { owner: string } | null;
+  requestId?: string;
+  startedAtMs?: number;
+}>;
+
+type UpstreamProvider = "chatgpt_codex" | "yunwu";
+
+type RoutedResponsesUpstream = Readonly<{
+  response: Response;
+  provider: UpstreamProvider;
+  paidFallback: PaidFallbackReservation | null;
+  gatewayResponse: boolean;
 }>;
 
 type UsageTokens = Readonly<{
@@ -116,27 +136,63 @@ const recordRequestUsage = async (
   context: UsageContext | undefined,
   details: { model: string; route: string; stream: boolean; reasoning: string | null },
 ): Promise<void> => {
-  await recordUsageDelta(context, {
-    request_count: 1,
-    stream_request_count: details.stream ? 1 : 0,
-    non_stream_request_count: details.stream ? 0 : 1,
-    model: details.model,
-    reasoning: details.reasoning,
-    route: details.route,
-    seen_at_ms: Date.now(),
-  });
+  const seenAtMs = context?.startedAtMs ?? Date.now();
+  const tasks: Promise<void>[] = [
+    recordUsageDelta(context, {
+      request_count: 1,
+      stream_request_count: details.stream ? 1 : 0,
+      non_stream_request_count: details.stream ? 0 : 1,
+      model: details.model,
+      reasoning: details.reasoning,
+      route: details.route,
+      seen_at_ms: seenAtMs,
+    }),
+  ];
+  if (context?.keyId && context.requestId) {
+    tasks.push(recordApiKeyRequestLog(context.keyId, {
+      id: context.requestId,
+      route: details.route,
+      path: details.route === "responses" ? "/v1/responses" : "/v1/chat/completions",
+      method: "POST",
+      status_code: 0,
+      stream: details.stream,
+      model: details.model,
+      reasoning: details.reasoning,
+      created_at_ms: seenAtMs,
+      provider: "chatgpt_codex",
+      billing_status: "not_applicable",
+    }));
+  }
+  await Promise.all(tasks);
 };
 
 const recordCompletionUsage = async (
   context: UsageContext | undefined,
   usage: UsageTokens | null,
 ): Promise<void> => {
-  await recordUsageDelta(context, {
-    completed_request_count: 1,
-    input_tokens: usage?.inputTokens,
-    output_tokens: usage?.outputTokens,
-    total_tokens: usage?.totalTokens,
-  });
+  const completedAtMs = Date.now();
+  const tasks: Promise<void>[] = [
+    recordUsageDelta(context, {
+      completed_request_count: 1,
+      input_tokens: usage?.inputTokens,
+      output_tokens: usage?.outputTokens,
+      total_tokens: usage?.totalTokens,
+    }),
+  ];
+  if (context?.keyId && context.requestId && context.startedAtMs !== undefined) {
+    tasks.push(updateApiKeyRequestLog(
+      context.keyId,
+      context.startedAtMs,
+      context.requestId,
+      {
+        completed_at_ms: completedAtMs,
+        latency_ms: Math.max(0, completedAtMs - context.startedAtMs),
+        input_tokens: usage?.inputTokens,
+        output_tokens: usage?.outputTokens,
+      },
+    ));
+  }
+  await Promise.all(tasks);
 };
 
 const recordErrorUsage = async (context: UsageContext | undefined): Promise<void> => {
@@ -207,16 +263,177 @@ const upstreamStatusToErrorType = (status: number, upstreamType?: string): strin
   return status >= 500 ? "server_error" : "invalid_request_error";
 };
 
-const toOpenAiUpstreamErrorResponse = async (upstream: Response): Promise<Response> => {
+const toOpenAiUpstreamErrorResponse = async (
+  upstream: Response,
+  provider: UpstreamProvider = "chatgpt_codex",
+): Promise<Response> => {
   const text = await upstream.text().catch(() => "");
   const details = parseUpstreamErrorDetails(text, upstream.statusText);
-  const status = upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502;
+  let status = upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502;
+  let code = details.code ?? "upstream_error";
+  if (provider === "yunwu") {
+    if (upstream.status === 401 || upstream.status === 403) {
+      status = 502;
+      code = "yunwu_upstream_auth_error";
+    } else if (upstream.status === 429 || upstream.status >= 500) {
+      status = 503;
+      code = "yunwu_upstream_unavailable";
+    }
+  }
+  const headers: Record<string, string> = { "x-ubq-upstream": provider };
+  const retryAfter = upstream.headers.get("Retry-After");
+  if (retryAfter) headers["Retry-After"] = retryAfter;
   const options: { type?: string; param?: string | null; headers: HeadersInit } = {
     type: upstreamStatusToErrorType(status, details.type),
-    headers: { "x-ubq-upstream": "chatgpt_codex" },
+    headers,
   };
   if (Object.prototype.hasOwnProperty.call(details, "param")) options.param = details.param ?? null;
-  return openaiError(status, details.message, details.code ?? "upstream_error", options);
+  return openaiError(status, details.message, code, options);
+};
+
+const cancelResponseBody = async (response: Response): Promise<void> => {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The response may already be closed.
+  }
+};
+
+const paidFallbackBlockedResponse = (
+  reason: "limit_exceeded" | "reconciliation_pending" | "invalid_policy" | "concurrent_update",
+  resetAtMs: number | null,
+): Response => {
+  if (reason === "invalid_policy" || reason === "concurrent_update") {
+    return openaiError(
+      503,
+      reason === "concurrent_update"
+        ? "Paid fallback policy changed concurrently; retry the request."
+        : "Paid fallback policy is unavailable.",
+      "paid_fallback_unavailable",
+      {
+        type: "server_error",
+        headers: { "x-ubq-upstream": "chatgpt_codex" },
+      },
+    );
+  }
+  const nowMs = Date.now();
+  const retryAfterSeconds = resetAtMs && resetAtMs > nowMs ? Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000)) : 60;
+  const message = reason === "reconciliation_pending"
+    ? "A previous paid fallback is still awaiting YunWu billing reconciliation."
+    : `Paid fallback credit limit exhausted${resetAtMs ? `; resets at ${new Date(resetAtMs).toISOString()}` : ""}.`;
+  return openaiError(
+    429,
+    message,
+    reason === "reconciliation_pending" ? "paid_fallback_reconciliation_pending" : "paid_fallback_limit_exceeded",
+    {
+      type: "rate_limit_error",
+      headers: {
+        "Retry-After": String(retryAfterSeconds),
+        "x-ubq-upstream": "chatgpt_codex",
+      },
+    },
+  );
+};
+
+const fetchResponsesWithPaidFallback = async (
+  body: Record<string, unknown>,
+  options: Readonly<{
+    model: string;
+    route: "chat.completions" | "responses";
+    stream: boolean;
+    reasoning: string | null;
+    usageContext?: UsageContext;
+    clientVersion?: string | null;
+    signal?: AbortSignal;
+  }>,
+): Promise<RoutedResponsesUpstream> => {
+  const primary = await fetchCodexResponses(body, {
+    clientVersion: options.clientVersion,
+    signal: options.signal,
+  });
+  const keyId = options.usageContext?.keyId;
+  const requestId = options.usageContext?.requestId;
+  const createdAtMs = options.usageContext?.startedAtMs;
+  if (primary.status !== 429 || !keyId || !requestId || createdAtMs === undefined) {
+    return {
+      response: primary,
+      provider: "chatgpt_codex",
+      paidFallback: null,
+      gatewayResponse: false,
+    };
+  }
+  if (options.signal?.aborted) {
+    await cancelResponseBody(primary);
+    throw options.signal.reason instanceof Error
+      ? options.signal.reason
+      : new DOMException("The request was aborted.", "AbortError");
+  }
+
+  const reservationInput = {
+    keyId,
+    requestId,
+    createdAtMs,
+    model: options.model,
+    route: options.route,
+    path: options.route === "responses" ? "/v1/responses" : "/v1/chat/completions",
+    stream: options.stream,
+    reasoning: options.reasoning,
+  } as const;
+  let decision = await reservePaidFallback(reservationInput);
+  if (decision.kind === "blocked" && decision.reason === "reconciliation_pending") {
+    await reconcileApiKeyPaidFallbacks(keyId);
+    decision = await reservePaidFallback(reservationInput);
+  }
+
+  if (decision.kind === "skip") {
+    return {
+      response: primary,
+      provider: "chatgpt_codex",
+      paidFallback: null,
+      gatewayResponse: false,
+    };
+  }
+  if (decision.kind === "blocked") {
+    await cancelResponseBody(primary);
+    return {
+      response: paidFallbackBlockedResponse(decision.reason, decision.reset_at_ms),
+      provider: "chatgpt_codex",
+      paidFallback: null,
+      gatewayResponse: true,
+    };
+  }
+
+  await cancelResponseBody(primary);
+  if (options.signal?.aborted) {
+    await recordYunwuUndispatchedCancellation(decision.reservation);
+    throw options.signal.reason instanceof Error
+      ? options.signal.reason
+      : new DOMException("The request was aborted.", "AbortError");
+  }
+  try {
+    const result = await fetchYunwuResponses(body, { signal: options.signal });
+    await recordYunwuUpstreamResponse(decision.reservation, result.response, result.request_id);
+    return {
+      response: result.response,
+      provider: "yunwu",
+      paidFallback: decision.reservation,
+      gatewayResponse: false,
+    };
+  } catch (error) {
+    await recordYunwuAmbiguousFailure(decision.reservation);
+    if (error instanceof YunwuError) {
+      return {
+        response: openaiError(error.status, error.message, error.code, {
+          type: "server_error",
+          headers: { "x-ubq-upstream": "yunwu" },
+        }),
+        provider: "yunwu",
+        paidFallback: decision.reservation,
+        gatewayResponse: true,
+      };
+    }
+    throw error;
+  }
 };
 
 type CodexModelReasoning = Readonly<{
@@ -1338,6 +1555,7 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
 const collectResponsesStreamUsage = async (
   stream: ReadableStream<Uint8Array>,
   usageContext?: UsageContext,
+  paidFallback?: PaidFallbackReservation | null,
 ): Promise<void> => {
   if (!usageContext?.keyId && !usageContext?.kernelRepo && !usageContext?.kernelOrg) return;
   try {
@@ -1346,6 +1564,7 @@ const collectResponsesStreamUsage = async (
       if (getString(ev.type) === "response.completed" && isRecord(ev.response)) {
         const usageTokens = extractUsageTokens(ev.response.usage);
         await recordCompletionUsage(usageContext, usageTokens);
+        if (paidFallback) await reconcileApiKeyPaidFallbacks(paidFallback.key_id);
         return;
       }
     }
@@ -1381,7 +1600,29 @@ const withAccumulatedResponseText = (response: Record<string, unknown>, text: st
   return { ...response, output };
 };
 
-const streamChatCompletions = (upstream: Response, model: string, usageContext?: UsageContext): Response => {
+const withAccumulatedResponseItems = (
+  response: Record<string, unknown>,
+  accumulated: Record<string, unknown>[],
+): Record<string, unknown> => {
+  if (!accumulated.length) return response;
+  const output = Array.isArray(response.output) ? response.output.filter(isRecord).map((item) => ({ ...item })) : [];
+  const existingIds = new Set(output.map((item) => getString(item.id)).filter(Boolean));
+  for (const item of accumulated) {
+    const id = getString(item.id);
+    if (id && existingIds.has(id)) continue;
+    output.push(item);
+    if (id) existingIds.add(id);
+  }
+  return { ...response, output };
+};
+
+const streamChatCompletions = (
+  upstream: Response,
+  model: string,
+  usageContext: UsageContext | undefined,
+  provider: UpstreamProvider,
+  paidFallback: PaidFallbackReservation | null,
+): Response => {
   if (!upstream.body) {
     return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
   }
@@ -1428,6 +1669,7 @@ const streamChatCompletions = (upstream: Response, model: string, usageContext?:
           if (type === "response.completed") {
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
             await recordCompletionUsage(usageContext, usageTokens);
+            if (paidFallback) await reconcileApiKeyPaidFallbacks(paidFallback.key_id);
             const chunk: Record<string, unknown> = {
               id,
               object: "chat.completion.chunk",
@@ -1461,7 +1703,7 @@ const streamChatCompletions = (upstream: Response, model: string, usageContext?:
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      "x-ubq-upstream": "chatgpt_codex",
+      "x-ubq-upstream": provider,
     },
   });
 };
@@ -1470,6 +1712,8 @@ const completeChatCompletions = async (
   upstream: Response,
   model: string,
   usageContext?: UsageContext,
+  provider: UpstreamProvider = "chatgpt_codex",
+  paidFallback: PaidFallbackReservation | null = null,
 ): Promise<Response> => {
   if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
 
@@ -1502,6 +1746,7 @@ const completeChatCompletions = async (
         };
       }
       await recordCompletionUsage(usageContext, usageTokens);
+      if (paidFallback) await reconcileApiKeyPaidFallbacks(paidFallback.key_id);
       break;
     }
   }
@@ -1520,7 +1765,7 @@ const completeChatCompletions = async (
     ],
   };
   if (usage) body.usage = usage;
-  return json(200, body, { "x-ubq-upstream": "chatgpt_codex" });
+  return json(200, body, { "x-ubq-upstream": provider });
 };
 
 export const handleModels = async (): Promise<Response> => {
@@ -2632,18 +2877,32 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     reasoning: reasoningLabel,
   });
 
-  let upstream: Response;
+  let routed: RoutedResponsesUpstream;
   try {
-    upstream = await fetchCodexResponses(codexBody, { clientVersion: modelMetadata.snapshot?.client_version });
+    routed = await fetchResponsesWithPaidFallback(codexBody, {
+      model,
+      route: "chat.completions",
+      stream,
+      reasoning: reasoningLabel,
+      usageContext,
+      clientVersion: modelMetadata.snapshot?.client_version,
+      signal: req.signal,
+    });
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
     return toCodexErrorResponse(error);
   }
+  const upstream = routed.response;
 
+  if (routed.gatewayResponse) {
+    await recordErrorUsage(usageContext);
+    return upstream;
+  }
   if (!upstream.ok) {
     await recordErrorUsage(usageContext);
-    return await toOpenAiUpstreamErrorResponse(upstream);
+    if (routed.paidFallback) await reconcileApiKeyPaidFallbacks(routed.paidFallback.key_id);
+    return await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
   }
 
   if (!upstream.body) {
@@ -2651,11 +2910,9 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
   }
 
-  const response = stream ? streamChatCompletions(upstream, model, usageContext) : await completeChatCompletions(
-    upstream,
-    model,
-    usageContext,
-  );
+  const response = stream
+    ? streamChatCompletions(upstream, model, usageContext, routed.provider, routed.paidFallback)
+    : await completeChatCompletions(upstream, model, usageContext, routed.provider, routed.paidFallback);
   return withUosWarning(response, warnings);
 };
 
@@ -2815,18 +3072,32 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     reasoning: reasoningLabel,
   });
 
-  let upstream: Response;
+  let routed: RoutedResponsesUpstream;
   try {
-    upstream = await fetchCodexResponses(codexBody, { clientVersion: modelMetadata.snapshot?.client_version });
+    routed = await fetchResponsesWithPaidFallback(codexBody, {
+      model,
+      route: "responses",
+      stream: clientWantsStream,
+      reasoning: reasoningLabel,
+      usageContext,
+      clientVersion: modelMetadata.snapshot?.client_version,
+      signal: req.signal,
+    });
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
     return toCodexErrorResponse(error);
   }
+  const upstream = routed.response;
 
+  if (routed.gatewayResponse) {
+    await recordErrorUsage(usageContext);
+    return upstream;
+  }
   if (!upstream.ok) {
     await recordErrorUsage(usageContext);
-    return await toOpenAiUpstreamErrorResponse(upstream);
+    if (routed.paidFallback) await reconcileApiKeyPaidFallbacks(routed.paidFallback.key_id);
+    return await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
   }
 
   if (clientWantsStream) {
@@ -2835,10 +3106,10 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
       return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
     }
     const headers = new Headers(upstream.headers);
-    headers.set("x-ubq-upstream", "chatgpt_codex");
+    headers.set("x-ubq-upstream", routed.provider);
     if (usageContext?.keyId || usageContext?.kernelRepo || usageContext?.kernelOrg) {
       const [clientStream, analyticsStream] = upstream.body.tee();
-      void collectResponsesStreamUsage(analyticsStream, usageContext);
+      void collectResponsesStreamUsage(analyticsStream, usageContext, routed.paidFallback);
       const response = new Response(clientStream, {
         status: upstream.status,
         statusText: upstream.statusText,
@@ -2861,11 +3132,16 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
 
   let finalResponse: Record<string, unknown> | null = null;
   let outputText = "";
+  const outputItems: Record<string, unknown>[] = [];
   for await (const ev of parseSseEvents(upstream.body)) {
     if (!isRecord(ev)) continue;
     const type = getString(ev.type);
     if (type === "response.output_text.delta") {
       outputText += getString(ev.delta) ?? "";
+      continue;
+    }
+    if (type === "response.output_item.done" && isRecord(ev.item)) {
+      outputItems.push(ev.item);
       continue;
     }
     if (type === "response.completed" && isRecord(ev.response)) {
@@ -2877,9 +3153,11 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     await recordErrorUsage(usageContext);
     return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error");
   }
+  finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
   finalResponse = withAccumulatedResponseText(finalResponse, outputText);
   const usageTokens = extractUsageTokens(finalResponse.usage);
   await recordCompletionUsage(usageContext, usageTokens);
-  const response = json(200, finalResponse, { "x-ubq-upstream": "chatgpt_codex" });
+  if (routed.paidFallback) await reconcileApiKeyPaidFallbacks(routed.paidFallback.key_id);
+  const response = json(200, finalResponse, { "x-ubq-upstream": routed.provider });
   return withUosWarning(response, warnings);
 };

@@ -478,7 +478,7 @@ const fetchCodexModelsWithAuth = async (
 
 export const fetchCodexResponses = async (
   body: unknown,
-  options: Readonly<{ clientVersion?: string | null }> = {},
+  options: Readonly<{ clientVersion?: string | null; signal?: AbortSignal }> = {},
 ): Promise<Response> => {
   const auth = await getValidAuth();
   const url = `${config.codexBaseUrl}/responses`;
@@ -499,6 +499,7 @@ export const fetchCodexResponses = async (
       headers,
       body: JSON.stringify(body),
       redirect: "manual",
+      signal: options.signal,
     });
   } catch (error) {
     throw new CodexError(
@@ -522,6 +523,7 @@ export const fetchCodexResponses = async (
       headers,
       body: JSON.stringify(body),
       redirect: "manual",
+      signal: options.signal,
     });
   } catch (error) {
     throw new CodexError(

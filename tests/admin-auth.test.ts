@@ -91,7 +91,10 @@ const kvStub = {
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
 const {
+  handleAdminApiKeysCreate,
+  handleAdminApiKeysDelete,
   handleAdminApiKeysRequests,
+  handleAdminApiKeysUpdate,
   handleAdminCodexAuth,
   handleAdminDefaults,
   handleAdminKvMigrationImport,
@@ -113,6 +116,34 @@ const makeRequest = (body: unknown): Request =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+const yunwuMetadataResponse = (url: string): Response => {
+  if (url === "https://yunwu.ai/api/ratio_config") {
+    return new Response(
+      JSON.stringify({
+        success: true,
+        data: {
+          model_ratio: {
+            "gpt-5.6-sol": 1,
+            "not-in-codex-catalog": 1,
+          },
+          model_price: {},
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  if (url === "https://yunwu.ai/api/status") {
+    return new Response(
+      JSON.stringify({
+        success: true,
+        data: { setup: true, quota_per_unit: 500_000 },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  throw new Error(`Unexpected YunWu metadata URL: ${url}`);
+};
 
 Deno.test("admin codex auth stores live upstream model catalog as source of truth", async () => {
   kvStore.clear();
@@ -412,6 +443,219 @@ Deno.test("admin defaults rejects null reasoning effort", async () => {
   assert.equal(kvStore.has(keyToString(["default", "reasoning_effort"])), false);
 });
 
+Deno.test("paid fallback pricing initializes only when a key becomes enabled", async () => {
+  kvStore.clear();
+  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+    source: "chatgpt_codex",
+    updated_at_ms: Date.now(),
+    models: [
+      { slug: "gpt-5.6-sol" },
+      { slug: "codex-only-model" },
+    ],
+  });
+
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = Deno.env.get("YUNWU_API_KEY");
+  const metadataUrls: string[] = [];
+  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  globalThis.fetch = (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    metadataUrls.push(url);
+    return Promise.resolve(yunwuMetadataResponse(url));
+  };
+
+  try {
+    const createResponse = await handleAdminApiKeysCreate(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Overflow disabled",
+          token: "u_test_disabled_initialization_123456789",
+          paid_fallback_enabled: false,
+          paid_fallback_limit_credits: 2,
+        }),
+      }),
+    );
+    assert.equal(createResponse.status, 200);
+    assert.equal(metadataUrls.length, 0);
+    const created = await createResponse.json() as {
+      id: string;
+      paid_fallback_enabled: boolean;
+      paid_fallback_limit_credits: number;
+      paid_fallback_pricing_checked_at_ms: number | null;
+    };
+    assert.equal(created.paid_fallback_enabled, false);
+    assert.equal(created.paid_fallback_limit_credits, 2);
+    assert.equal(created.paid_fallback_pricing_checked_at_ms, null);
+
+    const enableResponse = await handleAdminApiKeysUpdate(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: created.id, paid_fallback_enabled: true }),
+      }),
+    );
+    assert.equal(enableResponse.status, 200);
+    assert.deepEqual(metadataUrls.sort(), [
+      "https://yunwu.ai/api/ratio_config",
+      "https://yunwu.ai/api/status",
+    ]);
+    const enabled = await enableResponse.json() as {
+      paid_fallback_enabled: boolean;
+      paid_fallback_model_ids: string[];
+      paid_fallback_pricing_checked_at_ms: number | null;
+    };
+    assert.equal(enabled.paid_fallback_enabled, true);
+    assert.deepEqual(enabled.paid_fallback_model_ids, ["gpt-5.6-sol"]);
+    assert.equal(typeof enabled.paid_fallback_pricing_checked_at_ms, "number");
+
+    metadataUrls.length = 0;
+    const capResponse = await handleAdminApiKeysUpdate(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: created.id, paid_fallback_limit_credits: -1 }),
+      }),
+    );
+    assert.equal(capResponse.status, 200);
+    assert.equal(metadataUrls.length, 0);
+    const unlimited = await capResponse.json() as { paid_fallback_limit_credits: number };
+    assert.equal(unlimited.paid_fallback_limit_credits, -1);
+    const storedUnlimitedId = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", created.id])) as {
+      hash: string;
+      paid_fallback_limit_microcredits: number;
+    };
+    const storedUnlimitedHash = kvStore.get(
+      keyToString(["ubq_ai", "api_keys", "hash", storedUnlimitedId.hash]),
+    ) as { paid_fallback_limit_microcredits: number };
+    assert.equal(storedUnlimitedId.paid_fallback_limit_microcredits, -1);
+    assert.equal(storedUnlimitedHash.paid_fallback_limit_microcredits, -1);
+
+    const disableResponse = await handleAdminApiKeysUpdate(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: created.id, paid_fallback_enabled: false }),
+      }),
+    );
+    assert.equal(disableResponse.status, 200);
+    assert.equal(metadataUrls.length, 0);
+
+    const reenableResponse = await handleAdminApiKeysUpdate(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: created.id, paid_fallback_enabled: true }),
+      }),
+    );
+    assert.equal(reenableResponse.status, 200);
+    assert.deepEqual(metadataUrls.sort(), [
+      "https://yunwu.ai/api/ratio_config",
+      "https://yunwu.ai/api/status",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
+    else Deno.env.set("YUNWU_API_KEY", originalApiKey);
+  }
+});
+
+Deno.test("enabled key creation initializes once and failed enable leaves the key disabled", async () => {
+  kvStore.clear();
+  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+    source: "chatgpt_codex",
+    updated_at_ms: Date.now(),
+    models: [{ slug: "gpt-5.6-sol" }],
+  });
+
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = Deno.env.get("YUNWU_API_KEY");
+  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  let metadataCalls = 0;
+  globalThis.fetch = (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    metadataCalls += 1;
+    return Promise.resolve(yunwuMetadataResponse(url));
+  };
+
+  try {
+    const enabledCreate = await handleAdminApiKeysCreate(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Overflow enabled",
+          token: "u_test_enabled_initialization_1234567890",
+          paid_fallback_enabled: true,
+          paid_fallback_limit_credits: 1,
+        }),
+      }),
+    );
+    assert.equal(enabledCreate.status, 200);
+    assert.equal(metadataCalls, 2);
+    const enabledPayload = await enabledCreate.json() as Record<string, unknown>;
+    assert.equal(Object.prototype.hasOwnProperty.call(enabledPayload, "ok"), false);
+    assert.deepEqual(enabledPayload.paid_fallback_model_ids, ["gpt-5.6-sol"]);
+
+    metadataCalls = 0;
+    const duplicateCreate = await handleAdminApiKeysCreate(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Duplicate overflow key",
+          token: "u_test_enabled_initialization_1234567890",
+          paid_fallback_enabled: true,
+          paid_fallback_limit_credits: 1,
+        }),
+      }),
+    );
+    assert.equal(duplicateCreate.status, 409);
+    assert.equal(metadataCalls, 0);
+
+    const disabledCreate = await handleAdminApiKeysCreate(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Enable failure",
+          token: "u_test_failed_initialization_123456789",
+          paid_fallback_enabled: false,
+          paid_fallback_limit_credits: 1,
+        }),
+      }),
+    );
+    const disabledPayload = await disabledCreate.json() as { id: string };
+
+    globalThis.fetch = (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith("/api/status")) {
+        return Promise.resolve(new Response("upstream unavailable", { status: 503 }));
+      }
+      return Promise.resolve(yunwuMetadataResponse(url));
+    };
+    const failedEnable = await handleAdminApiKeysUpdate(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: disabledPayload.id, paid_fallback_enabled: true }),
+      }),
+    );
+    assert.equal(failedEnable.status, 502);
+    const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", disabledPayload.id])) as {
+      paid_fallback_enabled?: boolean;
+      paid_fallback_pricing_checked_at_ms?: number | null;
+    };
+    assert.equal(stored.paid_fallback_enabled, false);
+    assert.equal(stored.paid_fallback_pricing_checked_at_ms, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
+    else Deno.env.set("YUNWU_API_KEY", originalApiKey);
+  }
+});
+
 Deno.test("API key request logs are retained newest-first and exposed to admins", async () => {
   kvStore.clear();
   const keyId = "4ba83596-d68e-447a-9281-0f1c92e8a87e";
@@ -479,6 +723,66 @@ Deno.test("API key request log endpoint validates key existence and limit", asyn
     keyId,
   );
   assert.equal(invalidLimit.status, 400);
+});
+
+Deno.test("deleting a revoked API key removes its mirrored policy and analytics", async () => {
+  kvStore.clear();
+  const keyId = "key-delete-cleanup";
+  const hash = "hash-delete-cleanup";
+  const commonPolicy = {
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: 2_000_000,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+  };
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "id", keyId]), {
+    id: keyId,
+    name: "Delete cleanup",
+    prefix: "u_delete",
+    hash,
+    created_at_ms: Date.now() - 10_000,
+    expires_at_ms: -1,
+    revoked_at_ms: Date.now() - 1_000,
+    usage_limit_requests: 50,
+    usage_requests: 1,
+    usage_reset_at_ms: Date.now() + 60_000,
+    window_ms: 60_000,
+    ...commonPolicy,
+    paid_fallback_model_ids: [],
+    paid_fallback_quota_per_credit: 0,
+    paid_fallback_pricing_checked_at_ms: null,
+  });
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), {
+    id: keyId,
+    expires_at_ms: -1,
+    revoked_at_ms: Date.now() - 1_000,
+    usage_limit_requests: 50,
+    usage_requests: 1,
+    usage_reset_at_ms: Date.now() + 60_000,
+    window_ms: 60_000,
+    ...commonPolicy,
+  });
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "usage", keyId]), { key_id: keyId });
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "usage_daily", keyId]), { key_id: keyId, days: [] });
+  kvStore.set(
+    keyToString(["ubq_ai", "api_keys", "request_log", keyId, Date.now(), "request-delete"]),
+    { id: "request-delete", key_id: keyId },
+  );
+
+  const response = await handleAdminApiKeysDelete(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: keyId }),
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { id: keyId });
+  for (const encodedKey of kvStore.keys()) {
+    assert.equal(encodedKey.includes(keyId), false);
+    assert.equal(encodedKey.includes(hash), false);
+  }
 });
 
 Deno.test("health auth summary does not refresh Codex auth", async () => {
