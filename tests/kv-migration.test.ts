@@ -98,6 +98,32 @@ Deno.test("local KV migration keeps legacy and Codex bootstrap rows for replay",
   assert.equal(store.has(keyToString(["key", "health", "1"])), true);
 });
 
+Deno.test("KV migration imports only the option-aware v2 embedding cache when requested", async () => {
+  const store = new Map<string, unknown>();
+  const v1Key: Deno.KvKey = ["embeddings", "v1", "legacy-model", "text-hash"];
+  const v2Key: Deno.KvKey = [
+    "embeddings",
+    "v2",
+    "voyage-4-large|document|1024|float|float|false",
+    "text-hash",
+  ];
+  const result = await importKvMigrationLines(makeKvStub(store), [
+    entryLine(v1Key, { embedding: [1] }),
+    entryLine(v2Key, { embedding: [2] }),
+  ], {
+    profile: "prod",
+    includeCache: true,
+    includeLegacy: false,
+    overwrite: true,
+    dryRun: false,
+  });
+
+  assert.equal(result.imported, 1);
+  assert.equal(result.skipped, 1);
+  assert.equal(store.has(keyToString(v1Key)), false);
+  assert.deepEqual(store.get(keyToString(v2Key)), { embedding: [2] });
+});
+
 Deno.test("KV migration dry-run reports destination collisions like writes", async () => {
   const store = new Map<string, unknown>();
   store.set(keyToString(["default", "model"]), "existing-model");

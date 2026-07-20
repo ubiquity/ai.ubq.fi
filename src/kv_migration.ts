@@ -43,7 +43,7 @@ export type KvMigrationValidationResult = {
     passkey_users: number;
     passkey_credentials: number;
     agent_messages: number;
-    embeddings_v1_at_most_10000: number;
+    embeddings_v2_at_most_10000: number;
     legacy_model_key_configs: number;
     legacy_model_key_health: number;
   };
@@ -103,9 +103,9 @@ const TRANSIENT_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
 ];
 
 const EMBEDDINGS_CACHE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
-  { group: "embeddings_cache_index", prefix: ["embeddings", "v1", "cache_index"] },
-  { group: "embeddings_cache_index_by_hash", prefix: ["embeddings", "v1", "cache_index_by_hash"] },
-  { group: "embeddings_cache_values", prefix: ["embeddings", "v1"] },
+  { group: "embeddings_cache_index", prefix: ["embeddings", "v2", "cache_index"] },
+  { group: "embeddings_cache_index_by_hash", prefix: ["embeddings", "v2", "cache_index_by_hash"] },
+  { group: "embeddings_cache_values", prefix: ["embeddings", "v2"] },
 ];
 
 const keyStartsWith = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => {
@@ -247,7 +247,7 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
     listKvMigrationCount(kv, ["uos_ai", "auth", "users"]),
     listKvMigrationCount(kv, ["uos_ai", "auth", "credentials"]),
     listKvMigrationCount(kv, ["agent_messages"]),
-    listKvMigrationCount(kv, ["embeddings", "v1"], 10_000),
+    listKvMigrationCount(kv, ["embeddings", "v2"], 10_000),
     listKvMigrationCount(kv, ["key", "config"]),
     listKvMigrationCount(kv, ["key", "health"]),
   ]);
@@ -291,7 +291,7 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
       passkey_users: passkeyUsers,
       passkey_credentials: passkeyCredentials,
       agent_messages: agentMessages,
-      embeddings_v1_at_most_10000: embeddingCache,
+      embeddings_v2_at_most_10000: embeddingCache,
       legacy_model_key_configs: legacyModelKeyConfigs,
       legacy_model_key_health: legacyModelKeyHealth,
     },

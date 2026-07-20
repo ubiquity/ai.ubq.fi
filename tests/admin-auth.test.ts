@@ -683,6 +683,7 @@ Deno.test("API key request logs are retained newest-first and exposed to admins"
     model: "gpt-5.6-luna",
     reasoning: "high",
     created_at_ms: 2_000,
+    provider: "voyage",
   });
 
   const newest = await listApiKeyRequestLogs(keyId, { limit: 1 });
@@ -699,13 +700,95 @@ Deno.test("API key request logs are retained newest-first and exposed to admins"
   const payload = await response.json() as {
     ok?: boolean;
     object?: string;
-    data?: Array<{ created_at_ms?: number; model?: string | null; reasoning?: string | null }>;
+    data?: Array<{
+      created_at_ms?: number;
+      model?: string | null;
+      reasoning?: string | null;
+      provider?: string;
+    }>;
   };
   assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
   assert.equal(payload.object, "list");
   assert.deepEqual(payload.data?.map((entry) => entry.created_at_ms), [2_000, 1_000]);
   assert.equal(payload.data?.[1]?.model, "gpt-5.6-sol");
   assert.equal(payload.data?.[1]?.reasoning, "max");
+  assert.equal(payload.data?.[0]?.provider, "voyage");
+});
+
+Deno.test("authenticated UOS embeddings record Voyage provider analytics", async () => {
+  kvStore.clear();
+  kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage-test-key");
+  const token = `u_voyage_analytics_${crypto.randomUUID().replaceAll("-", "")}`;
+  const createdResponse = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Voyage analytics route",
+        token,
+        usage_limit_requests: -1,
+        paid_fallback_enabled: false,
+      }),
+    }),
+  );
+  assert.equal(createdResponse.status, 200);
+  const created = await createdResponse.json() as { id?: unknown };
+  assert.equal(typeof created.id, "string");
+  const keyId = created.id as string;
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    assert.equal(url, "https://api.voyageai.com/v1/embeddings");
+    const body = JSON.parse(typeof init?.body === "string" ? init.body : "null") as Record<string, unknown>;
+    assert.equal(body.model, "voyage-4-large");
+    assert.equal(body.input_type, "document");
+    assert.equal(body.output_dimension, 1024);
+    assert.equal(body.output_dtype, "float");
+    assert.equal(body.truncation, false);
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          data: [{ embedding: Array.from({ length: 1024 }, (_, index) => index / 1024) }],
+          usage: { total_tokens: 3 },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  };
+
+  try {
+    const { default: handler } = await import("../src/handler.ts");
+    const response = await handler(
+      new Request("https://ai.ubq.fi/uos/embeddings", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "voyage-4-large",
+          input: "analytics provider proof",
+          input_type: "document",
+          dimensions: 1024,
+          truncation: false,
+          encoding_format: "float",
+        }),
+      }),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-ubq-upstream"), "voyage");
+
+    const logs = await listApiKeyRequestLogs(keyId, { limit: 10 });
+    const routeLog = logs.find((entry) => entry.path === "/uos/embeddings");
+    assert.ok(routeLog);
+    assert.equal(routeLog.provider, "voyage");
+    assert.equal(routeLog.route, "embeddings");
+    assert.equal(routeLog.method, "POST");
+    assert.equal(routeLog.status_code, 200);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("API key request log endpoint validates key existence and limit", async () => {

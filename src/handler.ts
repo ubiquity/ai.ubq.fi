@@ -46,6 +46,7 @@ import {
   handleModelCapabilities,
   handleModels,
   handleResponses,
+  handleUosEmbeddings,
 } from "./openai.ts";
 import {
   handlePasskeyLoginFinish,
@@ -297,8 +298,9 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
   }
 
-  const isUosEmbeddingJobPath = path === "/uos/embedding-jobs" || path.startsWith("/uos/embedding-jobs/");
-  if (!path.startsWith("/v1/") && !isUosEmbeddingJobPath) {
+  const isUosEmbeddingPath = path === "/uos/embeddings" || path === "/uos/embedding-jobs" ||
+    path.startsWith("/uos/embedding-jobs/");
+  if (!path.startsWith("/v1/") && !isUosEmbeddingPath) {
     return withCors(notFound());
   }
 
@@ -350,7 +352,7 @@ export default async function handler(req: Request): Promise<Response> {
     stream: boolean;
     model?: string | null;
     reasoning?: string | null;
-    provider?: "chatgpt_codex" | "yunwu";
+    provider?: "chatgpt_codex" | "voyage" | "yunwu";
   }): Promise<void> => {
     if (!usageKeyId) return;
     await recordApiKeyRequestLog(usageKeyId, {
@@ -377,6 +379,23 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleModels());
   }
 
+  if (req.method === "POST" && path === "/uos/embeddings") {
+    const response = await handleUosEmbeddings(req, usageContext);
+    if (response.ok) {
+      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
+      await incrementKernelLimitUsage();
+    }
+    await logApiKeyRequest({
+      route: "embeddings",
+      path,
+      method: req.method,
+      status_code: response.status,
+      stream: false,
+      provider: "voyage",
+    });
+    return withCors(response);
+  }
+
   if (req.method === "POST" && path === "/uos/embedding-jobs") {
     const response = await handleEmbeddingsJobCreate(req, authResult.token, usageContext);
     if (response.ok) {
@@ -389,6 +408,7 @@ export default async function handler(req: Request): Promise<Response> {
       method: req.method,
       status_code: response.status,
       stream: false,
+      provider: "voyage",
     });
     return withCors(response);
   }
@@ -403,6 +423,7 @@ export default async function handler(req: Request): Promise<Response> {
       method: req.method,
       status_code: response.status,
       stream: false,
+      provider: "voyage",
     });
     return withCors(response);
   }
@@ -419,6 +440,7 @@ export default async function handler(req: Request): Promise<Response> {
       method: req.method,
       status_code: response.status,
       stream: false,
+      provider: "voyage",
     });
     return withCors(response);
   }

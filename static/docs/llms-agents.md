@@ -113,6 +113,7 @@ UOS gateway endpoints:
 
 - `GET /uos/auth`
 - `GET /uos/models/capabilities`
+- `POST /uos/embeddings`
 - `POST /uos/embedding-jobs`
 - `GET /uos/embedding-jobs/{id}`
 - `GET /uos/agent-messages`
@@ -281,9 +282,10 @@ until KV is full, then evicts the oldest entries (FIFO) and retries.
 
 Request:
 
-- `model` (string, required): accepts `text-embedding-3-small`, `text-embedding-3-large`, or `voyage-*`.
+- `model` (string, required): accepts `text-embedding-3-small`, `text-embedding-3-large`, or `voyage-4-large`.
 - `input` (string or string[], required).
 - `encoding_format` (optional): `float` (default) or `base64`.
+- `dimensions` (optional): `256`, `512`, `1024` (default), or `2048`.
 
 The gateway returns an OpenAI-style response with `object: "list"` and one `data[]` entry per input string.
 
@@ -291,6 +293,11 @@ Notes:
 
 - Batching is strongly recommended (send `input` as an array).
 - When rate limited (by Voyage or the gateway's own KV throttling), the gateway responds `429` with `Retry-After`.
+
+`POST /uos/embeddings` exposes the retrieval-specific Voyage profile without adding provider-only fields to the
+OpenAI-compatible endpoint. It requires `model="voyage-4-large"` and `input_type="query"|"document"`; `dimensions`
+defaults to `1024`, `truncation` defaults to `true`, and `encoding_format` is fixed to `float`. Callers that need an
+over-length input to fail instead of being shortened must send `truncation=false` explicitly.
 
 ## Embedding Jobs (Async)
 
@@ -301,7 +308,8 @@ Notes:
 
 Notes:
 
-- Jobs currently support `encoding_format="float"` only.
+- Jobs use the same Voyage profile fields and validation as `/uos/embeddings` and support `encoding_format="float"`
+  only.
 - When queued, the gateway responds with `Retry-After` and `retry_after_seconds`.
 - Jobs are scoped to the authenticated client identity; poll using credentials that resolve to the same identity scope
   used to create the job (same API key, or for GitHub/kernel auth the same `{owner, repo}` attestation context).
