@@ -79,6 +79,11 @@ const DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "codex_prompts_chunks", prefix: ["uos_ai", "codex_instructions_chunk"] },
   { group: "kernel_policy_queue", prefix: ["uos_ai", "kernel_policy_queue"] },
   { group: "migrations", prefix: ["uos_ai", "migrations"] },
+  {
+    group: "embeddings_idempotency_responses",
+    prefix: ["embeddings", "idempotency", "v1", "response"],
+  },
+  { group: "embeddings_idempotency", prefix: ["embeddings", "idempotency", "v1"] },
   { group: "passkey_users", prefix: ["uos_ai", "auth", "users"] },
   { group: "passkey_handles", prefix: ["uos_ai", "auth", "handles"] },
   { group: "passkey_credentials", prefix: ["uos_ai", "auth", "credentials"] },
