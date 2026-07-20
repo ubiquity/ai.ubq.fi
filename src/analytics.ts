@@ -43,7 +43,7 @@ export type ApiKeyRequestLogInput = Readonly<{
   model?: string | null;
   reasoning?: string | null;
   created_at_ms: number;
-  provider?: "chatgpt_codex" | "yunwu";
+  provider?: "chatgpt_codex" | "voyage" | "yunwu";
   fallback_reason?: string | null;
   provider_request_id?: string | null;
   completed_at_ms?: number | null;
@@ -104,7 +104,7 @@ const normalizeRequestLogRecord = (
   if (!isRecord(value)) return null;
   const createdAtMs = coerceNumber(value.created_at_ms, fallbackCreatedAtMs);
   const statusCode = coerceNumber(value.status_code);
-  const provider = value.provider === "yunwu" ? "yunwu" : "chatgpt_codex";
+  const provider = value.provider === "voyage" ? "voyage" : value.provider === "yunwu" ? "yunwu" : "chatgpt_codex";
   const billingStatus = value.billing_status;
   const normalizedBillingStatus: ApiKeyRequestLogRecord["billing_status"] =
     billingStatus === "pending" || billingStatus === "reconciled" || billingStatus === "not_billed" ||

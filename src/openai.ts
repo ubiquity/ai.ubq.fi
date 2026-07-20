@@ -68,6 +68,7 @@ type UsageContext = Readonly<{
   keyId: string | null;
   kernelRepo: { owner: string; repo: string } | null;
   kernelOrg: { owner: string } | null;
+  idempotencyPrincipal?: string | null;
   requestId?: string;
   startedAtMs?: number;
 }>;
@@ -159,7 +160,7 @@ const recordRequestUsage = async (
       model: details.model,
       reasoning: details.reasoning,
       created_at_ms: seenAtMs,
-      provider: "chatgpt_codex",
+      provider: details.route.startsWith("embeddings") ? "voyage" : "chatgpt_codex",
       billing_status: "not_applicable",
     }));
   }
@@ -733,6 +734,31 @@ const findUnknownKey = (record: Record<string, unknown>, allowed: ReadonlySet<st
 };
 
 type EmbeddingsEncodingFormat = "float" | "base64";
+type VoyageEmbeddingsInputType = "query" | "document";
+type VoyageEmbeddingsDimension = 256 | 512 | 1024 | 2048;
+type VoyageEmbeddingsOutputDtype = "float";
+
+type ResolvedEmbeddingsProfile = Readonly<{
+  upstream: "voyage";
+  upstream_model: "voyage-4-large";
+  input_type: VoyageEmbeddingsInputType;
+  dimensions: VoyageEmbeddingsDimension;
+  output_dtype: VoyageEmbeddingsOutputDtype;
+  encoding_format: EmbeddingsEncodingFormat;
+  truncation: boolean;
+  cache_profile_key: string;
+}>;
+
+type ParsedEmbeddingsRequest = Readonly<{
+  model: string;
+  inputs: string[];
+  total_chars: number;
+  profile: ResolvedEmbeddingsProfile;
+}>;
+
+type EmbeddingsParseResult =
+  | Readonly<{ ok: true; value: ParsedEmbeddingsRequest }>
+  | Readonly<{ ok: false; response: Response }>;
 
 type VoyageRateLimitState = Readonly<{
   window_start_ms: number;
@@ -752,14 +778,66 @@ const EMBEDDINGS_CACHE_EVICT_MAX_BATCH = 8192;
 const EMBEDDINGS_CACHE_QUOTA_MAX_RETRIES = 4;
 const EMBEDDINGS_JOB_TTL_MS = 24 * 60 * 60_000;
 const EMBEDDINGS_JOB_LOCK_MS = 30_000;
+const EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES = new Set([429, 500, 502, 503, 504]);
+const EMBEDDINGS_IDEMPOTENCY_LEASE_MS = 60_000;
+const EMBEDDINGS_IDEMPOTENCY_RESPONSE_CHUNK_CHARS = 48_000;
+// 128 inputs x 2,048 finite JSON numbers fit comfortably below this cap.
+const EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS = 256;
+const EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS = 7 * 24 * 60 * 60_000;
+// Response chunks are published before their ledger record. Keep them for one
+// extra day so every published ledger expires before the chunks it references;
+// unpublished/orphaned generations are reclaimed by the same TTL.
+const EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS = EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS + 24 * 60 * 60_000;
+const EMBEDDINGS_IDEMPOTENCY_MAX_KEY_CHARS = 255;
 
 const VOYAGE_EMBEDDINGS_URL = "https://api.voyageai.com/v1/embeddings";
-const VOYAGE_INPUT_TYPE = "document";
+const VOYAGE_EMBEDDINGS_MODEL = "voyage-4-large";
+const VOYAGE_DEFAULT_DIMENSIONS: VoyageEmbeddingsDimension = 1024;
+const VOYAGE_OUTPUT_DTYPE: VoyageEmbeddingsOutputDtype = "float";
+const VOYAGE_SUPPORTED_DIMENSIONS = new Set<number>([256, 512, 1024, 2048]);
+const UOS_EMBEDDINGS_ALLOWED_KEYS = new Set([
+  "dimensions",
+  "encoding_format",
+  "input",
+  "input_type",
+  "model",
+  "truncation",
+]);
 // Voyage free-tier throttles are tiny; we enforce conservative defaults to avoid 429s.
 const VOYAGE_RATE_LIMIT_RPM = 3;
 const VOYAGE_RATE_LIMIT_TPM = 10_000;
 const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
 const VOYAGE_API_KEY_KV_KEY: Deno.KvKey = ["uos_ai", "voyage_api_key"];
+
+type EmbeddingsIdempotencyState = "reserved" | "dispatched" | "succeeded" | "indeterminate";
+
+type EmbeddingsIdempotencyRecord = Readonly<{
+  v: 1;
+  fingerprint: string;
+  state: EmbeddingsIdempotencyState;
+  owner_request_id: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  lease_until_ms: number | null;
+  response_status: number | null;
+  response_content_type: string | null;
+  response_generation: string | null;
+  response_chunk_count: number | null;
+  response_sha256: string | null;
+}>;
+
+type EmbeddingsIdempotencyLease = Readonly<{
+  kv: Deno.Kv;
+  key: Deno.KvKey;
+  responseKeyPrefix: Deno.KvKey;
+  fingerprint: string;
+  ownerRequestId: string;
+}>;
+
+type EmbeddingsIdempotencyAcquireResult =
+  | Readonly<{ kind: "acquired"; lease: EmbeddingsIdempotencyLease }>
+  | Readonly<{ kind: "replay"; response: Response }>
+  | Readonly<{ kind: "error"; response: Response }>;
 
 type EmbeddingsJobStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -769,9 +847,14 @@ type EmbeddingsJobRecord = Readonly<{
   created_at_ms: number;
   updated_at_ms: number;
   model: string;
-  cache_model_key: string;
+  cache_profile_key: string;
   upstream: "voyage";
-  upstream_model: string;
+  upstream_model: "voyage-4-large";
+  input_type: VoyageEmbeddingsInputType;
+  dimensions: VoyageEmbeddingsDimension;
+  output_dtype: VoyageEmbeddingsOutputDtype;
+  encoding_format: EmbeddingsEncodingFormat;
+  truncation: boolean;
   input_hashes: string[];
   input_count: number;
   total_chars: number;
@@ -788,32 +871,529 @@ type EmbeddingsJobInputRecord = Readonly<{
   created_at_ms: number;
 }>;
 
-const embeddingsJobKey = (tokenHash: string, id: string): Deno.KvKey => ["embeddings", "jobs", "v1", tokenHash, id];
-const embeddingsJobInputKey = (tokenHash: string, jobId: string, hash: string): Deno.KvKey => [
+type EmbeddingsJobLookupRecord = Readonly<{
+  cache_profile_key: string;
+}>;
+
+const embeddingsJobKey = (tokenHash: string, cacheProfileKey: string, id: string): Deno.KvKey => [
   "embeddings",
   "jobs",
-  "v1",
+  "v2",
+  tokenHash,
+  cacheProfileKey,
+  id,
+];
+const embeddingsJobLookupKey = (tokenHash: string, id: string): Deno.KvKey => [
+  "embeddings",
+  "jobs",
+  "v2",
+  "lookup",
+  tokenHash,
+  id,
+];
+const embeddingsJobInputKey = (
+  tokenHash: string,
+  cacheProfileKey: string,
+  jobId: string,
+  hash: string,
+): Deno.KvKey => [
+  "embeddings",
+  "jobs",
+  "v2",
   "input",
   tokenHash,
+  cacheProfileKey,
   jobId,
   hash,
 ];
 
-const embeddingsCacheIndexPrefix = (
-  cacheModelKey: string,
-): Deno.KvKey => ["embeddings", "v1", "cache_index", cacheModelKey];
 const embeddingsCacheIndexKey = (
-  cacheModelKey: string,
+  cacheProfileKey: string,
   createdAtMs: number,
   hash: string,
-): Deno.KvKey => ["embeddings", "v1", "cache_index", cacheModelKey, createdAtMs, hash];
-const embeddingsCacheIndexByHashKey = (cacheModelKey: string, hash: string): Deno.KvKey => [
+): Deno.KvKey => ["embeddings", "v2", "cache_index", cacheProfileKey, createdAtMs, hash];
+const embeddingsCacheGlobalIndexPrefix: Deno.KvKey = ["embeddings", "v2", "cache_index_global"];
+const embeddingsCacheGlobalIndexKey = (
+  createdAtMs: number,
+  cacheProfileKey: string,
+  hash: string,
+): Deno.KvKey => [...embeddingsCacheGlobalIndexPrefix, createdAtMs, cacheProfileKey, hash];
+const embeddingsCacheIndexByHashKey = (cacheProfileKey: string, hash: string): Deno.KvKey => [
   "embeddings",
-  "v1",
+  "v2",
   "cache_index_by_hash",
-  cacheModelKey,
+  cacheProfileKey,
   hash,
 ];
+const embeddingsCacheKey = (cacheProfileKey: string, hash: string): Deno.KvKey => [
+  "embeddings",
+  "v2",
+  "cache",
+  cacheProfileKey,
+  hash,
+];
+
+const embeddingsIdempotencyKey = (principalHash: string, idempotencyKeyHash: string): Deno.KvKey => [
+  "embeddings",
+  "idempotency",
+  "v1",
+  principalHash,
+  idempotencyKeyHash,
+];
+
+const embeddingsIdempotencyResponseKeyPrefix = (
+  principalHash: string,
+  idempotencyKeyHash: string,
+): Deno.KvKey => [
+  "embeddings",
+  "idempotency",
+  "v1",
+  "response",
+  principalHash,
+  idempotencyKeyHash,
+];
+
+const isEmbeddingsIdempotencyState = (value: unknown): value is EmbeddingsIdempotencyState =>
+  value === "reserved" || value === "dispatched" || value === "succeeded" || value === "indeterminate";
+
+const normalizeEmbeddingsIdempotencyRecord = (value: unknown): EmbeddingsIdempotencyRecord | null => {
+  if (!isRecord(value) || value.v !== 1 || typeof value.fingerprint !== "string") return null;
+  if (!isEmbeddingsIdempotencyState(value.state)) return null;
+  if (value.owner_request_id !== null && typeof value.owner_request_id !== "string") return null;
+  if (
+    typeof value.created_at_ms !== "number" || !Number.isFinite(value.created_at_ms) ||
+    typeof value.updated_at_ms !== "number" || !Number.isFinite(value.updated_at_ms)
+  ) {
+    return null;
+  }
+  if (
+    value.lease_until_ms !== null &&
+    (typeof value.lease_until_ms !== "number" || !Number.isFinite(value.lease_until_ms))
+  ) {
+    return null;
+  }
+  if (
+    value.response_status !== null &&
+    (typeof value.response_status !== "number" || !Number.isInteger(value.response_status))
+  ) {
+    return null;
+  }
+  if (value.response_content_type !== null && typeof value.response_content_type !== "string") return null;
+  if (value.response_generation !== null && typeof value.response_generation !== "string") return null;
+  if (
+    value.response_chunk_count !== null &&
+    (
+      typeof value.response_chunk_count !== "number" ||
+      !Number.isInteger(value.response_chunk_count) ||
+      value.response_chunk_count < 1 ||
+      value.response_chunk_count > EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS
+    )
+  ) {
+    return null;
+  }
+  if (value.response_sha256 !== null && typeof value.response_sha256 !== "string") return null;
+
+  return {
+    v: 1,
+    fingerprint: value.fingerprint,
+    state: value.state,
+    owner_request_id: value.owner_request_id,
+    created_at_ms: Math.trunc(value.created_at_ms),
+    updated_at_ms: Math.trunc(value.updated_at_ms),
+    lease_until_ms: value.lease_until_ms === null ? null : Math.trunc(value.lease_until_ms),
+    response_status: value.response_status === null ? null : Math.trunc(value.response_status),
+    response_content_type: value.response_content_type,
+    response_generation: value.response_generation,
+    response_chunk_count: value.response_chunk_count === null ? null : Math.trunc(value.response_chunk_count),
+    response_sha256: value.response_sha256,
+  };
+};
+
+const embeddingsIdempotencyError = (
+  status: 409 | 503,
+  message: string,
+  code:
+    | "embedding_idempotency_conflict"
+    | "embedding_idempotency_in_progress"
+    | "embedding_idempotency_indeterminate"
+    | "embedding_idempotency_unavailable",
+  retryAfterSeconds?: number,
+): Response =>
+  openaiError(status, message, code, {
+    type: status === 503 ? "server_error" : "idempotency_error",
+    param: null,
+    ...(retryAfterSeconds === undefined ? {} : { headers: { "Retry-After": String(retryAfterSeconds) } }),
+  });
+
+const embeddingsIdempotencyConflictResponse = (): Response =>
+  embeddingsIdempotencyError(
+    409,
+    "Idempotency-Key was already used with a different embeddings request.",
+    "embedding_idempotency_conflict",
+  );
+
+const embeddingsIdempotencyInProgressResponse = (): Response =>
+  embeddingsIdempotencyError(
+    409,
+    "The embeddings request for this Idempotency-Key is still in progress.",
+    "embedding_idempotency_in_progress",
+    1,
+  );
+
+const embeddingsIdempotencyIndeterminateResponse = (): Response =>
+  embeddingsIdempotencyError(
+    409,
+    "The embeddings request outcome is indeterminate and will not be dispatched again.",
+    "embedding_idempotency_indeterminate",
+  );
+
+const embeddingsIdempotencyUnavailableResponse = (): Response =>
+  embeddingsIdempotencyError(
+    503,
+    "Idempotent embeddings requests require durable KV storage.",
+    "embedding_idempotency_unavailable",
+  );
+
+const hasAsciiControlCharacter = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+};
+
+const buildEmbeddingsIdempotencyFingerprint = async (
+  profile: ResolvedEmbeddingsProfile,
+  orderedInputHashes: string[],
+): Promise<string> =>
+  await sha256Hex(
+    JSON.stringify([
+      "uos-embeddings-idempotency-v1",
+      profile.upstream,
+      profile.upstream_model,
+      profile.input_type,
+      profile.dimensions,
+      profile.output_dtype,
+      profile.encoding_format,
+      profile.truncation,
+      orderedInputHashes,
+    ]),
+  );
+
+const loadEmbeddingsIdempotencyResponse = async (
+  lease: Omit<EmbeddingsIdempotencyLease, "ownerRequestId">,
+  record: EmbeddingsIdempotencyRecord,
+): Promise<Response | null> => {
+  if (
+    record.state !== "succeeded" ||
+    record.response_status !== 200 ||
+    !record.response_content_type ||
+    !record.response_generation ||
+    record.response_chunk_count === null ||
+    !record.response_sha256
+  ) {
+    return null;
+  }
+
+  const chunks = await Promise.all(
+    Array.from(
+      { length: record.response_chunk_count },
+      (_, index) =>
+        lease.kv.get<string>([
+          ...lease.responseKeyPrefix,
+          record.response_generation!,
+          index,
+        ]),
+    ),
+  );
+  if (chunks.some((entry) => typeof entry.value !== "string")) return null;
+  const body = chunks.map((entry) => entry.value as string).join("");
+  if (await sha256Hex(body) !== record.response_sha256) return null;
+  return new Response(body, {
+    status: record.response_status,
+    headers: {
+      "Content-Type": record.response_content_type,
+      "x-uos-idempotency-replayed": "true",
+    },
+  });
+};
+
+const markEmbeddingsIdempotencyIndeterminate = async (
+  lease: EmbeddingsIdempotencyLease,
+): Promise<void> => {
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      if (!record || record.fingerprint !== lease.fingerprint) return;
+      if (record.state === "indeterminate" || record.state === "succeeded") return;
+      const now = Date.now();
+      const next: EmbeddingsIdempotencyRecord = {
+        ...record,
+        state: "indeterminate",
+        owner_request_id: null,
+        updated_at_ms: now,
+        lease_until_ms: null,
+        response_status: null,
+        response_content_type: null,
+        response_generation: null,
+        response_chunk_count: null,
+        response_sha256: null,
+      };
+      const commit = await lease.kv.atomic()
+        .check(entry)
+        .set(lease.key, next, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+        .commit();
+      if (commit.ok) return;
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency indeterminate-state write failed:", error);
+  }
+};
+
+const acquireEmbeddingsIdempotencyLease = async (params: {
+  kv: Deno.Kv;
+  principal: string;
+  idempotencyKey: string;
+  fingerprint: string;
+  requestId: string;
+}): Promise<EmbeddingsIdempotencyAcquireResult> => {
+  const [principalHash, idempotencyKeyHash] = await Promise.all([
+    sha256Hex(`uos-embeddings-principal-v1:${params.principal}`),
+    sha256Hex(`uos-embeddings-key-v1:${params.idempotencyKey}`),
+  ]);
+  const key = embeddingsIdempotencyKey(principalHash, idempotencyKeyHash);
+  const responseKeyPrefix = embeddingsIdempotencyResponseKeyPrefix(principalHash, idempotencyKeyHash);
+  const lease: EmbeddingsIdempotencyLease = {
+    kv: params.kv,
+    key,
+    responseKeyPrefix,
+    fingerprint: params.fingerprint,
+    ownerRequestId: params.requestId,
+  };
+
+  try {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const entry = await params.kv.get<EmbeddingsIdempotencyRecord>(key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      const now = Date.now();
+
+      if (entry.versionstamp === null) {
+        const reserved: EmbeddingsIdempotencyRecord = {
+          v: 1,
+          fingerprint: params.fingerprint,
+          state: "reserved",
+          owner_request_id: params.requestId,
+          created_at_ms: now,
+          updated_at_ms: now,
+          lease_until_ms: now + EMBEDDINGS_IDEMPOTENCY_LEASE_MS,
+          response_status: null,
+          response_content_type: null,
+          response_generation: null,
+          response_chunk_count: null,
+          response_sha256: null,
+        };
+        const commit = await params.kv.atomic()
+          .check(entry)
+          .set(key, reserved, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+          .commit();
+        if (commit.ok) return { kind: "acquired", lease };
+        continue;
+      }
+
+      if (!record) return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
+      if (record.fingerprint !== params.fingerprint) {
+        return { kind: "error", response: embeddingsIdempotencyConflictResponse() };
+      }
+
+      if (record.state === "succeeded") {
+        const replay = await loadEmbeddingsIdempotencyResponse(lease, record);
+        if (replay) return { kind: "replay", response: replay };
+        const indeterminate: EmbeddingsIdempotencyRecord = {
+          ...record,
+          state: "indeterminate",
+          owner_request_id: null,
+          updated_at_ms: now,
+          lease_until_ms: null,
+          response_status: null,
+          response_content_type: null,
+          response_generation: null,
+          response_chunk_count: null,
+          response_sha256: null,
+        };
+        const commit = await params.kv.atomic()
+          .check(entry)
+          .set(key, indeterminate, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+          .commit();
+        if (commit.ok) return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
+        continue;
+      }
+
+      if (record.state === "indeterminate") {
+        return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
+      }
+
+      if (record.lease_until_ms !== null && record.lease_until_ms > now) {
+        return { kind: "error", response: embeddingsIdempotencyInProgressResponse() };
+      }
+
+      if (record.state === "dispatched") {
+        const indeterminate: EmbeddingsIdempotencyRecord = {
+          ...record,
+          state: "indeterminate",
+          owner_request_id: null,
+          updated_at_ms: now,
+          lease_until_ms: null,
+          response_status: null,
+          response_content_type: null,
+          response_generation: null,
+          response_chunk_count: null,
+          response_sha256: null,
+        };
+        const commit = await params.kv.atomic()
+          .check(entry)
+          .set(key, indeterminate, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+          .commit();
+        if (commit.ok) return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
+        continue;
+      }
+
+      const reserved: EmbeddingsIdempotencyRecord = {
+        ...record,
+        state: "reserved",
+        owner_request_id: params.requestId,
+        updated_at_ms: now,
+        lease_until_ms: now + EMBEDDINGS_IDEMPOTENCY_LEASE_MS,
+        response_status: null,
+        response_content_type: null,
+        response_generation: null,
+        response_chunk_count: null,
+        response_sha256: null,
+      };
+      const commit = await params.kv.atomic()
+        .check(entry)
+        .set(key, reserved, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+        .commit();
+      if (commit.ok) return { kind: "acquired", lease };
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency reservation failed:", error);
+  }
+
+  return { kind: "error", response: embeddingsIdempotencyUnavailableResponse() };
+};
+
+const markEmbeddingsIdempotencyDispatched = async (
+  lease: EmbeddingsIdempotencyLease,
+): Promise<boolean> => {
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      if (
+        !record ||
+        record.fingerprint !== lease.fingerprint ||
+        record.state !== "reserved" ||
+        record.owner_request_id !== lease.ownerRequestId
+      ) {
+        return false;
+      }
+      const now = Date.now();
+      const dispatched: EmbeddingsIdempotencyRecord = {
+        ...record,
+        state: "dispatched",
+        updated_at_ms: now,
+        lease_until_ms: now + EMBEDDINGS_IDEMPOTENCY_LEASE_MS,
+      };
+      const commit = await lease.kv.atomic()
+        .check(entry)
+        .set(lease.key, dispatched, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+        .commit();
+      if (commit.ok) return true;
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency dispatch-state write failed:", error);
+  }
+  return false;
+};
+
+const releaseEmbeddingsIdempotencyReservation = async (
+  lease: EmbeddingsIdempotencyLease,
+  allowDispatched: boolean,
+): Promise<boolean> => {
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      if (!record || record.fingerprint !== lease.fingerprint) return false;
+      if (record.owner_request_id !== lease.ownerRequestId) return false;
+      if (record.state !== "reserved" && !(allowDispatched && record.state === "dispatched")) return false;
+      const commit = await lease.kv.atomic().check(entry).delete(lease.key).commit();
+      if (commit.ok) return true;
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency reservation release failed:", error);
+  }
+  return false;
+};
+
+const storeEmbeddingsIdempotencySuccess = async (
+  lease: EmbeddingsIdempotencyLease,
+  response: Response,
+): Promise<boolean> => {
+  try {
+    const body = await response.clone().text();
+    const chunks: string[] = [];
+    for (let offset = 0; offset < body.length; offset += EMBEDDINGS_IDEMPOTENCY_RESPONSE_CHUNK_CHARS) {
+      chunks.push(body.slice(offset, offset + EMBEDDINGS_IDEMPOTENCY_RESPONSE_CHUNK_CHARS));
+    }
+    if (!chunks.length) chunks.push("");
+    if (chunks.length > EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS) return false;
+    const responseGeneration = lease.ownerRequestId;
+    for (let index = 0; index < chunks.length; index += 1) {
+      await lease.kv.set(
+        [...lease.responseKeyPrefix, responseGeneration, index],
+        chunks[index]!,
+        { expireIn: EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS },
+      );
+    }
+    const bodyHash = await sha256Hex(body);
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      if (
+        !record ||
+        record.fingerprint !== lease.fingerprint ||
+        (record.state !== "reserved" && record.state !== "dispatched") ||
+        record.owner_request_id !== lease.ownerRequestId
+      ) {
+        return false;
+      }
+      const now = Date.now();
+      const succeeded: EmbeddingsIdempotencyRecord = {
+        ...record,
+        state: "succeeded",
+        owner_request_id: null,
+        updated_at_ms: now,
+        lease_until_ms: null,
+        response_status: response.status,
+        response_content_type: response.headers.get("Content-Type") ?? "application/json",
+        response_generation: responseGeneration,
+        response_chunk_count: chunks.length,
+        response_sha256: bodyHash,
+      };
+      const commit = await lease.kv.atomic()
+        .check(entry)
+        .set(lease.key, succeeded, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+        .commit();
+      if (commit.ok) return true;
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency response write failed:", error);
+  }
+  return false;
+};
 
 const normalizeEmbeddingsCacheTimestampMs = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -844,13 +1424,13 @@ const isEmbeddingsCacheQuotaError = (error: unknown): boolean => {
 
 const writeEmbeddingsCacheEntry = async (
   kv: Deno.Kv,
-  cacheModelKey: string,
+  cacheProfileKey: string,
   hash: string,
   embedding: number[],
   createdAtMs: number,
 ): Promise<{ isNew: boolean }> => {
-  const byHashKey = embeddingsCacheIndexByHashKey(cacheModelKey, hash);
-  const cacheKey: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hash];
+  const byHashKey = embeddingsCacheIndexByHashKey(cacheProfileKey, hash);
+  const cacheKey = embeddingsCacheKey(cacheProfileKey, hash);
 
   // Concurrency-safe: if multiple requests try to cache the same hash, only one
   // will win the "create index" CAS; the others will reuse the winner's index.
@@ -858,22 +1438,24 @@ const writeEmbeddingsCacheEntry = async (
     const entry = await kv.get<number>(byHashKey);
     const existingCreatedAtMs = normalizeEmbeddingsCacheTimestampMs(entry.value);
     if (existingCreatedAtMs !== null) {
-      const indexKey = embeddingsCacheIndexKey(cacheModelKey, existingCreatedAtMs, hash);
+      const indexKey = embeddingsCacheIndexKey(cacheProfileKey, existingCreatedAtMs, hash);
       const updated = await kv.atomic()
         .check(entry)
         .set(cacheKey, { embedding, created_at: new Date(existingCreatedAtMs).toISOString() })
         .set(indexKey, 1)
+        .set(embeddingsCacheGlobalIndexKey(existingCreatedAtMs, cacheProfileKey, hash), 1)
         .commit();
       if (updated.ok) return { isNew: false };
       continue;
     }
 
     const createdAtIso = new Date(createdAtMs).toISOString();
-    const indexKey = embeddingsCacheIndexKey(cacheModelKey, createdAtMs, hash);
+    const indexKey = embeddingsCacheIndexKey(cacheProfileKey, createdAtMs, hash);
     const created = await kv.atomic()
       .check(entry)
       .set(cacheKey, { embedding, created_at: createdAtIso })
       .set(indexKey, 1)
+      .set(embeddingsCacheGlobalIndexKey(createdAtMs, cacheProfileKey, hash), 1)
       .set(byHashKey, createdAtMs)
       .commit();
     if (created.ok) return { isNew: true };
@@ -885,7 +1467,7 @@ const writeEmbeddingsCacheEntry = async (
 
 const writeEmbeddingsCacheEntryBestEffort = async (
   kv: Deno.Kv,
-  cacheModelKey: string,
+  cacheProfileKey: string,
   hash: string,
   embedding: number[],
   createdAtMs: number,
@@ -896,18 +1478,20 @@ const writeEmbeddingsCacheEntryBestEffort = async (
   for (let attempt = 0; attempt <= EMBEDDINGS_CACHE_QUOTA_MAX_RETRIES; attempt += 1) {
     if (Date.now() >= deadlineMs) return { isNew: false };
     try {
-      return await writeEmbeddingsCacheEntry(kv, cacheModelKey, hash, embedding, createdAtMs);
+      return await writeEmbeddingsCacheEntry(kv, cacheProfileKey, hash, embedding, createdAtMs);
     } catch (error) {
       if (!isEmbeddingsCacheQuotaError(error)) {
         console.warn("[ai.ubq.fi] embeddings_cache write failed:", error);
         return { isNew: false };
       }
 
-      // KV rejected the write (likely storage quota). Evict oldest entries and retry.
+      // KV rejected the write (likely storage quota). Evict the oldest entries
+      // across every embedding profile so a newly introduced profile cannot be
+      // starved by cache entries owned by another profile.
       try {
-        const evicted = await evictOldestEmbeddingsCacheEntries(kv, cacheModelKey, evictBatch);
+        const evicted = await evictOldestEmbeddingsCacheEntries(kv, evictBatch);
         console.warn(
-          `[ai.ubq.fi] embeddings_cache quota eviction model=${cacheModelKey} evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} batch=${evictBatch}`,
+          `[ai.ubq.fi] embeddings_cache quota eviction requesting_profile=${cacheProfileKey} scope=global evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} batch=${evictBatch}`,
         );
         if (evicted.evicted_embeddings <= 0 && evicted.deleted_stale_index_keys <= 0) return { isNew: false };
       } catch (evictError) {
@@ -923,35 +1507,50 @@ const writeEmbeddingsCacheEntryBestEffort = async (
 
 const evictOldestEmbeddingsCacheEntries = async (
   kv: Deno.Kv,
-  cacheModelKey: string,
   count: number,
 ): Promise<EmbeddingsCacheEvictResult> => {
-  const prefix = embeddingsCacheIndexPrefix(cacheModelKey);
-  const keys: Array<{ indexKey: Deno.KvKey; createdAtMs: number; hash: string }> = [];
-  for await (const entry of kv.list({ prefix }, { limit: count })) {
+  const keys: Array<{
+    globalIndexKey: Deno.KvKey;
+    cacheProfileKey: string;
+    createdAtMs: number;
+    hash: string;
+  }> = [];
+  for await (const entry of kv.list({ prefix: embeddingsCacheGlobalIndexPrefix }, { limit: count })) {
     const key = entry.key;
     const hash = key.at(-1);
-    const createdAtMs = key.at(-2);
+    const cacheProfileKey = key.at(-2);
+    const createdAtMs = key.at(-3);
     if (typeof hash !== "string" || !hash) continue;
+    if (typeof cacheProfileKey !== "string" || !cacheProfileKey) continue;
     if (typeof createdAtMs !== "number" || !Number.isFinite(createdAtMs)) continue;
-    keys.push({ indexKey: key, createdAtMs: Math.trunc(createdAtMs), hash });
+    keys.push({
+      globalIndexKey: key,
+      cacheProfileKey,
+      createdAtMs: Math.trunc(createdAtMs),
+      hash,
+    });
   }
   if (!keys.length) return { evicted_embeddings: 0, deleted_stale_index_keys: 0 };
 
-  const byHashKeys = keys.map((item) => embeddingsCacheIndexByHashKey(cacheModelKey, item.hash));
+  const byHashKeys = keys.map((item) => embeddingsCacheIndexByHashKey(item.cacheProfileKey, item.hash));
   const byHashEntries = await Promise.all(byHashKeys.map((key) => kv.get<number>(key)));
 
   let evictedEmbeddings = 0;
   let deletedStaleIndexKeys = 0;
   for (let i = 0; i < keys.length; i += 1) {
-    const { indexKey, createdAtMs, hash } = keys[i]!;
+    const { globalIndexKey, cacheProfileKey, createdAtMs, hash } = keys[i]!;
     const pointerEntry = byHashEntries[i]!;
     const pointer = normalizeEmbeddingsCacheTimestampMs(pointerEntry.value);
-    const cacheKey: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hash];
+    const cacheKey = embeddingsCacheKey(cacheProfileKey, hash);
+    const profileIndexKey = embeddingsCacheIndexKey(cacheProfileKey, createdAtMs, hash);
 
     if (pointer !== null && pointer !== createdAtMs) {
-      // Stale duplicate index key for this hash; delete the index entry only.
-      const deleted = await kv.atomic().check(pointerEntry).delete(indexKey).commit();
+      // Stale duplicate index keys for this hash; delete only the indexes.
+      const deleted = await kv.atomic()
+        .check(pointerEntry)
+        .delete(globalIndexKey)
+        .delete(profileIndexKey)
+        .commit();
       if (deleted.ok) deletedStaleIndexKeys += 1;
       continue;
     }
@@ -965,14 +1564,19 @@ const evictOldestEmbeddingsCacheEntries = async (
       const createdAtIso = isRecord(value) && typeof value.created_at === "string" ? value.created_at : null;
       const expectedIso = new Date(createdAtMs).toISOString();
       if (createdAtIso !== expectedIso) {
-        const deleted = await kv.atomic().check(pointerEntry).delete(indexKey).commit();
+        const deleted = await kv.atomic()
+          .check(pointerEntry)
+          .delete(globalIndexKey)
+          .delete(profileIndexKey)
+          .commit();
         if (deleted.ok) deletedStaleIndexKeys += 1;
         continue;
       }
 
       const commit = await kv.atomic()
         .check(pointerEntry)
-        .delete(indexKey)
+        .delete(globalIndexKey)
+        .delete(profileIndexKey)
         .delete(cacheKey)
         .commit();
       if (commit.ok) evictedEmbeddings += 1;
@@ -982,9 +1586,10 @@ const evictOldestEmbeddingsCacheEntries = async (
     // Canonical pointer match: evict embedding + index + pointer as an atomic unit.
     const commit = await kv.atomic()
       .check(pointerEntry)
-      .delete(indexKey)
+      .delete(globalIndexKey)
+      .delete(profileIndexKey)
       .delete(cacheKey)
-      .delete(embeddingsCacheIndexByHashKey(cacheModelKey, hash))
+      .delete(embeddingsCacheIndexByHashKey(cacheProfileKey, hash))
       .commit();
     if (commit.ok) evictedEmbeddings += 1;
   }
@@ -1128,29 +1733,270 @@ const applyVoyageRateLimit = async (
   }
 };
 
-const resolveEmbeddingsModel = (raw: string): { upstream: "voyage"; model: string } | null => {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const normalized = trimmed.toLowerCase();
-  if (normalized === "text-embedding-3-small" || normalized === "text-embedding-3-large") {
-    // OpenAI-compatible model names; backed by Voyage (dimensionality may differ from OpenAI).
-    return { upstream: "voyage", model: "voyage-4-large" };
-  }
-  if (normalized.startsWith("voyage-")) {
-    return { upstream: "voyage", model: normalized };
-  }
-  return null;
-};
-
 const parseEmbeddingsEncodingFormat = (
   value: unknown,
 ): { ok: true; value: EmbeddingsEncodingFormat } | { ok: false; message: string } => {
   if (value === undefined) return { ok: true, value: "float" };
   if (typeof value !== "string") return { ok: false, message: "encoding_format must be a string" };
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "float" || normalized === "base64") return { ok: true, value: normalized };
+  if (value === "float" || value === "base64") return { ok: true, value };
   return { ok: false, message: 'encoding_format must be one of: "float", "base64"' };
 };
+
+const parseEmbeddingsDimensions = (
+  value: unknown,
+): { ok: true; value: VoyageEmbeddingsDimension } | { ok: false; message: string } => {
+  if (value === undefined) return { ok: true, value: VOYAGE_DEFAULT_DIMENSIONS };
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+    return { ok: false, message: "dimensions must be an integer" };
+  }
+  if (!VOYAGE_SUPPORTED_DIMENSIONS.has(value)) {
+    return { ok: false, message: "dimensions must be one of: 256, 512, 1024, 2048" };
+  }
+  return { ok: true, value: value as VoyageEmbeddingsDimension };
+};
+
+const buildEmbeddingsCacheProfileKey = (
+  inputType: VoyageEmbeddingsInputType,
+  dimensions: VoyageEmbeddingsDimension,
+  encodingFormat: EmbeddingsEncodingFormat,
+  truncation: boolean,
+): string =>
+  JSON.stringify([
+    "voyage-profile-v2",
+    VOYAGE_EMBEDDINGS_MODEL,
+    inputType,
+    dimensions,
+    VOYAGE_OUTPUT_DTYPE,
+    encodingFormat,
+    truncation,
+  ]);
+
+const buildResolvedEmbeddingsProfile = (
+  inputType: VoyageEmbeddingsInputType,
+  dimensions: VoyageEmbeddingsDimension,
+  encodingFormat: EmbeddingsEncodingFormat,
+  truncation: boolean,
+): ResolvedEmbeddingsProfile => ({
+  upstream: "voyage",
+  upstream_model: VOYAGE_EMBEDDINGS_MODEL,
+  input_type: inputType,
+  dimensions,
+  output_dtype: VOYAGE_OUTPUT_DTYPE,
+  encoding_format: encodingFormat,
+  truncation,
+  cache_profile_key: buildEmbeddingsCacheProfileKey(inputType, dimensions, encodingFormat, truncation),
+});
+
+const resolveOpenAiEmbeddingsModel = (raw: string): "voyage-4-large" | null => {
+  const normalized = raw.trim().toLowerCase();
+  if (
+    normalized === VOYAGE_EMBEDDINGS_MODEL ||
+    normalized === "text-embedding-3-small" ||
+    normalized === "text-embedding-3-large"
+  ) {
+    return VOYAGE_EMBEDDINGS_MODEL;
+  }
+  return null;
+};
+
+const parseEmbeddingsRequest = (
+  rawBody: Record<string, unknown>,
+  contract: "openai" | "uos",
+): EmbeddingsParseResult => {
+  const allowedKeys = contract === "openai" ? EMBEDDINGS_ALLOWED_KEYS : UOS_EMBEDDINGS_ALLOWED_KEYS;
+  const unknownKey = findUnknownKey(rawBody, allowedKeys);
+  if (unknownKey) {
+    return {
+      ok: false,
+      response: openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error"),
+    };
+  }
+
+  const modelRaw = getString(rawBody.model);
+  if (!modelRaw || !modelRaw.trim()) {
+    return {
+      ok: false,
+      response: openaiError(400, "model is required and must be a non-empty string", "invalid_request_error", {
+        param: "model",
+      }),
+    };
+  }
+  const model = contract === "openai" ? modelRaw.trim() : modelRaw;
+  if (
+    contract === "uos"
+      ? model !== VOYAGE_EMBEDDINGS_MODEL
+      : resolveOpenAiEmbeddingsModel(model) !== VOYAGE_EMBEDDINGS_MODEL
+  ) {
+    return {
+      ok: false,
+      response: openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" }),
+    };
+  }
+
+  const dimensions = parseEmbeddingsDimensions(rawBody.dimensions);
+  if (!dimensions.ok) {
+    return {
+      ok: false,
+      response: openaiError(400, dimensions.message, "invalid_request_error", { param: "dimensions" }),
+    };
+  }
+
+  const encodingFormat = parseEmbeddingsEncodingFormat(rawBody.encoding_format);
+  if (!encodingFormat.ok) {
+    return {
+      ok: false,
+      response: openaiError(400, encodingFormat.message, "invalid_request_error", { param: "encoding_format" }),
+    };
+  }
+  if (contract === "uos" && encodingFormat.value !== "float") {
+    return {
+      ok: false,
+      response: openaiError(
+        400,
+        'encoding_format must be "float" for UOS embeddings',
+        "invalid_request_error",
+        { param: "encoding_format" },
+      ),
+    };
+  }
+
+  let inputType: VoyageEmbeddingsInputType = "document";
+  let truncation = true;
+  if (contract === "uos") {
+    if (rawBody.input_type !== "query" && rawBody.input_type !== "document") {
+      return {
+        ok: false,
+        response: openaiError(
+          400,
+          'input_type is required and must be one of: "query", "document"',
+          "invalid_request_error",
+          { param: "input_type" },
+        ),
+      };
+    }
+    inputType = rawBody.input_type;
+    if (rawBody.truncation !== undefined && typeof rawBody.truncation !== "boolean") {
+      return {
+        ok: false,
+        response: openaiError(400, "truncation must be a boolean", "invalid_request_error", {
+          param: "truncation",
+        }),
+      };
+    }
+    truncation = rawBody.truncation === undefined ? true : rawBody.truncation;
+  } else if (Object.prototype.hasOwnProperty.call(rawBody, "user")) {
+    const user = rawBody.user;
+    if (user !== undefined && user !== null && typeof user !== "string") {
+      return {
+        ok: false,
+        response: openaiError(400, "user must be a string", "invalid_request_error", { param: "user" }),
+      };
+    }
+  }
+
+  const inputRaw = rawBody.input;
+  let inputs: string[] = [];
+  if (typeof inputRaw === "string") {
+    inputs = [inputRaw];
+  } else if (Array.isArray(inputRaw)) {
+    for (const item of inputRaw) {
+      if (typeof item !== "string") {
+        return {
+          ok: false,
+          response: openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
+            param: "input",
+          }),
+        };
+      }
+      inputs.push(item);
+    }
+  } else {
+    return {
+      ok: false,
+      response: openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
+        param: "input",
+      }),
+    };
+  }
+
+  if (inputs.length === 0) {
+    return {
+      ok: false,
+      response: openaiError(
+        400,
+        "input must be a non-empty string or a non-empty array",
+        "invalid_request_error",
+        { param: "input" },
+      ),
+    };
+  }
+  if (inputs.length > EMBEDDINGS_MAX_INPUTS_PER_REQUEST) {
+    return {
+      ok: false,
+      response: openaiError(
+        400,
+        `Too many inputs: ${inputs.length} (max ${EMBEDDINGS_MAX_INPUTS_PER_REQUEST})`,
+        "invalid_request_error",
+        { param: "input" },
+      ),
+    };
+  }
+
+  let totalChars = 0;
+  for (const text of inputs) {
+    const len = text.length;
+    if (len > EMBEDDINGS_MAX_CHARS_PER_INPUT) {
+      return {
+        ok: false,
+        response: openaiError(
+          400,
+          `Input too large: ${len} chars (max ${EMBEDDINGS_MAX_CHARS_PER_INPUT})`,
+          "invalid_request_error",
+          { param: "input" },
+        ),
+      };
+    }
+    totalChars += len;
+    if (totalChars > EMBEDDINGS_MAX_TOTAL_CHARS) {
+      return {
+        ok: false,
+        response: openaiError(
+          400,
+          `Request too large: ${totalChars} chars total (max ${EMBEDDINGS_MAX_TOTAL_CHARS})`,
+          "invalid_request_error",
+          { param: "input" },
+        ),
+      };
+    }
+    const tokenEstimate = estimateTokens(text);
+    if (tokenEstimate > VOYAGE_RATE_LIMIT_TPM) {
+      return {
+        ok: false,
+        response: openaiError(
+          400,
+          `Input too large for embeddings provider: ~${tokenEstimate} tokens (max ${VOYAGE_RATE_LIMIT_TPM}).`,
+          "invalid_request_error",
+          { param: "input" },
+        ),
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      model,
+      inputs,
+      total_chars: totalChars,
+      profile: buildResolvedEmbeddingsProfile(inputType, dimensions.value, encodingFormat.value, truncation),
+    },
+  };
+};
+
+const isValidEmbeddingVector = (value: unknown, dimensions: VoyageEmbeddingsDimension): value is number[] =>
+  Array.isArray(value) &&
+  value.length === dimensions &&
+  value.every((item) => typeof item === "number" && Number.isFinite(item));
 
 const floatEmbeddingToBase64 = (embedding: number[]): string => {
   const buffer = new ArrayBuffer(embedding.length * 4);
@@ -1204,7 +2050,7 @@ const normalizeEmbeddingsJobInputRecord = (value: unknown): EmbeddingsJobInputRe
 };
 
 const importEmbeddingsJobKey = async (tokenSeed: string): Promise<CryptoKey> => {
-  const material = new TextEncoder().encode(`uos_embeddings_job_v1:${tokenSeed}`);
+  const material = new TextEncoder().encode(`uos_embeddings_job_v2:${tokenSeed}`);
   const digest = await crypto.subtle.digest("SHA-256", material);
   return await crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 };
@@ -1265,8 +2111,12 @@ const readVoyageApiKey = async (kv: Deno.Kv | null): Promise<string | null> => {
 
 const fetchVoyageEmbeddings = async (params: {
   apiKey: string;
-  model: string;
+  model: "voyage-4-large";
   inputs: string[];
+  inputType: VoyageEmbeddingsInputType;
+  dimensions: VoyageEmbeddingsDimension;
+  outputDtype: VoyageEmbeddingsOutputDtype;
+  truncation: boolean;
   deadlineMs: number;
 }): Promise<{ vectors: number[][]; totalTokens: number | null }> => {
   const controller = new AbortController();
@@ -1283,7 +2133,10 @@ const fetchVoyageEmbeddings = async (params: {
       body: JSON.stringify({
         model: params.model,
         input: params.inputs.length === 1 ? params.inputs[0] : params.inputs,
-        input_type: VOYAGE_INPUT_TYPE,
+        input_type: params.inputType,
+        output_dimension: params.dimensions,
+        output_dtype: params.outputDtype,
+        truncation: params.truncation,
       }),
       signal: controller.signal,
     });
@@ -1801,7 +2654,22 @@ export const handleModelCapabilities = async (): Promise<Response> => {
   );
 };
 
-export const handleEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
+const withVoyageUpstreamHeader = (response: Response): Response => {
+  const headers = new Headers(response.headers);
+  headers.set("x-ubq-upstream", "voyage");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
+
+const handleEmbeddingsRequest = async (
+  req: Request,
+  contract: "openai" | "uos",
+  usageContext?: UsageContext,
+  options: Readonly<{ kv?: Deno.Kv | null }> = {},
+): Promise<Response> => {
   const requestId = crypto.randomUUID();
   const startedAtMs = Date.now();
 
@@ -1810,138 +2678,78 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
     return openaiError(400, "Invalid JSON body", "invalid_request_error");
   }
 
-  const unknownKey = findUnknownKey(rawBody, EMBEDDINGS_ALLOWED_KEYS);
-  if (unknownKey) {
-    return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
-  }
+  const parsed = parseEmbeddingsRequest(rawBody, contract);
+  if (!parsed.ok) return parsed.response;
+  const { model, inputs, total_chars: totalChars, profile } = parsed.value;
 
-  const modelRaw = getString(rawBody.model);
-  if (!modelRaw || !modelRaw.trim()) {
-    return openaiError(400, "model is required and must be a non-empty string", "invalid_request_error", {
-      param: "model",
-    });
-  }
-  const model = modelRaw.trim();
-
-  const encodingFormat = parseEmbeddingsEncodingFormat(rawBody.encoding_format);
-  if (!encodingFormat.ok) {
-    return openaiError(400, encodingFormat.message, "invalid_request_error", { param: "encoding_format" });
-  }
-
-  if (Object.prototype.hasOwnProperty.call(rawBody, "dimensions")) {
-    const rawDimensions = rawBody.dimensions;
-    if (typeof rawDimensions !== "number" || !Number.isFinite(rawDimensions)) {
-      return openaiError(400, "dimensions must be a number", "invalid_request_error", { param: "dimensions" });
-    }
-    const dims = Math.trunc(rawDimensions);
-    if (dims <= 0) {
-      return openaiError(400, "dimensions must be a positive integer", "invalid_request_error", {
-        param: "dimensions",
-      });
-    }
-    // Voyage does not guarantee OpenAI-compatible dimension control.
-    return openaiError(400, "dimensions is not supported by this gateway", "invalid_request_error", {
-      param: "dimensions",
-    });
-  }
-
-  if (Object.prototype.hasOwnProperty.call(rawBody, "user")) {
-    const user = rawBody.user;
-    if (user !== undefined && user !== null && typeof user !== "string") {
-      return openaiError(400, "user must be a string", "invalid_request_error", { param: "user" });
-    }
-  }
-
-  const inputRaw = rawBody.input;
-  let inputs: string[] = [];
-  if (typeof inputRaw === "string") {
-    inputs = [inputRaw];
-  } else if (Array.isArray(inputRaw)) {
-    for (const item of inputRaw) {
-      if (typeof item !== "string") {
-        return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
-          param: "input",
-        });
-      }
-      inputs.push(item);
-    }
-  } else {
-    return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
-      param: "input",
-    });
-  }
-
-  if (inputs.length === 0) {
-    return openaiError(400, "input must be a non-empty string or a non-empty array", "invalid_request_error", {
-      param: "input",
-    });
-  }
-
-  if (inputs.length > EMBEDDINGS_MAX_INPUTS_PER_REQUEST) {
-    return openaiError(
-      400,
-      `Too many inputs: ${inputs.length} (max ${EMBEDDINGS_MAX_INPUTS_PER_REQUEST})`,
-      "invalid_request_error",
-      { param: "input" },
-    );
-  }
-
-  let totalChars = 0;
-  for (const text of inputs) {
-    const len = text.length;
-    if (len > EMBEDDINGS_MAX_CHARS_PER_INPUT) {
+  const kv = Object.prototype.hasOwnProperty.call(options, "kv") ? options.kv ?? null : await kvPromise;
+  const hashes = await Promise.all(inputs.map((text) => sha256Hex(text)));
+  let idempotencyLease: EmbeddingsIdempotencyLease | null = null;
+  let idempotencyDispatched = false;
+  let idempotencyHasConfirmedSuccess = false;
+  const idempotencyKey = contract === "uos" ? req.headers.get("Idempotency-Key") : null;
+  if (idempotencyKey !== null) {
+    if (
+      !idempotencyKey ||
+      idempotencyKey.length > EMBEDDINGS_IDEMPOTENCY_MAX_KEY_CHARS ||
+      hasAsciiControlCharacter(idempotencyKey)
+    ) {
       return openaiError(
         400,
-        `Input too large: ${len} chars (max ${EMBEDDINGS_MAX_CHARS_PER_INPUT})`,
+        `Idempotency-Key must contain 1-${EMBEDDINGS_IDEMPOTENCY_MAX_KEY_CHARS} non-control characters.`,
         "invalid_request_error",
-        { param: "input" },
+        { param: null },
       );
     }
-    totalChars += len;
-    if (totalChars > EMBEDDINGS_MAX_TOTAL_CHARS) {
-      return openaiError(
-        400,
-        `Request too large: ${totalChars} chars total (max ${EMBEDDINGS_MAX_TOTAL_CHARS})`,
-        "invalid_request_error",
-        { param: "input" },
-      );
-    }
+    const principal = usageContext?.idempotencyPrincipal?.trim() ?? "";
+    if (!kv || !principal) return embeddingsIdempotencyUnavailableResponse();
+    const fingerprint = await buildEmbeddingsIdempotencyFingerprint(profile, hashes);
+    const acquired = await acquireEmbeddingsIdempotencyLease({
+      kv,
+      principal,
+      idempotencyKey,
+      fingerprint,
+      requestId,
+    });
+    if (acquired.kind === "replay") return acquired.response;
+    if (acquired.kind === "error") return acquired.response;
+    idempotencyLease = acquired.lease;
   }
 
-  const resolved = resolveEmbeddingsModel(model);
-  if (!resolved) {
-    return openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" });
-  }
-
-  for (const text of inputs) {
-    const tokenEstimate = estimateTokens(text);
-    if (tokenEstimate > VOYAGE_RATE_LIMIT_TPM) {
-      return openaiError(
-        400,
-        `Input too large for embeddings provider: ~${tokenEstimate} tokens (max ${VOYAGE_RATE_LIMIT_TPM}).`,
-        "invalid_request_error",
-        { param: "input" },
-      );
-    }
-  }
+  const releaseBeforeDispatch = async (response: Response): Promise<Response> => {
+    if (!idempotencyLease) return response;
+    const released = await releaseEmbeddingsIdempotencyReservation(idempotencyLease, false);
+    return released ? response : embeddingsIdempotencyUnavailableResponse();
+  };
+  const releaseAfterExplicitUpstreamFailure = async (response: Response): Promise<Response> => {
+    if (!idempotencyLease) return response;
+    if (idempotencyHasConfirmedSuccess) return await failIndeterminate();
+    const released = await releaseEmbeddingsIdempotencyReservation(idempotencyLease, true);
+    if (released) return response;
+    await markEmbeddingsIdempotencyIndeterminate(idempotencyLease);
+    return embeddingsIdempotencyIndeterminateResponse();
+  };
+  const failIndeterminate = async (): Promise<Response> => {
+    if (idempotencyLease) await markEmbeddingsIdempotencyIndeterminate(idempotencyLease);
+    return embeddingsIdempotencyIndeterminateResponse();
+  };
 
   await recordRequestUsage(usageContext, { model, route: "embeddings", stream: false, reasoning: null });
 
   const deadlineMs = startedAtMs + EMBEDDINGS_TIMEOUT_MS;
-  const kv = await kvPromise;
   const apiKey = await readVoyageApiKey(kv);
   if (!apiKey) {
     await recordErrorUsage(usageContext);
-    return openaiError(
-      503,
-      "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
-      "server_error",
-      { type: "server_error", param: null },
+    return await releaseBeforeDispatch(
+      openaiError(
+        503,
+        "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
+        "server_error",
+        { type: "server_error", param: null },
+      ),
     );
   }
-  const shouldCache = encodingFormat.value === "float" && !Object.prototype.hasOwnProperty.call(rawBody, "dimensions");
-
-  const hashes = await Promise.all(inputs.map((text) => sha256Hex(text)));
+  const shouldCache = Boolean(kv);
 
   // Dedupe within a request (hash collisions are astronomically unlikely).
   const buckets = new Map<string, { text: string; indices: number[] }>();
@@ -1955,8 +2763,8 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
     }
   }
 
-  const cacheModelKey = model.toLowerCase();
-  const cacheKeyFor = (hash: string): Deno.KvKey => ["embeddings", "v1", cacheModelKey, hash];
+  const cacheProfileKey = profile.cache_profile_key;
+  const cacheKeyFor = (hash: string): Deno.KvKey => embeddingsCacheKey(cacheProfileKey, hash);
   const vectorsByIndex: Array<number[] | null> = Array.from({ length: inputs.length }, () => null);
 
   let voyageTotalTokens = 0;
@@ -1970,8 +2778,8 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
       const item = unique[i]!;
       const entry = entries[i]!;
       const cached = entry.value?.embedding;
-      if (Array.isArray(cached) && cached.every((v) => typeof v === "number" && Number.isFinite(v))) {
-        for (const idx of item.indices) vectorsByIndex[idx] = cached as number[];
+      if (isValidEmbeddingVector(cached, profile.dimensions)) {
+        for (const idx of item.indices) vectorsByIndex[idx] = cached;
       } else {
         missing.push(item);
       }
@@ -1983,7 +2791,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
   }
 
   console.info(
-    `[ai.ubq.fi] embeddings request_id=${requestId} model=${model} upstream=${resolved.upstream} inputs=${inputs.length} unique=${buckets.size} chars=${totalChars} cache=${
+    `[ai.ubq.fi] embeddings request_id=${requestId} model=${model} upstream=${profile.upstream} inputs=${inputs.length} unique=${buckets.size} chars=${totalChars} cache=${
       shouldCache && Boolean(kv)
     }`,
   );
@@ -2000,7 +2808,10 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
       const now = Date.now();
       if (now >= deadlineMs) {
         await recordErrorUsage(usageContext);
-        return openaiError(502, "Embeddings request timed out.", "timeout", { type: "server_error", param: null });
+        if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
+        return await releaseBeforeDispatch(
+          openaiError(502, "Embeddings request timed out.", "timeout", { type: "server_error", param: null }),
+        );
       }
 
       const chunkItems = missing.slice(offset, offset + chunk.length);
@@ -2012,6 +2823,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
         const reserved = await applyVoyageRateLimit(kv, tokenEstimate, deadlineMs);
         if (!reserved.ok) {
           await recordErrorUsage(usageContext);
+          if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
           const retryAfterSeconds = Math.max(1, Math.ceil(reserved.wait_ms / 1000));
           const body = {
             error: {
@@ -2021,19 +2833,36 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
               param: null,
             },
           };
-          return json(429, body, { "Retry-After": String(retryAfterSeconds) });
+          return await releaseBeforeDispatch(json(429, body, { "Retry-After": String(retryAfterSeconds) }));
         }
       }
 
-      const retryable = new Set([429, 500, 502, 503, 504]);
       let attempt = 0;
       let backoffMs = 250;
       let vectors: number[][] | null = null;
 
       for (;;) {
+        if (idempotencyLease && !idempotencyDispatched) {
+          const markedDispatched = await markEmbeddingsIdempotencyDispatched(idempotencyLease);
+          if (!markedDispatched) {
+            await recordErrorUsage(usageContext);
+            return embeddingsIdempotencyUnavailableResponse();
+          }
+          idempotencyDispatched = true;
+        }
         try {
-          const upstream = await fetchVoyageEmbeddings({ apiKey, model: resolved.model, inputs: texts, deadlineMs });
+          const upstream = await fetchVoyageEmbeddings({
+            apiKey,
+            model: profile.upstream_model,
+            inputs: texts,
+            inputType: profile.input_type,
+            dimensions: profile.dimensions,
+            outputDtype: profile.output_dtype,
+            truncation: profile.truncation,
+            deadlineMs,
+          });
           vectors = upstream.vectors;
+          if (idempotencyLease) idempotencyHasConfirmedSuccess = true;
           if (typeof upstream.totalTokens === "number") {
             sawVoyageTokenUsage = true;
             voyageTotalTokens += upstream.totalTokens;
@@ -2047,14 +2876,39 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
             ? `Embeddings upstream request failed: ${snippet}`
             : "Embeddings upstream request failed.";
 
-          if (!status || !retryable.has(status) || attempt >= 2) {
+          if (!status || !EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
             console.error(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
             await recordErrorUsage(usageContext);
-            return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
+            if (!status) return await failIndeterminate();
+            return await releaseAfterExplicitUpstreamFailure(
+              openaiError(502, message, "upstream_error", { type: "server_error", param: null }),
+            );
+          }
+
+          const waitMs = Math.max(0, retryAfterMs ?? backoffMs);
+          if (attempt >= 2) {
+            console.error(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
+            await recordErrorUsage(usageContext);
+            if (status === 429) {
+              const retryAfterSeconds = Math.max(1, Math.ceil(waitMs / 1000));
+              const body = {
+                error: {
+                  message,
+                  type: "rate_limit_error",
+                  code: "rate_limit_exceeded",
+                  param: null,
+                },
+              };
+              return await releaseAfterExplicitUpstreamFailure(
+                json(429, body, { "Retry-After": String(retryAfterSeconds) }),
+              );
+            }
+            return await releaseAfterExplicitUpstreamFailure(
+              openaiError(502, message, "upstream_error", { type: "server_error", param: null }),
+            );
           }
 
           const now = Date.now();
-          const waitMs = Math.max(0, retryAfterMs ?? backoffMs);
           if (now + waitMs >= deadlineMs) {
             if (status === 429) {
               await recordErrorUsage(usageContext);
@@ -2067,10 +2921,14 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
                   param: null,
                 },
               };
-              return json(429, body, { "Retry-After": String(retryAfterSeconds) });
+              return await releaseAfterExplicitUpstreamFailure(
+                json(429, body, { "Retry-After": String(retryAfterSeconds) }),
+              );
             }
             await recordErrorUsage(usageContext);
-            return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
+            return await releaseAfterExplicitUpstreamFailure(
+              openaiError(502, message, "upstream_error", { type: "server_error", param: null }),
+            );
           }
 
           await sleep(waitMs);
@@ -2081,10 +2939,24 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
 
       if (!vectors || vectors.length !== chunkItems.length) {
         await recordErrorUsage(usageContext);
+        if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
         return openaiError(502, "Embeddings upstream returned a size mismatch.", "upstream_error", {
           type: "server_error",
           param: null,
         });
+      }
+
+      const wrongLengthIndex = vectors.findIndex((vector) => vector.length !== profile.dimensions);
+      if (wrongLengthIndex >= 0) {
+        await recordErrorUsage(usageContext);
+        const actualLength = vectors[wrongLengthIndex]?.length ?? 0;
+        if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
+        return openaiError(
+          502,
+          `Embeddings upstream returned vector length ${actualLength}; expected ${profile.dimensions}.`,
+          "upstream_dimension_mismatch",
+          { type: "server_error", param: null },
+        );
       }
 
       for (let i = 0; i < chunkItems.length; i += 1) {
@@ -2094,7 +2966,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
         if (shouldCache && kv) {
           await writeEmbeddingsCacheEntryBestEffort(
             kv,
-            cacheModelKey,
+            cacheProfileKey,
             item.hash,
             vec,
             Date.now(),
@@ -2110,6 +2982,7 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
     const vec = vectorsByIndex[i];
     if (!vec) {
       await recordErrorUsage(usageContext);
+      if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
       return openaiError(502, "Embeddings gateway failed to construct a complete response.", "server_error", {
         type: "server_error",
         param: null,
@@ -2118,21 +2991,14 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
     data.push({
       object: "embedding",
       index: i,
-      embedding: encodingFormat.value === "base64" ? floatEmbeddingToBase64(vec) : vec,
+      embedding: profile.encoding_format === "base64" ? floatEmbeddingToBase64(vec) : vec,
     });
   }
-
-  const elapsedMs = Date.now() - startedAtMs;
-  console.info(
-    `[ai.ubq.fi] embeddings request_id=${requestId} status=200 upstream=${resolved.upstream} ms=${elapsedMs}`,
-  );
 
   const usageTokens: UsageTokens | null = sawVoyageTokenUsage
     ? { inputTokens: voyageTotalTokens, outputTokens: 0, totalTokens: voyageTotalTokens }
     : null;
-  await recordCompletionUsage(usageContext, usageTokens);
-
-  return json(200, {
+  const response = json(200, {
     object: "list",
     data,
     model,
@@ -2140,8 +3006,30 @@ export const handleEmbeddings = async (req: Request, usageContext?: UsageContext
       prompt_tokens: usageTokens?.inputTokens ?? 0,
       total_tokens: usageTokens?.totalTokens ?? 0,
     },
-  }, { "x-ubq-upstream": resolved.upstream });
+  });
+  if (idempotencyLease) {
+    const stored = await storeEmbeddingsIdempotencySuccess(idempotencyLease, response);
+    if (!stored) {
+      if (idempotencyDispatched) return await failIndeterminate();
+      return await releaseBeforeDispatch(embeddingsIdempotencyUnavailableResponse());
+    }
+  }
+  await recordCompletionUsage(usageContext, usageTokens);
+  const elapsedMs = Date.now() - startedAtMs;
+  console.info(
+    `[ai.ubq.fi] embeddings request_id=${requestId} status=200 upstream=${profile.upstream} ms=${elapsedMs}`,
+  );
+  return response;
 };
+
+export const handleEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
+  withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "openai", usageContext));
+
+export const handleUosEmbeddings = async (
+  req: Request,
+  usageContext?: UsageContext,
+  options: Readonly<{ kv?: Deno.Kv | null }> = {},
+): Promise<Response> => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "uos", usageContext, options));
 
 const buildEmbeddingsJobBody = (
   job: EmbeddingsJobRecord,
@@ -2153,6 +3041,13 @@ const buildEmbeddingsJobBody = (
   created_at_ms: job.created_at_ms,
   updated_at_ms: job.updated_at_ms,
   model: job.model,
+  upstream: job.upstream,
+  upstream_model: job.upstream_model,
+  input_type: job.input_type,
+  dimensions: job.dimensions,
+  output_dtype: job.output_dtype,
+  encoding_format: job.encoding_format,
+  truncation: job.truncation,
   input_count: job.input_count,
   total_chars: job.total_chars,
   retry_after_seconds: job.retry_after_seconds,
@@ -2162,18 +3057,19 @@ const buildEmbeddingsJobBody = (
 
 const loadEmbeddingsVectorsFromCache = async (
   kv: Deno.Kv,
-  cacheModelKey: string,
+  cacheProfileKey: string,
   hashesByIndex: string[],
+  dimensions: VoyageEmbeddingsDimension,
 ): Promise<Array<number[] | null>> => {
   const uniqueHashes = Array.from(new Set(hashesByIndex));
-  const cacheKeyFor = (hash: string): Deno.KvKey => ["embeddings", "v1", cacheModelKey, hash];
+  const cacheKeyFor = (hash: string): Deno.KvKey => embeddingsCacheKey(cacheProfileKey, hash);
   const entries = await Promise.all(uniqueHashes.map((hash) => kv.get<{ embedding?: unknown }>(cacheKeyFor(hash))));
   const vectorsByHash = new Map<string, number[]>();
   for (let i = 0; i < uniqueHashes.length; i += 1) {
     const hash = uniqueHashes[i]!;
     const cached = entries[i]?.value?.embedding;
-    if (Array.isArray(cached) && cached.every((v) => typeof v === "number" && Number.isFinite(v))) {
-      vectorsByHash.set(hash, cached as number[]);
+    if (isValidEmbeddingVector(cached, dimensions)) {
+      vectorsByHash.set(hash, cached);
     }
   }
   return hashesByIndex.map((hash) => vectorsByHash.get(hash) ?? null);
@@ -2183,12 +3079,13 @@ const buildOpenAiEmbeddingsResult = (
   model: string,
   vectorsByIndex: Array<number[] | null>,
   usageTotalTokens: number,
+  encodingFormat: EmbeddingsEncodingFormat,
 ): Record<string, unknown> => ({
   object: "list",
   data: vectorsByIndex.map((vec, index) => ({
     object: "embedding",
     index,
-    embedding: vec ?? [],
+    embedding: vec && encodingFormat === "base64" ? floatEmbeddingToBase64(vec) : vec ?? [],
   })),
   model,
   usage: { prompt_tokens: usageTotalTokens, total_tokens: usageTotalTokens },
@@ -2209,19 +3106,30 @@ const reserveVoyageBudgetForJob = async (
 
 const updateEmbeddingsJobRecord = async (
   kv: Deno.Kv,
-  key: Deno.KvKey,
+  jobKey: Deno.KvKey,
+  lookupKey: Deno.KvKey,
   job: EmbeddingsJobRecord,
 ): Promise<void> => {
-  await kv.set(key, job, { expireIn: EMBEDDINGS_JOB_TTL_MS });
+  await kv.atomic()
+    .set(jobKey, job, { expireIn: EMBEDDINGS_JOB_TTL_MS })
+    .set(
+      lookupKey,
+      { cache_profile_key: job.cache_profile_key } satisfies EmbeddingsJobLookupRecord,
+      { expireIn: EMBEDDINGS_JOB_TTL_MS },
+    )
+    .commit();
 };
 
 const deleteEmbeddingsJobInputs = async (
   kv: Deno.Kv,
   tokenHash: string,
+  cacheProfileKey: string,
   jobId: string,
   uniqueHashes: string[],
 ): Promise<void> => {
-  await Promise.all(uniqueHashes.map((hash) => kv.delete(embeddingsJobInputKey(tokenHash, jobId, hash))));
+  await Promise.all(
+    uniqueHashes.map((hash) => kv.delete(embeddingsJobInputKey(tokenHash, cacheProfileKey, jobId, hash))),
+  );
 };
 
 const runEmbeddingsJobAttempt = async (params: {
@@ -2231,6 +3139,7 @@ const runEmbeddingsJobAttempt = async (params: {
   tokenSeed: string;
   tokenHash: string;
   jobKey: Deno.KvKey;
+  jobLookupKey: Deno.KvKey;
   jobEntry: Deno.KvEntryMaybe<EmbeddingsJobRecord>;
   job: EmbeddingsJobRecord;
   deadlineMs: number;
@@ -2240,7 +3149,10 @@ const runEmbeddingsJobAttempt = async (params: {
   if (params.job.locked_until_ms && params.job.locked_until_ms > now) {
     const retryAfterSeconds = Math.max(1, Math.ceil((params.job.locked_until_ms - now) / 1000));
     const body = buildEmbeddingsJobBody(params.job, null);
-    return json(202, body, { "Retry-After": String(retryAfterSeconds) });
+    return json(202, body, {
+      "Retry-After": String(retryAfterSeconds),
+      "x-ubq-upstream": params.job.upstream,
+    });
   }
 
   const lockedUntilMs = now + EMBEDDINGS_JOB_LOCK_MS;
@@ -2255,16 +3167,21 @@ const runEmbeddingsJobAttempt = async (params: {
   const lockCommit = await params.kv.atomic()
     .check(params.jobEntry)
     .set(params.jobKey, locked, { expireIn: EMBEDDINGS_JOB_TTL_MS })
+    .set(
+      params.jobLookupKey,
+      { cache_profile_key: locked.cache_profile_key } satisfies EmbeddingsJobLookupRecord,
+      { expireIn: EMBEDDINGS_JOB_TTL_MS },
+    )
     .commit();
   if (!lockCommit.ok) {
     const body = buildEmbeddingsJobBody(params.job, null);
-    return json(202, body, { "Retry-After": "1" });
+    return json(202, body, { "Retry-After": "1", "x-ubq-upstream": params.job.upstream });
   }
 
-  const cacheModelKey = locked.cache_model_key;
+  const cacheProfileKey = locked.cache_profile_key;
   const hashesByIndex = locked.input_hashes;
   const uniqueHashes = Array.from(new Set(hashesByIndex));
-  const cacheKeyFor = (hash: string): Deno.KvKey => ["embeddings", "v1", cacheModelKey, hash];
+  const cacheKeyFor = (hash: string): Deno.KvKey => embeddingsCacheKey(cacheProfileKey, hash);
 
   let currentJob: EmbeddingsJobRecord = locked;
   let queueRetryAfterMs: number | null = null;
@@ -2277,7 +3194,7 @@ const runEmbeddingsJobAttempt = async (params: {
     for (let i = 0; i < uniqueHashes.length; i += 1) {
       const hash = uniqueHashes[i]!;
       const cached = entries[i]?.value?.embedding;
-      if (Array.isArray(cached) && cached.every((v) => typeof v === "number" && Number.isFinite(v))) continue;
+      if (isValidEmbeddingVector(cached, locked.dimensions)) continue;
       missing.push(hash);
     }
     return missing;
@@ -2293,8 +3210,14 @@ const runEmbeddingsJobAttempt = async (params: {
       error: { message, type: "server_error", code },
     };
     currentJob = failed;
-    await updateEmbeddingsJobRecord(params.kv, params.jobKey, failed);
-    await deleteEmbeddingsJobInputs(params.kv, params.tokenHash, failed.id, uniqueHashes);
+    await updateEmbeddingsJobRecord(params.kv, params.jobKey, params.jobLookupKey, failed);
+    await deleteEmbeddingsJobInputs(
+      params.kv,
+      params.tokenHash,
+      failed.cache_profile_key,
+      failed.id,
+      uniqueHashes,
+    );
     await recordErrorUsage(params.usageContext);
     return json(200, buildEmbeddingsJobBody(failed, null), { "x-ubq-upstream": failed.upstream });
   };
@@ -2310,13 +3233,18 @@ const runEmbeddingsJobAttempt = async (params: {
       error: null,
     };
     currentJob = queued;
-    await updateEmbeddingsJobRecord(params.kv, params.jobKey, queued);
+    await updateEmbeddingsJobRecord(params.kv, params.jobKey, params.jobLookupKey, queued);
     const body = buildEmbeddingsJobBody(queued, null);
     return json(202, body, { "Retry-After": String(retryAfterSeconds), "x-ubq-upstream": queued.upstream });
   };
 
   const succeedJob = async (): Promise<Response> => {
-    const vectorsByIndex = await loadEmbeddingsVectorsFromCache(params.kv, cacheModelKey, hashesByIndex);
+    const vectorsByIndex = await loadEmbeddingsVectorsFromCache(
+      params.kv,
+      cacheProfileKey,
+      hashesByIndex,
+      currentJob.dimensions,
+    );
     if (vectorsByIndex.some((vec) => !vec)) {
       return await failJob("Embeddings job completed but cache entries were missing.", "embeddings_job_cache_miss");
     }
@@ -2329,9 +3257,20 @@ const runEmbeddingsJobAttempt = async (params: {
       error: null,
     };
     currentJob = succeeded;
-    await updateEmbeddingsJobRecord(params.kv, params.jobKey, succeeded);
-    await deleteEmbeddingsJobInputs(params.kv, params.tokenHash, succeeded.id, uniqueHashes);
-    const result = buildOpenAiEmbeddingsResult(succeeded.model, vectorsByIndex, succeeded.usage_total_tokens);
+    await updateEmbeddingsJobRecord(params.kv, params.jobKey, params.jobLookupKey, succeeded);
+    await deleteEmbeddingsJobInputs(
+      params.kv,
+      params.tokenHash,
+      succeeded.cache_profile_key,
+      succeeded.id,
+      uniqueHashes,
+    );
+    const result = buildOpenAiEmbeddingsResult(
+      succeeded.model,
+      vectorsByIndex,
+      succeeded.usage_total_tokens,
+      succeeded.encoding_format,
+    );
     const usageTokens: UsageTokens | null = succeeded.usage_total_tokens > 0
       ? { inputTokens: succeeded.usage_total_tokens, outputTokens: 0, totalTokens: succeeded.usage_total_tokens }
       : null;
@@ -2345,7 +3284,9 @@ const runEmbeddingsJobAttempt = async (params: {
 
     const inputEntries = await Promise.all(
       missingBefore.map((hash) =>
-        params.kv.get<EmbeddingsJobInputRecord>(embeddingsJobInputKey(params.tokenHash, locked.id, hash))
+        params.kv.get<EmbeddingsJobInputRecord>(
+          embeddingsJobInputKey(params.tokenHash, locked.cache_profile_key, locked.id, hash),
+        )
       ),
     );
     const items: Array<{ hash: string; text: string }> = [];
@@ -2386,6 +3327,10 @@ const runEmbeddingsJobAttempt = async (params: {
           apiKey: params.apiKey,
           model: currentJob.upstream_model,
           inputs: texts,
+          inputType: currentJob.input_type,
+          dimensions: currentJob.dimensions,
+          outputDtype: currentJob.output_dtype,
+          truncation: currentJob.truncation,
           deadlineMs: params.deadlineMs,
         });
         vectors = upstream.vectors;
@@ -2393,8 +3338,8 @@ const runEmbeddingsJobAttempt = async (params: {
       } catch (error) {
         const status = (error as { status?: number }).status;
         const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
-        if (status === 429) {
-          queueRetryAfterMs = retryAfterMs ?? 60_000;
+        if (status && EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
+          queueRetryAfterMs = retryAfterMs ?? (status === 429 ? 60_000 : 1_000);
           break;
         }
         const snippet = formatErrorSnippet(error);
@@ -2408,6 +3353,15 @@ const runEmbeddingsJobAttempt = async (params: {
         return await failJob("Embeddings upstream returned a size mismatch.", "embeddings_job_upstream_mismatch");
       }
 
+      const wrongLengthIndex = vectors.findIndex((vector) => vector.length !== currentJob.dimensions);
+      if (wrongLengthIndex >= 0) {
+        const actualLength = vectors[wrongLengthIndex]?.length ?? 0;
+        return await failJob(
+          `Embeddings upstream returned vector length ${actualLength}; expected ${currentJob.dimensions}.`,
+          "embeddings_job_upstream_dimension_mismatch",
+        );
+      }
+
       if (typeof totalTokens === "number") {
         currentJob = { ...currentJob, usage_total_tokens: currentJob.usage_total_tokens + totalTokens };
       }
@@ -2417,7 +3371,7 @@ const runEmbeddingsJobAttempt = async (params: {
         const vec = vectors[i]!;
         await writeEmbeddingsCacheEntryBestEffort(
           params.kv,
-          currentJob.cache_model_key,
+          currentJob.cache_profile_key,
           item.hash,
           vec,
           Date.now(),
@@ -2439,7 +3393,7 @@ const runEmbeddingsJobAttempt = async (params: {
   }
 };
 
-export const handleEmbeddingsJobCreate = async (
+const handleEmbeddingsJobCreateInternal = async (
   req: Request,
   authToken: string | null,
   usageContext?: UsageContext,
@@ -2453,131 +3407,12 @@ export const handleEmbeddingsJobCreate = async (
     return openaiError(400, "Invalid JSON body", "invalid_request_error");
   }
 
-  const unknownKey = findUnknownKey(rawBody, EMBEDDINGS_ALLOWED_KEYS);
-  if (unknownKey) {
+  const parsed = parseEmbeddingsRequest(rawBody, "uos");
+  if (!parsed.ok) {
     await recordErrorUsage(usageContext);
-    return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
+    return parsed.response;
   }
-
-  const modelRaw = getString(rawBody.model);
-  if (!modelRaw || !modelRaw.trim()) {
-    await recordErrorUsage(usageContext);
-    return openaiError(400, "model is required and must be a non-empty string", "invalid_request_error", {
-      param: "model",
-    });
-  }
-  const model = modelRaw.trim();
-
-  const encodingFormat = parseEmbeddingsEncodingFormat(rawBody.encoding_format);
-  if (!encodingFormat.ok) {
-    await recordErrorUsage(usageContext);
-    return openaiError(400, encodingFormat.message, "invalid_request_error", { param: "encoding_format" });
-  }
-  if (encodingFormat.value !== "float") {
-    await recordErrorUsage(usageContext);
-    return openaiError(
-      400,
-      'Embeddings jobs only support encoding_format="float"',
-      "invalid_request_error",
-      { param: "encoding_format" },
-    );
-  }
-
-  if (Object.prototype.hasOwnProperty.call(rawBody, "dimensions")) {
-    await recordErrorUsage(usageContext);
-    return openaiError(400, "dimensions is not supported by this gateway", "invalid_request_error", {
-      param: "dimensions",
-    });
-  }
-
-  if (Object.prototype.hasOwnProperty.call(rawBody, "user")) {
-    const user = rawBody.user;
-    if (user !== undefined && user !== null && typeof user !== "string") {
-      await recordErrorUsage(usageContext);
-      return openaiError(400, "user must be a string", "invalid_request_error", { param: "user" });
-    }
-  }
-
-  const inputRaw = rawBody.input;
-  let inputs: string[] = [];
-  if (typeof inputRaw === "string") {
-    inputs = [inputRaw];
-  } else if (Array.isArray(inputRaw)) {
-    for (const item of inputRaw) {
-      if (typeof item !== "string") {
-        await recordErrorUsage(usageContext);
-        return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
-          param: "input",
-        });
-      }
-      inputs.push(item);
-    }
-  } else {
-    await recordErrorUsage(usageContext);
-    return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
-      param: "input",
-    });
-  }
-
-  if (inputs.length === 0) {
-    await recordErrorUsage(usageContext);
-    return openaiError(400, "input must be a non-empty string or a non-empty array", "invalid_request_error", {
-      param: "input",
-    });
-  }
-
-  if (inputs.length > EMBEDDINGS_MAX_INPUTS_PER_REQUEST) {
-    await recordErrorUsage(usageContext);
-    return openaiError(
-      400,
-      `Too many inputs: ${inputs.length} (max ${EMBEDDINGS_MAX_INPUTS_PER_REQUEST})`,
-      "invalid_request_error",
-      { param: "input" },
-    );
-  }
-
-  let totalChars = 0;
-  for (const text of inputs) {
-    const len = text.length;
-    if (len > EMBEDDINGS_MAX_CHARS_PER_INPUT) {
-      await recordErrorUsage(usageContext);
-      return openaiError(
-        400,
-        `Input too large: ${len} chars (max ${EMBEDDINGS_MAX_CHARS_PER_INPUT})`,
-        "invalid_request_error",
-        { param: "input" },
-      );
-    }
-    totalChars += len;
-    if (totalChars > EMBEDDINGS_MAX_TOTAL_CHARS) {
-      await recordErrorUsage(usageContext);
-      return openaiError(
-        400,
-        `Request too large: ${totalChars} chars total (max ${EMBEDDINGS_MAX_TOTAL_CHARS})`,
-        "invalid_request_error",
-        { param: "input" },
-      );
-    }
-  }
-
-  const resolved = resolveEmbeddingsModel(model);
-  if (!resolved) {
-    await recordErrorUsage(usageContext);
-    return openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" });
-  }
-
-  for (const text of inputs) {
-    const tokenEstimate = estimateTokens(text);
-    if (tokenEstimate > VOYAGE_RATE_LIMIT_TPM) {
-      await recordErrorUsage(usageContext);
-      return openaiError(
-        400,
-        `Input too large for embeddings provider: ~${tokenEstimate} tokens (max ${VOYAGE_RATE_LIMIT_TPM}).`,
-        "invalid_request_error",
-        { param: "input" },
-      );
-    }
-  }
+  const { model, inputs, total_chars: totalChars, profile } = parsed.value;
 
   await recordRequestUsage(usageContext, { model, route: "embeddings.jobs.create", stream: false, reasoning: null });
 
@@ -2607,12 +3442,15 @@ export const handleEmbeddingsJobCreate = async (
   const tokenSeed = resolveEmbeddingsJobTokenSeed(jobId, authToken, usageContext);
   const tokenHash = await sha256Hex(tokenSeed);
   const now = Date.now();
-  const cacheModelKey = model.toLowerCase();
 
   // Store encrypted inputs (no raw text) so queued jobs can be processed later without the client resending inputs.
   const inputWrites = uniqueHashes.map(async (hash) => {
     const record = await encryptEmbeddingsJobInput(tokenSeed, uniqueTextsByHash.get(hash)!);
-    await kv.set(embeddingsJobInputKey(tokenHash, jobId, hash), record, { expireIn: EMBEDDINGS_JOB_TTL_MS });
+    await kv.set(
+      embeddingsJobInputKey(tokenHash, profile.cache_profile_key, jobId, hash),
+      record,
+      { expireIn: EMBEDDINGS_JOB_TTL_MS },
+    );
   });
   await Promise.all(inputWrites);
 
@@ -2622,9 +3460,14 @@ export const handleEmbeddingsJobCreate = async (
     created_at_ms: now,
     updated_at_ms: now,
     model,
-    cache_model_key: cacheModelKey,
-    upstream: resolved.upstream,
-    upstream_model: resolved.model,
+    cache_profile_key: profile.cache_profile_key,
+    upstream: profile.upstream,
+    upstream_model: profile.upstream_model,
+    input_type: profile.input_type,
+    dimensions: profile.dimensions,
+    output_dtype: profile.output_dtype,
+    encoding_format: profile.encoding_format,
+    truncation: profile.truncation,
     input_hashes: hashesByIndex,
     input_count: inputs.length,
     total_chars: totalChars,
@@ -2633,8 +3476,23 @@ export const handleEmbeddingsJobCreate = async (
     locked_until_ms: null,
     error: null,
   };
-  const jobKey = embeddingsJobKey(tokenHash, jobId);
-  await kv.set(jobKey, job, { expireIn: EMBEDDINGS_JOB_TTL_MS });
+  const jobKey = embeddingsJobKey(tokenHash, profile.cache_profile_key, jobId);
+  const jobLookupKey = embeddingsJobLookupKey(tokenHash, jobId);
+  const persisted = await kv.atomic()
+    .set(jobKey, job, { expireIn: EMBEDDINGS_JOB_TTL_MS })
+    .set(
+      jobLookupKey,
+      { cache_profile_key: profile.cache_profile_key } satisfies EmbeddingsJobLookupRecord,
+      { expireIn: EMBEDDINGS_JOB_TTL_MS },
+    )
+    .commit();
+  if (!persisted.ok) {
+    await recordErrorUsage(usageContext);
+    return openaiError(502, "Embeddings job could not be persisted.", "server_error", {
+      type: "server_error",
+      param: null,
+    });
+  }
 
   const deadlineMs = startedAtMs + EMBEDDINGS_TIMEOUT_MS;
   const entry = await kv.get<EmbeddingsJobRecord>(jobKey);
@@ -2654,6 +3512,7 @@ export const handleEmbeddingsJobCreate = async (
     tokenSeed,
     tokenHash,
     jobKey,
+    jobLookupKey,
     jobEntry: entry,
     job: value,
     deadlineMs,
@@ -2661,7 +3520,13 @@ export const handleEmbeddingsJobCreate = async (
   });
 };
 
-export const handleEmbeddingsJobGet = async (
+export const handleEmbeddingsJobCreate = async (
+  req: Request,
+  authToken: string | null,
+  usageContext?: UsageContext,
+): Promise<Response> => withVoyageUpstreamHeader(await handleEmbeddingsJobCreateInternal(req, authToken, usageContext));
+
+const handleEmbeddingsJobGetInternal = async (
   _req: Request,
   authToken: string | null,
   jobId: string,
@@ -2678,27 +3543,23 @@ export const handleEmbeddingsJobGet = async (
 
   const preferredSeed = resolveEmbeddingsJobTokenSeed(jobId, authToken, usageContext);
   const preferredHash = await sha256Hex(preferredSeed);
-  let tokenSeed = preferredSeed;
-  let tokenHash = preferredHash;
-  let jobKey = embeddingsJobKey(preferredHash, jobId);
-  let entry = await kv.get<EmbeddingsJobRecord>(jobKey);
-
-  // Backwards compatibility: older versions keyed jobs to the raw bearer token.
-  if (!entry.value && authToken && preferredSeed !== authToken) {
-    const legacySeed = authToken;
-    const legacyHash = await sha256Hex(legacySeed);
-    const legacyKey = embeddingsJobKey(legacyHash, jobId);
-    const legacyEntry = await kv.get<EmbeddingsJobRecord>(legacyKey);
-    if (legacyEntry.value) {
-      tokenSeed = legacySeed;
-      tokenHash = legacyHash;
-      jobKey = legacyKey;
-      entry = legacyEntry;
-    }
+  const tokenSeed = preferredSeed;
+  const tokenHash = preferredHash;
+  const jobLookupKey = embeddingsJobLookupKey(preferredHash, jobId);
+  const lookupEntry = await kv.get<EmbeddingsJobLookupRecord>(jobLookupKey);
+  const cacheProfileKey = isRecord(lookupEntry.value) ? getString(lookupEntry.value.cache_profile_key) : null;
+  if (!cacheProfileKey) {
+    await recordErrorUsage(usageContext);
+    return openaiError(404, "Embeddings job not found", "not_found", {
+      type: "invalid_request_error",
+      param: null,
+    });
   }
+  const jobKey = embeddingsJobKey(preferredHash, cacheProfileKey, jobId);
+  const entry = await kv.get<EmbeddingsJobRecord>(jobKey);
 
   const job = entry.value;
-  if (!job) {
+  if (!job || job.cache_profile_key !== cacheProfileKey) {
     await recordErrorUsage(usageContext);
     return openaiError(404, "Embeddings job not found", "not_found", { type: "invalid_request_error", param: null });
   }
@@ -2711,10 +3572,15 @@ export const handleEmbeddingsJobGet = async (
   });
 
   if (job.status === "succeeded") {
-    const vectorsByIndex = await loadEmbeddingsVectorsFromCache(kv, job.cache_model_key, job.input_hashes);
+    const vectorsByIndex = await loadEmbeddingsVectorsFromCache(
+      kv,
+      job.cache_profile_key,
+      job.input_hashes,
+      job.dimensions,
+    );
     const result = vectorsByIndex.some((vec) => !vec)
       ? null
-      : buildOpenAiEmbeddingsResult(job.model, vectorsByIndex, job.usage_total_tokens);
+      : buildOpenAiEmbeddingsResult(job.model, vectorsByIndex, job.usage_total_tokens, job.encoding_format);
     if (!result) {
       // Cache misses are unexpected (cache TTL is longer than job TTL), but if it happens
       // there's nothing the client can do besides resubmitting the job.
@@ -2730,7 +3596,7 @@ export const handleEmbeddingsJobGet = async (
           code: "embeddings_job_result_missing",
         },
       };
-      await updateEmbeddingsJobRecord(kv, jobKey, failed);
+      await updateEmbeddingsJobRecord(kv, jobKey, jobLookupKey, failed);
       return json(200, buildEmbeddingsJobBody(failed, null), { "x-ubq-upstream": failed.upstream });
     }
     return json(200, buildEmbeddingsJobBody(job, result), { "x-ubq-upstream": job.upstream });
@@ -2759,6 +3625,7 @@ export const handleEmbeddingsJobGet = async (
     tokenSeed,
     tokenHash,
     jobKey,
+    jobLookupKey,
     jobEntry: entry,
     job,
     deadlineMs,
@@ -2769,6 +3636,14 @@ export const handleEmbeddingsJobGet = async (
   console.info(`[ai.ubq.fi] embeddings_job_get request_id=${requestId} job_id=${jobId} ms=${elapsedMs}`);
   return response;
 };
+
+export const handleEmbeddingsJobGet = async (
+  req: Request,
+  authToken: string | null,
+  jobId: string,
+  usageContext?: UsageContext,
+): Promise<Response> =>
+  withVoyageUpstreamHeader(await handleEmbeddingsJobGetInternal(req, authToken, jobId, usageContext));
 
 export const handleChatCompletions = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;

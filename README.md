@@ -131,17 +131,39 @@ Embeddings (OpenAI-compatible):
 curl -sS https://ai.ubq.fi/v1/embeddings \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"model":"text-embedding-3-small","input":"hello"}'
+  --data '{"model":"text-embedding-3-small","input":"hello","dimensions":1024}'
 ```
 
 Notes:
 
 - `input` can be a string or an array of strings (batching is strongly recommended).
+- `dimensions` accepts `256`, `512`, `1024` (default), or `2048`; `encoding_format` accepts `float` (default) or
+  `base64`. These are the standard OpenAI request fields; Voyage-only controls are not accepted on `/v1/embeddings`.
 - Backed by Voyage (`voyage-4-large`) and cached in Deno KV. The cache is quota-driven: it keeps writing until KV is
   full, then evicts the oldest entries (FIFO) and retries.
-- Embedding dimensionality may differ from OpenAI because the vectors come from Voyage.
 - When rate limited (by Voyage or the gateway's own KV throttling), the gateway returns `429` with `Retry-After`;
   clients should retry (or use the async jobs API below).
+
+Voyage-aware embeddings (gateway-specific):
+
+```bash
+curl -sS https://ai.ubq.fi/uos/embeddings \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "model":"voyage-4-large",
+    "input":"hello",
+    "input_type":"document",
+    "dimensions":1024,
+    "truncation":false,
+    "encoding_format":"float"
+  }'
+```
+
+`input_type` is required and must be `query` or `document`. `dimensions` defaults to `1024`, `truncation` defaults to
+`true`, and `encoding_format` is fixed to `float`. The gateway sends Voyage `output_dimension` and
+`output_dtype="float"`; numeric arrays do not request an upstream response encoding. See the
+[Voyage embeddings documentation](https://docs.voyageai.com/docs/embeddings).
 
 Embeddings jobs (async, gateway-specific):
 
@@ -154,7 +176,7 @@ Create:
 curl -sS https://ai.ubq.fi/uos/embedding-jobs \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"model":"text-embedding-3-small","input":["hello","world"]}' \
+  --data '{"model":"voyage-4-large","input":["hello","world"],"input_type":"document","dimensions":1024,"truncation":false,"encoding_format":"float"}' \
   | jq
 ```
 
@@ -164,7 +186,7 @@ Poll:
 job_id="$(curl -sS https://ai.ubq.fi/uos/embedding-jobs \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"model":"text-embedding-3-small","input":"hello"}' \
+  --data '{"model":"voyage-4-large","input":"hello","input_type":"query","dimensions":1024,"truncation":false,"encoding_format":"float"}' \
   | jq -r .id)"
 
 curl -sS "https://ai.ubq.fi/uos/embedding-jobs/${job_id}" \
@@ -174,7 +196,8 @@ curl -sS "https://ai.ubq.fi/uos/embedding-jobs/${job_id}" \
 
 Notes:
 
-- Jobs currently support `encoding_format="float"` only.
+- Jobs use the same `voyage-4-large`, `input_type`, `dimensions`, `truncation`, and float encoding contract as
+  `/uos/embeddings`.
 - When queued, the gateway responds `202` with `Retry-After` and `retry_after_seconds`; poll until `status="succeeded"`.
 - Jobs are scoped to the authenticated client identity; poll using credentials that resolve to the same identity scope
   used to create the job (same API key, or for GitHub/kernel auth the same `{owner, repo}` attestation context).
@@ -405,6 +428,7 @@ deno task ubq-ai admin keys revoke --id "<id>"
 - `GET /admin/kernel-pubkeys`, `POST /admin/kernel-pubkeys`, `DELETE /admin/kernel-pubkeys` (admin only)
 - `GET /uos/auth`
 - `GET /uos/models/capabilities`
+- `POST /uos/embeddings`
 - `POST /uos/embedding-jobs`, `GET /uos/embedding-jobs/:id`
 - `GET /uos/agent-messages`, `POST /uos/agent-messages`
 - `GET /v1/models`

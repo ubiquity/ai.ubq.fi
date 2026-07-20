@@ -46,6 +46,7 @@ import {
   handleModelCapabilities,
   handleModels,
   handleResponses,
+  handleUosEmbeddings,
 } from "./openai.ts";
 import {
   handlePasskeyLoginFinish,
@@ -60,6 +61,31 @@ import {
 import { recordApiKeyRequestLog } from "./analytics.ts";
 import { ensurePaidFallbackBackfill } from "./paid_fallback.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
+import { sha256Hex } from "./utils.ts";
+
+type AuthenticatedClientResult = Extract<
+  Awaited<ReturnType<typeof authenticateClient>>,
+  { ok: true }
+>;
+
+export const resolveIdempotencyPrincipal = async (
+  authResult: Pick<AuthenticatedClientResult, "method" | "token">,
+): Promise<string> => {
+  switch (authResult.method.kind) {
+    case "kv_api_key":
+      return `api-key:${authResult.method.key_id}`;
+    case "github_token":
+      return `github-repo:${authResult.method.owner.toLowerCase()}/${authResult.method.repo.toLowerCase()}`;
+    case "passkey_session":
+      return `passkey-user:${authResult.method.user_id}`;
+    case "auth_tokens_allowlist":
+    case "admin_allowlist":
+    case "deno_deploy_token":
+      return `auth-method:${authResult.method.kind}`;
+    case "disabled":
+      return authResult.token ? `bearer-sha256:${await sha256Hex(authResult.token)}` : "local-auth-disabled";
+  }
+};
 
 const normalizePath = (path: string): string => {
   if (path === "/") return path;
@@ -297,8 +323,9 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
   }
 
-  const isUosEmbeddingJobPath = path === "/uos/embedding-jobs" || path.startsWith("/uos/embedding-jobs/");
-  if (!path.startsWith("/v1/") && !isUosEmbeddingJobPath) {
+  const isUosEmbeddingPath = path === "/uos/embeddings" || path === "/uos/embedding-jobs" ||
+    path.startsWith("/uos/embedding-jobs/");
+  if (!path.startsWith("/v1/") && !isUosEmbeddingPath) {
     return withCors(notFound());
   }
 
@@ -308,6 +335,7 @@ export default async function handler(req: Request): Promise<Response> {
   const requestStartedAtMs = Date.now();
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
   const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
+  const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
   let kernelRepo = authResult.method.kind === "github_token"
     ? { owner: authResult.method.owner, repo: authResult.method.repo }
     : null;
@@ -322,6 +350,7 @@ export default async function handler(req: Request): Promise<Response> {
     keyId: usageKeyId,
     kernelRepo,
     kernelOrg,
+    idempotencyPrincipal,
     requestId,
     startedAtMs: requestStartedAtMs,
   };
@@ -350,7 +379,7 @@ export default async function handler(req: Request): Promise<Response> {
     stream: boolean;
     model?: string | null;
     reasoning?: string | null;
-    provider?: "chatgpt_codex" | "yunwu";
+    provider?: "chatgpt_codex" | "voyage" | "yunwu";
   }): Promise<void> => {
     if (!usageKeyId) return;
     await recordApiKeyRequestLog(usageKeyId, {
@@ -377,6 +406,23 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleModels());
   }
 
+  if (req.method === "POST" && path === "/uos/embeddings") {
+    const response = await handleUosEmbeddings(req, usageContext);
+    if (response.ok && response.headers.get("x-uos-idempotency-replayed") !== "true") {
+      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
+      await incrementKernelLimitUsage();
+    }
+    await logApiKeyRequest({
+      route: "embeddings",
+      path,
+      method: req.method,
+      status_code: response.status,
+      stream: false,
+      provider: "voyage",
+    });
+    return withCors(response);
+  }
+
   if (req.method === "POST" && path === "/uos/embedding-jobs") {
     const response = await handleEmbeddingsJobCreate(req, authResult.token, usageContext);
     if (response.ok) {
@@ -389,6 +435,7 @@ export default async function handler(req: Request): Promise<Response> {
       method: req.method,
       status_code: response.status,
       stream: false,
+      provider: "voyage",
     });
     return withCors(response);
   }
@@ -403,6 +450,7 @@ export default async function handler(req: Request): Promise<Response> {
       method: req.method,
       status_code: response.status,
       stream: false,
+      provider: "voyage",
     });
     return withCors(response);
   }
@@ -419,6 +467,7 @@ export default async function handler(req: Request): Promise<Response> {
       method: req.method,
       status_code: response.status,
       stream: false,
+      provider: "voyage",
     });
     return withCors(response);
   }
