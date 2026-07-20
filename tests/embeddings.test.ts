@@ -31,8 +31,12 @@ const compareKeys = (a: Deno.KvKey, b: Deno.KvKey): number => {
 
 const kvStore = new Map<string, unknown>();
 const kvExpirations = new Map<string, number | undefined>();
+const kvVersions = new Map<string, number>();
 const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
 const EMBEDDINGS_JOB_TTL_MS = 24 * 60 * 60_000;
+const EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS = 256;
+const EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS = 7 * 24 * 60 * 60_000;
+const EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS = EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS + 24 * 60 * 60_000;
 const resetVoyageRateLimit = () => void kvStore.delete(keyToString(VOYAGE_RATE_LIMIT_KEY));
 type TestInputType = "query" | "document";
 type TestDimension = 256 | 512 | 1024 | 2048;
@@ -124,17 +128,36 @@ let failNextAtomicCommit:
   ) => boolean | Error)
   | null = null;
 
+const kvVersionstamp = (rawKey: string): string | null =>
+  kvStore.has(rawKey) ? String(kvVersions.get(rawKey) ?? 1).padStart(20, "0") : null;
+
+const bumpKvVersion = (rawKey: string): void => {
+  kvVersions.set(rawKey, (kvVersions.get(rawKey) ?? 0) + 1);
+};
+
 const kvStub = {
-  get: (key: Deno.KvKey) =>
-    Promise.resolve(({ key, value: kvStore.get(keyToString(key)) ?? null }) as Deno.KvEntryMaybe<unknown>),
+  get: (key: Deno.KvKey) => {
+    const rawKey = keyToString(key);
+    return Promise.resolve(
+      ({
+        key,
+        value: kvStore.get(rawKey) ?? null,
+        versionstamp: kvVersionstamp(rawKey),
+      }) as Deno.KvEntryMaybe<unknown>,
+    );
+  },
   set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
-    kvStore.set(keyToString(key), value);
-    kvExpirations.set(keyToString(key), options?.expireIn);
+    const rawKey = keyToString(key);
+    kvStore.set(rawKey, value);
+    kvExpirations.set(rawKey, options?.expireIn);
+    bumpKvVersion(rawKey);
     return Promise.resolve({ ok: true } as const);
   },
   delete: (key: Deno.KvKey) => {
-    kvStore.delete(keyToString(key));
-    kvExpirations.delete(keyToString(key));
+    const rawKey = keyToString(key);
+    kvStore.delete(rawKey);
+    kvExpirations.delete(rawKey);
+    bumpKvVersion(rawKey);
     return Promise.resolve();
   },
   list: async function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
@@ -178,6 +201,11 @@ const kvStub = {
         return chain;
       },
       commit: () => {
+        for (const check of checks) {
+          if (kvVersionstamp(keyToString(check.key)) !== check.versionstamp) {
+            return Promise.resolve({ ok: false } as const);
+          }
+        }
         if (failNextAtomicCommit) {
           const failure = failNextAtomicCommit(
             checks,
@@ -190,13 +218,15 @@ const kvStub = {
           }
         }
         for (const op of ops) {
+          const rawKey = keyToString(op.key);
           if (op.type === "set") {
-            kvStore.set(keyToString(op.key), op.value);
-            kvExpirations.set(keyToString(op.key), op.expireIn);
+            kvStore.set(rawKey, op.value);
+            kvExpirations.set(rawKey, op.expireIn);
           } else {
-            kvStore.delete(keyToString(op.key));
-            kvExpirations.delete(keyToString(op.key));
+            kvStore.delete(rawKey);
+            kvExpirations.delete(rawKey);
           }
+          bumpKvVersion(rawKey);
         }
         return Promise.resolve({ ok: true } as const);
       },
@@ -266,6 +296,85 @@ const voyageOkResponse = (count: number, dimensions: TestDimension = 1024): Resp
     headers: { "Content-Type": "application/json" },
   });
 };
+
+const uosIdempotencyUsageContext = (principal: string) => ({
+  keyId: null,
+  kernelRepo: null,
+  kernelOrg: null,
+  idempotencyPrincipal: principal,
+});
+
+const uosIdempotentRequest = (
+  idempotencyKey: string,
+  input: string | string[],
+  overrides: Partial<{
+    input_type: TestInputType;
+    dimensions: TestDimension;
+    truncation: boolean;
+  }> = {},
+): Request =>
+  new Request("https://ai.ubq.fi/uos/embeddings", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify({
+      model: "voyage-4-large",
+      input,
+      input_type: overrides.input_type ?? "document",
+      dimensions: overrides.dimensions ?? 1024,
+      truncation: overrides.truncation ?? false,
+    }),
+  });
+
+const responseErrorCode = async (response: Response): Promise<string | null> => {
+  const payload = await response.json() as { error?: { code?: unknown } };
+  return typeof payload.error?.code === "string" ? payload.error.code : null;
+};
+
+const uosEmbeddingsIdempotencyRecordKey = async (
+  principal: string,
+  idempotencyKey: string,
+): Promise<Deno.KvKey> => [
+  "embeddings",
+  "idempotency",
+  "v1",
+  await sha256Hex(`uos-embeddings-principal-v1:${principal}`),
+  await sha256Hex(`uos-embeddings-key-v1:${idempotencyKey}`),
+];
+
+const uosEmbeddingsIdempotencyResponsePrefix = async (
+  principal: string,
+  idempotencyKey: string,
+): Promise<Deno.KvKey> => [
+  "embeddings",
+  "idempotency",
+  "v1",
+  "response",
+  await sha256Hex(`uos-embeddings-principal-v1:${principal}`),
+  await sha256Hex(`uos-embeddings-key-v1:${idempotencyKey}`),
+];
+
+const uosEmbeddingsIdempotencyFingerprint = async (
+  input: string[],
+  inputType: TestInputType = "document",
+  dimensions: TestDimension = 1024,
+  truncation = false,
+): Promise<string> =>
+  await sha256Hex(
+    JSON.stringify([
+      "uos-embeddings-idempotency-v1",
+      "voyage",
+      "voyage-4-large",
+      inputType,
+      dimensions,
+      "float",
+      "float",
+      truncation,
+      await Promise.all(input.map((item) => sha256Hex(item))),
+    ]),
+  );
 
 Deno.test("embeddings: normalizes string input", async () => {
   resetVoyageRateLimit();
@@ -375,6 +484,437 @@ Deno.test("uos embeddings: forwards synchronous query and document profiles", as
     assert.equal(body.truncation, expected.truncation);
     assert.equal("encoding_format" in body, false);
     assert.equal("output_encoding" in body, false);
+  }
+});
+
+Deno.test("uos embeddings idempotency: replays the stored validated response without another Voyage call", async () => {
+  resetVoyageRateLimit();
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const input = `idempotency-replay-${crypto.randomUUID()}`;
+  const usageContext = uosIdempotencyUsageContext("account-replay");
+  let upstreamCalls = 0;
+
+  await withFetchMock(
+    () => {
+      upstreamCalls += 1;
+      return voyageOkResponse(1);
+    },
+    async () => {
+      const first = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        usageContext,
+      );
+      assert.equal(first.status, 200);
+      assert.equal(first.headers.get("x-uos-idempotency-replayed"), null);
+      const firstBody = await first.text();
+
+      const replay = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        usageContext,
+      );
+      assert.equal(replay.status, 200);
+      assert.equal(replay.headers.get("x-uos-idempotency-replayed"), "true");
+      assert.equal(await replay.text(), firstBody);
+    },
+  );
+
+  assert.equal(upstreamCalls, 1);
+});
+
+Deno.test("uos embeddings idempotency: same principal and key reject a different ordered request fingerprint", async () => {
+  resetVoyageRateLimit();
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const usageContext = uosIdempotencyUsageContext("account-conflict");
+  let upstreamCalls = 0;
+
+  await withFetchMock(
+    () => {
+      upstreamCalls += 1;
+      return voyageOkResponse(2);
+    },
+    async () => {
+      const first = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, ["first", "second"]),
+        usageContext,
+      );
+      assert.equal(first.status, 200);
+
+      const conflict = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, ["second", "first"]),
+        usageContext,
+      );
+      assert.equal(conflict.status, 409);
+      assert.equal(await responseErrorCode(conflict), "embedding_idempotency_conflict");
+    },
+  );
+
+  assert.equal(upstreamCalls, 1);
+});
+
+Deno.test("uos embeddings idempotency: a concurrent replay cannot dispatch Voyage twice", async () => {
+  resetVoyageRateLimit();
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const input = `idempotency-concurrent-${crypto.randomUUID()}`;
+  const usageContext = uosIdempotencyUsageContext("account-concurrent");
+  let upstreamCalls = 0;
+  let signalUpstreamEntered = () => {};
+  const upstreamEntered = new Promise<void>((resolve) => {
+    signalUpstreamEntered = resolve;
+  });
+  let releaseUpstream = (_response: Response) => {};
+  const upstreamResult = new Promise<Response>((resolve) => {
+    releaseUpstream = resolve;
+  });
+
+  await withFetchMock(
+    async () => {
+      upstreamCalls += 1;
+      signalUpstreamEntered();
+      return await upstreamResult;
+    },
+    async () => {
+      const firstPromise = handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        usageContext,
+      );
+      await upstreamEntered;
+
+      const concurrent = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        usageContext,
+      );
+      assert.equal(concurrent.status, 409);
+      assert.equal(concurrent.headers.get("Retry-After"), "1");
+      assert.equal(await responseErrorCode(concurrent), "embedding_idempotency_in_progress");
+      assert.equal(upstreamCalls, 1);
+
+      releaseUpstream(voyageOkResponse(1));
+      const first = await firstPromise;
+      assert.equal(first.status, 200);
+    },
+  );
+
+  assert.equal(upstreamCalls, 1);
+});
+
+Deno.test("uos embeddings idempotency: keyed requests fail before Voyage when durable KV is unavailable", async () => {
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const usageContext = uosIdempotencyUsageContext("account-no-kv");
+  let upstreamCalls = 0;
+
+  const response = await withFetchMock(
+    () => {
+      upstreamCalls += 1;
+      return voyageOkResponse(1);
+    },
+    () =>
+      handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, `idempotency-no-kv-${crypto.randomUUID()}`),
+        usageContext,
+        { kv: null },
+      ),
+  );
+
+  assert.equal(response.status, 503);
+  assert.equal(await responseErrorCode(response), "embedding_idempotency_unavailable");
+  assert.equal(upstreamCalls, 0);
+});
+
+Deno.test("uos embeddings idempotency: an outcome-unknown dispatch is durable and never sent again", async () => {
+  resetVoyageRateLimit();
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const input = `idempotency-indeterminate-${crypto.randomUUID()}`;
+  const usageContext = uosIdempotencyUsageContext("account-indeterminate");
+  let upstreamCalls = 0;
+
+  await withFetchMock(
+    () => {
+      upstreamCalls += 1;
+      throw new TypeError("simulated connection loss after dispatch");
+    },
+    async () => {
+      const first = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        usageContext,
+      );
+      assert.equal(first.status, 409);
+      assert.equal(await responseErrorCode(first), "embedding_idempotency_indeterminate");
+
+      const replay = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        usageContext,
+      );
+      assert.equal(replay.status, 409);
+      assert.equal(await responseErrorCode(replay), "embedding_idempotency_indeterminate");
+    },
+  );
+
+  assert.equal(upstreamCalls, 1);
+});
+
+Deno.test("uos embeddings idempotency: an abandoned dispatched ledger fails closed without Voyage", async () => {
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const input = `idempotency-abandoned-${crypto.randomUUID()}`;
+  const principal = "account-abandoned";
+  const ledgerKey = await uosEmbeddingsIdempotencyRecordKey(principal, idempotencyKey);
+  const fingerprint = await uosEmbeddingsIdempotencyFingerprint([input]);
+  const now = Date.now();
+  kvStore.set(keyToString(ledgerKey), {
+    v: 1,
+    fingerprint,
+    state: "dispatched",
+    owner_request_id: "crashed-request",
+    created_at_ms: now - 120_000,
+    updated_at_ms: now - 120_000,
+    lease_until_ms: now - 60_000,
+    response_status: null,
+    response_content_type: null,
+    response_generation: null,
+    response_chunk_count: null,
+    response_sha256: null,
+  });
+  let upstreamCalls = 0;
+
+  try {
+    const response = await withFetchMock(
+      () => {
+        upstreamCalls += 1;
+        return voyageOkResponse(1);
+      },
+      () =>
+        handleUosEmbeddings(
+          uosIdempotentRequest(idempotencyKey, input),
+          uosIdempotencyUsageContext(principal),
+        ),
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(await responseErrorCode(response), "embedding_idempotency_indeterminate");
+    assert.equal(upstreamCalls, 0);
+    const stored = kvStore.get(keyToString(ledgerKey)) as { state?: unknown } | undefined;
+    assert.equal(stored?.state, "indeterminate");
+  } finally {
+    kvStore.delete(keyToString(ledgerKey));
+  }
+});
+
+Deno.test("uos embeddings idempotency: confirmed HTTP failures re-arm the key for a later retry", async () => {
+  resetVoyageRateLimit();
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const input = `idempotency-explicit-retry-${crypto.randomUUID()}`;
+  const usageContext = uosIdempotencyUsageContext("account-explicit-retry");
+  let upstreamCalls = 0;
+
+  await withFetchMock(
+    () => {
+      upstreamCalls += 1;
+      if (upstreamCalls <= 3) {
+        return new Response(JSON.stringify({ error: "rate limited" }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "0.001" },
+        });
+      }
+      return voyageOkResponse(1);
+    },
+    async () => {
+      const failed = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        usageContext,
+      );
+      assert.equal(failed.status, 429);
+      assert.equal(await responseErrorCode(failed), "rate_limit_exceeded");
+
+      const retry = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        usageContext,
+      );
+      assert.equal(retry.status, 200);
+      assert.equal(retry.headers.get("x-uos-idempotency-replayed"), null);
+    },
+  );
+
+  assert.equal(upstreamCalls, 4);
+});
+
+Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the published response generation", async () => {
+  resetVoyageRateLimit();
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const input = `idempotency-owner-generation-${crypto.randomUUID()}`;
+  const principal = "account-owner-generation";
+  const usageContext = uosIdempotencyUsageContext(principal);
+  const ledgerKey = await uosEmbeddingsIdempotencyRecordKey(principal, idempotencyKey);
+  const responsePrefix = await uosEmbeddingsIdempotencyResponsePrefix(principal, idempotencyKey);
+  const fingerprint = await uosEmbeddingsIdempotencyFingerprint([input]);
+  const expiredGeneration = "expired-owner";
+  const now = Date.now();
+  kvStore.set(keyToString(ledgerKey), {
+    v: 1,
+    fingerprint,
+    state: "reserved",
+    owner_request_id: expiredGeneration,
+    created_at_ms: now - 120_000,
+    updated_at_ms: now - 120_000,
+    lease_until_ms: now - 60_000,
+    response_status: null,
+    response_content_type: null,
+    response_generation: null,
+    response_chunk_count: null,
+    response_sha256: null,
+  });
+  bumpKvVersion(keyToString(ledgerKey));
+  let upstreamCalls = 0;
+
+  try {
+    await withFetchMock(
+      () => {
+        upstreamCalls += 1;
+        return voyageOkResponse(1);
+      },
+      async () => {
+        const first = await handleUosEmbeddings(
+          uosIdempotentRequest(idempotencyKey, input),
+          usageContext,
+        );
+        assert.equal(first.status, 200);
+        const firstBody = await first.text();
+        const stored = kvStore.get(keyToString(ledgerKey)) as {
+          state?: unknown;
+          response_generation?: unknown;
+          response_chunk_count?: unknown;
+        };
+        assert.equal(stored.state, "succeeded");
+        assert.equal(typeof stored.response_generation, "string");
+        assert.notEqual(stored.response_generation, expiredGeneration);
+        assert.equal(typeof stored.response_chunk_count, "number");
+
+        const publishedGeneration = stored.response_generation as string;
+        const publishedChunkKey: Deno.KvKey = [...responsePrefix, publishedGeneration, 0];
+        assert.equal(kvExpirations.get(keyToString(ledgerKey)), EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS);
+        assert.equal(
+          kvExpirations.get(keyToString(publishedChunkKey)),
+          EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS,
+        );
+        assert(
+          EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS > EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS,
+        );
+
+        // A late write from the expired owner lands in its own generation and
+        // cannot corrupt the response generation already published by CAS.
+        const expiredChunkKey: Deno.KvKey = [...responsePrefix, expiredGeneration, 0];
+        await kvStub.set(
+          expiredChunkKey,
+          "late stale owner body",
+          { expireIn: EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS },
+        );
+        assert.equal(
+          kvExpirations.get(keyToString(expiredChunkKey)),
+          EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS,
+        );
+
+        const replay = await handleUosEmbeddings(
+          uosIdempotentRequest(idempotencyKey, input),
+          usageContext,
+        );
+        assert.equal(replay.status, 200);
+        assert.equal(replay.headers.get("x-uos-idempotency-replayed"), "true");
+        assert.equal(await replay.text(), firstBody);
+      },
+    );
+    assert.equal(upstreamCalls, 1);
+  } finally {
+    for (const rawKey of [...kvStore.keys()]) {
+      const key = JSON.parse(rawKey) as Deno.KvKey;
+      if (keyHasPrefix(key, ledgerKey) || keyHasPrefix(key, responsePrefix)) {
+        kvStore.delete(rawKey);
+        kvExpirations.delete(rawKey);
+      }
+    }
+  }
+});
+
+Deno.test("uos embeddings idempotency: rejects an oversized stored response chunk count without reading chunks", async () => {
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const input = `idempotency-chunk-bound-${crypto.randomUUID()}`;
+  const principal = "account-chunk-bound";
+  const ledgerKey = await uosEmbeddingsIdempotencyRecordKey(principal, idempotencyKey);
+  const fingerprint = await uosEmbeddingsIdempotencyFingerprint([input]);
+  const oversizedChunkCount = EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS + 1;
+  const now = Date.now();
+  kvStore.set(keyToString(ledgerKey), {
+    v: 1,
+    fingerprint,
+    state: "succeeded",
+    owner_request_id: null,
+    created_at_ms: now,
+    updated_at_ms: now,
+    lease_until_ms: null,
+    response_status: 200,
+    response_content_type: "application/json",
+    response_generation: "oversized-generation",
+    response_chunk_count: oversizedChunkCount,
+    response_sha256: await sha256Hex("oversized"),
+  });
+  bumpKvVersion(keyToString(ledgerKey));
+  let upstreamCalls = 0;
+
+  try {
+    const response = await withFetchMock(
+      () => {
+        upstreamCalls += 1;
+        return voyageOkResponse(1);
+      },
+      () =>
+        handleUosEmbeddings(
+          uosIdempotentRequest(idempotencyKey, input),
+          uosIdempotencyUsageContext(principal),
+        ),
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(await responseErrorCode(response), "embedding_idempotency_indeterminate");
+    assert.equal(upstreamCalls, 0);
+    const stored = kvStore.get(keyToString(ledgerKey)) as {
+      state?: unknown;
+      response_chunk_count?: unknown;
+    };
+    assert.equal(stored.state, "succeeded");
+    assert.equal(stored.response_chunk_count, oversizedChunkCount);
+  } finally {
+    kvStore.delete(keyToString(ledgerKey));
+  }
+});
+
+Deno.test("uos embeddings idempotency: a malformed stored value is not mistaken for an absent CAS entry", async () => {
+  const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
+  const principal = "account-malformed-ledger";
+  const ledgerKey = await uosEmbeddingsIdempotencyRecordKey(principal, idempotencyKey);
+  kvStore.set(keyToString(ledgerKey), null);
+  bumpKvVersion(keyToString(ledgerKey));
+  let upstreamCalls = 0;
+
+  try {
+    const response = await withFetchMock(
+      () => {
+        upstreamCalls += 1;
+        return voyageOkResponse(1);
+      },
+      () =>
+        handleUosEmbeddings(
+          uosIdempotentRequest(
+            idempotencyKey,
+            `idempotency-malformed-ledger-${crypto.randomUUID()}`,
+          ),
+          uosIdempotencyUsageContext(principal),
+        ),
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(await responseErrorCode(response), "embedding_idempotency_indeterminate");
+    assert.equal(upstreamCalls, 0);
+    assert.equal(kvStore.has(keyToString(ledgerKey)), true);
+    assert.equal(kvStore.get(keyToString(ledgerKey)), null);
+  } finally {
+    kvStore.delete(keyToString(ledgerKey));
   }
 });
 
@@ -1893,6 +2433,67 @@ Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 gu
 
   assert.equal(response.status, 401);
   assert.notEqual(response.status, 404);
+});
+
+Deno.test("handler: idempotency principals survive allowlist token rotation and preserve account scopes", async () => {
+  const { resolveIdempotencyPrincipal } = await import("../src/handler.ts");
+
+  for (
+    const kind of [
+      "auth_tokens_allowlist",
+      "admin_allowlist",
+      "deno_deploy_token",
+    ] as const
+  ) {
+    const first = await resolveIdempotencyPrincipal({
+      token: "first-rotating-secret",
+      method: { kind },
+    });
+    const rotated = await resolveIdempotencyPrincipal({
+      token: "second-rotating-secret",
+      method: { kind },
+    });
+    assert.equal(first, `auth-method:${kind}`);
+    assert.equal(rotated, first);
+    assert.equal(first.includes("rotating-secret"), false);
+  }
+
+  assert.equal(
+    await resolveIdempotencyPrincipal({
+      token: "kv-secret-one",
+      method: { kind: "kv_api_key", key_id: "stable-key-id" },
+    }),
+    await resolveIdempotencyPrincipal({
+      token: "kv-secret-two",
+      method: { kind: "kv_api_key", key_id: "stable-key-id" },
+    }),
+  );
+  assert.equal(
+    await resolveIdempotencyPrincipal({
+      token: "github-secret-one",
+      method: {
+        kind: "github_token",
+        owner: "Ubiquity",
+        repo: "AI.UBQ.FI",
+        state_id: "state-one",
+        limit_scope: "repo",
+      },
+    }),
+    "github-repo:ubiquity/ai.ubq.fi",
+  );
+  assert.equal(
+    await resolveIdempotencyPrincipal({
+      token: "passkey-session-one",
+      method: {
+        kind: "passkey_session",
+        user_id: "user-47",
+        handle: "user",
+        is_admin: false,
+        credential_count: 1,
+      },
+    }),
+    "passkey-user:user-47",
+  );
 });
 
 addEventListener("unload", () => {

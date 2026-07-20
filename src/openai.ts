@@ -68,6 +68,7 @@ type UsageContext = Readonly<{
   keyId: string | null;
   kernelRepo: { owner: string; repo: string } | null;
   kernelOrg: { owner: string } | null;
+  idempotencyPrincipal?: string | null;
   requestId?: string;
   startedAtMs?: number;
 }>;
@@ -778,6 +779,16 @@ const EMBEDDINGS_CACHE_QUOTA_MAX_RETRIES = 4;
 const EMBEDDINGS_JOB_TTL_MS = 24 * 60 * 60_000;
 const EMBEDDINGS_JOB_LOCK_MS = 30_000;
 const EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES = new Set([429, 500, 502, 503, 504]);
+const EMBEDDINGS_IDEMPOTENCY_LEASE_MS = 60_000;
+const EMBEDDINGS_IDEMPOTENCY_RESPONSE_CHUNK_CHARS = 48_000;
+// 128 inputs x 2,048 finite JSON numbers fit comfortably below this cap.
+const EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS = 256;
+const EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS = 7 * 24 * 60 * 60_000;
+// Response chunks are published before their ledger record. Keep them for one
+// extra day so every published ledger expires before the chunks it references;
+// unpublished/orphaned generations are reclaimed by the same TTL.
+const EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS = EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS + 24 * 60 * 60_000;
+const EMBEDDINGS_IDEMPOTENCY_MAX_KEY_CHARS = 255;
 
 const VOYAGE_EMBEDDINGS_URL = "https://api.voyageai.com/v1/embeddings";
 const VOYAGE_EMBEDDINGS_MODEL = "voyage-4-large";
@@ -797,6 +808,36 @@ const VOYAGE_RATE_LIMIT_RPM = 3;
 const VOYAGE_RATE_LIMIT_TPM = 10_000;
 const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
 const VOYAGE_API_KEY_KV_KEY: Deno.KvKey = ["uos_ai", "voyage_api_key"];
+
+type EmbeddingsIdempotencyState = "reserved" | "dispatched" | "succeeded" | "indeterminate";
+
+type EmbeddingsIdempotencyRecord = Readonly<{
+  v: 1;
+  fingerprint: string;
+  state: EmbeddingsIdempotencyState;
+  owner_request_id: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  lease_until_ms: number | null;
+  response_status: number | null;
+  response_content_type: string | null;
+  response_generation: string | null;
+  response_chunk_count: number | null;
+  response_sha256: string | null;
+}>;
+
+type EmbeddingsIdempotencyLease = Readonly<{
+  kv: Deno.Kv;
+  key: Deno.KvKey;
+  responseKeyPrefix: Deno.KvKey;
+  fingerprint: string;
+  ownerRequestId: string;
+}>;
+
+type EmbeddingsIdempotencyAcquireResult =
+  | Readonly<{ kind: "acquired"; lease: EmbeddingsIdempotencyLease }>
+  | Readonly<{ kind: "replay"; response: Response }>
+  | Readonly<{ kind: "error"; response: Response }>;
 
 type EmbeddingsJobStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -891,6 +932,468 @@ const embeddingsCacheKey = (cacheProfileKey: string, hash: string): Deno.KvKey =
   cacheProfileKey,
   hash,
 ];
+
+const embeddingsIdempotencyKey = (principalHash: string, idempotencyKeyHash: string): Deno.KvKey => [
+  "embeddings",
+  "idempotency",
+  "v1",
+  principalHash,
+  idempotencyKeyHash,
+];
+
+const embeddingsIdempotencyResponseKeyPrefix = (
+  principalHash: string,
+  idempotencyKeyHash: string,
+): Deno.KvKey => [
+  "embeddings",
+  "idempotency",
+  "v1",
+  "response",
+  principalHash,
+  idempotencyKeyHash,
+];
+
+const isEmbeddingsIdempotencyState = (value: unknown): value is EmbeddingsIdempotencyState =>
+  value === "reserved" || value === "dispatched" || value === "succeeded" || value === "indeterminate";
+
+const normalizeEmbeddingsIdempotencyRecord = (value: unknown): EmbeddingsIdempotencyRecord | null => {
+  if (!isRecord(value) || value.v !== 1 || typeof value.fingerprint !== "string") return null;
+  if (!isEmbeddingsIdempotencyState(value.state)) return null;
+  if (value.owner_request_id !== null && typeof value.owner_request_id !== "string") return null;
+  if (
+    typeof value.created_at_ms !== "number" || !Number.isFinite(value.created_at_ms) ||
+    typeof value.updated_at_ms !== "number" || !Number.isFinite(value.updated_at_ms)
+  ) {
+    return null;
+  }
+  if (
+    value.lease_until_ms !== null &&
+    (typeof value.lease_until_ms !== "number" || !Number.isFinite(value.lease_until_ms))
+  ) {
+    return null;
+  }
+  if (
+    value.response_status !== null &&
+    (typeof value.response_status !== "number" || !Number.isInteger(value.response_status))
+  ) {
+    return null;
+  }
+  if (value.response_content_type !== null && typeof value.response_content_type !== "string") return null;
+  if (value.response_generation !== null && typeof value.response_generation !== "string") return null;
+  if (
+    value.response_chunk_count !== null &&
+    (
+      typeof value.response_chunk_count !== "number" ||
+      !Number.isInteger(value.response_chunk_count) ||
+      value.response_chunk_count < 1 ||
+      value.response_chunk_count > EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS
+    )
+  ) {
+    return null;
+  }
+  if (value.response_sha256 !== null && typeof value.response_sha256 !== "string") return null;
+
+  return {
+    v: 1,
+    fingerprint: value.fingerprint,
+    state: value.state,
+    owner_request_id: value.owner_request_id,
+    created_at_ms: Math.trunc(value.created_at_ms),
+    updated_at_ms: Math.trunc(value.updated_at_ms),
+    lease_until_ms: value.lease_until_ms === null ? null : Math.trunc(value.lease_until_ms),
+    response_status: value.response_status === null ? null : Math.trunc(value.response_status),
+    response_content_type: value.response_content_type,
+    response_generation: value.response_generation,
+    response_chunk_count: value.response_chunk_count === null ? null : Math.trunc(value.response_chunk_count),
+    response_sha256: value.response_sha256,
+  };
+};
+
+const embeddingsIdempotencyError = (
+  status: 409 | 503,
+  message: string,
+  code:
+    | "embedding_idempotency_conflict"
+    | "embedding_idempotency_in_progress"
+    | "embedding_idempotency_indeterminate"
+    | "embedding_idempotency_unavailable",
+  retryAfterSeconds?: number,
+): Response =>
+  openaiError(status, message, code, {
+    type: status === 503 ? "server_error" : "idempotency_error",
+    param: null,
+    ...(retryAfterSeconds === undefined ? {} : { headers: { "Retry-After": String(retryAfterSeconds) } }),
+  });
+
+const embeddingsIdempotencyConflictResponse = (): Response =>
+  embeddingsIdempotencyError(
+    409,
+    "Idempotency-Key was already used with a different embeddings request.",
+    "embedding_idempotency_conflict",
+  );
+
+const embeddingsIdempotencyInProgressResponse = (): Response =>
+  embeddingsIdempotencyError(
+    409,
+    "The embeddings request for this Idempotency-Key is still in progress.",
+    "embedding_idempotency_in_progress",
+    1,
+  );
+
+const embeddingsIdempotencyIndeterminateResponse = (): Response =>
+  embeddingsIdempotencyError(
+    409,
+    "The embeddings request outcome is indeterminate and will not be dispatched again.",
+    "embedding_idempotency_indeterminate",
+  );
+
+const embeddingsIdempotencyUnavailableResponse = (): Response =>
+  embeddingsIdempotencyError(
+    503,
+    "Idempotent embeddings requests require durable KV storage.",
+    "embedding_idempotency_unavailable",
+  );
+
+const hasAsciiControlCharacter = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+};
+
+const buildEmbeddingsIdempotencyFingerprint = async (
+  profile: ResolvedEmbeddingsProfile,
+  orderedInputHashes: string[],
+): Promise<string> =>
+  await sha256Hex(
+    JSON.stringify([
+      "uos-embeddings-idempotency-v1",
+      profile.upstream,
+      profile.upstream_model,
+      profile.input_type,
+      profile.dimensions,
+      profile.output_dtype,
+      profile.encoding_format,
+      profile.truncation,
+      orderedInputHashes,
+    ]),
+  );
+
+const loadEmbeddingsIdempotencyResponse = async (
+  lease: Omit<EmbeddingsIdempotencyLease, "ownerRequestId">,
+  record: EmbeddingsIdempotencyRecord,
+): Promise<Response | null> => {
+  if (
+    record.state !== "succeeded" ||
+    record.response_status !== 200 ||
+    !record.response_content_type ||
+    !record.response_generation ||
+    record.response_chunk_count === null ||
+    !record.response_sha256
+  ) {
+    return null;
+  }
+
+  const chunks = await Promise.all(
+    Array.from(
+      { length: record.response_chunk_count },
+      (_, index) =>
+        lease.kv.get<string>([
+          ...lease.responseKeyPrefix,
+          record.response_generation!,
+          index,
+        ]),
+    ),
+  );
+  if (chunks.some((entry) => typeof entry.value !== "string")) return null;
+  const body = chunks.map((entry) => entry.value as string).join("");
+  if (await sha256Hex(body) !== record.response_sha256) return null;
+  return new Response(body, {
+    status: record.response_status,
+    headers: {
+      "Content-Type": record.response_content_type,
+      "x-uos-idempotency-replayed": "true",
+    },
+  });
+};
+
+const markEmbeddingsIdempotencyIndeterminate = async (
+  lease: EmbeddingsIdempotencyLease,
+): Promise<void> => {
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      if (!record || record.fingerprint !== lease.fingerprint) return;
+      if (record.state === "indeterminate" || record.state === "succeeded") return;
+      const now = Date.now();
+      const next: EmbeddingsIdempotencyRecord = {
+        ...record,
+        state: "indeterminate",
+        owner_request_id: null,
+        updated_at_ms: now,
+        lease_until_ms: null,
+        response_status: null,
+        response_content_type: null,
+        response_generation: null,
+        response_chunk_count: null,
+        response_sha256: null,
+      };
+      const commit = await lease.kv.atomic()
+        .check(entry)
+        .set(lease.key, next, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+        .commit();
+      if (commit.ok) return;
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency indeterminate-state write failed:", error);
+  }
+};
+
+const acquireEmbeddingsIdempotencyLease = async (params: {
+  kv: Deno.Kv;
+  principal: string;
+  idempotencyKey: string;
+  fingerprint: string;
+  requestId: string;
+}): Promise<EmbeddingsIdempotencyAcquireResult> => {
+  const [principalHash, idempotencyKeyHash] = await Promise.all([
+    sha256Hex(`uos-embeddings-principal-v1:${params.principal}`),
+    sha256Hex(`uos-embeddings-key-v1:${params.idempotencyKey}`),
+  ]);
+  const key = embeddingsIdempotencyKey(principalHash, idempotencyKeyHash);
+  const responseKeyPrefix = embeddingsIdempotencyResponseKeyPrefix(principalHash, idempotencyKeyHash);
+  const lease: EmbeddingsIdempotencyLease = {
+    kv: params.kv,
+    key,
+    responseKeyPrefix,
+    fingerprint: params.fingerprint,
+    ownerRequestId: params.requestId,
+  };
+
+  try {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const entry = await params.kv.get<EmbeddingsIdempotencyRecord>(key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      const now = Date.now();
+
+      if (entry.versionstamp === null) {
+        const reserved: EmbeddingsIdempotencyRecord = {
+          v: 1,
+          fingerprint: params.fingerprint,
+          state: "reserved",
+          owner_request_id: params.requestId,
+          created_at_ms: now,
+          updated_at_ms: now,
+          lease_until_ms: now + EMBEDDINGS_IDEMPOTENCY_LEASE_MS,
+          response_status: null,
+          response_content_type: null,
+          response_generation: null,
+          response_chunk_count: null,
+          response_sha256: null,
+        };
+        const commit = await params.kv.atomic()
+          .check(entry)
+          .set(key, reserved, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+          .commit();
+        if (commit.ok) return { kind: "acquired", lease };
+        continue;
+      }
+
+      if (!record) return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
+      if (record.fingerprint !== params.fingerprint) {
+        return { kind: "error", response: embeddingsIdempotencyConflictResponse() };
+      }
+
+      if (record.state === "succeeded") {
+        const replay = await loadEmbeddingsIdempotencyResponse(lease, record);
+        if (replay) return { kind: "replay", response: replay };
+        const indeterminate: EmbeddingsIdempotencyRecord = {
+          ...record,
+          state: "indeterminate",
+          owner_request_id: null,
+          updated_at_ms: now,
+          lease_until_ms: null,
+          response_status: null,
+          response_content_type: null,
+          response_generation: null,
+          response_chunk_count: null,
+          response_sha256: null,
+        };
+        const commit = await params.kv.atomic()
+          .check(entry)
+          .set(key, indeterminate, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+          .commit();
+        if (commit.ok) return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
+        continue;
+      }
+
+      if (record.state === "indeterminate") {
+        return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
+      }
+
+      if (record.lease_until_ms !== null && record.lease_until_ms > now) {
+        return { kind: "error", response: embeddingsIdempotencyInProgressResponse() };
+      }
+
+      if (record.state === "dispatched") {
+        const indeterminate: EmbeddingsIdempotencyRecord = {
+          ...record,
+          state: "indeterminate",
+          owner_request_id: null,
+          updated_at_ms: now,
+          lease_until_ms: null,
+          response_status: null,
+          response_content_type: null,
+          response_generation: null,
+          response_chunk_count: null,
+          response_sha256: null,
+        };
+        const commit = await params.kv.atomic()
+          .check(entry)
+          .set(key, indeterminate, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+          .commit();
+        if (commit.ok) return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
+        continue;
+      }
+
+      const reserved: EmbeddingsIdempotencyRecord = {
+        ...record,
+        state: "reserved",
+        owner_request_id: params.requestId,
+        updated_at_ms: now,
+        lease_until_ms: now + EMBEDDINGS_IDEMPOTENCY_LEASE_MS,
+        response_status: null,
+        response_content_type: null,
+        response_generation: null,
+        response_chunk_count: null,
+        response_sha256: null,
+      };
+      const commit = await params.kv.atomic()
+        .check(entry)
+        .set(key, reserved, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+        .commit();
+      if (commit.ok) return { kind: "acquired", lease };
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency reservation failed:", error);
+  }
+
+  return { kind: "error", response: embeddingsIdempotencyUnavailableResponse() };
+};
+
+const markEmbeddingsIdempotencyDispatched = async (
+  lease: EmbeddingsIdempotencyLease,
+): Promise<boolean> => {
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      if (
+        !record ||
+        record.fingerprint !== lease.fingerprint ||
+        record.state !== "reserved" ||
+        record.owner_request_id !== lease.ownerRequestId
+      ) {
+        return false;
+      }
+      const now = Date.now();
+      const dispatched: EmbeddingsIdempotencyRecord = {
+        ...record,
+        state: "dispatched",
+        updated_at_ms: now,
+        lease_until_ms: now + EMBEDDINGS_IDEMPOTENCY_LEASE_MS,
+      };
+      const commit = await lease.kv.atomic()
+        .check(entry)
+        .set(lease.key, dispatched, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+        .commit();
+      if (commit.ok) return true;
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency dispatch-state write failed:", error);
+  }
+  return false;
+};
+
+const releaseEmbeddingsIdempotencyReservation = async (
+  lease: EmbeddingsIdempotencyLease,
+  allowDispatched: boolean,
+): Promise<boolean> => {
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      if (!record || record.fingerprint !== lease.fingerprint) return false;
+      if (record.owner_request_id !== lease.ownerRequestId) return false;
+      if (record.state !== "reserved" && !(allowDispatched && record.state === "dispatched")) return false;
+      const commit = await lease.kv.atomic().check(entry).delete(lease.key).commit();
+      if (commit.ok) return true;
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency reservation release failed:", error);
+  }
+  return false;
+};
+
+const storeEmbeddingsIdempotencySuccess = async (
+  lease: EmbeddingsIdempotencyLease,
+  response: Response,
+): Promise<boolean> => {
+  try {
+    const body = await response.clone().text();
+    const chunks: string[] = [];
+    for (let offset = 0; offset < body.length; offset += EMBEDDINGS_IDEMPOTENCY_RESPONSE_CHUNK_CHARS) {
+      chunks.push(body.slice(offset, offset + EMBEDDINGS_IDEMPOTENCY_RESPONSE_CHUNK_CHARS));
+    }
+    if (!chunks.length) chunks.push("");
+    if (chunks.length > EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS) return false;
+    const responseGeneration = lease.ownerRequestId;
+    for (let index = 0; index < chunks.length; index += 1) {
+      await lease.kv.set(
+        [...lease.responseKeyPrefix, responseGeneration, index],
+        chunks[index]!,
+        { expireIn: EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS },
+      );
+    }
+    const bodyHash = await sha256Hex(body);
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
+      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
+      if (
+        !record ||
+        record.fingerprint !== lease.fingerprint ||
+        (record.state !== "reserved" && record.state !== "dispatched") ||
+        record.owner_request_id !== lease.ownerRequestId
+      ) {
+        return false;
+      }
+      const now = Date.now();
+      const succeeded: EmbeddingsIdempotencyRecord = {
+        ...record,
+        state: "succeeded",
+        owner_request_id: null,
+        updated_at_ms: now,
+        lease_until_ms: null,
+        response_status: response.status,
+        response_content_type: response.headers.get("Content-Type") ?? "application/json",
+        response_generation: responseGeneration,
+        response_chunk_count: chunks.length,
+        response_sha256: bodyHash,
+      };
+      const commit = await lease.kv.atomic()
+        .check(entry)
+        .set(lease.key, succeeded, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
+        .commit();
+      if (commit.ok) return true;
+    }
+  } catch (error) {
+    console.error("[ai.ubq.fi] embeddings idempotency response write failed:", error);
+  }
+  return false;
+};
 
 const normalizeEmbeddingsCacheTimestampMs = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -2165,6 +2668,7 @@ const handleEmbeddingsRequest = async (
   req: Request,
   contract: "openai" | "uos",
   usageContext?: UsageContext,
+  options: Readonly<{ kv?: Deno.Kv | null }> = {},
 ): Promise<Response> => {
   const requestId = crypto.randomUUID();
   const startedAtMs = Date.now();
@@ -2178,23 +2682,74 @@ const handleEmbeddingsRequest = async (
   if (!parsed.ok) return parsed.response;
   const { model, inputs, total_chars: totalChars, profile } = parsed.value;
 
+  const kv = Object.prototype.hasOwnProperty.call(options, "kv") ? options.kv ?? null : await kvPromise;
+  const hashes = await Promise.all(inputs.map((text) => sha256Hex(text)));
+  let idempotencyLease: EmbeddingsIdempotencyLease | null = null;
+  let idempotencyDispatched = false;
+  let idempotencyHasConfirmedSuccess = false;
+  const idempotencyKey = contract === "uos" ? req.headers.get("Idempotency-Key") : null;
+  if (idempotencyKey !== null) {
+    if (
+      !idempotencyKey ||
+      idempotencyKey.length > EMBEDDINGS_IDEMPOTENCY_MAX_KEY_CHARS ||
+      hasAsciiControlCharacter(idempotencyKey)
+    ) {
+      return openaiError(
+        400,
+        `Idempotency-Key must contain 1-${EMBEDDINGS_IDEMPOTENCY_MAX_KEY_CHARS} non-control characters.`,
+        "invalid_request_error",
+        { param: null },
+      );
+    }
+    const principal = usageContext?.idempotencyPrincipal?.trim() ?? "";
+    if (!kv || !principal) return embeddingsIdempotencyUnavailableResponse();
+    const fingerprint = await buildEmbeddingsIdempotencyFingerprint(profile, hashes);
+    const acquired = await acquireEmbeddingsIdempotencyLease({
+      kv,
+      principal,
+      idempotencyKey,
+      fingerprint,
+      requestId,
+    });
+    if (acquired.kind === "replay") return acquired.response;
+    if (acquired.kind === "error") return acquired.response;
+    idempotencyLease = acquired.lease;
+  }
+
+  const releaseBeforeDispatch = async (response: Response): Promise<Response> => {
+    if (!idempotencyLease) return response;
+    const released = await releaseEmbeddingsIdempotencyReservation(idempotencyLease, false);
+    return released ? response : embeddingsIdempotencyUnavailableResponse();
+  };
+  const releaseAfterExplicitUpstreamFailure = async (response: Response): Promise<Response> => {
+    if (!idempotencyLease) return response;
+    if (idempotencyHasConfirmedSuccess) return await failIndeterminate();
+    const released = await releaseEmbeddingsIdempotencyReservation(idempotencyLease, true);
+    if (released) return response;
+    await markEmbeddingsIdempotencyIndeterminate(idempotencyLease);
+    return embeddingsIdempotencyIndeterminateResponse();
+  };
+  const failIndeterminate = async (): Promise<Response> => {
+    if (idempotencyLease) await markEmbeddingsIdempotencyIndeterminate(idempotencyLease);
+    return embeddingsIdempotencyIndeterminateResponse();
+  };
+
   await recordRequestUsage(usageContext, { model, route: "embeddings", stream: false, reasoning: null });
 
   const deadlineMs = startedAtMs + EMBEDDINGS_TIMEOUT_MS;
-  const kv = await kvPromise;
   const apiKey = await readVoyageApiKey(kv);
   if (!apiKey) {
     await recordErrorUsage(usageContext);
-    return openaiError(
-      503,
-      "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
-      "server_error",
-      { type: "server_error", param: null },
+    return await releaseBeforeDispatch(
+      openaiError(
+        503,
+        "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
+        "server_error",
+        { type: "server_error", param: null },
+      ),
     );
   }
   const shouldCache = Boolean(kv);
-
-  const hashes = await Promise.all(inputs.map((text) => sha256Hex(text)));
 
   // Dedupe within a request (hash collisions are astronomically unlikely).
   const buckets = new Map<string, { text: string; indices: number[] }>();
@@ -2253,7 +2808,10 @@ const handleEmbeddingsRequest = async (
       const now = Date.now();
       if (now >= deadlineMs) {
         await recordErrorUsage(usageContext);
-        return openaiError(502, "Embeddings request timed out.", "timeout", { type: "server_error", param: null });
+        if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
+        return await releaseBeforeDispatch(
+          openaiError(502, "Embeddings request timed out.", "timeout", { type: "server_error", param: null }),
+        );
       }
 
       const chunkItems = missing.slice(offset, offset + chunk.length);
@@ -2265,6 +2823,7 @@ const handleEmbeddingsRequest = async (
         const reserved = await applyVoyageRateLimit(kv, tokenEstimate, deadlineMs);
         if (!reserved.ok) {
           await recordErrorUsage(usageContext);
+          if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
           const retryAfterSeconds = Math.max(1, Math.ceil(reserved.wait_ms / 1000));
           const body = {
             error: {
@@ -2274,7 +2833,7 @@ const handleEmbeddingsRequest = async (
               param: null,
             },
           };
-          return json(429, body, { "Retry-After": String(retryAfterSeconds) });
+          return await releaseBeforeDispatch(json(429, body, { "Retry-After": String(retryAfterSeconds) }));
         }
       }
 
@@ -2283,6 +2842,14 @@ const handleEmbeddingsRequest = async (
       let vectors: number[][] | null = null;
 
       for (;;) {
+        if (idempotencyLease && !idempotencyDispatched) {
+          const markedDispatched = await markEmbeddingsIdempotencyDispatched(idempotencyLease);
+          if (!markedDispatched) {
+            await recordErrorUsage(usageContext);
+            return embeddingsIdempotencyUnavailableResponse();
+          }
+          idempotencyDispatched = true;
+        }
         try {
           const upstream = await fetchVoyageEmbeddings({
             apiKey,
@@ -2295,6 +2862,7 @@ const handleEmbeddingsRequest = async (
             deadlineMs,
           });
           vectors = upstream.vectors;
+          if (idempotencyLease) idempotencyHasConfirmedSuccess = true;
           if (typeof upstream.totalTokens === "number") {
             sawVoyageTokenUsage = true;
             voyageTotalTokens += upstream.totalTokens;
@@ -2311,7 +2879,10 @@ const handleEmbeddingsRequest = async (
           if (!status || !EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
             console.error(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
             await recordErrorUsage(usageContext);
-            return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
+            if (!status) return await failIndeterminate();
+            return await releaseAfterExplicitUpstreamFailure(
+              openaiError(502, message, "upstream_error", { type: "server_error", param: null }),
+            );
           }
 
           const waitMs = Math.max(0, retryAfterMs ?? backoffMs);
@@ -2328,9 +2899,13 @@ const handleEmbeddingsRequest = async (
                   param: null,
                 },
               };
-              return json(429, body, { "Retry-After": String(retryAfterSeconds) });
+              return await releaseAfterExplicitUpstreamFailure(
+                json(429, body, { "Retry-After": String(retryAfterSeconds) }),
+              );
             }
-            return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
+            return await releaseAfterExplicitUpstreamFailure(
+              openaiError(502, message, "upstream_error", { type: "server_error", param: null }),
+            );
           }
 
           const now = Date.now();
@@ -2346,10 +2921,14 @@ const handleEmbeddingsRequest = async (
                   param: null,
                 },
               };
-              return json(429, body, { "Retry-After": String(retryAfterSeconds) });
+              return await releaseAfterExplicitUpstreamFailure(
+                json(429, body, { "Retry-After": String(retryAfterSeconds) }),
+              );
             }
             await recordErrorUsage(usageContext);
-            return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
+            return await releaseAfterExplicitUpstreamFailure(
+              openaiError(502, message, "upstream_error", { type: "server_error", param: null }),
+            );
           }
 
           await sleep(waitMs);
@@ -2360,6 +2939,7 @@ const handleEmbeddingsRequest = async (
 
       if (!vectors || vectors.length !== chunkItems.length) {
         await recordErrorUsage(usageContext);
+        if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
         return openaiError(502, "Embeddings upstream returned a size mismatch.", "upstream_error", {
           type: "server_error",
           param: null,
@@ -2370,6 +2950,7 @@ const handleEmbeddingsRequest = async (
       if (wrongLengthIndex >= 0) {
         await recordErrorUsage(usageContext);
         const actualLength = vectors[wrongLengthIndex]?.length ?? 0;
+        if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
         return openaiError(
           502,
           `Embeddings upstream returned vector length ${actualLength}; expected ${profile.dimensions}.`,
@@ -2401,6 +2982,7 @@ const handleEmbeddingsRequest = async (
     const vec = vectorsByIndex[i];
     if (!vec) {
       await recordErrorUsage(usageContext);
+      if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
       return openaiError(502, "Embeddings gateway failed to construct a complete response.", "server_error", {
         type: "server_error",
         param: null,
@@ -2413,17 +2995,10 @@ const handleEmbeddingsRequest = async (
     });
   }
 
-  const elapsedMs = Date.now() - startedAtMs;
-  console.info(
-    `[ai.ubq.fi] embeddings request_id=${requestId} status=200 upstream=${profile.upstream} ms=${elapsedMs}`,
-  );
-
   const usageTokens: UsageTokens | null = sawVoyageTokenUsage
     ? { inputTokens: voyageTotalTokens, outputTokens: 0, totalTokens: voyageTotalTokens }
     : null;
-  await recordCompletionUsage(usageContext, usageTokens);
-
-  return json(200, {
+  const response = json(200, {
     object: "list",
     data,
     model,
@@ -2432,13 +3007,29 @@ const handleEmbeddingsRequest = async (
       total_tokens: usageTokens?.totalTokens ?? 0,
     },
   });
+  if (idempotencyLease) {
+    const stored = await storeEmbeddingsIdempotencySuccess(idempotencyLease, response);
+    if (!stored) {
+      if (idempotencyDispatched) return await failIndeterminate();
+      return await releaseBeforeDispatch(embeddingsIdempotencyUnavailableResponse());
+    }
+  }
+  await recordCompletionUsage(usageContext, usageTokens);
+  const elapsedMs = Date.now() - startedAtMs;
+  console.info(
+    `[ai.ubq.fi] embeddings request_id=${requestId} status=200 upstream=${profile.upstream} ms=${elapsedMs}`,
+  );
+  return response;
 };
 
 export const handleEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
   withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "openai", usageContext));
 
-export const handleUosEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
-  withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "uos", usageContext));
+export const handleUosEmbeddings = async (
+  req: Request,
+  usageContext?: UsageContext,
+  options: Readonly<{ kv?: Deno.Kv | null }> = {},
+): Promise<Response> => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "uos", usageContext, options));
 
 const buildEmbeddingsJobBody = (
   job: EmbeddingsJobRecord,
