@@ -35,10 +35,25 @@ import {
   DEFAULT_USAGE_LIMIT_REQUESTS,
   generateApiKeyToken,
   getDefaultExpiryMs,
+  paidFallbackCreditsToMicrocredits,
+  paidFallbackMicrocreditsToCredits,
   USAGE_RESET_PERIOD_MS,
 } from "./api_keys.ts";
-import { getApiKeyUsage, listApiKeyRequestLogs } from "./analytics.ts";
+import {
+  apiKeyRequestLogPrefix,
+  apiKeyUsageDailyKey,
+  apiKeyUsageKey,
+  getApiKeyUsage,
+  listApiKeyRequestLogs,
+} from "./analytics.ts";
 import { reloadKernelPublicKeys } from "./auth.ts";
+import {
+  defaultPaidFallbackPolicy,
+  hasStrictPaidFallbackKeyPolicy,
+  initializePaidFallbackPolicy,
+  paidFallbackHashFields,
+  reconcileApiKeyPaidFallbacks,
+} from "./paid_fallback.ts";
 import {
   deleteKernelOrgUsageLimit,
   deleteKernelUsageLimit,
@@ -66,6 +81,7 @@ import { kvPromise } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "./types.ts";
+import { YunwuError } from "./yunwu.ts";
 
 const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
 const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
@@ -495,6 +511,27 @@ const normalizeApiKeyWindowMsInput = (value: unknown): number | null => {
   return windowMs;
 };
 
+const paidFallbackInputError = (message: string): Response => openaiError(400, message, "invalid_request_error");
+
+const paidFallbackInitializationError = (error: unknown): Response => {
+  if (error instanceof YunwuError) {
+    return openaiError(error.status, error.message, error.code, { type: "server_error" });
+  }
+  console.error("[ai.ubq.fi] Failed to initialize YunWu paid fallback:", error);
+  return openaiError(502, "Failed to initialize YunWu paid fallback", "yunwu_pricing_unavailable", {
+    type: "server_error",
+  });
+};
+
+const paidFallbackPublicFields = (record: ApiKeyRecord) => ({
+  paid_fallback_enabled: record.paid_fallback_enabled,
+  paid_fallback_limit_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_limit_microcredits),
+  paid_fallback_spent_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_spent_microcredits),
+  paid_fallback_reserved_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_reserved_microcredits),
+  paid_fallback_model_ids: record.paid_fallback_model_ids,
+  paid_fallback_pricing_checked_at_ms: record.paid_fallback_pricing_checked_at_ms,
+});
+
 const normalizeKernelRepoPart = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -753,11 +790,47 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   }
   const resolvedWindowMs = windowMs ?? USAGE_RESET_PERIOD_MS;
 
+  if (
+    Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") &&
+    typeof raw.paid_fallback_enabled !== "boolean"
+  ) {
+    return paidFallbackInputError("paid_fallback_enabled must be a boolean");
+  }
+  const paidFallbackEnabled = raw.paid_fallback_enabled === true;
+  const paidFallbackLimitMicrocredits = Object.prototype.hasOwnProperty.call(raw, "paid_fallback_limit_credits")
+    ? paidFallbackCreditsToMicrocredits(raw.paid_fallback_limit_credits)
+    : 0;
+  if (paidFallbackLimitMicrocredits === null) {
+    return paidFallbackInputError("paid_fallback_limit_credits must be a non-negative number or -1");
+  }
+  if (paidFallbackEnabled && paidFallbackLimitMicrocredits === 0) {
+    return paidFallbackInputError("paid_fallback_limit_credits must be positive or -1 when paid fallback is enabled");
+  }
+
   const hash = await sha256Base64Url(token);
   const hashKey = apiKeyHashKey(hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
   if (hashEntry.value) {
     return openaiError(409, "API key already exists", "invalid_request_error");
+  }
+
+  let paidFallbackPolicy = defaultPaidFallbackPolicy();
+  if (paidFallbackEnabled) {
+    try {
+      paidFallbackPolicy = {
+        ...paidFallbackPolicy,
+        ...await initializePaidFallbackPolicy(req.signal),
+        paid_fallback_enabled: true,
+        paid_fallback_limit_microcredits: paidFallbackLimitMicrocredits,
+      };
+    } catch (error) {
+      return paidFallbackInitializationError(error);
+    }
+  } else {
+    paidFallbackPolicy = {
+      ...paidFallbackPolicy,
+      paid_fallback_limit_microcredits: paidFallbackLimitMicrocredits,
+    };
   }
 
   const id = crypto.randomUUID();
@@ -774,6 +847,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_requests: 0,
     usage_reset_at_ms: usageResetAtMs,
     window_ms: resolvedWindowMs,
+    ...paidFallbackPolicy,
   };
   const hashRecord: ApiKeyHashRecord = {
     id,
@@ -783,6 +857,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_requests: 0,
     usage_reset_at_ms: usageResetAtMs,
     window_ms: resolvedWindowMs,
+    ...paidFallbackHashFields(record),
   };
 
   const commit = await kv.atomic()
@@ -797,7 +872,6 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   return json(
     200,
     {
-      ok: true,
       id,
       name,
       token,
@@ -808,6 +882,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
       usage_requests: record.usage_requests,
       usage_reset_at_ms: record.usage_reset_at_ms,
       window_ms: record.window_ms,
+      ...paidFallbackPublicFields(record),
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
@@ -849,6 +924,7 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
         usage_requests: r.usage_requests,
         usage_reset_at_ms: r.usage_reset_at_ms,
         window_ms: coerceApiKeyWindowMs(r),
+        ...paidFallbackPublicFields(r),
         ...(includeUsage ? { usage: usageById.get(r.id) ?? null } : {}),
       })),
     },
@@ -885,6 +961,7 @@ export const handleAdminApiKeysRequests = async (
   const limit = Math.min(requestedLimit, 100);
 
   try {
+    await reconcileApiKeyPaidFallbacks(normalizedKeyId);
     const records = await listApiKeyRequestLogs(normalizedKeyId, { limit, kv });
     return json(
       200,
@@ -911,6 +988,11 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   const idKey = apiKeyIdKey(id);
   const entry = await kv.get<ApiKeyRecord>(idKey);
   if (!entry.value) return openaiError(404, "Not found", "not_found");
+  if (!hasStrictPaidFallbackKeyPolicy(entry.value)) {
+    return openaiError(503, "API key paid fallback migration is incomplete", "server_error", {
+      type: "server_error",
+    });
+  }
 
   const now = Date.now();
   const currentExpiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
@@ -921,6 +1003,14 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   let nextUsageRequests = entry.value.usage_requests;
   let nextUsageResetAtMs = entry.value.usage_reset_at_ms;
   let nextWindowMs = currentWindowMs;
+  let nextPaidFallbackEnabled = entry.value.paid_fallback_enabled;
+  let nextPaidFallbackLimitMicrocredits = entry.value.paid_fallback_limit_microcredits;
+  let nextPaidFallbackSpentMicrocredits = entry.value.paid_fallback_spent_microcredits;
+  const nextPaidFallbackReservedMicrocredits = entry.value.paid_fallback_reserved_microcredits;
+  const nextPaidFallbackReservationRequestId = entry.value.paid_fallback_reservation_request_id;
+  let nextPaidFallbackModelIds = entry.value.paid_fallback_model_ids;
+  let nextPaidFallbackQuotaPerCredit = entry.value.paid_fallback_quota_per_credit;
+  let nextPaidFallbackPricingCheckedAtMs = entry.value.paid_fallback_pricing_checked_at_ms;
 
   if (Object.prototype.hasOwnProperty.call(raw, "name")) {
     const name = normalizeApiKeyName(raw.name);
@@ -960,16 +1050,57 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     nextWindowMs = windowMs;
   }
 
+  if (
+    Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") &&
+    typeof raw.paid_fallback_enabled !== "boolean"
+  ) {
+    return paidFallbackInputError("paid_fallback_enabled must be a boolean");
+  }
+  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled")) {
+    nextPaidFallbackEnabled = raw.paid_fallback_enabled === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_limit_credits")) {
+    const limitMicrocredits = paidFallbackCreditsToMicrocredits(raw.paid_fallback_limit_credits);
+    if (limitMicrocredits === null) {
+      return paidFallbackInputError("paid_fallback_limit_credits must be a non-negative number or -1");
+    }
+    nextPaidFallbackLimitMicrocredits = limitMicrocredits;
+  }
+  if (nextPaidFallbackEnabled && nextPaidFallbackLimitMicrocredits === 0) {
+    return paidFallbackInputError("paid_fallback_limit_credits must be positive or -1 when paid fallback is enabled");
+  }
+
+  const initializePaidFallback = !entry.value.paid_fallback_enabled && nextPaidFallbackEnabled;
+  if (initializePaidFallback) {
+    try {
+      const initialized = await initializePaidFallbackPolicy(req.signal);
+      nextPaidFallbackModelIds = [...initialized.paid_fallback_model_ids];
+      nextPaidFallbackQuotaPerCredit = initialized.paid_fallback_quota_per_credit;
+      nextPaidFallbackPricingCheckedAtMs = initialized.paid_fallback_pricing_checked_at_ms;
+    } catch (error) {
+      return paidFallbackInitializationError(error);
+    }
+  }
+
   const resetUsage = normalizeOptionalBoolean(raw.reset_usage);
   if (resetUsage || nextWindowMs !== currentWindowMs) {
     nextUsageRequests = 0;
     nextUsageResetAtMs = calculateNextResetMs(now, nextWindowMs);
+    nextPaidFallbackSpentMicrocredits = 0;
   }
 
   const hasChanges = nextName !== entry.value.name ||
     nextExpiresAtMs !== currentExpiresAtMs ||
     nextUsageLimit !== entry.value.usage_limit_requests ||
     nextWindowMs !== currentWindowMs ||
+    nextPaidFallbackEnabled !== entry.value.paid_fallback_enabled ||
+    nextPaidFallbackLimitMicrocredits !== entry.value.paid_fallback_limit_microcredits ||
+    nextPaidFallbackSpentMicrocredits !== entry.value.paid_fallback_spent_microcredits ||
+    nextPaidFallbackReservedMicrocredits !== entry.value.paid_fallback_reserved_microcredits ||
+    nextPaidFallbackReservationRequestId !== entry.value.paid_fallback_reservation_request_id ||
+    nextPaidFallbackModelIds !== entry.value.paid_fallback_model_ids ||
+    nextPaidFallbackQuotaPerCredit !== entry.value.paid_fallback_quota_per_credit ||
+    nextPaidFallbackPricingCheckedAtMs !== entry.value.paid_fallback_pricing_checked_at_ms ||
     (resetUsage &&
       (nextUsageRequests !== entry.value.usage_requests || nextUsageResetAtMs !== entry.value.usage_reset_at_ms));
 
@@ -977,7 +1108,6 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     return json(
       200,
       {
-        ok: true,
         id: entry.value.id,
         name: entry.value.name,
         prefix: entry.value.prefix,
@@ -988,6 +1118,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
         usage_requests: entry.value.usage_requests,
         usage_reset_at_ms: entry.value.usage_reset_at_ms,
         window_ms: currentWindowMs,
+        ...paidFallbackPublicFields(entry.value),
       },
       { "x-ubq-upstream": "chatgpt_codex" },
     );
@@ -1001,6 +1132,14 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     usage_requests: nextUsageRequests,
     usage_reset_at_ms: nextUsageResetAtMs,
     window_ms: nextWindowMs,
+    paid_fallback_enabled: nextPaidFallbackEnabled,
+    paid_fallback_limit_microcredits: nextPaidFallbackLimitMicrocredits,
+    paid_fallback_spent_microcredits: nextPaidFallbackSpentMicrocredits,
+    paid_fallback_reserved_microcredits: nextPaidFallbackReservedMicrocredits,
+    paid_fallback_reservation_request_id: nextPaidFallbackReservationRequestId,
+    paid_fallback_model_ids: nextPaidFallbackModelIds,
+    paid_fallback_quota_per_credit: nextPaidFallbackQuotaPerCredit,
+    paid_fallback_pricing_checked_at_ms: nextPaidFallbackPricingCheckedAtMs,
   };
   const hashKey = apiKeyHashKey(entry.value.hash);
   const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
@@ -1012,6 +1151,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     usage_requests: updated.usage_requests,
     usage_reset_at_ms: updated.usage_reset_at_ms,
     window_ms: updated.window_ms,
+    ...paidFallbackHashFields(updated),
   };
 
   const atomic = kv.atomic()
@@ -1028,7 +1168,6 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   return json(
     200,
     {
-      ok: true,
       id: updated.id,
       name: updated.name,
       prefix: updated.prefix,
@@ -1039,6 +1178,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
       usage_requests: updated.usage_requests,
       usage_reset_at_ms: updated.usage_reset_at_ms,
       window_ms: updated.window_ms,
+      ...paidFallbackPublicFields(updated),
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
@@ -1058,6 +1198,11 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
   const idKey = apiKeyIdKey(id);
   const entry = await kv.get<ApiKeyRecord>(idKey);
   if (!entry.value) return openaiError(404, "Not found", "not_found");
+  if (!hasStrictPaidFallbackKeyPolicy(entry.value)) {
+    return openaiError(503, "API key paid fallback migration is incomplete", "server_error", {
+      type: "server_error",
+    });
+  }
 
   const now = Date.now();
   const expiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
@@ -1074,6 +1219,7 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
     usage_requests: updated.usage_requests,
     usage_reset_at_ms: updated.usage_reset_at_ms,
     window_ms: updated.window_ms,
+    ...paidFallbackHashFields(updated),
   };
 
   const atomic = kv.atomic()
@@ -1090,7 +1236,6 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
   return json(
     200,
     {
-      ok: true,
       id: updated.id,
       revoked_at_ms: updated.revoked_at_ms,
     },
@@ -1112,9 +1257,14 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
   const idKey = apiKeyIdKey(id);
   const entry = await kv.get<ApiKeyRecord>(idKey);
   if (!entry.value) return openaiError(404, "Not found", "not_found");
+  if (!hasStrictPaidFallbackKeyPolicy(entry.value)) {
+    return openaiError(503, "API key paid fallback migration is incomplete", "server_error", {
+      type: "server_error",
+    });
+  }
 
   if (!entry.value.revoked_at_ms) {
-    return json(200, { ok: true, id, revoked_at_ms: null }, { "x-ubq-upstream": "chatgpt_codex" });
+    return json(200, { id, revoked_at_ms: null }, { "x-ubq-upstream": "chatgpt_codex" });
   }
 
   const expiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
@@ -1129,6 +1279,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
     usage_requests: updated.usage_requests,
     usage_reset_at_ms: updated.usage_reset_at_ms,
     window_ms: updated.window_ms,
+    ...paidFallbackHashFields(updated),
   };
 
   const atomic = kv.atomic()
@@ -1145,7 +1296,6 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
   return json(
     200,
     {
-      ok: true,
       id: updated.id,
       revoked_at_ms: updated.revoked_at_ms,
     },
@@ -1176,14 +1326,19 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
     .check(entry)
     .delete(idKey)
     .delete(apiKeyHashKey(entry.value.hash))
-    .delete(["ubq_ai", "api_keys", "usage", id]);
+    .delete(apiKeyUsageKey(id))
+    .delete(apiKeyUsageDailyKey(id));
 
   const commit = await atomic.commit();
   if (!commit.ok) {
     return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   }
 
-  return json(200, { ok: true, id }, { "x-ubq-upstream": "chatgpt_codex" });
+  for await (const requestEntry of kv.list({ prefix: apiKeyRequestLogPrefix(id) })) {
+    await kv.delete(requestEntry.key);
+  }
+
+  return json(200, { id }, { "x-ubq-upstream": "chatgpt_codex" });
 };
 
 const normalizePem = (raw: unknown): string | null => {

@@ -169,6 +169,40 @@
                 <button id="key-window-1d" type="button">1d</button>
                 <button id="key-window-1w" type="button">1w</button>
               </div>
+              <section data-paid-fallback-create aria-labelledby="create-paid-fallback-label">
+                <label data-check data-paid-fallback-toggle>
+                  <span id="create-paid-fallback-label">
+                    <strong>YunWu paid overflow</strong>
+                    <small>Use once Codex returns its final rate-limit response.</small>
+                  </span>
+                  <input
+                    id="key-paid-fallback-enabled"
+                    type="checkbox"
+                    role="switch"
+                    aria-controls="key-paid-fallback-settings"
+                  />
+                </label>
+                <div id="key-paid-fallback-settings" data-paid-fallback-settings hidden>
+                  <label data-field>
+                    <span data-label>Window cap (credits; -1 = unlimited)</span>
+                    <input
+                      id="key-paid-fallback-limit"
+                      type="number"
+                      inputmode="decimal"
+                      min="-1"
+                      step="0.000001"
+                      placeholder="-1 or 1"
+                      aria-describedby="key-paid-fallback-warning"
+                      disabled
+                    />
+                  </label>
+                  <p id="key-paid-fallback-warning" data-paid-fallback-warning>
+                    Enabling fallback can send prompts, code, tools, and attachments to YunWu.
+                    Pricing is checked only when this key is enabled; re-enabling checks it again.
+                    Ordinary requests never recheck it.
+                  </p>
+                </div>
+              </section>
               <div data-layout="row">
                 <button
                   id="create-key"

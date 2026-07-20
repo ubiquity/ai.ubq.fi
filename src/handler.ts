@@ -1,8 +1,8 @@
 import {
   handleAdminApiKeysCreate,
   handleAdminApiKeysDelete,
-  handleAdminApiKeysRequests,
   handleAdminApiKeysList,
+  handleAdminApiKeysRequests,
   handleAdminApiKeysRevoke,
   handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
@@ -58,6 +58,7 @@ import {
   handlePasskeyUsersUpdate,
 } from "./passkeys.ts";
 import { recordApiKeyRequestLog } from "./analytics.ts";
+import { ensurePaidFallbackBackfill } from "./paid_fallback.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
 
 const normalizePath = (path: string): string => {
@@ -118,6 +119,15 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "POST" && path === "/api/auth/logout") {
     return withCors(await handlePasskeyLogout(req));
+  }
+
+  try {
+    await ensurePaidFallbackBackfill();
+  } catch (error) {
+    console.error("[ai.ubq.fi] Paid fallback API key backfill failed:", error);
+    return withCors(openaiError(503, "API key migration is unavailable", "server_error", {
+      type: "server_error",
+    }));
   }
 
   if (req.method === "GET" && path === "/admin/passkey-users") {
@@ -294,6 +304,8 @@ export default async function handler(req: Request): Promise<Response> {
 
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return withCors(authResult.response);
+  const requestId = crypto.randomUUID();
+  const requestStartedAtMs = Date.now();
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
   const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
   let kernelRepo = authResult.method.kind === "github_token"
@@ -306,7 +318,13 @@ export default async function handler(req: Request): Promise<Response> {
     }
   }
   const kernelOrg = kernelRepo ? { owner: kernelRepo.owner } : null;
-  const usageContext = { keyId: usageKeyId, kernelRepo, kernelOrg };
+  const usageContext = {
+    keyId: usageKeyId,
+    kernelRepo,
+    kernelOrg,
+    requestId,
+    startedAtMs: requestStartedAtMs,
+  };
   const resolveKernelLimitScope = async (): Promise<"org" | "repo" | null> => {
     if (!kernelRepo) return null;
     if (kernelLimitScope) return kernelLimitScope;
@@ -332,17 +350,26 @@ export default async function handler(req: Request): Promise<Response> {
     stream: boolean;
     model?: string | null;
     reasoning?: string | null;
+    provider?: "chatgpt_codex" | "yunwu";
   }): Promise<void> => {
     if (!usageKeyId) return;
     await recordApiKeyRequestLog(usageKeyId, {
+      id: requestId,
       route: details.route,
       path: details.path,
       method: details.method,
       status_code: details.status_code,
       stream: details.stream,
-      model: details.model ?? null,
-      reasoning: details.reasoning ?? null,
-      created_at_ms: Date.now(),
+      created_at_ms: requestStartedAtMs,
+      provider: details.provider ?? "chatgpt_codex",
+      ...(details.model !== undefined ? { model: details.model } : {}),
+      ...(details.reasoning !== undefined ? { reasoning: details.reasoning } : {}),
+      ...(!details.stream
+        ? {
+          completed_at_ms: Date.now(),
+          latency_ms: Math.max(0, Date.now() - requestStartedAtMs),
+        }
+        : {}),
     });
   };
 
@@ -409,6 +436,7 @@ export default async function handler(req: Request): Promise<Response> {
       method: req.method,
       status_code: response.status,
       stream: isStream,
+      provider: response.headers.get("x-ubq-upstream") === "yunwu" ? "yunwu" : "chatgpt_codex",
     });
     return withCors(response);
   }
@@ -426,6 +454,7 @@ export default async function handler(req: Request): Promise<Response> {
       method: req.method,
       status_code: response.status,
       stream: isStream,
+      provider: response.headers.get("x-ubq-upstream") === "yunwu" ? "yunwu" : "chatgpt_codex",
     });
     return withCors(response);
   }

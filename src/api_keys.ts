@@ -5,6 +5,8 @@ export const API_KEY_ID_PREFIX = ["ubq_ai", "api_keys", "id"] as const;
 export const API_KEY_HASH_PREFIX = ["ubq_ai", "api_keys", "hash"] as const;
 export const API_KEY_NO_EXPIRATION_MS = -1;
 export const API_KEY_NO_USAGE_LIMIT = -1;
+export const PAID_FALLBACK_NO_LIMIT = -1;
+export const MICROCREDITS_PER_CREDIT = 1_000_000;
 
 const getEnvNumber = (key: string, defaultValue: number): number => {
   try {
@@ -24,6 +26,25 @@ export const USAGE_RESET_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const apiKeyIdKey = (id: string) => [...API_KEY_ID_PREFIX, id] as const;
 export const apiKeyHashKey = (hash: string) => [...API_KEY_HASH_PREFIX, hash] as const;
+
+export const normalizePaidFallbackMicrocredits = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
+  return value;
+};
+
+export const paidFallbackCreditsToMicrocredits = (value: unknown): number | null => {
+  if (value === PAID_FALLBACK_NO_LIMIT) return PAID_FALLBACK_NO_LIMIT;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  const microcredits = Math.round(value * MICROCREDITS_PER_CREDIT);
+  if (!Number.isSafeInteger(microcredits) || microcredits < 0) return null;
+  return microcredits;
+};
+
+export const paidFallbackMicrocreditsToCredits = (value: unknown): number => {
+  if (value === PAID_FALLBACK_NO_LIMIT) return PAID_FALLBACK_NO_LIMIT;
+  const microcredits = normalizePaidFallbackMicrocredits(value) ?? 0;
+  return microcredits / MICROCREDITS_PER_CREDIT;
+};
 
 export const generateApiKeyToken = (): string => {
   const bytes = new Uint8Array(32);

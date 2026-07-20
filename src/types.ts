@@ -17,6 +17,14 @@ export type ApiKeyRecord = Readonly<{
   usage_requests: number;
   usage_reset_at_ms: number;
   window_ms: number;
+  paid_fallback_enabled: boolean;
+  paid_fallback_limit_microcredits: number;
+  paid_fallback_spent_microcredits: number;
+  paid_fallback_reserved_microcredits: number;
+  paid_fallback_reservation_request_id: string | null;
+  paid_fallback_model_ids: string[];
+  paid_fallback_quota_per_credit: number;
+  paid_fallback_pricing_checked_at_ms: number | null;
 }>;
 
 export type ApiKeyHashRecord = Readonly<{
@@ -27,6 +35,11 @@ export type ApiKeyHashRecord = Readonly<{
   usage_requests: number;
   usage_reset_at_ms: number;
   window_ms: number;
+  paid_fallback_enabled: boolean;
+  paid_fallback_limit_microcredits: number;
+  paid_fallback_spent_microcredits: number;
+  paid_fallback_reserved_microcredits: number;
+  paid_fallback_reservation_request_id: string | null;
 }>;
 
 export type ApiKeyUsageRecord = Readonly<{
@@ -44,11 +57,18 @@ export type ApiKeyUsageRecord = Readonly<{
   last_model: string | null;
   last_reasoning: string | null;
   last_route: string | null;
+  yunwu_fallback_requests: number;
+  yunwu_input_tokens: number;
+  yunwu_output_tokens: number;
+  yunwu_total_tokens: number;
+  yunwu_spend_microcredits: number;
 }>;
 
 export type ApiKeyUsageDay = Readonly<{
   day: string;
   request_count: number;
+  yunwu_fallback_requests: number;
+  yunwu_spend_microcredits: number;
 }>;
 
 export type ApiKeyUsageDailyRecord = Readonly<{
@@ -68,6 +88,18 @@ export type ApiKeyRequestLogRecord = Readonly<{
   model: string | null;
   reasoning: string | null;
   created_at_ms: number;
+  provider: "chatgpt_codex" | "yunwu";
+  fallback_reason: string | null;
+  provider_request_id: string | null;
+  completed_at_ms: number | null;
+  latency_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  provider_quota: number | null;
+  quota_per_credit: number | null;
+  spend_microcredits: number | null;
+  paid_fallback_window_reset_at_ms: number | null;
+  billing_status: "not_applicable" | "pending" | "reconciled" | "not_billed" | "unresolved";
 }>;
 
 export type KernelAuthUsageRecord = Readonly<{

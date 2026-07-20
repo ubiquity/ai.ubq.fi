@@ -123,6 +123,54 @@ const baseSseChunks = () => [
   }\n\n`,
 ];
 
+const seedPaidFallbackKey = (
+  id: string,
+  options: {
+    enabled?: boolean;
+    limitMicrocredits?: number;
+    spentMicrocredits?: number;
+    reservedMicrocredits?: number;
+    reservationRequestId?: string | null;
+    modelIds?: readonly string[];
+  } = {},
+): void => {
+  const hash = `hash-${id}`;
+  const common = {
+    paid_fallback_enabled: options.enabled ?? true,
+    paid_fallback_limit_microcredits: options.limitMicrocredits ?? 1_000_000,
+    paid_fallback_spent_microcredits: options.spentMicrocredits ?? 0,
+    paid_fallback_reserved_microcredits: options.reservedMicrocredits ?? 0,
+    paid_fallback_reservation_request_id: options.reservationRequestId ?? null,
+  };
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    id,
+    name: `Key ${id}`,
+    prefix: "u_test",
+    hash,
+    created_at_ms: Date.now(),
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: -1,
+    usage_requests: 0,
+    usage_reset_at_ms: Date.now() + 60_000,
+    window_ms: 60_000,
+    ...common,
+    paid_fallback_model_ids: options.modelIds ?? [DEFAULT_TEST_MODEL],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_pricing_checked_at_ms: Date.now(),
+  });
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), {
+    id,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: -1,
+    usage_requests: 0,
+    usage_reset_at_ms: Date.now() + 60_000,
+    window_ms: 60_000,
+    ...common,
+  });
+};
+
 const parseWarnings = (value: string | null): string[] =>
   value ? value.split(",").map((entry) => entry.trim()).filter(Boolean) : [];
 
@@ -882,6 +930,258 @@ Deno.test("openai: upstream detail errors are normalized to OpenAI-style envelop
   assert.match(payload.error?.message ?? "", /not supported when using Codex/);
 });
 
+Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
+  const originalApiKey = Deno.env.get("YUNWU_API_KEY");
+  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  try {
+    await t.step("disabled, unpriced, and exhausted keys retain the primary 429", async () => {
+      const cases = [
+        {
+          id: "fallback-disabled",
+          options: { enabled: false },
+          expectedCode: "upstream_error",
+        },
+        {
+          id: "fallback-unpriced",
+          options: { modelIds: ["some-other-model"] },
+          expectedCode: "upstream_error",
+        },
+        {
+          id: "fallback-exhausted",
+          options: { limitMicrocredits: 100, spentMicrocredits: 100 },
+          expectedCode: "paid_fallback_limit_exceeded",
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        seedPaidFallbackKey(testCase.id, testCase.options);
+        let calls = 0;
+        const response = await withFetchMock(
+          () => {
+            calls += 1;
+            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+              status: 429,
+              headers: { "Content-Type": "application/json" },
+            });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+              }),
+              {
+                keyId: testCase.id,
+                kernelRepo: null,
+                kernelOrg: null,
+                requestId: `request-${testCase.id}`,
+                startedAtMs: Date.now(),
+              },
+            ),
+        );
+        assert.equal(response.status, 429);
+        assert.equal(calls, 1);
+        const payload = await response.json() as { error?: { code?: string } };
+        assert.equal(payload.error?.code, testCase.expectedCode);
+      }
+    });
+
+    await t.step("primary errors and network failures other than 429 never dispatch YunWu", async () => {
+      for (const scenario of ["http_500", "network"] as const) {
+        const keyId = `fallback-${scenario}`;
+        seedPaidFallbackKey(keyId);
+        let calls = 0;
+        const response = await withFetchMock(
+          () => {
+            calls += 1;
+            if (scenario === "network") throw new TypeError("primary network unavailable");
+            return new Response(JSON.stringify({ error: { message: "Primary failed" } }), {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+              }),
+              {
+                keyId,
+                kernelRepo: null,
+                kernelOrg: null,
+                requestId: `request-${keyId}`,
+                startedAtMs: Date.now(),
+              },
+            ),
+        );
+        assert.equal(response.status, scenario === "http_500" ? 500 : 502);
+        assert.equal(calls, 1);
+      }
+    });
+
+    await t.step("Responses sends the same canonical payload to YunWu exactly once", async () => {
+      const keyId = "fallback-responses-success";
+      seedPaidFallbackKey(keyId);
+      const bodies: Record<string, unknown>[] = [];
+      const urls: string[] = [];
+      const response = await withFetchMock(
+        (url, bodyText, init) => {
+          urls.push(url);
+          if (bodyText) bodies.push(JSON.parse(bodyText) as Record<string, unknown>);
+          if (url === "https://yunwu.ai/v1/responses") {
+            assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer yunwu-test-key");
+            return new Response(sseResponse(baseSseChunks()).body, {
+              status: 200,
+              headers: {
+                "Content-Type": "text/event-stream",
+                "X-Oneapi-Request-Id": "yunwu-responses-request",
+              },
+            });
+          }
+          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                input: "ping",
+                reasoning: { effort: "ultra" },
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "request-fallback-responses-success",
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+      assert.deepEqual(urls, [
+        "https://chatgpt.com/backend-api/codex/responses",
+        "https://yunwu.ai/v1/responses",
+      ]);
+      assert.equal(bodies.length, 2);
+      assert.deepEqual(bodies[1], bodies[0]);
+      assert.deepEqual(bodies[1].reasoning, { effort: "max" });
+    });
+
+    await t.step("Chat Completions also falls back through YunWu Responses once", async () => {
+      const keyId = "fallback-chat-success";
+      seedPaidFallbackKey(keyId);
+      const urls: string[] = [];
+      const response = await withFetchMock(
+        (url) => {
+          urls.push(url);
+          if (url === "https://yunwu.ai/v1/responses") {
+            return new Response(sseResponse(baseSseChunks()).body, {
+              status: 200,
+              headers: {
+                "Content-Type": "text/event-stream",
+                "X-Oneapi-Request-Id": "yunwu-chat-request",
+              },
+            });
+          }
+          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                messages: [{ role: "user", content: "ping" }],
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "request-fallback-chat-success",
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+      assert.deepEqual(urls, [
+        "https://chatgpt.com/backend-api/codex/responses",
+        "https://yunwu.ai/v1/responses",
+      ]);
+    });
+
+    await t.step("a YunWu error is attempted once and remains pending when it has a provider request id", async () => {
+      const keyId = "fallback-yunwu-error";
+      seedPaidFallbackKey(keyId);
+      let yunwuCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://yunwu.ai/v1/responses") {
+            yunwuCalls += 1;
+            return new Response(JSON.stringify({ error: { message: "YunWu busy" } }), {
+              status: 503,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Oneapi-Request-Id": "yunwu-error-request",
+              },
+            });
+          }
+          if (url === "https://yunwu.ai/api/log/token") {
+            return new Response(JSON.stringify({ success: true, data: [] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "request-fallback-yunwu-error",
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+      assert.equal(yunwuCalls, 1);
+      const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
+        paid_fallback_reserved_microcredits?: number;
+      };
+      assert.equal(stored.paid_fallback_reserved_microcredits, 1_000_000);
+    });
+  } finally {
+    if (originalApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
+    else Deno.env.set("YUNWU_API_KEY", originalApiKey);
+  }
+});
+
 Deno.test("http: CORS wrapper exposes a gateway request id", () => {
   const response = withCors(new Response("{}", { headers: { "Content-Type": "application/json" } }));
   assert.ok(response.headers.get("x-uos-request-id"));
@@ -1077,6 +1377,65 @@ Deno.test("openai: responses accept non-message input items", async () => {
   assert.ok(types.includes("reasoning"));
   assert.ok(types.includes("function_call"));
   assert.ok(types.includes("function_call_output"));
+});
+
+Deno.test("openai: buffered responses preserve function calls emitted as output items", async () => {
+  const functionCall = {
+    id: "fc_test",
+    type: "function_call",
+    status: "completed",
+    name: "assistant_exports_download",
+    call_id: "call_export",
+    arguments: '{"format":"csv"}',
+  };
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${
+          JSON.stringify({
+            type: "response.output_item.done",
+            output_index: 0,
+            item: functionCall,
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.completed",
+            response: {
+              model: DEFAULT_TEST_MODEL,
+              output: [],
+              usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+            },
+          })
+        }\n\n`,
+      ]),
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            input: "export csv",
+            tools: [{
+              type: "function",
+              name: "assistant_exports_download",
+              description: "Download the selected records.",
+              parameters: {
+                type: "object",
+                properties: { format: { type: "string", enum: ["csv", "json"] } },
+                required: ["format"],
+                additionalProperties: false,
+              },
+              strict: true,
+            }],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { output?: unknown[] };
+  assert.deepEqual(payload.output, [functionCall]);
 });
 
 Deno.test("openai: responses preserve image detail on normalized input images", async () => {
