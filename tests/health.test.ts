@@ -48,8 +48,7 @@ const kvStub = {
 
 const { handleHealth, handleHealthAuth, handleHealthUpstream } = await import("../src/health.ts");
 
-const base64Url = (value: string): string =>
-  btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+const base64Url = (value: string): string => btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 
 const makeJwt = (expSeconds: number | null): string => {
   const header = base64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
@@ -201,9 +200,12 @@ Deno.test("/health and /health/upstream share upstream semantics", async () => {
     assert.equal(readinessPayload.content_type, upstreamPayload.content_type);
     assert.equal(readinessPayload.error, upstreamPayload.error);
     assert.equal(readinessPayload.details, upstreamPayload.details);
-    assert.equal((readinessPayload.auth as { source?: string } | undefined)?.source, (upstreamPayload.auth as {
-      source?: string;
-    } | undefined)?.source);
+    assert.equal(
+      (readinessPayload.auth as { source?: string } | undefined)?.source,
+      (upstreamPayload.auth as {
+        source?: string;
+      } | undefined)?.source,
+    );
     assert.ok(Array.isArray(readinessPayload.problems));
   } finally {
     globalThis.fetch = originalFetch;

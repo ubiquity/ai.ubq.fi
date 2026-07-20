@@ -1,3 +1,16 @@
+/**
+ * @typedef {EventTarget & { visibilityState?: string }} ForegroundDocumentTarget
+ * @typedef {{
+ *   windowTarget?: EventTarget,
+ *   documentTarget?: ForegroundDocumentTarget,
+ *   delayMs?: number,
+ * }} ForegroundRefreshOptions
+ */
+
+/**
+ * @param {() => void} refresh
+ * @param {ForegroundRefreshOptions} [options]
+ */
 export const bindForegroundRefresh = (
   refresh,
   {
