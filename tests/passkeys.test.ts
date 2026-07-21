@@ -115,6 +115,7 @@ const {
   updatePasskeyCredentialSignCount,
 } = await import("../src/passkeys.ts");
 const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
+const { YUNWU_QUOTA_STATE_KEY } = await import("../src/yunwu_quota.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
   const originalGet = Deno.env.get;
@@ -149,6 +150,48 @@ const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true } = 
   });
   return { token, user };
 };
+
+Deno.test("inference handler decorates Responses and Chat Completions with the cached YunWu cycle", async () => {
+  kvStore.clear();
+  const { token } = seedPasskeySession();
+  const now = Date.now();
+  kvStore.set(keyToString(YUNWU_QUOTA_STATE_KEY), {
+    current_balance_quota: 25_000_000,
+    post_refill_baseline_quota: 50_000_000,
+    last_observed_used_quota: 25_000_000,
+    quota_per_credit: 500_000,
+    observed_at_ms: now,
+    cycle_started_at_ms: now - 60_000,
+    confidence: "refill_observed",
+    last_known_debits_quota: 1_000_000,
+    last_inferred_credit_quota: 0,
+    last_credit_at_ms: now - 60_000,
+    latest_refill_id: "refill-2",
+    latest_refill_amount_credits: 50,
+    latest_refill_completed_at_ms: now - 60_000,
+  });
+
+  await withEnv({ YUNWU_SYSTEM_TOKEN: "system-token", YUNWU_USER_ID: "717235" }, async () => {
+    const { default: handler } = await import("../src/handler.ts");
+    for (const path of ["/v1/responses", "/v1/chat/completions"]) {
+      const response = await handler(
+        new Request(`https://ai.ubq.fi${path}`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+        }),
+      );
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("x-codex-limit-name"), "YunWu balance");
+      assert.equal(response.headers.get("x-codex-primary-used-percent"), "50");
+      assert.equal(response.headers.has("x-codex-primary-window-minutes"), false);
+      assert.equal(response.headers.has("x-codex-primary-reset-at"), false);
+    }
+  });
+});
 
 Deno.test("passkey session authenticates as client and admin", async () => {
   kvStore.clear();

@@ -173,6 +173,17 @@ const defaultsKernelWindowPreset1h = mustGet("defaults-kernel-window-1h");
 const defaultsKernelWindowPreset1d = mustGet("defaults-kernel-window-1d");
 const defaultsKernelWindowPreset1w = mustGet("defaults-kernel-window-1w");
 const defaultsBadge = mustGet("defaults-badge");
+const yunwuQuotaBadge = mustGet("yunwu-quota-badge");
+const yunwuQuotaRemaining = mustGet("yunwu-quota-remaining");
+const yunwuQuotaProgress = mustGet("yunwu-quota-progress");
+const yunwuQuotaBalance = mustGet("yunwu-quota-balance");
+const yunwuQuotaBaseline = mustGet("yunwu-quota-baseline");
+const yunwuQuotaLatestRefill = mustGet("yunwu-quota-latest-refill");
+const yunwuQuotaInferredCredit = mustGet("yunwu-quota-inferred-credit");
+const yunwuQuotaCache = mustGet("yunwu-quota-cache");
+const yunwuQuotaConfidence = mustGet("yunwu-quota-confidence");
+const yunwuQuotaObserved = mustGet("yunwu-quota-observed");
+const yunwuQuotaCycleStarted = mustGet("yunwu-quota-cycle-started");
 let defaultsLoaded = false;
 let defaultsSaving = false;
 let defaultsModelMap = new Map();
@@ -308,6 +319,7 @@ const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
 const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
 const setPasskeyUsersBadge = (state, text) => setBadge(passkeyUsersBadge, state, text);
 const setDefaultsBadge = (state, text) => setBadge(defaultsBadge, state, text);
+const setYunwuQuotaBadge = (state, text) => setBadge(yunwuQuotaBadge, state, text);
 const setKernelListBadge = (state, text) => setBadge(kernelListBadge, state, text);
 const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text);
 const setKernelQueueBadge = (state, text) => setBadge(kernelQueueBadge, state, text);
@@ -598,6 +610,10 @@ const creditFormatter = new Intl.NumberFormat(undefined, {
 const decimalFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 0,
   maximumFractionDigits: 6,
+});
+const quotaPercentFormatter = new Intl.NumberFormat(undefined, {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
 });
 const MICROCREDITS_PER_CREDIT = 1_000_000;
 
@@ -4833,6 +4849,83 @@ const extractCachedDefaults = (cached) => {
   return { model, reasoning_effort: reasoning, kernel_policy_limit_requests: limit, kernel_policy_window_ms: windowMs };
 };
 
+const clearYunwuQuotaDiagnostics = () => {
+  yunwuQuotaRemaining.textContent = "—";
+  yunwuQuotaProgress.hidden = true;
+  yunwuQuotaProgress.value = 0;
+  yunwuQuotaProgress.removeAttribute("aria-valuetext");
+  yunwuQuotaBalance.textContent = "—";
+  yunwuQuotaBaseline.textContent = "—";
+  yunwuQuotaLatestRefill.textContent = "—";
+  yunwuQuotaLatestRefill.removeAttribute("title");
+  yunwuQuotaInferredCredit.textContent = "—";
+  yunwuQuotaCache.textContent = "—";
+  yunwuQuotaConfidence.textContent = "—";
+  yunwuQuotaObserved.textContent = "—";
+  yunwuQuotaCycleStarted.textContent = "—";
+};
+
+const formatQuotaCredits = (value) =>
+  typeof value === "number" && Number.isFinite(value) ? `${creditFormatter.format(value)} credits` : "—";
+
+const formatQuotaLabel = (value) => {
+  if (typeof value !== "string" || !value) return "—";
+  return value.replaceAll("_", " ").replace(/^./, (first) => first.toUpperCase());
+};
+
+const renderYunwuQuotaDiagnostics = (diagnostics) => {
+  clearYunwuQuotaDiagnostics();
+  if (!diagnostics || typeof diagnostics !== "object") {
+    setYunwuQuotaBadge("bad", "Unavailable");
+    return;
+  }
+  if (diagnostics.configured !== true) {
+    setYunwuQuotaBadge("unknown", "Not configured");
+    return;
+  }
+  if (diagnostics.available !== true) {
+    setYunwuQuotaBadge("bad", "Unavailable");
+    return;
+  }
+
+  const remaining = typeof diagnostics.remaining_percent === "number" && Number.isFinite(diagnostics.remaining_percent)
+    ? Math.min(100, Math.max(0, diagnostics.remaining_percent))
+    : null;
+  if (remaining !== null) {
+    const formatted = quotaPercentFormatter.format(remaining);
+    yunwuQuotaRemaining.textContent = `${formatted}%`;
+    yunwuQuotaProgress.value = remaining;
+    yunwuQuotaProgress.hidden = false;
+    yunwuQuotaProgress.setAttribute("aria-valuetext", `${formatted}% remaining`);
+  }
+
+  yunwuQuotaBalance.textContent = formatQuotaCredits(diagnostics.balance_credits);
+  yunwuQuotaBaseline.textContent = formatQuotaCredits(diagnostics.baseline_credits);
+  yunwuQuotaInferredCredit.textContent = formatQuotaCredits(diagnostics.last_inferred_credit_credits);
+  yunwuQuotaCache.textContent = formatQuotaLabel(diagnostics.cache_state);
+  yunwuQuotaConfidence.textContent = formatQuotaLabel(diagnostics.confidence);
+  yunwuQuotaObserved.textContent = typeof diagnostics.observed_at_ms === "number"
+    ? formatDate(diagnostics.observed_at_ms)
+    : "—";
+  yunwuQuotaCycleStarted.textContent = typeof diagnostics.cycle_started_at_ms === "number"
+    ? formatDate(diagnostics.cycle_started_at_ms)
+    : "—";
+
+  const refillAmount = formatQuotaCredits(diagnostics.latest_refill_amount_credits);
+  const refillTime = typeof diagnostics.latest_refill_completed_at_ms === "number"
+    ? formatDate(diagnostics.latest_refill_completed_at_ms)
+    : "—";
+  yunwuQuotaLatestRefill.textContent = refillAmount === "—" && refillTime === "—"
+    ? "—"
+    : `${refillAmount} · ${refillTime}`;
+  if (typeof diagnostics.latest_refill_id === "string" && diagnostics.latest_refill_id) {
+    yunwuQuotaLatestRefill.title = `Refill ${diagnostics.latest_refill_id}`;
+  }
+
+  const stale = diagnostics.cache_state === "stale";
+  setYunwuQuotaBadge(stale ? "unknown" : "ok", stale ? "Stale cache" : "Available");
+};
+
 const applyDefaultsSnapshot = (snapshot, defaults, options = {}) => {
   if (!Array.isArray(snapshot?.models) || !snapshot.models.length) return null;
   const models = snapshot.models;
@@ -4902,6 +4995,8 @@ const loadDefaults = async (options = {}) => {
   const token = getAdminToken();
   if (!token) {
     setDefaultsBadge("bad", "Missing token");
+    clearYunwuQuotaDiagnostics();
+    setYunwuQuotaBadge("unknown", "Not loaded");
     return;
   }
 
@@ -4910,6 +5005,7 @@ const loadDefaults = async (options = {}) => {
   if (!preserveInputs) defaultsTouched = false;
   defaultsLoaded = false;
   setDefaultsBadge("unknown", "Loading...");
+  setYunwuQuotaBadge("unknown", "Loading...");
   let cacheApplied = false;
   const cachedDefaults = extractCachedDefaults(readStorageJson(STORAGE_KEYS.defaultsSnapshot));
   const cachedModels = extractCachedModels(readStorageJson(STORAGE_KEYS.defaultsModels));
@@ -4955,8 +5051,10 @@ const loadDefaults = async (options = {}) => {
     const defaultsPayload = await defaultsRes.json().catch(() => null);
     if (!defaultsRes.ok) {
       setDefaultsBadge("bad", defaultsPayload?.error?.message ?? "Error");
+      renderYunwuQuotaDiagnostics(null);
       return;
     }
+    renderYunwuQuotaDiagnostics(defaultsPayload?.yunwu_quota);
 
     if (!models.length) {
       setDefaultsBadge("bad", "No models");
@@ -4991,6 +5089,7 @@ const loadDefaults = async (options = {}) => {
     }
   } catch {
     setDefaultsBadge("bad", "Offline");
+    renderYunwuQuotaDiagnostics(null);
   }
 };
 
@@ -5079,6 +5178,8 @@ setCreateBadge("unknown", "Idle");
 setKeysBadge("unknown", "Not loaded");
 setPasskeyUsersBadge("unknown", "Not loaded");
 setDefaultsBadge("unknown", "Idle");
+clearYunwuQuotaDiagnostics();
+setYunwuQuotaBadge("unknown", "Idle");
 setKernelListBadge("unknown", "Not loaded");
 setKernelNewBadge("unknown", "Idle");
 setKernelQueueBadge("unknown", "Not loaded");

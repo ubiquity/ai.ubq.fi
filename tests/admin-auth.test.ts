@@ -117,6 +117,44 @@ const makeRequest = (body: unknown): Request =>
     body: JSON.stringify(body),
   });
 
+Deno.test("admin defaults includes serializable YunWu quota diagnostics without credentials", async () => {
+  kvStore.clear();
+  const response = await handleAdminDefaults(
+    new Request("https://ai.ubq.fi/admin/defaults"),
+    {
+      getYunwuQuotaDiagnostics: () =>
+        Promise.resolve({
+          configured: true,
+          available: true,
+          cache_state: "fresh",
+          confidence: "refill_observed",
+          balance_credits: 75,
+          baseline_credits: 100,
+          remaining_percent: 75,
+          used_percent: 25,
+          observed_at_ms: 2_000_000,
+          cycle_started_at_ms: 1_000_000,
+          last_known_debits_credits: 1,
+          last_inferred_credit_credits: 50,
+          last_credit_at_ms: 1_500_000,
+          latest_refill_id: "refill-2",
+          latest_refill_amount_credits: 50,
+          latest_refill_completed_at_ms: 1_400_000,
+        }),
+    },
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as Record<string, unknown> & {
+    yunwu_quota?: Record<string, unknown>;
+  };
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
+  assert.equal(payload.yunwu_quota?.remaining_percent, 75);
+  assert.equal(payload.yunwu_quota?.latest_refill_id, "refill-2");
+  assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "system_token"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "user_id"), false);
+});
+
 const yunwuMetadataResponse = (url: string): Response => {
   if (url === "https://yunwu.ai/api/ratio_config") {
     return new Response(

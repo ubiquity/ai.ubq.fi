@@ -139,6 +139,31 @@ curl -sS https://ai.ubq.fi/v1/responses \
   }'
 ```
 
+## Codex quota reporting
+
+Successful inference responses let unmodified Codex terminal and GUI clients show both sources of capacity in `/status`:
+
+- YunWu wallet availability is the canonical `x-codex-*` family, so it can trigger Codex's built-in low-quota warning.
+- The upstream ChatGPT/Codex subscription window is preserved as the named `x-openai-subscription-*` family instead of
+  being allowed to overwrite the wallet warning.
+
+YunWu does not publish a weekly allowance, so the gateway never fabricates a window or reset time. It reports only
+`x-codex-limit-name: YunWu balance` and `x-codex-primary-used-percent`. A Codex client receives the update after its
+first inference response; opening `/status` before sending a message can therefore show
+`Limits: data not available
+yet`.
+
+The denominator is a durable refill-cycle baseline, not the sum of lifetime purchases. The first observation uses the
+larger of the current wallet balance and the latest successful top-up. Later observations infer account credits as
+`balance_now - (balance_previous - used_quota_delta)`, and a newly observed top-up record starts a new cycle even when
+intervening usage hides a net balance increase. The remaining percentage is `current_balance / cycle_baseline`; the
+first observation is marked provisional in the admin diagnostics until a later refill or inferred adjustment is
+observed.
+
+The account snapshot is cached in Deno KV for five minutes, guarded by a durable refresh lease, retained for 24 hours,
+and served stale during temporary YunWu failures. Admins can inspect the balance, baseline, confidence, latest refill,
+inferred credit, and cache state in the Defaults view or the `yunwu_quota` object returned by `GET /admin/defaults`.
+
 Embeddings (OpenAI-compatible):
 
 ```bash
@@ -283,6 +308,10 @@ ubq-ai admin keys list | jq
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
 - `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
   Deno KV at `["uos_ai","voyage_api_key"]`.
+- `YUNWU_SYSTEM_TOKEN` (required for Codex quota reporting): YunWu System Access Token used only by the server to read
+  the account balance and top-up records. It is never sent to gateway clients or inference upstreams.
+- `YUNWU_USER_ID` (required for Codex quota reporting): Numeric YunWu account ID sent as `New-API-User` with the system
+  token.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.

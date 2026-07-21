@@ -153,6 +153,23 @@ Use `GET /uos/models/capabilities` for gateway-specific model metadata such as `
 `supported_endpoints`, and `upstream_provider`. This metadata is intentionally not included in `/v1/models` so
 OpenAI-compatible SDKs receive an OpenAI-shaped response.
 
+## Codex quota reporting
+
+After an inference response, stock Codex terminal and GUI clients can show two independent capacity families in
+`/status`. The gateway makes the YunWu wallet the canonical Codex family using `x-codex-limit-name: YunWu balance` and
+`x-codex-primary-used-percent`, which allows Codex's built-in low-quota warning to reflect the wallet. Upstream
+ChatGPT/Codex subscription limits are retained under the separately named `x-openai-subscription-*` family.
+
+The YunWu wallet is not a weekly quota. The gateway does not emit a synthetic `primary-window-minutes` or
+`primary-reset-at` value for it. A client that opens `/status` before its first inference response may still say that
+limit data is unavailable because Codex learns these headers from inference responses.
+
+The YunWu percentage uses a Deno KV-backed refill cycle rather than adding all historical top-ups. Its first baseline is
+the larger of the observed wallet balance and latest successful top-up. Later credits are inferred from wallet movement
+and the account usage counter; a new top-up record always starts a new cycle. Snapshots are fresh for five minutes,
+retained for 24 hours, protected by a durable refresh lease, and served stale during temporary account API failures.
+`GET /admin/defaults` exposes non-secret diagnostics in `yunwu_quota`; credentials are never returned.
+
 Observed integration behavior:
 
 - `gpt-5.5` works for `/v1/chat/completions`.

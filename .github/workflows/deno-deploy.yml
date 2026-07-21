@@ -33,7 +33,6 @@ jobs:
 
   sync-ai-runtime-env:
     needs: deploy
-    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -94,6 +93,8 @@ jobs:
           UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UOS_AI_KERNEL_PUBLIC_KEY || secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY || vars.UOS_AI_KERNEL_PUBLIC_KEY || vars.UBIQUITY_AI_KERNEL_PUBLIC_KEY || '' }}
           VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY || vars.VOYAGEAI_API_KEY || '' }}
           YUNWU_API_KEY: ${{ secrets.YUNWU_API_KEY || vars.YUNWU_API_KEY || '' }}
+          YUNWU_SYSTEM_TOKEN: ${{ secrets.YUNWU_SYSTEM_TOKEN || '' }}
+          YUNWU_USER_ID: ${{ vars.YUNWU_USER_ID || secrets.YUNWU_USER_ID || '' }}
         run: |
           set -euo pipefail
 
@@ -139,6 +140,10 @@ jobs:
             echo "::error::CODEX_AUTH_JSON_B64 is required for Codex auth runtime env."
             exit 1
           fi
+          if [ -z "$YUNWU_SYSTEM_TOKEN" ] || [ -z "$YUNWU_USER_ID" ]; then
+            echo "::error::YUNWU_SYSTEM_TOKEN and YUNWU_USER_ID are required for YunWu quota diagnostics."
+            exit 1
+          fi
 
           codex_auth_minified="$(
             deno eval '
@@ -177,3 +182,5 @@ jobs:
           sync_secret UOS_AI_KERNEL_PUBLIC_KEY
           sync_secret VOYAGEAI_API_KEY
           sync_secret YUNWU_API_KEY
+          sync_secret YUNWU_SYSTEM_TOKEN
+          sync_secret YUNWU_USER_ID

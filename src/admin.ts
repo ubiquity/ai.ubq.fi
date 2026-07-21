@@ -84,6 +84,7 @@ import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "./types.ts";
 import { YunwuError } from "./yunwu.ts";
+import { getYunwuQuotaDiagnostics } from "./yunwu_quota.ts";
 
 const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
 const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
@@ -351,30 +352,38 @@ export const handleAdminKvMigrationValidate = async (): Promise<Response> => {
   return json(200, await validateKvMigrationTarget(kv));
 };
 
-export const handleAdminDefaults = async (req: Request): Promise<Response> => {
+export const handleAdminDefaults = async (
+  req: Request,
+  dependencies: Readonly<{
+    getYunwuQuotaDiagnostics?: typeof getYunwuQuotaDiagnostics;
+  }> = {},
+): Promise<Response> => {
   const kv = await kvPromise;
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage defaults", "server_error");
   }
 
   if (req.method === "GET") {
-    const modelEntry = await kv.get<string>(DEFAULT_MODEL_KEY);
-    const reasoningEntry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
-    const kernelLimitEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY);
-    const kernelWindowEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY);
+    const [modelEntry, reasoningEntry, kernelLimitEntry, kernelWindowEntry, yunwuQuota] = await Promise.all([
+      kv.get<string>(DEFAULT_MODEL_KEY),
+      kv.get<string>(DEFAULT_REASONING_EFFORT_KEY),
+      kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY),
+      kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY),
+      (dependencies.getYunwuQuotaDiagnostics ?? getYunwuQuotaDiagnostics)(),
+    ]);
     const model = await resolveDefaultModel(modelEntry.value);
     const reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
     const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
       DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
     const kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
     return json(200, {
-      ok: true,
       defaults: {
         model,
         reasoning_effort: reasoningEffort,
         kernel_policy_limit_requests: kernelPolicyLimit,
         kernel_policy_window_ms: kernelPolicyWindow,
       },
+      yunwu_quota: yunwuQuota,
     });
   }
 
@@ -455,7 +464,6 @@ export const handleAdminDefaults = async (req: Request): Promise<Response> => {
     }
 
     return json(200, {
-      ok: true,
       defaults: {
         model,
         reasoning_effort: reasoningEffort,
