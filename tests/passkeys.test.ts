@@ -115,7 +115,7 @@ const {
   updatePasskeyCredentialSignCount,
 } = await import("../src/passkeys.ts");
 const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
-const { YUNWU_QUOTA_STATE_KEY } = await import("../src/yunwu_quota.ts");
+const { YUNWU_QUOTA_FRESH_MS, YUNWU_QUOTA_STATE_KEY } = await import("../src/yunwu_quota.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
   const originalGet = Deno.env.get;
@@ -191,6 +191,70 @@ Deno.test("inference handler decorates Responses and Chat Completions with the c
       assert.equal(response.headers.has("x-codex-primary-reset-at"), false);
     }
   });
+});
+
+Deno.test("inference handler never waits for a slow YunWu quota refresh", async () => {
+  kvStore.clear();
+  const { token } = seedPasskeySession();
+  const now = Date.now();
+  kvStore.set(keyToString(YUNWU_QUOTA_STATE_KEY), {
+    current_balance_quota: 25_000_000,
+    post_refill_baseline_quota: 50_000_000,
+    last_observed_used_quota: 25_000_000,
+    quota_per_credit: 500_000,
+    observed_at_ms: now - YUNWU_QUOTA_FRESH_MS,
+    cycle_started_at_ms: now - 60_000,
+    confidence: "refill_observed",
+    last_known_debits_quota: 1_000_000,
+    last_inferred_credit_quota: 0,
+    last_credit_at_ms: now - 60_000,
+    latest_refill_id: "refill-2",
+    latest_refill_amount_credits: 50,
+    latest_refill_completed_at_ms: now - 60_000,
+  });
+
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener(
+        "abort",
+        () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
+        { once: true },
+      );
+    });
+  try {
+    await withEnv({ YUNWU_SYSTEM_TOKEN: "system-token", YUNWU_USER_ID: "717235" }, async () => {
+      const { default: handler } = await import("../src/handler.ts");
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const response = await Promise.race([
+          handler(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: "{}",
+              signal: controller.signal,
+            }),
+          ),
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(() => reject(new Error("handler waited for YunWu quota refresh")), 500);
+          }),
+        ]);
+        assert.equal(response.status, 503);
+        assert.equal(response.headers.get("x-codex-primary-used-percent"), "50");
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+      }
+    });
+  } finally {
+    controller.abort();
+    globalThis.fetch = originalFetch;
+    await Promise.resolve();
+  }
 });
 
 Deno.test("passkey session authenticates as client and admin", async () => {

@@ -161,8 +161,11 @@ first observation is marked provisional in the admin diagnostics until a later r
 observed.
 
 The account snapshot is cached in Deno KV for five minutes, guarded by a durable refresh lease, retained for 24 hours,
-and served stale during temporary YunWu failures. Admins can inspect the balance, baseline, confidence, latest refill,
-inferred credit, and cache state in the Defaults view or the `yunwu_quota` object returned by `GET /admin/defaults`.
+and served stale during temporary YunWu failures. Refresh work runs alongside inference and never delays response
+headers; the gateway uses only an already available fresh or retained snapshot for that response. A YunWu-routed
+response durably invalidates the pre-debit observation so the next request refreshes it instead of reusing it as fresh
+for five minutes. Admins can inspect the balance, baseline, confidence, latest refill, inferred credit, and cache state
+in the Defaults view or the `yunwu_quota` object returned by `GET /admin/defaults`.
 
 Embeddings (OpenAI-compatible):
 

@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { buildCodexQuotaHeaders, OPENAI_SUBSCRIPTION_LIMIT_NAME, YUNWU_CODEX_LIMIT_NAME } from "../src/codex_quota.ts";
 import {
   fetchYunwuQuotaObservation,
+  getCachedYunwuQuotaSnapshot,
   getYunwuQuotaSnapshot,
+  invalidateYunwuQuotaSnapshot,
   readYunwuAccountCredentials,
   updateYunwuQuotaState,
   YUNWU_QUOTA_FRESH_MS,
+  YUNWU_QUOTA_INVALIDATION_KEY,
   YUNWU_QUOTA_RETENTION_MS,
   YUNWU_QUOTA_STATE_KEY,
   YUNWU_SYSTEM_TOKEN_ENV,
@@ -331,6 +334,43 @@ Deno.test("YunWu quota cache serves fresh state without an upstream request", as
   assert.equal(snapshot?.remaining_percent, 100);
 });
 
+Deno.test("YunWu quota cache marks an invalidated observation stale", async () => {
+  const kv = new MemoryKv();
+  const now = 15_000_000;
+  kv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now }));
+  kv.seed(YUNWU_QUOTA_INVALIDATION_KEY, { invalidated_at_ms: now });
+
+  const snapshot = await getCachedYunwuQuotaSnapshot({
+    kv: kv as unknown as Deno.Kv,
+    now: () => now,
+  });
+
+  assert.equal(snapshot?.cache_state, "stale");
+  assert.equal(snapshot?.remaining_percent, 100);
+});
+
+Deno.test("YunWu quota invalidation forces a fresh account observation", async () => {
+  const kv = new MemoryKv();
+  const now = 16_000_000;
+  kv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now }));
+  await invalidateYunwuQuotaSnapshot({
+    kv: kv as unknown as Deno.Kv,
+    now: () => now,
+  });
+  const calls: Array<{ url: string; headers: Headers }> = [];
+
+  const snapshot = await getYunwuQuotaSnapshot(credentials, {
+    kv: kv as unknown as Deno.Kv,
+    now: () => now,
+    fetcher: yunwuFetcher(calls),
+    createLeaseOwner: () => "invalidation-refresh-owner",
+  });
+
+  assert.equal(snapshot?.cache_state, "refreshed");
+  assert.equal(calls.length, 3);
+  assert.equal(kv.value(YUNWU_QUOTA_INVALIDATION_KEY), null);
+});
+
 Deno.test("YunWu quota refresh stores a new observation and computes its percentage", async () => {
   const kv = new MemoryKv();
   const now = 20_000_000;
@@ -408,6 +448,44 @@ Deno.test("YunWu quota refresh lease permits only one upstream refresh", async (
   assert.equal(calls.length, 3);
   assert.equal(snapshots.filter((snapshot) => snapshot?.cache_state === "refreshed").length, 1);
   assert.equal(snapshots.filter((snapshot) => snapshot?.cache_state === "stale").length, 11);
+});
+
+Deno.test("YunWu quota invalidation rejects an in-flight pre-debit refresh", async () => {
+  const kv = new MemoryKv();
+  const now = 50_000_000;
+  const previous = state({ observed_at_ms: now - YUNWU_QUOTA_FRESH_MS });
+  kv.seed(YUNWU_QUOTA_STATE_KEY, previous);
+  let releaseFetch = (): void => {};
+  let markFetchStarted = (): void => {};
+  const fetchStarted = new Promise<void>((resolve) => {
+    markFetchStarted = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    releaseFetch = resolve;
+  });
+  const baseFetcher = yunwuFetcher([]);
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    markFetchStarted();
+    await gate;
+    return await baseFetcher(input, init);
+  };
+  const pending = getYunwuQuotaSnapshot(credentials, {
+    kv: kv as unknown as Deno.Kv,
+    now: () => now,
+    fetcher,
+    createLeaseOwner: () => "pre-debit-refresh-owner",
+  });
+  await fetchStarted;
+  await invalidateYunwuQuotaSnapshot({
+    kv: kv as unknown as Deno.Kv,
+    now: () => now + 1,
+  });
+  releaseFetch();
+
+  const snapshot = await pending;
+  assert.equal(snapshot?.cache_state, "stale");
+  assert.deepEqual(kv.value(YUNWU_QUOTA_STATE_KEY), previous);
+  assert.deepEqual(kv.value(YUNWU_QUOTA_INVALIDATION_KEY), { invalidated_at_ms: now + 1 });
 });
 
 const quotaSnapshot = (usedPercent: number): YunwuQuotaSnapshot => ({
