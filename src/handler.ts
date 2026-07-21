@@ -118,7 +118,7 @@ type CodexQuotaLoad = Readonly<{
   refreshed: Promise<YunwuQuotaSnapshot | null>;
 }>;
 
-const CODEX_QUOTA_DECORATION_WAIT_MS = 25;
+const CODEX_QUOTA_DECORATION_WAIT_MS = 250;
 
 const startCodexQuotaLoad = (signal: AbortSignal): CodexQuotaLoad => ({
   cached: getCachedConfiguredYunwuQuotaSnapshot(),
