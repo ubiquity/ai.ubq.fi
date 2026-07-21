@@ -2,6 +2,9 @@
 
 - Keep OpenAI-compatible endpoints and request bodies aligned with the official OpenAI API schema. Do not add
   gateway-only aliases, sentinel values, or alternate wire formats.
+- Keep `GET /v1/models` without query parameters strictly OpenAI-compatible. Treat `GET /v1/models?client_version=X.Y.Z`
+  as a separate Codex-native compatibility contract that returns the rich upstream `{ "models": [...] }` catalog for
+  that exact client version; never describe the versioned response as an official OpenAI schema.
 - Treat Codex CLI compatibility as a first-class gateway contract for `/v1/responses`. Accept fields emitted by
   supported Codex CLI versions through explicit compatibility extensions that remain separate from the official OpenAI
   schema allowlists and drift checks; do not present those extensions as official OpenAI fields.

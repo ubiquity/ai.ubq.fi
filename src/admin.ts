@@ -11,6 +11,8 @@ import {
   storeCodexModelsSnapshot,
   validateCodexAuthJson,
 } from "./codex.ts";
+import { normalizeCodexModelsPayload } from "./codex_models.ts";
+import { CODEX_CATALOG_AUTH_GENERATION_KEY, storeCodexCatalog } from "./codex_catalog.ts";
 import {
   DEFAULT_KERNEL_POLICY_LIMIT_KEY,
   DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS,
@@ -88,15 +90,6 @@ const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
 const UOS_CODEX_PROMPTS_CHUNK_PREFIX = ["uos_ai", "codex_instructions_chunk"] as const;
 const MAX_KV_MIGRATION_BODY_BYTES = 5 * 1024 * 1024;
 
-const isHiddenCodexModel = (value: Record<string, unknown>): boolean =>
-  getString(value.visibility)?.trim().toLowerCase() === "hide";
-
-const normalizeNonNegativeInteger = (value: unknown): number | null => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const normalized = Math.trunc(value);
-  return normalized >= 0 ? normalized : null;
-};
-
 const resolveDefaultModel = async (entryValue: unknown): Promise<string> => {
   const configured = typeof entryValue === "string" ? entryValue.trim() : "";
   if (configured) return configured;
@@ -142,9 +135,10 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     );
   }
 
+  const validatedClientVersion = validated.clientVersion;
   const snapshot = normalizeCodexModelsPayload(validated.models, {
     source: "chatgpt_codex",
-    clientVersion,
+    clientVersion: validatedClientVersion,
   });
   if (!snapshot) {
     return openaiError(
@@ -165,14 +159,36 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     );
   }
 
-  const stored = await kv.atomic()
-    .set(CODEX_KV_KEY, validated.auth)
-    .set(CODEX_MODELS_KV_KEY, snapshot)
-    .commit();
-  if (!stored.ok) {
+  const authGeneration = crypto.randomUUID();
+  let stored = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const existingSnapshot = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
+    const atomic = kv.atomic()
+      .check(existingSnapshot)
+      .set(CODEX_KV_KEY, validated.auth)
+      .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration)
+      .set(CODEX_MODELS_KV_KEY, snapshot);
+    if ((await atomic.commit()).ok) {
+      stored = true;
+      break;
+    }
+  }
+  if (!stored) {
     return openaiError(500, "Deno KV could not persist Codex auth and models", "server_error");
   }
   cacheCodexAuth(validated.auth);
+
+  const catalogSeeded = await storeCodexCatalog(kv, {
+    clientVersion: validatedClientVersion,
+    authGeneration,
+    body: validated.modelsBody,
+    etag: validated.etag,
+    contentType: validated.contentType,
+    fetchedAtMs: Date.now(),
+  }).catch((error) => {
+    console.error("[ai.ubq.fi] Codex catalog seed failed:", error);
+    return false;
+  });
 
   const modelsStored = {
     count: snapshot.models.length,
@@ -185,7 +201,6 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   return json(
     200,
     {
-      ok: true,
       stored: true,
       refreshed: validated.refreshed,
       account_id: validated.auth.account_id,
@@ -194,6 +209,8 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       upstream_status: validated.status,
       upstream_content_type: validated.contentType,
       models: modelsStored,
+      catalog_seeded: catalogSeeded,
+      normalized_snapshot_updated: true,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
@@ -624,119 +641,6 @@ const extractModelReasoningLevels = (model: Record<string, unknown> | null): Rea
     })
     .filter((entry): entry is ReasoningEffort => Boolean(entry));
   return Array.from(new Set(levels));
-};
-
-const reasoningLevelEffort = (value: unknown): ReasoningEffort | null => {
-  if (value === null) return "none";
-  if (typeof value === "string") return normalizeReasoningEffort(value);
-  if (!isRecord(value)) return null;
-  return value.effort === null ? "none" : normalizeReasoningEffort(value.effort);
-};
-
-const deriveReasoningEffortWireMap = (levels: unknown[]): Record<string, ReasoningEffort> => {
-  const wireMap = new Map<ReasoningEffort, ReasoningEffort>();
-  let previousWireEffort: ReasoningEffort | null = null;
-
-  for (const level of levels) {
-    const effort = reasoningLevelEffort(level);
-    if (!effort) continue;
-
-    const explicitWireEffort = isRecord(level) ? normalizeReasoningEffort(level.wire_effort) : null;
-    const description = isRecord(level) ? getString(level.description)?.trim().toLowerCase() ?? "" : "";
-    const delegatesAutomatically = description.includes("automatic task delegation");
-    const wireEffort: ReasoningEffort = explicitWireEffort ??
-      (delegatesAutomatically ? previousWireEffort : effort) ?? effort;
-
-    if (wireEffort !== effort) wireMap.set(effort, wireEffort);
-    previousWireEffort = wireEffort;
-  }
-
-  return Object.fromEntries(wireMap);
-};
-
-const normalizeCodexModelsPayload = (
-  value: unknown,
-  overrides: Readonly<{ source?: string; clientVersion?: string | null; updatedAtMs?: number | null }> = {},
-): CodexModelsSnapshot | null => {
-  let modelsRaw: unknown = null;
-  let source = "codex_cli";
-  let clientVersion: string | null = null;
-  let updatedAtMs: number | null = null;
-
-  if (Array.isArray(value)) {
-    modelsRaw = value;
-  } else if (isRecord(value)) {
-    if (Array.isArray(value.models)) modelsRaw = value.models;
-    else if (Array.isArray(value.data)) modelsRaw = value.data;
-    const sourceValue = getString(value.source);
-    if (sourceValue) source = sourceValue;
-    clientVersion = getString(value.client_version) ?? getString(value.clientVersion);
-    if (typeof value.updated_at_ms === "number" && Number.isFinite(value.updated_at_ms)) {
-      updatedAtMs = Math.trunc(value.updated_at_ms);
-    }
-  }
-  if (overrides.source) source = overrides.source;
-  if (overrides.clientVersion) clientVersion = overrides.clientVersion;
-  if (typeof overrides.updatedAtMs === "number" && Number.isFinite(overrides.updatedAtMs)) {
-    updatedAtMs = Math.trunc(overrides.updatedAtMs);
-  }
-
-  if (!modelsRaw || !Array.isArray(modelsRaw)) return null;
-
-  const normalizeModel = (item: Record<string, unknown>): Record<string, unknown> | null => {
-    if (isHiddenCodexModel(item)) return null;
-    const slug = getString(item.slug) ?? getString(item.id) ?? getString(item.model) ?? getString(item.name);
-    if (!slug) return null;
-    const normalized: Record<string, unknown> = { slug };
-    const displayName = getString(item.display_name) ?? getString(item.displayName) ?? getString(item.name);
-    if (displayName) normalized.display_name = displayName;
-    const description = getString(item.description);
-    if (description) normalized.description = description;
-    const visibility = getString(item.visibility);
-    if (visibility) normalized.visibility = visibility;
-    if (typeof item.supported_in_api === "boolean") normalized.supported_in_api = item.supported_in_api;
-    for (const key of ["context_window", "max_context_window", "auto_compact_token_limit"]) {
-      if (item[key] === null) {
-        normalized[key] = null;
-        continue;
-      }
-      const count = normalizeNonNegativeInteger(item[key]);
-      if (count !== null) normalized[key] = count;
-    }
-    const defaultReasoning = item.default_reasoning_level === null
-      ? "none"
-      : normalizeReasoningEffort(item.default_reasoning_level);
-    if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
-    if (Array.isArray(item.supported_reasoning_levels)) {
-      const levels = item.supported_reasoning_levels.map(reasoningLevelEffort)
-        .filter((entry): entry is ReasoningEffort => entry !== null);
-      if (levels.length) normalized.supported_reasoning_levels = levels;
-      const wireMap = deriveReasoningEffortWireMap(item.supported_reasoning_levels);
-      if (Object.keys(wireMap).length) normalized.reasoning_effort_wire_map = wireMap;
-    }
-    return normalized;
-  };
-
-  const models: Record<string, unknown>[] = [];
-  const seen = new Set<string>();
-  for (const item of modelsRaw) {
-    if (!isRecord(item)) continue;
-    const normalized = normalizeModel(item);
-    if (!normalized) continue;
-    const slug = getString(normalized.slug);
-    if (!slug || seen.has(slug)) continue;
-    models.push(normalized);
-    seen.add(slug);
-  }
-
-  if (!models.length) return null;
-
-  return {
-    models,
-    source,
-    updated_at_ms: updatedAtMs ?? Date.now(),
-    client_version: clientVersion ?? undefined,
-  };
 };
 
 const estimateJsonSize = (value: unknown): number | null => {

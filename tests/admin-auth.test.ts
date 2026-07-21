@@ -10,7 +10,7 @@ const stringEntryLine = (key: Deno.KvKey, value: string): string =>
   });
 
 const kvStore = new Map<string, unknown>();
-let failNextAtomicCommit = false;
+let atomicCommitsToFail = 0;
 
 const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   if (left === right) return 0;
@@ -72,8 +72,8 @@ const kvStub = {
         return chain;
       },
       commit: () => {
-        if (failNextAtomicCommit) {
-          failNextAtomicCommit = false;
+        if (atomicCommitsToFail > 0) {
+          atomicCommitsToFail -= 1;
           return Promise.resolve({ ok: false } as const);
         }
         for (const op of ops) {
@@ -238,6 +238,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
     assert.equal(stored?.models?.[0]?.supported_in_api, false);
     assert.equal(stored?.models?.[0]?.default_reasoning_level, "high");
     assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, [
+      "none",
       "low",
       "medium",
       "high",
@@ -272,9 +273,62 @@ Deno.test("admin codex auth stores live model catalog without caller model snaps
   }
 });
 
-Deno.test("admin codex auth stores auth and model snapshot atomically", async () => {
+Deno.test("admin codex auth rotation replaces a prior account snapshot even at an older version", async () => {
   kvStore.clear();
-  failNextAtomicCommit = true;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const version = new URL(url).searchParams.get("client_version") ?? "missing";
+    return Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: `gpt-${version}`, rich_field: { preserved: true } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: `"${version}"` },
+      }),
+    );
+  };
+
+  try {
+    const newer = await handleAdminCodexAuth(makeRequest({
+      auth: authPayload,
+      models: { client_version: "0.201.0" },
+    }));
+    assert.equal(newer.status, 200);
+    const firstGeneration = kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"]));
+    assert.equal(typeof firstGeneration, "string");
+
+    const older = await handleAdminCodexAuth(makeRequest({
+      auth: authPayload,
+      models: { client_version: "0.200.0" },
+    }));
+    assert.equal(older.status, 200);
+    const olderPayload = await older.json() as { normalized_snapshot_updated?: boolean; ok?: boolean };
+    assert.equal(olderPayload.normalized_snapshot_updated, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(olderPayload, "ok"), false);
+
+    const secondGeneration = kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"]));
+    assert.equal(typeof secondGeneration, "string");
+    assert.notEqual(secondGeneration, firstGeneration);
+    const snapshot = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as {
+      client_version?: string;
+      models?: Array<{ slug?: string }>;
+    };
+    assert.equal(snapshot.client_version, "0.200.0");
+    assert.equal(snapshot.models?.[0]?.slug, "gpt-0.200.0");
+
+    const seededMetadata = kvStore.get(keyToString(["ubq_ai", "codex_catalog", "0.200.0"])) as {
+      auth_generation?: string;
+      etag?: string;
+    };
+    assert.equal(seededMetadata.auth_generation, secondGeneration);
+    assert.equal(seededMetadata.etag, '"0.200.0"');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("admin codex auth retries transient snapshot contention", async () => {
+  kvStore.clear();
+  atomicCommitsToFail = 1;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () =>
     Promise.resolve(
@@ -297,12 +351,41 @@ Deno.test("admin codex auth stores auth and model snapshot atomically", async ()
       }),
     );
 
+    assert.equal(response.status, 200);
+    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), true);
+    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    atomicCommitsToFail = 0;
+  }
+});
+
+Deno.test("admin codex auth fails atomically after snapshot contention retries are exhausted", async () => {
+  kvStore.clear();
+  atomicCommitsToFail = 3;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+  try {
+    const response = await handleAdminCodexAuth(
+      makeRequest({
+        auth: authPayload,
+        models: { client_version: "0.126.0" },
+      }),
+    );
+
     assert.equal(response.status, 500);
     assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
     assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
   } finally {
     globalThis.fetch = originalFetch;
-    failNextAtomicCommit = false;
+    atomicCommitsToFail = 0;
   }
 });
 

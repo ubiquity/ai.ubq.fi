@@ -1,4 +1,5 @@
 import { config } from "./config.ts";
+import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
 import { kvPromise } from "./kv.ts";
 import { decodeBase64ToString, getString, isRecord } from "./utils.ts";
 import type { CodexAuthState, ResponseInputItem } from "./types.ts";
@@ -64,23 +65,8 @@ export class CodexError extends Error {
 export const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
 export const CODEX_MODELS_KV_KEY = ["ubq_ai", "codex_models"] as const;
 
-export type CodexModelsSnapshot = Readonly<{
-  models: Record<string, unknown>[];
-  source: string;
-  updated_at_ms: number;
-  client_version?: string | null;
-}>;
-
-export const getCodexModelsSnapshotDefaultModel = (snapshot: CodexModelsSnapshot | null): string | null => {
-  if (!snapshot || !Array.isArray(snapshot.models)) return null;
-  for (const model of snapshot.models) {
-    if (!isRecord(model)) continue;
-    const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
-    const trimmed = id?.trim();
-    if (trimmed) return trimmed;
-  }
-  return null;
-};
+export type { CodexModelsSnapshot } from "./codex_models.ts";
+export { getCodexModelsSnapshotDefaultModel } from "./codex_models.ts";
 
 export const parseCodexAuthFromAuthJson = (value: unknown): Omit<CodexAuthState, "updated_at_ms"> | null => {
   if (!isRecord(value)) return null;
@@ -452,13 +438,15 @@ const fetchCodexModelsWithAuth = async (
   auth: CodexAuthState,
   url: string,
   clientVersion: string | null,
+  ifNoneMatch?: string | null,
 ): Promise<Response> => {
   const headers = new Headers();
   headers.set("Authorization", `Bearer ${auth.access_token}`);
   headers.set("ChatGPT-Account-ID", auth.account_id);
   headers.set("originator", CODEX_ORIGINATOR);
-  headers.set("user-agent", codexUserAgent(clientVersion));
+  headers.set("user-agent", `codex_cli_rs/${clientVersion ?? CODEX_CLIENT_VERSION} (ai.ubq.fi)`);
   headers.set("Accept", "application/json");
+  if (ifNoneMatch) headers.set("If-None-Match", ifNoneMatch);
 
   try {
     return await fetch(url, {
@@ -536,19 +524,22 @@ export const fetchCodexResponses = async (
 };
 
 export const fetchCodexModels = async (
-  options: Readonly<{ clientVersion?: string | null }> = {},
+  options: Readonly<{ clientVersion?: string | null; ifNoneMatch?: string | null }> = {},
 ): Promise<Response> => {
   const auth = await getValidAuth();
-  const clientVersion = pickHigherSemver(options.clientVersion, CODEX_CLIENT_VERSION);
+  const requestedVersion = options.clientVersion?.trim() || null;
+  const clientVersion = requestedVersion && parseCodexClientVersion(requestedVersion)
+    ? requestedVersion
+    : CODEX_CLIENT_VERSION;
   const urls = codexModelsBaseUrls(clientVersion);
   let lastResponse: Response | null = null;
 
   for (const url of urls) {
-    let res = await fetchCodexModelsWithAuth(auth, url, clientVersion);
+    let res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch);
     if (res.status === 401) {
       await refreshAuth(await getAuthEntry());
       const auth2 = await getValidAuth();
-      res = await fetchCodexModelsWithAuth(auth2, url, clientVersion);
+      res = await fetchCodexModelsWithAuth(auth2, url, clientVersion, options.ifNoneMatch);
     }
     if ((res.status === 404 || res.status === 400) && urls.length > 1) {
       lastResponse = res;
@@ -603,13 +594,19 @@ export const validateCodexAuthJson = async (
     status: number;
     contentType: string | null;
     models: unknown;
+    modelsBody: string;
+    etag: string | null;
+    clientVersion: string;
   } | {
     ok: false;
     status: number;
     body: string;
   }
 > => {
-  const clientVersion = pickHigherSemver(options.clientVersion, CODEX_CLIENT_VERSION);
+  const requestedVersion = options.clientVersion?.trim() || null;
+  const clientVersion = requestedVersion && parseCodexClientVersion(requestedVersion)
+    ? requestedVersion
+    : CODEX_CLIENT_VERSION;
   const urls = codexModelsBaseUrls(clientVersion);
   let refreshed = false;
   let lastResponse: Response | null = null;
@@ -647,7 +644,17 @@ export const validateCodexAuthJson = async (
       } catch {
         // ignore
       }
-      return { ok: true, auth, refreshed, status: res.status, contentType, models };
+      return {
+        ok: true,
+        auth,
+        refreshed,
+        status: res.status,
+        contentType,
+        models,
+        modelsBody: text,
+        etag: res.headers.get("ETag"),
+        clientVersion,
+      };
     }
 
     const text = await res.text().catch(() => "");

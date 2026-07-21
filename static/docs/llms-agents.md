@@ -109,6 +109,10 @@ OpenAI-compatible endpoints:
 - `POST /v1/responses`
 - `POST /v1/embeddings`
 
+Codex compatibility endpoints:
+
+- `GET /v1/models?client_version=X.Y.Z`
+
 UOS gateway endpoints:
 
 - `GET /uos/auth`
@@ -131,9 +135,18 @@ Health endpoints:
 model catalog. Each model object contains only the OpenAI model fields: `id`, `object`, `created`, and `owned_by`. When
 no snapshot has been initialized, it returns an empty list.
 
+`GET /v1/models?client_version=X.Y.Z` is a separate Codex-native compatibility contract. It accepts exactly one
+three-part numeric version and returns the untouched rich upstream `{ "models": [...] }` JSON for that exact Codex
+version. It is intentionally not part of the official OpenAI model-list schema. The gateway uses only its server-held
+Codex authentication upstream, caches validated gzip-compressed JSON by version in Deno KV for five minutes, retains a
+last valid copy for 24 hours, and uses a durable refresh lease to collapse concurrent upstream refreshes. Upstream
+`ETag` values are returned and matching `If-None-Match` requests receive `304`. A temporary refresh failure serves the
+last valid version-specific copy; the route returns `502` when no valid copy exists.
+
 Use `/v1/models` as the source of truth instead of assuming OpenAI public API aliases are supported. The gateway is
 backed by Codex with a ChatGPT account, so some OpenAI API model aliases may not be available through this gateway.
-Hidden Codex catalog entries such as internal review models are filtered during snapshot upload and are not exposed.
+Hidden Codex catalog entries such as internal review models are filtered when the normalized snapshot is refreshed and
+are not exposed by the unversioned OpenAI model list.
 
 Use `GET /uos/models/capabilities` for gateway-specific model metadata such as `supported_reasoning_levels`,
 `default_reasoning_effort`, `context_window_tokens`, `max_context_window_tokens`, `auto_compact_token_limit_tokens`,
