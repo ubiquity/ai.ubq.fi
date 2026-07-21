@@ -118,19 +118,39 @@ type CodexQuotaLoad = Readonly<{
   refreshed: Promise<YunwuQuotaSnapshot | null>;
 }>;
 
+const CODEX_QUOTA_DECORATION_WAIT_MS = 25;
+
 const startCodexQuotaLoad = (signal: AbortSignal): CodexQuotaLoad => ({
   cached: getCachedConfiguredYunwuQuotaSnapshot(),
   refreshed: loadCodexQuotaSnapshot(signal),
 });
 
-const immediatelyAvailableCodexQuotaSnapshot = async (
+const boundedCodexQuotaSnapshot = (
   load: CodexQuotaLoad,
 ): Promise<YunwuQuotaSnapshot | null> =>
-  await Promise.race([
-    load.refreshed,
-    load.cached,
-    Promise.resolve(null),
-  ]);
+  new Promise((resolve) => {
+    let pending = 2;
+    let settled = false;
+    const timeout = setTimeout(() => finish(null), CODEX_QUOTA_DECORATION_WAIT_MS);
+
+    const finish = (snapshot: YunwuQuotaSnapshot | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(snapshot);
+    };
+    const accept = (snapshot: YunwuQuotaSnapshot | null): void => {
+      if (snapshot) {
+        finish(snapshot);
+        return;
+      }
+      pending -= 1;
+      if (pending === 0) finish(null);
+    };
+
+    load.refreshed.then(accept, () => accept(null));
+    load.cached.then(accept, () => accept(null));
+  });
 
 const decorateInferenceQuota = async (
   response: Response,
@@ -146,7 +166,7 @@ const decorateInferenceQuota = async (
       );
     }
   }
-  return withCodexQuotaHeaders(response, await immediatelyAvailableCodexQuotaSnapshot(load));
+  return withCodexQuotaHeaders(response, await boundedCodexQuotaSnapshot(load));
 };
 
 export default async function handler(req: Request): Promise<Response> {
