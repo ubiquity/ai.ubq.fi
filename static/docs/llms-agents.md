@@ -365,6 +365,10 @@ Keys forwarded for responses:
 - `text`
 - `include`
 
+Codex CLI's `client_metadata` string map is accepted for client compatibility and stripped before the gateway builds the
+upstream request. The gateway generates its own upstream request metadata instead of forwarding client-supplied session
+identifiers.
+
 `store` is always set to `false` by the gateway. The following are always ignored and will produce warnings:
 
 - `temperature` -> `temperature_ignored`

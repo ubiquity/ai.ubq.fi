@@ -200,6 +200,7 @@ export type ChatCompletionRequest = Readonly<{
 }>;
 
 export type ResponsesRequest = Readonly<{
+  client_metadata?: unknown;
   model?: unknown;
   input?: unknown;
   instructions?: unknown;

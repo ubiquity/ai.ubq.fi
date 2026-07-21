@@ -3800,6 +3800,17 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "client_metadata")) {
+    const clientMetadata = rawBody.client_metadata;
+    if (!isRecord(clientMetadata) || Object.values(clientMetadata).some((value) => typeof value !== "string")) {
+      return openaiError(
+        400,
+        "client_metadata must be an object with string values",
+        "invalid_request_error",
+        { param: "client_metadata" },
+      );
+    }
+  }
   const warnings = buildIgnoredWarnings(
     rawRecord,
     new Set([
@@ -3815,6 +3826,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
       "text",
       "include",
       "context_management",
+      "client_metadata",
     ]),
   );
 
