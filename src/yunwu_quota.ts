@@ -284,9 +284,14 @@ export const updateYunwuQuotaState = (
   const refillBaselineQuota = newRefillObserved && observation.latest_refill
     ? Math.round(observation.latest_refill.amount_credits * observation.quota_per_credit)
     : 0;
+  const balancePlusKnownDebits = observation.balance_quota + knownDebits;
+  const reconstructedRefillCapacityQuota = newRefillObserved && knownDebits > 0 &&
+      Number.isSafeInteger(balancePlusKnownDebits)
+    ? balancePlusKnownDebits
+    : observation.balance_quota;
   const postRefillBaselineQuota = creditObserved
     ? Math.max(
-      observation.balance_quota,
+      reconstructedRefillCapacityQuota,
       Number.isSafeInteger(refillBaselineQuota) && refillBaselineQuota > 0 ? refillBaselineQuota : 0,
     )
     : previous.post_refill_baseline_quota;

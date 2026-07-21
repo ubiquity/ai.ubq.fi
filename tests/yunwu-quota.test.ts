@@ -247,10 +247,57 @@ Deno.test("YunWu quota detects a refill despite intervening debits and starts a 
   );
   assert.equal(next.last_known_debits_quota, 1_000_000);
   assert.equal(next.last_inferred_credit_quota, 25_000_000);
-  assert.equal(next.post_refill_baseline_quota, 44_000_000);
+  assert.equal(next.post_refill_baseline_quota, 45_000_000);
   assert.equal(next.cycle_started_at_ms, 1_900_000);
   assert.equal(next.confidence, "refill_observed");
   assert.equal(next.latest_refill_amount_credits, 50);
+});
+
+Deno.test("YunWu quota restores post-refill debits when the wallet carries a prior balance", () => {
+  const previous = state({
+    current_balance_quota: 10_000_000,
+    post_refill_baseline_quota: 50_000_000,
+    last_observed_used_quota: 30_000_000,
+  });
+  const next = updateYunwuQuotaState(
+    previous,
+    observation({
+      balance_quota: 30_000_000,
+      used_quota: 35_000_000,
+      observed_at_ms: 2_000_000,
+      latest_refill: {
+        id: "refill-2",
+        amount_credits: 50,
+        completed_at_ms: 1_900_000,
+      },
+    }),
+  );
+  assert.equal(next.last_known_debits_quota, 5_000_000);
+  assert.equal(next.last_inferred_credit_quota, 25_000_000);
+  assert.equal(next.current_balance_quota, 30_000_000);
+  assert.equal(next.post_refill_baseline_quota, 35_000_000);
+});
+
+Deno.test("YunWu quota keeps reconstructed refill capacity within safe integer bounds", () => {
+  const previous = state({
+    current_balance_quota: Number.MAX_SAFE_INTEGER,
+    last_observed_used_quota: 100_000,
+  });
+  const next = updateYunwuQuotaState(
+    previous,
+    observation({
+      balance_quota: Number.MAX_SAFE_INTEGER,
+      used_quota: 100_001,
+      observed_at_ms: 2_000_000,
+      latest_refill: {
+        id: "refill-2",
+        amount_credits: 1,
+        completed_at_ms: 1_900_000,
+      },
+    }),
+  );
+  assert.equal(next.post_refill_baseline_quota, Number.MAX_SAFE_INTEGER);
+  assert.equal(Number.isSafeInteger(next.post_refill_baseline_quota), true);
 });
 
 Deno.test("YunWu quota never starts a refill cycle below the observed top-up amount", () => {

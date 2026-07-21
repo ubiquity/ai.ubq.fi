@@ -158,9 +158,10 @@ receives the update after its first inference response; opening `/status` before
 The denominator is a durable refill-cycle baseline, not the sum of lifetime purchases. The first observation uses the
 larger of the current wallet balance and the latest successful top-up. Later observations infer account credits as
 `balance_now - (balance_previous - used_quota_delta)`, and a newly observed top-up record starts a new cycle even when
-intervening usage hides a net balance increase. The remaining percentage is `current_balance / cycle_baseline`; the
-first observation is marked provisional in the admin diagnostics until a later refill or inferred adjustment is
-observed.
+intervening usage hides a net balance increase. When that new record arrives with a higher usage counter, the known
+inter-observation debits are added back to the observed balance before choosing the cycle baseline, preserving capacity
+that may have been spent after the refill. The remaining percentage is `current_balance / cycle_baseline`; the first
+observation is marked provisional in the admin diagnostics until a later refill or inferred adjustment is observed.
 
 The account snapshot is cached in Deno KV for five minutes, guarded by a durable refresh lease, retained for 24 hours,
 and served stale during temporary YunWu failures. Refresh work runs alongside inference and never delays response

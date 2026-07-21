@@ -172,11 +172,13 @@ available, the gateway emits no quota percentage.
 
 The YunWu percentage uses a Deno KV-backed refill cycle rather than adding all historical top-ups. Its first baseline is
 the larger of the observed wallet balance and latest successful top-up. Later credits are inferred from wallet movement
-and the account usage counter; a new top-up record always starts a new cycle. Snapshots are fresh for five minutes,
-retained for 24 hours, protected by a durable refresh lease, and served stale during temporary account API failures.
-Inference never waits for a slow account refresh: it uses only a snapshot that is already available. YunWu-routed
-responses invalidate their pre-debit observation so the next request refreshes it. `GET /admin/defaults` exposes
-non-secret diagnostics in `yunwu_quota`; credentials are never returned.
+and the account usage counter; a new top-up record always starts a new cycle. If the usage counter also advanced, known
+inter-observation debits are restored to the observed balance before choosing that cycle's capacity so post-refill spend
+does not shrink the denominator. Snapshots are fresh for five minutes, retained for 24 hours, protected by a durable
+refresh lease, and served stale during temporary account API failures. Inference never waits for a slow account refresh:
+it uses only a snapshot that is already available. YunWu-routed responses invalidate their pre-debit observation so the
+next request refreshes it. `GET /admin/defaults` exposes non-secret diagnostics in `yunwu_quota`; credentials are never
+returned.
 
 Observed integration behavior:
 
