@@ -120,10 +120,22 @@ type CodexQuotaLoad = Readonly<{
 
 const CODEX_QUOTA_DECORATION_WAIT_MS = 250;
 
-const startCodexQuotaLoad = (signal: AbortSignal): CodexQuotaLoad => ({
-  cached: getCachedConfiguredYunwuQuotaSnapshot(),
-  refreshed: loadCodexQuotaSnapshot(signal),
-});
+const startCodexQuotaLoad = (signal: AbortSignal): CodexQuotaLoad => {
+  const startedAt = performance.now();
+  const observe = (source: string, promise: Promise<YunwuQuotaSnapshot | null>) =>
+    promise.then((snapshot) => {
+      console.info(
+        `[ai.ubq.fi] YunWu quota debug source=${source} elapsed_ms=${
+          Math.round(performance.now() - startedAt)
+        } available=${Boolean(snapshot)}`,
+      );
+      return snapshot;
+    });
+  return {
+    cached: observe("cached", getCachedConfiguredYunwuQuotaSnapshot()),
+    refreshed: observe("refreshed", loadCodexQuotaSnapshot(signal)),
+  };
+};
 
 const boundedCodexQuotaSnapshot = (
   load: CodexQuotaLoad,
