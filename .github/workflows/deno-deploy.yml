@@ -42,58 +42,18 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Resolve Deno app URL
-        id: deploy-target
-        shell: bash
-        env:
-          PROJECT: ai-ubq-fi
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          REF_NAME: ${{ github.ref_name }}
-          DENO_DEPLOY_ORG: ubiquity-dao
-        run: |
-          set -euo pipefail
-
-          target="$PROJECT"
-          if [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
-            base="${PROJECT%-ubq-fi}"
-            if [ ${#base} -gt 17 ]; then
-              hash="$(printf '%s' "$base" | sha1sum | cut -c1-4)"
-              base="${base:0:12}-${hash}"
-            fi
-            target="p-${base}-ubq-fi"
-          fi
-
-          echo "app=$target" >> "$GITHUB_OUTPUT"
-          echo "url=https://${target}.${DENO_DEPLOY_ORG}.deno.net" >> "$GITHUB_OUTPUT"
-
-      - name: Wait for deployment
-        shell: bash
-        env:
-          DEPLOY_URL: ${{ steps.deploy-target.outputs.url }}
-        run: |
-          set -euo pipefail
-
-          for attempt in 1 2 3 4 5 6; do
-            http_code="$(curl -sS -L -o /dev/null -w "%{http_code}" "$DEPLOY_URL" || echo "000")"
-            if [ "$http_code" = "200" ]; then
-              exit 0
-            fi
-            sleep $((attempt * 5))
-          done
-
-          echo "::error::Deployment did not become reachable at $DEPLOY_URL"
-          exit 1
-
       - name: Sync AI runtime env
         shell: bash
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           DENO_DEPLOY_ORG: ubiquity-dao
-          DENO_DEPLOY_APP: ${{ steps.deploy-target.outputs.app }}
+          DENO_DEPLOY_APP: ai-ubq-fi
           CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 || vars.CODEX_AUTH_JSON_B64 || '' }}
           UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UOS_AI_KERNEL_PUBLIC_KEY || secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY || vars.UOS_AI_KERNEL_PUBLIC_KEY || vars.UBIQUITY_AI_KERNEL_PUBLIC_KEY || '' }}
           VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY || vars.VOYAGEAI_API_KEY || '' }}
           YUNWU_API_KEY: ${{ secrets.YUNWU_API_KEY || vars.YUNWU_API_KEY || '' }}
+          YUNWU_SYSTEM_TOKEN: ${{ secrets.YUNWU_SYSTEM_TOKEN || '' }}
+          YUNWU_USER_ID: ${{ vars.YUNWU_USER_ID || secrets.YUNWU_USER_ID || '' }}
         run: |
           set -euo pipefail
 
@@ -139,6 +99,22 @@ jobs:
             echo "::error::CODEX_AUTH_JSON_B64 is required for Codex auth runtime env."
             exit 1
           fi
+          if [ -z "$YUNWU_SYSTEM_TOKEN" ] || [ -z "$YUNWU_USER_ID" ]; then
+            echo "::error::YUNWU_SYSTEM_TOKEN and YUNWU_USER_ID are required for YunWu quota diagnostics."
+            exit 1
+          fi
+          deno eval '
+          const systemToken = (Deno.env.get("YUNWU_SYSTEM_TOKEN") ?? "").trim();
+          const userId = (Deno.env.get("YUNWU_USER_ID") ?? "").trim();
+          if (!systemToken || /\s/.test(systemToken)) {
+            console.error("YUNWU_SYSTEM_TOKEN must be a non-empty token without internal whitespace.");
+            Deno.exit(1);
+          }
+          if (!/^\d+$/.test(userId)) {
+            console.error("YUNWU_USER_ID must contain only decimal digits.");
+            Deno.exit(1);
+          }
+          '
 
           codex_auth_minified="$(
             deno eval '
@@ -177,3 +153,5 @@ jobs:
           sync_secret UOS_AI_KERNEL_PUBLIC_KEY
           sync_secret VOYAGEAI_API_KEY
           sync_secret YUNWU_API_KEY
+          sync_secret YUNWU_SYSTEM_TOKEN
+          sync_secret YUNWU_USER_ID

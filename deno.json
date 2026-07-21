@@ -26,7 +26,7 @@
     "kv:import-http": "deno run --allow-env=DENO_DEPLOY_TOKEN,UOS_AI_TOKEN --allow-net --allow-read=.kv-migration scripts/kv-migrate.ts import-http",
     "kv:validate": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net --allow-read=.kv-migration --allow-write=.kv-migration scripts/kv-migrate.ts validate",
     "kv:validate-http": "deno run --allow-env=DENO_DEPLOY_TOKEN,UOS_AI_TOKEN --allow-net scripts/kv-migrate.ts validate-http",
-    "test": "deno test --env --allow-env=VOYAGEAI_API_KEY,YUNWU_API_KEY",
+    "test": "deno test --env --allow-env=VOYAGEAI_API_KEY,YUNWU_API_KEY,YUNWU_SYSTEM_TOKEN,YUNWU_USER_ID",
     "test:e2e": "deno test --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
     "fmt": "deno fmt",
     "lint": "deno lint"

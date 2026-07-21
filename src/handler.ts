@@ -59,9 +59,16 @@ import {
   handlePasskeyUsersUpdate,
 } from "./passkeys.ts";
 import { recordApiKeyRequestLog } from "./analytics.ts";
+import { withCodexQuotaHeaders } from "./codex_quota.ts";
 import { ensurePaidFallbackBackfill } from "./paid_fallback.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
 import { sha256Hex } from "./utils.ts";
+import {
+  getCachedConfiguredYunwuQuotaSnapshot,
+  getConfiguredYunwuQuotaSnapshot,
+  invalidateConfiguredYunwuQuotaSnapshot,
+  type YunwuQuotaSnapshot,
+} from "./yunwu_quota.ts";
 
 type AuthenticatedClientResult = Extract<
   Awaited<ReturnType<typeof authenticateClient>>,
@@ -90,6 +97,76 @@ export const resolveIdempotencyPrincipal = async (
 const normalizePath = (path: string): string => {
   if (path === "/") return path;
   return path.replace(/\/+$/, "");
+};
+
+const loadCodexQuotaSnapshot = async (signal: AbortSignal) => {
+  try {
+    return await getConfiguredYunwuQuotaSnapshot({ signal });
+  } catch (error) {
+    if (!signal.aborted) {
+      console.warn(
+        "[ai.ubq.fi] YunWu quota response decoration failed:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    return null;
+  }
+};
+
+type CodexQuotaLoad = Readonly<{
+  cached: Promise<YunwuQuotaSnapshot | null>;
+  refreshed: Promise<YunwuQuotaSnapshot | null>;
+}>;
+
+const CODEX_QUOTA_DECORATION_WAIT_MS = 250;
+
+const startCodexQuotaLoad = (signal: AbortSignal): CodexQuotaLoad => ({
+  cached: getCachedConfiguredYunwuQuotaSnapshot(),
+  refreshed: loadCodexQuotaSnapshot(signal),
+});
+
+const boundedCodexQuotaSnapshot = (
+  load: CodexQuotaLoad,
+): Promise<YunwuQuotaSnapshot | null> =>
+  new Promise((resolve) => {
+    let pending = 2;
+    let settled = false;
+    const timeout = setTimeout(() => finish(null), CODEX_QUOTA_DECORATION_WAIT_MS);
+
+    const finish = (snapshot: YunwuQuotaSnapshot | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(snapshot);
+    };
+    const accept = (snapshot: YunwuQuotaSnapshot | null): void => {
+      if (snapshot) {
+        finish(snapshot);
+        return;
+      }
+      pending -= 1;
+      if (pending === 0) finish(null);
+    };
+
+    load.refreshed.then(accept, () => accept(null));
+    load.cached.then(accept, () => accept(null));
+  });
+
+const decorateInferenceQuota = async (
+  response: Response,
+  load: CodexQuotaLoad,
+): Promise<Response> => {
+  if (response.headers.get("x-ubq-upstream") === "yunwu") {
+    try {
+      await invalidateConfiguredYunwuQuotaSnapshot();
+    } catch (error) {
+      console.warn(
+        "[ai.ubq.fi] YunWu quota invalidation failed:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+  return withCodexQuotaHeaders(response, await boundedCodexQuotaSnapshot(load));
 };
 
 export default async function handler(req: Request): Promise<Response> {
@@ -473,6 +550,7 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
+    const quotaLoad = startCodexQuotaLoad(req.signal);
     const response = await handleChatCompletions(req, usageContext);
     const isStream = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
     if (response.ok) {
@@ -487,10 +565,11 @@ export default async function handler(req: Request): Promise<Response> {
       stream: isStream,
       provider: response.headers.get("x-ubq-upstream") === "yunwu" ? "yunwu" : "chatgpt_codex",
     });
-    return withCors(response);
+    return withCors(await decorateInferenceQuota(response, quotaLoad));
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
+    const quotaLoad = startCodexQuotaLoad(req.signal);
     const response = await handleResponses(req, usageContext);
     const isStream = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
     if (response.ok) {
@@ -505,7 +584,7 @@ export default async function handler(req: Request): Promise<Response> {
       stream: isStream,
       provider: response.headers.get("x-ubq-upstream") === "yunwu" ? "yunwu" : "chatgpt_codex",
     });
-    return withCors(response);
+    return withCors(await decorateInferenceQuota(response, quotaLoad));
   }
 
   return withCors(openaiError(404, "Not found", "not_found"));

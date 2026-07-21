@@ -458,7 +458,7 @@
           aria-labelledby="view-tab-defaults"
           hidden
         >
-          <article data-card aria-labelledby="card-defaults">
+          <article data-card data-span="half" aria-labelledby="card-defaults">
             <header>
               <h2 id="card-defaults">Defaults</h2>
             </header>
@@ -486,6 +486,59 @@
                 <button id="defaults-kernel-window-1w" type="button">1w</button>
               </div>
               <span id="defaults-badge" data-badge data-state="unknown">Idle</span>
+            </div>
+          </article>
+
+          <article data-card data-span="half" aria-labelledby="card-yunwu-quota">
+            <header>
+              <h2 id="card-yunwu-quota">YunWu refill cycle</h2>
+              <p>
+                Wallet availability since the latest observed refill. This is a balance cycle, not a weekly limit, so
+                no reset time is fabricated.
+              </p>
+            </header>
+            <div data-card-body>
+              <span id="yunwu-quota-badge" data-badge data-state="unknown">Idle</span>
+              <div data-yunwu-quota-summary>
+                <strong id="yunwu-quota-remaining">—</strong>
+                <span>remaining in the current refill cycle</span>
+                <progress id="yunwu-quota-progress" max="100" value="0" aria-label="YunWu quota remaining" hidden>
+                </progress>
+              </div>
+              <dl data-quota-diagnostics>
+                <div>
+                  <dt>Balance</dt>
+                  <dd id="yunwu-quota-balance">—</dd>
+                </div>
+                <div>
+                  <dt>Cycle baseline</dt>
+                  <dd id="yunwu-quota-baseline">—</dd>
+                </div>
+                <div>
+                  <dt>Latest refill</dt>
+                  <dd id="yunwu-quota-latest-refill">—</dd>
+                </div>
+                <div>
+                  <dt>Inferred credit</dt>
+                  <dd id="yunwu-quota-inferred-credit">—</dd>
+                </div>
+                <div>
+                  <dt>Cache</dt>
+                  <dd id="yunwu-quota-cache">—</dd>
+                </div>
+                <div>
+                  <dt>Confidence</dt>
+                  <dd id="yunwu-quota-confidence">—</dd>
+                </div>
+                <div>
+                  <dt>Observed</dt>
+                  <dd id="yunwu-quota-observed">—</dd>
+                </div>
+                <div>
+                  <dt>Cycle started</dt>
+                  <dd id="yunwu-quota-cycle-started">—</dd>
+                </div>
+              </dl>
             </div>
           </article>
         </section>
