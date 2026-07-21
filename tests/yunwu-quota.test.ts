@@ -501,14 +501,16 @@ const quotaSnapshot = (usedPercent: number): YunwuQuotaSnapshot => ({
   used_percent: usedPercent,
 });
 
-Deno.test("Codex quota headers move OpenAI limits to a named family and make YunWu canonical", () => {
+Deno.test("Codex quota headers publish named limits and mirror a low YunWu balance for warnings", () => {
   const headers = buildCodexQuotaHeaders(
     new Headers({
       "x-codex-primary-used-percent": "96.5",
       "x-codex-primary-window-minutes": "10080",
       "x-codex-primary-reset-at": "1785000000",
+      "x-codex-primary-reset-after-seconds": "86400",
       "x-codex-secondary-used-percent": "20",
       "x-codex-secondary-window-minutes": "300",
+      "x-codex-secondary-reset-after-seconds": "120",
       "x-codex-credits-has-credits": "true",
       "x-codex-credits-unlimited": "false",
       "x-codex-credits-balance": "12",
@@ -521,7 +523,13 @@ Deno.test("Codex quota headers move OpenAI limits to a named family and make Yun
   assert.equal(headers.get("x-codex-primary-used-percent"), "95");
   assert.equal(headers.has("x-codex-primary-window-minutes"), false);
   assert.equal(headers.has("x-codex-primary-reset-at"), false);
+  assert.equal(headers.has("x-codex-primary-reset-after-seconds"), false);
   assert.equal(headers.has("x-codex-secondary-used-percent"), false);
+  assert.equal(headers.has("x-codex-secondary-reset-after-seconds"), false);
+  assert.equal(headers.get("x-yunwu-limit-name"), YUNWU_CODEX_LIMIT_NAME);
+  assert.equal(headers.get("x-yunwu-primary-used-percent"), "95");
+  assert.equal(headers.has("x-yunwu-primary-window-minutes"), false);
+  assert.equal(headers.has("x-yunwu-primary-reset-at"), false);
   assert.equal(headers.get("x-openai-subscription-limit-name"), OPENAI_SUBSCRIPTION_LIMIT_NAME);
   assert.equal(headers.get("x-openai-subscription-primary-used-percent"), "96.5");
   assert.equal(headers.get("x-openai-subscription-primary-window-minutes"), "10080");
@@ -531,6 +539,14 @@ Deno.test("Codex quota headers move OpenAI limits to a named family and make Yun
   assert.equal(headers.has("x-codex-rate-limit-reached-type"), false);
 });
 
+Deno.test("Codex quota headers keep a healthy YunWu balance named without a duplicate canonical row", () => {
+  const headers = buildCodexQuotaHeaders({}, quotaSnapshot(50));
+  assert.equal(headers.get("x-yunwu-limit-name"), YUNWU_CODEX_LIMIT_NAME);
+  assert.equal(headers.get("x-yunwu-primary-used-percent"), "50");
+  assert.equal(headers.has("x-codex-limit-name"), false);
+  assert.equal(headers.has("x-codex-primary-used-percent"), false);
+});
+
 Deno.test("Codex quota headers never leak the shared canonical family without YunWu state", () => {
   const headers = buildCodexQuotaHeaders({
     "x-codex-primary-used-percent": "42",
@@ -538,6 +554,7 @@ Deno.test("Codex quota headers never leak the shared canonical family without Yu
   }, null);
   assert.equal(headers.has("x-codex-primary-used-percent"), false);
   assert.equal(headers.has("x-codex-primary-window-minutes"), false);
+  assert.equal(headers.has("x-yunwu-primary-used-percent"), false);
   assert.equal(headers.get("x-openai-subscription-primary-used-percent"), "42");
   assert.equal(headers.get("x-openai-subscription-primary-window-minutes"), "300");
 });

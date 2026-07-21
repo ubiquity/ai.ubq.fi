@@ -5,6 +5,8 @@ export const OPENAI_SUBSCRIPTION_LIMIT_NAME = "OpenAI subscription";
 
 const DEFAULT_CODEX_PREFIX = "x-codex";
 const OPENAI_SUBSCRIPTION_PREFIX = "x-openai-subscription";
+const YUNWU_PREFIX = "x-yunwu";
+const CODEX_WARNING_USED_PERCENT_THRESHOLD = 75;
 
 const RATE_LIMIT_WINDOW_SUFFIXES = [
   "primary-used-percent",
@@ -13,6 +15,11 @@ const RATE_LIMIT_WINDOW_SUFFIXES = [
   "secondary-used-percent",
   "secondary-window-minutes",
   "secondary-reset-at",
+] as const;
+
+const RATE_LIMIT_RESET_AFTER_SUFFIXES = [
+  "primary-reset-after-seconds",
+  "secondary-reset-after-seconds",
 ] as const;
 
 const SHARED_CODEX_QUOTA_HEADERS = [
@@ -41,22 +48,39 @@ export const buildCodexQuotaHeaders = (
     const upstreamValue = headers.get(canonicalName);
     headers.delete(canonicalName);
     headers.delete(namedName);
+    headers.delete(`${YUNWU_PREFIX}-${suffix}`);
     if (upstreamValue !== null) {
       headers.set(namedName, upstreamValue);
       copiedOpenAiLimit = true;
     }
   }
 
+  for (const suffix of RATE_LIMIT_RESET_AFTER_SUFFIXES) {
+    headers.delete(`${DEFAULT_CODEX_PREFIX}-${suffix}`);
+    headers.delete(`${OPENAI_SUBSCRIPTION_PREFIX}-${suffix}`);
+    headers.delete(`${YUNWU_PREFIX}-${suffix}`);
+  }
+
   headers.delete(`${DEFAULT_CODEX_PREFIX}-limit-name`);
   headers.delete(`${OPENAI_SUBSCRIPTION_PREFIX}-limit-name`);
+  headers.delete(`${YUNWU_PREFIX}-limit-name`);
   if (copiedOpenAiLimit) {
     headers.set(`${OPENAI_SUBSCRIPTION_PREFIX}-limit-name`, OPENAI_SUBSCRIPTION_LIMIT_NAME);
   }
   for (const name of SHARED_CODEX_QUOTA_HEADERS) headers.delete(name);
 
   if (snapshot?.used_percent !== null && snapshot?.used_percent !== undefined) {
-    headers.set(`${DEFAULT_CODEX_PREFIX}-limit-name`, YUNWU_CODEX_LIMIT_NAME);
-    headers.set(`${DEFAULT_CODEX_PREFIX}-primary-used-percent`, formatPercent(snapshot.used_percent));
+    const usedPercent = formatPercent(snapshot.used_percent);
+    headers.set(`${YUNWU_PREFIX}-limit-name`, YUNWU_CODEX_LIMIT_NAME);
+    headers.set(`${YUNWU_PREFIX}-primary-used-percent`, usedPercent);
+
+    // Codex only emits automatic threshold warnings for its canonical family. Keep the durable
+    // status row under the named YunWu family, and mirror it canonically only when a warning can
+    // actually fire so ordinary status output does not contain duplicate rows.
+    if (snapshot.used_percent >= CODEX_WARNING_USED_PERCENT_THRESHOLD) {
+      headers.set(`${DEFAULT_CODEX_PREFIX}-limit-name`, YUNWU_CODEX_LIMIT_NAME);
+      headers.set(`${DEFAULT_CODEX_PREFIX}-primary-used-percent`, usedPercent);
+    }
   }
   return headers;
 };

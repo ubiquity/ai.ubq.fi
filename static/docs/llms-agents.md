@@ -156,9 +156,10 @@ OpenAI-compatible SDKs receive an OpenAI-shaped response.
 ## Codex quota reporting
 
 After an inference response, stock Codex terminal and GUI clients can show two independent capacity families in
-`/status`. The gateway makes the YunWu wallet the canonical Codex family using `x-codex-limit-name: YunWu balance` and
-`x-codex-primary-used-percent`, which allows Codex's built-in low-quota warning to reflect the wallet. Upstream
-ChatGPT/Codex subscription limits are retained under the separately named `x-openai-subscription-*` family.
+`/status`. The gateway reports the YunWu wallet under the named `x-yunwu-*` family so its row persists independently.
+Upstream ChatGPT/Codex subscription limits are retained under the separately named `x-openai-subscription-*` family. At
+75% refill-cycle usage and above, the gateway also mirrors YunWu into the canonical `x-codex-*` family so stock Codex
+can emit its built-in 25%, 10%, and 5% remaining warnings.
 
 The YunWu wallet is not a weekly quota. The gateway does not emit a synthetic `primary-window-minutes` or
 `primary-reset-at` value for it. A client that opens `/status` before its first inference response may still say that

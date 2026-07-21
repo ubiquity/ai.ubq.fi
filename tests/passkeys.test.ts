@@ -186,10 +186,15 @@ Deno.test("inference handler decorates Responses and Chat Completions with the c
         }),
       );
       assert.equal(response.status, 503);
-      assert.equal(response.headers.get("x-codex-limit-name"), "YunWu balance");
-      assert.equal(response.headers.get("x-codex-primary-used-percent"), "50");
+      assert.equal(response.headers.get("x-yunwu-limit-name"), "YunWu balance");
+      assert.equal(response.headers.get("x-yunwu-primary-used-percent"), "50");
+      assert.equal(response.headers.has("x-codex-limit-name"), false);
+      assert.equal(response.headers.has("x-codex-primary-used-percent"), false);
       assert.equal(response.headers.has("x-codex-primary-window-minutes"), false);
       assert.equal(response.headers.has("x-codex-primary-reset-at"), false);
+      const exposedHeaders = response.headers.get("access-control-expose-headers") ?? "";
+      assert.match(exposedHeaders, /(?:^|,)x-yunwu-primary-used-percent(?:,|$)/i);
+      assert.match(exposedHeaders, /(?:^|,)x-openai-subscription-primary-used-percent(?:,|$)/i);
     }
   });
 });
@@ -229,7 +234,7 @@ Deno.test("inference handler gives a delayed retained YunWu snapshot a bounded o
     );
 
     assert.equal(response.status, 503);
-    assert.equal(response.headers.get("x-codex-primary-used-percent"), "50");
+    assert.equal(response.headers.get("x-yunwu-primary-used-percent"), "50");
   });
 });
 
@@ -285,7 +290,7 @@ Deno.test("inference handler never waits for a slow YunWu quota refresh", async 
           }),
         ]);
         assert.equal(response.status, 503);
-        assert.equal(response.headers.get("x-codex-primary-used-percent"), "50");
+        assert.equal(response.headers.get("x-yunwu-primary-used-percent"), "50");
       } finally {
         if (timeout !== undefined) clearTimeout(timeout);
       }
