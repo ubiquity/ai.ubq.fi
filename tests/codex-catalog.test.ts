@@ -441,6 +441,73 @@ Deno.test("codex catalog: gzip chunks are bounded and integrity failures force a
   }
 });
 
+Deno.test("codex catalog: replacing metadata reclaims superseded chunks", async () => {
+  seedBaseState();
+  const version = "0.152.1";
+  assert.equal(
+    await storeCodexCatalog(kvStub, {
+      clientVersion: version,
+      authGeneration: AUTH_GENERATION,
+      body: catalogBody(version, { generation: "first" }),
+    }),
+    true,
+  );
+  const firstMetadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as {
+    body_generation: string;
+    chunk_count: number;
+  };
+  const firstChunkKeys = Array.from(
+    { length: firstMetadata.chunk_count },
+    (_, index) => keyToString([...CODEX_CATALOG_CHUNK_PREFIX, version, firstMetadata.body_generation, index]),
+  );
+  assert.ok(firstChunkKeys.every((key) => kvStore.has(key)));
+
+  assert.equal(
+    await storeCodexCatalog(kvStub, {
+      clientVersion: version,
+      authGeneration: AUTH_GENERATION,
+      body: catalogBody(version, { generation: "second" }),
+    }),
+    true,
+  );
+  const secondMetadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as {
+    body_generation: string;
+    chunk_count: number;
+  };
+  assert.notEqual(secondMetadata.body_generation, firstMetadata.body_generation);
+  assert.ok(firstChunkKeys.every((key) => !kvStore.has(key)));
+  for (let index = 0; index < secondMetadata.chunk_count; index += 1) {
+    assert.equal(
+      kvStore.has(keyToString([
+        ...CODEX_CATALOG_CHUNK_PREFIX,
+        version,
+        secondMetadata.body_generation,
+        index,
+      ])),
+      true,
+    );
+  }
+});
+
+Deno.test("codex catalog: rejected old-generation writes reclaim their chunks", async () => {
+  seedBaseState();
+  const version = "0.152.2";
+  assert.equal(
+    await storeCodexCatalog(kvStub, {
+      clientVersion: version,
+      authGeneration: "superseded-generation",
+      body: catalogBody(version),
+    }),
+    false,
+  );
+  const orphanChunks = [...kvStore.keys()].filter((encoded) => {
+    const key = JSON.parse(encoded) as Deno.KvKey;
+    return matchesPrefix(key, [...CODEX_CATALOG_CHUNK_PREFIX, version]);
+  });
+  assert.equal(orphanChunks.length, 0);
+  assert.equal(kvStore.has(keyToString(CATALOG_KEY(version))), false);
+});
+
 Deno.test("codex catalog: only same-or-newer clients update the normalized snapshot", async () => {
   seedBaseState("0.200.0");
   const originalFetch = globalThis.fetch;

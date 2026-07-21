@@ -45,6 +45,17 @@ const chunkKey = (version: string, generation: string, index: number): Deno.KvKe
 ];
 const leaseKey = (version: string): Deno.KvKey => [...CODEX_CATALOG_LEASE_PREFIX, version];
 
+const deleteCatalogChunks = async (
+  kv: Deno.Kv,
+  version: string,
+  generation: string,
+  chunkCount: number,
+): Promise<void> => {
+  for (let index = 0; index < chunkCount; index += 1) {
+    await kv.delete(chunkKey(version, generation, index));
+  }
+};
+
 const gzip = async (body: string): Promise<Uint8Array> => {
   const stream = new Blob([body]).stream().pipeThrough(new CompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
@@ -166,12 +177,26 @@ export const storeCodexCatalog = async (
     body_bytes: new TextEncoder().encode(input.body).byteLength,
     sha256: await sha256Hex(input.body),
   };
+  const metadataEntry = await kv.get<CodexCatalogMetadata>(metadataKey(input.clientVersion));
   const generation = await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY);
-  if (generation.value !== input.authGeneration) return false;
-  return (await kv.atomic()
+  if (generation.value !== input.authGeneration) {
+    await deleteCatalogChunks(kv, input.clientVersion, bodyGeneration, chunkCount);
+    return false;
+  }
+  const published = (await kv.atomic()
     .check(generation)
+    .check(metadataEntry)
     .set(metadataKey(input.clientVersion), metadata, { expireIn })
     .commit()).ok;
+  if (!published) {
+    await deleteCatalogChunks(kv, input.clientVersion, bodyGeneration, chunkCount);
+    return false;
+  }
+  const previous = metadataEntry.value;
+  if (isCatalogMetadata(previous) && previous.body_generation !== bodyGeneration) {
+    await deleteCatalogChunks(kv, input.clientVersion, previous.body_generation, previous.chunk_count);
+  }
+  return true;
 };
 
 const getAuthGeneration = async (kv: Deno.Kv): Promise<string> => {
