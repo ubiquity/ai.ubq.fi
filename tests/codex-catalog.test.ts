@@ -70,6 +70,8 @@ const {
   CODEX_CATALOG_CHUNK_PREFIX,
   CODEX_CATALOG_FRESH_MS,
   CODEX_CATALOG_LEASE_PREFIX,
+  CODEX_CATALOG_MAX_VERSIONS,
+  CODEX_CATALOG_PREFIX,
   CODEX_CATALOG_RETENTION_MS,
   handleCodexCatalogModels,
   storeCodexCatalog,
@@ -506,6 +508,40 @@ Deno.test("codex catalog: rejected old-generation writes reclaim their chunks", 
   });
   assert.equal(orphanChunks.length, 0);
   assert.equal(kvStore.has(keyToString(CATALOG_KEY(version))), false);
+});
+
+Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bound", async () => {
+  seedBaseState();
+  const totalVersions = CODEX_CATALOG_MAX_VERSIONS + 3;
+  for (let index = 0; index < totalVersions; index += 1) {
+    const version = `1.0.${index}`;
+    assert.equal(
+      await storeCodexCatalog(kvStub, {
+        clientVersion: version,
+        authGeneration: AUTH_GENERATION,
+        body: catalogBody(version),
+        fetchedAtMs: Date.now() + index,
+      }),
+      true,
+    );
+  }
+
+  const metadataEntries = [...kvStore.entries()].filter(([encoded, stored]) => {
+    const key = JSON.parse(encoded) as Deno.KvKey;
+    return matchesPrefix(key, CODEX_CATALOG_PREFIX) && key.length === CODEX_CATALOG_PREFIX.length + 1 &&
+      typeof (stored.value as { body_generation?: unknown }).body_generation === "string";
+  });
+  assert.equal(metadataEntries.length, CODEX_CATALOG_MAX_VERSIONS);
+  for (let index = 0; index < totalVersions - CODEX_CATALOG_MAX_VERSIONS; index += 1) {
+    const version = `1.0.${index}`;
+    assert.equal(kvStore.has(keyToString(CATALOG_KEY(version))), false);
+    const chunks = [...kvStore.keys()].filter((encoded) => {
+      const key = JSON.parse(encoded) as Deno.KvKey;
+      return matchesPrefix(key, [...CODEX_CATALOG_CHUNK_PREFIX, version]);
+    });
+    assert.equal(chunks.length, 0);
+  }
+  assert.equal(kvStore.has(keyToString(CATALOG_KEY(`1.0.${totalVersions - 1}`))), true);
 });
 
 Deno.test("codex catalog: only same-or-newer clients update the normalized snapshot", async () => {

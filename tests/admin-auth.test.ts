@@ -273,7 +273,7 @@ Deno.test("admin codex auth stores live model catalog without caller model snaps
   }
 });
 
-Deno.test("admin codex auth rotates catalog generation and older uploads cannot downgrade the snapshot", async () => {
+Deno.test("admin codex auth rotation replaces a prior account snapshot even at an older version", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL) => {
@@ -302,7 +302,7 @@ Deno.test("admin codex auth rotates catalog generation and older uploads cannot 
     }));
     assert.equal(older.status, 200);
     const olderPayload = await older.json() as { normalized_snapshot_updated?: boolean; ok?: boolean };
-    assert.equal(olderPayload.normalized_snapshot_updated, false);
+    assert.equal(olderPayload.normalized_snapshot_updated, true);
     assert.equal(Object.prototype.hasOwnProperty.call(olderPayload, "ok"), false);
 
     const secondGeneration = kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"]));
@@ -312,8 +312,8 @@ Deno.test("admin codex auth rotates catalog generation and older uploads cannot 
       client_version?: string;
       models?: Array<{ slug?: string }>;
     };
-    assert.equal(snapshot.client_version, "0.201.0");
-    assert.equal(snapshot.models?.[0]?.slug, "gpt-0.201.0");
+    assert.equal(snapshot.client_version, "0.200.0");
+    assert.equal(snapshot.models?.[0]?.slug, "gpt-0.200.0");
 
     const seededMetadata = kvStore.get(keyToString(["ubq_ai", "codex_catalog", "0.200.0"])) as {
       auth_generation?: string;

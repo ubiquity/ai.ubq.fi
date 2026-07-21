@@ -11,7 +11,7 @@ import {
   storeCodexModelsSnapshot,
   validateCodexAuthJson,
 } from "./codex.ts";
-import { compareCodexClientVersions, normalizeCodexModelsPayload } from "./codex_models.ts";
+import { normalizeCodexModelsPayload } from "./codex_models.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY, storeCodexCatalog } from "./codex_catalog.ts";
 import {
   DEFAULT_KERNEL_POLICY_LIMIT_KEY,
@@ -160,18 +160,14 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   }
 
   const authGeneration = crypto.randomUUID();
-  let updateSnapshot = false;
   let stored = false;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const existingSnapshot = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
-    const existingVersion = existingSnapshot.value?.client_version?.trim();
-    const versionComparison = existingVersion ? compareCodexClientVersions(validatedClientVersion, existingVersion) : 1;
-    updateSnapshot = !existingSnapshot.value || (versionComparison !== null && versionComparison >= 0);
-    let atomic = kv.atomic()
+    const atomic = kv.atomic()
       .check(existingSnapshot)
       .set(CODEX_KV_KEY, validated.auth)
-      .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration);
-    if (updateSnapshot) atomic = atomic.set(CODEX_MODELS_KV_KEY, snapshot);
+      .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration)
+      .set(CODEX_MODELS_KV_KEY, snapshot);
     if ((await atomic.commit()).ok) {
       stored = true;
       break;
@@ -214,7 +210,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       upstream_content_type: validated.contentType,
       models: modelsStored,
       catalog_seeded: catalogSeeded,
-      normalized_snapshot_updated: updateSnapshot,
+      normalized_snapshot_updated: true,
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );

@@ -9,6 +9,7 @@ export const CODEX_CATALOG_RETENTION_MS = 24 * 60 * 60_000;
 export const CODEX_CATALOG_REFRESH_LEASE_MS = 15_000;
 export const CODEX_CATALOG_COLD_WAIT_MS = 5_000;
 export const CODEX_CATALOG_CHUNK_BYTES = 55_000;
+export const CODEX_CATALOG_MAX_VERSIONS = 32;
 
 export const CODEX_CATALOG_AUTH_GENERATION_KEY = ["ubq_ai", "codex_catalog_auth_generation"] as const;
 export const CODEX_CATALOG_PREFIX = ["ubq_ai", "codex_catalog"] as const;
@@ -53,6 +54,25 @@ const deleteCatalogChunks = async (
 ): Promise<void> => {
   for (let index = 0; index < chunkCount; index += 1) {
     await kv.delete(chunkKey(version, generation, index));
+  }
+};
+
+const pruneCatalogVersions = async (kv: Deno.Kv, currentVersion: string): Promise<void> => {
+  const catalogs: Array<{ entry: Deno.KvEntry<CodexCatalogMetadata>; metadata: CodexCatalogMetadata }> = [];
+  for await (const entry of kv.list<CodexCatalogMetadata>({ prefix: CODEX_CATALOG_PREFIX })) {
+    if (isCatalogMetadata(entry.value)) catalogs.push({ entry, metadata: entry.value });
+  }
+  if (catalogs.length <= CODEX_CATALOG_MAX_VERSIONS) return;
+
+  catalogs.sort((left, right) => left.metadata.fetched_at_ms - right.metadata.fetched_at_ms);
+  let remaining = catalogs.length;
+  for (const { entry, metadata } of catalogs) {
+    if (remaining <= CODEX_CATALOG_MAX_VERSIONS) break;
+    if (metadata.client_version === currentVersion) continue;
+    const deleted = await kv.atomic().check(entry).delete(entry.key).commit();
+    if (!deleted.ok) continue;
+    await deleteCatalogChunks(kv, metadata.client_version, metadata.body_generation, metadata.chunk_count);
+    remaining -= 1;
   }
 };
 
@@ -196,6 +216,9 @@ export const storeCodexCatalog = async (
   if (isCatalogMetadata(previous) && previous.body_generation !== bodyGeneration) {
     await deleteCatalogChunks(kv, input.clientVersion, previous.body_generation, previous.chunk_count);
   }
+  await pruneCatalogVersions(kv, input.clientVersion).catch((error) => {
+    console.error("[ai.ubq.fi] Codex catalog version pruning failed:", error);
+  });
   return true;
 };
 
