@@ -6,6 +6,7 @@ import {
   getCodexModelsSnapshotDefaultModel,
   loadCodexModelsSnapshot,
 } from "./codex.ts";
+import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import {
   DEFAULT_MODEL_KEY,
   DEFAULT_REASONING_EFFORT,
@@ -2626,7 +2627,11 @@ const completeChatCompletions = async (
   return json(200, body, { "x-ubq-upstream": provider });
 };
 
-export const handleModels = async (): Promise<Response> => {
+export const handleModels = async (req?: Request): Promise<Response> => {
+  if (req) {
+    const clientVersion = getCatalogClientVersion(req);
+    if (clientVersion !== null) return await handleCodexCatalogModels(req, clientVersion);
+  }
   const snapshot = await loadCodexModelsSnapshot();
   const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
     ? normalizeModelList(snapshot)

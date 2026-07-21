@@ -272,6 +272,59 @@ Deno.test("admin codex auth stores live model catalog without caller model snaps
   }
 });
 
+Deno.test("admin codex auth rotates catalog generation and older uploads cannot downgrade the snapshot", async () => {
+  kvStore.clear();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const version = new URL(url).searchParams.get("client_version") ?? "missing";
+    return Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: `gpt-${version}`, rich_field: { preserved: true } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: `"${version}"` },
+      }),
+    );
+  };
+
+  try {
+    const newer = await handleAdminCodexAuth(makeRequest({
+      auth: authPayload,
+      models: { client_version: "0.201.0" },
+    }));
+    assert.equal(newer.status, 200);
+    const firstGeneration = kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"]));
+    assert.equal(typeof firstGeneration, "string");
+
+    const older = await handleAdminCodexAuth(makeRequest({
+      auth: authPayload,
+      models: { client_version: "0.200.0" },
+    }));
+    assert.equal(older.status, 200);
+    const olderPayload = await older.json() as { normalized_snapshot_updated?: boolean; ok?: boolean };
+    assert.equal(olderPayload.normalized_snapshot_updated, false);
+    assert.equal(Object.prototype.hasOwnProperty.call(olderPayload, "ok"), false);
+
+    const secondGeneration = kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"]));
+    assert.equal(typeof secondGeneration, "string");
+    assert.notEqual(secondGeneration, firstGeneration);
+    const snapshot = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as {
+      client_version?: string;
+      models?: Array<{ slug?: string }>;
+    };
+    assert.equal(snapshot.client_version, "0.201.0");
+    assert.equal(snapshot.models?.[0]?.slug, "gpt-0.201.0");
+
+    const seededMetadata = kvStore.get(keyToString(["ubq_ai", "codex_catalog", "0.200.0"])) as {
+      auth_generation?: string;
+      etag?: string;
+    };
+    assert.equal(seededMetadata.auth_generation, secondGeneration);
+    assert.equal(seededMetadata.etag, '"0.200.0"');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("admin codex auth stores auth and model snapshot atomically", async () => {
   kvStore.clear();
   failNextAtomicCommit = true;

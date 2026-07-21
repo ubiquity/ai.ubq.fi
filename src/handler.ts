@@ -403,7 +403,7 @@ export default async function handler(req: Request): Promise<Response> {
   };
 
   if (req.method === "GET" && path === "/v1/models") {
-    return withCors(await handleModels());
+    return withCors(await handleModels(req));
   }
 
   if (req.method === "POST" && path === "/uos/embeddings") {

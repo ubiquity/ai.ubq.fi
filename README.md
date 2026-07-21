@@ -50,6 +50,20 @@ curl -sS https://ai.ubq.fi/v1/models \
   -H "Authorization: Bearer $UOS_AI_TOKEN"
 ```
 
+Codex clients request their native catalog for an exact installed version:
+
+```bash
+curl -sS 'https://ai.ubq.fi/v1/models?client_version=0.144.3' \
+  -H "Authorization: Bearer $UOS_AI_TOKEN"
+```
+
+The unversioned response remains the strict OpenAI `{ "object": "list", "data": [...] }` contract. Supplying one exact
+`X.Y.Z` `client_version` switches to the separate Codex compatibility contract and returns OpenAI's rich upstream
+`{ "models": [...] }` payload without reducing its model records to OpenAI list objects. The gateway fetches this JSON
+with server-held Codex authentication, caches each version independently in Deno KV for five minutes, and can serve its
+last valid copy for up to 24 hours during a temporary upstream failure. It forwards the upstream `ETag` and honors
+`If-None-Match`; client bearer tokens, cookies, and upstream credentials are never mixed or exposed.
+
 Inspect gateway-specific model capabilities:
 
 ```bash
@@ -276,8 +290,11 @@ ubq-ai admin keys list | jq
 ## Admin: upload/validate Codex auth.json
 
 This validates your posted `auth.json` against the upstream Codex endpoint and, if valid, stores the tokens in Deno KV
-(becoming the active upstream auth for subsequent requests). During validation, the server stores the live Codex model
-catalog returned by upstream as the single source of truth for `/v1/models` and the default model picker.
+(becoming the active upstream auth for subsequent requests). During validation, the server seeds the versioned catalog
+for the validated client version and updates the normalized snapshot used by unversioned `/v1/models` and the default
+model picker. Replacing authentication invalidates all previously cached versioned catalogs. Future Codex versions are
+fetched dynamically when they first request `/v1/models?client_version=...`; no Codex binary or manual catalog upload is
+required.
 
 Treat `auth.json` as a secret (it contains refresh tokens). Use the repo helper CLI:
 
@@ -482,5 +499,6 @@ deno task kv:validate-http --base-url "$BASE_URL" --strict
 
 The `local` profile imports durable settings plus Codex auth/model records and legacy rows for replay. The `prod`
 profile imports modern durable settings only: it skips `codex_auth` and `codex_models` because the deploy workflow
-refreshes those from the Codex CLI snapshot, and it skips legacy `["key", ...]` rows by default. Runtime-only state such
-as passkey sessions, WebAuthn challenges, embedding jobs, and rate windows is skipped.
+refreshes authentication and seeds the normalized model snapshot from upstream validation, and it skips legacy
+`["key", ...]` rows by default. Runtime-only state such as passkey sessions, WebAuthn challenges, embedding jobs, and
+rate windows is skipped.

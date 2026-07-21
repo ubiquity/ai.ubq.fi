@@ -4,9 +4,10 @@ export const corsHeaders = (): HeadersInit => ({
   "Access-Control-Allow-Origin": config.allowOrigin,
   "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "Access-Control-Allow-Headers":
-    "Authorization,Content-Type,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
-  // Allow browser clients to read gateway warnings and backoff hints (Retry-After).
-  "Access-Control-Expose-Headers": "x-uos-warning,x-uos-request-id,x-ubq-upstream,x-uos-router-revision,Retry-After",
+    "Authorization,Content-Type,If-None-Match,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
+  // Allow browser clients to read gateway warnings, cache validators, and backoff hints.
+  "Access-Control-Expose-Headers":
+    "x-uos-warning,x-uos-request-id,x-ubq-upstream,x-uos-router-revision,x-uos-cache,ETag,Retry-After",
   "Access-Control-Max-Age": "86400",
 });
 
