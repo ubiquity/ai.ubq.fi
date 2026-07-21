@@ -141,17 +141,19 @@ curl -sS https://ai.ubq.fi/v1/responses \
 
 ## Codex quota reporting
 
-Successful inference responses let unmodified Codex terminal and GUI clients show both sources of capacity in `/status`:
+Successful inference responses let unmodified Codex terminal and GUI clients show the YunWu wallet in `/status` and emit
+their built-in 25%, 10%, and 5% remaining warnings. The gateway publishes the wallet as the sole canonical family:
+`x-codex-limit-name: YunWu balance` and `x-codex-primary-used-percent`.
 
-- YunWu wallet availability is the named `x-yunwu-*` family, so its status row survives independent canonical updates.
-- The upstream ChatGPT/Codex subscription window is preserved as the named `x-openai-subscription-*` family instead of
-  being allowed to overwrite the wallet warning.
+Codex 0.144.6 parses multiple response-header families but persists only one response-derived rate-limit snapshot, so
+named OpenAI and YunWu families overwrite one another instead of remaining independent. AI.UBQ therefore strips every
+parseable upstream quota family and prioritizes the client-relevant YunWu balance. It does not combine that percentage
+with the shared ChatGPT subscription percentage: OpenAI does not provide an absolute token denominator, and the shared
+account is not an individual AI.UBQ client's truthful capacity.
 
-YunWu does not publish a weekly allowance, so the gateway never fabricates a window or reset time. It reports only
-`x-yunwu-limit-name: YunWu balance` and `x-yunwu-primary-used-percent`. Once 75% of the refill cycle is used, the
-gateway also mirrors the percentage into the canonical `x-codex-*` family so stock Codex can emit its built-in 25%, 10%,
-and 5% remaining warnings. A Codex client receives the update after its first inference response; opening `/status`
-before sending a message can therefore show `Limits: data not available yet`.
+YunWu does not publish a weekly allowance, so the gateway never fabricates a window or reset time. A Codex client
+receives the update after its first inference response; opening `/status` before sending a message can therefore show
+`Limits: data not available yet`. If no valid YunWu snapshot is available, the gateway emits no quota percentage.
 
 The denominator is a durable refill-cycle baseline, not the sum of lifetime purchases. The first observation uses the
 larger of the current wallet balance and the latest successful top-up. Later observations infer account credits as

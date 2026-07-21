@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildCodexQuotaHeaders, OPENAI_SUBSCRIPTION_LIMIT_NAME, YUNWU_CODEX_LIMIT_NAME } from "../src/codex_quota.ts";
+import { buildCodexQuotaHeaders, YUNWU_CODEX_LIMIT_NAME } from "../src/codex_quota.ts";
 import {
   fetchYunwuQuotaObservation,
   getCachedYunwuQuotaSnapshot,
@@ -501,7 +501,7 @@ const quotaSnapshot = (usedPercent: number): YunwuQuotaSnapshot => ({
   used_percent: usedPercent,
 });
 
-Deno.test("Codex quota headers publish named limits and mirror a low YunWu balance for warnings", () => {
+Deno.test("Codex quota headers replace every parseable upstream family with canonical YunWu", () => {
   const headers = buildCodexQuotaHeaders(
     new Headers({
       "x-codex-primary-used-percent": "96.5",
@@ -515,6 +515,18 @@ Deno.test("Codex quota headers publish named limits and mirror a low YunWu balan
       "x-codex-credits-unlimited": "false",
       "x-codex-credits-balance": "12",
       "x-codex-rate-limit-reached-type": "workspace_owner_usage_limit_reached",
+      "x-codex-spark-limit-name": "GPT-5.3-Codex-Spark Weekly limit",
+      "x-codex-spark-primary-used-percent": "0",
+      "x-codex-spark-primary-window-minutes": "10080",
+      "x-codex-spark-primary-reset-at": "1785100000",
+      "x-openai-subscription-limit-name": "OpenAI subscription",
+      "x-openai-subscription-primary-used-percent": "96.5",
+      "x-yunwu-limit-name": "stale YunWu family",
+      "x-yunwu-primary-used-percent": "40",
+      "x-codex-model": "gpt-5.6-sol",
+      "x-codex-plan-type": "pro",
+      "x-codex-safety-identifier": "safety-id",
+      "x-uos-router-revision": "routing-revision",
     }),
     quotaSnapshot(95),
   );
@@ -526,35 +538,43 @@ Deno.test("Codex quota headers publish named limits and mirror a low YunWu balan
   assert.equal(headers.has("x-codex-primary-reset-after-seconds"), false);
   assert.equal(headers.has("x-codex-secondary-used-percent"), false);
   assert.equal(headers.has("x-codex-secondary-reset-after-seconds"), false);
-  assert.equal(headers.get("x-yunwu-limit-name"), YUNWU_CODEX_LIMIT_NAME);
-  assert.equal(headers.get("x-yunwu-primary-used-percent"), "95");
-  assert.equal(headers.has("x-yunwu-primary-window-minutes"), false);
-  assert.equal(headers.has("x-yunwu-primary-reset-at"), false);
-  assert.equal(headers.get("x-openai-subscription-limit-name"), OPENAI_SUBSCRIPTION_LIMIT_NAME);
-  assert.equal(headers.get("x-openai-subscription-primary-used-percent"), "96.5");
-  assert.equal(headers.get("x-openai-subscription-primary-window-minutes"), "10080");
-  assert.equal(headers.get("x-openai-subscription-primary-reset-at"), "1785000000");
-  assert.equal(headers.get("x-openai-subscription-secondary-used-percent"), "20");
+  assert.equal(headers.has("x-codex-spark-limit-name"), false);
+  assert.equal(headers.has("x-codex-spark-primary-used-percent"), false);
+  assert.equal(headers.has("x-codex-spark-primary-window-minutes"), false);
+  assert.equal(headers.has("x-codex-spark-primary-reset-at"), false);
+  assert.equal(headers.has("x-openai-subscription-limit-name"), false);
+  assert.equal(headers.has("x-openai-subscription-primary-used-percent"), false);
+  assert.equal(headers.has("x-yunwu-limit-name"), false);
+  assert.equal(headers.has("x-yunwu-primary-used-percent"), false);
   assert.equal(headers.has("x-codex-credits-has-credits"), false);
   assert.equal(headers.has("x-codex-rate-limit-reached-type"), false);
+  assert.equal(headers.get("x-codex-model"), "gpt-5.6-sol");
+  assert.equal(headers.get("x-codex-plan-type"), "pro");
+  assert.equal(headers.get("x-codex-safety-identifier"), "safety-id");
+  assert.equal(headers.get("x-uos-router-revision"), "routing-revision");
 });
 
-Deno.test("Codex quota headers keep a healthy YunWu balance named without a duplicate canonical row", () => {
+Deno.test("Codex quota headers publish a healthy YunWu balance canonically", () => {
   const headers = buildCodexQuotaHeaders({}, quotaSnapshot(50));
-  assert.equal(headers.get("x-yunwu-limit-name"), YUNWU_CODEX_LIMIT_NAME);
-  assert.equal(headers.get("x-yunwu-primary-used-percent"), "50");
-  assert.equal(headers.has("x-codex-limit-name"), false);
-  assert.equal(headers.has("x-codex-primary-used-percent"), false);
+  assert.equal(headers.get("x-codex-limit-name"), YUNWU_CODEX_LIMIT_NAME);
+  assert.equal(headers.get("x-codex-primary-used-percent"), "50");
+  assert.equal(headers.has("x-codex-primary-window-minutes"), false);
+  assert.equal(headers.has("x-codex-primary-reset-at"), false);
 });
 
-Deno.test("Codex quota headers never leak the shared canonical family without YunWu state", () => {
+Deno.test("Codex quota headers emit no percentage and strip every family without YunWu state", () => {
   const headers = buildCodexQuotaHeaders({
     "x-codex-primary-used-percent": "42",
     "x-codex-primary-window-minutes": "300",
+    "x-codex-spark-primary-used-percent": "25",
+    "x-openai-subscription-primary-used-percent": "42",
+    "x-yunwu-primary-used-percent": "50",
+    "x-codex-model": "gpt-5.6-sol",
   }, null);
   assert.equal(headers.has("x-codex-primary-used-percent"), false);
   assert.equal(headers.has("x-codex-primary-window-minutes"), false);
+  assert.equal(headers.has("x-codex-spark-primary-used-percent"), false);
+  assert.equal(headers.has("x-openai-subscription-primary-used-percent"), false);
   assert.equal(headers.has("x-yunwu-primary-used-percent"), false);
-  assert.equal(headers.get("x-openai-subscription-primary-used-percent"), "42");
-  assert.equal(headers.get("x-openai-subscription-primary-window-minutes"), "300");
+  assert.equal(headers.get("x-codex-model"), "gpt-5.6-sol");
 });

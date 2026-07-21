@@ -10,15 +10,6 @@ const EXPOSED_RESPONSE_HEADERS = [
   "Retry-After",
   "x-codex-limit-name",
   "x-codex-primary-used-percent",
-  "x-yunwu-limit-name",
-  "x-yunwu-primary-used-percent",
-  "x-openai-subscription-limit-name",
-  "x-openai-subscription-primary-used-percent",
-  "x-openai-subscription-primary-window-minutes",
-  "x-openai-subscription-primary-reset-at",
-  "x-openai-subscription-secondary-used-percent",
-  "x-openai-subscription-secondary-window-minutes",
-  "x-openai-subscription-secondary-reset-at",
 ] as const;
 
 export const corsHeaders = (): HeadersInit => ({

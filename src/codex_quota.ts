@@ -1,25 +1,19 @@
 import type { YunwuQuotaSnapshot } from "./yunwu_quota.ts";
 
 export const YUNWU_CODEX_LIMIT_NAME = "YunWu balance";
-export const OPENAI_SUBSCRIPTION_LIMIT_NAME = "OpenAI subscription";
 
 const DEFAULT_CODEX_PREFIX = "x-codex";
-const OPENAI_SUBSCRIPTION_PREFIX = "x-openai-subscription";
-const YUNWU_PREFIX = "x-yunwu";
-const CODEX_WARNING_USED_PERCENT_THRESHOLD = 75;
 
-const RATE_LIMIT_WINDOW_SUFFIXES = [
-  "primary-used-percent",
-  "primary-window-minutes",
-  "primary-reset-at",
-  "secondary-used-percent",
-  "secondary-window-minutes",
-  "secondary-reset-at",
-] as const;
-
-const RATE_LIMIT_RESET_AFTER_SUFFIXES = [
-  "primary-reset-after-seconds",
-  "secondary-reset-after-seconds",
+const RATE_LIMIT_FAMILY_SUFFIXES = [
+  "-limit-name",
+  "-primary-used-percent",
+  "-primary-window-minutes",
+  "-primary-reset-at",
+  "-primary-reset-after-seconds",
+  "-secondary-used-percent",
+  "-secondary-window-minutes",
+  "-secondary-reset-at",
+  "-secondary-reset-after-seconds",
 ] as const;
 
 const SHARED_CODEX_QUOTA_HEADERS = [
@@ -40,47 +34,25 @@ export const buildCodexQuotaHeaders = (
   snapshot: YunwuQuotaSnapshot | null,
 ): Headers => {
   const headers = new Headers(input);
-  let copiedOpenAiLimit = false;
 
-  for (const suffix of RATE_LIMIT_WINDOW_SUFFIXES) {
-    const canonicalName = `${DEFAULT_CODEX_PREFIX}-${suffix}`;
-    const namedName = `${OPENAI_SUBSCRIPTION_PREFIX}-${suffix}`;
-    const upstreamValue = headers.get(canonicalName);
-    headers.delete(canonicalName);
-    headers.delete(namedName);
-    headers.delete(`${YUNWU_PREFIX}-${suffix}`);
-    if (upstreamValue !== null) {
-      headers.set(namedName, upstreamValue);
-      copiedOpenAiLimit = true;
+  // Codex discovers named limit families from any x-*-primary-used-percent header. Version 0.144.6
+  // parses every discovered family but persists only one response-derived snapshot, so forwarding
+  // multiple families makes whichever name sorts last overwrite the others. Remove every parseable
+  // family before publishing the one client-specific capacity source this gateway can measure.
+  for (const name of [...headers.keys()]) {
+    if (
+      name.startsWith("x-") &&
+      RATE_LIMIT_FAMILY_SUFFIXES.some((suffix) => name.endsWith(suffix))
+    ) {
+      headers.delete(name);
     }
-  }
-
-  for (const suffix of RATE_LIMIT_RESET_AFTER_SUFFIXES) {
-    headers.delete(`${DEFAULT_CODEX_PREFIX}-${suffix}`);
-    headers.delete(`${OPENAI_SUBSCRIPTION_PREFIX}-${suffix}`);
-    headers.delete(`${YUNWU_PREFIX}-${suffix}`);
-  }
-
-  headers.delete(`${DEFAULT_CODEX_PREFIX}-limit-name`);
-  headers.delete(`${OPENAI_SUBSCRIPTION_PREFIX}-limit-name`);
-  headers.delete(`${YUNWU_PREFIX}-limit-name`);
-  if (copiedOpenAiLimit) {
-    headers.set(`${OPENAI_SUBSCRIPTION_PREFIX}-limit-name`, OPENAI_SUBSCRIPTION_LIMIT_NAME);
   }
   for (const name of SHARED_CODEX_QUOTA_HEADERS) headers.delete(name);
 
   if (snapshot?.used_percent !== null && snapshot?.used_percent !== undefined) {
     const usedPercent = formatPercent(snapshot.used_percent);
-    headers.set(`${YUNWU_PREFIX}-limit-name`, YUNWU_CODEX_LIMIT_NAME);
-    headers.set(`${YUNWU_PREFIX}-primary-used-percent`, usedPercent);
-
-    // Codex only emits automatic threshold warnings for its canonical family. Keep the durable
-    // status row under the named YunWu family, and mirror it canonically only when a warning can
-    // actually fire so ordinary status output does not contain duplicate rows.
-    if (snapshot.used_percent >= CODEX_WARNING_USED_PERCENT_THRESHOLD) {
-      headers.set(`${DEFAULT_CODEX_PREFIX}-limit-name`, YUNWU_CODEX_LIMIT_NAME);
-      headers.set(`${DEFAULT_CODEX_PREFIX}-primary-used-percent`, usedPercent);
-    }
+    headers.set(`${DEFAULT_CODEX_PREFIX}-limit-name`, YUNWU_CODEX_LIMIT_NAME);
+    headers.set(`${DEFAULT_CODEX_PREFIX}-primary-used-percent`, usedPercent);
   }
   return headers;
 };
