@@ -724,11 +724,16 @@ const parseReasoningParam = (
 
 const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
 const RESPONSES_ALLOWED_KEYS = new Set(RESPONSES_REQUEST_KEYS);
+const CODEX_RESPONSES_EXTENSION_KEYS = new Set(["client_metadata"]);
 const EMBEDDINGS_ALLOWED_KEYS = new Set(EMBEDDINGS_REQUEST_KEYS);
 
-const findUnknownKey = (record: Record<string, unknown>, allowed: ReadonlySet<string>): string | null => {
+const findUnknownKey = (
+  record: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  extensions?: ReadonlySet<string>,
+): string | null => {
   for (const key of Object.keys(record)) {
-    if (!allowed.has(key)) return key;
+    if (!allowed.has(key) && !extensions?.has(key)) return key;
   }
   return null;
 };
@@ -3796,13 +3801,17 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   if (!rawBody || !isRecord(rawBody)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
   const rawRecord = rawBody as Record<string, unknown>;
-  const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS);
+  const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS, CODEX_RESPONSES_EXTENSION_KEYS);
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
   if (Object.prototype.hasOwnProperty.call(rawRecord, "client_metadata")) {
     const clientMetadata = rawBody.client_metadata;
-    if (!isRecord(clientMetadata) || Object.values(clientMetadata).some((value) => typeof value !== "string")) {
+    if (
+      !isRecord(clientMetadata) ||
+      Array.isArray(clientMetadata) ||
+      Object.values(clientMetadata).some((value) => typeof value !== "string")
+    ) {
       return openaiError(
         400,
         "client_metadata must be an object with string values",

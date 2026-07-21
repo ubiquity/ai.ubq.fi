@@ -411,6 +411,24 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal(payload.error?.param, "client_metadata");
   });
 
+  await t.step("responses rejects array-valued Codex CLI client metadata", async () => {
+    const response = await handleResponses(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: DEFAULT_TEST_MODEL,
+          input: "ping",
+          client_metadata: ["session_test"],
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { error?: { param?: string } };
+    assert.equal(payload.error?.param, "client_metadata");
+  });
+
   await t.step("responses preserves none reasoning upstream", async () => {
     let recordedBody: Record<string, unknown> | null = null;
 

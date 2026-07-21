@@ -38,7 +38,6 @@ export const CHAT_COMPLETIONS_REQUEST_KEYS = [
 
 export const RESPONSES_REQUEST_KEYS = [
   "background",
-  "client_metadata",
   "context_management",
   "conversation",
   "include",
