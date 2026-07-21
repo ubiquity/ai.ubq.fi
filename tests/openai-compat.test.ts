@@ -361,6 +361,74 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("max_output_tokens" in recorded, false);
   });
 
+  await t.step("responses accepts and strips Codex CLI client metadata", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              input: "ping",
+              client_metadata: {
+                session_id: "session_test",
+                thread_id: "thread_test",
+                request_kind: "turn",
+              },
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(parseWarnings(response.headers.get("x-uos-warning")), []);
+    assert.ok(recordedBody);
+    assert.equal("client_metadata" in recordedBody, false);
+  });
+
+  await t.step("responses rejects malformed Codex CLI client metadata", async () => {
+    const response = await handleResponses(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: DEFAULT_TEST_MODEL,
+          input: "ping",
+          client_metadata: { session_id: 123 },
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { error?: { param?: string } };
+    assert.equal(payload.error?.param, "client_metadata");
+  });
+
+  await t.step("responses rejects array-valued Codex CLI client metadata", async () => {
+    const response = await handleResponses(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: DEFAULT_TEST_MODEL,
+          input: "ping",
+          client_metadata: ["session_test"],
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { error?: { param?: string } };
+    assert.equal(payload.error?.param, "client_metadata");
+  });
+
   await t.step("responses preserves none reasoning upstream", async () => {
     let recordedBody: Record<string, unknown> | null = null;
 

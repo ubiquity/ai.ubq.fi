@@ -365,6 +365,10 @@ Keys forwarded for responses:
 - `text`
 - `include`
 
+The Codex CLI compatibility extension `client_metadata` is accepted as a string map and stripped before the gateway
+builds the upstream request. It remains separate from the official OpenAI request schema. The gateway generates its own
+upstream request metadata instead of forwarding client-supplied session identifiers.
+
 `store` is always set to `false` by the gateway. The following are always ignored and will produce warnings:
 
 - `temperature` -> `temperature_ignored`

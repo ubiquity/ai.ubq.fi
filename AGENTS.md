@@ -2,6 +2,9 @@
 
 - Keep OpenAI-compatible endpoints and request bodies aligned with the official OpenAI API schema. Do not add
   gateway-only aliases, sentinel values, or alternate wire formats.
+- Treat Codex CLI compatibility as a first-class gateway contract for `/v1/responses`. Accept fields emitted by
+  supported Codex CLI versions through explicit compatibility extensions that remain separate from the official OpenAI
+  schema allowlists and drift checks; do not present those extensions as official OpenAI fields.
 - Treat the uploaded Codex CLI model catalog as the source of truth for reasoning tier strings other than `none`.
   Preserve every non-empty advertised tier and do not enforce a hard-coded tier allowlist or tier membership check.
 - Treat `none` as the sole gateway-known reasoning special case and expose it even when the uploaded catalog omits it.
