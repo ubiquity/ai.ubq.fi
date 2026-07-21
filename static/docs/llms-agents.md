@@ -373,6 +373,8 @@ upstream request metadata instead of forwarding client-supplied session identifi
 
 - `temperature` -> `temperature_ignored`
 - `max_tokens`, `max_completion_tokens`, `max_output_tokens` -> `max_output_tokens_ignored`
+- `moderation` -> `moderation_ignored`
+- `prompt_cache_options` -> `prompt_cache_options_ignored`
 
 Any other accepted-but-unused key will emit a `<key>_ignored` warning.
 
