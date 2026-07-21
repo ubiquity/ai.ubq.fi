@@ -251,6 +251,8 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
               messages: [{ role: "user", content: "ping" }],
               temperature: 0.2,
               max_tokens: 12,
+              moderation: { model: "omni-moderation-latest" },
+              prompt_cache_options: { mode: "implicit", ttl: "30m" },
             }),
           }),
         ),
@@ -262,12 +264,16 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     const warnings = parseWarnings(response.headers.get("x-uos-warning"));
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
+    assert.ok(warnings.includes("moderation_ignored"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
     assert.deepEqual(recorded["reasoning"], { effort: "low" });
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
+    assert.equal("moderation" in recorded, false);
+    assert.equal("prompt_cache_options" in recorded, false);
   });
 
   await t.step("chat preserves none reasoning effort upstream", async () => {
@@ -341,6 +347,8 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
               input: "ping",
               temperature: 0.7,
               max_output_tokens: 24,
+              moderation: { model: "omni-moderation-latest" },
+              prompt_cache_options: { mode: "implicit", ttl: "30m" },
             }),
           }),
         ),
@@ -353,12 +361,16 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     const warnings = parseWarnings(response.headers.get("x-uos-warning"));
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
+    assert.ok(warnings.includes("moderation_ignored"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
     assert.deepEqual(recorded["reasoning"], { effort: "low" });
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
+    assert.equal("moderation" in recorded, false);
+    assert.equal("prompt_cache_options" in recorded, false);
   });
 
   await t.step("responses preserves none reasoning upstream", async () => {
