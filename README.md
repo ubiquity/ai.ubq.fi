@@ -58,7 +58,7 @@ curl -sS 'https://ai.ubq.fi/v1/models?client_version=0.144.3' \
 ```
 
 The unversioned response remains the strict OpenAI `{ "object": "list", "data": [...] }` contract. Supplying one exact
-`X.Y.Z` `client_version` switches to the separate Codex compatibility contract and returns OpenAI's rich upstream
+`X.Y.Z` `client_version` switches to the separate Codex compatibility contract and returns Codex's rich upstream
 `{ "models": [...] }` payload without reducing its model records to OpenAI list objects. The gateway fetches this JSON
 with server-held Codex authentication, caches each version independently in Deno KV for five minutes, and can serve its
 last valid copy for up to 24 hours during a temporary upstream failure. It forwards the upstream `ETag` and honors

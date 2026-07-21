@@ -54,17 +54,13 @@ const reasoningLevelEffort = (value: unknown): ReasoningEffort | null => {
 
 const deriveReasoningEffortWireMap = (levels: unknown[]): Record<string, ReasoningEffort> => {
   const wireMap = new Map<ReasoningEffort, ReasoningEffort>();
-  let previousWireEffort: ReasoningEffort | null = null;
 
   for (const level of levels) {
     const effort = reasoningLevelEffort(level);
     if (!effort) continue;
     const explicitWireEffort = isRecord(level) ? normalizeReasoningEffort(level.wire_effort) : null;
-    const description = isRecord(level) ? getString(level.description)?.trim().toLowerCase() ?? "" : "";
-    const wireEffort: ReasoningEffort = explicitWireEffort ??
-      (description.includes("automatic task delegation") ? previousWireEffort : effort) ?? effort;
+    const wireEffort: ReasoningEffort = effort === "ultra" ? "max" : explicitWireEffort ?? effort;
     if (wireEffort !== effort) wireMap.set(effort, wireEffort);
-    previousWireEffort = wireEffort;
   }
   return Object.fromEntries(wireMap);
 };
@@ -124,6 +120,7 @@ export const normalizeCodexModelsPayload = (
     if (Array.isArray(item.supported_reasoning_levels)) {
       const levels = item.supported_reasoning_levels.map(reasoningLevelEffort)
         .filter((entry): entry is ReasoningEffort => entry !== null);
+      if (!levels.includes("none")) levels.unshift("none");
       if (levels.length) normalized.supported_reasoning_levels = levels;
       const wireMap = deriveReasoningEffortWireMap(item.supported_reasoning_levels);
       if (Object.keys(wireMap).length) normalized.reasoning_effort_wire_map = wireMap;

@@ -10,7 +10,7 @@ const stringEntryLine = (key: Deno.KvKey, value: string): string =>
   });
 
 const kvStore = new Map<string, unknown>();
-let failNextAtomicCommit = false;
+let atomicCommitsToFail = 0;
 
 const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   if (left === right) return 0;
@@ -72,8 +72,8 @@ const kvStub = {
         return chain;
       },
       commit: () => {
-        if (failNextAtomicCommit) {
-          failNextAtomicCommit = false;
+        if (atomicCommitsToFail > 0) {
+          atomicCommitsToFail -= 1;
           return Promise.resolve({ ok: false } as const);
         }
         for (const op of ops) {
@@ -238,6 +238,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
     assert.equal(stored?.models?.[0]?.supported_in_api, false);
     assert.equal(stored?.models?.[0]?.default_reasoning_level, "high");
     assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, [
+      "none",
       "low",
       "medium",
       "high",
@@ -325,9 +326,9 @@ Deno.test("admin codex auth rotates catalog generation and older uploads cannot 
   }
 });
 
-Deno.test("admin codex auth stores auth and model snapshot atomically", async () => {
+Deno.test("admin codex auth retries transient snapshot contention", async () => {
   kvStore.clear();
-  failNextAtomicCommit = true;
+  atomicCommitsToFail = 1;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () =>
     Promise.resolve(
@@ -350,12 +351,41 @@ Deno.test("admin codex auth stores auth and model snapshot atomically", async ()
       }),
     );
 
+    assert.equal(response.status, 200);
+    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), true);
+    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    atomicCommitsToFail = 0;
+  }
+});
+
+Deno.test("admin codex auth fails atomically after snapshot contention retries are exhausted", async () => {
+  kvStore.clear();
+  atomicCommitsToFail = 3;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+  try {
+    const response = await handleAdminCodexAuth(
+      makeRequest({
+        auth: authPayload,
+        models: { client_version: "0.126.0" },
+      }),
+    );
+
     assert.equal(response.status, 500);
     assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
     assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
   } finally {
     globalThis.fetch = originalFetch;
-    failNextAtomicCommit = false;
+    atomicCommitsToFail = 0;
   }
 });
 

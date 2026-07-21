@@ -159,18 +159,25 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     );
   }
 
-  const existingSnapshot = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
-  const existingVersion = existingSnapshot.value?.client_version?.trim();
-  const versionComparison = existingVersion ? compareCodexClientVersions(validatedClientVersion, existingVersion) : 1;
-  const updateSnapshot = !existingSnapshot.value || (versionComparison !== null && versionComparison >= 0);
   const authGeneration = crypto.randomUUID();
-  let atomic = kv.atomic()
-    .check(existingSnapshot)
-    .set(CODEX_KV_KEY, validated.auth)
-    .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration);
-  if (updateSnapshot) atomic = atomic.set(CODEX_MODELS_KV_KEY, snapshot);
-  const stored = await atomic.commit();
-  if (!stored.ok) {
+  let updateSnapshot = false;
+  let stored = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const existingSnapshot = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
+    const existingVersion = existingSnapshot.value?.client_version?.trim();
+    const versionComparison = existingVersion ? compareCodexClientVersions(validatedClientVersion, existingVersion) : 1;
+    updateSnapshot = !existingSnapshot.value || (versionComparison !== null && versionComparison >= 0);
+    let atomic = kv.atomic()
+      .check(existingSnapshot)
+      .set(CODEX_KV_KEY, validated.auth)
+      .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration);
+    if (updateSnapshot) atomic = atomic.set(CODEX_MODELS_KV_KEY, snapshot);
+    if ((await atomic.commit()).ok) {
+      stored = true;
+      break;
+    }
+  }
+  if (!stored) {
     return openaiError(500, "Deno KV could not persist Codex auth and models", "server_error");
   }
   cacheCodexAuth(validated.auth);

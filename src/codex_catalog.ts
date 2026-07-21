@@ -7,6 +7,7 @@ import { getString, isRecord, sha256Hex } from "./utils.ts";
 export const CODEX_CATALOG_FRESH_MS = 5 * 60_000;
 export const CODEX_CATALOG_RETENTION_MS = 24 * 60 * 60_000;
 export const CODEX_CATALOG_REFRESH_LEASE_MS = 15_000;
+export const CODEX_CATALOG_COLD_WAIT_MS = 5_000;
 export const CODEX_CATALOG_CHUNK_BYTES = 55_000;
 
 export const CODEX_CATALOG_AUTH_GENERATION_KEY = ["ubq_ai", "codex_catalog_auth_generation"] as const;
@@ -165,8 +166,12 @@ export const storeCodexCatalog = async (
     body_bytes: new TextEncoder().encode(input.body).byteLength,
     sha256: await sha256Hex(input.body),
   };
-  await kv.set(metadataKey(input.clientVersion), metadata, { expireIn });
-  return true;
+  const generation = await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY);
+  if (generation.value !== input.authGeneration) return false;
+  return (await kv.atomic()
+    .check(generation)
+    .set(metadataKey(input.clientVersion), metadata, { expireIn })
+    .commit()).ok;
 };
 
 const getAuthGeneration = async (kv: Deno.Kv): Promise<string> => {
@@ -195,6 +200,49 @@ const acquireRefreshLease = async (
   return (await kv.atomic().check(entry).set(key, lease, { expireIn: CODEX_CATALOG_REFRESH_LEASE_MS * 2 }).commit()).ok;
 };
 
+const renewRefreshLease = async (kv: Deno.Kv, version: string, owner: string): Promise<boolean> => {
+  const key = leaseKey(version);
+  const entry = await kv.get<RefreshLease>(key);
+  if (entry.value?.owner !== owner) return false;
+  const lease: RefreshLease = { owner, lease_until_ms: Date.now() + CODEX_CATALOG_REFRESH_LEASE_MS };
+  return (await kv.atomic().check(entry).set(key, lease, { expireIn: CODEX_CATALOG_REFRESH_LEASE_MS * 2 }).commit()).ok;
+};
+
+const startRefreshLeaseHeartbeat = (kv: Deno.Kv, version: string, owner: string): {
+  lost: () => boolean;
+  stop: () => Promise<void>;
+} => {
+  let stopped = false;
+  let lost = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let renewal: Promise<void> | null = null;
+  const schedule = (): void => {
+    timer = setTimeout(() => {
+      renewal = renewRefreshLease(kv, version, owner)
+        .then((renewed) => {
+          if (!renewed) lost = true;
+        })
+        .catch((error) => {
+          lost = true;
+          console.error(`[ai.ubq.fi] Codex catalog lease renewal failed for ${version}:`, error);
+        })
+        .finally(() => {
+          renewal = null;
+          if (!stopped && !lost) schedule();
+        });
+    }, Math.floor(CODEX_CATALOG_REFRESH_LEASE_MS / 3));
+  };
+  schedule();
+  return {
+    lost: () => lost,
+    stop: async () => {
+      stopped = true;
+      if (timer !== null) clearTimeout(timer);
+      await renewal;
+    },
+  };
+};
+
 const releaseRefreshLease = async (kv: Deno.Kv, version: string, owner: string): Promise<void> => {
   try {
     const key = leaseKey(version);
@@ -205,9 +253,30 @@ const releaseRefreshLease = async (kv: Deno.Kv, version: string, owner: string):
   }
 };
 
+const authGenerationIsCurrent = async (kv: Deno.Kv, expected: string): Promise<boolean> =>
+  (await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY)).value === expected;
+
+const loadCurrentGenerationCatalog = async (kv: Deno.Kv, version: string): Promise<LoadedCodexCatalog | null> => {
+  const generation = (await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY)).value;
+  return generation ? await loadCatalog(kv, version, generation, Date.now()) : null;
+};
+
+const waitForColdCatalog = async (kv: Deno.Kv, version: string): Promise<LoadedCodexCatalog | null> => {
+  const deadline = Date.now() + CODEX_CATALOG_COLD_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const authGeneration = (await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY)).value;
+    if (!authGeneration) continue;
+    const catalog = await loadCatalog(kv, version, authGeneration, Date.now());
+    if (catalog) return catalog;
+  }
+  return null;
+};
+
 const maybeUpdateNormalizedSnapshot = async (
   kv: Deno.Kv,
   version: string,
+  authGeneration: string,
   parsed: Record<string, unknown>,
   updatedAtMs: number,
 ): Promise<void> => {
@@ -218,13 +287,15 @@ const maybeUpdateNormalizedSnapshot = async (
   });
   if (!next) return;
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    const generation = await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY);
+    if (generation.value !== authGeneration) return;
     const current = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
     const currentVersion = current.value?.client_version;
     if (currentVersion) {
       const comparison = compareCodexClientVersions(version, currentVersion);
       if (comparison === null || comparison < 0) return;
     }
-    const commit = await kv.atomic().check(current).set(CODEX_MODELS_KV_KEY, next).commit();
+    const commit = await kv.atomic().check(generation).check(current).set(CODEX_MODELS_KV_KEY, next).commit();
     if (commit.ok) return;
   }
 };
@@ -281,16 +352,28 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
   });
   if (!acquired) {
     if (cached) return catalogResponse(cached, req, "stale");
+    const waited = await waitForColdCatalog(kv, version).catch((error) => {
+      console.error(`[ai.ubq.fi] Codex catalog cold-cache wait failed for ${version}:`, error);
+      return null;
+    });
+    if (waited) return catalogResponse(waited, req, "wait");
     return openaiError(502, "Codex model catalog refresh is already in progress", "codex_catalog_unavailable");
   }
 
+  const leaseHeartbeat = startRefreshLeaseHeartbeat(kv, version, leaseOwner);
   try {
     const upstream = await fetchCodexModels({
       clientVersion: version,
       ifNoneMatch: cached?.metadata.etag ?? null,
     });
     if (upstream.status === 304 && cached) {
-      await storeCodexCatalog(kv, {
+      if (leaseHeartbeat.lost() || !await authGenerationIsCurrent(kv, authGeneration)) {
+        const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
+        return replacement
+          ? catalogResponse(replacement, req, "rotated")
+          : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
+      }
+      const revalidated = await storeCodexCatalog(kv, {
         clientVersion: version,
         authGeneration,
         body: cached.body,
@@ -298,6 +381,12 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
         contentType: cached.metadata.content_type,
         fetchedAtMs: nowMs,
       });
+      if (!revalidated || !await authGenerationIsCurrent(kv, authGeneration)) {
+        const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
+        return replacement
+          ? catalogResponse(replacement, req, "rotated")
+          : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
+      }
       const refreshed = await loadCatalog(kv, version, authGeneration, nowMs);
       return catalogResponse(refreshed ?? cached, req, "revalidated");
     }
@@ -309,9 +398,20 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
       console.error(
         `[ai.ubq.fi] Codex catalog refresh failed for ${version}: upstream ${upstream.status} ${body.slice(0, 240)}`,
       );
-      return cached
-        ? catalogResponse(cached, req, "stale")
+      if (cached && await authGenerationIsCurrent(kv, authGeneration)) {
+        return catalogResponse(cached, req, "stale");
+      }
+      const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
+      return replacement
+        ? catalogResponse(replacement, req, "rotated")
         : openaiError(502, "Codex upstream did not return a valid model catalog", "codex_catalog_unavailable");
+    }
+
+    if (leaseHeartbeat.lost() || !await authGenerationIsCurrent(kv, authGeneration)) {
+      const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
+      return replacement
+        ? catalogResponse(replacement, req, "rotated")
+        : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
     }
 
     const stored = await storeCodexCatalog(kv, {
@@ -323,24 +423,38 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
       fetchedAtMs: nowMs,
     });
     if (!stored) {
-      return cached
-        ? catalogResponse(cached, req, "stale")
+      if (cached && await authGenerationIsCurrent(kv, authGeneration)) {
+        return catalogResponse(cached, req, "stale");
+      }
+      const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
+      return replacement
+        ? catalogResponse(replacement, req, "rotated")
         : openaiError(502, "Codex model catalog could not be cached", "codex_catalog_unavailable");
     }
-    await maybeUpdateNormalizedSnapshot(kv, version, parsed, nowMs).catch((error) => {
+    await maybeUpdateNormalizedSnapshot(kv, version, authGeneration, parsed, nowMs).catch((error) => {
       console.error(`[ai.ubq.fi] Codex normalized snapshot update failed for ${version}:`, error);
     });
+    if (!await authGenerationIsCurrent(kv, authGeneration)) {
+      const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
+      return replacement
+        ? catalogResponse(replacement, req, "rotated")
+        : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
+    }
     const storedCatalog = await loadCatalog(kv, version, authGeneration, nowMs);
     return storedCatalog
       ? catalogResponse(storedCatalog, req, "miss")
       : openaiError(502, "Codex model catalog could not be read after caching", "codex_catalog_unavailable");
   } catch (error) {
     console.error(`[ai.ubq.fi] Codex catalog refresh failed for ${version}:`, error);
-    const recovered = cached ?? await loadCatalog(kv, version, authGeneration, Date.now()).catch(() => null);
+    const generationCurrent = await authGenerationIsCurrent(kv, authGeneration).catch(() => false);
+    const recovered = generationCurrent
+      ? cached ?? await loadCatalog(kv, version, authGeneration, Date.now()).catch(() => null)
+      : await loadCurrentGenerationCatalog(kv, version).catch(() => null);
     return recovered
-      ? catalogResponse(recovered, req, cached ? "stale" : "miss")
+      ? catalogResponse(recovered, req, generationCurrent ? (cached ? "stale" : "miss") : "rotated")
       : openaiError(502, "Codex upstream model catalog is unavailable", "codex_catalog_unavailable");
   } finally {
+    await leaseHeartbeat.stop();
     await releaseRefreshLease(kv, version, leaseOwner);
   }
 };

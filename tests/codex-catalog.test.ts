@@ -281,6 +281,122 @@ Deno.test("codex catalog: refresh leases suppress duplicate upstream requests", 
   }
 });
 
+Deno.test("codex catalog: concurrent cold misses share one upstream refresh", async () => {
+  seedBaseState();
+  const version = "0.151.1";
+  const originalFetch = globalThis.fetch;
+  let resolveFetch!: (response: Response) => void;
+  let markFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => markFetchStarted = resolve);
+  const deferredResponse = new Promise<Response>((resolve) => resolveFetch = resolve);
+  let calls = 0;
+  globalThis.fetch = () => {
+    calls += 1;
+    markFetchStarted();
+    return deferredResponse;
+  };
+
+  try {
+    const firstPromise = handleCodexCatalogModels(request(version), version);
+    await fetchStarted;
+    const secondPromise = handleCodexCatalogModels(request(version), version);
+    resolveFetch(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(second.headers.get("x-uos-cache"), "wait");
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("codex catalog: auth rotation discards an in-flight old-generation refresh", async () => {
+  seedBaseState("0.200.0");
+  const version = "0.201.1";
+  const replacementGeneration = "replacement-auth-generation";
+  const replacementBody = catalogBody(version, { account: "replacement" });
+  const originalFetch = globalThis.fetch;
+  let resolveFetch!: (response: Response) => void;
+  let markFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => markFetchStarted = resolve);
+  const deferredResponse = new Promise<Response>((resolve) => resolveFetch = resolve);
+  globalThis.fetch = () => {
+    markFetchStarted();
+    return deferredResponse;
+  };
+
+  try {
+    const responsePromise = handleCodexCatalogModels(request(version), version);
+    await fetchStarted;
+    kvStore.set(keyToString(CODEX_CATALOG_AUTH_GENERATION_KEY), {
+      value: replacementGeneration,
+      versionstamp: nextVersion(),
+    });
+    kvStore.set(keyToString(SNAPSHOT_KEY), {
+      value: {
+        source: "chatgpt_codex",
+        client_version: version,
+        updated_at_ms: Date.now(),
+        models: [{ slug: "replacement-snapshot" }],
+      },
+      versionstamp: nextVersion(),
+    });
+    assert.equal(
+      await storeCodexCatalog(kvStub, {
+        clientVersion: version,
+        authGeneration: replacementGeneration,
+        body: replacementBody,
+      }),
+      true,
+    );
+    resolveFetch(
+      new Response(catalogBody(version, { account: "old" }), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await responsePromise;
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-cache"), "rotated");
+    assert.equal((await response.json() as { account?: string }).account, "replacement");
+    const metadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as { auth_generation?: string };
+    assert.equal(metadata.auth_generation, replacementGeneration);
+    const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as { models?: Array<{ slug?: string }> };
+    assert.equal(snapshot.models?.[0]?.slug, "replacement-snapshot");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("codex catalog: slow refreshes renew their lease", async () => {
+  seedBaseState();
+  const version = "0.151.2";
+  const leaseStorageKey = keyToString([...CODEX_CATALOG_LEASE_PREFIX, version]);
+  const originalFetch = globalThis.fetch;
+  let resolveFetch!: (response: Response) => void;
+  let markFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => markFetchStarted = resolve);
+  const deferredResponse = new Promise<Response>((resolve) => resolveFetch = resolve);
+  globalThis.fetch = () => {
+    markFetchStarted();
+    return deferredResponse;
+  };
+
+  try {
+    const responsePromise = handleCodexCatalogModels(request(version), version);
+    await fetchStarted;
+    const initialLease = kvStore.get(leaseStorageKey)?.value as { lease_until_ms: number };
+    await new Promise((resolve) => setTimeout(resolve, 5_100));
+    const renewedLease = kvStore.get(leaseStorageKey)?.value as { lease_until_ms: number };
+    assert.ok(renewedLease.lease_until_ms > initialLease.lease_until_ms);
+    resolveFetch(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
+    assert.equal((await responsePromise).status, 200);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("codex catalog: gzip chunks are bounded and integrity failures force a refresh", async () => {
   seedBaseState();
   const version = "0.152.0";
