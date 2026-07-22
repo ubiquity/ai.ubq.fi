@@ -53,7 +53,6 @@ const currentWindow = (
 
 const policyVersion = (record: ApiKeyHashRecord): string =>
   [
-    record.usage_limit_requests,
     normalizeApiKeyWindowMs(record.window_ms),
     record.usage_reset_at_ms,
   ].join(":");

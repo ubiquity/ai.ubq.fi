@@ -98,6 +98,9 @@ export const getGlobalCodexRateLimitDecision = async (nowMs = Date.now()): Promi
     }
     hydrated = true;
   }
+  // Deliberately avoid re-reading a healthy/null circuit: the warm success path has a zero-read budget.
+  // If another isolate opened the shared circuit, this isolate can leak at most one primary 429; that response
+  // immediately calls openGlobalCodexRateLimitCircuit and hydrates this isolate for the rest of the cooldown.
   if (!localState) return { kind: "primary" };
   if (localState.retry_at_ms > nowMs) return { kind: "cached", retryAtMs: localState.retry_at_ms };
   if (localState.probe_id && localState.probe_lease_until_ms! > nowMs) {

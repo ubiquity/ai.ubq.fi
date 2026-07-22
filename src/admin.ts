@@ -43,6 +43,7 @@ import {
   apiKeyPolicyFromHashRecord,
   getApiKeyUsageV2,
   invalidateApiKeyPolicy,
+  looksLikeUosApiKey,
 } from "./api_key_policy.ts";
 import { apiKeyRequestLogPrefix, apiKeyUsageDailyKey, apiKeyUsageKey, listApiKeyRequestLogs } from "./analytics.ts";
 import { reloadKernelPublicKeys } from "./auth.ts";
@@ -498,11 +499,7 @@ const normalizeOptionalApiKeyToken = (value: unknown): string | null => {
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") return null;
   const token = value.trim();
-  if (!token) return null;
-  if (/\s/.test(token)) return null;
-  if (token.length < 24) return null;
-  if (token.length > 300) return null;
-  return token;
+  return looksLikeUosApiKey(token) ? token : null;
 };
 
 const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | null => {
@@ -685,6 +682,13 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   if (!name) return openaiError(400, "name must be a non-empty string (<=80 chars)", "invalid_request_error");
 
   const providedToken = normalizeOptionalApiKeyToken(raw.token);
+  if (raw.token !== undefined && providedToken === null) {
+    return openaiError(
+      400,
+      "token must use the u_ prefix followed by 64 lowercase hexadecimal characters",
+      "invalid_request_error",
+    );
+  }
   const token = providedToken ?? generateApiKeyToken();
 
   const now = Date.now();

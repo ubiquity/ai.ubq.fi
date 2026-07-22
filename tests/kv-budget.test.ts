@@ -116,7 +116,12 @@ const {
   invalidateApiKeyPolicy,
   resetApiKeyPolicyCacheForTest,
 } = await import("../src/api_key_policy.ts");
-const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
+const {
+  loadRuntimeConfig,
+  RUNTIME_CONFIG_CACHE_TTL_MS,
+  RUNTIME_CONFIG_V2_KEY,
+  resetRuntimeConfigCacheForTest,
+} = await import("../src/runtime_config.ts");
 const { resetCodexRateLimitCacheForTest } = await import("../src/codex_rate_limit.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 
@@ -236,6 +241,55 @@ Deno.test("KV budget: warm bounded inference reads once and atomically sums once
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("KV budget: changing only a bounded limit preserves the active v2 counter", async () => {
+  const token = `u_${"4".repeat(64)}`;
+  const { hash, record } = await seedKey(token, "limit-change", 100);
+  const original = apiKeyPolicyFromHashRecord(hash, record, now);
+  const lowered = apiKeyPolicyFromHashRecord(hash, { ...record, usage_limit_requests: 10 }, now);
+  assert.ok(original && lowered);
+  assert.deepEqual(apiKeyUsageV2Key(lowered), apiKeyUsageV2Key(original));
+  kv.values.set(encodeKey(apiKeyUsageV2Key(original)), new Deno.KvU64(12n));
+  kv.values.set(encodeKey(["ubq_ai", "api_keys", "hash", hash]), { ...record, usage_limit_requests: 10 });
+  resetApiKeyPolicyCacheForTest();
+  const decision = await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now });
+  assert.equal(decision.ok, false);
+  if (!decision.ok) assert.equal(decision.response.status, 429);
+});
+
+Deno.test("KV budget: runtime configuration revalidates after the bounded isolate TTL", async () => {
+  resetRuntimeConfigCacheForTest();
+  const first = structuredClone(runtime);
+  const second = {
+    ...runtime,
+    default_model: "gpt-5-kv-budget-next",
+    codex_models: {
+      ...runtime.codex_models,
+      models: [{
+        slug: "gpt-5-kv-budget-next",
+        default_reasoning_level: "high",
+        supported_reasoning_levels: ["none", "high"],
+      }],
+    },
+    updated_at_ms: now + 1,
+  };
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), first);
+  kv.resetCounts();
+  assert.equal((await loadRuntimeConfig(kv as unknown as Deno.Kv, now))?.default_model, MODEL);
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), second);
+  assert.equal(
+    (await loadRuntimeConfig(kv as unknown as Deno.Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS - 1))?.default_model,
+    MODEL,
+  );
+  const refreshed = await Promise.all(
+    Array.from(
+      { length: 20 },
+      () => loadRuntimeConfig(kv as unknown as Deno.Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS + 1),
+    ),
+  );
+  assert.ok(refreshed.every((config) => config?.default_model === second.default_model));
+  assert.equal(kv.reads, 2);
 });
 
 Deno.test("KV budget: malformed tokens are rejected without KV and policy expiry refreshes revocation", async () => {

@@ -43,6 +43,10 @@ const makeKvStub = (store: Map<string, unknown>): Deno.Kv =>
       store.set(keyToString(key), value);
       return Promise.resolve({ ok: true } as const);
     },
+    delete: (key: Deno.KvKey) => {
+      store.delete(keyToString(key));
+      return Promise.resolve();
+    },
     atomic: () => {
       const writes: Array<{ key: Deno.KvKey; value: unknown }> = [];
       const operation = {
@@ -262,7 +266,7 @@ Deno.test("KV incident migration creates counters, runtime config, and only pend
   store.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
     id,
     name: "Bounded",
-    prefix: "u_bounded",
+    prefix: "u_0123456789",
     hash,
     created_at_ms: now,
     expires_at_ms: -1,
@@ -286,6 +290,8 @@ Deno.test("KV incident migration creates counters, runtime config, and only pend
     window_ms: 60_000,
     ...fallback,
   });
+  const staleCounterKey = ["uos_ai", "api_key_usage", "v2", id, `10:60000:${now + 60_000}`, now] as const;
+  store.set(keyToString(staleCounterKey), new Deno.KvU64(7n));
   for (const [requestId, billingStatus] of [["pending", "pending"], ["done", "reconciled"]] as const) {
     store.set(keyToString(["ubq_ai", "api_keys", "request_log", id, now, requestId]), {
       id: requestId,
@@ -304,6 +310,11 @@ Deno.test("KV incident migration creates counters, runtime config, and only pend
     runtime_config_written: true,
   });
   assert.equal(store.has(keyToString(["uos_ai", "runtime_config", "v2"])), true);
+  assert.equal(store.has(keyToString(staleCounterKey)), false);
+  const currentCounter = [...store.entries()].find(([key]) => key.includes('"api_key_usage","v2"'))?.[1] as
+    | Deno.KvU64
+    | undefined;
+  assert.equal(currentCounter?.value, 7n);
   assert.equal(store.has(keyToString(["uos_ai", "paid_fallback", "ledger", id, now, "pending"])), true);
   assert.equal(store.has(keyToString(["uos_ai", "paid_fallback", "ledger", id, now, "done"])), false);
   const validation = await validateKvMigrationTarget(makeKvStub(store));

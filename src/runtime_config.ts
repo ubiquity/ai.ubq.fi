@@ -5,6 +5,7 @@ import { kvPromise } from "./kv.ts";
 import { isRecord } from "./utils.ts";
 
 export const RUNTIME_CONFIG_V2_KEY = ["uos_ai", "runtime_config", "v2"] as const;
+export const RUNTIME_CONFIG_CACHE_TTL_MS = 5 * 60_000;
 
 export type RuntimeConfigV2 = Readonly<{
   version: 2;
@@ -14,7 +15,8 @@ export type RuntimeConfigV2 = Readonly<{
   updated_at_ms: number;
 }>;
 
-let cachedRuntimeConfig: RuntimeConfigV2 | null = null;
+let cachedRuntimeConfig: Readonly<{ value: RuntimeConfigV2; expires_at_ms: number }> | null = null;
+let runtimeConfigLoadInFlight: Promise<RuntimeConfigV2 | null> | null = null;
 
 export const normalizeRuntimeConfig = (value: unknown): RuntimeConfigV2 | null => {
   if (!isRecord(value) || value.version !== 2 || !isRecord(value.codex_models)) return null;
@@ -50,13 +52,29 @@ export const buildRuntimeConfig = (
   };
 };
 
-export const loadRuntimeConfig = async (kvOverride?: Deno.Kv | null): Promise<RuntimeConfigV2 | null> => {
-  if (cachedRuntimeConfig) return cachedRuntimeConfig;
-  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
-  if (!kv) return null;
-  const entry = await kv.get<RuntimeConfigV2>(RUNTIME_CONFIG_V2_KEY, { consistency: "strong" });
-  cachedRuntimeConfig = normalizeRuntimeConfig(entry.value);
-  return cachedRuntimeConfig;
+export const loadRuntimeConfig = async (
+  kvOverride?: Deno.Kv | null,
+  nowMs = Date.now(),
+): Promise<RuntimeConfigV2 | null> => {
+  if (cachedRuntimeConfig && cachedRuntimeConfig.expires_at_ms > nowMs) return cachedRuntimeConfig.value;
+  if (runtimeConfigLoadInFlight) return await runtimeConfigLoadInFlight;
+  const stale = cachedRuntimeConfig?.value ?? null;
+  runtimeConfigLoadInFlight = (async () => {
+    try {
+      const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+      if (!kv) return stale;
+      const entry = await kv.get<RuntimeConfigV2>(RUNTIME_CONFIG_V2_KEY, { consistency: "strong" });
+      const value = normalizeRuntimeConfig(entry.value) ?? stale;
+      if (value) cachedRuntimeConfig = { value, expires_at_ms: nowMs + RUNTIME_CONFIG_CACHE_TTL_MS };
+      return value;
+    } catch (error) {
+      console.warn("[ai.ubq.fi] Runtime configuration refresh failed; using stale configuration:", error);
+      return stale;
+    } finally {
+      runtimeConfigLoadInFlight = null;
+    }
+  })();
+  return await runtimeConfigLoadInFlight;
 };
 
 export const storeRuntimeConfig = async (
@@ -66,14 +84,15 @@ export const storeRuntimeConfig = async (
   const kv = kvOverride === undefined ? await kvPromise : kvOverride;
   if (!kv) return false;
   await kv.set(RUNTIME_CONFIG_V2_KEY, config);
-  cachedRuntimeConfig = config;
+  cacheRuntimeConfig(config);
   return true;
 };
 
-export const cacheRuntimeConfig = (config: RuntimeConfigV2): void => {
-  cachedRuntimeConfig = config;
+export const cacheRuntimeConfig = (config: RuntimeConfigV2, nowMs = Date.now()): void => {
+  cachedRuntimeConfig = { value: config, expires_at_ms: nowMs + RUNTIME_CONFIG_CACHE_TTL_MS };
 };
 
 export const resetRuntimeConfigCacheForTest = (): void => {
   cachedRuntimeConfig = null;
+  runtimeConfigLoadInFlight = null;
 };

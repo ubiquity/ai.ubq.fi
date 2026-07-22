@@ -1,6 +1,6 @@
 import { type KvEntryJSON, toKey, toValue } from "@deno/kv-utils/json";
 import { API_KEY_ID_PREFIX, apiKeyHashKey } from "./api_keys.ts";
-import { apiKeyPolicyFromHashRecord, apiKeyUsageV2Key } from "./api_key_policy.ts";
+import { API_KEY_USAGE_V2_PREFIX, apiKeyPolicyFromHashRecord, apiKeyUsageV2Key } from "./api_key_policy.ts";
 import { buildRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyRequestLogRecord } from "./types.ts";
 import { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
@@ -246,6 +246,7 @@ export const listKvMigrationCount = async (
 export const KV_READ_INCIDENT_V2_MIGRATION_KEY = ["uos_ai", "migrations", "kv_read_incident_v2"] as const;
 const LEGACY_REQUEST_LOG_PREFIX = ["ubq_ai", "api_keys", "request_log"] as const;
 const PAID_FALLBACK_LEDGER_PREFIX = ["uos_ai", "paid_fallback", "ledger"] as const;
+const isRoutableApiKeyPrefix = (value: unknown): boolean => typeof value === "string" && /^u_[0-9a-f]{10}$/.test(value);
 
 export type KvReadIncidentV2MigrationResult = Readonly<{
   api_keys: number;
@@ -268,7 +269,7 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
   let boundedCounters = 0;
   for await (const entry of kv.list<ApiKeyRecord>({ prefix: API_KEY_ID_PREFIX })) {
     const record = entry.value;
-    if (!record || !hasStrictPaidFallbackKeyPolicy(record)) {
+    if (!record || !hasStrictPaidFallbackKeyPolicy(record) || !isRoutableApiKeyPrefix(record.prefix)) {
       throw new Error(`API key ${String(entry.key.at(-1))} has an invalid policy`);
     }
     const hashEntry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(record.hash));
@@ -280,8 +281,14 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
     apiKeys += 1;
     if (policy.usage_limit_requests !== -1) {
       const counterKey = apiKeyUsageV2Key(policy);
-      const counter = await kv.get<Deno.KvU64>(counterKey);
-      if (!counter.value) await kv.set(counterKey, new Deno.KvU64(BigInt(Math.max(0, record.usage_requests))));
+      let usage = BigInt(Math.max(0, record.usage_requests));
+      const staleCounterKeys: Deno.KvKey[] = [];
+      for await (const counter of kv.list<Deno.KvU64>({ prefix: [...API_KEY_USAGE_V2_PREFIX, record.id] })) {
+        if (counter.value && counter.value.value > usage) usage = counter.value.value;
+        if (JSON.stringify(counter.key) !== JSON.stringify(counterKey)) staleCounterKeys.push(counter.key);
+      }
+      await kv.set(counterKey, new Deno.KvU64(usage));
+      for (const staleKey of staleCounterKeys) await kv.delete(staleKey);
       boundedCounters += 1;
     }
   }
@@ -354,7 +361,10 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
 
   let boundedApiKeys = 0;
   for await (const entry of kv.list<ApiKeyRecord>({ prefix: API_KEY_ID_PREFIX })) {
-    if (!entry.value || !hasStrictPaidFallbackKeyPolicy(entry.value)) {
+    if (
+      !entry.value || !hasStrictPaidFallbackKeyPolicy(entry.value) ||
+      !isRoutableApiKeyPrefix(entry.value.prefix)
+    ) {
       errors.push(`api key has invalid v2 policy: ${String(entry.key.at(-1))}`);
       continue;
     }

@@ -128,6 +128,10 @@ const authPayload = {
   },
 };
 
+const DISABLED_FALLBACK_TOKEN = `u_${"a".repeat(64)}`;
+const ENABLED_FALLBACK_TOKEN = `u_${"b".repeat(64)}`;
+const FAILED_FALLBACK_TOKEN = `u_${"c".repeat(64)}`;
+
 const makeRequest = (body: unknown): Request =>
   new Request("https://ai.ubq.fi/admin/codex/auth", {
     method: "POST",
@@ -622,7 +626,7 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Overflow disabled",
-          token: "u_test_disabled_initialization_123456789",
+          token: DISABLED_FALLBACK_TOKEN,
           paid_fallback_enabled: false,
           paid_fallback_limit_credits: 2,
         }),
@@ -712,6 +716,24 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
   }
 });
 
+Deno.test("API key creation rejects custom tokens outside the v2 routable shape", async () => {
+  kvStore.clear();
+  const response = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Legacy custom token",
+        token: "legacy_custom_token_that_was_previously_accepted",
+      }),
+    }),
+  );
+  assert.equal(response.status, 400);
+  const payload = await response.json() as { error?: { message?: string } };
+  assert.match(payload.error?.message ?? "", /u_ prefix followed by 64 lowercase hexadecimal/);
+  assert.equal([...kvStore.keys()].some((key) => key.includes('"api_keys"')), false);
+});
+
 Deno.test("enabled key creation initializes once and failed enable leaves the key disabled", async () => {
   kvStore.clear();
   seedCodexSnapshot({
@@ -737,7 +759,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Overflow enabled",
-          token: "u_test_enabled_initialization_1234567890",
+          token: ENABLED_FALLBACK_TOKEN,
           paid_fallback_enabled: true,
           paid_fallback_limit_credits: 1,
         }),
@@ -756,7 +778,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Duplicate overflow key",
-          token: "u_test_enabled_initialization_1234567890",
+          token: ENABLED_FALLBACK_TOKEN,
           paid_fallback_enabled: true,
           paid_fallback_limit_credits: 1,
         }),
@@ -771,7 +793,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Enable failure",
-          token: "u_test_failed_initialization_123456789",
+          token: FAILED_FALLBACK_TOKEN,
           paid_fallback_enabled: false,
           paid_fallback_limit_credits: 1,
         }),
