@@ -20,6 +20,7 @@ import { fetchYunwuTokenLogs, initializeYunwuPricing, readYunwuApiKey, YunwuErro
 
 const PAID_FALLBACK_MIGRATION_KEY = ["uos_ai", "migrations", "api_key_paid_fallback_v1"] as const;
 const MAX_RESERVATION_RELEASE_RETRIES = 3;
+export const PAID_FALLBACK_UNRECONCILABLE_TIMEOUT_MS = 5 * 60_000;
 
 export type PaidFallbackPolicyFields = Pick<
   ApiKeyRecord,
@@ -367,7 +368,7 @@ const clearReservation = async (
     statusCode?: number;
     clear: boolean;
   }>,
-): Promise<void> => {
+): Promise<boolean> => {
   const kv = await kvPromise;
   let cleared = !patch.clear;
   if (kv && patch.clear) {
@@ -416,6 +417,7 @@ const clearReservation = async (
       billing_status: resolvedBillingStatus,
     },
   );
+  return cleared;
 };
 
 export const recordYunwuUpstreamResponse = async (
@@ -477,7 +479,7 @@ export const recordYunwuUpstreamResponse = async (
 export const recordYunwuAmbiguousFailure = async (reservation: PaidFallbackReservation): Promise<void> => {
   await clearReservation(reservation, "unresolved", {
     statusCode: 502,
-    clear: false,
+    clear: true,
   });
 };
 
@@ -572,6 +574,8 @@ export const reconcileApiKeyPaidFallbacks = async (keyId: string): Promise<numbe
   const kv = await kvPromise;
   if (!kv) return 0;
   const pending: ApiKeyRequestLogRecord[] = [];
+  let settled = 0;
+  const now = Date.now();
   for await (
     const entry of kv.list<ApiKeyRequestLogRecord>(
       { prefix: apiKeyRequestLogPrefix(keyId) },
@@ -580,14 +584,29 @@ export const reconcileApiKeyPaidFallbacks = async (keyId: string): Promise<numbe
   ) {
     const request = entry.value;
     if (
-      request?.provider === "yunwu" &&
-      (request.billing_status === "pending" || request.billing_status === "unresolved") &&
-      Boolean(request.provider_request_id)
-    ) {
+      request?.provider !== "yunwu" ||
+      (request.billing_status !== "pending" && request.billing_status !== "unresolved")
+    ) continue;
+    if (request.provider_request_id) {
       pending.push(request);
+      continue;
     }
+    if (now - request.created_at_ms < PAID_FALLBACK_UNRECONCILABLE_TIMEOUT_MS) continue;
+    const released = await clearReservation(
+      {
+        key_id: request.key_id,
+        request_id: request.id,
+        created_at_ms: request.created_at_ms,
+        reserved_microcredits: 0,
+        quota_per_credit: request.quota_per_credit ?? 0,
+        window_reset_at_ms: request.paid_fallback_window_reset_at_ms ?? 0,
+      },
+      "unresolved",
+      { providerRequestId: null, statusCode: request.status_code || 502, clear: true },
+    );
+    if (released) settled += 1;
   }
-  if (!pending.length) return 0;
+  if (!pending.length) return settled;
 
   let providerLogs;
   try {
@@ -597,10 +616,9 @@ export const reconcileApiKeyPaidFallbacks = async (keyId: string): Promise<numbe
       "[ai.ubq.fi] Failed to reconcile YunWu billing:",
       error instanceof Error ? error.message : String(error),
     );
-    return 0;
+    return settled;
   }
   const logsByRequestId = new Map(providerLogs.map((entry) => [entry.request_id, entry]));
-  let settled = 0;
   for (const request of pending) {
     const providerRequestId = request.provider_request_id;
     if (!providerRequestId) continue;
