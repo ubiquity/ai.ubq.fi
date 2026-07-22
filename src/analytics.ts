@@ -42,6 +42,7 @@ export type ApiKeyRequestLogPatch = Partial<Omit<ApiKeyRequestLogInput, "id" | "
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const API_KEY_REQUEST_LOG_RETENTION_MS = 365 * DAY_MS;
 const MAX_REQUEST_LOGS = 100;
+const MAX_PAID_FALLBACK_LEDGER_WRITE_RETRIES = 3;
 
 const integer = (value: unknown, fallback = 0): number =>
   typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
@@ -91,28 +92,55 @@ const normalize = (
   };
 };
 
+const mutateApiKeyRequestLog = async (
+  keyId: string,
+  createdAtMs: number,
+  requestId: string,
+  mutate: (existing: ApiKeyRequestLogRecord | null) => ApiKeyRequestLogInput | ApiKeyRequestLogRecord | null,
+  kvOverride?: Deno.Kv | null,
+): Promise<void> => {
+  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+  if (!kv || !keyId.trim()) return;
+  const key = apiKeyRequestLogKey(keyId, createdAtMs, requestId);
+
+  for (let attempt = 0; attempt < MAX_PAID_FALLBACK_LEDGER_WRITE_RETRIES; attempt += 1) {
+    const entry = await kv.get<ApiKeyRequestLogRecord>(key, { consistency: "strong" });
+    const existing = normalize(entry.value, keyId, requestId, createdAtMs);
+    const next = mutate(existing);
+    if (!next) return;
+    const record = normalize(
+      { ...next, id: requestId, key_id: keyId, created_at_ms: createdAtMs },
+      keyId,
+      requestId,
+      createdAtMs,
+    );
+    if (!record) return;
+    const expireIn = Math.max(
+      1,
+      createdAtMs + API_KEY_REQUEST_LOG_RETENTION_MS - Date.now(),
+    );
+    const committed = await kv.atomic().check(entry).set(key, record, { expireIn }).commit();
+    if (committed.ok) return;
+  }
+
+  throw new Error(`paid fallback ledger changed concurrently: ${requestId}`);
+};
+
 export const recordApiKeyRequestLog = async (
   keyId: string,
   input: ApiKeyRequestLogInput,
   kvOverride?: Deno.Kv | null,
 ): Promise<void> => {
-  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
-  if (!kv || !keyId.trim()) return;
   const nowMs = Date.now();
   const requestId = text(input.id, 120, crypto.randomUUID());
   const createdAtMs = integer(input.created_at_ms, nowMs);
-  const key = apiKeyRequestLogKey(keyId, createdAtMs, requestId);
-  const entry = await kv.get<ApiKeyRequestLogRecord>(key, { consistency: "strong" });
-  const record = normalize(
-    { ...(entry.value ?? {}), ...input, id: requestId, key_id: keyId },
+  await mutateApiKeyRequestLog(
     keyId,
-    requestId,
     createdAtMs,
+    requestId,
+    (existing) => ({ ...(existing ?? {}), ...input }),
+    kvOverride,
   );
-  if (!record) return;
-  const expireIn = Math.max(1, createdAtMs + API_KEY_REQUEST_LOG_RETENTION_MS - nowMs);
-  const committed = await kv.atomic().check(entry).set(key, record, { expireIn }).commit();
-  if (!committed.ok) throw new Error(`paid fallback ledger changed concurrently: ${requestId}`);
 };
 
 export const getApiKeyRequestLog = async (
@@ -134,9 +162,13 @@ export const updateApiKeyRequestLog = async (
   patch: ApiKeyRequestLogPatch,
   kvOverride?: Deno.Kv | null,
 ): Promise<void> => {
-  const existing = await getApiKeyRequestLog(keyId, createdAtMs, requestId, kvOverride);
-  if (!existing) return;
-  await recordApiKeyRequestLog(keyId, { ...existing, ...patch, id: requestId, created_at_ms: createdAtMs }, kvOverride);
+  await mutateApiKeyRequestLog(
+    keyId,
+    createdAtMs,
+    requestId,
+    (existing) => existing ? { ...existing, ...patch } : null,
+    kvOverride,
+  );
 };
 
 export const listApiKeyRequestLogs = async (

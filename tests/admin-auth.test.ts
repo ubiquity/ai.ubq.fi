@@ -100,9 +100,12 @@ const kvStub = {
 const {
   handleAdminApiKeysCreate,
   handleAdminApiKeysDelete,
+  handleAdminApiKeysList,
   handleAdminApiKeysPaidFallbacks,
   handleAdminApiKeysUpdate,
   handleAdminCodexAuth,
+  handleAdminCodexModelsGet,
+  handleAdminCodexModelsSet,
   handleAdminDefaults,
   handleAdminKvMigrationImport,
 } = await import("../src/admin.ts");
@@ -138,6 +141,101 @@ const makeRequest = (body: unknown): Request =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+Deno.test("API key list ignores legacy usage unless v2 usage is requested", async () => {
+  kvStore.clear();
+  const id = "v2-usage-list";
+  const windowMs = 60_000;
+  const windowStartMs = Date.now();
+  const usageResetAtMs = windowStartMs + windowMs;
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    id,
+    name: "V2 usage list",
+    prefix: "u_1234567890",
+    hash: "hash-v2-usage-list",
+    created_at_ms: windowStartMs,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 10,
+    usage_requests: 17,
+    usage_reset_at_ms: usageResetAtMs,
+    window_ms: windowMs,
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: 0,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+    paid_fallback_model_ids: [],
+    paid_fallback_quota_per_credit: 0,
+    paid_fallback_pricing_checked_at_ms: null,
+  });
+  kvStore.set(
+    keyToString(["uos_ai", "api_key_usage", "v2", id, String(windowMs), windowStartMs]),
+    { value: 3n } as Deno.KvU64,
+  );
+
+  const withoutUsage = await handleAdminApiKeysList(
+    new Request("https://ai.ubq.fi/admin/api-keys"),
+  );
+  assert.equal(withoutUsage.status, 200);
+  const withoutPayload = await withoutUsage.json() as { data?: Array<Record<string, unknown>> };
+  assert.equal(Object.prototype.hasOwnProperty.call(withoutPayload.data?.[0] ?? {}, "usage_requests"), false);
+
+  const withUsage = await handleAdminApiKeysList(
+    new Request("https://ai.ubq.fi/admin/api-keys?include_usage=1"),
+  );
+  assert.equal(withUsage.status, 200);
+  const withPayload = await withUsage.json() as {
+    data?: Array<{ usage_requests?: number; usage?: { request_count?: number } }>;
+  };
+  assert.equal(withPayload.data?.[0]?.usage_requests, 3);
+  assert.equal(withPayload.data?.[0]?.usage?.request_count, 3);
+});
+
+Deno.test("admin Codex model GET returns the full catalog rather than the compact runtime record", async () => {
+  kvStore.clear();
+  seedCodexSnapshot({
+    models: [{
+      slug: "gpt-admin-full-catalog",
+      display_name: "GPT Admin Full Catalog",
+      description: "full catalog description",
+      context_window: 272_000,
+      supported_reasoning_levels: ["none", "high"],
+    }],
+    source: "chatgpt_codex",
+    client_version: "0.201.0",
+    updated_at_ms: Date.now(),
+  });
+
+  const response = await handleAdminCodexModelsGet();
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    data?: { models?: Array<{ description?: string; context_window?: number }> };
+  };
+  assert.equal(payload.data?.models?.[0]?.description, "full catalog description");
+  assert.equal(payload.data?.models?.[0]?.context_window, 272_000);
+});
+
+Deno.test("admin Codex model update rejects a catalog whose compact runtime record exceeds 4 KiB", async () => {
+  kvStore.clear();
+  const response = await handleAdminCodexModelsSet(
+    makeRequest({
+      source: "chatgpt_codex",
+      client_version: "0.201.0",
+      models: Array.from({ length: 200 }, (_, index) => ({
+        slug: `gpt-admin-runtime-${String(index).padStart(3, "0")}`,
+        supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh", "ultra"],
+      })),
+    }),
+  );
+
+  assert.equal(response.status, 413);
+  const payload = await response.json() as { error?: { code?: string; message?: string } };
+  assert.equal(payload.error?.code, "runtime_config_invalid");
+  assert.match(payload.error?.message ?? "", /runtime config is too large/);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
+  assert.equal(kvStore.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
+});
 
 Deno.test("admin defaults includes serializable YunWu quota diagnostics without credentials", async () => {
   kvStore.clear();
@@ -175,6 +273,51 @@ Deno.test("admin defaults includes serializable YunWu quota diagnostics without 
   assert.equal(payload.yunwu_quota?.latest_refill_id, "refill-2");
   assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "system_token"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "user_id"), false);
+});
+
+Deno.test("admin defaults permits kernel-only updates without runtime configuration", async () => {
+  kvStore.clear();
+
+  const response = await handleAdminDefaults(
+    new Request("https://ai.ubq.fi/admin/defaults", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kernel_policy_limit_requests: 17,
+        kernel_policy_window_ms: 60_000,
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    defaults?: {
+      model?: string;
+      reasoning_effort?: string;
+      kernel_policy_limit_requests?: number;
+      kernel_policy_window_ms?: number;
+    };
+  };
+  assert.deepEqual(payload.defaults, {
+    model: "",
+    reasoning_effort: "medium",
+    kernel_policy_limit_requests: 17,
+    kernel_policy_window_ms: 60_000,
+  });
+  assert.equal(kvStore.get(keyToString(["default", "kernel_policy_limit_requests"])), 17);
+  assert.equal(kvStore.get(keyToString(["default", "kernel_policy_window_ms"])), 60_000);
+  assert.equal(kvStore.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
+
+  for (const body of [{ model: "gpt-5.5" }, { reasoning_effort: "none" }]) {
+    const guardedResponse = await handleAdminDefaults(
+      new Request("https://ai.ubq.fi/admin/defaults", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+    assert.equal(guardedResponse.status, 503);
+  }
 });
 
 const yunwuMetadataResponse = (url: string): Response => {
@@ -732,6 +875,25 @@ Deno.test("API key creation rejects custom tokens outside the v2 routable shape"
   const payload = await response.json() as { error?: { message?: string } };
   assert.match(payload.error?.message ?? "", /u_ prefix followed by 64 lowercase hexadecimal/);
   assert.equal([...kvStore.keys()].some((key) => key.includes('"api_keys"')), false);
+});
+
+Deno.test("API key creation generates a v2 token when token is null", async () => {
+  kvStore.clear();
+  const response = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Generated token",
+        token: null,
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { token?: string; prefix?: string };
+  assert.match(payload.token ?? "", /^u_[0-9a-f]{64}$/);
+  assert.equal(payload.prefix, payload.token?.slice(0, 12));
 });
 
 Deno.test("enabled key creation initializes once and failed enable leaves the key disabled", async () => {

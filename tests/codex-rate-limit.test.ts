@@ -13,6 +13,7 @@ const encode = (key: Deno.KvKey): string => JSON.stringify(key);
 class CircuitKv {
   readonly values = new Map<string, { value: unknown; version: number }>();
   nextVersion = 1;
+  beforeDeleteCommit: (() => Promise<void>) | null = null;
 
   seed(key: Deno.KvKey, value: unknown): void {
     this.values.set(encode(key), { value, version: this.nextVersion++ });
@@ -43,18 +44,21 @@ class CircuitKv {
         writes.push({ key, deleted: true });
         return operation;
       },
-      commit: () => {
+      commit: async () => {
+        if (writes.some((write) => write.deleted) && this.beforeDeleteCommit) {
+          await this.beforeDeleteCommit();
+        }
         for (const check of checks) {
           const current = this.values.get(encode(check.key));
           if ((current ? String(current.version) : null) !== check.versionstamp) {
-            return Promise.resolve({ ok: false } as const);
+            return { ok: false } as const;
           }
         }
         for (const write of writes) {
           if (write.deleted) this.values.delete(encode(write.key));
           else this.seed(write.key, write.value);
         }
-        return Promise.resolve({ ok: true, versionstamp: String(this.nextVersion) });
+        return { ok: true, versionstamp: String(this.nextVersion) };
       },
     };
     return operation as unknown as Deno.AtomicOperation;
@@ -88,8 +92,24 @@ Deno.test("Codex circuit grants one recovery probe and stale probes cannot clear
 
   const probe = decisions.find((decision) => decision.kind === "probe");
   assert.ok(probe && probe.kind === "probe");
+
+  let signalDeleteCommit: () => void = () => {};
+  const deleteCommitStarted = new Promise<void>((resolve) => {
+    signalDeleteCommit = resolve;
+  });
+  let releaseDeleteCommit: () => void = () => {};
+  const deleteCommitReleased = new Promise<void>((resolve) => {
+    releaseDeleteCommit = resolve;
+  });
+  kv.beforeDeleteCommit = () => {
+    signalDeleteCommit();
+    return deleteCommitReleased;
+  };
+  const close = closeCodexRateLimitProbe(kv as unknown as Deno.Kv, probe.probeId);
+  await deleteCommitStarted;
   await openCodexRateLimitCircuit(kv as unknown as Deno.Kv, "90", now);
-  await closeCodexRateLimitProbe(kv as unknown as Deno.Kv, probe.probeId);
+  releaseDeleteCommit();
+  await close;
   const state = (await kv.get<{ retry_at_ms?: number }>(CODEX_RATE_LIMIT_KV_KEY)).value;
   assert.equal(state?.retry_at_ms, now + 90_000);
 });

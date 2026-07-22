@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import type { CodexModelsSnapshot } from "../src/codex_models.ts";
+import { loadFullCodexModelsSnapshot } from "../src/codex.ts";
+import {
+  buildRuntimeConfig,
+  normalizeRuntimeConfig,
+  RUNTIME_CONFIG_MAX_BYTES,
+  RuntimeConfigError,
+} from "../src/runtime_config.ts";
+
+const jsonBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length;
+
+Deno.test("runtime config compacts a near-limit full catalog into one 4 KiB read unit", () => {
+  const fullSnapshot: CodexModelsSnapshot = {
+    models: [{
+      slug: "gpt-compact-test",
+      display_name: "GPT Compact Test",
+      description: "x".repeat(57_000),
+      visibility: "list",
+      supported_in_api: true,
+      context_window: 272_000,
+      max_context_window: 1_000_000,
+      auto_compact_token_limit: 250_000,
+      default_reasoning_level: "high",
+      supported_reasoning_levels: [{ effort: null }, "low", "medium", "high", "xhigh", "ultra"],
+      reasoning_effort_wire_map: { ultra: "max" },
+    }],
+    source: "chatgpt_codex",
+    client_version: "0.201.0",
+    updated_at_ms: 1_000_000,
+  };
+  assert.ok(jsonBytes(fullSnapshot) > 55_000);
+  assert.ok(jsonBytes(fullSnapshot) < 60_000);
+
+  const runtime = buildRuntimeConfig(fullSnapshot, {
+    defaultModel: "gpt-compact-test",
+    defaultReasoningEffort: "xhigh",
+    nowMs: 1_000_001,
+  });
+
+  assert.ok(jsonBytes(runtime) <= RUNTIME_CONFIG_MAX_BYTES);
+  assert.deepEqual(runtime.codex_models.models, [{
+    slug: "gpt-compact-test",
+    default_reasoning_level: "high",
+    supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh", "ultra"],
+    reasoning_effort_wire_map: { ultra: "max" },
+  }]);
+  assert.deepEqual(normalizeRuntimeConfig(runtime), runtime);
+});
+
+Deno.test("runtime config rejects an extreme model inventory instead of crossing one read unit", () => {
+  const fullSnapshot: CodexModelsSnapshot = {
+    models: Array.from({ length: 200 }, (_, index) => ({
+      slug: `gpt-runtime-model-${String(index).padStart(3, "0")}`,
+      supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh", "ultra"],
+      reasoning_effort_wire_map: { ultra: "max" },
+    })),
+    source: "chatgpt_codex",
+    client_version: "0.201.0",
+    updated_at_ms: 1_000_000,
+  };
+  assert.ok(jsonBytes(fullSnapshot) < 60_000);
+  assert.throws(
+    () => buildRuntimeConfig(fullSnapshot, { nowMs: 1_000_001 }),
+    (error: unknown) => error instanceof RuntimeConfigError && /too large/.test(error.message),
+  );
+});
+
+Deno.test("full Codex model loader preserves catalog fields outside the inference runtime record", async () => {
+  const fullSnapshot: CodexModelsSnapshot = {
+    models: [{
+      slug: "gpt-full-loader",
+      display_name: "GPT Full Loader",
+      description: "Admin-only catalog detail",
+      context_window: 272_000,
+    }],
+    source: "chatgpt_codex",
+    client_version: "0.201.0",
+    updated_at_ms: 1_000_000,
+  };
+  const kv = {
+    get: (key: Deno.KvKey) => Promise.resolve({ key, value: fullSnapshot, versionstamp: "00000000000000000001" }),
+  } as unknown as Deno.Kv;
+
+  assert.deepEqual(await loadFullCodexModelsSnapshot(kv), fullSnapshot);
+  const runtime = buildRuntimeConfig(fullSnapshot, { nowMs: 1_000_001 });
+  assert.equal(Object.prototype.hasOwnProperty.call(runtime.codex_models.models[0], "description"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(runtime.codex_models.models[0], "context_window"), false);
+});

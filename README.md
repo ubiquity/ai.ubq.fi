@@ -522,14 +522,37 @@ deno task kv:import-remote --in .kv-migration/deno1.ndjson --dest "$DEST_KV" --p
 deno task kv:validate --target "$DEST_KV" --strict
 ```
 
-For the KV read-budget v2 hard cutover, export the production database first, then create the bounded counters,
-paid-fallback ledger, and compact runtime configuration in place. The command validates the migrated database before it
-exits successfully.
+For the KV read-budget v2 hard cutover, export the production database first. Then run the incident migration in two
+tightly spaced phases so requests completed by the old revision during deployment are not lost:
 
 ```bash
 deno task kv:export --source "$DEST_KV" --out .kv-migration/pre-kv-read-v2.ndjson
+
+# Phase 1: run immediately before merging, while only the old revision writes bounded usage.
+deno task kv:incident-v2 --target "$DEST_KV"
+
+# Merge, wait for the exact production revision to become healthy, and drain every old-revision request before rerunning.
 deno task kv:incident-v2 --target "$DEST_KV"
 ```
+
+The first run atomically seeds each current bounded counter with its legacy count and records a per-key/window migration
+baseline. It must report `handoff_phase: "predeploy_seed"`. The second run must report
+`handoff_phase: "postdeploy_reconcile"`; it atomically adds only the positive legacy delta observed since phase 1, so
+concurrent increments from the new revision are preserved. Repeating phase 2 is safe and reports a zero
+`legacy_usage_delta_applied` once caught up, including when a bounded key moved to a new window during deployment.
+
+Phase 1 requires exclusive access to the v2 counters: do not issue bounded requests through a PR preview, staging
+revision, local process, or any other new-revision deployment that shares the destination KV from before phase 1 until
+the production cutover. The old production revision may continue writing only the legacy counters during this interval.
+Do not merge if phase 1 reports any other handoff phase.
+
+After deployment, first confirm the exact production revision is healthy and every old-revision request has drained,
+including requests that were already waiting on a non-streaming upstream response. Then run phase 2 until it reports
+`postdeploy_reconcile`. Exact handoff is complete only after **two spaced post-deploy observations** both report zero
+`legacy_usage_delta_applied`; any non-zero observation restarts that two-observation streak. Validation must also
+succeed. Post-deploy reconciliation deliberately retains non-active counter and baseline versions so it cannot delete a
+new-window increment racing the migration; validation requires the active counter and baseline without treating retained
+versions as errors. The same runs also migrate the paid-fallback ledger and write compact runtime configuration.
 
 If the new Deno Deploy database is only reachable from the app runtime, use the super-admin HTTP importer. It writes
 through the deployed app's own `Deno.openKv()` connection and is also dry-run by default:

@@ -6,7 +6,9 @@ import {
   type CodexModelsSnapshot,
   getJwtExpMs,
   loadCodexModelsSnapshot,
+  loadFullCodexModelsSnapshot,
   parseCodexAuthFromAuthJson,
+  preserveCodexDefaultModel,
   storeCodexModelsSnapshot,
   validateCodexAuthJson,
 } from "./codex.ts";
@@ -83,6 +85,7 @@ import {
   cacheRuntimeConfig,
   loadRuntimeConfig,
   RUNTIME_CONFIG_V2_KEY,
+  RuntimeConfigError,
   storeRuntimeConfig,
 } from "./runtime_config.ts";
 import { readJsonBody } from "./request.ts";
@@ -95,6 +98,12 @@ const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
 const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
 const UOS_CODEX_PROMPTS_CHUNK_PREFIX = ["uos_ai", "codex_instructions_chunk"] as const;
 const MAX_KV_MIGRATION_BODY_BYTES = 5 * 1024 * 1024;
+
+const runtimeConfigErrorResponse = (error: unknown): Response | null => {
+  if (!(error instanceof RuntimeConfigError)) return null;
+  const status = error.message.includes("too large") || error.message.includes("4 KiB") ? 413 : 409;
+  return openaiError(status, error.message, "runtime_config_invalid", { type: "invalid_request_error" });
+};
 
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   const kv = await kvPromise;
@@ -161,10 +170,17 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
 
   const authGeneration = crypto.randomUUID();
   const currentRuntime = await loadRuntimeConfig(kv);
-  const runtimeConfig = buildRuntimeConfig(snapshot, {
-    defaultModel: currentRuntime?.default_model,
-    defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
-  });
+  let runtimeConfig;
+  try {
+    runtimeConfig = buildRuntimeConfig(snapshot, {
+      defaultModel: preserveCodexDefaultModel(snapshot, currentRuntime?.default_model),
+      defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
+    });
+  } catch (error) {
+    const response = runtimeConfigErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   let stored = false;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const existingSnapshot = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
@@ -224,7 +240,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
 };
 
 export const handleAdminCodexModelsGet = async (): Promise<Response> => {
-  const snapshot = await loadCodexModelsSnapshot();
+  const snapshot = await loadFullCodexModelsSnapshot();
   if (!snapshot) return json(200, { ok: true, data: null });
   return json(200, { ok: true, data: snapshot });
 };
@@ -249,7 +265,14 @@ export const handleAdminCodexModelsSet = async (req: Request): Promise<Response>
     );
   }
 
-  const stored = await storeCodexModelsSnapshot(snapshot);
+  let stored: boolean;
+  try {
+    stored = await storeCodexModelsSnapshot(snapshot);
+  } catch (error) {
+    const response = runtimeConfigErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   if (!stored) {
     return openaiError(500, "Deno KV is not available; cannot persist Codex models", "server_error");
   }
@@ -397,12 +420,11 @@ export const handleAdminDefaults = async (
     if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
     const runtime = await loadRuntimeConfig(kv);
-    if (!runtime) return openaiError(503, "Runtime configuration is unavailable", "server_error");
     const kernelLimitEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY);
     const kernelWindowEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY);
 
-    let model = runtime.default_model;
-    let reasoningEffort = runtime.default_reasoning_effort;
+    let model = runtime?.default_model ?? "";
+    let reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
     let kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
       DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
     let kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
@@ -410,6 +432,7 @@ export const handleAdminDefaults = async (
     const wantsModelUpdate = Object.prototype.hasOwnProperty.call(raw, "model") ||
       Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
     if (wantsModelUpdate) {
+      if (!runtime) return openaiError(503, "Runtime configuration is unavailable", "server_error");
       const nextModel = normalizeDefaultModel(raw.model ?? model);
       if (!nextModel) return openaiError(400, "model must be a non-empty string", "invalid_request_error");
 
@@ -682,7 +705,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   if (!name) return openaiError(400, "name must be a non-empty string (<=80 chars)", "invalid_request_error");
 
   const providedToken = normalizeOptionalApiKeyToken(raw.token);
-  if (raw.token !== undefined && providedToken === null) {
+  if (raw.token !== undefined && raw.token !== null && providedToken === null) {
     return openaiError(
       400,
       "token must use the u_ prefix followed by 64 lowercase hexadecimal characters",
@@ -862,11 +885,15 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
         expires_at_ms: coerceApiKeyExpiresAtMs(r),
         revoked_at_ms: r.revoked_at_ms,
         usage_limit_requests: r.usage_limit_requests,
-        usage_requests: includeUsage ? usageById.get(r.id)?.request_count ?? 0 : r.usage_requests,
         usage_reset_at_ms: includeUsage ? usageById.get(r.id)?.reset_at_ms ?? r.usage_reset_at_ms : r.usage_reset_at_ms,
         window_ms: coerceApiKeyWindowMs(r),
         ...paidFallbackPublicFields(r),
-        ...(includeUsage ? { usage: usageById.get(r.id) ?? null } : {}),
+        ...(includeUsage
+          ? {
+            usage_requests: usageById.get(r.id)?.request_count ?? 0,
+            usage: usageById.get(r.id) ?? null,
+          }
+          : {}),
       })),
     },
     { "x-ubq-upstream": "chatgpt_codex" },

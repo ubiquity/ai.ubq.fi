@@ -51,11 +51,7 @@ const currentWindow = (
   return { start, reset: start + windowMs };
 };
 
-const policyVersion = (record: ApiKeyHashRecord): string =>
-  [
-    normalizeApiKeyWindowMs(record.window_ms),
-    record.usage_reset_at_ms,
-  ].join(":");
+const policyVersion = (record: ApiKeyHashRecord): string => String(normalizeApiKeyWindowMs(record.window_ms));
 
 export const apiKeyPolicyFromHashRecord = (
   tokenHash: string,

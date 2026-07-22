@@ -7,6 +7,9 @@ const DEFAULT_TEST_MODEL = "gpt-5-fixture-default";
 const TEST_CODEX_MODELS_KEY = ["ubq_ai", "codex_models"] as const;
 
 const kvStore = new Map<string, unknown>();
+type OpenAiAtomicOp = { type: "set" | "delete"; key: Deno.KvKey; value?: unknown };
+let atomicCommitFailure: ((ops: readonly OpenAiAtomicOp[]) => Error | null) | null = null;
+let exposePaidFallbackLedgerEntries = false;
 kvStore.set(keyToString(DEFAULT_REASONING_EFFORT_KEY), "low");
 kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
   access_token: "access",
@@ -44,11 +47,16 @@ const kvStub = {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: async function* (_selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
-    yield* [];
+  list: async function* (selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
+    if (!exposePaidFallbackLedgerEntries || !("prefix" in selector)) return;
+    for (const [encoded, value] of kvStore) {
+      const key = JSON.parse(encoded) as Deno.KvKey;
+      if (!selector.prefix.every((part, index) => key[index] === part)) continue;
+      yield { key, value, versionstamp: "00000000000000000001" } as Deno.KvEntry<unknown>;
+    }
   },
   atomic: () => {
-    const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
+    const ops: OpenAiAtomicOp[] = [];
     const chain = {
       check: () => chain,
       set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
@@ -60,6 +68,8 @@ const kvStub = {
         return chain;
       },
       commit: () => {
+        const failure = atomicCommitFailure?.(ops) ?? null;
+        if (failure) return Promise.reject(failure);
         for (const op of ops) {
           if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
           else kvStore.delete(keyToString(op.key));
@@ -74,9 +84,10 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleChatCompletions, handleModelCapabilities, handleModels, handleResponses } = await import(
-  "../src/openai.ts"
-);
+const { getResponseTelemetry, handleChatCompletions, handleModelCapabilities, handleModels, handleResponses } =
+  await import(
+    "../src/openai.ts"
+  );
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 const { resetCodexRateLimitCacheForTest } = await import("../src/codex_rate_limit.ts");
@@ -1037,6 +1048,43 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
   const originalApiKey = Deno.env.get("YUNWU_API_KEY");
   Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
   try {
+    await t.step("already-loaded disabled policy bypasses paid fallback reservation", async () => {
+      const keyId = "fallback-policy-bypass";
+      seedPaidFallbackKey(keyId, { enabled: true });
+      let calls = 0;
+      const response = await withFetchMock(
+        () => {
+          calls += 1;
+          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId: "request-fallback-policy-bypass",
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 429);
+      assert.equal(calls, 1);
+      const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
+        paid_fallback_reservation_request_id?: string | null;
+      };
+      assert.equal(stored.paid_fallback_reservation_request_id, null);
+    });
+
     await t.step("disabled, unpriced, and exhausted keys retain the primary 429", async () => {
       const cases = [
         {
@@ -1171,6 +1219,8 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       );
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+      assert.equal(getResponseTelemetry(response)?.quotaUsedPercent, 100);
+      assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_429");
       assert.deepEqual(urls, [
         "https://chatgpt.com/backend-api/codex/responses",
         "https://yunwu.ai/v1/responses",
@@ -1279,7 +1329,248 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       };
       assert.equal(stored.paid_fallback_reserved_microcredits, 1_000_000);
     });
+
+    await t.step("a ledger write failure after YunWu accepts preserves the usable response", async () => {
+      const keyId = "fallback-ledger-write-failure";
+      const requestId = "request-fallback-ledger-write-failure";
+      const providerRequestId = "yunwu-ledger-write-failure";
+      seedPaidFallbackKey(keyId);
+      atomicCommitFailure = (ops) =>
+        ops.some((op) => {
+            const value = op.value as { provider_request_id?: unknown } | undefined;
+            return op.type === "set" && op.key[0] === "uos_ai" && op.key[1] === "paid_fallback" &&
+              op.key[2] === "ledger" && value?.provider_request_id === providerRequestId;
+          })
+          ? new Error("injected paid fallback ledger failure")
+          : null;
+      try {
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://yunwu.ai/v1/responses") {
+              return new Response(sseResponse(baseSseChunks()).body, {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/event-stream",
+                  "X-Oneapi-Request-Id": providerRequestId,
+                },
+              });
+            }
+            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+              status: 429,
+              headers: { "Content-Type": "application/json" },
+            });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+              }),
+              {
+                keyId,
+                kernelRepo: null,
+                kernelOrg: null,
+                requestId,
+                startedAtMs: Date.now(),
+              },
+            ),
+        );
+        assert.equal(response.status, 200);
+        assert.match(await response.text(), /pong/);
+        assert.equal(getResponseTelemetry(response)?.completed, true);
+        const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
+          paid_fallback_reservation_request_id?: string | null;
+        };
+        assert.equal(stored.paid_fallback_reservation_request_id, requestId);
+      } finally {
+        atomicCommitFailure = null;
+      }
+    });
+
+    await t.step("reconciliation failures preserve chat and Responses results across stream modes", async () => {
+      const cases = [
+        { route: "responses", stream: false },
+        { route: "responses", stream: true },
+        { route: "chat", stream: false },
+        { route: "chat", stream: true },
+      ] as const;
+      exposePaidFallbackLedgerEntries = true;
+      atomicCommitFailure = (ops) =>
+        ops.some((op) => {
+            const value = op.value as { billing_status?: unknown } | undefined;
+            return op.type === "set" && op.key[0] === "uos_ai" && op.key[1] === "paid_fallback" &&
+              op.key[2] === "ledger" && value?.billing_status === "reconciled";
+          })
+          ? new Error("injected paid fallback reconciliation failure")
+          : null;
+      try {
+        for (const testCase of cases) {
+          const suffix = `${testCase.route}-${testCase.stream ? "stream" : "nonstream"}`;
+          const keyId = `fallback-reconcile-${suffix}`;
+          const requestId = `request-fallback-reconcile-${suffix}`;
+          const providerRequestId = `yunwu-reconcile-${suffix}`;
+          seedPaidFallbackKey(keyId);
+          const result = await withFetchMock(
+            (url) => {
+              if (url === "https://yunwu.ai/v1/responses") {
+                return new Response(sseResponse(baseSseChunks()).body, {
+                  status: 200,
+                  headers: {
+                    "Content-Type": "text/event-stream",
+                    "X-Oneapi-Request-Id": providerRequestId,
+                  },
+                });
+              }
+              if (url === "https://yunwu.ai/api/log/token") {
+                return new Response(
+                  JSON.stringify({
+                    success: true,
+                    data: [{
+                      request_id: providerRequestId,
+                      quota: 100,
+                      prompt_tokens: 1,
+                      completion_tokens: 1,
+                      model_name: DEFAULT_TEST_MODEL,
+                      created_at: Math.floor(Date.now() / 1000),
+                    }],
+                  }),
+                  { status: 200, headers: { "Content-Type": "application/json" } },
+                );
+              }
+              return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+                status: 429,
+                headers: { "Content-Type": "application/json" },
+              });
+            },
+            async () => {
+              const context = {
+                keyId,
+                kernelRepo: null,
+                kernelOrg: null,
+                requestId,
+                startedAtMs: Date.now(),
+              };
+              const response = await (testCase.route === "responses"
+                ? handleResponses(
+                  new Request("https://ai.ubq.fi/v1/responses", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: DEFAULT_TEST_MODEL,
+                      input: "ping",
+                      stream: testCase.stream,
+                    }),
+                  }),
+                  context,
+                )
+                : handleChatCompletions(
+                  new Request("https://ai.ubq.fi/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: DEFAULT_TEST_MODEL,
+                      messages: [{ role: "user", content: "ping" }],
+                      stream: testCase.stream,
+                    }),
+                  }),
+                  context,
+                ));
+              const completedBeforeConsumption = getResponseTelemetry(response)?.completed;
+              const text = await response.text();
+              return { response, text, completedBeforeConsumption };
+            },
+          );
+          const { response, text, completedBeforeConsumption } = result;
+          assert.equal(response.status, 200, suffix);
+          if (testCase.stream) assert.equal(completedBeforeConsumption, false, suffix);
+          assert.match(text, /pong/, suffix);
+          assert.equal(getResponseTelemetry(response)?.completed, true, suffix);
+          const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
+            paid_fallback_reservation_request_id?: string | null;
+          };
+          assert.equal(stored.paid_fallback_reservation_request_id, requestId, suffix);
+        }
+      } finally {
+        atomicCommitFailure = null;
+        exposePaidFallbackLedgerEntries = false;
+      }
+    });
+
+    await t.step("reconciliation failure does not replace the original YunWu error", async () => {
+      const keyId = "fallback-error-reconcile-failure";
+      const requestId = "request-fallback-error-reconcile-failure";
+      const providerRequestId = "yunwu-error-reconcile-failure";
+      seedPaidFallbackKey(keyId);
+      exposePaidFallbackLedgerEntries = true;
+      atomicCommitFailure = (ops) =>
+        ops.some((op) => (op.value as { billing_status?: unknown } | undefined)?.billing_status === "reconciled")
+          ? new Error("injected upstream error reconciliation failure")
+          : null;
+      try {
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://yunwu.ai/v1/responses") {
+              return new Response(JSON.stringify({ error: { message: "YunWu original error" } }), {
+                status: 503,
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Oneapi-Request-Id": providerRequestId,
+                },
+              });
+            }
+            if (url === "https://yunwu.ai/api/log/token") {
+              return new Response(
+                JSON.stringify({
+                  success: true,
+                  data: [{
+                    request_id: providerRequestId,
+                    quota: 100,
+                    prompt_tokens: 1,
+                    completion_tokens: 0,
+                    model_name: DEFAULT_TEST_MODEL,
+                    created_at: Math.floor(Date.now() / 1000),
+                  }],
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              );
+            }
+            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+              status: 429,
+              headers: { "Content-Type": "application/json" },
+            });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+              }),
+              {
+                keyId,
+                kernelRepo: null,
+                kernelOrg: null,
+                requestId,
+                startedAtMs: Date.now(),
+              },
+            ),
+        );
+        assert.equal(response.status, 503);
+        const payload = await response.json() as { error?: { message?: string } };
+        assert.equal(payload.error?.message, "YunWu original error");
+        const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
+          paid_fallback_reservation_request_id?: string | null;
+        };
+        assert.equal(stored.paid_fallback_reservation_request_id, requestId);
+      } finally {
+        atomicCommitFailure = null;
+        exposePaidFallbackLedgerEntries = false;
+      }
+    });
   } finally {
+    atomicCommitFailure = null;
+    exposePaidFallbackLedgerEntries = false;
     if (originalApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
     else Deno.env.set("YUNWU_API_KEY", originalApiKey);
   }

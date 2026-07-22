@@ -5,10 +5,10 @@ import {
   fetchCodexResponses,
   getCodexModelsSnapshotDefaultModel,
   loadCodexModelsSnapshot,
+  loadFullCodexModelsSnapshot,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
-import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
 import {
   closeGlobalCodexRateLimitProbe,
   getGlobalCodexRateLimitDecision,
@@ -57,18 +57,101 @@ type UsageContext = Readonly<{
   keyId: string | null;
   kernelRepo: { owner: string; repo: string } | null;
   kernelOrg: { owner: string } | null;
+  paidFallbackEnabled?: boolean;
   idempotencyPrincipal?: string | null;
   requestId?: string;
   startedAtMs?: number;
+  responseTelemetry?: ResponseTelemetryState;
 }>;
 
 type UpstreamProvider = "chatgpt_codex" | "yunwu";
+export type InferenceFallbackReason = "primary_429" | "primary_rate_limit_cached";
+
+export type ResponseTelemetry = Readonly<{
+  provider: string;
+  fallbackReason: InferenceFallbackReason | null;
+  model: string | null;
+  reasoning: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  quotaUsedPercent: number | null | undefined;
+  completed: boolean;
+}>;
+
+type ResponseTelemetryState = {
+  provider: string | null;
+  fallbackReason: InferenceFallbackReason | null;
+  model: string | null;
+  reasoning: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  quotaUsedPercent: number | null | undefined;
+  completed: boolean;
+};
+
+const responseTelemetry = new WeakMap<Response, ResponseTelemetryState>();
+
+const createResponseTelemetryState = (): ResponseTelemetryState => ({
+  provider: null,
+  fallbackReason: null,
+  model: null,
+  reasoning: null,
+  inputTokens: null,
+  outputTokens: null,
+  quotaUsedPercent: undefined,
+  completed: false,
+});
+
+const withResponseTelemetryContext = (
+  context: UsageContext | undefined,
+  state: ResponseTelemetryState,
+): UsageContext => ({
+  keyId: context?.keyId ?? null,
+  kernelRepo: context?.kernelRepo ?? null,
+  kernelOrg: context?.kernelOrg ?? null,
+  paidFallbackEnabled: context?.paidFallbackEnabled,
+  idempotencyPrincipal: context?.idempotencyPrincipal,
+  requestId: context?.requestId,
+  startedAtMs: context?.startedAtMs,
+  responseTelemetry: state,
+});
+
+const attachResponseTelemetry = (response: Response, state: ResponseTelemetryState): Response => {
+  state.provider ??= response.headers.get("x-ubq-upstream") || "gateway";
+  responseTelemetry.set(response, state);
+  return response;
+};
+
+export const getResponseTelemetry = (response: Response): ResponseTelemetry | null => {
+  const state = responseTelemetry.get(response);
+  if (!state) return null;
+  return {
+    provider: state.provider ?? (response.headers.get("x-ubq-upstream") || "gateway"),
+    fallbackReason: state.fallbackReason,
+    model: state.model,
+    reasoning: state.reasoning,
+    inputTokens: state.inputTokens,
+    outputTokens: state.outputTokens,
+    quotaUsedPercent: state.quotaUsedPercent,
+    completed: state.completed,
+  };
+};
+
+const runWithResponseTelemetry = async (
+  context: UsageContext | undefined,
+  run: (context: UsageContext) => Promise<Response>,
+): Promise<Response> => {
+  const state = createResponseTelemetryState();
+  const response = await run(withResponseTelemetryContext(context, state));
+  return attachResponseTelemetry(response, state);
+};
 
 type RoutedResponsesUpstream = Readonly<{
   response: Response;
   provider: UpstreamProvider;
   paidFallback: PaidFallbackReservation | null;
   gatewayResponse: boolean;
+  fallbackReason: InferenceFallbackReason | null;
 }>;
 
 type UsageTokens = Readonly<{
@@ -76,34 +159,6 @@ type UsageTokens = Readonly<{
   outputTokens: number;
   totalTokens: number;
 }>;
-
-type UsageDelta = Readonly<{
-  request_count?: number;
-  stream_request_count?: number;
-  non_stream_request_count?: number;
-  completed_request_count?: number;
-  error_request_count?: number;
-  input_tokens?: number;
-  output_tokens?: number;
-  total_tokens?: number;
-  model?: string | null;
-  reasoning?: string | null;
-  route?: string | null;
-  seen_at_ms?: number;
-}>;
-
-const recordUsageDelta = async (context: UsageContext | undefined, delta: UsageDelta): Promise<void> => {
-  if (!context) return;
-  const tasks: Promise<void>[] = [];
-  if (context.kernelRepo) tasks.push(recordKernelUsage(context.kernelRepo.owner, context.kernelRepo.repo, delta));
-  if (context.kernelOrg) tasks.push(recordKernelOrgUsage(context.kernelOrg.owner, delta));
-  if (!tasks.length) return;
-  if (tasks.length === 1) {
-    await tasks[0];
-    return;
-  }
-  await Promise.all(tasks);
-};
 
 const normalizeTokenCount = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -121,37 +176,30 @@ const extractUsageTokens = (value: unknown): UsageTokens | null => {
   return { inputTokens, outputTokens, totalTokens };
 };
 
-const recordRequestUsage = async (
+const recordRequestUsage = (
   context: UsageContext | undefined,
   details: { model: string; route: string; stream: boolean; reasoning: string | null },
 ): Promise<void> => {
-  const seenAtMs = context?.startedAtMs ?? Date.now();
-  await recordUsageDelta(context, {
-    request_count: 1,
-    stream_request_count: details.stream ? 1 : 0,
-    non_stream_request_count: details.stream ? 0 : 1,
-    model: details.model,
-    reasoning: details.reasoning,
-    route: details.route,
-    seen_at_ms: seenAtMs,
-  });
+  if (context?.responseTelemetry) {
+    context.responseTelemetry.model = details.model;
+    context.responseTelemetry.reasoning = details.reasoning;
+  }
+  return Promise.resolve();
 };
 
-const recordCompletionUsage = async (
+const recordCompletionUsage = (
   context: UsageContext | undefined,
   usage: UsageTokens | null,
 ): Promise<void> => {
-  await recordUsageDelta(context, {
-    completed_request_count: 1,
-    input_tokens: usage?.inputTokens,
-    output_tokens: usage?.outputTokens,
-    total_tokens: usage?.totalTokens,
-  });
+  if (context?.responseTelemetry) {
+    context.responseTelemetry.inputTokens = usage?.inputTokens ?? null;
+    context.responseTelemetry.outputTokens = usage?.outputTokens ?? null;
+    context.responseTelemetry.completed = true;
+  }
+  return Promise.resolve();
 };
 
-const recordErrorUsage = async (context: UsageContext | undefined): Promise<void> => {
-  await recordUsageDelta(context, { error_request_count: 1 });
-};
+const recordErrorUsage = (_context: UsageContext | undefined): Promise<void> => Promise.resolve();
 
 const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   const raw = error instanceof Error ? error.message : String(error);
@@ -161,13 +209,27 @@ const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   return `${trimmed.slice(0, maxLen)}...`;
 };
 
-const toCodexErrorResponse = (error: unknown): Response => {
+const withUpstreamProviderHeader = (response: Response, provider: string | null | undefined): Response => {
+  if (!provider) return response;
+  const headers = new Headers(response.headers);
+  headers.set("x-ubq-upstream", provider);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
+
+const toCodexErrorResponse = (error: unknown, provider?: string | null): Response => {
+  let response: Response;
   if (error instanceof CodexError) {
-    return openaiError(error.status, error.message, error.code);
+    response = openaiError(error.status, error.message, error.code);
+  } else {
+    const detail = formatErrorSnippet(error);
+    const message = detail ? `Codex upstream request failed: ${detail}` : "Codex upstream request failed.";
+    response = openaiError(502, message, "codex_upstream_unreachable");
   }
-  const detail = formatErrorSnippet(error);
-  const message = detail ? `Codex upstream request failed: ${detail}` : "Codex upstream request failed.";
-  return openaiError(502, message, "codex_upstream_unreachable");
+  return withUpstreamProviderHeader(response, provider);
 };
 
 type UpstreamErrorDetails = Readonly<{
@@ -253,6 +315,24 @@ const cancelResponseBody = async (response: Response): Promise<void> => {
   }
 };
 
+const warnPaidFallbackBookkeepingFailure = (operation: string, error: unknown): void => {
+  console.warn(
+    `[ai.ubq.fi] Paid fallback ${operation} failed; leaving the reservation pending:`,
+    error instanceof Error ? error.message : String(error),
+  );
+};
+
+const bestEffortPaidFallbackBookkeeping = async (
+  operation: string,
+  run: () => Promise<unknown>,
+): Promise<void> => {
+  try {
+    await run();
+  } catch (error) {
+    warnPaidFallbackBookkeepingFailure(operation, error);
+  }
+};
+
 const paidFallbackBlockedResponse = (
   reason: "limit_exceeded" | "reconciliation_pending" | "invalid_policy" | "concurrent_update",
   resetAtMs: number | null,
@@ -315,6 +395,8 @@ const fetchResponsesWithPaidFallback = async (
     signal?: AbortSignal;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
+  const telemetry = options.usageContext?.responseTelemetry;
+  if (telemetry) telemetry.provider = "chatgpt_codex";
   const circuit = await getGlobalCodexRateLimitDecision();
   let primary: Response | null = null;
   let retryAtMs: number | null = null;
@@ -335,13 +417,26 @@ const fetchResponsesWithPaidFallback = async (
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
   const cachedRateLimit = primary === null;
-  if ((primary?.status !== 429 && !cachedRateLimit) || !keyId || !requestId || createdAtMs === undefined) {
+  const fallbackReason: InferenceFallbackReason | null = cachedRateLimit
+    ? "primary_rate_limit_cached"
+    : primary?.status === 429
+    ? "primary_429"
+    : null;
+  if (telemetry) telemetry.fallbackReason = fallbackReason;
+  if (
+    (primary?.status !== 429 && !cachedRateLimit) ||
+    options.usageContext?.paidFallbackEnabled === false ||
+    !keyId ||
+    !requestId ||
+    createdAtMs === undefined
+  ) {
     if (cachedRateLimit) {
       return {
         response: cachedCodexRateLimitResponse(retryAtMs ?? Date.now() + 60_000),
         provider: "chatgpt_codex",
         paidFallback: null,
         gatewayResponse: true,
+        fallbackReason,
       };
     }
     return {
@@ -349,6 +444,7 @@ const fetchResponsesWithPaidFallback = async (
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: false,
+      fallbackReason,
     };
   }
   if (options.signal?.aborted) {
@@ -382,6 +478,7 @@ const fetchResponsesWithPaidFallback = async (
         provider: "chatgpt_codex",
         paidFallback: null,
         gatewayResponse: true,
+        fallbackReason: reservationInput.reason,
       };
     }
     return {
@@ -389,6 +486,7 @@ const fetchResponsesWithPaidFallback = async (
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: false,
+      fallbackReason: reservationInput.reason,
     };
   }
   if (decision.kind === "blocked") {
@@ -400,27 +498,32 @@ const fetchResponsesWithPaidFallback = async (
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: true,
+      fallbackReason: reservationInput.reason,
     };
   }
 
   if (primary) await cancelResponseBody(primary);
+  if (telemetry) {
+    telemetry.provider = "yunwu";
+    telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
+  }
   if (options.signal?.aborted) {
-    await recordYunwuUndispatchedCancellation(decision.reservation);
+    await bestEffortPaidFallbackBookkeeping(
+      "undispatched cancellation recording",
+      () => recordYunwuUndispatchedCancellation(decision.reservation),
+    );
     throw options.signal.reason instanceof Error
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
+  let result: Awaited<ReturnType<typeof fetchYunwuResponses>>;
   try {
-    const result = await fetchYunwuResponses(body, { signal: options.signal });
-    await recordYunwuUpstreamResponse(decision.reservation, result.response, result.request_id);
-    return {
-      response: result.response,
-      provider: "yunwu",
-      paidFallback: decision.reservation,
-      gatewayResponse: false,
-    };
+    result = await fetchYunwuResponses(body, { signal: options.signal });
   } catch (error) {
-    await recordYunwuAmbiguousFailure(decision.reservation);
+    await bestEffortPaidFallbackBookkeeping(
+      "ambiguous failure recording",
+      () => recordYunwuAmbiguousFailure(decision.reservation),
+    );
     if (error instanceof YunwuError) {
       return {
         response: openaiError(error.status, error.message, error.code, {
@@ -430,10 +533,22 @@ const fetchResponsesWithPaidFallback = async (
         provider: "yunwu",
         paidFallback: decision.reservation,
         gatewayResponse: true,
+        fallbackReason: reservationInput.reason,
       };
     }
     throw error;
   }
+  await bestEffortPaidFallbackBookkeeping(
+    "upstream response recording",
+    () => recordYunwuUpstreamResponse(decision.reservation, result.response, result.request_id),
+  );
+  return {
+    response: result.response,
+    provider: "yunwu",
+    paidFallback: decision.reservation,
+    gatewayResponse: false,
+    fallbackReason: reservationInput.reason,
+  };
 };
 
 type CodexModelReasoning = Readonly<{
@@ -2409,25 +2524,65 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
   }
 };
 
-const collectResponsesStreamUsage = async (
+const observeResponsesStreamUsage = (
   stream: ReadableStream<Uint8Array>,
   usageContext?: UsageContext,
   paidFallback?: PaidFallbackReservation | null,
-): Promise<void> => {
-  if (!usageContext?.keyId && !usageContext?.kernelRepo && !usageContext?.kernelOrg) return;
-  try {
-    for await (const ev of parseSseEvents(stream)) {
-      if (!isRecord(ev)) continue;
-      if (getString(ev.type) === "response.completed" && isRecord(ev.response)) {
-        const usageTokens = extractUsageTokens(ev.response.usage);
+): ReadableStream<Uint8Array> => {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed = false;
+
+  const observe = async (chunk?: Uint8Array): Promise<void> => {
+    buffer += chunk ? decoder.decode(chunk, { stream: true }) : decoder.decode();
+    if (chunk === undefined && buffer.trim()) buffer += "\n\n";
+    const normalized = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const parts = normalized.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const data = part.split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      if (!data) continue;
+      let event: unknown;
+      try {
+        event = JSON.parse(data) as unknown;
+      } catch (error) {
+        console.warn(
+          "[ai.ubq.fi] SSE parse error:",
+          error instanceof Error ? error.message : String(error),
+        );
+        continue;
+      }
+      if (completed || !isRecord(event) || getString(event.type) !== "response.completed") continue;
+      completed = true;
+      const usageTokens = isRecord(event.response) ? extractUsageTokens(event.response.usage) : null;
+      try {
         await recordCompletionUsage(usageContext, usageTokens);
-        if (paidFallback) await reconcileApiKeyPaidFallbacks(paidFallback.key_id);
-        return;
+        if (paidFallback) {
+          await bestEffortPaidFallbackBookkeeping(
+            "responses stream reconciliation",
+            () => reconcileApiKeyPaidFallbacks(paidFallback.key_id),
+          );
+        }
+      } catch (error) {
+        console.warn("[ai.ubq.fi] Failed to record responses stream usage:", error);
       }
     }
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to parse responses usage stream:", error);
-  }
+  };
+
+  return stream.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      async transform(chunk, controller) {
+        await observe(chunk);
+        controller.enqueue(chunk);
+      },
+      async flush() {
+        await observe();
+      },
+    }),
+  );
 };
 
 const responseHasOutputText = (output: unknown): boolean => {
@@ -2526,7 +2681,12 @@ const streamChatCompletions = (
           if (type === "response.completed") {
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
             await recordCompletionUsage(usageContext, usageTokens);
-            if (paidFallback) await reconcileApiKeyPaidFallbacks(paidFallback.key_id);
+            if (paidFallback) {
+              await bestEffortPaidFallbackBookkeeping(
+                "chat stream reconciliation",
+                () => reconcileApiKeyPaidFallbacks(paidFallback.key_id),
+              );
+            }
             const chunk: Record<string, unknown> = {
               id,
               object: "chat.completion.chunk",
@@ -2603,7 +2763,12 @@ const completeChatCompletions = async (
         };
       }
       await recordCompletionUsage(usageContext, usageTokens);
-      if (paidFallback) await reconcileApiKeyPaidFallbacks(paidFallback.key_id);
+      if (paidFallback) {
+        await bestEffortPaidFallbackBookkeeping(
+          "chat completion reconciliation",
+          () => reconcileApiKeyPaidFallbacks(paidFallback.key_id),
+        );
+      }
       break;
     }
   }
@@ -2643,7 +2808,7 @@ export const handleModels = async (req?: Request): Promise<Response> => {
 };
 
 export const handleModelCapabilities = async (): Promise<Response> => {
-  const snapshot = await loadCodexModelsSnapshot();
+  const snapshot = await loadFullCodexModelsSnapshot();
   const data = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
     ? snapshot.models.map(normalizeModelCapabilitiesEntry).filter(Boolean) as Record<string, unknown>[]
     : [];
@@ -3021,13 +3186,20 @@ const handleEmbeddingsRequest = async (
 };
 
 export const handleEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
-  withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "openai", usageContext));
+  await runWithResponseTelemetry(
+    usageContext,
+    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "openai", context)),
+  );
 
 export const handleUosEmbeddings = async (
   req: Request,
   usageContext?: UsageContext,
   options: Readonly<{ kv?: Deno.Kv | null }> = {},
-): Promise<Response> => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "uos", usageContext, options));
+): Promise<Response> =>
+  await runWithResponseTelemetry(
+    usageContext,
+    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "uos", context, options)),
+  );
 
 const buildEmbeddingsJobBody = (
   job: EmbeddingsJobRecord,
@@ -3276,119 +3448,112 @@ const runEmbeddingsJobAttempt = async (params: {
     return json(200, buildEmbeddingsJobBody(succeeded, result), { "x-ubq-upstream": succeeded.upstream });
   };
 
-  try {
-    const missingBefore = await computeMissing();
-    if (missingBefore.length === 0) return await succeedJob();
+  const missingBefore = await computeMissing();
+  if (missingBefore.length === 0) return await succeedJob();
 
-    const inputEntries = await Promise.all(
-      missingBefore.map((hash) =>
-        params.kv.get<EmbeddingsJobInputRecord>(
-          embeddingsJobInputKey(params.tokenHash, locked.cache_profile_key, locked.id, hash),
-        )
-      ),
-    );
-    const items: Array<{ hash: string; text: string }> = [];
-    for (let i = 0; i < missingBefore.length; i += 1) {
-      const hash = missingBefore[i]!;
-      const entry = inputEntries[i]!;
-      const normalized = normalizeEmbeddingsJobInputRecord(entry.value);
-      if (!normalized) {
-        return await failJob("Embeddings job input expired or was unavailable.", "embeddings_job_input_missing");
-      }
-      const text = await decryptEmbeddingsJobInput(params.tokenSeed, normalized);
-      if (text === null) {
-        return await failJob("Embeddings job input could not be decrypted.", "embeddings_job_input_decrypt_failed");
-      }
-      items.push({ hash, text });
+  const inputEntries = await Promise.all(
+    missingBefore.map((hash) =>
+      params.kv.get<EmbeddingsJobInputRecord>(
+        embeddingsJobInputKey(params.tokenHash, locked.cache_profile_key, locked.id, hash),
+      )
+    ),
+  );
+  const items: Array<{ hash: string; text: string }> = [];
+  for (let i = 0; i < missingBefore.length; i += 1) {
+    const hash = missingBefore[i]!;
+    const entry = inputEntries[i]!;
+    const normalized = normalizeEmbeddingsJobInputRecord(entry.value);
+    if (!normalized) {
+      return await failJob("Embeddings job input expired or was unavailable.", "embeddings_job_input_missing");
     }
-
-    const chunks = chunkByTokenBudget(items, EMBEDDINGS_MAX_INPUTS_PER_REQUEST, VOYAGE_RATE_LIMIT_TPM);
-    for (const chunk of chunks) {
-      if (Date.now() >= params.deadlineMs) {
-        queueRetryAfterMs = 1000;
-        break;
-      }
-
-      const texts = chunk.map((item) => item.text);
-      const tokenEstimate = estimateTokenCount(texts);
-
-      const reserved = await reserveVoyageBudgetForJob(params.kv, tokenEstimate);
-      if (!reserved.ok) {
-        queueRetryAfterMs = reserved.wait_ms > 0 ? reserved.wait_ms : 1000;
-        break;
-      }
-
-      let vectors: number[][] | null = null;
-      let totalTokens: number | null = null;
-      try {
-        const upstream = await fetchVoyageEmbeddings({
-          apiKey: params.apiKey,
-          model: currentJob.upstream_model,
-          inputs: texts,
-          inputType: currentJob.input_type,
-          dimensions: currentJob.dimensions,
-          outputDtype: currentJob.output_dtype,
-          truncation: currentJob.truncation,
-          deadlineMs: params.deadlineMs,
-        });
-        vectors = upstream.vectors;
-        totalTokens = upstream.totalTokens;
-      } catch (error) {
-        const status = (error as { status?: number }).status;
-        const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
-        if (status && EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
-          queueRetryAfterMs = retryAfterMs ?? (status === 429 ? 60_000 : 1_000);
-          break;
-        }
-        const snippet = formatErrorSnippet(error);
-        const message = snippet
-          ? `Embeddings upstream request failed: ${snippet}`
-          : "Embeddings upstream request failed.";
-        return await failJob(message, "embeddings_job_upstream_error");
-      }
-
-      if (!vectors || vectors.length !== chunk.length) {
-        return await failJob("Embeddings upstream returned a size mismatch.", "embeddings_job_upstream_mismatch");
-      }
-
-      const wrongLengthIndex = vectors.findIndex((vector) => vector.length !== currentJob.dimensions);
-      if (wrongLengthIndex >= 0) {
-        const actualLength = vectors[wrongLengthIndex]?.length ?? 0;
-        return await failJob(
-          `Embeddings upstream returned vector length ${actualLength}; expected ${currentJob.dimensions}.`,
-          "embeddings_job_upstream_dimension_mismatch",
-        );
-      }
-
-      if (typeof totalTokens === "number") {
-        currentJob = { ...currentJob, usage_total_tokens: currentJob.usage_total_tokens + totalTokens };
-      }
-
-      for (let i = 0; i < chunk.length; i += 1) {
-        const item = chunk[i]!;
-        const vec = vectors[i]!;
-        await writeEmbeddingsCacheEntryBestEffort(
-          params.kv,
-          currentJob.cache_profile_key,
-          item.hash,
-          vec,
-          Date.now(),
-          params.deadlineMs,
-        );
-      }
+    const text = await decryptEmbeddingsJobInput(params.tokenSeed, normalized);
+    if (text === null) {
+      return await failJob("Embeddings job input could not be decrypted.", "embeddings_job_input_decrypt_failed");
     }
-
-    const missingAfter = await computeMissing();
-    if (missingAfter.length === 0) return await succeedJob();
-
-    const waitMs = queueRetryAfterMs ?? 60_000;
-    return await queueJob(waitMs);
-  } finally {
-    const elapsedMs = Date.now() - (params.deadlineMs - EMBEDDINGS_TIMEOUT_MS);
-    console.info(
-      `[ai.ubq.fi] embeddings_job request_id=${params.reqId} job_id=${params.job.id} status=${currentJob.status} ms=${elapsedMs}`,
-    );
+    items.push({ hash, text });
   }
+
+  const chunks = chunkByTokenBudget(items, EMBEDDINGS_MAX_INPUTS_PER_REQUEST, VOYAGE_RATE_LIMIT_TPM);
+  for (const chunk of chunks) {
+    if (Date.now() >= params.deadlineMs) {
+      queueRetryAfterMs = 1000;
+      break;
+    }
+
+    const texts = chunk.map((item) => item.text);
+    const tokenEstimate = estimateTokenCount(texts);
+
+    const reserved = await reserveVoyageBudgetForJob(params.kv, tokenEstimate);
+    if (!reserved.ok) {
+      queueRetryAfterMs = reserved.wait_ms > 0 ? reserved.wait_ms : 1000;
+      break;
+    }
+
+    let vectors: number[][] | null = null;
+    let totalTokens: number | null = null;
+    try {
+      const upstream = await fetchVoyageEmbeddings({
+        apiKey: params.apiKey,
+        model: currentJob.upstream_model,
+        inputs: texts,
+        inputType: currentJob.input_type,
+        dimensions: currentJob.dimensions,
+        outputDtype: currentJob.output_dtype,
+        truncation: currentJob.truncation,
+        deadlineMs: params.deadlineMs,
+      });
+      vectors = upstream.vectors;
+      totalTokens = upstream.totalTokens;
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
+      if (status && EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
+        queueRetryAfterMs = retryAfterMs ?? (status === 429 ? 60_000 : 1_000);
+        break;
+      }
+      const snippet = formatErrorSnippet(error);
+      const message = snippet
+        ? `Embeddings upstream request failed: ${snippet}`
+        : "Embeddings upstream request failed.";
+      return await failJob(message, "embeddings_job_upstream_error");
+    }
+
+    if (!vectors || vectors.length !== chunk.length) {
+      return await failJob("Embeddings upstream returned a size mismatch.", "embeddings_job_upstream_mismatch");
+    }
+
+    const wrongLengthIndex = vectors.findIndex((vector) => vector.length !== currentJob.dimensions);
+    if (wrongLengthIndex >= 0) {
+      const actualLength = vectors[wrongLengthIndex]?.length ?? 0;
+      return await failJob(
+        `Embeddings upstream returned vector length ${actualLength}; expected ${currentJob.dimensions}.`,
+        "embeddings_job_upstream_dimension_mismatch",
+      );
+    }
+
+    if (typeof totalTokens === "number") {
+      currentJob = { ...currentJob, usage_total_tokens: currentJob.usage_total_tokens + totalTokens };
+    }
+
+    for (let i = 0; i < chunk.length; i += 1) {
+      const item = chunk[i]!;
+      const vec = vectors[i]!;
+      await writeEmbeddingsCacheEntryBestEffort(
+        params.kv,
+        currentJob.cache_profile_key,
+        item.hash,
+        vec,
+        Date.now(),
+        params.deadlineMs,
+      );
+    }
+  }
+
+  const missingAfter = await computeMissing();
+  if (missingAfter.length === 0) return await succeedJob();
+
+  const waitMs = queueRetryAfterMs ?? 60_000;
+  return await queueJob(waitMs);
 };
 
 const handleEmbeddingsJobCreateInternal = async (
@@ -3522,7 +3687,11 @@ export const handleEmbeddingsJobCreate = async (
   req: Request,
   authToken: string | null,
   usageContext?: UsageContext,
-): Promise<Response> => withVoyageUpstreamHeader(await handleEmbeddingsJobCreateInternal(req, authToken, usageContext));
+): Promise<Response> =>
+  await runWithResponseTelemetry(
+    usageContext,
+    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsJobCreateInternal(req, authToken, context)),
+  );
 
 const handleEmbeddingsJobGetInternal = async (
   _req: Request,
@@ -3630,8 +3799,6 @@ const handleEmbeddingsJobGetInternal = async (
     usageContext,
   });
 
-  const elapsedMs = Date.now() - startedAtMs;
-  console.info(`[ai.ubq.fi] embeddings_job_get request_id=${requestId} job_id=${jobId} ms=${elapsedMs}`);
   return response;
 };
 
@@ -3641,9 +3808,12 @@ export const handleEmbeddingsJobGet = async (
   jobId: string,
   usageContext?: UsageContext,
 ): Promise<Response> =>
-  withVoyageUpstreamHeader(await handleEmbeddingsJobGetInternal(req, authToken, jobId, usageContext));
+  await runWithResponseTelemetry(
+    usageContext,
+    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsJobGetInternal(req, authToken, jobId, context)),
+  );
 
-export const handleChatCompletions = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
+const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;
   if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
@@ -3679,6 +3849,7 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     modelRaw = defaultModel;
   }
   const model = normalizeModelForCodex(modelRaw);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.model = modelRaw;
   const modelMetadata = await getCodexModelMetadata(model);
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
@@ -3743,6 +3914,7 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
 
   const stream = Boolean(body.stream);
   const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.reasoning = reasoningLabel;
   await recordRequestUsage(usageContext, {
     model: modelRaw,
     route: "chat.completions",
@@ -3764,7 +3936,7 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
-    return toCodexErrorResponse(error);
+    return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }
   const upstream = routed.response;
 
@@ -3774,13 +3946,20 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   }
   if (!upstream.ok) {
     await recordErrorUsage(usageContext);
-    if (routed.paidFallback) await reconcileApiKeyPaidFallbacks(routed.paidFallback.key_id);
+    if (routed.paidFallback) {
+      await bestEffortPaidFallbackBookkeeping(
+        "chat upstream error reconciliation",
+        () => reconcileApiKeyPaidFallbacks(routed.paidFallback!.key_id),
+      );
+    }
     return await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
   }
 
   if (!upstream.body) {
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
+    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
+      headers: { "x-ubq-upstream": routed.provider },
+    });
   }
 
   const response = stream
@@ -3789,7 +3968,13 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
   return withUosWarning(response, warnings);
 };
 
-export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
+export const handleChatCompletions = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
+  await runWithResponseTelemetry(
+    usageContext,
+    (context) => handleChatCompletionsInternal(req, context),
+  );
+
+const handleResponsesInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const rawBody = (await readJsonBody(req)) as ResponsesRequest | null;
   if (!rawBody || !isRecord(rawBody)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
@@ -3847,6 +4032,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     modelRaw = defaultModel;
   }
   const model = normalizeModelForCodex(modelRaw);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.model = modelRaw;
   const modelMetadata = await getCodexModelMetadata(model);
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
@@ -3932,6 +4118,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   const modelReasoning = modelMetadata.reasoning;
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.reasoning = reasoningLabel;
 
   let reasoningValue = normalizeReasoningParamForCodex(reasoning.value, modelReasoning);
   if (reasoningValue === undefined && reasoning.value === undefined) {
@@ -3975,7 +4162,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
-    return toCodexErrorResponse(error);
+    return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }
   const upstream = routed.response;
 
@@ -3985,28 +4172,25 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   }
   if (!upstream.ok) {
     await recordErrorUsage(usageContext);
-    if (routed.paidFallback) await reconcileApiKeyPaidFallbacks(routed.paidFallback.key_id);
+    if (routed.paidFallback) {
+      await bestEffortPaidFallbackBookkeeping(
+        "responses upstream error reconciliation",
+        () => reconcileApiKeyPaidFallbacks(routed.paidFallback!.key_id),
+      );
+    }
     return await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
   }
 
   if (clientWantsStream) {
     if (!upstream.body) {
       await recordErrorUsage(usageContext);
-      return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
+      return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
+        headers: { "x-ubq-upstream": routed.provider },
+      });
     }
     const headers = new Headers(upstream.headers);
     headers.set("x-ubq-upstream", routed.provider);
-    if (routed.paidFallback || usageContext?.kernelRepo || usageContext?.kernelOrg) {
-      const [clientStream, analyticsStream] = upstream.body.tee();
-      void collectResponsesStreamUsage(analyticsStream, usageContext, routed.paidFallback);
-      const response = new Response(clientStream, {
-        status: upstream.status,
-        statusText: upstream.statusText,
-        headers,
-      });
-      return withUosWarning(response, warnings);
-    }
-    const response = new Response(upstream.body, {
+    const response = new Response(observeResponsesStreamUsage(upstream.body, usageContext, routed.paidFallback), {
       status: upstream.status,
       statusText: upstream.statusText,
       headers,
@@ -4016,7 +4200,9 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
 
   if (!upstream.body) {
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
+    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
+      headers: { "x-ubq-upstream": routed.provider },
+    });
   }
 
   let finalResponse: Record<string, unknown> | null = null;
@@ -4040,13 +4226,26 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   }
   if (!finalResponse) {
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error");
+    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
+      headers: { "x-ubq-upstream": routed.provider },
+    });
   }
   finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
   finalResponse = withAccumulatedResponseText(finalResponse, outputText);
   const usageTokens = extractUsageTokens(finalResponse.usage);
   await recordCompletionUsage(usageContext, usageTokens);
-  if (routed.paidFallback) await reconcileApiKeyPaidFallbacks(routed.paidFallback.key_id);
+  if (routed.paidFallback) {
+    await bestEffortPaidFallbackBookkeeping(
+      "responses completion reconciliation",
+      () => reconcileApiKeyPaidFallbacks(routed.paidFallback!.key_id),
+    );
+  }
   const response = json(200, finalResponse, { "x-ubq-upstream": routed.provider });
   return withUosWarning(response, warnings);
 };
+
+export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
+  await runWithResponseTelemetry(
+    usageContext,
+    (context) => handleResponsesInternal(req, context),
+  );

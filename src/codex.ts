@@ -1,7 +1,7 @@
 import { config } from "./config.ts";
 import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
 import { kvPromise } from "./kv.ts";
-import { buildRuntimeConfig, loadRuntimeConfig, storeRuntimeConfig } from "./runtime_config.ts";
+import { buildRuntimeConfig, cacheRuntimeConfig, loadRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord } from "./utils.ts";
 import type { CodexAuthState, ResponseInputItem } from "./types.ts";
 
@@ -564,18 +564,51 @@ export const loadCodexModelsSnapshot = async (): Promise<CodexModelsSnapshot | n
   return (await loadRuntimeConfig())?.codex_models ?? null;
 };
 
+export const preserveCodexDefaultModel = (
+  snapshot: CodexModelsSnapshot,
+  candidate: string | null | undefined,
+): string | undefined => {
+  const target = candidate?.trim();
+  if (!target) return undefined;
+  const found = snapshot.models.some((model) => {
+    if (!isRecord(model)) return false;
+    const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
+    return id?.trim() === target;
+  });
+  return found ? target : undefined;
+};
+
+export const loadFullCodexModelsSnapshot = async (
+  kvOverride?: Deno.Kv | null,
+): Promise<CodexModelsSnapshot | null> => {
+  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+  if (!kv) return null;
+  const entry = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY, { consistency: "strong" });
+  const snapshot = entry.value;
+  if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) return null;
+  if (snapshot.models.some((model) => !isRecord(model))) return null;
+  if (!getString(snapshot.source)?.trim()) return null;
+  if (
+    typeof snapshot.updated_at_ms !== "number" || !Number.isSafeInteger(snapshot.updated_at_ms) ||
+    snapshot.updated_at_ms <= 0
+  ) return null;
+  return snapshot;
+};
+
 export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): Promise<boolean> => {
   const kv = await kvPromise;
   if (!kv) return false;
-  await kv.set(CODEX_MODELS_KV_KEY, snapshot);
   const current = await loadRuntimeConfig(kv);
-  await storeRuntimeConfig(
-    buildRuntimeConfig(snapshot, {
-      defaultModel: current?.default_model,
-      defaultReasoningEffort: current?.default_reasoning_effort,
-    }),
-    kv,
-  );
+  const runtimeConfig = buildRuntimeConfig(snapshot, {
+    defaultModel: preserveCodexDefaultModel(snapshot, current?.default_model),
+    defaultReasoningEffort: current?.default_reasoning_effort,
+  });
+  const commit = await kv.atomic()
+    .set(CODEX_MODELS_KV_KEY, snapshot)
+    .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)
+    .commit();
+  if (!commit.ok) return false;
+  cacheRuntimeConfig(runtimeConfig);
   return true;
 };
 

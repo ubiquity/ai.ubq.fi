@@ -33,6 +33,7 @@ export type PaidFallbackReservation = Readonly<{
   reserved_microcredits: number;
   quota_per_credit: number;
   window_reset_at_ms: number;
+  quota_used_percent: number | null;
 }>;
 
 export type PaidFallbackReservationDecision =
@@ -77,6 +78,26 @@ export const hasStrictPaidFallbackPolicy = (value: unknown): boolean => {
   if (!isNonNegativeSafeInteger(value.paid_fallback_spent_microcredits)) return false;
   if (!isNonNegativeSafeInteger(value.paid_fallback_reserved_microcredits)) return false;
   if (!isNullableString(value.paid_fallback_reservation_request_id)) return false;
+
+  const enabled = value.paid_fallback_enabled;
+  const limit = value.paid_fallback_limit_microcredits;
+  const spent = value.paid_fallback_spent_microcredits;
+  const reserved = value.paid_fallback_reserved_microcredits;
+  const reservationRequestId = value.paid_fallback_reservation_request_id;
+  const unlimited = limit === PAID_FALLBACK_NO_LIMIT;
+
+  if (enabled && !unlimited && !isPositiveSafeInteger(limit)) return false;
+  if (!enabled && reservationRequestId !== null) return false;
+  if (reservationRequestId === null && reserved !== 0) return false;
+  if (unlimited) {
+    // Unlimited reservations use the request id itself as the lock and never
+    // reserve a synthetic amount.
+    if (reserved !== 0) return false;
+  } else {
+    const allocated = spent + reserved;
+    if (!Number.isSafeInteger(allocated) || allocated > limit) return false;
+    if (reservationRequestId !== null && reserved === 0) return false;
+  }
   return true;
 };
 
@@ -91,9 +112,14 @@ export const hasStrictPaidFallbackKeyPolicy = (value: unknown): boolean => {
   if (!isNonNegativeSafeInteger(value.paid_fallback_quota_per_credit)) return false;
   if (
     value.paid_fallback_pricing_checked_at_ms !== null &&
-    !isNonNegativeSafeInteger(value.paid_fallback_pricing_checked_at_ms)
+    !isPositiveSafeInteger(value.paid_fallback_pricing_checked_at_ms)
   ) {
     return false;
+  }
+  if (value.paid_fallback_enabled) {
+    if (value.paid_fallback_model_ids.length === 0) return false;
+    if (!isPositiveSafeInteger(value.paid_fallback_quota_per_credit)) return false;
+    if (!isPositiveSafeInteger(value.paid_fallback_pricing_checked_at_ms)) return false;
   }
   return true;
 };
@@ -214,17 +240,30 @@ export const reservePaidFallback = async (
   if (!kv) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
   let pair = await loadStrictKeyPair(kv, input.keyId);
   if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
+  let record = pair.record;
+  if (!record.paid_fallback_enabled) return { kind: "skip", reason: "disabled" };
+  if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
+  if (!record.paid_fallback_model_ids.includes(input.model)) {
+    return { kind: "skip", reason: "model_not_priced" };
+  }
+  const unlimited = record.paid_fallback_limit_microcredits === PAID_FALLBACK_NO_LIMIT;
   if (
-    pair.record.usage_reset_at_ms <= input.createdAtMs &&
-    pair.record.paid_fallback_reservation_request_id === null
+    (!unlimited && !isPositiveSafeInteger(record.paid_fallback_limit_microcredits)) ||
+    !isPositiveSafeInteger(record.paid_fallback_quota_per_credit)
+  ) {
+    return { kind: "blocked", reason: "invalid_policy", reset_at_ms: record.usage_reset_at_ms };
+  }
+  if (
+    record.usage_reset_at_ms <= input.createdAtMs &&
+    record.paid_fallback_reservation_request_id === null
   ) {
     const resetAtMs = advanceUsageWindow(
-      pair.record.usage_reset_at_ms,
-      pair.record.window_ms,
+      record.usage_reset_at_ms,
+      record.window_ms,
       input.createdAtMs,
     );
     const resetRecord: ApiKeyRecord = {
-      ...pair.record,
+      ...record,
       usage_requests: 0,
       usage_reset_at_ms: resetAtMs,
       paid_fallback_spent_microcredits: 0,
@@ -248,20 +287,7 @@ export const reservePaidFallback = async (
     invalidateApiKeyPolicy(input.keyId);
     pair = await loadStrictKeyPair(kv, input.keyId);
     if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-  }
-  const record = pair.record;
-
-  if (!record.paid_fallback_enabled) return { kind: "skip", reason: "disabled" };
-  if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
-  if (!record.paid_fallback_model_ids.includes(input.model)) {
-    return { kind: "skip", reason: "model_not_priced" };
-  }
-  const unlimited = record.paid_fallback_limit_microcredits === PAID_FALLBACK_NO_LIMIT;
-  if (
-    (!unlimited && !isPositiveSafeInteger(record.paid_fallback_limit_microcredits)) ||
-    !isPositiveSafeInteger(record.paid_fallback_quota_per_credit)
-  ) {
-    return { kind: "blocked", reason: "invalid_policy", reset_at_ms: record.usage_reset_at_ms };
+    record = pair.record;
   }
   if (record.paid_fallback_reserved_microcredits > 0 || record.paid_fallback_reservation_request_id) {
     return { kind: "blocked", reason: "reconciliation_pending", reset_at_ms: record.usage_reset_at_ms };
@@ -341,6 +367,14 @@ export const reservePaidFallback = async (
       reserved_microcredits: remaining,
       quota_per_credit: record.paid_fallback_quota_per_credit,
       window_reset_at_ms: record.usage_reset_at_ms,
+      quota_used_percent: unlimited ? null : Math.min(
+        100,
+        Math.max(
+          0,
+          (record.paid_fallback_spent_microcredits + remaining) * 100 /
+            record.paid_fallback_limit_microcredits,
+        ),
+      ),
     },
   };
 };

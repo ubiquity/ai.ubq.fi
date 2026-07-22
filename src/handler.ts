@@ -40,6 +40,7 @@ import {
   incrementKernelUsageLimit,
 } from "./kernel_usage.ts";
 import {
+  getResponseTelemetry,
   handleChatCompletions,
   handleEmbeddings,
   handleEmbeddingsJobCreate,
@@ -48,6 +49,7 @@ import {
   handleModels,
   handleResponses,
   handleUosEmbeddings,
+  type ResponseTelemetry,
 } from "./openai.ts";
 import {
   handlePasskeyLoginFinish,
@@ -97,41 +99,132 @@ const normalizePath = (path: string): string => {
   return path.replace(/\/+$/, "");
 };
 
-const decorateInferenceQuota = (response: Response, policy: ApiKeyPolicy | null): Response => {
-  const usedPercent = apiKeyQuotaUsedPercent(policy);
+const decorateInferenceQuota = (
+  response: Response,
+  policy: ApiKeyPolicy | null,
+  telemetry: ResponseTelemetry | null,
+): Response => {
+  const usedPercent = telemetry?.quotaUsedPercent !== undefined
+    ? telemetry.quotaUsedPercent
+    : apiKeyQuotaUsedPercent(policy);
   return withCodexQuotaHeaders(response, usedPercent === null ? null : { used_percent: usedPercent });
 };
 
 const logTerminalRequest = (
   input: Readonly<{
     route: string;
-    status: number;
     response: Response;
+    telemetryResponse?: Response;
     startedAtMs: number;
     keyId: string | null;
-    model?: string | null;
-    reasoning?: string | null;
   }>,
 ): void => {
-  const provider = input.response.headers.get("x-ubq-upstream") || "gateway";
+  const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
   console.info(
     "[ai.ubq.fi] request_terminal",
     JSON.stringify({
       route: input.route,
-      status: input.status,
-      provider,
+      status: input.response.status,
+      provider: telemetry?.provider ?? input.response.headers.get("x-ubq-upstream") ?? "gateway",
       latency_ms: Math.max(0, Date.now() - input.startedAtMs),
-      input_tokens: null,
-      output_tokens: null,
-      model: input.model ?? null,
-      reasoning: input.reasoning ?? null,
+      input_tokens: telemetry?.inputTokens ?? null,
+      output_tokens: telemetry?.outputTokens ?? null,
+      model: telemetry?.model ?? null,
+      reasoning: telemetry?.reasoning ?? null,
       key_id: input.keyId,
-      fallback_reason: provider === "yunwu" ? "primary_429" : null,
+      fallback_reason: telemetry?.fallbackReason ?? null,
     }),
   );
 };
 
+const withTerminalRequestLog = (
+  response: Response,
+  input: Readonly<{
+    route: string;
+    telemetryResponse?: Response;
+    startedAtMs: number;
+    keyId: string | null;
+    onCompleted?: () => Promise<void>;
+  }>,
+): Promise<Response> => {
+  let logged = false;
+  let completionFinalization: Promise<void> | null = null;
+  const log = (): void => {
+    if (logged) return;
+    logged = true;
+    logTerminalRequest({ ...input, response });
+  };
+  const finalizeCompletion = (): Promise<void> => {
+    if (!input.onCompleted || !response.ok) return Promise.resolve();
+    const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
+    if (!telemetry?.completed) return Promise.resolve();
+    completionFinalization ??= input.onCompleted();
+    return completionFinalization;
+  };
+  if (!response.body || !response.headers.get("Content-Type")?.toLowerCase().includes("text/event-stream")) {
+    return (async () => {
+      try {
+        await finalizeCompletion();
+        return response;
+      } finally {
+        log();
+      }
+    })();
+  }
+
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          await finalizeCompletion();
+          log();
+          controller.close();
+          return;
+        }
+        // The OpenAI stream observer marks response.completed before yielding
+        // the chunk that contains it, so quota accounting cannot be skipped by
+        // cancelling immediately after that chunk becomes visible to a client.
+        await finalizeCompletion();
+        controller.enqueue(value);
+      } catch (error) {
+        log();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        try {
+          await finalizeCompletion();
+        } finally {
+          log();
+        }
+      }
+    },
+  });
+  return Promise.resolve(
+    new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    }),
+  );
+};
+
+const terminalRouteForRequest = (method: string, path: string): string | null => {
+  if (method === "POST" && (path === "/uos/embeddings" || path === "/v1/embeddings")) return "embeddings";
+  if (method === "POST" && path === "/uos/embedding-jobs") return "embeddings.jobs.create";
+  if (method === "GET" && path.startsWith("/uos/embedding-jobs/")) return "embeddings.jobs.get";
+  if (method === "POST" && path === "/v1/chat/completions") return "chat.completions";
+  if (method === "POST" && path === "/v1/responses") return "responses";
+  return null;
+};
+
 export default async function handler(req: Request): Promise<Response> {
+  const requestStartedAtMs = Date.now();
   if (req.method === "OPTIONS") {
     return withCors(new Response(null, { status: 204, headers: corsHeaders() }));
   }
@@ -359,10 +452,19 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(notFound());
   }
 
+  const terminalRoute = terminalRouteForRequest(req.method, path);
   const authResult = await authenticateClient(req);
-  if (!authResult.ok) return withCors(authResult.response);
+  if (!authResult.ok) {
+    const response = withCors(authResult.response);
+    return terminalRoute
+      ? await withTerminalRequestLog(response, {
+        route: terminalRoute,
+        startedAtMs: requestStartedAtMs,
+        keyId: null,
+      })
+      : response;
+  }
   const requestId = crypto.randomUUID();
-  const requestStartedAtMs = Date.now();
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
   const usagePolicy = authResult.method.kind === "kv_api_key" ? authResult.method.policy : null;
   const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
@@ -381,6 +483,7 @@ export default async function handler(req: Request): Promise<Response> {
     keyId: usageKeyId,
     kernelRepo,
     kernelOrg,
+    paidFallbackEnabled: usagePolicy?.paid_fallback_enabled === true,
     idempotencyPrincipal,
     requestId,
     startedAtMs: requestStartedAtMs,
@@ -401,6 +504,26 @@ export default async function handler(req: Request): Promise<Response> {
     }
     if (kernelOrg) await incrementKernelOrgUsageLimit(kernelOrg.owner);
   };
+  const finishTerminalResponse = async (
+    response: Response,
+    route: string,
+    includeQuota = false,
+    onCompleted?: () => Promise<void>,
+  ): Promise<Response> => {
+    const telemetry = getResponseTelemetry(response);
+    const decorated = includeQuota ? decorateInferenceQuota(response, usagePolicy, telemetry) : response;
+    return await withTerminalRequestLog(withCors(decorated), {
+      route,
+      telemetryResponse: response,
+      startedAtMs: requestStartedAtMs,
+      keyId: usageKeyId,
+      onCompleted,
+    });
+  };
+  const incrementInferenceUsage = async (): Promise<void> => {
+    if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
+    await incrementKernelLimitUsage();
+  };
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(await handleModels(req));
@@ -412,14 +535,7 @@ export default async function handler(req: Request): Promise<Response> {
       if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
       await incrementKernelLimitUsage();
     }
-    logTerminalRequest({
-      route: "embeddings",
-      status: response.status,
-      response,
-      startedAtMs: requestStartedAtMs,
-      keyId: usageKeyId,
-    });
-    return withCors(response);
+    return await finishTerminalResponse(response, "embeddings");
   }
 
   if (req.method === "POST" && path === "/uos/embedding-jobs") {
@@ -428,28 +544,16 @@ export default async function handler(req: Request): Promise<Response> {
       if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
       await incrementKernelLimitUsage();
     }
-    logTerminalRequest({
-      route: "embeddings.jobs.create",
-      status: response.status,
-      response,
-      startedAtMs: requestStartedAtMs,
-      keyId: usageKeyId,
-    });
-    return withCors(response);
+    return await finishTerminalResponse(response, "embeddings.jobs.create");
   }
 
   if (req.method === "GET" && path.startsWith("/uos/embedding-jobs/")) {
     const jobId = path.slice("/uos/embedding-jobs/".length).trim();
-    if (!jobId) return withCors(openaiError(404, "Not found", "not_found"));
+    if (!jobId) {
+      return await finishTerminalResponse(openaiError(404, "Not found", "not_found"), "embeddings.jobs.get");
+    }
     const response = await handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext);
-    logTerminalRequest({
-      route: "embeddings.jobs.get",
-      status: response.status,
-      response,
-      startedAtMs: requestStartedAtMs,
-      keyId: usageKeyId,
-    });
-    return withCors(response);
+    return await finishTerminalResponse(response, "embeddings.jobs.get");
   }
 
   if (req.method === "POST" && path === "/v1/embeddings") {
@@ -458,46 +562,17 @@ export default async function handler(req: Request): Promise<Response> {
       if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
       await incrementKernelLimitUsage();
     }
-    logTerminalRequest({
-      route: "embeddings",
-      status: response.status,
-      response,
-      startedAtMs: requestStartedAtMs,
-      keyId: usageKeyId,
-    });
-    return withCors(response);
+    return await finishTerminalResponse(response, "embeddings");
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
     const response = await handleChatCompletions(req, usageContext);
-    if (response.ok) {
-      if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
-      await incrementKernelLimitUsage();
-    }
-    logTerminalRequest({
-      route: "chat.completions",
-      status: response.status,
-      response,
-      startedAtMs: requestStartedAtMs,
-      keyId: usageKeyId,
-    });
-    return withCors(decorateInferenceQuota(response, usagePolicy));
+    return await finishTerminalResponse(response, "chat.completions", true, incrementInferenceUsage);
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
     const response = await handleResponses(req, usageContext);
-    if (response.ok) {
-      if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
-      await incrementKernelLimitUsage();
-    }
-    logTerminalRequest({
-      route: "responses",
-      status: response.status,
-      response,
-      startedAtMs: requestStartedAtMs,
-      keyId: usageKeyId,
-    });
-    return withCors(decorateInferenceQuota(response, usagePolicy));
+    return await finishTerminalResponse(response, "responses", true, incrementInferenceUsage);
   }
 
   return withCors(openaiError(404, "Not found", "not_found"));
