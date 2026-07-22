@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
 import { appendBooleanParam } from "../scripts/kv-migrate.ts";
-import { importKvMigrationLines, validateKvMigrationTarget } from "../src/kv_migration.ts";
+import {
+  classifyKvMigrationKey,
+  importKvMigrationLines,
+  migrateKvReadIncidentV2,
+  validateKvMigrationTarget,
+} from "../src/kv_migration.ts";
+
+if (typeof Deno.KvU64 !== "function") {
+  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
+    constructor(readonly value: bigint) {}
+  } as typeof Deno.KvU64;
+}
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 
@@ -32,6 +43,20 @@ const makeKvStub = (store: Map<string, unknown>): Deno.Kv =>
       store.set(keyToString(key), value);
       return Promise.resolve({ ok: true } as const);
     },
+    atomic: () => {
+      const writes: Array<{ key: Deno.KvKey; value: unknown }> = [];
+      const operation = {
+        set: (key: Deno.KvKey, value: unknown) => {
+          writes.push({ key, value });
+          return operation;
+        },
+        commit: () => {
+          for (const write of writes) store.set(keyToString(write.key), write.value);
+          return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
+        },
+      };
+      return operation;
+    },
     list: async function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
       const prefix = "prefix" in selector ? selector.prefix : [];
       const limit = typeof options?.limit === "number" ? options.limit : Infinity;
@@ -53,6 +78,18 @@ Deno.test("KV migration HTTP CLI serializes explicit false flags", () => {
 
   assert.equal(url.searchParams.get("include_legacy"), "0");
   assert.equal(url.searchParams.get("overwrite"), "1");
+});
+
+Deno.test("KV migration classifies v2 incident state and skips the transient circuit", () => {
+  const options = { profile: "prod", includeCache: false, includeLegacy: false } as const;
+  assert.equal(classifyKvMigrationKey(["uos_ai", "api_key_usage", "v2", "id"], options).action, "import");
+  assert.equal(classifyKvMigrationKey(["uos_ai", "paid_fallback", "ledger", "id"], options).action, "import");
+  assert.equal(classifyKvMigrationKey(["uos_ai", "runtime_config", "v2"], options).action, "import");
+  assert.deepEqual(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options), {
+    action: "skip",
+    group: "codex_rate_limit",
+    reason: "transient_runtime_state",
+  });
 });
 
 Deno.test("prod KV migration imports only modern durable rows by default", async () => {
@@ -201,4 +238,74 @@ Deno.test("KV migration validation rejects unusable codex model snapshots for co
   const result = await validateKvMigrationTarget(makeKvStub(store));
 
   assert.match(result.errors.join("\n"), /codex model snapshot is empty or malformed/);
+});
+
+Deno.test("KV incident migration creates counters, runtime config, and only pending fallback ledger rows", async () => {
+  const store = new Map<string, unknown>();
+  const now = Date.now();
+  const id = "bounded-key";
+  const hash = "bounded-hash";
+  const fallback = {
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: 1_000_000,
+    paid_fallback_spent_microcredits: 100_000,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+  };
+  store.set(keyToString(["ubq_ai", "codex_models"]), {
+    models: [{ slug: "gpt-5.5", supported_reasoning_levels: ["none", "medium"] }],
+    source: "chatgpt_codex",
+    updated_at_ms: now,
+  });
+  store.set(keyToString(["default", "model"]), "gpt-5.5");
+  store.set(keyToString(["default", "reasoning_effort"]), "medium");
+  store.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    id,
+    name: "Bounded",
+    prefix: "u_bounded",
+    hash,
+    created_at_ms: now,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 10,
+    usage_requests: 4,
+    usage_reset_at_ms: now + 60_000,
+    window_ms: 60_000,
+    ...fallback,
+    paid_fallback_model_ids: ["gpt-5.5"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_pricing_checked_at_ms: now,
+  });
+  store.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), {
+    id,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 10,
+    usage_requests: 4,
+    usage_reset_at_ms: now + 60_000,
+    window_ms: 60_000,
+    ...fallback,
+  });
+  for (const [requestId, billingStatus] of [["pending", "pending"], ["done", "reconciled"]] as const) {
+    store.set(keyToString(["ubq_ai", "api_keys", "request_log", id, now, requestId]), {
+      id: requestId,
+      key_id: id,
+      provider: "yunwu",
+      billing_status: billingStatus,
+      created_at_ms: now,
+    });
+  }
+
+  const result = await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.deepEqual(result, {
+    api_keys: 1,
+    bounded_counters: 1,
+    paid_fallback_records: 1,
+    runtime_config_written: true,
+  });
+  assert.equal(store.has(keyToString(["uos_ai", "runtime_config", "v2"])), true);
+  assert.equal(store.has(keyToString(["uos_ai", "paid_fallback", "ledger", id, now, "pending"])), true);
+  assert.equal(store.has(keyToString(["uos_ai", "paid_fallback", "ledger", id, now, "done"])), false);
+  const validation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.deepEqual(validation.errors, []);
 });

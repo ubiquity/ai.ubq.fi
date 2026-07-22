@@ -522,6 +522,15 @@ deno task kv:import-remote --in .kv-migration/deno1.ndjson --dest "$DEST_KV" --p
 deno task kv:validate --target "$DEST_KV" --strict
 ```
 
+For the KV read-budget v2 hard cutover, export the production database first, then create the bounded counters,
+paid-fallback ledger, and compact runtime configuration in place. The command validates the migrated database before it
+exits successfully.
+
+```bash
+deno task kv:export --source "$DEST_KV" --out .kv-migration/pre-kv-read-v2.ndjson
+deno task kv:incident-v2 --target "$DEST_KV"
+```
+
 If the new Deno Deploy database is only reachable from the app runtime, use the super-admin HTTP importer. It writes
 through the deployed app's own `Deno.openKv()` connection and is also dry-run by default:
 

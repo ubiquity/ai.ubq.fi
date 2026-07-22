@@ -5,6 +5,7 @@ import {
   importKvMigrationLines,
   type KvMigrationDecisionAction,
   type KvMigrationProfile,
+  migrateKvReadIncidentV2,
   parseKvMigrationEntryLine,
   safeKvMigrationValueType,
   validateKvMigrationTarget,
@@ -296,6 +297,19 @@ const validateCommand = async (flags: Args): Promise<void> => {
   }
 };
 
+const incidentV2Command = async (flags: Args): Promise<void> => {
+  const target = getRequiredFlagString(flags, "target");
+  const kv = await openKv(target);
+  try {
+    const migration = await migrateKvReadIncidentV2(kv);
+    const validation = await validateKvMigrationTarget(kv);
+    console.log(JSON.stringify({ target, migration, validation }, null, 2));
+    if (validation.errors.length) Deno.exit(1);
+  } finally {
+    kv.close();
+  }
+};
+
 const getAuthToken = (flags: Args): string => {
   const token = getFlagString(flags, "token") || Deno.env.get("DENO_DEPLOY_TOKEN")?.trim() ||
     Deno.env.get("UOS_AI_TOKEN")?.trim() || "";
@@ -394,6 +408,7 @@ Usage:
   deno task kv:import-http --in .kv-migration/deno1.ndjson --base-url https://ai.ubq.fi --profile prod --overwrite
   deno task kv:import-http --in .kv-migration/deno1.ndjson --base-url https://ai.ubq.fi --profile prod --overwrite --write
   deno task kv:validate --target <remote-kv-url>
+  deno task kv:incident-v2 --target <remote-kv-url>
   deno task kv:validate-http --base-url https://ai.ubq.fi --strict
 
 Remote Deno KV exports require DENO_KV_ACCESS_TOKEN in the environment.
@@ -424,6 +439,7 @@ const main = async (): Promise<void> => {
   if (command === "import-local") return await importLocalCommand(flags);
   if (command === "import-remote") return await importRemoteCommand(flags);
   if (command === "validate") return await validateCommand(flags);
+  if (command === "incident-v2") return await incidentV2Command(flags);
   if (command === "import-http") return await importHttpCommand(flags);
   if (command === "validate-http") return await validateHttpCommand(flags);
   usage();

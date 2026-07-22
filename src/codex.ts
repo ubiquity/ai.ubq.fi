@@ -1,6 +1,7 @@
 import { config } from "./config.ts";
 import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
 import { kvPromise } from "./kv.ts";
+import { buildRuntimeConfig, loadRuntimeConfig, storeRuntimeConfig } from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord } from "./utils.ts";
 import type { CodexAuthState, ResponseInputItem } from "./types.ts";
 
@@ -108,6 +109,11 @@ export const cacheCodexAuth = (auth: CodexAuthState): void => {
   cachedAuth = auth;
 };
 
+export const resetCodexAuthCacheForTest = (): void => {
+  cachedAuth = null;
+  refreshInFlight = null;
+};
+
 const loadAuthSeedFromEnv = (): CodexAuthState => {
   if (config.isDeploy) {
     if (!config.codexAuthJsonB64) {
@@ -211,11 +217,14 @@ const getConfiguredCodexAuthSeed = (): CodexAuthState | null => {
   }
 };
 
-const getAuthEntry = async (): Promise<{
+const getAuthEntry = async (forceKv = false): Promise<{
   kv: Deno.Kv | null;
   entry: Deno.KvEntryMaybe<CodexAuthState> | null;
   auth: CodexAuthState;
 }> => {
+  if (!forceKv && cachedAuth && !needsRefresh(cachedAuth)) {
+    return { kv: null, entry: null, auth: cachedAuth };
+  }
   const kv = await kvPromise;
   if (!kv) {
     const auth = cachedAuth ?? getConfiguredCodexAuthSeed();
@@ -500,7 +509,7 @@ export const fetchCodexResponses = async (
 
   if (res.status !== 401) return res;
 
-  await refreshAuth(await getAuthEntry());
+  await refreshAuth(await getAuthEntry(true));
 
   const auth2 = await getValidAuth();
   headers.set("Authorization", `Bearer ${auth2.access_token}`);
@@ -537,7 +546,7 @@ export const fetchCodexModels = async (
   for (const url of urls) {
     let res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch);
     if (res.status === 401) {
-      await refreshAuth(await getAuthEntry());
+      await refreshAuth(await getAuthEntry(true));
       const auth2 = await getValidAuth();
       res = await fetchCodexModelsWithAuth(auth2, url, clientVersion, options.ifNoneMatch);
     }
@@ -552,16 +561,21 @@ export const fetchCodexModels = async (
 };
 
 export const loadCodexModelsSnapshot = async (): Promise<CodexModelsSnapshot | null> => {
-  const kv = await kvPromise;
-  if (!kv) return null;
-  const entry = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
-  return entry.value ?? null;
+  return (await loadRuntimeConfig())?.codex_models ?? null;
 };
 
 export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): Promise<boolean> => {
   const kv = await kvPromise;
   if (!kv) return false;
   await kv.set(CODEX_MODELS_KV_KEY, snapshot);
+  const current = await loadRuntimeConfig(kv);
+  await storeRuntimeConfig(
+    buildRuntimeConfig(snapshot, {
+      defaultModel: current?.default_model,
+      defaultReasoningEffort: current?.default_reasoning_effort,
+    }),
+    kv,
+  );
   return true;
 };
 

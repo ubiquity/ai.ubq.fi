@@ -1,6 +1,6 @@
-import type { YunwuQuotaSnapshot } from "./yunwu_quota.ts";
-
 export const YUNWU_CODEX_LIMIT_NAME = "YunWu balance";
+
+type ClientQuotaSnapshot = Readonly<{ used_percent: number | null }>;
 
 const DEFAULT_CODEX_PREFIX = "x-codex";
 
@@ -31,7 +31,7 @@ const formatPercent = (value: number): string => {
 
 export const buildCodexQuotaHeaders = (
   input: HeadersInit,
-  snapshot: YunwuQuotaSnapshot | null,
+  snapshot: ClientQuotaSnapshot | null,
 ): Headers => {
   const headers = new Headers(input);
 
@@ -59,7 +59,7 @@ export const buildCodexQuotaHeaders = (
 
 export const withCodexQuotaHeaders = (
   response: Response,
-  snapshot: YunwuQuotaSnapshot | null,
+  snapshot: ClientQuotaSnapshot | null,
 ): Response =>
   new Response(response.body, {
     status: response.status,

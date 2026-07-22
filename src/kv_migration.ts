@@ -1,4 +1,9 @@
 import { type KvEntryJSON, toKey, toValue } from "@deno/kv-utils/json";
+import { API_KEY_ID_PREFIX, apiKeyHashKey } from "./api_keys.ts";
+import { apiKeyPolicyFromHashRecord, apiKeyUsageV2Key } from "./api_key_policy.ts";
+import { buildRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyRequestLogRecord } from "./types.ts";
+import { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
 
 export type KvMigrationProfile = "local" | "prod";
 export type KvMigrationDecisionAction = "import" | "skip" | "optional";
@@ -38,6 +43,8 @@ export type KvMigrationValidationResult = {
   counts: {
     api_key_ids: number;
     api_key_hashes: number;
+    api_key_bounded_counters_v2: number;
+    paid_fallback_ledger: number;
     kernel_repo_limits: number;
     kernel_org_limits: number;
     passkey_users: number;
@@ -56,6 +63,7 @@ export type KvMigrationValidationResult = {
     default_kernel_policy_window_ms: boolean;
     voyage_api_key: boolean;
     kernel_pubkeys: boolean;
+    runtime_config_v2: boolean;
   };
   errors: string[];
 };
@@ -66,6 +74,9 @@ const DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "api_keys_usage", prefix: ["ubq_ai", "api_keys", "usage"] },
   { group: "api_keys_usage_daily", prefix: ["ubq_ai", "api_keys", "usage_daily"] },
   { group: "api_keys_request_log", prefix: ["ubq_ai", "api_keys", "request_log"] },
+  { group: "api_key_usage_v2", prefix: ["uos_ai", "api_key_usage", "v2"] },
+  { group: "paid_fallback_ledger", prefix: ["uos_ai", "paid_fallback", "ledger"] },
+  { group: "runtime_config_v2", prefix: ["uos_ai", "runtime_config", "v2"] },
   { group: "kernel_usage", prefix: ["ubq_ai", "kernel_auth", "usage"] },
   { group: "kernel_usage_daily", prefix: ["ubq_ai", "kernel_auth", "usage_daily"] },
   { group: "kernel_limits", prefix: ["ubq_ai", "kernel_auth", "limits"] },
@@ -101,6 +112,7 @@ const LEGACY_DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
 ];
 
 const TRANSIENT_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
+  { group: "codex_rate_limit", prefix: ["uos_ai", "codex_rate_limit"] },
   { group: "passkey_challenges", prefix: ["uos_ai", "auth", "challenges"] },
   { group: "passkey_sessions", prefix: ["uos_ai", "auth", "sessions"] },
   { group: "embeddings_rate", prefix: ["embeddings", "v1", "rate"] },
@@ -231,11 +243,88 @@ export const listKvMigrationCount = async (
   return count;
 };
 
+export const KV_READ_INCIDENT_V2_MIGRATION_KEY = ["uos_ai", "migrations", "kv_read_incident_v2"] as const;
+const LEGACY_REQUEST_LOG_PREFIX = ["ubq_ai", "api_keys", "request_log"] as const;
+const PAID_FALLBACK_LEDGER_PREFIX = ["uos_ai", "paid_fallback", "ledger"] as const;
+
+export type KvReadIncidentV2MigrationResult = Readonly<{
+  api_keys: number;
+  bounded_counters: number;
+  paid_fallback_records: number;
+  runtime_config_written: boolean;
+}>;
+
+export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncidentV2MigrationResult> => {
+  const codexModels = await kv.get<Record<string, unknown>>(["ubq_ai", "codex_models"]);
+  if (!codexModels.value) throw new Error("Codex model snapshot is missing");
+  const defaultModel = await kv.get<string>(["default", "model"]);
+  const defaultReasoning = await kv.get<string>(["default", "reasoning_effort"]);
+  const runtimeConfig = buildRuntimeConfig(codexModels.value as never, {
+    defaultModel: defaultModel.value,
+    defaultReasoningEffort: defaultReasoning.value,
+  });
+
+  let apiKeys = 0;
+  let boundedCounters = 0;
+  for await (const entry of kv.list<ApiKeyRecord>({ prefix: API_KEY_ID_PREFIX })) {
+    const record = entry.value;
+    if (!record || !hasStrictPaidFallbackKeyPolicy(record)) {
+      throw new Error(`API key ${String(entry.key.at(-1))} has an invalid policy`);
+    }
+    const hashEntry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(record.hash));
+    if (!hashEntry.value || !hasStrictPaidFallbackPolicy(hashEntry.value) || hashEntry.value.id !== record.id) {
+      throw new Error(`API key ${record.id} is missing its matching hash policy`);
+    }
+    const policy = apiKeyPolicyFromHashRecord(record.hash, hashEntry.value, Date.now());
+    if (!policy) throw new Error(`API key ${record.id} policy could not be normalized`);
+    apiKeys += 1;
+    if (policy.usage_limit_requests !== -1) {
+      const counterKey = apiKeyUsageV2Key(policy);
+      const counter = await kv.get<Deno.KvU64>(counterKey);
+      if (!counter.value) await kv.set(counterKey, new Deno.KvU64(BigInt(Math.max(0, record.usage_requests))));
+      boundedCounters += 1;
+    }
+  }
+
+  let paidFallbackRecords = 0;
+  for await (const entry of kv.list<ApiKeyRequestLogRecord>({ prefix: LEGACY_REQUEST_LOG_PREFIX })) {
+    const value = entry.value;
+    if (
+      !value || value.provider !== "yunwu" ||
+      (value.billing_status !== "pending" && value.billing_status !== "unresolved")
+    ) continue;
+    await kv.set(
+      [...PAID_FALLBACK_LEDGER_PREFIX, value.key_id, value.created_at_ms, value.id],
+      value,
+    );
+    paidFallbackRecords += 1;
+  }
+
+  await kv.atomic()
+    .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)
+    .set(KV_READ_INCIDENT_V2_MIGRATION_KEY, {
+      version: 2,
+      completed_at_ms: Date.now(),
+      api_keys: apiKeys,
+      bounded_counters: boundedCounters,
+      paid_fallback_records: paidFallbackRecords,
+    })
+    .commit();
+  return {
+    api_keys: apiKeys,
+    bounded_counters: boundedCounters,
+    paid_fallback_records: paidFallbackRecords,
+    runtime_config_written: true,
+  };
+};
+
 export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigrationValidationResult> => {
   const errors: string[] = [];
   const [
     apiIds,
     apiHashes,
+    boundedCounters,
+    paidFallbackLedger,
     kernelLimits,
     kernelOrgLimits,
     passkeyUsers,
@@ -247,6 +336,8 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
   ] = await Promise.all([
     listKvMigrationCount(kv, ["ubq_ai", "api_keys", "id"]),
     listKvMigrationCount(kv, ["ubq_ai", "api_keys", "hash"]),
+    listKvMigrationCount(kv, ["uos_ai", "api_key_usage", "v2"]),
+    listKvMigrationCount(kv, ["uos_ai", "paid_fallback", "ledger"]),
     listKvMigrationCount(kv, ["ubq_ai", "kernel_auth", "limits"]),
     listKvMigrationCount(kv, ["ubq_ai", "kernel_auth", "org_limits"]),
     listKvMigrationCount(kv, ["uos_ai", "auth", "users"]),
@@ -259,6 +350,49 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
 
   if (apiIds !== apiHashes) {
     errors.push(`api key id/hash count mismatch: ids=${apiIds} hashes=${apiHashes}`);
+  }
+
+  let boundedApiKeys = 0;
+  for await (const entry of kv.list<ApiKeyRecord>({ prefix: API_KEY_ID_PREFIX })) {
+    if (!entry.value || !hasStrictPaidFallbackKeyPolicy(entry.value)) {
+      errors.push(`api key has invalid v2 policy: ${String(entry.key.at(-1))}`);
+      continue;
+    }
+    const hashEntry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(entry.value.hash));
+    if (
+      !hashEntry.value || hashEntry.value.id !== entry.value.id ||
+      !hasStrictPaidFallbackPolicy(hashEntry.value)
+    ) {
+      errors.push(`api key hash policy is missing or inconsistent: ${entry.value.id}`);
+      continue;
+    }
+    const policy = apiKeyPolicyFromHashRecord(entry.value.hash, hashEntry.value, Date.now());
+    if (!policy) {
+      errors.push(`api key policy could not be normalized: ${entry.value.id}`);
+      continue;
+    }
+    if (entry.value.usage_limit_requests !== -1) {
+      boundedApiKeys += 1;
+      const counter = await kv.get<Deno.KvU64>(apiKeyUsageV2Key(policy));
+      if (!counter.value || typeof counter.value.value !== "bigint") {
+        errors.push(`bounded counter is missing or invalid: ${entry.value.id}`);
+      }
+    }
+    if (entry.value.paid_fallback_reservation_request_id) {
+      let reservationFound = false;
+      for await (
+        const ledger of kv.list<ApiKeyRequestLogRecord>({ prefix: [...PAID_FALLBACK_LEDGER_PREFIX, entry.value.id] })
+      ) {
+        if (ledger.value?.id === entry.value.paid_fallback_reservation_request_id) {
+          reservationFound = true;
+          break;
+        }
+      }
+      if (!reservationFound) errors.push(`paid fallback reservation has no ledger record: ${entry.value.id}`);
+    }
+  }
+  if (boundedCounters < boundedApiKeys) {
+    errors.push(`bounded counter count is incomplete: keys=${boundedApiKeys} counters=${boundedCounters}`);
   }
 
   const codexModels = await kv.get<Record<string, unknown>>(["ubq_ai", "codex_models"]);
@@ -285,12 +419,18 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
     kv.get(["default", "kernel_policy_window_ms"]),
     kv.get(["uos_ai", "voyage_api_key"]),
     kv.get(["uos_ai", "kernel_pubkeys"]),
+    kv.get(RUNTIME_CONFIG_V2_KEY),
   ]);
+  if (normalizeRuntimeConfig(knownSettings[8].value) === null) {
+    errors.push("runtime config v2 is missing or invalid");
+  }
 
   return {
     counts: {
       api_key_ids: apiIds,
       api_key_hashes: apiHashes,
+      api_key_bounded_counters_v2: boundedCounters,
+      paid_fallback_ledger: paidFallbackLedger,
       kernel_repo_limits: kernelLimits,
       kernel_org_limits: kernelOrgLimits,
       passkey_users: passkeyUsers,
@@ -309,6 +449,7 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
       default_kernel_policy_window_ms: knownSettings[5].value !== null,
       voyage_api_key: knownSettings[6].value !== null,
       kernel_pubkeys: knownSettings[7].value !== null,
+      runtime_config_v2: normalizeRuntimeConfig(knownSettings[8].value) !== null,
     },
     errors,
   };

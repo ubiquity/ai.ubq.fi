@@ -78,6 +78,8 @@ const { handleChatCompletions, handleModelCapabilities, handleModels, handleResp
   "../src/openai.ts"
 );
 const { withCors } = await import("../src/http.ts");
+const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
+const { resetCodexRateLimitCacheForTest } = await import("../src/codex_rate_limit.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -218,6 +220,27 @@ const withFetchMock = async <T>(
     release = () => resolve(undefined);
   });
   await prev;
+
+  const snapshot = kvStore.get(keyToString(TEST_CODEX_MODELS_KEY)) as
+    | { models?: Array<Record<string, unknown>>; source?: string; updated_at_ms?: number; client_version?: string }
+    | undefined;
+  if (snapshot?.models?.length) {
+    const explicitDefault = kvStore.get(keyToString(DEFAULT_MODEL_KEY));
+    kvStore.set(keyToString(["uos_ai", "runtime_config", "v2"]), {
+      version: 2,
+      default_model: typeof explicitDefault === "string"
+        ? explicitDefault
+        : String(snapshot.models[0]?.slug ?? DEFAULT_TEST_MODEL),
+      default_reasoning_effort: String(kvStore.get(keyToString(DEFAULT_REASONING_EFFORT_KEY)) ?? "low"),
+      codex_models: snapshot,
+      updated_at_ms: Date.now(),
+    });
+  } else {
+    kvStore.delete(keyToString(["uos_ai", "runtime_config", "v2"]));
+  }
+  resetRuntimeConfigCacheForTest();
+  kvStore.delete(keyToString(["uos_ai", "codex_rate_limit"]));
+  resetCodexRateLimitCacheForTest();
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {

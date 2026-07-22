@@ -7,17 +7,16 @@ import {
   loadCodexModelsSnapshot,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
-import {
-  DEFAULT_MODEL_KEY,
-  DEFAULT_REASONING_EFFORT,
-  DEFAULT_REASONING_EFFORT_KEY,
-  normalizeReasoningEffort,
-  type ReasoningEffort,
-} from "./defaults.ts";
-import { recordApiKeyRequestLog, recordApiKeyUsage, updateApiKeyRequestLog } from "./analytics.ts";
+import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
+import {
+  closeGlobalCodexRateLimitProbe,
+  getGlobalCodexRateLimitDecision,
+  openGlobalCodexRateLimitCircuit,
+} from "./codex_rate_limit.ts";
 import { json, openaiError } from "./http.ts";
 import { kvPromise } from "./kv.ts";
+import { loadRuntimeConfig } from "./runtime_config.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, EMBEDDINGS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
 import { readJsonBody } from "./request.ts";
 import {
@@ -39,16 +38,8 @@ import type {
 import { fetchYunwuResponses, YunwuError } from "./yunwu.ts";
 
 const getDefaultModel = async (): Promise<string | null> => {
-  const kv = await kvPromise;
-  if (kv) {
-    const entry = await kv.get<string>(DEFAULT_MODEL_KEY);
-    const model = typeof entry.value === "string" ? entry.value.trim() : "";
-    if (model) return model;
-  }
-  const snapshot = await loadCodexModelsSnapshot();
-  const snapshotDefault = getCodexModelsSnapshotDefaultModel(snapshot);
-  if (snapshotDefault) return snapshotDefault;
-  return null;
+  const runtime = await loadRuntimeConfig();
+  return runtime?.default_model ?? getCodexModelsSnapshotDefaultModel(runtime?.codex_models ?? null);
 };
 
 const defaultModelUnavailableError = (): Response =>
@@ -59,10 +50,7 @@ const defaultModelUnavailableError = (): Response =>
   );
 
 const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
-  const kv = await kvPromise;
-  if (!kv) return DEFAULT_REASONING_EFFORT;
-  const entry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
-  return normalizeReasoningEffort(entry.value) ?? DEFAULT_REASONING_EFFORT;
+  return (await loadRuntimeConfig())?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
 };
 
 type UsageContext = Readonly<{
@@ -107,7 +95,6 @@ type UsageDelta = Readonly<{
 const recordUsageDelta = async (context: UsageContext | undefined, delta: UsageDelta): Promise<void> => {
   if (!context) return;
   const tasks: Promise<void>[] = [];
-  if (context.keyId) tasks.push(recordApiKeyUsage(context.keyId, delta));
   if (context.kernelRepo) tasks.push(recordKernelUsage(context.kernelRepo.owner, context.kernelRepo.repo, delta));
   if (context.kernelOrg) tasks.push(recordKernelOrgUsage(context.kernelOrg.owner, delta));
   if (!tasks.length) return;
@@ -139,62 +126,27 @@ const recordRequestUsage = async (
   details: { model: string; route: string; stream: boolean; reasoning: string | null },
 ): Promise<void> => {
   const seenAtMs = context?.startedAtMs ?? Date.now();
-  const tasks: Promise<void>[] = [
-    recordUsageDelta(context, {
-      request_count: 1,
-      stream_request_count: details.stream ? 1 : 0,
-      non_stream_request_count: details.stream ? 0 : 1,
-      model: details.model,
-      reasoning: details.reasoning,
-      route: details.route,
-      seen_at_ms: seenAtMs,
-    }),
-  ];
-  if (context?.keyId && context.requestId) {
-    tasks.push(recordApiKeyRequestLog(context.keyId, {
-      id: context.requestId,
-      route: details.route,
-      path: details.route === "responses" ? "/v1/responses" : "/v1/chat/completions",
-      method: "POST",
-      status_code: 0,
-      stream: details.stream,
-      model: details.model,
-      reasoning: details.reasoning,
-      created_at_ms: seenAtMs,
-      provider: details.route.startsWith("embeddings") ? "voyage" : "chatgpt_codex",
-      billing_status: "not_applicable",
-    }));
-  }
-  await Promise.all(tasks);
+  await recordUsageDelta(context, {
+    request_count: 1,
+    stream_request_count: details.stream ? 1 : 0,
+    non_stream_request_count: details.stream ? 0 : 1,
+    model: details.model,
+    reasoning: details.reasoning,
+    route: details.route,
+    seen_at_ms: seenAtMs,
+  });
 };
 
 const recordCompletionUsage = async (
   context: UsageContext | undefined,
   usage: UsageTokens | null,
 ): Promise<void> => {
-  const completedAtMs = Date.now();
-  const tasks: Promise<void>[] = [
-    recordUsageDelta(context, {
-      completed_request_count: 1,
-      input_tokens: usage?.inputTokens,
-      output_tokens: usage?.outputTokens,
-      total_tokens: usage?.totalTokens,
-    }),
-  ];
-  if (context?.keyId && context.requestId && context.startedAtMs !== undefined) {
-    tasks.push(updateApiKeyRequestLog(
-      context.keyId,
-      context.startedAtMs,
-      context.requestId,
-      {
-        completed_at_ms: completedAtMs,
-        latency_ms: Math.max(0, completedAtMs - context.startedAtMs),
-        input_tokens: usage?.inputTokens,
-        output_tokens: usage?.outputTokens,
-      },
-    ));
-  }
-  await Promise.all(tasks);
+  await recordUsageDelta(context, {
+    completed_request_count: 1,
+    input_tokens: usage?.inputTokens,
+    output_tokens: usage?.outputTokens,
+    total_tokens: usage?.totalTokens,
+  });
 };
 
 const recordErrorUsage = async (context: UsageContext | undefined): Promise<void> => {
@@ -337,6 +289,20 @@ const paidFallbackBlockedResponse = (
   );
 };
 
+const cachedCodexRateLimitResponse = (retryAtMs: number): Response =>
+  openaiError(
+    429,
+    "The shared Codex subscription is rate limited. Retry after the current cooldown.",
+    "rate_limit_exceeded",
+    {
+      type: "rate_limit_error",
+      headers: {
+        "Retry-After": String(Math.max(1, Math.ceil((retryAtMs - Date.now()) / 1000))),
+        "x-ubq-upstream": "chatgpt_codex",
+      },
+    },
+  );
+
 const fetchResponsesWithPaidFallback = async (
   body: Record<string, unknown>,
   options: Readonly<{
@@ -349,23 +315,44 @@ const fetchResponsesWithPaidFallback = async (
     signal?: AbortSignal;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
-  const primary = await fetchCodexResponses(body, {
-    clientVersion: options.clientVersion,
-    signal: options.signal,
-  });
+  const circuit = await getGlobalCodexRateLimitDecision();
+  let primary: Response | null = null;
+  let retryAtMs: number | null = null;
+  if (circuit.kind === "cached") {
+    retryAtMs = circuit.retryAtMs;
+  } else {
+    primary = await fetchCodexResponses(body, {
+      clientVersion: options.clientVersion,
+      signal: options.signal,
+    });
+    if (primary.status === 429) {
+      retryAtMs = await openGlobalCodexRateLimitCircuit(primary.headers.get("Retry-After"));
+    } else if (circuit.kind === "probe") {
+      await closeGlobalCodexRateLimitProbe(circuit.probeId);
+    }
+  }
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  if (primary.status !== 429 || !keyId || !requestId || createdAtMs === undefined) {
+  const cachedRateLimit = primary === null;
+  if ((primary?.status !== 429 && !cachedRateLimit) || !keyId || !requestId || createdAtMs === undefined) {
+    if (cachedRateLimit) {
+      return {
+        response: cachedCodexRateLimitResponse(retryAtMs ?? Date.now() + 60_000),
+        provider: "chatgpt_codex",
+        paidFallback: null,
+        gatewayResponse: true,
+      };
+    }
     return {
-      response: primary,
+      response: primary!,
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: false,
     };
   }
   if (options.signal?.aborted) {
-    await cancelResponseBody(primary);
+    if (primary) await cancelResponseBody(primary);
     throw options.signal.reason instanceof Error
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
@@ -380,6 +367,7 @@ const fetchResponsesWithPaidFallback = async (
     path: options.route === "responses" ? "/v1/responses" : "/v1/chat/completions",
     stream: options.stream,
     reasoning: options.reasoning,
+    reason: cachedRateLimit ? "primary_rate_limit_cached" : "primary_429",
   } as const;
   let decision = await reservePaidFallback(reservationInput);
   if (decision.kind === "blocked" && decision.reason === "reconciliation_pending") {
@@ -388,24 +376,34 @@ const fetchResponsesWithPaidFallback = async (
   }
 
   if (decision.kind === "skip") {
+    if (cachedRateLimit) {
+      return {
+        response: cachedCodexRateLimitResponse(retryAtMs ?? Date.now() + 60_000),
+        provider: "chatgpt_codex",
+        paidFallback: null,
+        gatewayResponse: true,
+      };
+    }
     return {
-      response: primary,
+      response: primary!,
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: false,
     };
   }
   if (decision.kind === "blocked") {
-    await cancelResponseBody(primary);
+    if (primary) await cancelResponseBody(primary);
     return {
-      response: paidFallbackBlockedResponse(decision.reason, decision.reset_at_ms),
+      response: cachedRateLimit
+        ? cachedCodexRateLimitResponse(retryAtMs ?? Date.now() + 60_000)
+        : paidFallbackBlockedResponse(decision.reason, decision.reset_at_ms),
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: true,
     };
   }
 
-  await cancelResponseBody(primary);
+  if (primary) await cancelResponseBody(primary);
   if (options.signal?.aborted) {
     await recordYunwuUndispatchedCancellation(decision.reservation);
     throw options.signal.reason instanceof Error
@@ -2690,7 +2688,7 @@ const handleEmbeddingsRequest = async (
 
   const parsed = parseEmbeddingsRequest(rawBody, contract);
   if (!parsed.ok) return parsed.response;
-  const { model, inputs, total_chars: totalChars, profile } = parsed.value;
+  const { model, inputs, profile } = parsed.value;
 
   const kv = Object.prototype.hasOwnProperty.call(options, "kv") ? options.kv ?? null : await kvPromise;
   const hashes = await Promise.all(inputs.map((text) => sha256Hex(text)));
@@ -2799,12 +2797,6 @@ const handleEmbeddingsRequest = async (
       missing.push({ hash, text: bucket.text, indices: bucket.indices });
     }
   }
-
-  console.info(
-    `[ai.ubq.fi] embeddings request_id=${requestId} model=${model} upstream=${profile.upstream} inputs=${inputs.length} unique=${buckets.size} chars=${totalChars} cache=${
-      shouldCache && Boolean(kv)
-    }`,
-  );
 
   if (missing.length > 0) {
     const chunks = chunkByTokenBudget(
@@ -3025,10 +3017,6 @@ const handleEmbeddingsRequest = async (
     }
   }
   await recordCompletionUsage(usageContext, usageTokens);
-  const elapsedMs = Date.now() - startedAtMs;
-  console.info(
-    `[ai.ubq.fi] embeddings request_id=${requestId} status=200 upstream=${profile.upstream} ms=${elapsedMs}`,
-  );
   return response;
 };
 
@@ -4008,7 +3996,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
     }
     const headers = new Headers(upstream.headers);
     headers.set("x-ubq-upstream", routed.provider);
-    if (usageContext?.keyId || usageContext?.kernelRepo || usageContext?.kernelOrg) {
+    if (routed.paidFallback || usageContext?.kernelRepo || usageContext?.kernelOrg) {
       const [clientStream, analyticsStream] = upstream.body.tee();
       void collectResponsesStreamUsage(analyticsStream, usageContext, routed.paidFallback);
       const response = new Response(clientStream, {

@@ -152,7 +152,7 @@ const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true } = 
   return { token, user };
 };
 
-Deno.test("inference handler decorates Responses and Chat Completions with the cached YunWu cycle", async () => {
+Deno.test("inference handler omits synthetic quota headers for passkey sessions", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession();
   const now = Date.now();
@@ -186,8 +186,8 @@ Deno.test("inference handler decorates Responses and Chat Completions with the c
         }),
       );
       assert.equal(response.status, 503);
-      assert.equal(response.headers.get("x-codex-limit-name"), "YunWu balance");
-      assert.equal(response.headers.get("x-codex-primary-used-percent"), "50");
+      assert.equal(response.headers.get("x-codex-limit-name"), null);
+      assert.equal(response.headers.get("x-codex-primary-used-percent"), null);
       assert.equal(response.headers.has("x-codex-primary-window-minutes"), false);
       assert.equal(response.headers.has("x-codex-primary-reset-at"), false);
       const exposedHeaders = response.headers.get("access-control-expose-headers") ?? "";
@@ -198,7 +198,7 @@ Deno.test("inference handler decorates Responses and Chat Completions with the c
   });
 });
 
-Deno.test("inference handler gives a delayed retained YunWu snapshot a bounded opportunity", async () => {
+Deno.test("passkey inference does not read a retained YunWu snapshot", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession();
   const now = Date.now();
@@ -233,11 +233,11 @@ Deno.test("inference handler gives a delayed retained YunWu snapshot a bounded o
     );
 
     assert.equal(response.status, 503);
-    assert.equal(response.headers.get("x-codex-primary-used-percent"), "50");
+    assert.equal(response.headers.get("x-codex-primary-used-percent"), null);
   });
 });
 
-Deno.test("inference handler never waits for a slow YunWu quota refresh", async () => {
+Deno.test("passkey inference never waits for a YunWu quota refresh", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession();
   const now = Date.now();
@@ -289,7 +289,7 @@ Deno.test("inference handler never waits for a slow YunWu quota refresh", async 
           }),
         ]);
         assert.equal(response.status, 503);
-        assert.equal(response.headers.get("x-codex-primary-used-percent"), "50");
+        assert.equal(response.headers.get("x-codex-primary-used-percent"), null);
       } finally {
         if (timeout !== undefined) clearTimeout(timeout);
       }

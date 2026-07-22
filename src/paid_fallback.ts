@@ -2,23 +2,16 @@ import {
   API_KEY_REQUEST_LOG_RETENTION_MS,
   apiKeyRequestLogKey,
   apiKeyRequestLogPrefix,
-  prepareApiKeyUsageAtomicMutation,
   updateApiKeyRequestLog,
 } from "./analytics.ts";
-import {
-  API_KEY_ID_PREFIX,
-  apiKeyHashKey,
-  apiKeyIdKey,
-  MICROCREDITS_PER_CREDIT,
-  PAID_FALLBACK_NO_LIMIT,
-} from "./api_keys.ts";
+import { apiKeyHashKey, apiKeyIdKey, MICROCREDITS_PER_CREDIT, PAID_FALLBACK_NO_LIMIT } from "./api_keys.ts";
+import { invalidateApiKeyPolicy } from "./api_key_policy.ts";
 import { loadCodexModelsSnapshot } from "./codex.ts";
 import { kvPromise } from "./kv.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyRequestLogRecord } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
 import { fetchYunwuTokenLogs, initializeYunwuPricing, readYunwuApiKey, YunwuError } from "./yunwu.ts";
 
-const PAID_FALLBACK_MIGRATION_KEY = ["uos_ai", "migrations", "api_key_paid_fallback_v1"] as const;
 const MAX_RESERVATION_RELEASE_RETRIES = 3;
 
 export type PaidFallbackPolicyFields = Pick<
@@ -167,57 +160,6 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
   };
 };
 
-let backfillInFlight: Promise<void> | null = null;
-let backfillComplete = false;
-
-const runPaidFallbackBackfill = async (kv: Deno.Kv): Promise<void> => {
-  const marker = await kv.get<{ version?: number }>(PAID_FALLBACK_MIGRATION_KEY);
-  if (marker.value?.version === 1) return;
-
-  for await (const entry of kv.list<ApiKeyRecord>({ prefix: API_KEY_ID_PREFIX })) {
-    if (!entry.value) continue;
-    const hashKey = apiKeyHashKey(entry.value.hash);
-    const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
-    if (!hashEntry.value) {
-      throw new Error(`API key ${entry.value.id} is missing its hash record`);
-    }
-
-    const record = hasStrictPaidFallbackKeyPolicy(entry.value)
-      ? entry.value
-      : { ...entry.value, ...defaultPaidFallbackPolicy() };
-    const hashRecord: ApiKeyHashRecord = {
-      ...hashEntry.value,
-      ...paidFallbackHashFields(record),
-    };
-    const commit = await kv.atomic()
-      .check(entry)
-      .check(hashEntry)
-      .set(entry.key, record)
-      .set(hashKey, hashRecord)
-      .commit();
-    if (!commit.ok) {
-      throw new Error(`API key ${entry.value.id} changed during paid fallback backfill`);
-    }
-  }
-
-  await kv.set(PAID_FALLBACK_MIGRATION_KEY, { version: 1, completed_at_ms: Date.now() });
-};
-
-export const ensurePaidFallbackBackfill = async (kvOverride?: Deno.Kv | null): Promise<void> => {
-  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
-  if (!kv) return;
-  if (kvOverride !== undefined) {
-    await runPaidFallbackBackfill(kv);
-    return;
-  }
-  if (backfillComplete) return;
-  backfillInFlight ??= runPaidFallbackBackfill(kv).finally(() => {
-    backfillInFlight = null;
-  });
-  await backfillInFlight;
-  backfillComplete = true;
-};
-
 const loadStrictKeyPair = async (
   kv: Deno.Kv,
   keyId: string,
@@ -248,6 +190,13 @@ const loadStrictKeyPair = async (
   };
 };
 
+const advanceUsageWindow = (resetAtMs: number, windowMs: number, nowMs: number): number => {
+  if (nowMs < resetAtMs) return resetAtMs;
+  const initialStart = resetAtMs - windowMs;
+  const elapsedWindows = Math.floor((nowMs - initialStart) / windowMs);
+  return initialStart + (elapsedWindows + 1) * windowMs;
+};
+
 export const reservePaidFallback = async (
   input: Readonly<{
     keyId: string;
@@ -258,12 +207,48 @@ export const reservePaidFallback = async (
     path: string;
     stream: boolean;
     reasoning: string | null;
+    reason: "primary_429" | "primary_rate_limit_cached";
   }>,
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await kvPromise;
   if (!kv) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-  const pair = await loadStrictKeyPair(kv, input.keyId);
+  let pair = await loadStrictKeyPair(kv, input.keyId);
   if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
+  if (
+    pair.record.usage_reset_at_ms <= input.createdAtMs &&
+    pair.record.paid_fallback_reservation_request_id === null
+  ) {
+    const resetAtMs = advanceUsageWindow(
+      pair.record.usage_reset_at_ms,
+      pair.record.window_ms,
+      input.createdAtMs,
+    );
+    const resetRecord: ApiKeyRecord = {
+      ...pair.record,
+      usage_requests: 0,
+      usage_reset_at_ms: resetAtMs,
+      paid_fallback_spent_microcredits: 0,
+      paid_fallback_reserved_microcredits: 0,
+    };
+    const resetHash: ApiKeyHashRecord = {
+      ...pair.hashRecord,
+      usage_requests: 0,
+      usage_reset_at_ms: resetAtMs,
+      ...paidFallbackHashFields(resetRecord),
+    };
+    const reset = await kv.atomic()
+      .check(pair.idEntry)
+      .check(pair.hashEntry)
+      .set(pair.idKey, resetRecord)
+      .set(pair.hashKey, resetHash)
+      .commit();
+    if (!reset.ok) {
+      return { kind: "blocked", reason: "concurrent_update", reset_at_ms: pair.record.usage_reset_at_ms };
+    }
+    invalidateApiKeyPolicy(input.keyId);
+    pair = await loadStrictKeyPair(kv, input.keyId);
+    if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
+  }
   const record = pair.record;
 
   if (!record.paid_fallback_enabled) return { kind: "skip", reason: "disabled" };
@@ -324,7 +309,7 @@ export const reservePaidFallback = async (
       billing_status: "not_applicable",
     }),
     provider: "yunwu",
-    fallback_reason: "primary_429",
+    fallback_reason: input.reason,
     provider_request_id: null,
     quota_per_credit: record.paid_fallback_quota_per_credit,
     paid_fallback_window_reset_at_ms: record.usage_reset_at_ms,
@@ -345,6 +330,7 @@ export const reservePaidFallback = async (
   if (!commit.ok) {
     return { kind: "blocked", reason: "concurrent_update", reset_at_ms: record.usage_reset_at_ms };
   }
+  invalidateApiKeyPolicy(input.keyId);
 
   return {
     kind: "reserved",
@@ -396,6 +382,7 @@ const clearReservation = async (
         .commit();
       if (commit.ok) {
         cleared = true;
+        invalidateApiKeyPolicy(reservation.key_id);
         break;
       }
     }
@@ -538,14 +525,6 @@ const settlePaidFallback = async (
     spend_microcredits: spendMicrocredits,
     billing_status: "reconciled",
   };
-  const usageMutation = await prepareApiKeyUsageAtomicMutation(kv, keyId, {
-    yunwu_fallback_requests: 1,
-    yunwu_input_tokens: providerLog.prompt_tokens,
-    yunwu_output_tokens: providerLog.completion_tokens,
-    yunwu_total_tokens: providerLog.prompt_tokens + providerLog.completion_tokens,
-    yunwu_spend_microcredits: spendMicrocredits,
-    seen_at_ms: request.created_at_ms,
-  }, reconciledAtMs);
   const expireIn = Math.max(
     1,
     request.created_at_ms + API_KEY_REQUEST_LOG_RETENTION_MS - reconciledAtMs,
@@ -554,17 +533,12 @@ const settlePaidFallback = async (
     .check(pair.idEntry)
     .check(pair.hashEntry)
     .check(logEntry)
-    .check(usageMutation.usage_entry)
-    .check(usageMutation.daily_entry)
     .set(pair.idKey, updated)
     .set(pair.hashKey, updatedHash)
-    .set(logKey, updatedLog, { expireIn })
-    .set(usageMutation.usage_key, usageMutation.usage_record);
-  if (usageMutation.daily_record) {
-    atomic.set(usageMutation.daily_key, usageMutation.daily_record);
-  }
+    .set(logKey, updatedLog, { expireIn });
   const commit = await atomic.commit();
   if (!commit.ok) return false;
+  invalidateApiKeyPolicy(keyId);
   return true;
 };
 
