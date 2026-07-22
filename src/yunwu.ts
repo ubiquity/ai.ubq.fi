@@ -65,6 +65,21 @@ export type YunwuResponsesResult = Readonly<{
   request_id: string | null;
 }>;
 
+const YUNWU_REASONING_SUFFIX_MODELS = new Set(["gpt-5.6-sol"]);
+
+const toYunwuResponsesBody = (body: JsonRecord): JsonRecord => {
+  const model = nonEmptyString(body.model);
+  const reasoning = isRecord(body.reasoning) ? nonEmptyString(body.reasoning.effort) : null;
+  if (!model || !reasoning || !YUNWU_REASONING_SUFFIX_MODELS.has(model)) return body;
+
+  const suffix = reasoning === "none" || reasoning === "minimal" ? "low" : reasoning === "ultra" ? "max" : reasoning;
+  if (!["low", "medium", "high", "xhigh", "max"].includes(suffix)) return body;
+
+  const result: JsonRecord = { ...body, model: `${model}-${suffix}` };
+  delete result.reasoning;
+  return result;
+};
+
 export type YunwuTokenLogEntry = Readonly<{
   request_id: string;
   quota: number;
@@ -299,7 +314,7 @@ export const fetchYunwuResponses = async (
 
   let encodedBody: string;
   try {
-    encodedBody = JSON.stringify(body);
+    encodedBody = JSON.stringify(toYunwuResponsesBody(body));
   } catch {
     throw new YunwuError(
       "YunWu Responses requests must use a JSON-serializable body.",

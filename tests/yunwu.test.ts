@@ -111,7 +111,7 @@ Deno.test("initializeYunwuPricing fails closed and never returns an earlier snap
   );
 });
 
-Deno.test("fetchYunwuResponses makes one canonical request and forwards headers and cancellation", async () => {
+Deno.test("fetchYunwuResponses applies YunWu Sol reasoning suffixes and forwards cancellation", async () => {
   const controller = new AbortController();
   const canonicalBody = {
     model: "gpt-5.6-sol",
@@ -140,13 +140,39 @@ Deno.test("fetchYunwuResponses makes one canonical request and forwards headers 
   assert.equal(calls[0].url, "https://yunwu.ai/v1/responses");
   assert.equal(calls[0].init?.method, "POST");
   assert.equal(calls[0].init?.signal, controller.signal);
-  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), canonicalBody);
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+    model: "gpt-5.6-sol-high",
+    input: canonicalBody.input,
+    stream: true,
+  });
   const headers = new Headers(calls[0].init?.headers);
   assert.equal(headers.get("Authorization"), "Bearer test-yunwu-key");
   assert.equal(headers.get("Accept"), "text/event-stream");
   assert.equal(headers.get("Content-Type"), "application/json");
   assert.equal(result.response.status, 429);
   assert.equal(result.request_id, "yunwu-request-1");
+});
+
+Deno.test("fetchYunwuResponses maps no-reasoning and ultra Sol presets to live aliases", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const fetcher: YunwuFetch = (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  await fetchYunwuResponses(
+    { model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "minimal" } },
+    { apiKey: "test-yunwu-key", fetcher },
+  );
+  await fetchYunwuResponses(
+    { model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "ultra" } },
+    { apiKey: "test-yunwu-key", fetcher },
+  );
+
+  assert.deepEqual(bodies, [
+    { model: "gpt-5.6-sol-low", input: "hello" },
+    { model: "gpt-5.6-sol-max", input: "hello" },
+  ]);
 });
 
 Deno.test("fetchYunwuResponses propagates streaming cancellation", async () => {
