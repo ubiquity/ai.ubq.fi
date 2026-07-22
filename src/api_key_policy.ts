@@ -129,6 +129,11 @@ export const authenticateApiKeyToken = async (
     return { ok: true, policy, usage_requests: 0 };
   }
 
+  // This is intentionally a strong snapshot admission check followed by one
+  // contention-free sum after a successful completion. Strictly reserving
+  // concurrent capacity would require a pre-dispatch conditional write/CAS (and
+  // rollback on failure), which conflicts with success-only accounting and the
+  // one-read/one-sum incident budget.
   const usageRequests = await readCounter(kv, policy);
   if (usageRequests >= policy.usage_limit_requests) {
     return {

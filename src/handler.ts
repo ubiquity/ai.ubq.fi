@@ -137,6 +137,26 @@ const logTerminalRequest = (
   );
 };
 
+const warnQuotaAccountingFailure = (
+  input: Readonly<{ route: string; keyId: string | null }>,
+  error: unknown,
+): void => {
+  const errors = error instanceof AggregateError ? error.errors : [error];
+  try {
+    console.warn(
+      "[ai.ubq.fi] quota_accounting_failed",
+      JSON.stringify({
+        route: input.route,
+        key_id: input.keyId,
+        errors: errors.map((item) => item instanceof Error ? item.message : String(item)),
+      }),
+    );
+  } catch {
+    // Accounting and its warning are both best-effort after completion. Neither
+    // may replace an upstream response that is already ready for the client.
+  }
+};
+
 const withTerminalRequestLog = (
   response: Response,
   input: Readonly<{
@@ -155,10 +175,17 @@ const withTerminalRequestLog = (
     logTerminalRequest({ ...input, response });
   };
   const finalizeCompletion = (): Promise<void> => {
-    if (!input.onCompleted || !response.ok) return Promise.resolve();
+    const onCompleted = input.onCompleted;
+    if (!onCompleted || !response.ok) return Promise.resolve();
     const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
     if (!telemetry?.completed) return Promise.resolve();
-    completionFinalization ??= input.onCompleted();
+    completionFinalization ??= (async () => {
+      try {
+        await onCompleted();
+      } catch (error) {
+        warnQuotaAccountingFailure(input, error);
+      }
+    })();
     return completionFinalization;
   };
   if (!response.body || !response.headers.get("Content-Type")?.toLowerCase().includes("text/event-stream")) {
@@ -521,8 +548,24 @@ export default async function handler(req: Request): Promise<Response> {
     });
   };
   const incrementInferenceUsage = async (): Promise<void> => {
-    if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
-    await incrementKernelLimitUsage();
+    const operations: Array<Readonly<{ name: string; result: Promise<void> }>> = [];
+    if (usagePolicy) {
+      operations.push({ name: "api_key", result: incrementApiKeyUsage(usagePolicy) });
+    }
+    operations.push({ name: "kernel", result: incrementKernelLimitUsage() });
+    const results = await Promise.allSettled(operations.map((operation) => operation.result));
+    const failures = results.flatMap((result, index) =>
+      result.status === "rejected"
+        ? [
+          new Error(
+            `${operations[index]!.name}: ${
+              result.reason instanceof Error ? result.reason.message : String(result.reason)
+            }`,
+          ),
+        ]
+        : []
+    );
+    if (failures.length) throw new AggregateError(failures, "Inference quota accounting failed");
   };
 
   if (req.method === "GET" && path === "/v1/models") {

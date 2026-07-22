@@ -65,6 +65,7 @@ export class CodexError extends Error {
 
 export const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
 export const CODEX_MODELS_KV_KEY = ["ubq_ai", "codex_models"] as const;
+export const CODEX_AUTH_CACHE_TTL_MS = 5 * 60_000;
 
 export type { CodexModelsSnapshot } from "./codex_models.ts";
 export { getCodexModelsSnapshotDefaultModel } from "./codex_models.ts";
@@ -102,15 +103,26 @@ const needsRefresh = (auth: CodexAuthState): boolean => {
   return now - auth.updated_at_ms > 7 * 60_000;
 };
 
+type CodexAuthEntry = {
+  kv: Deno.Kv | null;
+  entry: Deno.KvEntryMaybe<CodexAuthState> | null;
+  auth: CodexAuthState;
+};
+
 let cachedAuth: CodexAuthState | null = null;
+let cachedAuthExpiresAtMs = 0;
+let authEntryInFlight: Promise<CodexAuthEntry> | null = null;
 let refreshInFlight: Promise<CodexAuthState> | null = null;
 
 export const cacheCodexAuth = (auth: CodexAuthState): void => {
   cachedAuth = auth;
+  cachedAuthExpiresAtMs = Date.now() + CODEX_AUTH_CACHE_TTL_MS;
 };
 
 export const resetCodexAuthCacheForTest = (): void => {
   cachedAuth = null;
+  cachedAuthExpiresAtMs = 0;
+  authEntryInFlight = null;
   refreshInFlight = null;
 };
 
@@ -217,14 +229,7 @@ const getConfiguredCodexAuthSeed = (): CodexAuthState | null => {
   }
 };
 
-const getAuthEntry = async (forceKv = false): Promise<{
-  kv: Deno.Kv | null;
-  entry: Deno.KvEntryMaybe<CodexAuthState> | null;
-  auth: CodexAuthState;
-}> => {
-  if (!forceKv && cachedAuth && !needsRefresh(cachedAuth)) {
-    return { kv: null, entry: null, auth: cachedAuth };
-  }
+const loadAuthEntry = async (): Promise<CodexAuthEntry> => {
   const kv = await kvPromise;
   if (!kv) {
     const auth = cachedAuth ?? getConfiguredCodexAuthSeed();
@@ -235,17 +240,17 @@ const getAuthEntry = async (forceKv = false): Promise<{
         503,
       );
     }
-    cachedAuth = auth;
+    cacheCodexAuth(auth);
     return { kv: null, entry: null, auth };
   }
 
-  const entry = await kv.get<CodexAuthState>(CODEX_KV_KEY);
+  const entry = await kv.get<CodexAuthState>(CODEX_KV_KEY, { consistency: "strong" });
   if (entry.value) {
     if (!config.isDeploy) {
       try {
         const localSeed = getConfiguredCodexAuthSeed();
         if (localSeed) {
-          cachedAuth = localSeed;
+          cacheCodexAuth(localSeed);
           await kv.set(CODEX_KV_KEY, localSeed);
           return { kv, entry, auth: localSeed };
         }
@@ -253,7 +258,7 @@ const getAuthEntry = async (forceKv = false): Promise<{
         // Keep working from persisted KV credentials when local seed loading fails.
       }
     }
-    cachedAuth = entry.value;
+    cacheCodexAuth(entry.value);
     return { kv, entry, auth: entry.value };
   }
 
@@ -266,8 +271,22 @@ const getAuthEntry = async (forceKv = false): Promise<{
     );
   }
   await kv.set(CODEX_KV_KEY, seed);
-  cachedAuth = seed;
+  cacheCodexAuth(seed);
   return { kv, entry: null, auth: seed };
+};
+
+const getAuthEntry = async (forceKv = false): Promise<CodexAuthEntry> => {
+  if (!forceKv && cachedAuth && !needsRefresh(cachedAuth) && Date.now() < cachedAuthExpiresAtMs) {
+    return { kv: null, entry: null, auth: cachedAuth };
+  }
+
+  // A bounded single read makes credential replacement converge across warm
+  // isolates without restoring a KV lookup to every inference request.
+  if (authEntryInFlight) return await authEntryInFlight;
+  authEntryInFlight = loadAuthEntry().finally(() => {
+    authEntryInFlight = null;
+  });
+  return await authEntryInFlight;
 };
 
 const formatFailureSnippet = (raw: string, maxLen = 240): string => {
@@ -327,7 +346,7 @@ const refreshAuth = async (
     updated_at_ms: Date.now(),
   };
 
-  cachedAuth = next;
+  cacheCodexAuth(next);
 
   if (current.kv) {
     if (current.entry) {
@@ -335,7 +354,7 @@ const refreshAuth = async (
       if (!commit.ok) {
         const latest = await current.kv.get<CodexAuthState>(CODEX_KV_KEY);
         if (latest.value) {
-          cachedAuth = latest.value;
+          cacheCodexAuth(latest.value);
           return latest.value;
         }
       }

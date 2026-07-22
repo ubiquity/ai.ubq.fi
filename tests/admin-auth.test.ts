@@ -40,6 +40,8 @@ const compareKvKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
 
 const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
   prefix.every((part, index) => key[index] === part);
+const kvStoreHasPrefix = (prefix: Deno.KvKey): boolean =>
+  [...kvStore.keys()].some((encodedKey) => matchesPrefix(JSON.parse(encodedKey) as Deno.KvKey, prefix));
 
 const kvStub = {
   get: (key: Deno.KvKey) =>
@@ -1140,6 +1142,7 @@ Deno.test("API key request log endpoint validates key existence and limit", asyn
 Deno.test("deleting a revoked API key removes its mirrored policy and analytics", async () => {
   kvStore.clear();
   const keyId = "key-delete-cleanup";
+  const neighboringKeyId = `${keyId}-neighbor`;
   const hash = "hash-delete-cleanup";
   const commonPolicy = {
     paid_fallback_enabled: false,
@@ -1181,6 +1184,42 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
     keyToString(["uos_ai", "paid_fallback", "ledger", keyId, Date.now(), "request-delete"]),
     { id: "request-delete", key_id: keyId },
   );
+  kvStore.set(
+    keyToString(["ubq_ai", "api_keys", "request_log", keyId, Date.now(), "legacy-request-delete"]),
+    { id: "legacy-request-delete", key_id: keyId },
+  );
+  kvStore.set(
+    keyToString(["uos_ai", "api_key_usage", "v2", keyId, "policy", Date.now()]),
+    { value: 1n } as Deno.KvU64,
+  );
+
+  const neighboringPaidFallbackKey = [
+    "uos_ai",
+    "paid_fallback",
+    "ledger",
+    neighboringKeyId,
+    Date.now(),
+    "request-neighbor",
+  ] as const;
+  const neighboringLegacyLogKey = [
+    "ubq_ai",
+    "api_keys",
+    "request_log",
+    neighboringKeyId,
+    Date.now(),
+    "legacy-request-neighbor",
+  ] as const;
+  const neighboringCounterKey = [
+    "uos_ai",
+    "api_key_usage",
+    "v2",
+    neighboringKeyId,
+    "policy",
+    Date.now(),
+  ] as const;
+  kvStore.set(keyToString(neighboringPaidFallbackKey), { id: "request-neighbor", key_id: neighboringKeyId });
+  kvStore.set(keyToString(neighboringLegacyLogKey), { id: "legacy-request-neighbor", key_id: neighboringKeyId });
+  kvStore.set(keyToString(neighboringCounterKey), { value: 1n } as Deno.KvU64);
 
   const response = await handleAdminApiKeysDelete(
     new Request("https://ai.ubq.fi/admin/api-keys", {
@@ -1191,10 +1230,16 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   );
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { id: keyId });
-  for (const encodedKey of kvStore.keys()) {
-    assert.equal(encodedKey.includes(keyId), false);
-    assert.equal(encodedKey.includes(hash), false);
-  }
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), false);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "hash", hash])), false);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "usage", keyId])), false);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "usage_daily", keyId])), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "ledger", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["ubq_ai", "api_keys", "request_log", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "api_key_usage", "v2", keyId]), false);
+  assert.equal(kvStore.has(keyToString(neighboringPaidFallbackKey)), true);
+  assert.equal(kvStore.has(keyToString(neighboringLegacyLogKey)), true);
+  assert.equal(kvStore.has(keyToString(neighboringCounterKey)), true);
 });
 
 Deno.test("health auth summary does not refresh Codex auth", async () => {

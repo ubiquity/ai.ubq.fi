@@ -2,13 +2,15 @@ import { kvPromise } from "./kv.ts";
 import type { ApiKeyRequestLogRecord } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
 
-// v1 aggregates remain named for deletion and migration only. The serving path never reads or writes them.
+// v1 analytics keys remain named for deletion and migration only. The serving path never reads or writes them.
 export const API_KEY_USAGE_PREFIX = ["ubq_ai", "api_keys", "usage"] as const;
 export const API_KEY_USAGE_DAILY_PREFIX = ["ubq_ai", "api_keys", "usage_daily"] as const;
+export const LEGACY_API_KEY_REQUEST_LOG_PREFIX = ["ubq_ai", "api_keys", "request_log"] as const;
 export const API_KEY_REQUEST_LOG_PREFIX = ["uos_ai", "paid_fallback", "ledger"] as const;
 
 export const apiKeyUsageKey = (id: string) => [...API_KEY_USAGE_PREFIX, id] as const;
 export const apiKeyUsageDailyKey = (id: string) => [...API_KEY_USAGE_DAILY_PREFIX, id] as const;
+export const legacyApiKeyRequestLogPrefix = (id: string) => [...LEGACY_API_KEY_REQUEST_LOG_PREFIX, id] as const;
 export const apiKeyRequestLogPrefix = (id: string) => [...API_KEY_REQUEST_LOG_PREFIX, id] as const;
 export const apiKeyRequestLogKey = (id: string, createdAtMs: number, requestId: string) =>
   [...apiKeyRequestLogPrefix(id), createdAtMs, requestId] as const;

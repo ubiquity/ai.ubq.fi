@@ -47,7 +47,13 @@ import {
   invalidateApiKeyPolicy,
   looksLikeUosApiKey,
 } from "./api_key_policy.ts";
-import { apiKeyRequestLogPrefix, apiKeyUsageDailyKey, apiKeyUsageKey, listApiKeyRequestLogs } from "./analytics.ts";
+import {
+  apiKeyRequestLogPrefix,
+  apiKeyUsageDailyKey,
+  apiKeyUsageKey,
+  legacyApiKeyRequestLogPrefix,
+  listApiKeyRequestLogs,
+} from "./analytics.ts";
 import { reloadKernelPublicKeys } from "./auth.ts";
 import {
   defaultPaidFallbackPolicy,
@@ -1308,6 +1314,9 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
 
   for await (const requestEntry of kv.list({ prefix: apiKeyRequestLogPrefix(id) })) {
     await kv.delete(requestEntry.key);
+  }
+  for await (const legacyRequestEntry of kv.list({ prefix: legacyApiKeyRequestLogPrefix(id) })) {
+    await kv.delete(legacyRequestEntry.key);
   }
   for await (const counterEntry of kv.list({ prefix: [...API_KEY_USAGE_V2_PREFIX, id] })) {
     await kv.delete(counterEntry.key);

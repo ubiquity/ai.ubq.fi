@@ -31,6 +31,8 @@ class CountingKv {
   readUnits = 0;
   writes = 0;
   sums = 0;
+  sumCommitAttempts = 0;
+  failNextSumCommits = 0;
   retries = 0;
   readonly readKeys: Deno.KvKey[] = [];
 
@@ -39,6 +41,8 @@ class CountingKv {
     this.readUnits = 0;
     this.writes = 0;
     this.sums = 0;
+    this.sumCommitAttempts = 0;
+    this.failNextSumCommits = 0;
     this.retries = 0;
     this.readKeys.length = 0;
   }
@@ -106,6 +110,13 @@ class CountingKv {
         return operation;
       },
       commit: () => {
+        if (mutations.some((mutation) => mutation.kind === "sum")) {
+          this.sumCommitAttempts += 1;
+          if (this.failNextSumCommits > 0) {
+            this.failNextSumCommits -= 1;
+            return Promise.reject(new Error("injected API-key usage sum failure"));
+          }
+        }
         for (const mutation of mutations) {
           const encoded = encodeKey(mutation.key);
           if (mutation.kind === "delete") this.values.delete(encoded);
@@ -364,6 +375,119 @@ Deno.test("KV budget: warm bounded inference reads once and atomically sums once
   }
 });
 
+Deno.test("completed nonstream inference survives one failed quota increment attempt", async () => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexRateLimitCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
+    access_token: "access",
+    refresh_token: "refresh",
+    account_id: "acct",
+    updated_at_ms: Date.now(),
+  });
+  const token = `u_${"a".repeat(64)}`;
+  const { hash, record } = await seedKey(token, "failed-nonstream-accounting", 100);
+  const policy = apiKeyPolicyFromHashRecord(hash, record, now);
+  assert.ok(policy);
+  const usageKey = apiKeyUsageV2Key(policy);
+  kv.values.set(encodeKey(usageKey), new Deno.KvU64(0n));
+
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  globalThis.fetch = () => Promise.resolve(sse());
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+    throw new Error("injected logger failure");
+  };
+  try {
+    kv.resetCounts();
+    kv.failNextSumCommits = 1;
+    const response = await handler(request(token));
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { model?: string };
+    assert.equal(payload.model, MODEL);
+    assert.equal(kv.sumCommitAttempts, 1, "quota accounting retried after its terminal failure");
+    assert.equal(kv.sums, 0);
+    assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 0n);
+
+    const accountingWarnings = warnings.filter((entry) => entry[0] === "[ai.ubq.fi] quota_accounting_failed");
+    assert.equal(accountingWarnings.length, 1);
+    assert.deepEqual(JSON.parse(String(accountingWarnings[0]?.[1])), {
+      route: "responses",
+      key_id: "failed-nonstream-accounting",
+      errors: ["api_key: injected API-key usage sum failure"],
+    });
+  } finally {
+    console.warn = originalWarn;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("KV budget: concurrent bounded successes keep every increment and gate the next request", async () => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexRateLimitCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
+    access_token: "access",
+    refresh_token: "refresh",
+    account_id: "acct",
+    updated_at_ms: Date.now(),
+  });
+  const token = `u_${"b".repeat(64)}`;
+  const { hash, record } = await seedKey(token, "concurrent-bounded", 1);
+  const policy = apiKeyPolicyFromHashRecord(hash, record, now);
+  assert.ok(policy);
+  const usageKey = apiKeyUsageV2Key(policy);
+  kv.values.set(encodeKey(usageKey), new Deno.KvU64(0n));
+
+  const concurrency = 8;
+  let fetchCalls = 0;
+  let releaseUpstreams: () => void = () => {};
+  let resolveAllDispatched: () => void = () => {};
+  const upstreamGate = new Promise<void>((resolve) => {
+    releaseUpstreams = resolve;
+  });
+  const allDispatched = new Promise<void>((resolve) => {
+    resolveAllDispatched = resolve;
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    if (fetchCalls === concurrency) resolveAllDispatched();
+    await upstreamGate;
+    return sse();
+  };
+  try {
+    kv.resetCounts();
+    const pending = Array.from({ length: concurrency }, () => handler(request(token)));
+    await allDispatched;
+    assert.equal(kv.sums, 0, "usage was reserved before a successful completion");
+    releaseUpstreams();
+
+    const responses = await Promise.all(pending);
+    assert.deepEqual(responses.map((response) => response.status), Array(concurrency).fill(200));
+    assert.equal(kv.sumCommitAttempts, concurrency);
+    assert.equal(kv.sums, concurrency);
+    assert.equal(kv.retries, 0);
+    assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, BigInt(concurrency));
+
+    const rejected = await handler(request(token));
+    assert.equal(rejected.status, 429);
+    assert.equal(fetchCalls, concurrency, "an over-limit request reached the upstream");
+    assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, BigInt(concurrency));
+  } finally {
+    releaseUpstreams();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("streaming limits increment once only after response.completed", async () => {
   const originalFetch = globalThis.fetch;
   const encoder = new TextEncoder();
@@ -522,23 +646,26 @@ Deno.test("streaming completion increments API-key and kernel limits together ex
   kv.values.set(encodeKey(["uos_ai", "kernel_pubkeys"]), [{ pem: toPublicKeyPem(publicKey) }]);
   const nowSeconds = Math.floor(Date.now() / 1000);
   const header = encodeJsonBase64Url({ alg: "RS256", typ: "JWT" });
-  const payload = encodeJsonBase64Url({
-    iss: "ubiquity-os-kernel",
-    aud: "ai.ubq.fi",
-    iat: nowSeconds,
-    exp: nowSeconds + 600,
-    jti: `jti_${crypto.randomUUID()}`,
-    owner: "lifecycle-org",
-    repo: "lifecycle-repo",
-    installation_id: null,
-    auth_token_sha256: await sha256Base64Url(token),
-    state_id: "state_lifecycle",
-  });
-  const signingInput = `${header}.${payload}`;
-  const signature = new Uint8Array(
-    await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyPair.privateKey, textEncoder.encode(signingInput)),
-  );
-  const kernelToken = `${signingInput}.${encodeBase64Url(signature)}`;
+  const makeKernelToken = async (): Promise<string> => {
+    const payload = encodeJsonBase64Url({
+      iss: "ubiquity-os-kernel",
+      aud: "ai.ubq.fi",
+      iat: nowSeconds,
+      exp: nowSeconds + 600,
+      jti: `jti_${crypto.randomUUID()}`,
+      owner: "lifecycle-org",
+      repo: "lifecycle-repo",
+      installation_id: null,
+      auth_token_sha256: await sha256Base64Url(token),
+      state_id: "state_lifecycle",
+    });
+    const signingInput = `${header}.${payload}`;
+    const signature = new Uint8Array(
+      await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyPair.privateKey, textEncoder.encode(signingInput)),
+    );
+    return `${signingInput}.${encodeBase64Url(signature)}`;
+  };
+  const kernelToken = await makeKernelToken();
 
   const upstream = { controller: null as ReadableStreamDefaultController<Uint8Array> | null };
   const originalFetch = globalThis.fetch;
@@ -577,6 +704,43 @@ Deno.test("streaming completion increments API-key and kernel limits together ex
     assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 1n);
     const kernelLimit = kv.values.get(encodeKey(kernelOrgLimitKey)) as { usage_requests?: number } | undefined;
     assert.equal(kernelLimit?.usage_requests, 1);
+
+    const originalWarn = console.warn;
+    const warnings: unknown[][] = [];
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    try {
+      kv.resetCounts();
+      kv.failNextSumCommits = 1;
+      const failedAccountingRequest = streamingRequest(token, "responses");
+      const failedAccountingHeaders = new Headers(failedAccountingRequest.headers);
+      failedAccountingHeaders.set("X-Ubiquity-Kernel-Token", await makeKernelToken());
+      const failedAccountingResponse = await handler(
+        new Request(failedAccountingRequest, {
+          headers: failedAccountingHeaders,
+        }),
+      );
+      assert.equal(failedAccountingResponse.status, 200);
+      const failedAccountingBody = failedAccountingResponse.text();
+      upstream.controller!.enqueue(textEncoder.encode(completedSseEvent(6, 7)));
+      upstream.controller!.close();
+      assert.match(await failedAccountingBody, /response\.completed/);
+
+      assert.equal(kv.sumCommitAttempts, 1, "API-key accounting retried after failing once");
+      assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 1n);
+      const updatedKernelLimit = kv.values.get(encodeKey(kernelOrgLimitKey)) as
+        | { usage_requests?: number }
+        | undefined;
+      assert.equal(updatedKernelLimit?.usage_requests, 2, "API-key failure skipped independent kernel accounting");
+      const accountingWarnings = warnings.filter((entry) => entry[0] === "[ai.ubq.fi] quota_accounting_failed");
+      assert.equal(accountingWarnings.length, 1);
+      assert.deepEqual(JSON.parse(String(accountingWarnings[0]?.[1])), {
+        route: "responses",
+        key_id: "stream-kernel-and-key",
+        errors: ["api_key: injected API-key usage sum failure"],
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
