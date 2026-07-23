@@ -20,7 +20,7 @@
     "health:check": "deno run --allow-net --allow-env scripts/health-check.ts",
     "kv:probe": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net scripts/kv-migrate.ts probe",
     "kv:export": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net --allow-write=.kv-migration scripts/kv-migrate.ts export",
-    "kv:analyze": "deno run --allow-read=.kv-migration scripts/kv-migrate.ts analyze",
+    "kv:analyze": "deno run --unstable-kv --allow-read=.kv-migration scripts/kv-migrate.ts analyze",
     "kv:import-local": "deno run --unstable-kv --allow-read=.kv-migration --allow-write=.kv-migration scripts/kv-migrate.ts import-local",
     "kv:import-remote": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net --allow-read=.kv-migration scripts/kv-migrate.ts import-remote",
     "kv:import-http": "deno run --allow-env=DENO_DEPLOY_TOKEN,UOS_AI_TOKEN --allow-net --allow-read=.kv-migration scripts/kv-migrate.ts import-http",
