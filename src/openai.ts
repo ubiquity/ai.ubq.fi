@@ -2411,6 +2411,69 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
   }
 };
 
+const TERMINAL_RESPONSES_EVENT_TYPES = new Set([
+  "error",
+  "response.completed",
+  "response.failed",
+  "response.incomplete",
+]);
+
+const containsTerminalResponsesEvent = (eventBlock: string): boolean => {
+  const data = eventBlock.split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .join("\n");
+  if (!data) return false;
+  try {
+    const parsed = JSON.parse(data);
+    return isRecord(parsed) && TERMINAL_RESPONSES_EVENT_TYPES.has(getString(parsed.type) ?? "");
+  } catch {
+    return false;
+  }
+};
+
+const closeResponsesStreamAfterTerminalEvent = (
+  stream: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> => {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finished = false;
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (finished) return;
+      try {
+        const { value, done } = await reader.read();
+        if (done) {
+          finished = true;
+          controller.close();
+          return;
+        }
+
+        controller.enqueue(value);
+        buffer = (buffer + decoder.decode(value, { stream: true }))
+          .replace(/\r\n/g, "\n")
+          .replace(/\r/g, "\n");
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        if (!parts.some(containsTerminalResponsesEvent)) return;
+
+        finished = true;
+        controller.close();
+        void reader.cancel("Responses stream reached a terminal event").catch(() => {});
+      } catch (error) {
+        finished = true;
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      finished = true;
+      await reader.cancel(reason).catch(() => {});
+    },
+  });
+};
+
 const collectResponsesStreamUsage = async (
   stream: ReadableStream<Uint8Array>,
   usageContext?: UsageContext,
@@ -4006,10 +4069,13 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
       await recordErrorUsage(usageContext);
       return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
     }
+    const responseBody = routed.provider === "yunwu"
+      ? closeResponsesStreamAfterTerminalEvent(upstream.body)
+      : upstream.body;
     const headers = new Headers(upstream.headers);
     headers.set("x-ubq-upstream", routed.provider);
     if (usageContext?.keyId || usageContext?.kernelRepo || usageContext?.kernelOrg) {
-      const [clientStream, analyticsStream] = upstream.body.tee();
+      const [clientStream, analyticsStream] = responseBody.tee();
       void collectResponsesStreamUsage(analyticsStream, usageContext, routed.paidFallback);
       const response = new Response(clientStream, {
         status: upstream.status,
@@ -4018,7 +4084,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
       });
       return withUosWarning(response, warnings);
     }
-    const response = new Response(upstream.body, {
+    const response = new Response(responseBody, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers,
