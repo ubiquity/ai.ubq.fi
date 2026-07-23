@@ -12,8 +12,16 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
 jobs:
+  production-approval:
+    if: github.ref == 'refs/heads/development'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "Production deployment approved."
+
   deploy:
-    environment: ${{ github.ref == 'refs/heads/development' && 'production' || 'preview' }}
+    needs: production-approval
+    if: always() && (github.ref != 'refs/heads/development' || needs.production-approval.result == 'success')
     permissions:
       actions: read
       contents: read
@@ -107,11 +115,8 @@ jobs:
             echo "::error::CODEX_AUTH_JSON_B64 is required for Codex auth runtime env."
             exit 1
           fi
-          if [ -z "$YUNWU_SYSTEM_TOKEN" ] || [ -z "$YUNWU_USER_ID" ]; then
-            echo "::error::YUNWU_SYSTEM_TOKEN and YUNWU_USER_ID are required for YunWu quota diagnostics."
-            exit 1
-          fi
-          deno eval '
+          if [ -n "$YUNWU_SYSTEM_TOKEN" ] || [ -n "$YUNWU_USER_ID" ]; then
+            deno eval '
           const systemToken = (Deno.env.get("YUNWU_SYSTEM_TOKEN") ?? "").trim();
           const userId = (Deno.env.get("YUNWU_USER_ID") ?? "").trim();
           if (!systemToken || /\s/.test(systemToken)) {
@@ -123,6 +128,7 @@ jobs:
             Deno.exit(1);
           }
           '
+          fi
 
           codex_auth_minified="$(
             deno eval '
