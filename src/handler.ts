@@ -125,7 +125,7 @@ const logTerminalRequest = (
     JSON.stringify({
       route: input.route,
       status: input.response.status,
-      provider: telemetry?.provider ?? input.response.headers.get("x-ubq-upstream") ?? "gateway",
+      provider: telemetry?.provider ?? input.response.headers.get("x-uos-upstream") ?? "gateway",
       latency_ms: Math.max(0, Date.now() - input.startedAtMs),
       input_tokens: telemetry?.inputTokens ?? null,
       output_tokens: telemetry?.outputTokens ?? null,

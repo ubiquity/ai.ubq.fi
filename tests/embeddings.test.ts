@@ -425,7 +425,7 @@ Deno.test("embeddings: normalizes string input", async () => {
   assert.equal(payload.data[0]?.index, 0);
   assert.ok(Array.isArray(payload.data[0]?.embedding));
   assert.equal((payload.data[0]?.embedding as unknown[]).length, 1024);
-  assert.equal(response.headers.get("x-ubq-upstream"), "voyage");
+  assert.equal(response.headers.get("x-uos-upstream"), "voyage");
 });
 
 Deno.test("uos embeddings: forwards synchronous query and document profiles", async () => {
@@ -466,7 +466,7 @@ Deno.test("uos embeddings: forwards synchronous query and document profiles", as
           }),
         );
         assert.equal(response.status, 200);
-        assert.equal(response.headers.get("x-ubq-upstream"), "voyage");
+        assert.equal(response.headers.get("x-uos-upstream"), "voyage");
         const payload = await response.json() as { data?: Array<{ embedding?: unknown }> };
         assert.equal((payload.data?.[0]?.embedding as unknown[]).length, item.dimensions);
       }
@@ -1048,7 +1048,7 @@ Deno.test("embedding contracts: reject cross-contract and unsupported options", 
   for (const makeRequest of requests) {
     const response = await makeRequest();
     assert.equal(response.status, 400);
-    assert.equal(response.headers.get("x-ubq-upstream"), "voyage");
+    assert.equal(response.headers.get("x-uos-upstream"), "voyage");
   }
 });
 
@@ -1719,7 +1719,7 @@ Deno.test("uos embeddings: returns 502 when upstream vector length does not matc
   );
 
   assert.equal(response.status, 502);
-  assert.equal(response.headers.get("x-ubq-upstream"), "voyage");
+  assert.equal(response.headers.get("x-uos-upstream"), "voyage");
   const payload = await response.json() as { error?: { code?: unknown; message?: unknown } };
   assert.equal(payload.error?.code, "upstream_dimension_mismatch");
   assert.match(String(payload.error?.message), /length 255; expected 256/);
@@ -1804,7 +1804,7 @@ Deno.test("uos embeddings: exhausted upstream 429 preserves status and Retry-Aft
   assert.ok(bodies.every((body) => JSON.stringify(body) === JSON.stringify(bodies[0])));
   assert.equal(response.status, 429);
   assert.equal(response.headers.get("Retry-After"), "1");
-  assert.equal(response.headers.get("x-ubq-upstream"), "voyage");
+  assert.equal(response.headers.get("x-uos-upstream"), "voyage");
   const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
   assert.equal(payload.error?.type, "rate_limit_error");
   assert.equal(payload.error?.code, "rate_limit_exceeded");
@@ -1915,7 +1915,7 @@ Deno.test("embedding jobs: wrong-length upstream vector is a terminal failed job
   );
 
   assert.equal(created.status, 200);
-  assert.equal(created.headers.get("x-ubq-upstream"), "voyage");
+  assert.equal(created.headers.get("x-uos-upstream"), "voyage");
   const payload = await created.json() as {
     id?: unknown;
     status?: unknown;
@@ -1939,7 +1939,7 @@ Deno.test("embedding jobs: wrong-length upstream vector is a terminal failed job
       ),
   );
   assert.equal(polled.status, 200);
-  assert.equal(polled.headers.get("x-ubq-upstream"), "voyage");
+  assert.equal(polled.headers.get("x-uos-upstream"), "voyage");
   const polledPayload = await polled.json() as { status?: unknown; error?: { code?: unknown } };
   assert.equal(polledPayload.status, "failed");
   assert.equal(polledPayload.error?.code, "embeddings_job_upstream_dimension_mismatch");
@@ -2020,7 +2020,7 @@ Deno.test("embedding jobs: create queues with 202 + Retry-After when KV rate lim
     );
 
     assert.equal(response.status, 202);
-    assert.equal(response.headers.get("x-ubq-upstream"), "voyage");
+    assert.equal(response.headers.get("x-uos-upstream"), "voyage");
     const retryAfter = response.headers.get("Retry-After");
     assert.ok(retryAfter);
     const retryAfterSeconds = Number(retryAfter);
@@ -2081,7 +2081,7 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
       );
 
       assert.equal(created.status, 202);
-      assert.equal(created.headers.get("x-ubq-upstream"), "voyage");
+      assert.equal(created.headers.get("x-uos-upstream"), "voyage");
       const body = await created.json() as {
         id?: unknown;
         status?: unknown;
@@ -2146,7 +2146,7 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
             jobId,
           );
           assert.equal(polled.status, 200);
-          assert.equal(polled.headers.get("x-ubq-upstream"), "voyage");
+          assert.equal(polled.headers.get("x-uos-upstream"), "voyage");
           const payload = await polled.json() as {
             status?: unknown;
             input_type?: unknown;
@@ -2323,7 +2323,7 @@ Deno.test("embedding jobs: locked and CAS-contention 202 responses identify Voya
         ),
     );
     assert.equal(locked.status, 202);
-    assert.equal(locked.headers.get("x-ubq-upstream"), "voyage");
+    assert.equal(locked.headers.get("x-uos-upstream"), "voyage");
 
     kvStore.set(keyToString(jobKey), {
       ...stored,
@@ -2344,7 +2344,7 @@ Deno.test("embedding jobs: locked and CAS-contention 202 responses identify Voya
         ),
     );
     assert.equal(contended.status, 202);
-    assert.equal(contended.headers.get("x-ubq-upstream"), "voyage");
+    assert.equal(contended.headers.get("x-uos-upstream"), "voyage");
   } finally {
     failNextAtomicCommit = null;
     await kv.delete(VOYAGE_RATE_LIMIT_KEY);

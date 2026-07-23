@@ -6,6 +6,11 @@ import {
 } from "./analytics.ts";
 import { apiKeyHashKey, apiKeyIdKey, MICROCREDITS_PER_CREDIT, PAID_FALLBACK_NO_LIMIT } from "./api_keys.ts";
 import { invalidateApiKeyPolicy } from "./api_key_policy.ts";
+import {
+  admitPaidFallbackV3,
+  releaseUndispatchedPaidFallbackV3,
+  updatePaidFallbackRequestV3,
+} from "./paid_fallback_ledger.ts";
 import { loadCodexModelsSnapshot } from "./codex.ts";
 import { kvPromise } from "./kv.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyRequestLogRecord } from "./types.ts";
@@ -24,6 +29,7 @@ export type PaidFallbackPolicyFields = Pick<
   | "paid_fallback_reservation_request_id"
   | "paid_fallback_model_ids"
   | "paid_fallback_quota_per_credit"
+  | "paid_fallback_max_exposure_microcredits"
   | "paid_fallback_pricing_checked_at_ms"
 >;
 
@@ -62,9 +68,11 @@ const evaluatePaidFallbackEligibility = (
     return { kind: "skip", reason: "model_not_priced" };
   }
   const unlimited = record.paid_fallback_limit_microcredits === PAID_FALLBACK_NO_LIMIT;
+  const exposure = record.paid_fallback_max_exposure_microcredits?.[model] ?? record.paid_fallback_quota_per_credit;
   if (
     (!unlimited && !isPositiveSafeInteger(record.paid_fallback_limit_microcredits)) ||
-    !isPositiveSafeInteger(record.paid_fallback_quota_per_credit)
+    !isPositiveSafeInteger(record.paid_fallback_quota_per_credit) ||
+    (!unlimited && !isPositiveSafeInteger(exposure))
   ) {
     return { kind: "blocked", reason: "invalid_policy", reset_at_ms: record.usage_reset_at_ms };
   }
@@ -79,6 +87,7 @@ export const defaultPaidFallbackPolicy = (): PaidFallbackPolicyFields => ({
   paid_fallback_reservation_request_id: null,
   paid_fallback_model_ids: [],
   paid_fallback_quota_per_credit: 0,
+  paid_fallback_max_exposure_microcredits: {},
   paid_fallback_pricing_checked_at_ms: null,
 });
 
@@ -165,7 +174,10 @@ export const paidFallbackHashFields = (record: ApiKeyRecord): Pick<
 export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promise<
   Pick<
     PaidFallbackPolicyFields,
-    "paid_fallback_model_ids" | "paid_fallback_quota_per_credit" | "paid_fallback_pricing_checked_at_ms"
+    | "paid_fallback_model_ids"
+    | "paid_fallback_quota_per_credit"
+    | "paid_fallback_pricing_checked_at_ms"
+    | "paid_fallback_max_exposure_microcredits"
   >
 > => {
   if (!readYunwuApiKey()) {
@@ -178,6 +190,7 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
 
   const snapshot = await loadCodexModelsSnapshot();
   const modelIds: string[] = [];
+  const contextByModel = new Map<string, number>();
   const seen = new Set<string>();
   for (const model of snapshot?.models ?? []) {
     const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
@@ -185,6 +198,9 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
     modelIds.push(normalized);
+    const context = [model.context_window, model.max_context_window, model.auto_compact_token_limit]
+      .filter((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0);
+    if (context.length) contextByModel.set(normalized, Math.max(...context));
   }
   if (!modelIds.length) {
     throw new YunwuError(
@@ -202,9 +218,18 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
       503,
     );
   }
+  const maximumExposure: Record<string, number> = {};
+  for (const model of pricing.eligible_model_ids) {
+    const context = contextByModel.get(model);
+    const coefficient = pricing.model_quota_coefficients[model];
+    if (!context || !Number.isFinite(coefficient) || coefficient <= 0) continue;
+    const exposure = Math.ceil(context * coefficient * MICROCREDITS_PER_CREDIT / pricing.quota_per_credit);
+    if (Number.isSafeInteger(exposure) && exposure > 0) maximumExposure[model] = exposure;
+  }
   return {
     paid_fallback_model_ids: [...pricing.eligible_model_ids],
     paid_fallback_quota_per_credit: pricing.quota_per_credit,
+    paid_fallback_max_exposure_microcredits: maximumExposure,
     paid_fallback_pricing_checked_at_ms: pricing.checked_at_ms,
   };
 };
@@ -256,181 +281,35 @@ export const reservePaidFallback = async (
     path: string;
     stream: boolean;
     reasoning: string | null;
-    reason: "primary_429" | "primary_rate_limit_cached";
+    reason: "primary_429";
   }>,
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await kvPromise;
   if (!kv) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-  let pair = await loadStrictKeyPair(kv, input.keyId);
+  const pair = await loadStrictKeyPair(kv, input.keyId);
   if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-  let record = pair.record;
+  const record = pair.record;
   if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
-  let eligibility = evaluatePaidFallbackEligibility(record, input.model);
+  const eligibility = evaluatePaidFallbackEligibility(record, input.model);
   if (eligibility.kind !== "eligible") return eligibility;
-  let unlimited = eligibility.unlimited;
-  if (
-    unlimited &&
-    (record.paid_fallback_reserved_microcredits > 0 || record.paid_fallback_reservation_request_id)
-  ) {
-    const unlockedRecord: ApiKeyRecord = {
-      ...record,
-      paid_fallback_reserved_microcredits: 0,
-      paid_fallback_reservation_request_id: null,
-    };
-    const unlockedHash: ApiKeyHashRecord = {
-      ...pair.hashRecord,
-      ...paidFallbackHashFields(unlockedRecord),
-    };
-    const unlocked = await kv.atomic()
-      .check(pair.idEntry)
-      .check(pair.hashEntry)
-      .set(pair.idKey, unlockedRecord)
-      .set(pair.hashKey, unlockedHash)
-      .commit();
-    if (!unlocked.ok) {
-      return { kind: "blocked", reason: "concurrent_update", reset_at_ms: record.usage_reset_at_ms };
-    }
-    invalidateApiKeyPolicy(input.keyId);
-    pair = await loadStrictKeyPair(kv, input.keyId);
-    if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-    record = pair.record;
-    eligibility = evaluatePaidFallbackEligibility(record, input.model);
-    if (eligibility.kind !== "eligible") return eligibility;
-    unlimited = eligibility.unlimited;
+  const windowResetAtMs = advanceUsageWindow(record.usage_reset_at_ms, record.window_ms, input.createdAtMs);
+  const policyVersion = `${record.window_ms}:${record.paid_fallback_pricing_checked_at_ms ?? 0}`;
+  const admitted = await admitPaidFallbackV3({
+    ...input,
+    policyVersion,
+    limitMicrocredits: record.paid_fallback_limit_microcredits,
+    maximumExposureMicrocredits: record.paid_fallback_max_exposure_microcredits?.[input.model] ??
+      record.paid_fallback_quota_per_credit,
+    initialSettledMicrocredits: windowResetAtMs === record.usage_reset_at_ms
+      ? record.paid_fallback_spent_microcredits
+      : 0,
+    quotaPerCredit: record.paid_fallback_quota_per_credit,
+    windowResetAtMs,
+  });
+  if (admitted.kind === "blocked") {
+    return { kind: "blocked", reason: admitted.reason, reset_at_ms: windowResetAtMs };
   }
-  if (
-    record.usage_reset_at_ms <= input.createdAtMs &&
-    record.paid_fallback_reservation_request_id === null
-  ) {
-    const resetAtMs = advanceUsageWindow(
-      record.usage_reset_at_ms,
-      record.window_ms,
-      input.createdAtMs,
-    );
-    const resetRecord: ApiKeyRecord = {
-      ...record,
-      usage_requests: 0,
-      usage_reset_at_ms: resetAtMs,
-      paid_fallback_spent_microcredits: 0,
-      paid_fallback_reserved_microcredits: 0,
-    };
-    const resetHash: ApiKeyHashRecord = {
-      ...pair.hashRecord,
-      usage_requests: 0,
-      usage_reset_at_ms: resetAtMs,
-      ...paidFallbackHashFields(resetRecord),
-    };
-    const reset = await kv.atomic()
-      .check(pair.idEntry)
-      .check(pair.hashEntry)
-      .set(pair.idKey, resetRecord)
-      .set(pair.hashKey, resetHash)
-      .commit();
-    if (!reset.ok) {
-      return { kind: "blocked", reason: "concurrent_update", reset_at_ms: pair.record.usage_reset_at_ms };
-    }
-    invalidateApiKeyPolicy(input.keyId);
-    pair = await loadStrictKeyPair(kv, input.keyId);
-    if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-    record = pair.record;
-    eligibility = evaluatePaidFallbackEligibility(record, input.model);
-    if (eligibility.kind !== "eligible") return eligibility;
-    unlimited = eligibility.unlimited;
-  }
-  if (
-    !unlimited &&
-    (record.paid_fallback_reserved_microcredits > 0 || record.paid_fallback_reservation_request_id)
-  ) {
-    return { kind: "blocked", reason: "reconciliation_pending", reset_at_ms: record.usage_reset_at_ms };
-  }
-
-  const remaining = unlimited ? 0 : record.paid_fallback_limit_microcredits - record.paid_fallback_spent_microcredits;
-  if (!unlimited && remaining <= 0) {
-    return { kind: "blocked", reason: "limit_exceeded", reset_at_ms: record.usage_reset_at_ms };
-  }
-
-  const updated: ApiKeyRecord = {
-    ...record,
-    paid_fallback_reserved_microcredits: remaining,
-    paid_fallback_reservation_request_id: unlimited ? null : input.requestId,
-  };
-  const updatedHash: ApiKeyHashRecord = {
-    ...pair.hashRecord,
-    ...paidFallbackHashFields(updated),
-  };
-  const logKey = apiKeyRequestLogKey(input.keyId, input.createdAtMs, input.requestId);
-  const logEntry = await kv.get<ApiKeyRequestLogRecord>(logKey);
-  const requestLog: ApiKeyRequestLogRecord = {
-    ...(logEntry.value ?? {
-      id: input.requestId,
-      key_id: input.keyId,
-      route: input.route,
-      path: input.path,
-      method: "POST",
-      status_code: 0,
-      stream: input.stream,
-      model: input.model,
-      reasoning: input.reasoning,
-      created_at_ms: input.createdAtMs,
-      provider: "chatgpt_codex",
-      fallback_reason: null,
-      provider_request_id: null,
-      completed_at_ms: null,
-      latency_ms: null,
-      input_tokens: null,
-      output_tokens: null,
-      provider_quota: null,
-      quota_per_credit: null,
-      spend_microcredits: null,
-      paid_fallback_window_reset_at_ms: null,
-      billing_status: "not_applicable",
-    }),
-    provider: "yunwu",
-    fallback_reason: input.reason,
-    provider_request_id: null,
-    quota_per_credit: record.paid_fallback_quota_per_credit,
-    paid_fallback_window_reset_at_ms: record.usage_reset_at_ms,
-    billing_status: "pending",
-  };
-  const expireIn = Math.max(
-    1,
-    input.createdAtMs + API_KEY_REQUEST_LOG_RETENTION_MS - Date.now(),
-  );
-  let atomic = kv.atomic()
-    .check(pair.idEntry)
-    .check(pair.hashEntry)
-    .check(logEntry);
-  if (!unlimited) {
-    atomic = atomic
-      .set(pair.idKey, updated)
-      .set(pair.hashKey, updatedHash);
-  }
-  const commit = await atomic
-    .set(logKey, requestLog, { expireIn })
-    .commit();
-  if (!commit.ok) {
-    return { kind: "blocked", reason: "concurrent_update", reset_at_ms: record.usage_reset_at_ms };
-  }
-  invalidateApiKeyPolicy(input.keyId);
-
-  return {
-    kind: "reserved",
-    reservation: {
-      key_id: input.keyId,
-      request_id: input.requestId,
-      created_at_ms: input.createdAtMs,
-      reserved_microcredits: remaining,
-      quota_per_credit: record.paid_fallback_quota_per_credit,
-      window_reset_at_ms: record.usage_reset_at_ms,
-      quota_used_percent: unlimited ? null : Math.min(
-        100,
-        Math.max(
-          0,
-          record.paid_fallback_spent_microcredits * 100 / record.paid_fallback_limit_microcredits,
-        ),
-      ),
-    },
-  };
+  return { kind: "reserved", reservation: admitted.reservation };
 };
 
 const clearReservation = async (
@@ -499,6 +378,10 @@ export const recordYunwuUpstreamResponse = async (
   response: Response,
   providerRequestId: string | null,
 ): Promise<void> => {
+  await updatePaidFallbackRequestV3(reservation, {
+    provider_request_id: providerRequestId,
+    dispatch_state: "dispatched",
+  });
   if (!response.ok) {
     if (providerRequestId) {
       await updateApiKeyRequestLog(
@@ -551,6 +434,10 @@ export const recordYunwuUpstreamResponse = async (
 };
 
 export const recordYunwuAmbiguousFailure = async (reservation: PaidFallbackReservation): Promise<void> => {
+  await updatePaidFallbackRequestV3(reservation, {
+    dispatch_state: "dispatched",
+    terminal_state: "ambiguous",
+  });
   await clearReservation(reservation, "unresolved", {
     statusCode: 502,
     clear: true,
@@ -560,6 +447,7 @@ export const recordYunwuAmbiguousFailure = async (reservation: PaidFallbackReser
 export const recordYunwuUndispatchedCancellation = async (
   reservation: PaidFallbackReservation,
 ): Promise<void> => {
+  await releaseUndispatchedPaidFallbackV3(reservation);
   await clearReservation(reservation, "not_billed", {
     statusCode: 499,
     clear: true,

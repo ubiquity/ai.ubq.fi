@@ -1,4 +1,4 @@
-import { config } from "./config.ts";
+import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { CODEX_KV_KEY, fetchCodexModels, getJwtExpMs, parseCodexAuthFromAuthJson } from "./codex.ts";
 import { json } from "./http.ts";
 import { kvPromise } from "./kv.ts";
@@ -148,6 +148,9 @@ export const handleHealth = async (): Promise<Response> => {
     ...(probe.error !== undefined ? { error: probe.error } : {}),
     ...(probe.details !== undefined ? { details: probe.details } : {}),
     auth: probe.auth,
+  }, {
+    "x-uos-git-sha": runtimeGitSha(),
+    "x-uos-deployment-id": runtimeDeploymentId(),
   });
 };
 
@@ -159,14 +162,14 @@ export const handleHealthAuth = async (): Promise<Response> => {
       upstream: "chatgpt_codex",
       error: AUTH_NOT_CONFIGURED,
       auth,
-    });
+    }, { "x-uos-git-sha": runtimeGitSha(), "x-uos-deployment-id": runtimeDeploymentId() });
   }
 
   return json(200, {
     ok: true,
     upstream: "chatgpt_codex",
     auth,
-  });
+  }, { "x-uos-git-sha": runtimeGitSha(), "x-uos-deployment-id": runtimeDeploymentId() });
 };
 
 export const handleHealthUpstream = async (): Promise<Response> => {
@@ -179,5 +182,5 @@ export const handleHealthUpstream = async (): Promise<Response> => {
     ...(probe.error !== undefined ? { error: probe.error } : {}),
     ...(probe.details !== undefined ? { details: probe.details } : {}),
     auth: probe.auth,
-  });
+  }, { "x-uos-git-sha": runtimeGitSha(), "x-uos-deployment-id": runtimeDeploymentId() });
 };

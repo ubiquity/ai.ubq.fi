@@ -150,11 +150,7 @@ Deno.test("KV migration classifies v2 incident state and skips the transient cir
   assert.equal(classifyKvMigrationKey(["uos_ai", "api_key_usage", "v2", "id"], options).action, "import");
   assert.equal(classifyKvMigrationKey(["uos_ai", "paid_fallback", "ledger", "id"], options).action, "import");
   assert.equal(classifyKvMigrationKey(["uos_ai", "runtime_config", "v2"], options).action, "import");
-  assert.deepEqual(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options), {
-    action: "skip",
-    group: "codex_rate_limit",
-    reason: "transient_runtime_state",
-  });
+  assert.equal(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options).group, "unknown");
 });
 
 Deno.test("prod KV migration imports only modern durable rows by default", async () => {

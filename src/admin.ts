@@ -241,7 +241,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       catalog_seeded: catalogSeeded,
       normalized_snapshot_updated: true,
     },
-    { "x-ubq-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" },
   );
 };
 
@@ -838,7 +838,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
       window_ms: record.window_ms,
       ...paidFallbackPublicFields(record),
     },
-    { "x-ubq-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" },
   );
 };
 
@@ -902,7 +902,7 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
           : {}),
       })),
     },
-    { "x-ubq-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" },
   );
 };
 
@@ -984,6 +984,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   const nextPaidFallbackReservationRequestId = entry.value.paid_fallback_reservation_request_id;
   let nextPaidFallbackModelIds = entry.value.paid_fallback_model_ids;
   let nextPaidFallbackQuotaPerCredit = entry.value.paid_fallback_quota_per_credit;
+  let nextPaidFallbackMaxExposureMicrocredits = entry.value.paid_fallback_max_exposure_microcredits ?? {};
   let nextPaidFallbackPricingCheckedAtMs = entry.value.paid_fallback_pricing_checked_at_ms;
 
   if (Object.prototype.hasOwnProperty.call(raw, "name")) {
@@ -1050,6 +1051,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
       const initialized = await initializePaidFallbackPolicy(req.signal);
       nextPaidFallbackModelIds = [...initialized.paid_fallback_model_ids];
       nextPaidFallbackQuotaPerCredit = initialized.paid_fallback_quota_per_credit;
+      nextPaidFallbackMaxExposureMicrocredits = initialized.paid_fallback_max_exposure_microcredits ?? {};
       nextPaidFallbackPricingCheckedAtMs = initialized.paid_fallback_pricing_checked_at_ms;
     } catch (error) {
       return paidFallbackInitializationError(error);
@@ -1094,7 +1096,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
         window_ms: currentWindowMs,
         ...paidFallbackPublicFields(entry.value),
       },
-      { "x-ubq-upstream": "chatgpt_codex" },
+      { "x-uos-upstream": "chatgpt_codex" },
     );
   }
 
@@ -1113,6 +1115,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     paid_fallback_reservation_request_id: nextPaidFallbackReservationRequestId,
     paid_fallback_model_ids: nextPaidFallbackModelIds,
     paid_fallback_quota_per_credit: nextPaidFallbackQuotaPerCredit,
+    paid_fallback_max_exposure_microcredits: nextPaidFallbackMaxExposureMicrocredits,
     paid_fallback_pricing_checked_at_ms: nextPaidFallbackPricingCheckedAtMs,
   };
   const hashKey = apiKeyHashKey(entry.value.hash);
@@ -1155,7 +1158,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
       window_ms: updated.window_ms,
       ...paidFallbackPublicFields(updated),
     },
-    { "x-ubq-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" },
   );
 };
 
@@ -1215,7 +1218,7 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
       id: updated.id,
       revoked_at_ms: updated.revoked_at_ms,
     },
-    { "x-ubq-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" },
   );
 };
 
@@ -1240,7 +1243,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
   }
 
   if (!entry.value.revoked_at_ms) {
-    return json(200, { id, revoked_at_ms: null }, { "x-ubq-upstream": "chatgpt_codex" });
+    return json(200, { id, revoked_at_ms: null }, { "x-uos-upstream": "chatgpt_codex" });
   }
 
   const expiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
@@ -1276,7 +1279,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
       id: updated.id,
       revoked_at_ms: updated.revoked_at_ms,
     },
-    { "x-ubq-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" },
   );
 };
 
@@ -1322,7 +1325,7 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
     await kv.delete(counterEntry.key);
   }
 
-  return json(200, { id }, { "x-ubq-upstream": "chatgpt_codex" });
+  return json(200, { id }, { "x-uos-upstream": "chatgpt_codex" });
 };
 
 const normalizePem = (raw: unknown): string | null => {

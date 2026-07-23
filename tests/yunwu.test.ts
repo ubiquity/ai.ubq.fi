@@ -60,6 +60,10 @@ Deno.test("initializeYunwuPricing intersects the current Codex catalog and retur
   assert.deepEqual(snapshot, {
     eligible_model_ids: ["gpt-fixed", "gpt-5.6-sol"],
     quota_per_credit: 500_000,
+    model_quota_coefficients: {
+      "gpt-fixed": 0.25,
+      "gpt-5.6-sol": 5,
+    },
     checked_at_ms: 1_234_567,
   });
   assert.deepEqual(calls.map((call) => call.url), [

@@ -519,5 +519,5 @@ Useful response headers for debugging:
 
 - `x-deno-trace-id`
 - `x-uos-request-id`
-- `x-ubq-upstream`
+- `x-uos-upstream`
 - `x-uos-router-revision`

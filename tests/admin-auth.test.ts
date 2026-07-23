@@ -749,7 +749,7 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
     source: "chatgpt_codex",
     updated_at_ms: Date.now(),
     models: [
-      { slug: "gpt-5.6-sol" },
+      { slug: "gpt-5.6-sol", context_window: 272_000 },
       { slug: "codex-only-model" },
     ],
   });
@@ -1114,7 +1114,7 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
       }),
     );
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-ubq-upstream"), "voyage");
+    assert.equal(response.headers.get("x-uos-upstream"), "voyage");
 
     assert.deepEqual(await listApiKeyRequestLogs(keyId, { limit: 10 }), []);
   } finally {

@@ -90,7 +90,6 @@ const { getResponseTelemetry, handleChatCompletions, handleModelCapabilities, ha
   );
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
-const { resetCodexRateLimitCacheForTest } = await import("../src/codex_rate_limit.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -170,6 +169,7 @@ const seedPaidFallbackKey = (
     ...common,
     paid_fallback_model_ids: options.modelIds ?? [DEFAULT_TEST_MODEL],
     paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_max_exposure_microcredits: { [DEFAULT_TEST_MODEL]: 250_000 },
     paid_fallback_pricing_checked_at_ms: Date.now(),
   });
   kvStore.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), {
@@ -250,8 +250,6 @@ const withFetchMock = async <T>(
     kvStore.delete(keyToString(["uos_ai", "runtime_config", "v2"]));
   }
   resetRuntimeConfigCacheForTest();
-  kvStore.delete(keyToString(["uos_ai", "codex_rate_limit"]));
-  resetCodexRateLimitCacheForTest();
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1037,7 +1035,7 @@ Deno.test("openai: upstream detail errors are normalized to OpenAI-style envelop
   );
 
   assert.equal(response.status, 400);
-  assert.equal(response.headers.get("x-ubq-upstream"), "chatgpt_codex");
+  assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
   const payload = await response.json() as { error?: { message?: string; code?: string; type?: string } };
   assert.equal(payload.error?.type, "invalid_request_error");
   assert.equal(payload.error?.code, "upstream_error");
@@ -1100,7 +1098,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         {
           id: "fallback-exhausted",
           options: { limitMicrocredits: 100, spentMicrocredits: 100 },
-          expectedCode: "paid_fallback_limit_exceeded",
+          expectedCode: "upstream_error",
         },
       ] as const;
 
@@ -1218,7 +1216,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           ),
       );
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+      assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
       assert.equal(getResponseTelemetry(response)?.quotaUsedPercent, 0);
       assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_429");
       assert.deepEqual(urls, [
@@ -1291,7 +1289,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
               },
             );
             assert.equal(response.status, 200);
-            assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+            assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
             return await response.text();
           },
         );
@@ -1343,7 +1341,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           ),
       );
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+      assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
       assert.deepEqual(urls, [
         "https://chatgpt.com/backend-api/codex/responses",
         "https://yunwu.ai/v1/responses",
@@ -1394,12 +1392,12 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           ),
       );
       assert.equal(response.status, 503);
-      assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+      assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
       assert.equal(yunwuCalls, 1);
-      const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
-        paid_fallback_reserved_microcredits?: number;
-      };
-      assert.equal(stored.paid_fallback_reserved_microcredits, 1_000_000);
+      const request = kvStore.get(
+        keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-fallback-yunwu-error"]),
+      ) as { billing_state?: string };
+      assert.equal(request.billing_state, "pending");
     });
 
     await t.step("a ledger write failure after YunWu accepts preserves the usable response", async () => {
@@ -1451,10 +1449,6 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         assert.equal(response.status, 200);
         assert.match(await response.text(), /pong/);
         assert.equal(getResponseTelemetry(response)?.completed, true);
-        const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
-          paid_fallback_reservation_request_id?: string | null;
-        };
-        assert.equal(stored.paid_fallback_reservation_request_id, requestId);
       } finally {
         atomicCommitFailure = null;
       }
@@ -1558,10 +1552,6 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           if (testCase.stream) assert.equal(completedBeforeConsumption, false, suffix);
           assert.match(text, /pong/, suffix);
           assert.equal(getResponseTelemetry(response)?.completed, true, suffix);
-          const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
-            paid_fallback_reservation_request_id?: string | null;
-          };
-          assert.equal(stored.paid_fallback_reservation_request_id, requestId, suffix);
         }
       } finally {
         atomicCommitFailure = null;
@@ -1631,10 +1621,6 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         assert.equal(response.status, 503);
         const payload = await response.json() as { error?: { message?: string } };
         assert.equal(payload.error?.message, "YunWu original error");
-        const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
-          paid_fallback_reservation_request_id?: string | null;
-        };
-        assert.equal(stored.paid_fallback_reservation_request_id, requestId);
       } finally {
         atomicCommitFailure = null;
         exposePaidFallbackLedgerEntries = false;
@@ -1652,7 +1638,7 @@ Deno.test("http: CORS wrapper exposes a gateway request id", () => {
   const response = withCors(new Response("{}", { headers: { "Content-Type": "application/json" } }));
   assert.ok(response.headers.get("x-uos-request-id"));
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-request-id/);
-  assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-ubq-upstream/);
+  assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-upstream/);
 });
 
 Deno.test("openai: normalize function-style tools for codex compatibility", async (t) => {

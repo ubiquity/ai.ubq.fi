@@ -44,6 +44,7 @@ export class YunwuError extends Error {
 export type YunwuPricingSnapshot = Readonly<{
   eligible_model_ids: readonly string[];
   quota_per_credit: number;
+  model_quota_coefficients: Readonly<Record<string, number>>;
   checked_at_ms: number;
 }>;
 
@@ -220,6 +221,32 @@ const pricedModelIds = (pricing: JsonRecord): Set<string> => {
   return result;
 };
 
+const modelQuotaCoefficients = (pricing: JsonRecord): Record<string, number> => {
+  const ratios = pricing.model_ratio;
+  const fixedPrices = pricing.model_price;
+  const completionRatios = pricing.completion_ratio;
+  if (!isRecord(ratios) || !isRecord(fixedPrices)) {
+    throw new YunwuError(
+      "YunWu pricing initialization received an invalid pricing configuration.",
+      "yunwu_pricing_invalid",
+      502,
+    );
+  }
+  const result: Record<string, number> = {};
+  for (const [model, ratio] of Object.entries(ratios)) {
+    if (!isPositiveFiniteNumber(ratio)) continue;
+    const completion = isRecord(completionRatios) && isPositiveFiniteNumber(completionRatios[model])
+      ? completionRatios[model]
+      : 1;
+    const coefficient = ratio * (1 + completion);
+    if (Number.isFinite(coefficient) && coefficient > 0) result[model] = coefficient;
+  }
+  for (const [model, price] of Object.entries(fixedPrices)) {
+    if (isPositiveFiniteNumber(price)) result[model] = price;
+  }
+  return result;
+};
+
 const normalizeCodexModelIds = (value: readonly string[]): string[] => {
   if (!Array.isArray(value)) {
     throw new YunwuError(
@@ -282,6 +309,7 @@ export const initializeYunwuPricing = async (
   }
 
   const availableModelIds = pricedModelIds(pricing);
+  const coefficients = modelQuotaCoefficients(pricing);
   const eligibleModelIds = normalizeCodexModelIds(options.codexModelIds)
     .filter((modelId) => availableModelIds.has(modelId));
   const checkedAtMs = Math.trunc((options.now ?? Date.now)());
@@ -296,6 +324,9 @@ export const initializeYunwuPricing = async (
   return {
     eligible_model_ids: eligibleModelIds,
     quota_per_credit: status.quota_per_unit,
+    model_quota_coefficients: Object.fromEntries(
+      eligibleModelIds.flatMap((model) => coefficients[model] ? [[model, coefficients[model]]] : []),
+    ),
     checked_at_ms: checkedAtMs,
   };
 };

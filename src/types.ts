@@ -24,6 +24,7 @@ export type ApiKeyRecord = Readonly<{
   paid_fallback_reservation_request_id: string | null;
   paid_fallback_model_ids: string[];
   paid_fallback_quota_per_credit: number;
+  paid_fallback_max_exposure_microcredits?: Record<string, number>;
   paid_fallback_pricing_checked_at_ms: number | null;
 }>;
 
@@ -100,6 +101,42 @@ export type ApiKeyRequestLogRecord = Readonly<{
   spend_microcredits: number | null;
   paid_fallback_window_reset_at_ms: number | null;
   billing_status: "not_applicable" | "pending" | "reconciled" | "not_billed" | "unresolved";
+}>;
+
+export type PaidFallbackWindowV3 = Readonly<{
+  v: 3;
+  key_id: string;
+  policy_version: string;
+  window_reset_at_ms: number;
+  limit_microcredits: number;
+  settled_microcredits: number;
+  reserved_microcredits: number;
+  pending_count: number;
+  updated_at_ms: number;
+}>;
+
+export type PaidFallbackRequestV3 = Readonly<{
+  v: 3;
+  key_id: string;
+  request_id: string;
+  policy_version: string;
+  route: string;
+  path: string;
+  model: string;
+  stream: boolean;
+  reasoning: string | null;
+  window_reset_at_ms: number;
+  reserved_microcredits: number;
+  quota_per_credit: number;
+  provider_request_id: string | null;
+  dispatch_state: "reserved" | "dispatched" | "not_dispatched";
+  terminal_state: "pending" | "completed" | "failed" | "incomplete" | "cancelled" | "ambiguous";
+  spend_microcredits: number | null;
+  billing_state: "pending" | "settled" | "not_billed" | "unresolved";
+  reconciliation_attempts: number;
+  last_reconciliation_at_ms: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
 }>;
 
 export type KernelAuthUsageRecord = Readonly<{

@@ -2,26 +2,34 @@ name: Deno Deploy
 
 on:
   push:
+    branches:
+      - development
+  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: ai-ubq-fi-${{ github.ref == 'refs/heads/development' && 'production' || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
 jobs:
   deploy:
+    environment: ${{ github.ref == 'refs/heads/development' && 'production' || 'preview' }}
     permissions:
       actions: read
       contents: read
       issues: write
       pull-requests: write
-    uses: ubiquity/deno-deploy-workflow/.github/workflows/deno-deploy-reusable.yml@main
+    uses: ubiquity/deno-deploy-workflow/.github/workflows/deno-deploy-reusable.yml@091927036712d54a020a3240b5b2fa492f78a94b
     with:
-      project: ai-ubq-fi
-      preview_project: ai-ubq-fi
+      project: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
+      preview_project: p-ai-ubq-fi
       deploy_platform: deno2
       entrypoint: serve.ts
       install_command: deno install
       build_command: deno task build
       runtime_env: |
-        DENO_DEPLOY_TOKEN=$DENO_DEPLOY_TOKEN
         UOS_AI_TOKEN=$UBIQUITY_AI_USER_TOKEN
+        GIT_REVISION=${{ github.sha }}
       index_html_path: static/docs.html
       extra_paths: |
         /app.js

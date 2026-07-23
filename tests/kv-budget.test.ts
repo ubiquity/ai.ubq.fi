@@ -153,7 +153,6 @@ const {
   RUNTIME_CONFIG_V2_KEY,
   resetRuntimeConfigCacheForTest,
 } = await import("../src/runtime_config.ts");
-const { CODEX_RATE_LIMIT_KV_KEY, resetCodexRateLimitCacheForTest } = await import("../src/codex_rate_limit.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 
 const MODEL = "gpt-5-kv-budget";
@@ -221,6 +220,7 @@ const seedPaidFallbackKey = async (token: string, id: string) => {
     ...policy,
     paid_fallback_model_ids: [MODEL],
     paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_max_exposure_microcredits: { [MODEL]: 250_000 },
     paid_fallback_pricing_checked_at_ms: Date.now(),
   });
 };
@@ -277,7 +277,6 @@ Deno.test("KV budget: warm unlimited inference performs zero KV operations", asy
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
-  resetCodexRateLimitCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(["uos_ai", "runtime_config", "v2"]), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
@@ -295,47 +294,6 @@ Deno.test("KV budget: warm unlimited inference performs zero KV operations", asy
     assert.equal((await handler(request(token))).status, 200);
     assert.ok(kv.reads <= 4, `cold inference used ${kv.reads} reads`);
     assert.ok(kv.readUnits <= 4, `cold inference used ${kv.readUnits} 4KiB read units`);
-
-    kv.resetCounts();
-    assert.equal((await handler(request(token))).status, 200);
-    assert.deepEqual({ reads: kv.reads, writes: kv.writes }, { reads: 0, writes: 0 });
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-Deno.test("KV budget: cold unlimited inference reuses an expired circuit hydration read", async () => {
-  kv.values.clear();
-  resetApiKeyPolicyCacheForTest();
-  resetRuntimeConfigCacheForTest();
-  resetCodexRateLimitCacheForTest();
-  resetCodexAuthCacheForTest();
-  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
-  kv.values.set(encodeKey(CODEX_RATE_LIMIT_KV_KEY), {
-    observed_at_ms: now - 120_000,
-    retry_at_ms: now - 60_000,
-  });
-  const token = `u_${"9".repeat(64)}`;
-  await seedKey(token, "expired-circuit", -1);
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(sse());
-  try {
-    kv.resetCounts();
-    assert.equal((await handler(request(token))).status, 200);
-    assert.ok(kv.reads <= 4, `cold expired-circuit inference used ${kv.reads} reads`);
-    assert.ok(kv.readUnits <= 4, `cold expired-circuit inference used ${kv.readUnits} 4KiB read units`);
-    assert.equal(
-      kv.readKeys.filter((key) => encodeKey(key) === encodeKey(CODEX_RATE_LIMIT_KV_KEY)).length,
-      1,
-      "probe acquisition and close must reuse the circuit hydration entry",
-    );
-    assert.equal(kv.values.has(encodeKey(CODEX_RATE_LIMIT_KV_KEY)), false);
 
     kv.resetCounts();
     assert.equal((await handler(request(token))).status, 200);
@@ -379,7 +337,6 @@ Deno.test("completed nonstream inference survives one failed quota increment att
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
-  resetCodexRateLimitCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
@@ -431,7 +388,6 @@ Deno.test("KV budget: concurrent bounded successes keep every increment and gate
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
-  resetCodexRateLimitCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
@@ -495,7 +451,6 @@ Deno.test("streaming limits increment once only after response.completed", async
     kv.values.clear();
     resetApiKeyPolicyCacheForTest();
     resetRuntimeConfigCacheForTest();
-    resetCodexRateLimitCacheForTest();
     resetCodexAuthCacheForTest();
     kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
     kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
@@ -615,7 +570,6 @@ Deno.test("streaming completion increments API-key and kernel limits together ex
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
-  resetCodexRateLimitCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
@@ -749,7 +703,6 @@ Deno.test("streaming completion increments API-key and kernel limits together ex
 Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates", async () => {
   kv.values.clear();
   resetRuntimeConfigCacheForTest();
-  resetCodexRateLimitCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
@@ -788,7 +741,6 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
-  resetCodexRateLimitCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
@@ -837,7 +789,6 @@ Deno.test("streaming inference emits one terminal log only after the response bo
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
-  resetCodexRateLimitCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
@@ -916,7 +867,6 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
-  resetCodexRateLimitCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {

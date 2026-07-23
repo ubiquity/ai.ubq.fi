@@ -382,7 +382,7 @@ const catalogResponse = (catalog: LoadedCodexCatalog, req: Request, cacheState: 
   const headers = new Headers({
     "Content-Type": catalog.metadata.content_type,
     "Cache-Control": "private, max-age=300",
-    "x-ubq-upstream": "chatgpt_codex",
+    "x-uos-upstream": "chatgpt_codex",
     "x-uos-cache": cacheState,
   });
   if (catalog.metadata.etag) headers.set("ETag", catalog.metadata.etag);

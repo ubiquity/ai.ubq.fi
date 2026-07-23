@@ -1,10 +1,12 @@
-import { config } from "./config.ts";
+import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 
 const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-warning",
   "x-uos-request-id",
-  "x-ubq-upstream",
+  "x-uos-upstream",
   "x-uos-router-revision",
+  "x-uos-git-sha",
+  "x-uos-deployment-id",
   "x-uos-cache",
   "ETag",
   "Retry-After",
@@ -24,6 +26,8 @@ export const corsHeaders = (): HeadersInit => ({
 
 export const withCors = (response: Response): Response => {
   const headers = new Headers(response.headers);
+  headers.set("x-uos-git-sha", runtimeGitSha());
+  headers.set("x-uos-deployment-id", runtimeDeploymentId());
   if (!headers.has("x-uos-request-id")) headers.set("x-uos-request-id", crypto.randomUUID());
   for (const [key, value] of Object.entries(corsHeaders())) {
     headers.set(key, value);
