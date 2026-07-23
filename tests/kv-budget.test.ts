@@ -912,7 +912,7 @@ Deno.test("streaming inference emits one terminal log only after the response bo
   }
 });
 
-Deno.test("first bounded paid fallback response exposes the post-reservation 100 percent quota", async () => {
+Deno.test("first bounded paid fallback response exposes settled spend without counting its reservation", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -959,7 +959,7 @@ Deno.test("first bounded paid fallback response exposes the post-reservation 100
       }),
     );
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-codex-primary-used-percent"), "100");
+    assert.equal(response.headers.get("x-codex-primary-used-percent"), "0");
     assert.equal(calls, 2);
     assert.ok(kv.reads <= 9, `fallback response unexpectedly reread KV (${kv.reads} reads)`);
     await response.body?.cancel();

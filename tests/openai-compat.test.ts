@@ -1219,7 +1219,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       );
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
-      assert.equal(getResponseTelemetry(response)?.quotaUsedPercent, 100);
+      assert.equal(getResponseTelemetry(response)?.quotaUsedPercent, 0);
       assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_429");
       assert.deepEqual(urls, [
         "https://chatgpt.com/backend-api/codex/responses",

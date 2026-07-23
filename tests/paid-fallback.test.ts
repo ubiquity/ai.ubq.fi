@@ -441,7 +441,7 @@ Deno.test("bounded paid fallback permits one outstanding request while unlimited
     assert.equal(first.kind, "reserved");
     if (first.kind !== "reserved") throw new Error("expected reservation");
     assert.equal(first.reservation.reserved_microcredits, 4_000_000);
-    assert.equal(first.reservation.quota_used_percent, 100);
+    assert.equal(first.reservation.quota_used_percent, 20);
 
     const storedId = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(String(record.id)));
     const storedHash = await memoryKv.get<Record<string, unknown>>(apiKeyHashKey(String(record.hash)));

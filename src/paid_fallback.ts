@@ -113,8 +113,8 @@ export const hasStrictPaidFallbackPolicy = (value: unknown): boolean => {
   if (!enabled && reservationRequestId !== null) return false;
   if (reservationRequestId === null && reserved !== 0) return false;
   if (unlimited) {
-    // Unlimited reservations use the request id itself as the lock and never
-    // reserve a synthetic amount.
+    // Unlimited requests are lock-free. Accept a request id here only so a
+    // pre-cutover stuck reservation can be cleared during recovery.
     if (reserved !== 0) return false;
   } else {
     const allocated = spent + reserved;
@@ -426,8 +426,7 @@ export const reservePaidFallback = async (
         100,
         Math.max(
           0,
-          (record.paid_fallback_spent_microcredits + remaining) * 100 /
-            record.paid_fallback_limit_microcredits,
+          record.paid_fallback_spent_microcredits * 100 / record.paid_fallback_limit_microcredits,
         ),
       ),
     },
