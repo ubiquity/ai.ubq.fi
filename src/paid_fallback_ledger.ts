@@ -295,9 +295,10 @@ export const reconcilePaidFallbackV3 = async (keyId: string, now = Date.now()): 
     }
     if (!due.length) return 0;
 
-    const logs = await fetchYunwuTokenLogs();
-    const byId = new Map(logs.map((log) => [log.request_id, log]));
-    let settled = 0;
+    const candidates: Array<{
+      pending: Deno.KvEntry<PaidFallbackPendingV3>;
+      requestEntry: Deno.KvEntry<PaidFallbackRequestV3>;
+    }> = [];
     for (const pending of due) {
       const requestId = String(pending.key.at(-1));
       const requestKey = paidFallbackRequestV3Key(keyId, requestId);
@@ -307,6 +308,28 @@ export const reconcilePaidFallbackV3 = async (keyId: string, now = Date.now()): 
         await kv.atomic().check(pending).delete(pending.key).commit();
         continue;
       }
+      candidates.push({
+        pending,
+        requestEntry: requestEntry as Deno.KvEntry<PaidFallbackRequestV3>,
+      });
+    }
+    if (!candidates.length) return 0;
+    const providerRequestIds = candidates
+      .map(({ requestEntry }) => requestEntry.value.provider_request_id)
+      .filter((requestId): requestId is string => requestId !== null);
+    const logs = providerRequestIds.length
+      ? await fetchYunwuTokenLogs({
+        requestIds: providerRequestIds,
+        startAtMs: Math.min(...candidates.map(({ requestEntry }) => requestEntry.value.created_at_ms)) - 60_000,
+        endAtMs: now + 60_000,
+      })
+      : [];
+    const byId = new Map(logs.map((log) => [log.request_id, log]));
+    let settled = 0;
+    for (const { pending, requestEntry } of candidates) {
+      const request = requestEntry.value;
+      const requestId = request.request_id;
+      const requestKey = paidFallbackRequestV3Key(keyId, requestId);
       const providerLog = request.provider_request_id ? byId.get(request.provider_request_id) : null;
       if (!providerLog) {
         const attempts = request.reconciliation_attempts + 1;

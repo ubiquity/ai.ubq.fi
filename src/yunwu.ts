@@ -61,6 +61,14 @@ export type YunwuAuthenticatedFetchOptions = Readonly<{
   signal?: AbortSignal;
 }>;
 
+export type YunwuTokenLogFetchOptions =
+  & YunwuAuthenticatedFetchOptions
+  & Readonly<{
+    requestIds?: readonly string[];
+    startAtMs?: number;
+    endAtMs?: number;
+  }>;
+
 export type YunwuResponsesResult = Readonly<{
   response: Response;
   request_id: string | null;
@@ -385,13 +393,24 @@ export const fetchYunwuResponses = async (
 
   return {
     response,
-    request_id: nonEmptyString(response.headers.get("X-Oneapi-Request-Id")),
+    request_id: nonEmptyString(
+      response.headers.get("X-Api-Request-Id") ??
+        response.headers.get("X-Oneapi-Request-Id"),
+    ),
   };
 };
 
 const normalizeTokenLogEntry = (value: unknown): YunwuTokenLogEntry | null => {
   if (!isRecord(value)) return null;
-  const requestId = nonEmptyString(value.request_id);
+  let requestId = nonEmptyString(value.request_id);
+  if (!requestId && typeof value.other === "string") {
+    try {
+      const other = JSON.parse(value.other) as unknown;
+      if (isRecord(other)) requestId = nonEmptyString(other.request_id);
+    } catch {
+      // Ignore malformed provider metadata.
+    }
+  }
   const model = nonEmptyString(value.model_name);
   if (
     !requestId ||
@@ -415,56 +434,90 @@ const normalizeTokenLogEntry = (value: unknown): YunwuTokenLogEntry | null => {
 };
 
 export const fetchYunwuTokenLogs = async (
-  options: YunwuAuthenticatedFetchOptions = {},
+  options: YunwuTokenLogFetchOptions = {},
 ): Promise<readonly YunwuTokenLogEntry[]> => {
   const apiKey = requireYunwuApiKey(options.apiKey);
-  let response: Response;
-  try {
-    response = await (options.fetcher ?? fetch)(YUNWU_TOKEN_LOGS_URL, {
-      method: "GET",
-      headers: authenticatedHeaders(apiKey, "application/json"),
-      redirect: "manual",
-      signal: options.signal,
-    });
-  } catch (error) {
-    rethrowCancellation(error, options.signal);
-    throw new YunwuError(
-      "YunWu billing logs could not be reached.",
-      "yunwu_logs_unavailable",
-      502,
-    );
-  }
+  const requestedIds = new Set(options.requestIds?.map((id) => id.trim()).filter(Boolean) ?? []);
+  const foundIds = new Set<string>();
+  const logs: YunwuTokenLogEntry[] = [];
+  const pageSize = 100;
 
-  if (!response.ok) {
-    throw new YunwuError(
-      "YunWu billing logs returned an unsuccessful response.",
-      "yunwu_logs_unavailable",
-      502,
-      response.status,
-    );
-  }
+  for (let page = 1; page <= 100; page += 1) {
+    const url = new URL(YUNWU_TOKEN_LOGS_URL);
+    url.searchParams.set("key", apiKey);
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("page_size", String(pageSize));
+    if (Number.isFinite(options.startAtMs)) {
+      url.searchParams.set("start_timestamp", String(Math.max(0, Math.floor(options.startAtMs! / 1_000))));
+    }
+    if (Number.isFinite(options.endAtMs)) {
+      url.searchParams.set("end_timestamp", String(Math.max(0, Math.ceil(options.endAtMs! / 1_000))));
+    }
 
-  let envelope: unknown;
-  try {
-    envelope = await response.json() as unknown;
-  } catch {
-    throw new YunwuError(
-      "YunWu billing logs returned invalid JSON.",
-      "yunwu_logs_invalid",
-      502,
-      response.status,
-    );
-  }
-  if (!isRecord(envelope) || envelope.success !== true || !Array.isArray(envelope.data)) {
-    throw new YunwuError(
-      "YunWu billing logs returned an invalid response envelope.",
-      "yunwu_logs_invalid",
-      502,
-      response.status,
-    );
-  }
+    let response: Response;
+    try {
+      response = await (options.fetcher ?? fetch)(url, {
+        method: "GET",
+        headers: metadataHeaders(),
+        redirect: "manual",
+        signal: options.signal,
+      });
+    } catch (error) {
+      rethrowCancellation(error, options.signal);
+      throw new YunwuError(
+        "YunWu billing logs could not be reached.",
+        "yunwu_logs_unavailable",
+        502,
+      );
+    }
 
-  return envelope.data
-    .map(normalizeTokenLogEntry)
-    .filter((entry): entry is YunwuTokenLogEntry => entry !== null);
+    if (!response.ok) {
+      throw new YunwuError(
+        "YunWu billing logs returned an unsuccessful response.",
+        "yunwu_logs_unavailable",
+        502,
+        response.status,
+      );
+    }
+
+    let envelope: unknown;
+    try {
+      envelope = await response.json() as unknown;
+    } catch {
+      throw new YunwuError(
+        "YunWu billing logs returned invalid JSON.",
+        "yunwu_logs_invalid",
+        502,
+        response.status,
+      );
+    }
+    if (!isRecord(envelope) || envelope.success !== true) {
+      throw new YunwuError(
+        "YunWu billing logs returned an invalid response envelope.",
+        "yunwu_logs_invalid",
+        502,
+        response.status,
+      );
+    }
+    const data = envelope.data;
+    const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
+    if (!items) {
+      throw new YunwuError(
+        "YunWu billing logs returned an invalid response envelope.",
+        "yunwu_logs_invalid",
+        502,
+        response.status,
+      );
+    }
+    for (const item of items) {
+      const log = normalizeTokenLogEntry(item);
+      if (!log) continue;
+      logs.push(log);
+      if (requestedIds.has(log.request_id)) foundIds.add(log.request_id);
+    }
+    if (requestedIds.size > 0 && foundIds.size === requestedIds.size) break;
+    const total = isRecord(data) && isNonNegativeSafeInteger(data.total) ? data.total : items.length;
+    if (page * pageSize >= total || items.length === 0) break;
+  }
+  return logs;
 };

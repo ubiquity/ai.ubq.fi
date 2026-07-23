@@ -129,7 +129,7 @@ Deno.test("fetchYunwuResponses applies YunWu Sol reasoning suffixes and forwards
     return Promise.resolve(
       new Response("rate limited", {
         status: 429,
-        headers: { "X-Oneapi-Request-Id": " yunwu-request-1 " },
+        headers: { "X-Api-Request-Id": " yunwu-request-1 " },
       }),
     );
   };
@@ -219,29 +219,33 @@ Deno.test("fetchYunwuTokenLogs returns only strict allowlisted billing fields", 
     return Promise.resolve(jsonResponse({
       success: true,
       message: "",
-      data: [
-        {
-          id: 9001,
-          request_id: "request-abc",
-          quota: 2914,
-          prompt_tokens: 71,
-          completion_tokens: 231,
-          model_name: "gpt-5.6-sol",
-          created_at: 1_752_960_000,
-          username: "must-not-leak",
-          token_name: "must-not-leak",
-          ip: "must-not-leak",
-          other: '{"must":"not leak"}',
-        },
-        {
-          request_id: "malformed-entry",
-          quota: "2914",
-          prompt_tokens: 71,
-          completion_tokens: 231,
-          model_name: "gpt-5.6-sol",
-          created_at: 1_752_960_000,
-        },
-      ],
+      data: {
+        total: 2,
+        page: 1,
+        page_size: 100,
+        items: [
+          {
+            id: 9001,
+            quota: 2914,
+            prompt_tokens: 71,
+            completion_tokens: 231,
+            model_name: "gpt-5.6-sol",
+            created_at: 1_752_960_000,
+            username: "must-not-leak",
+            token_name: "must-not-leak",
+            ip: "must-not-leak",
+            other: '{"request_id":"request-abc","must":"not leak"}',
+          },
+          {
+            other: '{"request_id":"malformed-entry"}',
+            quota: "2914",
+            prompt_tokens: 71,
+            completion_tokens: 231,
+            model_name: "gpt-5.6-sol",
+            created_at: 1_752_960_000,
+          },
+        ],
+      },
     }));
   };
 
@@ -250,10 +254,14 @@ Deno.test("fetchYunwuTokenLogs returns only strict allowlisted billing fields", 
     fetcher,
   });
 
-  assert.equal(capturedUrl, "https://yunwu.ai/api/log/token");
+  const captured = new URL(capturedUrl);
+  assert.equal(captured.origin + captured.pathname, "https://yunwu.ai/api/log/token");
+  assert.equal(captured.searchParams.get("key"), "test-yunwu-key");
+  assert.equal(captured.searchParams.get("page"), "1");
+  assert.equal(captured.searchParams.get("page_size"), "100");
   assert.equal(capturedInit?.method, "GET");
   const headers = new Headers(capturedInit?.headers);
-  assert.equal(headers.get("Authorization"), "Bearer test-yunwu-key");
+  assert.equal(headers.get("Authorization"), null);
   assert.equal(headers.get("Accept"), "application/json");
   assert.deepEqual(logs, [{
     request_id: "request-abc",
