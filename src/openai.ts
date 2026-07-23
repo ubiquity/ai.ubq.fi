@@ -10,6 +10,7 @@ import {
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { json, openaiError } from "./http.ts";
+import { createInferenceSignal } from "./inference_deadline.ts";
 import { kvPromise } from "./kv.ts";
 import { loadRuntimeConfig } from "./runtime_config.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, EMBEDDINGS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
@@ -37,9 +38,7 @@ const getDefaultModel = async (): Promise<string | null> => {
   return runtime?.default_model ?? getCodexModelsSnapshotDefaultModel(runtime?.codex_models ?? null);
 };
 
-const INFERENCE_DEADLINE_MS = 240_000;
-const inferenceSignal = (request: Request): AbortSignal =>
-  AbortSignal.any([request.signal, AbortSignal.timeout(INFERENCE_DEADLINE_MS)]);
+const inferenceSignal = (request: Request): AbortSignal => createInferenceSignal(request.signal);
 
 const defaultModelUnavailableError = (): Response =>
   openaiError(
