@@ -432,7 +432,7 @@ Deno.test("concurrent paid fallback ledger patches retry without losing either u
   assert.equal(stored.value?.completed_at_ms, createdAtMs + 50);
 });
 
-Deno.test("paid fallback atomically reserves the remaining cap and permits only one outstanding request", async () => {
+Deno.test("bounded paid fallback permits one outstanding request while unlimited fallback stays concurrent", async () => {
   memoryKv.clear();
 
   await withYunwuApiKey(async () => {
@@ -488,15 +488,34 @@ Deno.test("paid fallback atomically reserves the remaining cap and permits only 
       apiKeyIdKey(String(unlimited.id)),
     );
     assert.equal(storedUnlimited.value?.paid_fallback_reserved_microcredits, 0);
-    assert.equal(storedUnlimited.value?.paid_fallback_reservation_request_id, "request-unlimited");
-    assert.deepEqual(
-      await reservePaidFallback(reservationInput(String(unlimited.id), "request-unlimited-second")),
-      {
-        kind: "blocked",
-        reason: "reconciliation_pending",
-        reset_at_ms: unlimited.usage_reset_at_ms,
-      },
+    assert.equal(storedUnlimited.value?.paid_fallback_reservation_request_id, null);
+    const unlimitedDecisions = await Promise.all(
+      Array.from(
+        { length: 8 },
+        (_, index) =>
+          reservePaidFallback(
+            reservationInput(String(unlimited.id), `request-unlimited-${index + 2}`),
+          ),
+      ),
     );
+    assert.deepEqual(unlimitedDecisions.map((decision) => decision.kind), Array(8).fill("reserved"));
+    assert.equal((await listApiKeyRequestLogs(String(unlimited.id))).length, 9);
+
+    const stuckUnlimited = await seedStrictKey({
+      id: "key-stuck-unlimited",
+      hash: "hash-stuck-unlimited",
+      paid_fallback_limit_microcredits: -1,
+      paid_fallback_reserved_microcredits: 0,
+      paid_fallback_reservation_request_id: "stuck-request",
+    });
+    const recovered = await reservePaidFallback(
+      reservationInput(String(stuckUnlimited.id), "request-after-stuck"),
+    );
+    assert.equal(recovered.kind, "reserved");
+    const recoveredRecord = await memoryKv.get<Record<string, unknown>>(
+      apiKeyIdKey(String(stuckUnlimited.id)),
+    );
+    assert.equal(recoveredRecord.value?.paid_fallback_reservation_request_id, null);
 
     const concurrent = await seedStrictKey({
       id: "key-concurrent",

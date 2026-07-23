@@ -49,6 +49,28 @@ export type PaidFallbackReservationDecision =
     reset_at_ms: number | null;
   };
 
+type PaidFallbackEligibility =
+  | { kind: "eligible"; unlimited: boolean }
+  | Exclude<PaidFallbackReservationDecision, { kind: "reserved" }>;
+
+const evaluatePaidFallbackEligibility = (
+  record: ApiKeyRecord,
+  model: string,
+): PaidFallbackEligibility => {
+  if (!record.paid_fallback_enabled) return { kind: "skip", reason: "disabled" };
+  if (!record.paid_fallback_model_ids.includes(model)) {
+    return { kind: "skip", reason: "model_not_priced" };
+  }
+  const unlimited = record.paid_fallback_limit_microcredits === PAID_FALLBACK_NO_LIMIT;
+  if (
+    (!unlimited && !isPositiveSafeInteger(record.paid_fallback_limit_microcredits)) ||
+    !isPositiveSafeInteger(record.paid_fallback_quota_per_credit)
+  ) {
+    return { kind: "blocked", reason: "invalid_policy", reset_at_ms: record.usage_reset_at_ms };
+  }
+  return { kind: "eligible", unlimited };
+};
+
 export const defaultPaidFallbackPolicy = (): PaidFallbackPolicyFields => ({
   paid_fallback_enabled: false,
   paid_fallback_limit_microcredits: 0,
@@ -242,17 +264,39 @@ export const reservePaidFallback = async (
   let pair = await loadStrictKeyPair(kv, input.keyId);
   if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
   let record = pair.record;
-  if (!record.paid_fallback_enabled) return { kind: "skip", reason: "disabled" };
   if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
-  if (!record.paid_fallback_model_ids.includes(input.model)) {
-    return { kind: "skip", reason: "model_not_priced" };
-  }
-  const unlimited = record.paid_fallback_limit_microcredits === PAID_FALLBACK_NO_LIMIT;
+  let eligibility = evaluatePaidFallbackEligibility(record, input.model);
+  if (eligibility.kind !== "eligible") return eligibility;
+  let unlimited = eligibility.unlimited;
   if (
-    (!unlimited && !isPositiveSafeInteger(record.paid_fallback_limit_microcredits)) ||
-    !isPositiveSafeInteger(record.paid_fallback_quota_per_credit)
+    unlimited &&
+    (record.paid_fallback_reserved_microcredits > 0 || record.paid_fallback_reservation_request_id)
   ) {
-    return { kind: "blocked", reason: "invalid_policy", reset_at_ms: record.usage_reset_at_ms };
+    const unlockedRecord: ApiKeyRecord = {
+      ...record,
+      paid_fallback_reserved_microcredits: 0,
+      paid_fallback_reservation_request_id: null,
+    };
+    const unlockedHash: ApiKeyHashRecord = {
+      ...pair.hashRecord,
+      ...paidFallbackHashFields(unlockedRecord),
+    };
+    const unlocked = await kv.atomic()
+      .check(pair.idEntry)
+      .check(pair.hashEntry)
+      .set(pair.idKey, unlockedRecord)
+      .set(pair.hashKey, unlockedHash)
+      .commit();
+    if (!unlocked.ok) {
+      return { kind: "blocked", reason: "concurrent_update", reset_at_ms: record.usage_reset_at_ms };
+    }
+    invalidateApiKeyPolicy(input.keyId);
+    pair = await loadStrictKeyPair(kv, input.keyId);
+    if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
+    record = pair.record;
+    eligibility = evaluatePaidFallbackEligibility(record, input.model);
+    if (eligibility.kind !== "eligible") return eligibility;
+    unlimited = eligibility.unlimited;
   }
   if (
     record.usage_reset_at_ms <= input.createdAtMs &&
@@ -289,8 +333,14 @@ export const reservePaidFallback = async (
     pair = await loadStrictKeyPair(kv, input.keyId);
     if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
     record = pair.record;
+    eligibility = evaluatePaidFallbackEligibility(record, input.model);
+    if (eligibility.kind !== "eligible") return eligibility;
+    unlimited = eligibility.unlimited;
   }
-  if (record.paid_fallback_reserved_microcredits > 0 || record.paid_fallback_reservation_request_id) {
+  if (
+    !unlimited &&
+    (record.paid_fallback_reserved_microcredits > 0 || record.paid_fallback_reservation_request_id)
+  ) {
     return { kind: "blocked", reason: "reconciliation_pending", reset_at_ms: record.usage_reset_at_ms };
   }
 
@@ -302,7 +352,7 @@ export const reservePaidFallback = async (
   const updated: ApiKeyRecord = {
     ...record,
     paid_fallback_reserved_microcredits: remaining,
-    paid_fallback_reservation_request_id: input.requestId,
+    paid_fallback_reservation_request_id: unlimited ? null : input.requestId,
   };
   const updatedHash: ApiKeyHashRecord = {
     ...pair.hashRecord,
@@ -346,12 +396,16 @@ export const reservePaidFallback = async (
     1,
     input.createdAtMs + API_KEY_REQUEST_LOG_RETENTION_MS - Date.now(),
   );
-  const commit = await kv.atomic()
+  let atomic = kv.atomic()
     .check(pair.idEntry)
     .check(pair.hashEntry)
-    .check(logEntry)
-    .set(pair.idKey, updated)
-    .set(pair.hashKey, updatedHash)
+    .check(logEntry);
+  if (!unlimited) {
+    atomic = atomic
+      .set(pair.idKey, updated)
+      .set(pair.hashKey, updatedHash);
+  }
+  const commit = await atomic
     .set(logKey, requestLog, { expireIn })
     .commit();
   if (!commit.ok) {
