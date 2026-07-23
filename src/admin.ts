@@ -1299,6 +1299,16 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
     return openaiError(400, "Only revoked keys can be deleted", "invalid_request_error");
   }
 
+  for await (const requestEntry of kv.list({ prefix: apiKeyRequestLogPrefix(id) })) {
+    await kv.delete(requestEntry.key);
+  }
+  for await (const legacyRequestEntry of kv.list({ prefix: legacyApiKeyRequestLogPrefix(id) })) {
+    await kv.delete(legacyRequestEntry.key);
+  }
+  for await (const counterEntry of kv.list({ prefix: [...API_KEY_USAGE_V2_PREFIX, id] })) {
+    await kv.delete(counterEntry.key);
+  }
+
   const atomic = kv.atomic()
     .check(entry)
     .delete(idKey)
@@ -1311,16 +1321,6 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
     return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   }
   invalidateApiKeyPolicy(id);
-
-  for await (const requestEntry of kv.list({ prefix: apiKeyRequestLogPrefix(id) })) {
-    await kv.delete(requestEntry.key);
-  }
-  for await (const legacyRequestEntry of kv.list({ prefix: legacyApiKeyRequestLogPrefix(id) })) {
-    await kv.delete(legacyRequestEntry.key);
-  }
-  for await (const counterEntry of kv.list({ prefix: [...API_KEY_USAGE_V2_PREFIX, id] })) {
-    await kv.delete(counterEntry.key);
-  }
 
   return json(200, { id }, { "x-ubq-upstream": "chatgpt_codex" });
 };

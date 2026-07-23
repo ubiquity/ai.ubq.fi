@@ -18,6 +18,7 @@ class TestKvStore extends Map<string, unknown> {
 }
 const kvStore = new TestKvStore();
 let atomicCommitsToFail = 0;
+let deletesToFail = 0;
 
 const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   if (left === right) return 0;
@@ -51,6 +52,10 @@ const kvStub = {
     return Promise.resolve({ ok: true } as const);
   },
   delete: (key: Deno.KvKey) => {
+    if (deletesToFail > 0) {
+      deletesToFail -= 1;
+      return Promise.reject(new Error("injected API-key cleanup delete failure"));
+    }
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
@@ -1221,13 +1226,21 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   kvStore.set(keyToString(neighboringLegacyLogKey), { id: "legacy-request-neighbor", key_id: neighboringKeyId });
   kvStore.set(keyToString(neighboringCounterKey), { value: 1n } as Deno.KvU64);
 
-  const response = await handleAdminApiKeysDelete(
-    new Request("https://ai.ubq.fi/admin/api-keys", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: keyId }),
-    }),
-  );
+  const deleteRequest = () =>
+    handleAdminApiKeysDelete(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: keyId }),
+      }),
+    );
+
+  deletesToFail = 1;
+  await assert.rejects(deleteRequest, /injected API-key cleanup delete failure/);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), true);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "hash", hash])), true);
+
+  const response = await deleteRequest();
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { id: keyId });
   assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), false);

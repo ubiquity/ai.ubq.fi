@@ -6,6 +6,7 @@ const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
 class AuthKv {
   auth: CodexAuthState;
   reads = 0;
+  nextReadGate: Promise<void> | null = null;
 
   constructor(auth: CodexAuthState) {
     this.auth = auth;
@@ -15,11 +16,11 @@ class AuthKv {
     assert.deepEqual(key, AUTH_KEY);
     assert.equal(options?.consistency, "strong");
     this.reads += 1;
-    return Promise.resolve({
-      key,
-      value: this.auth as T,
-      versionstamp: String(this.reads).padStart(20, "0"),
-    });
+    const value = this.auth as T;
+    const versionstamp = String(this.reads).padStart(20, "0");
+    const gate = this.nextReadGate;
+    this.nextReadGate = null;
+    return (gate ?? Promise.resolve()).then(() => ({ key, value, versionstamp }));
   }
 
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
@@ -95,11 +96,32 @@ Deno.test("Codex auth cache revalidates rotations across warm isolates without p
     await fetchCodexResponses({ input: "warm-again" });
     assert.equal(kv.reads, 2, "the revalidated credential must remain a zero-read warm hit");
 
+    let releaseDelayedRead = (): void => {};
+    kv.nextReadGate = new Promise<void>((resolve) => {
+      releaseDelayedRead = resolve;
+    });
+    kv.auth = auth("stale-read");
+    nowMs += CODEX_AUTH_CACHE_TTL_MS + 1;
+    const delayedRequest = fetchCodexResponses({ input: "delayed-revalidation" });
+    while (kv.reads < 3) await Promise.resolve();
+
+    const racedAdmin = auth("admin-race");
+    kv.auth = racedAdmin;
+    cacheCodexAuth(racedAdmin);
+    releaseDelayedRead();
+    await delayedRequest;
+    assert.equal(authorizations.at(-1), `Bearer ${accessToken("admin-race")}`);
+    assert.equal(accountIds.at(-1), "account-admin-race");
+
+    await fetchCodexResponses({ input: "after-delayed-revalidation" });
+    assert.equal(kv.reads, 3, "a delayed stale read must not evict the admin credential");
+    assert.equal(authorizations.at(-1), `Bearer ${accessToken("admin-race")}`);
+
     const immediate = auth("admin");
     kv.auth = immediate;
     cacheCodexAuth(immediate);
     await fetchCodexResponses({ input: "admin-update" });
-    assert.equal(kv.reads, 2, "the admin isolate cache update must take effect without another KV read");
+    assert.equal(kv.reads, 3, "the admin isolate cache update must take effect without another KV read");
     assert.equal(authorizations.at(-1), `Bearer ${accessToken("admin")}`);
     assert.equal(accountIds.at(-1), "account-admin");
   } finally {

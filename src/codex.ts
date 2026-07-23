@@ -111,15 +111,18 @@ type CodexAuthEntry = {
 
 let cachedAuth: CodexAuthState | null = null;
 let cachedAuthExpiresAtMs = 0;
+let authCacheGeneration = 0;
 let authEntryInFlight: Promise<CodexAuthEntry> | null = null;
 let refreshInFlight: Promise<CodexAuthState> | null = null;
 
 export const cacheCodexAuth = (auth: CodexAuthState): void => {
+  authCacheGeneration += 1;
   cachedAuth = auth;
   cachedAuthExpiresAtMs = Date.now() + CODEX_AUTH_CACHE_TTL_MS;
 };
 
 export const resetCodexAuthCacheForTest = (): void => {
+  authCacheGeneration += 1;
   cachedAuth = null;
   cachedAuthExpiresAtMs = 0;
   authEntryInFlight = null;
@@ -229,7 +232,20 @@ const getConfiguredCodexAuthSeed = (): CodexAuthState | null => {
   }
 };
 
-const loadAuthEntry = async (): Promise<CodexAuthEntry> => {
+const loadedAuthEntry = (
+  auth: CodexAuthState,
+  generationAtStart: number,
+  kv: Deno.Kv | null,
+  entry: Deno.KvEntryMaybe<CodexAuthState> | null,
+): CodexAuthEntry => {
+  if (authCacheGeneration !== generationAtStart && cachedAuth) {
+    return { kv: null, entry: null, auth: cachedAuth };
+  }
+  cacheCodexAuth(auth);
+  return { kv, entry, auth };
+};
+
+const loadAuthEntry = async (generationAtStart: number): Promise<CodexAuthEntry> => {
   const kv = await kvPromise;
   if (!kv) {
     const auth = cachedAuth ?? getConfiguredCodexAuthSeed();
@@ -240,8 +256,7 @@ const loadAuthEntry = async (): Promise<CodexAuthEntry> => {
         503,
       );
     }
-    cacheCodexAuth(auth);
-    return { kv: null, entry: null, auth };
+    return loadedAuthEntry(auth, generationAtStart, null, null);
   }
 
   const entry = await kv.get<CodexAuthState>(CODEX_KV_KEY, { consistency: "strong" });
@@ -250,16 +265,17 @@ const loadAuthEntry = async (): Promise<CodexAuthEntry> => {
       try {
         const localSeed = getConfiguredCodexAuthSeed();
         if (localSeed) {
-          cacheCodexAuth(localSeed);
+          if (authCacheGeneration !== generationAtStart && cachedAuth) {
+            return { kv: null, entry: null, auth: cachedAuth };
+          }
           await kv.set(CODEX_KV_KEY, localSeed);
-          return { kv, entry, auth: localSeed };
+          return loadedAuthEntry(localSeed, generationAtStart, kv, entry);
         }
       } catch {
         // Keep working from persisted KV credentials when local seed loading fails.
       }
     }
-    cacheCodexAuth(entry.value);
-    return { kv, entry, auth: entry.value };
+    return loadedAuthEntry(entry.value, generationAtStart, kv, entry);
   }
 
   const seed = getConfiguredCodexAuthSeed();
@@ -270,9 +286,11 @@ const loadAuthEntry = async (): Promise<CodexAuthEntry> => {
       503,
     );
   }
+  if (authCacheGeneration !== generationAtStart && cachedAuth) {
+    return { kv: null, entry: null, auth: cachedAuth };
+  }
   await kv.set(CODEX_KV_KEY, seed);
-  cacheCodexAuth(seed);
-  return { kv, entry: null, auth: seed };
+  return loadedAuthEntry(seed, generationAtStart, kv, null);
 };
 
 const getAuthEntry = async (forceKv = false): Promise<CodexAuthEntry> => {
@@ -283,7 +301,7 @@ const getAuthEntry = async (forceKv = false): Promise<CodexAuthEntry> => {
   // A bounded single read makes credential replacement converge across warm
   // isolates without restoring a KV lookup to every inference request.
   if (authEntryInFlight) return await authEntryInFlight;
-  authEntryInFlight = loadAuthEntry().finally(() => {
+  authEntryInFlight = loadAuthEntry(authCacheGeneration).finally(() => {
     authEntryInFlight = null;
   });
   return await authEntryInFlight;
@@ -307,6 +325,7 @@ const buildRefreshFailureMessage = async (response: Response): Promise<string> =
 const refreshAuth = async (
   current: { kv: Deno.Kv | null; entry: Deno.KvEntryMaybe<CodexAuthState> | null; auth: CodexAuthState },
 ): Promise<CodexAuthState> => {
+  const generationAtStart = authCacheGeneration;
   let response: Response;
   try {
     response = await fetch(CODEX_REFRESH_TOKEN_URL, {
@@ -346,7 +365,7 @@ const refreshAuth = async (
     updated_at_ms: Date.now(),
   };
 
-  cacheCodexAuth(next);
+  if (authCacheGeneration !== generationAtStart && cachedAuth) return cachedAuth;
 
   if (current.kv) {
     if (current.entry) {
@@ -354,8 +373,7 @@ const refreshAuth = async (
       if (!commit.ok) {
         const latest = await current.kv.get<CodexAuthState>(CODEX_KV_KEY);
         if (latest.value) {
-          cacheCodexAuth(latest.value);
-          return latest.value;
+          return loadedAuthEntry(latest.value, generationAtStart, current.kv, latest).auth;
         }
       }
     } else {
@@ -363,6 +381,8 @@ const refreshAuth = async (
     }
   }
 
+  if (authCacheGeneration !== generationAtStart && cachedAuth) return cachedAuth;
+  cacheCodexAuth(next);
   return next;
 };
 

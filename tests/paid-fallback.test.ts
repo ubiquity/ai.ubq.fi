@@ -209,7 +209,9 @@ const {
 const {
   hasStrictPaidFallbackKeyPolicy,
   hasStrictPaidFallbackPolicy,
+  PAID_FALLBACK_UNRECONCILABLE_TIMEOUT_MS,
   reconcileApiKeyPaidFallbacks,
+  recordYunwuAmbiguousFailure,
   recordYunwuUpstreamResponse,
   reservePaidFallback,
 } = await import("../src/paid_fallback.ts");
@@ -567,6 +569,34 @@ Deno.test("paid fallback resets spend only when a new fallback enters an expired
     const updated = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(String(record.id)));
     assert.equal(updated.value?.paid_fallback_spent_microcredits, 0);
     assert.equal(updated.value?.paid_fallback_reservation_request_id, "request-new-window");
+  });
+});
+
+Deno.test("YunWu failures and stale request-id-less reservations cannot deadlock a key", async () => {
+  memoryKv.clear();
+
+  await withYunwuApiKey(async () => {
+    const record = await seedStrictKey({ paid_fallback_limit_microcredits: -1 });
+    const immediate = await reservePaidFallback(reservationInput(String(record.id), "request-immediate"));
+    assert.equal(immediate.kind, "reserved");
+    if (immediate.kind !== "reserved") throw new Error("expected reservation");
+    await recordYunwuAmbiguousFailure(immediate.reservation);
+
+    const afterFailure = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(String(record.id)));
+    assert.equal(afterFailure.value?.paid_fallback_reservation_request_id, null);
+    assert.equal((await listApiKeyRequestLogs(String(record.id)))[0].billing_status, "unresolved");
+
+    const staleCreatedAt = Date.now() - PAID_FALLBACK_UNRECONCILABLE_TIMEOUT_MS - 1;
+    const stale = await reservePaidFallback(
+      reservationInput(String(record.id), "request-stale", staleCreatedAt),
+    );
+    assert.equal(stale.kind, "reserved");
+    assert.equal(await reconcileApiKeyPaidFallbacks(String(record.id)), 1);
+
+    const afterReconcile = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(String(record.id)));
+    assert.equal(afterReconcile.value?.paid_fallback_reservation_request_id, null);
+    const logs = await listApiKeyRequestLogs(String(record.id));
+    assert.equal(logs.find((entry) => entry.id === "request-stale")?.billing_status, "unresolved");
   });
 });
 
