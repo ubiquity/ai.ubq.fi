@@ -2844,6 +2844,19 @@ const buildUsageSummary = (usage) => {
     return summary;
   }
 
+  if (Object.prototype.hasOwnProperty.call(usage, "request_count")) {
+    appendUsagePill(summary, "Requests", formatCompactNumber(usage.request_count), {
+      title: formatNumber(usage.request_count),
+    });
+    appendUsagePill(
+      summary,
+      "Limit",
+      toNumber(usage.limit) === -1 ? "Unlimited" : formatCompactNumber(usage.limit),
+    );
+    appendUsagePill(summary, "Resets", formatDate(usage.reset_at_ms));
+    return summary;
+  }
+
   appendUsagePill(summary, "Requests", formatCompactNumber(usage.total_requests), {
     title: formatNumber(usage.total_requests),
   });
@@ -2892,6 +2905,20 @@ const buildUsageDetails = (usage, options = {}) => {
   usageTitle.appendChild(usageLabel);
   usageTitle.appendChild(buildUsageSummary(usage));
   usageSection.appendChild(usageTitle);
+
+  if (usage && typeof usage === "object" && Object.prototype.hasOwnProperty.call(usage, "request_count")) {
+    const usageList = document.createElement("div");
+    usageList.dataset.usageList = "list";
+    appendMetaItem(usageList, "Requests", formatNumber(usage.request_count));
+    appendMetaItem(
+      usageList,
+      "Limit",
+      toNumber(usage.limit) === -1 ? "Unlimited" : formatNumber(usage.limit),
+    );
+    appendMetaItem(usageList, "Resets", formatDate(usage.reset_at_ms));
+    usageSection.appendChild(usageList);
+    return usageSection;
+  }
 
   const sparkline = buildUsageSparkline(usage);
   if (sparkline) usageSection.appendChild(sparkline);
@@ -3037,7 +3064,7 @@ const buildApiKeyRequestLogsPanel = (keyId) => {
 
   const label = document.createElement("span");
   label.dataset.usageLabel = "label";
-  label.textContent = "Recent requests";
+  label.textContent = "Paid fallbacks";
 
   const summary = document.createElement("span");
   summary.dataset.usageSummary = "summary";
@@ -3153,7 +3180,7 @@ const loadApiKeyRequestLogs = (keyId) => {
 
   const request = (async () => {
     try {
-      const url = new URL(apiUrl(`/admin/api-keys/${encodeURIComponent(cacheKey)}/requests`));
+      const url = new URL(apiUrl(`/admin/api-keys/${encodeURIComponent(cacheKey)}/paid-fallbacks`));
       url.searchParams.set("limit", String(API_KEY_REQUEST_LOGS_LIMIT));
 
       const res = await fetch(url.toString(), {
@@ -3234,12 +3261,12 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
   panel.dataset.requestLogsState = "ready";
   const records = response.records || [];
   if (!records.length) {
-    setRequestLogsPanelMessage(list, summary, `No requests in the last ${API_KEY_REQUEST_LOGS_LIMIT} calls`);
+    setRequestLogsPanelMessage(list, summary, "No paid fallbacks recorded");
     panel.dataset.requestLogsLoading = "0";
     return;
   }
 
-  const countText = records.length === 1 ? "1 request" : `${records.length} requests`;
+  const countText = records.length === 1 ? "1 paid fallback" : `${records.length} paid fallbacks`;
   summary.textContent = `${countText} (showing last ${API_KEY_REQUEST_LOGS_LIMIT})`;
   list.textContent = "";
   records.forEach((record) => {
@@ -3970,7 +3997,11 @@ const renderKeys = (keys, view = "all") => {
     const usage = hasUsageField ? key.usage : undefined;
 
     if (hasUsageField) {
-      main.appendChild(buildUsageDetails(usage));
+      main.appendChild(buildUsageDetails(usage, {
+        label: "Request limit",
+        unavailable: "Request count unavailable.",
+        empty: "No request count available.",
+      }));
     }
 
     row.appendChild(main);

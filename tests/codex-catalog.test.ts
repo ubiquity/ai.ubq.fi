@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 const kvStore = new Map<string, { value: unknown; versionstamp: string }>();
 let versionCounter = 0;
+type AtomicTestOp = { kind: "set" | "delete"; key: Deno.KvKey; value?: unknown };
+let beforeAtomicCommit: ((ops: readonly AtomicTestOp[]) => void) | null = null;
 
 const nextVersion = (): string => String(++versionCounter).padStart(20, "0");
 const entryFor = (key: Deno.KvKey): Deno.KvEntryMaybe<unknown> => {
@@ -33,7 +35,7 @@ const kvStub = {
   },
   atomic: () => {
     const checks: Deno.KvEntryMaybe<unknown>[] = [];
-    const ops: Array<{ kind: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
+    const ops: AtomicTestOp[] = [];
     const chain = {
       check: (entry: Deno.KvEntryMaybe<unknown>) => {
         checks.push(entry);
@@ -48,6 +50,7 @@ const kvStub = {
         return chain;
       },
       commit: () => {
+        beforeAtomicCommit?.(ops);
         const valid = checks.every((expected) => entryFor(expected.key).versionstamp === expected.versionstamp);
         if (!valid) return Promise.resolve({ ok: false } as const);
         for (const op of ops) {
@@ -77,6 +80,11 @@ const {
   storeCodexCatalog,
 } = await import("../src/codex_catalog.ts");
 const { handleModels } = await import("../src/openai.ts");
+const {
+  loadRuntimeConfig,
+  resetRuntimeConfigCacheForTest,
+  RUNTIME_CONFIG_V2_KEY,
+} = await import("../src/runtime_config.ts");
 
 const AUTH_GENERATION = "auth-generation-test";
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
@@ -85,6 +93,8 @@ const CATALOG_KEY = (version: string): Deno.KvKey => ["ubq_ai", "codex_catalog",
 
 const seedBaseState = (snapshotVersion = "0.200.0"): void => {
   kvStore.clear();
+  beforeAtomicCommit = null;
+  resetRuntimeConfigCacheForTest();
   kvStore.set(keyToString(CODEX_CATALOG_AUTH_GENERATION_KEY), {
     value: AUTH_GENERATION,
     versionstamp: nextVersion(),
@@ -98,12 +108,23 @@ const seedBaseState = (snapshotVersion = "0.200.0"): void => {
     },
     versionstamp: nextVersion(),
   });
+  const snapshot = {
+    source: "chatgpt_codex",
+    client_version: snapshotVersion,
+    updated_at_ms: Date.now(),
+    models: [{ slug: `snapshot-${snapshotVersion}` }],
+  };
   kvStore.set(keyToString(SNAPSHOT_KEY), {
+    value: snapshot,
+    versionstamp: nextVersion(),
+  });
+  kvStore.set(keyToString(RUNTIME_CONFIG_V2_KEY), {
     value: {
-      source: "chatgpt_codex",
-      client_version: snapshotVersion,
+      version: 2,
+      default_model: `snapshot-${snapshotVersion}`,
+      default_reasoning_effort: "medium",
+      codex_models: snapshot,
       updated_at_ms: Date.now(),
-      models: [{ slug: `snapshot-${snapshotVersion}` }],
     },
     versionstamp: nextVersion(),
   });
@@ -569,7 +590,93 @@ Deno.test("codex catalog: only same-or-newer clients update the normalized snaps
     };
     assert.equal(snapshot.client_version, "0.201.0");
     assert.equal(snapshot.models.length, 1);
+    const runtime = kvStore.get(keyToString(RUNTIME_CONFIG_V2_KEY))?.value as {
+      default_model: string;
+      default_reasoning_effort: string;
+      codex_models: { client_version: string; models: unknown[] };
+    };
+    assert.equal(runtime.default_model, "gpt-0.201.0");
+    assert.equal(runtime.default_reasoning_effort, "medium");
+    assert.equal(runtime.codex_models.client_version, "0.201.0");
+    assert.equal(runtime.codex_models.models.length, 1);
+
+    // The catalog publisher must seed the isolate cache with exactly the
+    // compact configuration committed in the same transaction.
+    kvStore.set(keyToString(RUNTIME_CONFIG_V2_KEY), {
+      value: { ...runtime, default_model: "stale-uncommitted-value" },
+      versionstamp: nextVersion(),
+    });
+    assert.equal((await loadRuntimeConfig(kvStub))?.default_model, "gpt-0.201.0");
   } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("codex catalog: normalized snapshot retry preserves a concurrent admin default", async () => {
+  seedBaseState("0.200.0");
+  const currentSnapshot = {
+    source: "chatgpt_codex",
+    client_version: "0.200.0",
+    updated_at_ms: Date.now(),
+    models: [
+      { slug: "shared-default", supported_reasoning_levels: ["medium"] },
+      { slug: "admin-default", supported_reasoning_levels: ["high"] },
+    ],
+  };
+  kvStore.set(keyToString(SNAPSHOT_KEY), { value: currentSnapshot, versionstamp: nextVersion() });
+  kvStore.set(keyToString(RUNTIME_CONFIG_V2_KEY), {
+    value: {
+      version: 2,
+      default_model: "shared-default",
+      default_reasoning_effort: "medium",
+      codex_models: currentSnapshot,
+      updated_at_ms: Date.now(),
+    },
+    versionstamp: nextVersion(),
+  });
+  resetRuntimeConfigCacheForTest();
+
+  const nextModels = [
+    { slug: "shared-default", supported_reasoning_levels: ["medium"] },
+    { slug: "admin-default", supported_reasoning_levels: ["high"] },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(catalogBody("0.201.0", { models: nextModels }), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+  beforeAtomicCommit = (ops) => {
+    if (!ops.some((op) => keyToString(op.key) === keyToString(RUNTIME_CONFIG_V2_KEY))) return;
+    beforeAtomicCommit = null;
+    const current = kvStore.get(keyToString(RUNTIME_CONFIG_V2_KEY))!.value as Record<string, unknown>;
+    kvStore.set(keyToString(RUNTIME_CONFIG_V2_KEY), {
+      value: {
+        ...current,
+        default_model: "admin-default",
+        default_reasoning_effort: "high",
+        updated_at_ms: Date.now(),
+      },
+      versionstamp: nextVersion(),
+    });
+  };
+
+  try {
+    assert.equal((await handleCodexCatalogModels(request("0.201.0"), "0.201.0")).status, 200);
+    const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as { client_version: string };
+    const runtime = kvStore.get(keyToString(RUNTIME_CONFIG_V2_KEY))?.value as {
+      default_model: string;
+      default_reasoning_effort: string;
+      codex_models: { client_version: string };
+    };
+    assert.equal(snapshot.client_version, "0.201.0");
+    assert.equal(runtime.codex_models.client_version, "0.201.0");
+    assert.equal(runtime.default_model, "admin-default");
+    assert.equal(runtime.default_reasoning_effort, "high");
+  } finally {
+    beforeAtomicCommit = null;
     globalThis.fetch = originalFetch;
   }
 });

@@ -1,6 +1,7 @@
 import { config } from "./config.ts";
 import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
 import { kvPromise } from "./kv.ts";
+import { buildRuntimeConfig, cacheRuntimeConfig, loadRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord } from "./utils.ts";
 import type { CodexAuthState, ResponseInputItem } from "./types.ts";
 
@@ -64,6 +65,7 @@ export class CodexError extends Error {
 
 export const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
 export const CODEX_MODELS_KV_KEY = ["ubq_ai", "codex_models"] as const;
+export const CODEX_AUTH_CACHE_TTL_MS = 5 * 60_000;
 
 export type { CodexModelsSnapshot } from "./codex_models.ts";
 export { getCodexModelsSnapshotDefaultModel } from "./codex_models.ts";
@@ -101,11 +103,30 @@ const needsRefresh = (auth: CodexAuthState): boolean => {
   return now - auth.updated_at_ms > 7 * 60_000;
 };
 
+type CodexAuthEntry = {
+  kv: Deno.Kv | null;
+  entry: Deno.KvEntryMaybe<CodexAuthState> | null;
+  auth: CodexAuthState;
+};
+
 let cachedAuth: CodexAuthState | null = null;
+let cachedAuthExpiresAtMs = 0;
+let authCacheGeneration = 0;
+let authEntryInFlight: Promise<CodexAuthEntry> | null = null;
 let refreshInFlight: Promise<CodexAuthState> | null = null;
 
 export const cacheCodexAuth = (auth: CodexAuthState): void => {
+  authCacheGeneration += 1;
   cachedAuth = auth;
+  cachedAuthExpiresAtMs = Date.now() + CODEX_AUTH_CACHE_TTL_MS;
+};
+
+export const resetCodexAuthCacheForTest = (): void => {
+  authCacheGeneration += 1;
+  cachedAuth = null;
+  cachedAuthExpiresAtMs = 0;
+  authEntryInFlight = null;
+  refreshInFlight = null;
 };
 
 const loadAuthSeedFromEnv = (): CodexAuthState => {
@@ -211,11 +232,20 @@ const getConfiguredCodexAuthSeed = (): CodexAuthState | null => {
   }
 };
 
-const getAuthEntry = async (): Promise<{
-  kv: Deno.Kv | null;
-  entry: Deno.KvEntryMaybe<CodexAuthState> | null;
-  auth: CodexAuthState;
-}> => {
+const loadedAuthEntry = (
+  auth: CodexAuthState,
+  generationAtStart: number,
+  kv: Deno.Kv | null,
+  entry: Deno.KvEntryMaybe<CodexAuthState> | null,
+): CodexAuthEntry => {
+  if (authCacheGeneration !== generationAtStart && cachedAuth) {
+    return { kv: null, entry: null, auth: cachedAuth };
+  }
+  cacheCodexAuth(auth);
+  return { kv, entry, auth };
+};
+
+const loadAuthEntry = async (generationAtStart: number): Promise<CodexAuthEntry> => {
   const kv = await kvPromise;
   if (!kv) {
     const auth = cachedAuth ?? getConfiguredCodexAuthSeed();
@@ -226,26 +256,26 @@ const getAuthEntry = async (): Promise<{
         503,
       );
     }
-    cachedAuth = auth;
-    return { kv: null, entry: null, auth };
+    return loadedAuthEntry(auth, generationAtStart, null, null);
   }
 
-  const entry = await kv.get<CodexAuthState>(CODEX_KV_KEY);
+  const entry = await kv.get<CodexAuthState>(CODEX_KV_KEY, { consistency: "strong" });
   if (entry.value) {
     if (!config.isDeploy) {
       try {
         const localSeed = getConfiguredCodexAuthSeed();
         if (localSeed) {
-          cachedAuth = localSeed;
+          if (authCacheGeneration !== generationAtStart && cachedAuth) {
+            return { kv: null, entry: null, auth: cachedAuth };
+          }
           await kv.set(CODEX_KV_KEY, localSeed);
-          return { kv, entry, auth: localSeed };
+          return loadedAuthEntry(localSeed, generationAtStart, kv, entry);
         }
       } catch {
         // Keep working from persisted KV credentials when local seed loading fails.
       }
     }
-    cachedAuth = entry.value;
-    return { kv, entry, auth: entry.value };
+    return loadedAuthEntry(entry.value, generationAtStart, kv, entry);
   }
 
   const seed = getConfiguredCodexAuthSeed();
@@ -256,9 +286,25 @@ const getAuthEntry = async (): Promise<{
       503,
     );
   }
+  if (authCacheGeneration !== generationAtStart && cachedAuth) {
+    return { kv: null, entry: null, auth: cachedAuth };
+  }
   await kv.set(CODEX_KV_KEY, seed);
-  cachedAuth = seed;
-  return { kv, entry: null, auth: seed };
+  return loadedAuthEntry(seed, generationAtStart, kv, null);
+};
+
+const getAuthEntry = async (forceKv = false): Promise<CodexAuthEntry> => {
+  if (!forceKv && cachedAuth && !needsRefresh(cachedAuth) && Date.now() < cachedAuthExpiresAtMs) {
+    return { kv: null, entry: null, auth: cachedAuth };
+  }
+
+  // A bounded single read makes credential replacement converge across warm
+  // isolates without restoring a KV lookup to every inference request.
+  if (authEntryInFlight) return await authEntryInFlight;
+  authEntryInFlight = loadAuthEntry(authCacheGeneration).finally(() => {
+    authEntryInFlight = null;
+  });
+  return await authEntryInFlight;
 };
 
 const formatFailureSnippet = (raw: string, maxLen = 240): string => {
@@ -279,6 +325,7 @@ const buildRefreshFailureMessage = async (response: Response): Promise<string> =
 const refreshAuth = async (
   current: { kv: Deno.Kv | null; entry: Deno.KvEntryMaybe<CodexAuthState> | null; auth: CodexAuthState },
 ): Promise<CodexAuthState> => {
+  const generationAtStart = authCacheGeneration;
   let response: Response;
   try {
     response = await fetch(CODEX_REFRESH_TOKEN_URL, {
@@ -318,7 +365,7 @@ const refreshAuth = async (
     updated_at_ms: Date.now(),
   };
 
-  cachedAuth = next;
+  if (authCacheGeneration !== generationAtStart && cachedAuth) return cachedAuth;
 
   if (current.kv) {
     if (current.entry) {
@@ -326,8 +373,7 @@ const refreshAuth = async (
       if (!commit.ok) {
         const latest = await current.kv.get<CodexAuthState>(CODEX_KV_KEY);
         if (latest.value) {
-          cachedAuth = latest.value;
-          return latest.value;
+          return loadedAuthEntry(latest.value, generationAtStart, current.kv, latest).auth;
         }
       }
     } else {
@@ -335,6 +381,8 @@ const refreshAuth = async (
     }
   }
 
+  if (authCacheGeneration !== generationAtStart && cachedAuth) return cachedAuth;
+  cacheCodexAuth(next);
   return next;
 };
 
@@ -500,7 +548,7 @@ export const fetchCodexResponses = async (
 
   if (res.status !== 401) return res;
 
-  await refreshAuth(await getAuthEntry());
+  await refreshAuth(await getAuthEntry(true));
 
   const auth2 = await getValidAuth();
   headers.set("Authorization", `Bearer ${auth2.access_token}`);
@@ -537,7 +585,7 @@ export const fetchCodexModels = async (
   for (const url of urls) {
     let res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch);
     if (res.status === 401) {
-      await refreshAuth(await getAuthEntry());
+      await refreshAuth(await getAuthEntry(true));
       const auth2 = await getValidAuth();
       res = await fetchCodexModelsWithAuth(auth2, url, clientVersion, options.ifNoneMatch);
     }
@@ -552,16 +600,54 @@ export const fetchCodexModels = async (
 };
 
 export const loadCodexModelsSnapshot = async (): Promise<CodexModelsSnapshot | null> => {
-  const kv = await kvPromise;
+  return (await loadRuntimeConfig())?.codex_models ?? null;
+};
+
+export const preserveCodexDefaultModel = (
+  snapshot: CodexModelsSnapshot,
+  candidate: string | null | undefined,
+): string | undefined => {
+  const target = candidate?.trim();
+  if (!target) return undefined;
+  const found = snapshot.models.some((model) => {
+    if (!isRecord(model)) return false;
+    const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
+    return id?.trim() === target;
+  });
+  return found ? target : undefined;
+};
+
+export const loadFullCodexModelsSnapshot = async (
+  kvOverride?: Deno.Kv | null,
+): Promise<CodexModelsSnapshot | null> => {
+  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
   if (!kv) return null;
-  const entry = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
-  return entry.value ?? null;
+  const entry = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY, { consistency: "strong" });
+  const snapshot = entry.value;
+  if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) return null;
+  if (snapshot.models.some((model) => !isRecord(model))) return null;
+  if (!getString(snapshot.source)?.trim()) return null;
+  if (
+    typeof snapshot.updated_at_ms !== "number" || !Number.isSafeInteger(snapshot.updated_at_ms) ||
+    snapshot.updated_at_ms <= 0
+  ) return null;
+  return snapshot;
 };
 
 export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): Promise<boolean> => {
   const kv = await kvPromise;
   if (!kv) return false;
-  await kv.set(CODEX_MODELS_KV_KEY, snapshot);
+  const current = await loadRuntimeConfig(kv);
+  const runtimeConfig = buildRuntimeConfig(snapshot, {
+    defaultModel: preserveCodexDefaultModel(snapshot, current?.default_model),
+    defaultReasoningEffort: current?.default_reasoning_effort,
+  });
+  const commit = await kv.atomic()
+    .set(CODEX_MODELS_KV_KEY, snapshot)
+    .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)
+    .commit();
+  if (!commit.ok) return false;
+  cacheRuntimeConfig(runtimeConfig);
   return true;
 };
 

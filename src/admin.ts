@@ -4,10 +4,11 @@ import {
   CODEX_MODELS_KV_KEY,
   CodexError,
   type CodexModelsSnapshot,
-  getCodexModelsSnapshotDefaultModel,
   getJwtExpMs,
   loadCodexModelsSnapshot,
+  loadFullCodexModelsSnapshot,
   parseCodexAuthFromAuthJson,
+  preserveCodexDefaultModel,
   storeCodexModelsSnapshot,
   validateCodexAuthJson,
 } from "./codex.ts";
@@ -18,9 +19,7 @@ import {
   DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS,
   DEFAULT_KERNEL_POLICY_WINDOW_KEY,
   DEFAULT_KERNEL_POLICY_WINDOW_MS,
-  DEFAULT_MODEL_KEY,
   DEFAULT_REASONING_EFFORT,
-  DEFAULT_REASONING_EFFORT_KEY,
   normalizeReasoningEffort,
   type ReasoningEffort,
 } from "./defaults.ts";
@@ -42,10 +41,17 @@ import {
   USAGE_RESET_PERIOD_MS,
 } from "./api_keys.ts";
 import {
+  API_KEY_USAGE_V2_PREFIX,
+  apiKeyPolicyFromHashRecord,
+  getApiKeyUsageV2,
+  invalidateApiKeyPolicy,
+  looksLikeUosApiKey,
+} from "./api_key_policy.ts";
+import {
   apiKeyRequestLogPrefix,
   apiKeyUsageDailyKey,
   apiKeyUsageKey,
-  getApiKeyUsage,
+  legacyApiKeyRequestLogPrefix,
   listApiKeyRequestLogs,
 } from "./analytics.ts";
 import { reloadKernelPublicKeys } from "./auth.ts";
@@ -80,6 +86,14 @@ import {
   validateKvMigrationTarget,
 } from "./kv_migration.ts";
 import { kvPromise } from "./kv.ts";
+import {
+  buildRuntimeConfig,
+  cacheRuntimeConfig,
+  loadRuntimeConfig,
+  RUNTIME_CONFIG_V2_KEY,
+  RuntimeConfigError,
+  storeRuntimeConfig,
+} from "./runtime_config.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "./types.ts";
@@ -91,10 +105,10 @@ const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
 const UOS_CODEX_PROMPTS_CHUNK_PREFIX = ["uos_ai", "codex_instructions_chunk"] as const;
 const MAX_KV_MIGRATION_BODY_BYTES = 5 * 1024 * 1024;
 
-const resolveDefaultModel = async (entryValue: unknown): Promise<string> => {
-  const configured = typeof entryValue === "string" ? entryValue.trim() : "";
-  if (configured) return configured;
-  return getCodexModelsSnapshotDefaultModel(await loadCodexModelsSnapshot()) ?? "";
+const runtimeConfigErrorResponse = (error: unknown): Response | null => {
+  if (!(error instanceof RuntimeConfigError)) return null;
+  const status = error.message.includes("too large") || error.message.includes("4 KiB") ? 413 : 409;
+  return openaiError(status, error.message, "runtime_config_invalid", { type: "invalid_request_error" });
 };
 
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
@@ -161,6 +175,18 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   }
 
   const authGeneration = crypto.randomUUID();
+  const currentRuntime = await loadRuntimeConfig(kv);
+  let runtimeConfig;
+  try {
+    runtimeConfig = buildRuntimeConfig(snapshot, {
+      defaultModel: preserveCodexDefaultModel(snapshot, currentRuntime?.default_model),
+      defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
+    });
+  } catch (error) {
+    const response = runtimeConfigErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   let stored = false;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const existingSnapshot = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
@@ -168,7 +194,8 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       .check(existingSnapshot)
       .set(CODEX_KV_KEY, validated.auth)
       .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration)
-      .set(CODEX_MODELS_KV_KEY, snapshot);
+      .set(CODEX_MODELS_KV_KEY, snapshot)
+      .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig);
     if ((await atomic.commit()).ok) {
       stored = true;
       break;
@@ -178,6 +205,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     return openaiError(500, "Deno KV could not persist Codex auth and models", "server_error");
   }
   cacheCodexAuth(validated.auth);
+  cacheRuntimeConfig(runtimeConfig);
 
   const catalogSeeded = await storeCodexCatalog(kv, {
     clientVersion: validatedClientVersion,
@@ -218,7 +246,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
 };
 
 export const handleAdminCodexModelsGet = async (): Promise<Response> => {
-  const snapshot = await loadCodexModelsSnapshot();
+  const snapshot = await loadFullCodexModelsSnapshot();
   if (!snapshot) return json(200, { ok: true, data: null });
   return json(200, { ok: true, data: snapshot });
 };
@@ -243,7 +271,14 @@ export const handleAdminCodexModelsSet = async (req: Request): Promise<Response>
     );
   }
 
-  const stored = await storeCodexModelsSnapshot(snapshot);
+  let stored: boolean;
+  try {
+    stored = await storeCodexModelsSnapshot(snapshot);
+  } catch (error) {
+    const response = runtimeConfigErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   if (!stored) {
     return openaiError(500, "Deno KV is not available; cannot persist Codex models", "server_error");
   }
@@ -364,15 +399,14 @@ export const handleAdminDefaults = async (
   }
 
   if (req.method === "GET") {
-    const [modelEntry, reasoningEntry, kernelLimitEntry, kernelWindowEntry, yunwuQuota] = await Promise.all([
-      kv.get<string>(DEFAULT_MODEL_KEY),
-      kv.get<string>(DEFAULT_REASONING_EFFORT_KEY),
+    const [runtime, kernelLimitEntry, kernelWindowEntry, yunwuQuota] = await Promise.all([
+      loadRuntimeConfig(kv),
       kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY),
       kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY),
       (dependencies.getYunwuQuotaDiagnostics ?? getYunwuQuotaDiagnostics)(),
     ]);
-    const model = await resolveDefaultModel(modelEntry.value);
-    const reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
+    const model = runtime?.default_model ?? "";
+    const reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
     const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
       DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
     const kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
@@ -391,13 +425,12 @@ export const handleAdminDefaults = async (
     const raw = await readJsonBody(req);
     if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-    const modelEntry = await kv.get<string>(DEFAULT_MODEL_KEY);
-    const reasoningEntry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
+    const runtime = await loadRuntimeConfig(kv);
     const kernelLimitEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY);
     const kernelWindowEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY);
 
-    let model = await resolveDefaultModel(modelEntry.value);
-    let reasoningEffort = normalizeReasoningEffort(reasoningEntry.value) ?? DEFAULT_REASONING_EFFORT;
+    let model = runtime?.default_model ?? "";
+    let reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
     let kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
       DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
     let kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
@@ -405,6 +438,7 @@ export const handleAdminDefaults = async (
     const wantsModelUpdate = Object.prototype.hasOwnProperty.call(raw, "model") ||
       Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
     if (wantsModelUpdate) {
+      if (!runtime) return openaiError(503, "Runtime configuration is unavailable", "server_error");
       const nextModel = normalizeDefaultModel(raw.model ?? model);
       if (!nextModel) return openaiError(400, "model must be a non-empty string", "invalid_request_error");
 
@@ -437,8 +471,13 @@ export const handleAdminDefaults = async (
 
       model = nextModel;
       reasoningEffort = nextReasoning;
-      await kv.set(DEFAULT_MODEL_KEY, model);
-      await kv.set(DEFAULT_REASONING_EFFORT_KEY, reasoningEffort);
+      await storeRuntimeConfig(
+        buildRuntimeConfig(snapshot, {
+          defaultModel: model,
+          defaultReasoningEffort: reasoningEffort,
+        }),
+        kv,
+      );
     }
 
     if (Object.prototype.hasOwnProperty.call(raw, "kernel_policy_limit_requests")) {
@@ -489,11 +528,7 @@ const normalizeOptionalApiKeyToken = (value: unknown): string | null => {
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") return null;
   const token = value.trim();
-  if (!token) return null;
-  if (/\s/.test(token)) return null;
-  if (token.length < 24) return null;
-  if (token.length > 300) return null;
-  return token;
+  return looksLikeUosApiKey(token) ? token : null;
 };
 
 const normalizeApiKeyExpiresAtMs = (value: unknown, nowMs: number): number | null => {
@@ -676,6 +711,13 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   if (!name) return openaiError(400, "name must be a non-empty string (<=80 chars)", "invalid_request_error");
 
   const providedToken = normalizeOptionalApiKeyToken(raw.token);
+  if (raw.token !== undefined && raw.token !== null && providedToken === null) {
+    return openaiError(
+      400,
+      "token must use the u_ prefix followed by 64 lowercase hexadecimal characters",
+      "invalid_request_error",
+    );
+  }
   const token = providedToken ?? generateApiKeyToken();
 
   const now = Date.now();
@@ -813,11 +855,27 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
   records.sort((a, b) => b.created_at_ms - a.created_at_ms);
 
   const includeUsage = shouldIncludeUsage(new URL(req.url).searchParams.get("include_usage"));
-  const usageById = new Map<string, Awaited<ReturnType<typeof getApiKeyUsage>>>();
-  const dailyDays = 30;
+  const usageById = new Map<string, Record<string, number>>();
   if (includeUsage) {
     for (const record of records) {
-      usageById.set(record.id, await getApiKeyUsage(record.id, { includeDaily: true, dailyDays }));
+      const hashRecord: ApiKeyHashRecord = {
+        id: record.id,
+        expires_at_ms: record.expires_at_ms,
+        revoked_at_ms: record.revoked_at_ms,
+        usage_limit_requests: record.usage_limit_requests,
+        usage_requests: record.usage_requests,
+        usage_reset_at_ms: record.usage_reset_at_ms,
+        window_ms: record.window_ms,
+        ...paidFallbackHashFields(record),
+      };
+      const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, Date.now());
+      if (policy) {
+        usageById.set(record.id, {
+          request_count: await getApiKeyUsageV2(policy, kv),
+          limit: policy.usage_limit_requests,
+          reset_at_ms: policy.usage_reset_at_ms,
+        });
+      }
     }
   }
 
@@ -833,25 +891,29 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
         expires_at_ms: coerceApiKeyExpiresAtMs(r),
         revoked_at_ms: r.revoked_at_ms,
         usage_limit_requests: r.usage_limit_requests,
-        usage_requests: r.usage_requests,
-        usage_reset_at_ms: r.usage_reset_at_ms,
+        usage_reset_at_ms: includeUsage ? usageById.get(r.id)?.reset_at_ms ?? r.usage_reset_at_ms : r.usage_reset_at_ms,
         window_ms: coerceApiKeyWindowMs(r),
         ...paidFallbackPublicFields(r),
-        ...(includeUsage ? { usage: usageById.get(r.id) ?? null } : {}),
+        ...(includeUsage
+          ? {
+            usage_requests: usageById.get(r.id)?.request_count ?? 0,
+            usage: usageById.get(r.id) ?? null,
+          }
+          : {}),
       })),
     },
     { "x-ubq-upstream": "chatgpt_codex" },
   );
 };
 
-export const handleAdminApiKeysRequests = async (
+export const handleAdminApiKeysPaidFallbacks = async (
   req: Request,
   keyId: string,
   kvOverride?: Deno.Kv | null,
 ): Promise<Response> => {
   const kv = kvOverride === undefined ? await kvPromise : kvOverride;
   if (!kv) {
-    return openaiError(500, "Deno KV is not available; cannot load API key requests", "server_error");
+    return openaiError(500, "Deno KV is not available; cannot load paid fallbacks", "server_error");
   }
 
   const normalizedKeyId = keyId.trim();
@@ -881,8 +943,8 @@ export const handleAdminApiKeysRequests = async (
       { "Cache-Control": "no-store" },
     );
   } catch (error) {
-    console.error("[ai.ubq.fi] Failed to load api key request logs:", error);
-    return openaiError(500, "Failed to load API key requests", "server_error");
+    console.error("[ai.ubq.fi] Failed to load paid fallback ledger:", error);
+    return openaiError(500, "Failed to load paid fallbacks", "server_error");
   }
 };
 
@@ -1076,6 +1138,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   if (!commit.ok) {
     return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   }
+  invalidateApiKeyPolicy(updated.id);
 
   return json(
     200,
@@ -1144,6 +1207,7 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
   if (!commit.ok) {
     return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   }
+  invalidateApiKeyPolicy(updated.id);
 
   return json(
     200,
@@ -1204,6 +1268,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
   if (!commit.ok) {
     return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   }
+  invalidateApiKeyPolicy(updated.id);
 
   return json(
     200,
@@ -1245,9 +1310,16 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
   if (!commit.ok) {
     return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   }
+  invalidateApiKeyPolicy(id);
 
   for await (const requestEntry of kv.list({ prefix: apiKeyRequestLogPrefix(id) })) {
     await kv.delete(requestEntry.key);
+  }
+  for await (const legacyRequestEntry of kv.list({ prefix: legacyApiKeyRequestLogPrefix(id) })) {
+    await kv.delete(legacyRequestEntry.key);
+  }
+  for await (const counterEntry of kv.list({ prefix: [...API_KEY_USAGE_V2_PREFIX, id] })) {
+    await kv.delete(counterEntry.key);
   }
 
   return json(200, { id }, { "x-ubq-upstream": "chatgpt_codex" });

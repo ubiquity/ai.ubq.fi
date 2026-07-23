@@ -3,7 +3,14 @@ import { config } from "../src/config.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 
-const kvStore = new Map<string, unknown>();
+let resetAuthCache = (): void => {};
+class HealthKvStore extends Map<string, unknown> {
+  override clear(): void {
+    super.clear();
+    resetAuthCache();
+  }
+}
+const kvStore = new HealthKvStore();
 
 const kvStub = {
   get: (key: Deno.KvKey) =>
@@ -47,6 +54,8 @@ const kvStub = {
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
 const { handleHealth, handleHealthAuth, handleHealthUpstream } = await import("../src/health.ts");
+const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+resetAuthCache = resetCodexAuthCacheForTest;
 
 const base64Url = (value: string): string => btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 

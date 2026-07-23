@@ -35,11 +35,13 @@ const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
 class MemoryKv {
   readonly entries = new Map<string, StoredEntry>();
   beforeAtomicCommit: (() => void) | null = null;
+  atomicCommitFailures = 0;
   #version = 0;
 
   clear(): void {
     this.entries.clear();
     this.beforeAtomicCommit = null;
+    this.atomicCommitFailures = 0;
     this.#version = 0;
   }
 
@@ -168,6 +170,7 @@ class MemoryKv {
         this.beforeAtomicCommit = null;
         this.#purgeExpired();
         if (checks.some((check) => this.versionstamp(check.key) !== check.versionstamp)) {
+          this.atomicCommitFailures += 1;
           return Promise.resolve({ ok: false });
         }
 
@@ -194,19 +197,17 @@ const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv);
 
 const {
-  API_KEY_HASH_PREFIX,
-  API_KEY_ID_PREFIX,
   apiKeyHashKey,
   apiKeyIdKey,
 } = await import("../src/api_keys.ts");
 const {
   apiKeyRequestLogKey,
-  apiKeyUsageDailyKey,
-  apiKeyUsageKey,
   listApiKeyRequestLogs,
+  recordApiKeyRequestLog,
+  updateApiKeyRequestLog,
 } = await import("../src/analytics.ts");
 const {
-  ensurePaidFallbackBackfill,
+  hasStrictPaidFallbackKeyPolicy,
   hasStrictPaidFallbackPolicy,
   PAID_FALLBACK_UNRECONCILABLE_TIMEOUT_MS,
   reconcileApiKeyPaidFallbacks,
@@ -214,8 +215,6 @@ const {
   recordYunwuUpstreamResponse,
   reservePaidFallback,
 } = await import("../src/paid_fallback.ts");
-
-const migrationKey = ["uos_ai", "migrations", "api_key_paid_fallback_v1"] as const;
 
 const strictKeyRecord = (
   overrides: Record<string, unknown> = {},
@@ -295,79 +294,142 @@ const reservationInput = (
   path: "/v1/responses",
   stream: false,
   reasoning: "high",
+  reason: "primary_429" as const,
 });
 
-Deno.test("paid fallback backfill is one-time and idempotent for legacy ID/hash pairs", async () => {
-  memoryKv.clear();
-  const now = Date.now();
-  const legacyId = {
-    id: "legacy-key",
-    name: "Legacy",
-    prefix: "u_legacy",
-    hash: "legacy-hash",
-    created_at_ms: now - 1_000,
-    expires_at_ms: -1,
-    revoked_at_ms: null,
-    usage_limit_requests: 50,
-    usage_requests: 2,
-    usage_reset_at_ms: now + 10_000,
-    window_ms: 60_000,
-  };
-  const legacyHash = {
-    id: legacyId.id,
-    expires_at_ms: legacyId.expires_at_ms,
-    revoked_at_ms: legacyId.revoked_at_ms,
-    usage_limit_requests: legacyId.usage_limit_requests,
-    usage_requests: legacyId.usage_requests,
-    usage_reset_at_ms: legacyId.usage_reset_at_ms,
-    window_ms: legacyId.window_ms,
-  };
-  await memoryKv.set([...API_KEY_ID_PREFIX, legacyId.id], legacyId);
-  await memoryKv.set([...API_KEY_HASH_PREFIX, legacyId.hash], legacyHash);
-
-  await ensurePaidFallbackBackfill(kv);
-
-  const migratedId = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(legacyId.id));
-  const migratedHash = await memoryKv.get<Record<string, unknown>>(apiKeyHashKey(legacyId.hash));
-  assert.equal(hasStrictPaidFallbackPolicy(migratedId.value), true);
-  assert.equal(hasStrictPaidFallbackPolicy(migratedHash.value), true);
-  assert.deepEqual(
-    {
-      enabled: migratedId.value?.paid_fallback_enabled,
-      limit: migratedId.value?.paid_fallback_limit_microcredits,
-      spent: migratedId.value?.paid_fallback_spent_microcredits,
-      reserved: migratedId.value?.paid_fallback_reserved_microcredits,
-      reservation: migratedId.value?.paid_fallback_reservation_request_id,
-      models: migratedId.value?.paid_fallback_model_ids,
-      quota: migratedId.value?.paid_fallback_quota_per_credit,
-      checked: migratedId.value?.paid_fallback_pricing_checked_at_ms,
-    },
-    {
-      enabled: false,
-      limit: 0,
-      spent: 0,
-      reserved: 0,
-      reservation: null,
-      models: [],
-      quota: 0,
-      checked: null,
-    },
-  );
-  assert.equal(migratedHash.value?.paid_fallback_enabled, false);
-  assert.equal(migratedHash.value?.paid_fallback_limit_microcredits, 0);
-
-  const firstIdVersion = migratedId.versionstamp;
-  const firstHashVersion = migratedHash.versionstamp;
-  const firstMarkerVersion = memoryKv.versionstamp(migrationKey);
-  await ensurePaidFallbackBackfill(kv);
-
-  assert.equal(memoryKv.versionstamp(apiKeyIdKey(legacyId.id)), firstIdVersion);
-  assert.equal(memoryKv.versionstamp(apiKeyHashKey(legacyId.hash)), firstHashVersion);
-  assert.equal(memoryKv.versionstamp(migrationKey), firstMarkerVersion);
-  assert.deepEqual((await memoryKv.get(migrationKey)).value, {
-    version: 1,
-    completed_at_ms: (await memoryKv.get<Record<string, unknown>>(migrationKey)).value?.completed_at_ms,
+Deno.test("strict paid fallback policy accepts valid disabled history and unlimited reservation state", () => {
+  const disabledHistory = strictKeyRecord({
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: 5_000_000,
+    paid_fallback_spent_microcredits: 1_250_000,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
   });
+  assert.equal(hasStrictPaidFallbackPolicy(disabledHistory), true);
+  assert.equal(hasStrictPaidFallbackKeyPolicy(disabledHistory), true);
+
+  const neverEnabled = strictKeyRecord({
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: 0,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+    paid_fallback_model_ids: [],
+    paid_fallback_quota_per_credit: 0,
+    paid_fallback_pricing_checked_at_ms: null,
+  });
+  assert.equal(hasStrictPaidFallbackKeyPolicy(neverEnabled), true);
+
+  const unlimitedReservation = strictKeyRecord({
+    paid_fallback_limit_microcredits: -1,
+    paid_fallback_spent_microcredits: 50_000_000,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: "request-unlimited",
+  });
+  assert.equal(hasStrictPaidFallbackPolicy(unlimitedReservation), true);
+  assert.equal(hasStrictPaidFallbackKeyPolicy(unlimitedReservation), true);
+});
+
+Deno.test("strict paid fallback policy rejects inconsistent caps and reservations", () => {
+  const invalidCommonPolicies = [
+    { paid_fallback_spent_microcredits: -1 },
+    { paid_fallback_spent_microcredits: Number.MAX_SAFE_INTEGER + 1 },
+    { paid_fallback_reserved_microcredits: -1 },
+    { paid_fallback_reserved_microcredits: Number.MAX_SAFE_INTEGER + 1 },
+    {
+      paid_fallback_reserved_microcredits: 1,
+      paid_fallback_reservation_request_id: null,
+    },
+    {
+      paid_fallback_limit_microcredits: 1_000_000,
+      paid_fallback_spent_microcredits: 900_000,
+      paid_fallback_reserved_microcredits: 100_001,
+      paid_fallback_reservation_request_id: "request-over-cap",
+    },
+    { paid_fallback_limit_microcredits: 0 },
+    { paid_fallback_limit_microcredits: -2 },
+    {
+      paid_fallback_reserved_microcredits: 0,
+      paid_fallback_reservation_request_id: "request-empty-bounded-reservation",
+    },
+    {
+      paid_fallback_enabled: false,
+      paid_fallback_reserved_microcredits: 0,
+      paid_fallback_reservation_request_id: "request-disabled",
+    },
+    {
+      paid_fallback_limit_microcredits: -1,
+      paid_fallback_reserved_microcredits: 1,
+      paid_fallback_reservation_request_id: "request-unlimited-with-amount",
+    },
+  ];
+  for (const overrides of invalidCommonPolicies) {
+    assert.equal(
+      hasStrictPaidFallbackPolicy(strictKeyRecord(overrides)),
+      false,
+      JSON.stringify(overrides),
+    );
+  }
+
+  const invalidEnabledKeyPolicies = [
+    { paid_fallback_model_ids: [] },
+    { paid_fallback_quota_per_credit: 0 },
+    { paid_fallback_quota_per_credit: Number.MAX_SAFE_INTEGER + 1 },
+    { paid_fallback_pricing_checked_at_ms: null },
+    { paid_fallback_pricing_checked_at_ms: 0 },
+    { paid_fallback_pricing_checked_at_ms: Number.MAX_SAFE_INTEGER + 1 },
+  ];
+  for (const overrides of invalidEnabledKeyPolicies) {
+    assert.equal(
+      hasStrictPaidFallbackKeyPolicy(strictKeyRecord(overrides)),
+      false,
+      JSON.stringify(overrides),
+    );
+  }
+});
+
+Deno.test("concurrent paid fallback ledger patches retry without losing either update", async () => {
+  memoryKv.clear();
+  const keyId = "key-concurrent-ledger";
+  const requestId = "request-concurrent-ledger";
+  const createdAtMs = Date.now();
+
+  await recordApiKeyRequestLog(keyId, {
+    id: requestId,
+    route: "responses",
+    path: "/v1/responses",
+    method: "POST",
+    status_code: 0,
+    stream: false,
+    created_at_ms: createdAtMs,
+    provider: "yunwu",
+    billing_status: "pending",
+  }, kv);
+
+  await Promise.all([
+    updateApiKeyRequestLog(
+      keyId,
+      createdAtMs,
+      requestId,
+      { provider_request_id: "provider-concurrent" },
+      kv,
+    ),
+    updateApiKeyRequestLog(
+      keyId,
+      createdAtMs,
+      requestId,
+      { status_code: 200, completed_at_ms: createdAtMs + 50 },
+      kv,
+    ),
+  ]);
+
+  assert.equal(memoryKv.atomicCommitFailures, 1);
+  const stored = await memoryKv.get<Record<string, unknown>>(
+    apiKeyRequestLogKey(keyId, createdAtMs, requestId),
+  );
+  assert.equal(stored.value?.provider_request_id, "provider-concurrent");
+  assert.equal(stored.value?.status_code, 200);
+  assert.equal(stored.value?.completed_at_ms, createdAtMs + 50);
 });
 
 Deno.test("bounded paid fallback permits one outstanding request while unlimited fallback stays concurrent", async () => {
@@ -379,6 +441,7 @@ Deno.test("bounded paid fallback permits one outstanding request while unlimited
     assert.equal(first.kind, "reserved");
     if (first.kind !== "reserved") throw new Error("expected reservation");
     assert.equal(first.reservation.reserved_microcredits, 4_000_000);
+    assert.equal(first.reservation.quota_used_percent, 20);
 
     const storedId = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(String(record.id)));
     const storedHash = await memoryKv.get<Record<string, unknown>>(apiKeyHashKey(String(record.hash)));
@@ -420,6 +483,7 @@ Deno.test("bounded paid fallback permits one outstanding request while unlimited
     assert.equal(unlimitedFirst.kind, "reserved");
     if (unlimitedFirst.kind !== "reserved") throw new Error("expected unlimited reservation");
     assert.equal(unlimitedFirst.reservation.reserved_microcredits, 0);
+    assert.equal(unlimitedFirst.reservation.quota_used_percent, null);
     const storedUnlimited = await memoryKv.get<Record<string, unknown>>(
       apiKeyIdKey(String(unlimited.id)),
     );
@@ -483,6 +547,47 @@ Deno.test("bounded paid fallback permits one outstanding request while unlimited
       (await listApiKeyRequestLogs(String(concurrent.id))).length,
       0,
     );
+  });
+});
+
+Deno.test("disabled paid fallback does not rewrite an expired usage window", async () => {
+  memoryKv.clear();
+  const expiredResetAtMs = Date.now() - 1;
+  const record = await seedStrictKey({
+    id: "key-disabled-expired",
+    hash: "hash-disabled-expired",
+    paid_fallback_enabled: false,
+    usage_reset_at_ms: expiredResetAtMs,
+  });
+
+  assert.deepEqual(
+    await reservePaidFallback(reservationInput(String(record.id), "request-disabled")),
+    { kind: "skip", reason: "disabled" },
+  );
+  const stored = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(String(record.id)));
+  assert.equal(stored.value?.usage_reset_at_ms, expiredResetAtMs);
+  assert.equal(stored.value?.paid_fallback_reservation_request_id, null);
+});
+
+Deno.test("paid fallback resets spend only when a new fallback enters an expired window", async () => {
+  memoryKv.clear();
+
+  await withYunwuApiKey(async () => {
+    const now = Date.now();
+    const record = await seedStrictKey({
+      usage_reset_at_ms: now - 1_000,
+      window_ms: 60_000,
+      paid_fallback_spent_microcredits: 5_000_000,
+    });
+    const decision = await reservePaidFallback(reservationInput(String(record.id), "request-new-window", now));
+    assert.equal(decision.kind, "reserved");
+    if (decision.kind !== "reserved") return;
+    assert.equal(decision.reservation.reserved_microcredits, 5_000_000);
+    assert.ok(decision.reservation.window_reset_at_ms > now);
+
+    const updated = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(String(record.id)));
+    assert.equal(updated.value?.paid_fallback_spent_microcredits, 0);
+    assert.equal(updated.value?.paid_fallback_reservation_request_id, "request-new-window");
   });
 });
 
@@ -595,25 +700,8 @@ Deno.test("YunWu reconciliation records exact microcredits once and releases the
         ) ?? 0) > Date.now(),
       );
 
-      const usage = await memoryKv.get<Record<string, unknown>>(apiKeyUsageKey(String(record.id)));
-      assert.equal(usage.value?.yunwu_fallback_requests, 1);
-      assert.equal(usage.value?.yunwu_input_tokens, 40);
-      assert.equal(usage.value?.yunwu_output_tokens, 60);
-      assert.equal(usage.value?.yunwu_total_tokens, 100);
-      assert.equal(usage.value?.yunwu_spend_microcredits, 246_912);
-      const daily = await memoryKv.get<{ days?: Array<Record<string, unknown>> }>(
-        apiKeyUsageDailyKey(String(record.id)),
-      );
-      assert.equal(daily.value?.days?.[0]?.yunwu_fallback_requests, 1);
-      assert.equal(daily.value?.days?.[0]?.yunwu_spend_microcredits, 246_912);
-
       assert.equal(await reconcileApiKeyPaidFallbacks(String(record.id)), 0);
       assert.equal(logFetches, 1);
-      assert.equal(
-        (await memoryKv.get<Record<string, unknown>>(apiKeyUsageKey(String(record.id)))).value
-          ?.yunwu_spend_microcredits,
-        246_912,
-      );
 
       const next = await reservePaidFallback(
         reservationInput(String(record.id), "gateway-request-two"),
@@ -693,11 +781,6 @@ Deno.test("late reconciliation after a window reset updates lifetime spend but n
       assert.equal(after.value?.paid_fallback_spent_microcredits, 0);
       assert.equal(after.value?.paid_fallback_reserved_microcredits, 0);
       assert.equal(after.value?.paid_fallback_reservation_request_id, null);
-      assert.equal(
-        (await memoryKv.get<Record<string, unknown>>(apiKeyUsageKey(String(record.id)))).value
-          ?.yunwu_spend_microcredits,
-        100_000,
-      );
       assert.equal((await listApiKeyRequestLogs(String(record.id)))[0].spend_microcredits, 100_000);
     });
   } finally {

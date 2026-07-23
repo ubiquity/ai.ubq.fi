@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
 import { appendBooleanParam } from "../scripts/kv-migrate.ts";
-import { importKvMigrationLines, validateKvMigrationTarget } from "../src/kv_migration.ts";
+import {
+  classifyKvMigrationKey,
+  importKvMigrationLines,
+  KV_READ_INCIDENT_V2_MIGRATION_KEY,
+  migrateKvReadIncidentV2,
+  validateKvMigrationTarget,
+} from "../src/kv_migration.ts";
+
+if (typeof Deno.KvU64 !== "function") {
+  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
+    constructor(readonly value: bigint) {}
+  } as typeof Deno.KvU64;
+}
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 
@@ -32,6 +44,34 @@ const makeKvStub = (store: Map<string, unknown>): Deno.Kv =>
       store.set(keyToString(key), value);
       return Promise.resolve({ ok: true } as const);
     },
+    delete: (key: Deno.KvKey) => {
+      store.delete(keyToString(key));
+      return Promise.resolve();
+    },
+    atomic: () => {
+      const writes: Array<{ key: Deno.KvKey; value: unknown }> = [];
+      const sums: Array<{ key: Deno.KvKey; value: bigint }> = [];
+      const operation = {
+        check: (_entry: Deno.KvEntryMaybe<unknown>) => operation,
+        set: (key: Deno.KvKey, value: unknown) => {
+          writes.push({ key, value });
+          return operation;
+        },
+        sum: (key: Deno.KvKey, value: bigint) => {
+          sums.push({ key, value });
+          return operation;
+        },
+        commit: () => {
+          for (const write of writes) store.set(keyToString(write.key), write.value);
+          for (const sum of sums) {
+            const existing = store.get(keyToString(sum.key)) as Deno.KvU64 | undefined;
+            store.set(keyToString(sum.key), new Deno.KvU64((existing?.value ?? 0n) + sum.value));
+          }
+          return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
+        },
+      };
+      return operation;
+    },
     list: async function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
       const prefix = "prefix" in selector ? selector.prefix : [];
       const limit = typeof options?.limit === "number" ? options.limit : Infinity;
@@ -46,6 +86,56 @@ const makeKvStub = (store: Map<string, unknown>): Deno.Kv =>
     },
   }) as unknown as Deno.Kv;
 
+const seedUnlimitedIncidentApiKey = (
+  store: Map<string, unknown>,
+  options: Readonly<{
+    id?: string;
+    hash?: string;
+    sharedOverrides?: Record<string, unknown>;
+    keyOverrides?: Record<string, unknown>;
+  }> = {},
+) => {
+  const now = Date.now();
+  const id = options.id ?? "unlimited-paid-fallback-key";
+  const hash = options.hash ?? "d".repeat(43);
+  const shared = {
+    id,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: -1,
+    usage_requests: 0,
+    usage_reset_at_ms: now + 60_000,
+    window_ms: 60_000,
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: -1,
+    paid_fallback_spent_microcredits: 2_000_000,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: "pending-unlimited-request",
+    ...options.sharedOverrides,
+  };
+  const record = {
+    ...shared,
+    name: "Unlimited paid fallback",
+    prefix: "u_1234567890",
+    hash,
+    created_at_ms: now - 60_000,
+    paid_fallback_model_ids: ["gpt-5.5"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_pricing_checked_at_ms: now,
+    ...options.keyOverrides,
+  };
+  store.set(keyToString(["ubq_ai", "codex_models"]), {
+    models: [{ slug: "gpt-5.5", supported_reasoning_levels: ["none", "medium"] }],
+    source: "chatgpt_codex",
+    updated_at_ms: now,
+  });
+  store.set(keyToString(["default", "model"]), "gpt-5.5");
+  store.set(keyToString(["default", "reasoning_effort"]), "medium");
+  store.set(keyToString(["ubq_ai", "api_keys", "id", id]), record);
+  store.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), shared);
+  return { id, hash, now, record, shared };
+};
+
 Deno.test("KV migration HTTP CLI serializes explicit false flags", () => {
   const url = new URL("https://ai.ubq.fi/admin/kv-migration/import");
   appendBooleanParam(url, "include_legacy", false);
@@ -53,6 +143,18 @@ Deno.test("KV migration HTTP CLI serializes explicit false flags", () => {
 
   assert.equal(url.searchParams.get("include_legacy"), "0");
   assert.equal(url.searchParams.get("overwrite"), "1");
+});
+
+Deno.test("KV migration classifies v2 incident state and skips the transient circuit", () => {
+  const options = { profile: "prod", includeCache: false, includeLegacy: false } as const;
+  assert.equal(classifyKvMigrationKey(["uos_ai", "api_key_usage", "v2", "id"], options).action, "import");
+  assert.equal(classifyKvMigrationKey(["uos_ai", "paid_fallback", "ledger", "id"], options).action, "import");
+  assert.equal(classifyKvMigrationKey(["uos_ai", "runtime_config", "v2"], options).action, "import");
+  assert.deepEqual(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options), {
+    action: "skip",
+    group: "codex_rate_limit",
+    reason: "transient_runtime_state",
+  });
 });
 
 Deno.test("prod KV migration imports only modern durable rows by default", async () => {
@@ -201,4 +303,464 @@ Deno.test("KV migration validation rejects unusable codex model snapshots for co
   const result = await validateKvMigrationTarget(makeKvStub(store));
 
   assert.match(result.errors.join("\n"), /codex model snapshot is empty or malformed/);
+});
+
+Deno.test("KV incident migration rejects an active reservation without a pending ledger before mutation", async () => {
+  const store = new Map<string, unknown>();
+  const { id } = seedUnlimitedIncidentApiKey(store);
+  const before = structuredClone([...store.entries()]);
+
+  const validation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(validation.errors.join("\n"), new RegExp(`reservation has no pending ledger record: ${id}`));
+  await assert.rejects(
+    () => migrateKvReadIncidentV2(makeKvStub(store)),
+    /Paid fallback ledger validation failed: paid fallback reservation has no pending ledger record/,
+  );
+
+  assert.deepEqual([...store.entries()], before);
+  assert.equal(store.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
+  assert.equal(store.has(keyToString(KV_READ_INCIDENT_V2_MIGRATION_KEY)), false);
+});
+
+Deno.test("KV incident migration preserves a valid unlimited reservation and requires its ledger to stay pending", async () => {
+  const store = new Map<string, unknown>();
+  const { id, now } = seedUnlimitedIncidentApiKey(store);
+  const requestId = "pending-unlimited-request";
+  const legacyKey = ["ubq_ai", "api_keys", "request_log", id, now, requestId] as const;
+  const ledgerKey = ["uos_ai", "paid_fallback", "ledger", id, now, requestId] as const;
+  const pendingLedger = {
+    id: requestId,
+    key_id: id,
+    provider: "yunwu",
+    billing_status: "pending",
+    created_at_ms: now,
+  };
+  store.set(keyToString(legacyKey), pendingLedger);
+
+  const migrated = await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.equal(migrated.handoff_phase, "no_bounded_keys");
+  assert.equal(migrated.paid_fallback_records, 1);
+  assert.deepEqual(store.get(keyToString(ledgerKey)), pendingLedger);
+  assert.deepEqual((await validateKvMigrationTarget(makeKvStub(store))).errors, []);
+
+  store.set(keyToString(ledgerKey), { ...pendingLedger, billing_status: "reconciled" });
+  const terminalLedger = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(terminalLedger.errors.join("\n"), /reservation has no pending ledger record/);
+});
+
+Deno.test("KV incident migration permits matching terminal ledgers but rejects destination identity collisions", async () => {
+  const store = new Map<string, unknown>();
+  const { id, now } = seedUnlimitedIncidentApiKey(store, {
+    sharedOverrides: { paid_fallback_reservation_request_id: null },
+  });
+  const requestId = "legacy-pending-request";
+  const legacyKey = ["ubq_ai", "api_keys", "request_log", id, now, requestId] as const;
+  const ledgerKey = ["uos_ai", "paid_fallback", "ledger", id, now, requestId] as const;
+  const pendingLedger = {
+    id: requestId,
+    key_id: id,
+    provider: "yunwu",
+    billing_status: "pending",
+    created_at_ms: now,
+  };
+  store.set(keyToString(legacyKey), pendingLedger);
+  store.set(keyToString(ledgerKey), {
+    ...pendingLedger,
+    id: "different-request",
+    billing_status: "reconciled",
+  });
+  const before = structuredClone([...store.entries()]);
+
+  await assert.rejects(
+    () => migrateKvReadIncidentV2(makeKvStub(store)),
+    /paid fallback ledger destination conflicts with legacy record/,
+  );
+  assert.deepEqual([...store.entries()], before);
+  assert.equal(store.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
+  assert.equal(store.has(keyToString(KV_READ_INCIDENT_V2_MIGRATION_KEY)), false);
+
+  const reconciledLedger = { ...pendingLedger, billing_status: "reconciled" };
+  store.set(keyToString(ledgerKey), reconciledLedger);
+  const migrated = await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.equal(migrated.paid_fallback_records, 1);
+  assert.deepEqual(store.get(keyToString(ledgerKey)), reconciledLedger);
+});
+
+Deno.test("KV incident migration rejects inconsistent paid fallback policy before mutation", async () => {
+  const store = new Map<string, unknown>();
+  const { id, hash } = seedUnlimitedIncidentApiKey(store, {
+    sharedOverrides: {
+      paid_fallback_limit_microcredits: 1_000_000,
+      paid_fallback_spent_microcredits: 900_000,
+      paid_fallback_reserved_microcredits: 200_000,
+    },
+  });
+  const before = structuredClone([...store.entries()]);
+
+  const validation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(validation.errors.join("\n"), /invalid core fields|invalid v2 policy/);
+  await assert.rejects(
+    () => migrateKvReadIncidentV2(makeKvStub(store)),
+    /API key policy validation failed/,
+  );
+  assert.deepEqual([...store.entries()], before);
+  assert.equal(store.has(keyToString(["ubq_ai", "api_keys", "id", id])), true);
+  assert.equal(store.has(keyToString(["ubq_ai", "api_keys", "hash", hash])), true);
+});
+
+Deno.test("KV incident migration resumes concurrent phase one and retains postdeploy counter versions", async () => {
+  const store = new Map<string, unknown>();
+  const now = Date.now();
+  const id = "bounded-key";
+  const hash = "a".repeat(43);
+  const fallback = {
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: 1_000_000,
+    paid_fallback_spent_microcredits: 100_000,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+  };
+  store.set(keyToString(["ubq_ai", "codex_models"]), {
+    models: [{ slug: "gpt-5.5", supported_reasoning_levels: ["none", "medium"] }],
+    source: "chatgpt_codex",
+    updated_at_ms: now,
+  });
+  store.set(keyToString(["default", "model"]), "gpt-5.5");
+  store.set(keyToString(["default", "reasoning_effort"]), "medium");
+  store.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    id,
+    name: "Bounded",
+    prefix: "u_0123456789",
+    hash,
+    created_at_ms: now,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 10,
+    usage_requests: 4,
+    usage_reset_at_ms: now + 60_000,
+    window_ms: 60_000,
+    ...fallback,
+    paid_fallback_model_ids: ["gpt-5.5"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_pricing_checked_at_ms: now,
+  });
+  store.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), {
+    id,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 10,
+    usage_requests: 4,
+    usage_reset_at_ms: now + 60_000,
+    window_ms: 60_000,
+    ...fallback,
+  });
+  const staleCounterKey = ["uos_ai", "api_key_usage", "v2", id, `10:60000:${now + 60_000}`, now] as const;
+  const expiredCounterKey = ["uos_ai", "api_key_usage", "v2", id, `10:60000:${now}`, now - 60_000] as const;
+  const unsafeCurrentCounterKey = ["uos_ai", "api_key_usage", "v2", id, "60000", now] as const;
+  const currentBaselineKey = [
+    ...KV_READ_INCIDENT_V2_MIGRATION_KEY,
+    "api_key_usage_baseline",
+    id,
+    "60000",
+    now,
+  ] as const;
+  store.set(keyToString(staleCounterKey), new Deno.KvU64(7n));
+  store.set(keyToString(expiredCounterKey), new Deno.KvU64(99n));
+  store.set(keyToString(unsafeCurrentCounterKey), new Deno.KvU64(8n));
+  store.set(keyToString(KV_READ_INCIDENT_V2_MIGRATION_KEY), { version: 2, completed_at_ms: now - 1 });
+  for (const [requestId, billingStatus] of [["pending", "pending"], ["done", "reconciled"]] as const) {
+    store.set(keyToString(["ubq_ai", "api_keys", "request_log", id, now, requestId]), {
+      id: requestId,
+      key_id: id,
+      provider: "yunwu",
+      billing_status: billingStatus,
+      created_at_ms: now,
+    });
+  }
+
+  const result = await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.deepEqual(result, {
+    api_keys: 1,
+    bounded_counters: 1,
+    handoff_phase: "predeploy_seed",
+    bounded_baselines_created: 1,
+    bounded_baselines_reconciled: 0,
+    legacy_usage_delta_applied: 0,
+    paid_fallback_records: 1,
+    runtime_config_written: true,
+  });
+  assert.equal(store.has(keyToString(["uos_ai", "runtime_config", "v2"])), true);
+  assert.equal(store.has(keyToString(staleCounterKey)), false);
+  assert.equal(store.has(keyToString(expiredCounterKey)), false);
+  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as Deno.KvU64).value, 4n);
+  const currentCounter = [...store.entries()].find(([key]) => key.includes('"api_key_usage","v2"'))?.[1] as
+    | Deno.KvU64
+    | undefined;
+  assert.equal(currentCounter?.value, 4n);
+  const ledgerKey = ["uos_ai", "paid_fallback", "ledger", id, now, "pending"] as const;
+  assert.equal(store.has(keyToString(ledgerKey)), true);
+  assert.equal(store.has(keyToString(["uos_ai", "paid_fallback", "ledger", id, now, "done"])), false);
+  const validation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.deepEqual(validation.errors, []);
+  assert.equal(validation.counts.api_key_bounded_counter_baselines_v2, 1);
+  assert.equal(validation.counts.api_key_bounded_counter_reconciled_baselines_v2, 0);
+
+  // A concurrent phase-one invocation may observe the missing global marker
+  // after another invocation has already seeded this per-key baseline. It must
+  // catch up old-revision usage without declaring post-deploy reconciliation.
+  store.delete(keyToString(KV_READ_INCIDENT_V2_MIGRATION_KEY));
+  const phaseOneIdPolicyKey = keyToString(["ubq_ai", "api_keys", "id", id]);
+  const phaseOneHashPolicyKey = keyToString(["ubq_ai", "api_keys", "hash", hash]);
+  const phaseOneIdPolicy = store.get(phaseOneIdPolicyKey) as Record<string, unknown>;
+  const phaseOneHashPolicy = store.get(phaseOneHashPolicyKey) as Record<string, unknown>;
+  store.set(phaseOneIdPolicyKey, { ...phaseOneIdPolicy, usage_requests: 5 });
+  store.set(phaseOneHashPolicyKey, { ...phaseOneHashPolicy, usage_requests: 5 });
+
+  const concurrentPhaseOne = await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.equal(concurrentPhaseOne.handoff_phase, "predeploy_seed");
+  assert.equal(concurrentPhaseOne.bounded_baselines_created, 0);
+  assert.equal(concurrentPhaseOne.bounded_baselines_reconciled, 0);
+  assert.equal(concurrentPhaseOne.legacy_usage_delta_applied, 1);
+  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as Deno.KvU64).value, 5n);
+  const caughtUpBaseline = store.get(keyToString(currentBaselineKey)) as Record<string, unknown>;
+  assert.equal(caughtUpBaseline.last_legacy_usage_requests, 5);
+  assert.equal(caughtUpBaseline.reconciled_at_ms, null);
+  assert.equal(caughtUpBaseline.reconciliation_runs, 0);
+
+  const migratedLedger = store.get(keyToString(ledgerKey)) as Record<string, unknown>;
+  const reconciledLedger = {
+    ...migratedLedger,
+    billing_status: "reconciled",
+    spend_microcredits: 123,
+  };
+  store.set(keyToString(ledgerKey), reconciledLedger);
+
+  const idPolicyKey = keyToString(["ubq_ai", "api_keys", "id", id]);
+  const hashPolicyKey = keyToString(["ubq_ai", "api_keys", "hash", hash]);
+  const initialIdPolicy = store.get(idPolicyKey) as Record<string, unknown>;
+  const initialHashPolicy = store.get(hashPolicyKey) as Record<string, unknown>;
+  store.set(idPolicyKey, { ...initialIdPolicy, usage_requests: 7 });
+  store.set(hashPolicyKey, { ...initialHashPolicy, usage_requests: 7 });
+  const currentCounterEntry = [...store.entries()].find(([key]) => key.includes('"api_key_usage","v2"'));
+  assert.ok(currentCounterEntry);
+  store.set(currentCounterEntry[0], new Deno.KvU64(7n));
+
+  // Once phase one has installed the durable marker, a post-deploy migration
+  // must not delete a counter created for a newer window or an older baseline.
+  const concurrentlyCreatedNextWindowCounterKey = [
+    "uos_ai",
+    "api_key_usage",
+    "v2",
+    id,
+    "60000",
+    now + 60_000,
+  ] as const;
+  const retainedPriorBaselineKey = [
+    ...KV_READ_INCIDENT_V2_MIGRATION_KEY,
+    "api_key_usage_baseline",
+    id,
+    "legacy-policy",
+    now - 60_000,
+  ] as const;
+  store.set(keyToString(concurrentlyCreatedNextWindowCounterKey), new Deno.KvU64(2n));
+  store.set(keyToString(retainedPriorBaselineKey), {
+    version: 1,
+    key_id: id,
+    policy_version: "legacy-policy",
+    window_start_ms: now - 60_000,
+    last_legacy_usage_requests: 1,
+    seeded_at_ms: now,
+    reconciled_at_ms: now,
+    reconciliation_runs: 1,
+  });
+
+  const rerun = await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.equal(rerun.handoff_phase, "postdeploy_reconcile");
+  assert.equal(rerun.bounded_baselines_created, 0);
+  assert.equal(rerun.bounded_baselines_reconciled, 1);
+  assert.equal(rerun.legacy_usage_delta_applied, 2);
+  assert.equal(rerun.paid_fallback_records, 1);
+  assert.deepEqual(store.get(keyToString(ledgerKey)), reconciledLedger);
+  assert.equal((store.get(currentCounterEntry[0]) as Deno.KvU64).value, 9n);
+  assert.equal(
+    (store.get(keyToString(concurrentlyCreatedNextWindowCounterKey)) as Deno.KvU64).value,
+    2n,
+  );
+  assert.equal(store.has(keyToString(retainedPriorBaselineKey)), true);
+
+  const repeated = await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.equal(repeated.handoff_phase, "postdeploy_reconcile");
+  assert.equal(repeated.legacy_usage_delta_applied, 0);
+  assert.equal((store.get(currentCounterEntry[0]) as Deno.KvU64).value, 9n);
+  const reconciledValidation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.deepEqual(reconciledValidation.errors, []);
+  assert.equal(reconciledValidation.counts.api_key_bounded_counters_v2, 2);
+  assert.equal(reconciledValidation.counts.api_key_bounded_counter_baselines_v2, 2);
+  assert.equal(reconciledValidation.counts.api_key_bounded_counter_reconciled_baselines_v2, 2);
+
+  const idPolicy = store.get(idPolicyKey);
+  store.delete(idPolicyKey);
+  store.set(keyToString(["ubq_ai", "api_keys", "id", "wrong-key-suffix"]), idPolicy);
+  const wrongIdKey = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(wrongIdKey.errors.join("\n"), /id key suffix does not match record id/);
+  await assert.rejects(
+    () => migrateKvReadIncidentV2(makeKvStub(store)),
+    /id key suffix does not match record id/,
+  );
+  store.delete(keyToString(["ubq_ai", "api_keys", "id", "wrong-key-suffix"]));
+  store.set(idPolicyKey, idPolicy);
+
+  const hashPolicy = store.get(hashPolicyKey) as Record<string, unknown>;
+  const orphanHash = "c".repeat(43);
+  store.set(keyToString(["ubq_ai", "api_keys", "hash", orphanHash]), {
+    ...hashPolicy,
+    id: "orphan-key",
+  });
+  const orphaned = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(orphaned.errors.join("\n"), /hash policy is orphaned/);
+  store.delete(keyToString(["ubq_ai", "api_keys", "hash", orphanHash]));
+
+  store.set(hashPolicyKey, { ...hashPolicy, usage_limit_requests: 11 });
+  const drifted = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(drifted.errors.join("\n"), /hash policy is missing or inconsistent/);
+});
+
+Deno.test("KV incident migration starts a fresh counter after an expired legacy window and rejects malformed policy", async () => {
+  const store = new Map<string, unknown>();
+  const now = Date.now();
+  const id = "expired-bounded-key";
+  const hash = "b".repeat(43);
+  const resetAtMs = now - 1;
+  const windowMs = 60_000;
+  const sharedPolicy = {
+    id,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 10,
+    usage_requests: 99,
+    usage_reset_at_ms: resetAtMs,
+    window_ms: windowMs,
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: 0,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+  };
+  store.set(keyToString(["ubq_ai", "codex_models"]), {
+    models: [{ slug: "gpt-5.5", supported_reasoning_levels: ["none", "medium"] }],
+    source: "chatgpt_codex",
+    updated_at_ms: now,
+  });
+  store.set(keyToString(["default", "model"]), "gpt-5.5");
+  store.set(keyToString(["default", "reasoning_effort"]), "medium");
+  store.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    ...sharedPolicy,
+    name: "Expired bounded",
+    prefix: "u_abcdef0123",
+    hash,
+    created_at_ms: now - windowMs,
+    paid_fallback_model_ids: [],
+    paid_fallback_quota_per_credit: 0,
+    paid_fallback_pricing_checked_at_ms: null,
+  });
+  store.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), sharedPolicy);
+  const expiredCounterKey = [
+    "uos_ai",
+    "api_key_usage",
+    "v2",
+    id,
+    `10:${windowMs}:${resetAtMs}`,
+    resetAtMs - windowMs,
+  ] as const;
+  store.set(keyToString(expiredCounterKey), new Deno.KvU64(99n));
+
+  await migrateKvReadIncidentV2(makeKvStub(store));
+
+  assert.equal(store.has(keyToString(expiredCounterKey)), false);
+  const counters = [...store.entries()].filter(([key]) => key.includes(`"api_key_usage","v2","${id}"`));
+  assert.equal(counters.length, 1);
+  assert.equal((counters[0][1] as Deno.KvU64).value, 0n);
+  const expiredValidation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.deepEqual(expiredValidation.errors, []);
+  assert.equal(expiredValidation.counts.api_key_bounded_counter_baselines_v2, 1);
+
+  const idPolicyKey = keyToString(["ubq_ai", "api_keys", "id", id]);
+  const hashPolicyKey = keyToString(["ubq_ai", "api_keys", "hash", hash]);
+  const migratedIdPolicy = store.get(idPolicyKey) as Record<string, unknown>;
+  const migratedHashPolicy = store.get(hashPolicyKey) as Record<string, unknown>;
+  const changedResetAtMs = now + windowMs;
+  store.set(idPolicyKey, { ...migratedIdPolicy, usage_requests: 2, usage_reset_at_ms: changedResetAtMs });
+  store.set(hashPolicyKey, { ...migratedHashPolicy, usage_requests: 2, usage_reset_at_ms: changedResetAtMs });
+  const rolledCounterKey = ["uos_ai", "api_key_usage", "v2", id, String(windowMs), now] as const;
+  store.set(keyToString(rolledCounterKey), new Deno.KvU64(3n));
+  const staleBaseline = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(staleBaseline.errors.join("\n"), /baseline is missing, stale, or invalid/);
+  const rolled = await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.equal(rolled.handoff_phase, "postdeploy_reconcile");
+  assert.equal(rolled.bounded_baselines_created, 1);
+  assert.equal(rolled.bounded_baselines_reconciled, 1);
+  assert.equal(rolled.legacy_usage_delta_applied, 2);
+  assert.equal((store.get(keyToString(rolledCounterKey)) as Deno.KvU64).value, 5n);
+  const rolledValidation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.deepEqual(rolledValidation.errors, []);
+  const repeatedRoll = await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.equal(repeatedRoll.legacy_usage_delta_applied, 0);
+  assert.equal((store.get(keyToString(rolledCounterKey)) as Deno.KvU64).value, 5n);
+
+  store.set(idPolicyKey, { ...(store.get(idPolicyKey) as Record<string, unknown>), usage_limit_requests: "bad" });
+  store.set(hashPolicyKey, {
+    ...(store.get(hashPolicyKey) as Record<string, unknown>),
+    usage_limit_requests: "bad",
+  });
+
+  const malformed = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(malformed.errors.join("\n"), /invalid core fields|invalid v2 policy/);
+  await assert.rejects(
+    () => migrateKvReadIncidentV2(makeKvStub(store)),
+    /API key policy validation failed/,
+  );
+});
+
+Deno.test("KV incident validation keeps revoked keys pinned to their stored window", async () => {
+  const store = new Map<string, unknown>();
+  const now = Date.now();
+  const id = "revoked-bounded-key";
+  const hash = "c".repeat(43);
+  const resetAtMs = now - 1;
+  const shared = {
+    id,
+    expires_at_ms: -1,
+    revoked_at_ms: now - 10_000,
+    usage_limit_requests: 20,
+    usage_requests: 4,
+    usage_reset_at_ms: resetAtMs,
+    window_ms: 60_000,
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: 0,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+  };
+  store.set(keyToString(["ubq_ai", "codex_models"]), {
+    models: [{ slug: "gpt-5.6-sol-max", supported_reasoning_levels: ["none"] }],
+    source: "test",
+    updated_at_ms: now,
+  });
+  store.set(keyToString(["default", "model"]), "gpt-5.6-sol-max");
+  store.set(keyToString(["default", "reasoning_effort"]), "none");
+  store.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    ...shared,
+    name: "Revoked bounded",
+    prefix: "u_abcdef0123",
+    hash,
+    created_at_ms: now - 120_000,
+    paid_fallback_model_ids: [],
+    paid_fallback_quota_per_credit: 0,
+    paid_fallback_pricing_checked_at_ms: null,
+  });
+  store.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), shared);
+
+  await migrateKvReadIncidentV2(makeKvStub(store));
+  const validation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.deepEqual(validation.errors, []);
 });

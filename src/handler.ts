@@ -2,7 +2,7 @@ import {
   handleAdminApiKeysCreate,
   handleAdminApiKeysDelete,
   handleAdminApiKeysList,
-  handleAdminApiKeysRequests,
+  handleAdminApiKeysPaidFallbacks,
   handleAdminApiKeysRevoke,
   handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
@@ -31,6 +31,7 @@ import {
   requireAdminAuth,
   requireSuperAdminAuth,
 } from "./auth.ts";
+import { type ApiKeyPolicy, apiKeyQuotaUsedPercent } from "./api_key_policy.ts";
 import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
 import {
@@ -39,6 +40,7 @@ import {
   incrementKernelUsageLimit,
 } from "./kernel_usage.ts";
 import {
+  getResponseTelemetry,
   handleChatCompletions,
   handleEmbeddings,
   handleEmbeddingsJobCreate,
@@ -47,6 +49,7 @@ import {
   handleModels,
   handleResponses,
   handleUosEmbeddings,
+  type ResponseTelemetry,
 } from "./openai.ts";
 import {
   handlePasskeyLoginFinish,
@@ -58,17 +61,9 @@ import {
   handlePasskeyUsersList,
   handlePasskeyUsersUpdate,
 } from "./passkeys.ts";
-import { recordApiKeyRequestLog } from "./analytics.ts";
 import { withCodexQuotaHeaders } from "./codex_quota.ts";
-import { ensurePaidFallbackBackfill } from "./paid_fallback.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
 import { sha256Hex } from "./utils.ts";
-import {
-  getCachedConfiguredYunwuQuotaSnapshot,
-  getConfiguredYunwuQuotaSnapshot,
-  invalidateConfiguredYunwuQuotaSnapshot,
-  type YunwuQuotaSnapshot,
-} from "./yunwu_quota.ts";
 
 type AuthenticatedClientResult = Extract<
   Awaited<ReturnType<typeof authenticateClient>>,
@@ -76,7 +71,12 @@ type AuthenticatedClientResult = Extract<
 >;
 
 export const resolveIdempotencyPrincipal = async (
-  authResult: Pick<AuthenticatedClientResult, "method" | "token">,
+  authResult: Readonly<{
+    token: string | null;
+    method:
+      | Readonly<{ kind: "kv_api_key"; key_id: string }>
+      | Exclude<AuthenticatedClientResult["method"], { kind: "kv_api_key" }>;
+  }>,
 ): Promise<string> => {
   switch (authResult.method.kind) {
     case "kv_api_key":
@@ -99,77 +99,159 @@ const normalizePath = (path: string): string => {
   return path.replace(/\/+$/, "");
 };
 
-const loadCodexQuotaSnapshot = async (signal: AbortSignal) => {
+const decorateInferenceQuota = (
+  response: Response,
+  policy: ApiKeyPolicy | null,
+  telemetry: ResponseTelemetry | null,
+): Response => {
+  const usedPercent = telemetry?.quotaUsedPercent !== undefined
+    ? telemetry.quotaUsedPercent
+    : apiKeyQuotaUsedPercent(policy);
+  return withCodexQuotaHeaders(response, usedPercent === null ? null : { used_percent: usedPercent });
+};
+
+const logTerminalRequest = (
+  input: Readonly<{
+    route: string;
+    response: Response;
+    telemetryResponse?: Response;
+    startedAtMs: number;
+    keyId: string | null;
+  }>,
+): void => {
+  const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
+  console.info(
+    "[ai.ubq.fi] request_terminal",
+    JSON.stringify({
+      route: input.route,
+      status: input.response.status,
+      provider: telemetry?.provider ?? input.response.headers.get("x-ubq-upstream") ?? "gateway",
+      latency_ms: Math.max(0, Date.now() - input.startedAtMs),
+      input_tokens: telemetry?.inputTokens ?? null,
+      output_tokens: telemetry?.outputTokens ?? null,
+      model: telemetry?.model ?? null,
+      reasoning: telemetry?.reasoning ?? null,
+      key_id: input.keyId,
+      fallback_reason: telemetry?.fallbackReason ?? null,
+    }),
+  );
+};
+
+const warnQuotaAccountingFailure = (
+  input: Readonly<{ route: string; keyId: string | null }>,
+  error: unknown,
+): void => {
+  const errors = error instanceof AggregateError ? error.errors : [error];
   try {
-    return await getConfiguredYunwuQuotaSnapshot({ signal });
-  } catch (error) {
-    if (!signal.aborted) {
-      console.warn(
-        "[ai.ubq.fi] YunWu quota response decoration failed:",
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-    return null;
+    console.warn(
+      "[ai.ubq.fi] quota_accounting_failed",
+      JSON.stringify({
+        route: input.route,
+        key_id: input.keyId,
+        errors: errors.map((item) => item instanceof Error ? item.message : String(item)),
+      }),
+    );
+  } catch {
+    // Accounting and its warning are both best-effort after completion. Neither
+    // may replace an upstream response that is already ready for the client.
   }
 };
 
-type CodexQuotaLoad = Readonly<{
-  cached: Promise<YunwuQuotaSnapshot | null>;
-  refreshed: Promise<YunwuQuotaSnapshot | null>;
-}>;
-
-const CODEX_QUOTA_DECORATION_WAIT_MS = 250;
-
-const startCodexQuotaLoad = (signal: AbortSignal): CodexQuotaLoad => ({
-  cached: getCachedConfiguredYunwuQuotaSnapshot(),
-  refreshed: loadCodexQuotaSnapshot(signal),
-});
-
-const boundedCodexQuotaSnapshot = (
-  load: CodexQuotaLoad,
-): Promise<YunwuQuotaSnapshot | null> =>
-  new Promise((resolve) => {
-    let pending = 2;
-    let settled = false;
-    const timeout = setTimeout(() => finish(null), CODEX_QUOTA_DECORATION_WAIT_MS);
-
-    const finish = (snapshot: YunwuQuotaSnapshot | null): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve(snapshot);
-    };
-    const accept = (snapshot: YunwuQuotaSnapshot | null): void => {
-      if (snapshot) {
-        finish(snapshot);
-        return;
-      }
-      pending -= 1;
-      if (pending === 0) finish(null);
-    };
-
-    load.refreshed.then(accept, () => accept(null));
-    load.cached.then(accept, () => accept(null));
-  });
-
-const decorateInferenceQuota = async (
+const withTerminalRequestLog = (
   response: Response,
-  load: CodexQuotaLoad,
+  input: Readonly<{
+    route: string;
+    telemetryResponse?: Response;
+    startedAtMs: number;
+    keyId: string | null;
+    onCompleted?: () => Promise<void>;
+  }>,
 ): Promise<Response> => {
-  if (response.headers.get("x-ubq-upstream") === "yunwu") {
-    try {
-      await invalidateConfiguredYunwuQuotaSnapshot();
-    } catch (error) {
-      console.warn(
-        "[ai.ubq.fi] YunWu quota invalidation failed:",
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+  let logged = false;
+  let completionFinalization: Promise<void> | null = null;
+  const log = (): void => {
+    if (logged) return;
+    logged = true;
+    logTerminalRequest({ ...input, response });
+  };
+  const finalizeCompletion = (): Promise<void> => {
+    const onCompleted = input.onCompleted;
+    if (!onCompleted || !response.ok) return Promise.resolve();
+    const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
+    if (!telemetry?.completed) return Promise.resolve();
+    completionFinalization ??= (async () => {
+      try {
+        await onCompleted();
+      } catch (error) {
+        warnQuotaAccountingFailure(input, error);
+      }
+    })();
+    return completionFinalization;
+  };
+  if (!response.body || !response.headers.get("Content-Type")?.toLowerCase().includes("text/event-stream")) {
+    return (async () => {
+      try {
+        await finalizeCompletion();
+        return response;
+      } finally {
+        log();
+      }
+    })();
   }
-  return withCodexQuotaHeaders(response, await boundedCodexQuotaSnapshot(load));
+
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          await finalizeCompletion();
+          log();
+          controller.close();
+          return;
+        }
+        // The OpenAI stream observer marks response.completed before yielding
+        // the chunk that contains it, so quota accounting cannot be skipped by
+        // cancelling immediately after that chunk becomes visible to a client.
+        await finalizeCompletion();
+        controller.enqueue(value);
+      } catch (error) {
+        log();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        try {
+          await finalizeCompletion();
+        } finally {
+          log();
+        }
+      }
+    },
+  });
+  return Promise.resolve(
+    new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    }),
+  );
+};
+
+const terminalRouteForRequest = (method: string, path: string): string | null => {
+  if (method === "POST" && (path === "/uos/embeddings" || path === "/v1/embeddings")) return "embeddings";
+  if (method === "POST" && path === "/uos/embedding-jobs") return "embeddings.jobs.create";
+  if (method === "GET" && path.startsWith("/uos/embedding-jobs/")) return "embeddings.jobs.get";
+  if (method === "POST" && path === "/v1/chat/completions") return "chat.completions";
+  if (method === "POST" && path === "/v1/responses") return "responses";
+  return null;
 };
 
 export default async function handler(req: Request): Promise<Response> {
+  const requestStartedAtMs = Date.now();
   if (req.method === "OPTIONS") {
     return withCors(new Response(null, { status: 204, headers: corsHeaders() }));
   }
@@ -222,15 +304,6 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "POST" && path === "/api/auth/logout") {
     return withCors(await handlePasskeyLogout(req));
-  }
-
-  try {
-    await ensurePaidFallbackBackfill();
-  } catch (error) {
-    console.error("[ai.ubq.fi] Paid fallback API key backfill failed:", error);
-    return withCors(openaiError(503, "API key migration is unavailable", "server_error", {
-      type: "server_error",
-    }));
   }
 
   if (req.method === "GET" && path === "/admin/passkey-users") {
@@ -299,11 +372,11 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleAdminApiKeysList(req));
   }
 
-  const apiKeyRequestsPathMatch = path.match(/^\/admin\/api-keys\/([^/]+)\/requests$/);
-  if (apiKeyRequestsPathMatch && req.method === "GET") {
+  const apiKeyPaidFallbacksPathMatch = path.match(/^\/admin\/api-keys\/([^/]+)\/paid-fallbacks$/);
+  if (apiKeyPaidFallbacksPathMatch && req.method === "GET") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
-    const pathKeyId = apiKeyRequestsPathMatch[1] ?? "";
+    const pathKeyId = apiKeyPaidFallbacksPathMatch[1] ?? "";
     let keyId: string;
     try {
       keyId = decodeURIComponent(pathKeyId);
@@ -311,10 +384,10 @@ export default async function handler(req: Request): Promise<Response> {
       return withCors(openaiError(400, "Invalid API key id", "invalid_request_error"));
     }
 
-    return withCors(await handleAdminApiKeysRequests(req, keyId));
+    return withCors(await handleAdminApiKeysPaidFallbacks(req, keyId));
   }
 
-  if (apiKeyRequestsPathMatch) {
+  if (apiKeyPaidFallbacksPathMatch) {
     return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
   }
 
@@ -406,11 +479,21 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(notFound());
   }
 
+  const terminalRoute = terminalRouteForRequest(req.method, path);
   const authResult = await authenticateClient(req);
-  if (!authResult.ok) return withCors(authResult.response);
+  if (!authResult.ok) {
+    const response = withCors(authResult.response);
+    return terminalRoute
+      ? await withTerminalRequestLog(response, {
+        route: terminalRoute,
+        startedAtMs: requestStartedAtMs,
+        keyId: null,
+      })
+      : response;
+  }
   const requestId = crypto.randomUUID();
-  const requestStartedAtMs = Date.now();
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
+  const usagePolicy = authResult.method.kind === "kv_api_key" ? authResult.method.policy : null;
   const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
   const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
   let kernelRepo = authResult.method.kind === "github_token"
@@ -427,6 +510,7 @@ export default async function handler(req: Request): Promise<Response> {
     keyId: usageKeyId,
     kernelRepo,
     kernelOrg,
+    paidFallbackEnabled: usagePolicy?.paid_fallback_enabled === true,
     idempotencyPrincipal,
     requestId,
     startedAtMs: requestStartedAtMs,
@@ -447,36 +531,41 @@ export default async function handler(req: Request): Promise<Response> {
     }
     if (kernelOrg) await incrementKernelOrgUsageLimit(kernelOrg.owner);
   };
-
-  const logApiKeyRequest = async (details: {
-    route: string;
-    path: string;
-    method: string;
-    status_code: number;
-    stream: boolean;
-    model?: string | null;
-    reasoning?: string | null;
-    provider?: "chatgpt_codex" | "voyage" | "yunwu";
-  }): Promise<void> => {
-    if (!usageKeyId) return;
-    await recordApiKeyRequestLog(usageKeyId, {
-      id: requestId,
-      route: details.route,
-      path: details.path,
-      method: details.method,
-      status_code: details.status_code,
-      stream: details.stream,
-      created_at_ms: requestStartedAtMs,
-      provider: details.provider ?? "chatgpt_codex",
-      ...(details.model !== undefined ? { model: details.model } : {}),
-      ...(details.reasoning !== undefined ? { reasoning: details.reasoning } : {}),
-      ...(!details.stream
-        ? {
-          completed_at_ms: Date.now(),
-          latency_ms: Math.max(0, Date.now() - requestStartedAtMs),
-        }
-        : {}),
+  const finishTerminalResponse = async (
+    response: Response,
+    route: string,
+    includeQuota = false,
+    onCompleted?: () => Promise<void>,
+  ): Promise<Response> => {
+    const telemetry = getResponseTelemetry(response);
+    const decorated = includeQuota ? decorateInferenceQuota(response, usagePolicy, telemetry) : response;
+    return await withTerminalRequestLog(withCors(decorated), {
+      route,
+      telemetryResponse: response,
+      startedAtMs: requestStartedAtMs,
+      keyId: usageKeyId,
+      onCompleted,
     });
+  };
+  const incrementInferenceUsage = async (): Promise<void> => {
+    const operations: Array<Readonly<{ name: string; result: Promise<void> }>> = [];
+    if (usagePolicy) {
+      operations.push({ name: "api_key", result: incrementApiKeyUsage(usagePolicy) });
+    }
+    operations.push({ name: "kernel", result: incrementKernelLimitUsage() });
+    const results = await Promise.allSettled(operations.map((operation) => operation.result));
+    const failures = results.flatMap((result, index) =>
+      result.status === "rejected"
+        ? [
+          new Error(
+            `${operations[index]!.name}: ${
+              result.reason instanceof Error ? result.reason.message : String(result.reason)
+            }`,
+          ),
+        ]
+        : []
+    );
+    if (failures.length) throw new AggregateError(failures, "Inference quota accounting failed");
   };
 
   if (req.method === "GET" && path === "/v1/models") {
@@ -486,105 +575,47 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method === "POST" && path === "/uos/embeddings") {
     const response = await handleUosEmbeddings(req, usageContext);
     if (response.ok && response.headers.get("x-uos-idempotency-replayed") !== "true") {
-      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
+      if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
       await incrementKernelLimitUsage();
     }
-    await logApiKeyRequest({
-      route: "embeddings",
-      path,
-      method: req.method,
-      status_code: response.status,
-      stream: false,
-      provider: "voyage",
-    });
-    return withCors(response);
+    return await finishTerminalResponse(response, "embeddings");
   }
 
   if (req.method === "POST" && path === "/uos/embedding-jobs") {
     const response = await handleEmbeddingsJobCreate(req, authResult.token, usageContext);
     if (response.ok) {
-      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
+      if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
       await incrementKernelLimitUsage();
     }
-    await logApiKeyRequest({
-      route: "embeddings.jobs.create",
-      path,
-      method: req.method,
-      status_code: response.status,
-      stream: false,
-      provider: "voyage",
-    });
-    return withCors(response);
+    return await finishTerminalResponse(response, "embeddings.jobs.create");
   }
 
   if (req.method === "GET" && path.startsWith("/uos/embedding-jobs/")) {
     const jobId = path.slice("/uos/embedding-jobs/".length).trim();
-    if (!jobId) return withCors(openaiError(404, "Not found", "not_found"));
+    if (!jobId) {
+      return await finishTerminalResponse(openaiError(404, "Not found", "not_found"), "embeddings.jobs.get");
+    }
     const response = await handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext);
-    await logApiKeyRequest({
-      route: "embeddings.jobs.get",
-      path,
-      method: req.method,
-      status_code: response.status,
-      stream: false,
-      provider: "voyage",
-    });
-    return withCors(response);
+    return await finishTerminalResponse(response, "embeddings.jobs.get");
   }
 
   if (req.method === "POST" && path === "/v1/embeddings") {
     const response = await handleEmbeddings(req, usageContext);
     if (response.ok) {
-      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
+      if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
       await incrementKernelLimitUsage();
     }
-    await logApiKeyRequest({
-      route: "embeddings",
-      path,
-      method: req.method,
-      status_code: response.status,
-      stream: false,
-      provider: "voyage",
-    });
-    return withCors(response);
+    return await finishTerminalResponse(response, "embeddings");
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
-    const quotaLoad = startCodexQuotaLoad(req.signal);
     const response = await handleChatCompletions(req, usageContext);
-    const isStream = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
-    if (response.ok) {
-      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
-      await incrementKernelLimitUsage();
-    }
-    await logApiKeyRequest({
-      route: "chat.completions",
-      path,
-      method: req.method,
-      status_code: response.status,
-      stream: isStream,
-      provider: response.headers.get("x-ubq-upstream") === "yunwu" ? "yunwu" : "chatgpt_codex",
-    });
-    return withCors(await decorateInferenceQuota(response, quotaLoad));
+    return await finishTerminalResponse(response, "chat.completions", true, incrementInferenceUsage);
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
-    const quotaLoad = startCodexQuotaLoad(req.signal);
     const response = await handleResponses(req, usageContext);
-    const isStream = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
-    if (response.ok) {
-      if (usageKeyId) await incrementApiKeyUsage(usageKeyId);
-      await incrementKernelLimitUsage();
-    }
-    await logApiKeyRequest({
-      route: "responses",
-      path,
-      method: req.method,
-      status_code: response.status,
-      stream: isStream,
-      provider: response.headers.get("x-ubq-upstream") === "yunwu" ? "yunwu" : "chatgpt_codex",
-    });
-    return withCors(await decorateInferenceQuota(response, quotaLoad));
+    return await finishTerminalResponse(response, "responses", true, incrementInferenceUsage);
   }
 
   return withCors(openaiError(404, "Not found", "not_found"));
