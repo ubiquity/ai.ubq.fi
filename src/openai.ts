@@ -19,6 +19,7 @@ import { proxyResponsesStream, readResponsesStream, type ResponsesStreamEvent } 
 import {
   type PaidFallbackReservation,
   recordYunwuAmbiguousFailure,
+  recordYunwuTerminal,
   recordYunwuUndispatchedCancellation,
   recordYunwuUpstreamResponse,
   reservePaidFallback,
@@ -331,6 +332,25 @@ const bestEffortPaidFallbackBookkeeping = async (
   }
 };
 
+const scheduleYunwuTerminalReconciliation = (
+  reservation: PaidFallbackReservation | null,
+  eventType: string,
+): void => {
+  if (!reservation) return;
+  const terminalState = eventType === "response.completed"
+    ? "completed"
+    : eventType === "response.failed" || eventType === "error"
+    ? "failed"
+    : eventType === "response.incomplete"
+    ? "incomplete"
+    : null;
+  if (!terminalState) return;
+  void bestEffortPaidFallbackBookkeeping(
+    "terminal reconciliation",
+    () => recordYunwuTerminal(reservation, terminalState),
+  );
+};
+
 const fetchResponsesWithPaidFallback = async (
   body: Record<string, unknown>,
   options: Readonly<{
@@ -387,7 +407,19 @@ const fetchResponsesWithPaidFallback = async (
     reasoning: options.reasoning,
     reason: "primary_429",
   } as const;
-  const decision = await reservePaidFallback(reservationInput);
+  let decision: Awaited<ReturnType<typeof reservePaidFallback>>;
+  try {
+    decision = await reservePaidFallback(reservationInput);
+  } catch (error) {
+    warnPaidFallbackBookkeepingFailure("admission", error);
+    return {
+      response: primary,
+      provider: "chatgpt_codex",
+      paidFallback: null,
+      gatewayResponse: false,
+      fallbackReason: reservationInput.reason,
+    };
+  }
   if (decision.kind === "skip") {
     return {
       response: primary,
@@ -2453,7 +2485,7 @@ const streamChatCompletions = (
   model: string,
   usageContext: UsageContext | undefined,
   provider: UpstreamProvider,
-  _paidFallback: PaidFallbackReservation | null,
+  paidFallback: PaidFallbackReservation | null,
 ): Response => {
   if (!upstream.body) {
     return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
@@ -2499,6 +2531,7 @@ const streamChatCompletions = (
           }
 
           if (type === "response.completed") {
+            scheduleYunwuTerminalReconciliation(paidFallback, type);
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
             await recordCompletionUsage(usageContext, usageTokens);
             const chunk: Record<string, unknown> = {
@@ -2520,6 +2553,7 @@ const streamChatCompletions = (
             return;
           }
           if (event.terminal) {
+            scheduleYunwuTerminalReconciliation(paidFallback, type);
             await recordErrorUsage(usageContext);
             const errorChunk = {
               id,
@@ -2573,7 +2607,7 @@ const completeChatCompletions = async (
   model: string,
   usageContext?: UsageContext,
   provider: UpstreamProvider = "chatgpt_codex",
-  _paidFallback: PaidFallbackReservation | null = null,
+  paidFallback: PaidFallbackReservation | null = null,
 ): Promise<Response> => {
   if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
 
@@ -2599,6 +2633,7 @@ const completeChatCompletions = async (
         continue;
       }
       if (type === "response.completed" && isRecord(ev.response)) {
+        scheduleYunwuTerminalReconciliation(paidFallback, type);
         const usageTokens = extractUsageTokens(ev.response.usage);
         if (usageTokens) {
           usage = {
@@ -2611,7 +2646,10 @@ const completeChatCompletions = async (
         completed = true;
         break;
       }
-      if (event.terminal) break;
+      if (event.terminal) {
+        scheduleYunwuTerminalReconciliation(paidFallback, type);
+        break;
+      }
     }
   } catch {
     completed = false;
@@ -4032,7 +4070,10 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     headers.set("x-uos-upstream", routed.provider);
     const responseBody = proxyResponsesStream(upstream.body, {
       signal: inferenceSignal(req),
-      onEvent: (event) => recordResponsesTerminal(event, usageContext),
+      onEvent: (event) => {
+        scheduleYunwuTerminalReconciliation(routed.paidFallback, event.type);
+        return recordResponsesTerminal(event, usageContext);
+      },
       onFailure: () => recordErrorUsage(usageContext),
     });
     const response = new Response(responseBody, {
@@ -4051,6 +4092,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
 
   let finalResponse: Record<string, unknown> | null = null;
+  let finalEventType: string | null = null;
   let outputText = "";
   const outputItems: Record<string, unknown>[] = [];
   try {
@@ -4070,6 +4112,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         isRecord(ev.response)
       ) {
         finalResponse = ev.response;
+        finalEventType = event.type;
         break;
       }
     }
@@ -4082,6 +4125,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       headers: { "x-uos-upstream": routed.provider },
     });
   }
+  if (finalEventType) scheduleYunwuTerminalReconciliation(routed.paidFallback, finalEventType);
   finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
   finalResponse = withAccumulatedResponseText(finalResponse, outputText);
   const usageTokens = extractUsageTokens(finalResponse.usage);

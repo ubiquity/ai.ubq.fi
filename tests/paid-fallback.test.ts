@@ -218,7 +218,10 @@ const {
 const {
   admitPaidFallbackV3,
   paidFallbackRequestV3Key,
+  paidFallbackPendingV3Key,
   paidFallbackWindowV3Key,
+  recordPaidFallbackTerminalV3,
+  updatePaidFallbackRequestV3,
 } = await import("../src/paid_fallback_ledger.ts");
 
 const strictKeyRecord = (
@@ -472,6 +475,8 @@ Deno.test("V3 admits concurrent bounded requests without a single reservation sl
     ),
   );
   assert.equal(rows.filter((entry) => entry.value !== null).length, 100);
+  const pending = await memoryKv.get<Record<string, unknown>>(paidFallbackPendingV3Key(keyId, "request-0"));
+  assert.equal(typeof pending.value?.next_reconciliation_at_ms, "number");
 });
 
 Deno.test("V3 unlimited admission writes independent rows without a shared window", async () => {
@@ -499,6 +504,71 @@ Deno.test("V3 unlimited admission writes independent rows without a shared windo
   );
   assert.deepEqual(decisions.map((decision) => decision.kind), Array(100).fill("reserved"));
   assert.equal((await memoryKv.get(paidFallbackWindowV3Key(keyId, resetAtMs))).value, null);
+});
+
+Deno.test("V3 terminal reconciliation settles a pending request exactly once without KV queues", async () => {
+  memoryKv.clear();
+  const originalFetch = globalThis.fetch;
+  const keyId = "v3-terminal";
+  const requestId = "gateway-terminal";
+  const providerRequestId = "provider-terminal";
+  const resetAtMs = Date.now() + 60_000;
+  const createdAtMs = Date.now();
+  globalThis.fetch = () =>
+    Promise.resolve(
+      Response.json({
+        success: true,
+        data: [{
+          request_id: providerRequestId,
+          quota: 123_456,
+          prompt_tokens: 40,
+          completion_tokens: 60,
+          model_name: "gpt-5-codex",
+          created_at: Math.trunc(Date.now() / 1_000),
+        }],
+      }),
+    );
+  try {
+    await withYunwuApiKey(async () => {
+      const decision = await admitPaidFallbackV3({
+        keyId,
+        requestId,
+        createdAtMs,
+        policyVersion: "policy-v3",
+        limitMicrocredits: 1_000_000,
+        maximumExposureMicrocredits: 250_000,
+        initialSettledMicrocredits: 0,
+        quotaPerCredit: 500_000,
+        windowResetAtMs: resetAtMs,
+        model: "gpt-5-codex",
+        route: "responses",
+        path: "/v1/responses",
+        stream: true,
+        reasoning: "high",
+      });
+      assert.equal(decision.kind, "reserved");
+      if (decision.kind !== "reserved") throw new Error("expected reservation");
+      await updatePaidFallbackRequestV3(decision.reservation, {
+        provider_request_id: providerRequestId,
+        dispatch_state: "dispatched",
+      });
+
+      assert.equal(await recordPaidFallbackTerminalV3(decision.reservation, "completed"), 1);
+      assert.equal(await recordPaidFallbackTerminalV3(decision.reservation, "completed"), 0);
+
+      const request = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, requestId));
+      assert.equal(request.value?.billing_state, "settled");
+      assert.equal(request.value?.terminal_state, "completed");
+      assert.equal(request.value?.spend_microcredits, 246_912);
+      const window = await memoryKv.get<Record<string, unknown>>(paidFallbackWindowV3Key(keyId, resetAtMs));
+      assert.equal(window.value?.reserved_microcredits, 0);
+      assert.equal(window.value?.settled_microcredits, 246_912);
+      assert.equal(window.value?.pending_count, 0);
+      assert.equal((await memoryKv.get(paidFallbackPendingV3Key(keyId, requestId))).value, null);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test({ name: "legacy single-slot paid fallback behavior", ignore: true }, async () => {

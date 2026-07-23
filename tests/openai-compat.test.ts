@@ -1136,6 +1136,56 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
+    await t.step("fallback admission infrastructure failure retains the authoritative primary 429", async () => {
+      const keyId = "fallback-admission-failure";
+      seedPaidFallbackKey(keyId);
+      atomicCommitFailure = (ops) =>
+        ops.some((op) =>
+            op.type === "set" &&
+            op.key[0] === "uos_ai" &&
+            op.key[1] === "paid_fallback" &&
+            op.key[2] === "v3"
+          )
+          ? new Error("Enqueue operations are not supported in KV Connect")
+          : null;
+      let calls = 0;
+      try {
+        const response = await withFetchMock(
+          () => {
+            calls += 1;
+            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": "42",
+              },
+            });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+              }),
+              {
+                keyId,
+                kernelRepo: null,
+                kernelOrg: null,
+                requestId: "request-fallback-admission-failure",
+                startedAtMs: Date.now(),
+              },
+            ),
+        );
+        assert.equal(response.status, 429);
+        assert.equal(response.headers.get("Retry-After"), "42");
+        assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+        assert.equal(calls, 1);
+      } finally {
+        atomicCommitFailure = null;
+      }
+    });
+
     await t.step("primary errors and network failures other than 429 never dispatch YunWu", async () => {
       for (const scenario of ["http_500", "network"] as const) {
         const keyId = `fallback-${scenario}`;

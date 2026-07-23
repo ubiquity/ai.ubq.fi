@@ -8,6 +8,7 @@ import { apiKeyHashKey, apiKeyIdKey, MICROCREDITS_PER_CREDIT, PAID_FALLBACK_NO_L
 import { invalidateApiKeyPolicy } from "./api_key_policy.ts";
 import {
   admitPaidFallbackV3,
+  recordPaidFallbackTerminalV3,
   releaseUndispatchedPaidFallbackV3,
   updatePaidFallbackRequestV3,
 } from "./paid_fallback_ledger.ts";
@@ -452,6 +453,13 @@ export const recordYunwuUndispatchedCancellation = async (
     statusCode: 499,
     clear: true,
   });
+};
+
+export const recordYunwuTerminal = async (
+  reservation: PaidFallbackReservation,
+  terminalState: "completed" | "failed" | "incomplete" | "cancelled" | "ambiguous",
+): Promise<void> => {
+  await recordPaidFallbackTerminalV3(reservation, terminalState);
 };
 
 const settlePaidFallback = async (
