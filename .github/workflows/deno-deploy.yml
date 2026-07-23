@@ -19,7 +19,6 @@ concurrency:
 
 jobs:
   validate:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,12 +38,19 @@ jobs:
       - run: echo "Production deployment approved."
 
   deploy:
-    needs: production-approval
+    needs:
+      - validate
+      - production-approval
     if: >-
       always() &&
+      needs.validate.result == 'success' &&
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_preview == 'true')
+        (
+          github.ref != 'refs/heads/development' &&
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.deploy_preview == 'true'
+        )
       )
     permissions:
       actions: read
