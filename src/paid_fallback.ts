@@ -263,9 +263,9 @@ export const reservePaidFallback = async (
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await kvPromise;
   if (!kv) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-  const pair = await loadStrictKeyPair(kv, input.keyId);
+  let pair = await loadStrictKeyPair(kv, input.keyId);
   if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-  const record = pair.record;
+  let record = pair.record;
 
   if (!record.paid_fallback_enabled) return { kind: "skip", reason: "disabled" };
   if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
@@ -279,7 +279,40 @@ export const reservePaidFallback = async (
   ) {
     return { kind: "blocked", reason: "invalid_policy", reset_at_ms: record.usage_reset_at_ms };
   }
-  if (record.paid_fallback_reserved_microcredits > 0 || record.paid_fallback_reservation_request_id) {
+  if (
+    unlimited &&
+    (record.paid_fallback_reserved_microcredits > 0 || record.paid_fallback_reservation_request_id)
+  ) {
+    const unlockedRecord: ApiKeyRecord = {
+      ...record,
+      paid_fallback_reserved_microcredits: 0,
+      paid_fallback_reservation_request_id: null,
+    };
+    const unlockedHash: ApiKeyHashRecord = {
+      ...pair.hashRecord,
+      ...paidFallbackHashFields(unlockedRecord),
+    };
+    const unlocked = await kv.atomic()
+      .check(pair.idEntry)
+      .check(pair.hashEntry)
+      .set(pair.idKey, unlockedRecord)
+      .set(pair.hashKey, unlockedHash)
+      .commit();
+    pair = await loadStrictKeyPair(kv, input.keyId);
+    if (
+      !pair ||
+      (!unlocked.ok &&
+        (pair.record.paid_fallback_reserved_microcredits > 0 ||
+          pair.record.paid_fallback_reservation_request_id))
+    ) {
+      return { kind: "blocked", reason: "concurrent_update", reset_at_ms: record.usage_reset_at_ms };
+    }
+    record = pair.record;
+  }
+  if (
+    !unlimited &&
+    (record.paid_fallback_reserved_microcredits > 0 || record.paid_fallback_reservation_request_id)
+  ) {
     return { kind: "blocked", reason: "reconciliation_pending", reset_at_ms: record.usage_reset_at_ms };
   }
 
@@ -291,7 +324,7 @@ export const reservePaidFallback = async (
   const updated: ApiKeyRecord = {
     ...record,
     paid_fallback_reserved_microcredits: remaining,
-    paid_fallback_reservation_request_id: input.requestId,
+    paid_fallback_reservation_request_id: unlimited ? null : input.requestId,
   };
   const updatedHash: ApiKeyHashRecord = {
     ...pair.hashRecord,
@@ -335,12 +368,16 @@ export const reservePaidFallback = async (
     1,
     input.createdAtMs + API_KEY_REQUEST_LOG_RETENTION_MS - Date.now(),
   );
-  const commit = await kv.atomic()
+  let atomic = kv.atomic()
     .check(pair.idEntry)
     .check(pair.hashEntry)
-    .check(logEntry)
-    .set(pair.idKey, updated)
-    .set(pair.hashKey, updatedHash)
+    .check(logEntry);
+  if (!unlimited) {
+    atomic = atomic
+      .set(pair.idKey, updated)
+      .set(pair.hashKey, updatedHash);
+  }
+  const commit = await atomic
     .set(logKey, requestLog, { expireIn })
     .commit();
   if (!commit.ok) {
