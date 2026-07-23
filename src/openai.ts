@@ -398,20 +398,18 @@ const fetchResponsesWithPaidFallback = async (
   const telemetry = options.usageContext?.responseTelemetry;
   if (telemetry) telemetry.provider = "chatgpt_codex";
   const circuit = await getGlobalCodexRateLimitDecision();
+  // Always probe the primary. A cached cooldown must not become a gateway-wide
+  // 429 that prevents eligible requests from reaching paid fallback.
   let primary: Response | null = null;
   let retryAtMs: number | null = null;
-  if (circuit.kind === "cached") {
-    retryAtMs = circuit.retryAtMs;
-  } else {
-    primary = await fetchCodexResponses(body, {
-      clientVersion: options.clientVersion,
-      signal: options.signal,
-    });
-    if (primary.status === 429) {
-      retryAtMs = await openGlobalCodexRateLimitCircuit(primary.headers.get("Retry-After"));
-    } else if (circuit.kind === "probe") {
-      await closeGlobalCodexRateLimitProbe(circuit.probeId);
-    }
+  primary = await fetchCodexResponses(body, {
+    clientVersion: options.clientVersion,
+    signal: options.signal,
+  });
+  if (primary.status === 429) {
+    retryAtMs = await openGlobalCodexRateLimitCircuit(primary.headers.get("Retry-After"));
+  } else if (circuit.kind === "probe") {
+    await closeGlobalCodexRateLimitProbe(circuit.probeId);
   }
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
