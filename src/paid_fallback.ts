@@ -289,9 +289,9 @@ export const reservePaidFallback = async (
   const pair = await loadStrictKeyPair(kv, input.keyId);
   if (!pair) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
   const record = pair.record;
-  if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
   const eligibility = evaluatePaidFallbackEligibility(record, input.model);
   if (eligibility.kind !== "eligible") return eligibility;
+  if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
   const windowResetAtMs = advanceUsageWindow(record.usage_reset_at_ms, record.window_ms, input.createdAtMs);
   const policyVersion = `${record.window_ms}:${record.paid_fallback_pricing_checked_at_ms ?? 0}`;
   const admitted = await admitPaidFallbackV3({
