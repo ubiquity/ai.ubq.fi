@@ -398,6 +398,11 @@ type BoundedCounterHandoffResult = Readonly<{
 const currentLegacyUsage = (record: ApiKeyRecord, nowMs: number): number =>
   nowMs < record.usage_reset_at_ms ? record.usage_requests : 0;
 
+// Revoked keys no longer advance their legacy window. Keep migration and
+// validation pinned to the last stored window instead of rolling them forward.
+const migrationPolicyNow = (record: ApiKeyRecord, nowMs: number): number =>
+  record.revoked_at_ms === null ? nowMs : Math.max(0, record.usage_reset_at_ms - 1);
+
 const migrateBoundedCounterHandoff = async (
   kv: Deno.Kv,
   policy: ApiKeyPolicy,
@@ -673,7 +678,7 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
   let boundedBaselinesReconciled = 0;
   let legacyUsageDeltaApplied = 0;
   for (const { record, hashRecord } of apiKeyInventory.pairs) {
-    const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, migrationNowMs);
+    const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, migrationPolicyNow(record, migrationNowMs));
     if (!policy) throw new Error(`API key ${record.id} policy could not be normalized`);
     apiKeys += 1;
     if (policy.usage_limit_requests !== -1) {
@@ -791,7 +796,7 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
   errors.push(...apiKeyInventory.errors);
   const validationNowMs = Date.now();
   for (const { record, hashRecord } of apiKeyInventory.pairs) {
-    const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, validationNowMs);
+    const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, migrationPolicyNow(record, validationNowMs));
     if (!policy) {
       errors.push(`api key policy could not be normalized: ${record.id}`);
       continue;

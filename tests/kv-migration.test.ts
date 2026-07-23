@@ -720,3 +720,47 @@ Deno.test("KV incident migration starts a fresh counter after an expired legacy 
     /API key policy validation failed/,
   );
 });
+
+Deno.test("KV incident validation keeps revoked keys pinned to their stored window", async () => {
+  const store = new Map<string, unknown>();
+  const now = Date.now();
+  const id = "revoked-bounded-key";
+  const hash = "c".repeat(43);
+  const resetAtMs = now - 1;
+  const shared = {
+    id,
+    expires_at_ms: -1,
+    revoked_at_ms: now - 10_000,
+    usage_limit_requests: 20,
+    usage_requests: 4,
+    usage_reset_at_ms: resetAtMs,
+    window_ms: 60_000,
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: 0,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+  };
+  store.set(keyToString(["ubq_ai", "codex_models"]), {
+    models: [{ slug: "gpt-5.6-sol-max", supported_reasoning_levels: ["none"] }],
+    source: "test",
+    updated_at_ms: now,
+  });
+  store.set(keyToString(["default", "model"]), "gpt-5.6-sol-max");
+  store.set(keyToString(["default", "reasoning_effort"]), "none");
+  store.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    ...shared,
+    name: "Revoked bounded",
+    prefix: "u_abcdef0123",
+    hash,
+    created_at_ms: now - 120_000,
+    paid_fallback_model_ids: [],
+    paid_fallback_quota_per_credit: 0,
+    paid_fallback_pricing_checked_at_ms: null,
+  });
+  store.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), shared);
+
+  await migrateKvReadIncidentV2(makeKvStub(store));
+  const validation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.deepEqual(validation.errors, []);
+});
