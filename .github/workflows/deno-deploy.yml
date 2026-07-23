@@ -6,12 +6,31 @@ on:
       - development
   pull_request:
   workflow_dispatch:
+    inputs:
+      deploy_preview:
+        description: Deploy the current non-production ref to p-ai-ubq-fi
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ai-ubq-fi-${{ github.ref == 'refs/heads/development' && 'production' || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno fmt --check
+      - run: deno lint
+      - run: deno task build
+      - run: deno task test
+
   production-approval:
     if: github.ref == 'refs/heads/development'
     runs-on: ubuntu-latest
@@ -21,7 +40,12 @@ jobs:
 
   deploy:
     needs: production-approval
-    if: always() && (github.ref != 'refs/heads/development' || needs.production-approval.result == 'success')
+    if: >-
+      always() &&
+      (
+        (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_preview == 'true')
+      )
     permissions:
       actions: read
       contents: read
