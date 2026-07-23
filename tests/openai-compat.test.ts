@@ -1166,8 +1166,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         const chunks = baseSseChunks();
         const terminalChunk = chunks.pop();
         assert.ok(terminalChunk);
-        const splitAt = Math.floor(terminalChunk.length / 2);
-        chunks.push(terminalChunk.slice(0, splitAt), terminalChunk.slice(splitAt));
+        const crlfTerminalChunk = terminalChunk.replace(/\n/g, "\r\n");
+        chunks.push(
+          crlfTerminalChunk.slice(0, -1),
+          `${crlfTerminalChunk.slice(-1)}: post-terminal bytes must not be forwarded\r\n\r\n`,
+        );
 
         const responseText = await withFetchMock(
           (url) => {
@@ -1221,6 +1224,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         );
 
         assert.match(responseText, /"type":"response.completed"/);
+        assert.doesNotMatch(responseText, /post-terminal/);
         assert.equal(upstreamCancelled, true);
       },
     );
