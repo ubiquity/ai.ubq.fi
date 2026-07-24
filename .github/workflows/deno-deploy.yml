@@ -334,11 +334,22 @@ jobs:
             last_git_sha="$git_sha"
             last_deployment_id="$reported_deployment_id"
 
-            healthy=false
+            attestable_health=false
             if [ "$http_code" = "200" ] && jq -e '.ok == true' "$body" >/dev/null 2>&1; then
-              healthy=true
+              attestable_health=true
+            elif [ "$http_code" = "503" ] && jq -e '
+              .ok == false and
+              .status == 503 and
+              .upstream == "chatgpt_codex" and
+              .details == "Codex upstream models endpoint returned 429."
+            ' "$body" >/dev/null 2>&1; then
+              # An exhausted Codex account is an accepted preview/production
+              # state: the request path must observe this authoritative 429
+              # before it can exercise Yunwu fallback. Keep every deployment
+              # identity check below mandatory.
+              attestable_health=true
             fi
-            if [ "$healthy" = "true" ] && [ "$git_sha" = "$GITHUB_SHA" ] && [ -n "$reported_deployment_id" ] && [ "$reported_deployment_id" != "unknown" ]; then
+            if [ "$attestable_health" = "true" ] && [ "$git_sha" = "$GITHUB_SHA" ] && [ -n "$reported_deployment_id" ] && [ "$reported_deployment_id" != "unknown" ]; then
               # Deploy 2 currently exposes the immutable configuration ID in
               # DENO_DEPLOYMENT_ID, while `deployments list` reports the
               # serving build/revision ID. Correlate the exact health probe
