@@ -42,8 +42,6 @@ jobs:
           source_digest="$(sha256sum .release/source/.uos-source.tar | awk '{print $1}')"
           tar -xf .release/source/.uos-source.tar -C .release/source
           SOURCE_DIGEST="$source_digest" deno eval \
-            --allow-env=GITHUB_SHA,SOURCE_DIGEST \
-            --allow-write=.release/source/.uos-release.json \
             '
               const manifest = {
                 git_sha: Deno.env.get("GITHUB_SHA"),
