@@ -38,10 +38,34 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .release/source
-          git archive --format=tar --output=.release/source/.uos-source.tar "$GITHUB_SHA"
-          source_digest="$(sha256sum .release/source/.uos-source.tar | awk '{print $1}')"
-          tar -xf .release/source/.uos-source.tar -C .release/source
-          SOURCE_DIGEST="$source_digest" deno eval \
+          git archive --format=tar --output=.release/git-source.tar "$GITHUB_SHA"
+          tar -xf .release/git-source.tar -C .release/source
+          GITHUB_SHA="$GITHUB_SHA" deno eval \
+            '
+              const gitSha = Deno.env.get("GITHUB_SHA");
+              if (!gitSha || !/^[0-9a-f]{40}$/.test(gitSha)) {
+                throw new Error("GITHUB_SHA must be a full Git commit SHA");
+              }
+              Deno.writeTextFileSync(
+                ".release/source/src/release.ts",
+                `// Generated for this immutable deployment artifact.\nexport const RELEASE_GIT_SHA = "${gitSha}";\n`,
+              );
+            '
+          source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+          tar \
+            --sort=name \
+            --mtime="@${source_date_epoch}" \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            --format=posix \
+            --pax-option=delete=atime,delete=ctime \
+            -cf .release/.uos-source.tar \
+            -C .release/source \
+            .
+          source_digest="$(sha256sum .release/.uos-source.tar | awk '{print $1}')"
+          mv .release/.uos-source.tar .release/source/.uos-source.tar
+          SOURCE_DIGEST="$source_digest" GITHUB_SHA="$GITHUB_SHA" deno eval \
             '
               const manifest = {
                 git_sha: Deno.env.get("GITHUB_SHA"),
@@ -99,6 +123,9 @@ jobs:
             echo "::error::Artifact source digest ${actual_digest} does not match ${expected_digest}."
             exit 1
           fi
+          baked_release_line="export const RELEASE_GIT_SHA = \"${GITHUB_SHA}\";"
+          grep -Fx "$baked_release_line" ".deploy-artifact/src/release.ts"
+          tar -xOf "$archive" ./src/release.ts | grep -Fx "$baked_release_line"
           {
             echo "### Immutable artifact"
             echo ""
@@ -113,7 +140,7 @@ jobs:
     steps:
       - run: echo "Production deployment approved."
 
-  deploy:
+  configure-secrets:
     needs:
       - validate
       - verify-artifact
@@ -122,6 +149,80 @@ jobs:
       always() &&
       needs.validate.result == 'success' &&
       needs.verify-artifact.result == 'success' &&
+      (
+        (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
+        (
+          github.ref != 'refs/heads/development' &&
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.deploy_preview == 'true'
+        )
+      )
+    runs-on: ubuntu-latest
+    env:
+      DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+      TARGET_PROJECT: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
+      UOS_AI_TOKEN: ${{ secrets.UBIQUITY_AI_USER_TOKEN }}
+      UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY }}
+      VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY }}
+      YUNWU_API_KEY: ${{ secrets.YUNWU_API_KEY }}
+      YUNWU_SYSTEM_TOKEN: ${{ secrets.YUNWU_SYSTEM_TOKEN }}
+    steps:
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Configure target application secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "$DENO_DEPLOY_TOKEN" ]
+          [ -n "$UOS_AI_TOKEN" ]
+          [ -n "$YUNWU_API_KEY" ]
+          echo "::add-mask::$DENO_DEPLOY_TOKEN"
+
+          deno eval \
+            '
+              const required = ["UOS_AI_TOKEN", "YUNWU_API_KEY"];
+              const optional = [
+                "UOS_AI_KERNEL_PUBLIC_KEY",
+                "VOYAGEAI_API_KEY",
+                "YUNWU_SYSTEM_TOKEN",
+              ];
+              const lines = [];
+              for (const name of [...required, ...optional]) {
+                const value = Deno.env.get(name)?.trim() ?? "";
+                if (!value) {
+                  if (required.includes(name)) throw new Error(`${name} is required`);
+                  continue;
+                }
+                lines.push(`${name}=${JSON.stringify(value)}`);
+              }
+              Deno.writeTextFileSync(".uos-deploy-secrets.env", `${lines.join("\n")}\n`, {
+                mode: 0o600,
+              });
+            '
+
+          deno deploy env load \
+            --replace \
+            --json \
+            --non-interactive \
+            --org ubiquity-dao \
+            --app "$TARGET_PROJECT" \
+            --token "$DENO_DEPLOY_TOKEN" \
+            .uos-deploy-secrets.env |
+            jq '{added, updated, skipped}'
+
+  deploy:
+    needs:
+      - validate
+      - verify-artifact
+      - production-approval
+      - configure-secrets
+    if: >-
+      always() &&
+      needs.validate.result == 'success' &&
+      needs.verify-artifact.result == 'success' &&
+      needs.configure-secrets.result == 'success' &&
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
         (
@@ -153,26 +254,8 @@ jobs:
       # was minified and validated by the prior sync path; the pinned reusable
       # workflow cannot safely transform the raw repository secret.
       runtime_env: |
-        UOS_AI_TOKEN=$UBIQUITY_AI_USER_TOKEN
         YUNWU_USER_ID=${{ vars.YUNWU_USER_ID || '' }}
-        GIT_REVISION=${{ github.sha }}
-      project_secrets: |
-        UOS_AI_TOKEN=UBIQUITY_AI_USER_TOKEN
-        UOS_AI_KERNEL_PUBLIC_KEY=UBIQUITY_AI_KERNEL_PUBLIC_KEY
-        VOYAGEAI_API_KEY=VOYAGEAI_API_KEY
-        YUNWU_API_KEY=YUNWU_API_KEY
-        YUNWU_SYSTEM_TOKEN=YUNWU_SYSTEM_TOKEN
-      preview_project_secrets: |
-        UOS_AI_TOKEN=UBIQUITY_AI_USER_TOKEN
-        UOS_AI_KERNEL_PUBLIC_KEY=UBIQUITY_AI_KERNEL_PUBLIC_KEY
-        VOYAGEAI_API_KEY=VOYAGEAI_API_KEY
-        YUNWU_API_KEY=YUNWU_API_KEY
-        YUNWU_SYSTEM_TOKEN=YUNWU_SYSTEM_TOKEN
-      forward_all_secrets: true
-      forward_all_secrets_exclude: |
-        DENO_DEPLOY_TOKEN
-        GITHUB_TOKEN
-        CODEX_AUTH_JSON_B64
+      forward_all_secrets: false
       index_html_path: static/docs.html
       extra_paths: |
         /app.js

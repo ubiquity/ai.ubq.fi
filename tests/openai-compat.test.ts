@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
+import { RELEASE_GIT_SHA } from "../src/release.ts";
 import { sha256Base64Url } from "../src/utils.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
@@ -2202,7 +2203,7 @@ Deno.test("http: CORS wrapper exposes a gateway request id", () => {
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-upstream/);
 });
 
-Deno.test("http: CORS wrapper exposes configured runtime identity headers", () => {
+Deno.test("http: CORS wrapper exposes baked source identity and deployment headers", () => {
   const originalGitRevision = Deno.env.get("GIT_REVISION");
   const originalGithubSha = Deno.env.get("GITHUB_SHA");
   const originalBuildId = Deno.env.get("DENO_DEPLOY_BUILD_ID");
@@ -2213,7 +2214,7 @@ Deno.test("http: CORS wrapper exposes configured runtime identity headers", () =
     Deno.env.set("DENO_DEPLOY_BUILD_ID", "build-test-id");
     Deno.env.set("DENO_DEPLOYMENT_ID", "deployment-test-id");
     const response = withCors(new Response("{}", { headers: { "Content-Type": "application/json" } }));
-    assert.equal(response.headers.get("x-uos-git-sha"), "git-test-revision");
+    assert.equal(response.headers.get("x-uos-git-sha"), RELEASE_GIT_SHA);
     assert.equal(response.headers.get("x-uos-deployment-id"), "build-test-id");
     const exposed = response.headers.get("Access-Control-Expose-Headers") ?? "";
     assert.match(exposed, /x-uos-git-sha/);
