@@ -10,14 +10,17 @@ const stringEntryLine = (key: Deno.KvKey, value: string): string =>
   });
 
 let resetRuntimeCache = (): void => {};
+let atomicCommitsToFail = 0;
+let atomicCommitsBeforeFailure: number | null = null;
 class TestKvStore extends Map<string, unknown> {
   override clear(): void {
     super.clear();
+    atomicCommitsToFail = 0;
+    atomicCommitsBeforeFailure = null;
     resetRuntimeCache();
   }
 }
 const kvStore = new TestKvStore();
-let atomicCommitsToFail = 0;
 
 const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   if (left === right) return 0;
@@ -81,6 +84,13 @@ const kvStub = {
         return chain;
       },
       commit: () => {
+        if (atomicCommitsBeforeFailure !== null) {
+          if (atomicCommitsBeforeFailure === 0) {
+            atomicCommitsBeforeFailure = null;
+            return Promise.resolve({ ok: false } as const);
+          }
+          atomicCommitsBeforeFailure -= 1;
+        }
         if (atomicCommitsToFail > 0) {
           atomicCommitsToFail -= 1;
           return Promise.resolve({ ok: false } as const);
@@ -104,6 +114,7 @@ const {
   handleAdminApiKeysDelete,
   handleAdminApiKeysList,
   handleAdminApiKeysPaidFallbacks,
+  handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
   handleAdminCodexAuth,
   handleAdminCodexModelsGet,
@@ -192,6 +203,60 @@ Deno.test("API key list ignores legacy usage unless v2 usage is requested", asyn
   };
   assert.equal(withPayload.data?.[0]?.usage_requests, 3);
   assert.equal(withPayload.data?.[0]?.usage?.request_count, 3);
+});
+
+Deno.test("API key list projects current paid fallback totals from V3 only", async () => {
+  kvStore.clear();
+  const id = "paid-fallback-v3-projection";
+  const now = Date.now();
+  const resetAtMs = now + 60_000;
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    id,
+    name: "V3 projection",
+    prefix: "u_1234567890",
+    hash: "hash-paid-fallback-v3-projection",
+    created_at_ms: now - 1_000,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: -1,
+    usage_requests: 0,
+    usage_reset_at_ms: resetAtMs,
+    window_ms: 60_000,
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: 2_000_000,
+    paid_fallback_spent_microcredits: 1_000_000,
+    paid_fallback_reserved_microcredits: 500_000,
+    paid_fallback_reservation_request_id: "legacy-stale-reservation",
+    paid_fallback_model_ids: ["gpt-5.6-sol"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_pricing_checked_at_ms: now,
+  });
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "window", id, resetAtMs]), {
+    v: 3,
+    key_id: id,
+    policy_version: "60000",
+    window_reset_at_ms: resetAtMs,
+    limit_microcredits: 2_000_000,
+    settled_microcredits: 28_992,
+    reserved_microcredits: 125_000,
+    pending_count: 1,
+    updated_at_ms: now,
+  });
+
+  const response = await handleAdminApiKeysList(new Request("https://ai.ubq.fi/admin/api-keys"));
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    data?: Array<{
+      paid_fallback_limit_credits?: number;
+      paid_fallback_spent_credits?: number;
+      paid_fallback_reserved_credits?: number;
+      paid_fallback_pending_count?: number;
+    }>;
+  };
+  assert.equal(payload.data?.[0]?.paid_fallback_limit_credits, 2);
+  assert.equal(payload.data?.[0]?.paid_fallback_spent_credits, 0.028992);
+  assert.equal(payload.data?.[0]?.paid_fallback_reserved_credits, 0.125);
+  assert.equal(payload.data?.[0]?.paid_fallback_pending_count, 1);
 });
 
 Deno.test("admin Codex model GET returns the full catalog rather than the compact runtime record", async () => {
@@ -903,7 +968,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
   seedCodexSnapshot({
     source: "chatgpt_codex",
     updated_at_ms: Date.now(),
-    models: [{ slug: "gpt-5.6-sol" }],
+    models: [{ slug: "gpt-5.6-sol", context_window: 272_000 }],
   });
 
   const originalFetch = globalThis.fetch;
@@ -993,7 +1058,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
   }
 });
 
-Deno.test("API key request logs are retained newest-first and exposed to admins", async () => {
+Deno.test("admin paid fallback history exposes V3 request lifecycle and billing fields", async () => {
   kvStore.clear();
   const keyId = "4ba83596-d68e-447a-9281-0f1c92e8a87e";
   kvStore.set(keyToString(["ubq_ai", "api_keys", "id", keyId]), {
@@ -1028,6 +1093,40 @@ Deno.test("API key request logs are retained newest-first and exposed to admins"
   assert.equal(newest[0].created_at_ms, 2_000);
   assert.equal(newest[0].method, "POST");
 
+  const settledRequest = {
+    v: 3,
+    key_id: keyId,
+    request_id: "request-v3-settled",
+    policy_version: "60000",
+    route: "responses",
+    path: "/v1/responses",
+    model: "gpt-5.6-sol",
+    stream: true,
+    reasoning: "max",
+    window_reset_at_ms: 61_000,
+    reserved_microcredits: 125_000,
+    quota_per_credit: 500_000,
+    provider_request_id: "provider-v3-settled",
+    provider_quota: 14.496,
+    input_tokens: 31,
+    output_tokens: 17,
+    dispatch_state: "dispatched",
+    terminal_state: "completed",
+    spend_microcredits: 28_992,
+    billing_state: "settled",
+    reconciliation_attempts: 2,
+    last_reconciliation_at_ms: 2_500,
+    dispatched_at_ms: 1_100,
+    terminal_at_ms: 2_000,
+    settled_at_ms: 2_500,
+    created_at_ms: 1_000,
+    updated_at_ms: 2_500,
+  } as const;
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, settledRequest.request_id]),
+    settledRequest,
+  );
+
   const response = await handleAdminApiKeysPaidFallbacks(
     new Request(`https://ai.ubq.fi/admin/api-keys/${keyId}/paid-fallbacks?limit=20`),
     keyId,
@@ -1039,17 +1138,47 @@ Deno.test("API key request logs are retained newest-first and exposed to admins"
     object?: string;
     data?: Array<{
       created_at_ms?: number;
+      request_id?: string;
       model?: string | null;
       reasoning?: string | null;
       provider?: string;
+      reserved_microcredits?: number;
+      dispatch_state?: string;
+      terminal_state?: string;
+      billing_state?: string;
+      provider_request_id?: string | null;
+      provider_quota?: number | null;
+      input_tokens?: number | null;
+      output_tokens?: number | null;
+      reconciliation_attempts?: number;
+      last_reconciliation_at_ms?: number | null;
+      spend_microcredits?: number | null;
+      dispatched_at_ms?: number | null;
+      terminal_at_ms?: number | null;
+      settled_at_ms?: number | null;
     }>;
   };
   assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
   assert.equal(payload.object, "list");
-  assert.deepEqual(payload.data?.map((entry) => entry.created_at_ms), [2_000, 1_000]);
-  assert.equal(payload.data?.[1]?.model, "gpt-5.6-sol");
-  assert.equal(payload.data?.[1]?.reasoning, "max");
-  assert.equal(payload.data?.[0]?.provider, "voyage");
+  assert.equal(payload.data?.length, 1);
+  assert.equal(payload.data?.[0]?.request_id, settledRequest.request_id);
+  assert.equal(payload.data?.[0]?.model, "gpt-5.6-sol");
+  assert.equal(payload.data?.[0]?.reasoning, "max");
+  assert.equal(payload.data?.[0]?.provider, "yunwu");
+  assert.equal(payload.data?.[0]?.reserved_microcredits, 125_000);
+  assert.equal(payload.data?.[0]?.dispatch_state, "dispatched");
+  assert.equal(payload.data?.[0]?.terminal_state, "completed");
+  assert.equal(payload.data?.[0]?.billing_state, "settled");
+  assert.equal(payload.data?.[0]?.provider_request_id, "provider-v3-settled");
+  assert.equal(payload.data?.[0]?.provider_quota, 14.496);
+  assert.equal(payload.data?.[0]?.input_tokens, 31);
+  assert.equal(payload.data?.[0]?.output_tokens, 17);
+  assert.equal(payload.data?.[0]?.reconciliation_attempts, 2);
+  assert.equal(payload.data?.[0]?.last_reconciliation_at_ms, 2_500);
+  assert.equal(payload.data?.[0]?.spend_microcredits, 28_992);
+  assert.equal(payload.data?.[0]?.dispatched_at_ms, 1_100);
+  assert.equal(payload.data?.[0]?.terminal_at_ms, 2_000);
+  assert.equal(payload.data?.[0]?.settled_at_ms, 2_500);
 });
 
 Deno.test("authenticated UOS embeddings do not write ordinary request history", async () => {
@@ -1192,6 +1321,40 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
     keyToString(["uos_ai", "api_key_usage", "v2", keyId, "policy", Date.now()]),
     { value: 1n } as Deno.KvU64,
   );
+  const v3WindowResetAtMs = Date.now() + 60_000;
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-settled"]),
+    {
+      v: 3,
+      key_id: keyId,
+      request_id: "request-v3-settled",
+      billing_state: "settled",
+    },
+  );
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-not-billed"]),
+    {
+      v: 3,
+      key_id: keyId,
+      request_id: "request-v3-not-billed",
+      billing_state: "not_billed",
+    },
+  );
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, v3WindowResetAtMs]),
+    {
+      v: 3,
+      key_id: keyId,
+      window_reset_at_ms: v3WindowResetAtMs,
+      settled_microcredits: 28_992,
+      reserved_microcredits: 0,
+      pending_count: 0,
+    },
+  );
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "reconciliation_lease", keyId]),
+    { token: "stale-delete-lease", expires_at_ms: Date.now() + 60_000 },
+  );
 
   const neighboringPaidFallbackKey = [
     "uos_ai",
@@ -1217,9 +1380,23 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
     "policy",
     Date.now(),
   ] as const;
+  const neighboringV3RequestKey = [
+    "uos_ai",
+    "paid_fallback",
+    "v3",
+    "request",
+    neighboringKeyId,
+    "request-v3-neighbor",
+  ] as const;
   kvStore.set(keyToString(neighboringPaidFallbackKey), { id: "request-neighbor", key_id: neighboringKeyId });
   kvStore.set(keyToString(neighboringLegacyLogKey), { id: "legacy-request-neighbor", key_id: neighboringKeyId });
   kvStore.set(keyToString(neighboringCounterKey), { value: 1n } as Deno.KvU64);
+  kvStore.set(keyToString(neighboringV3RequestKey), {
+    v: 3,
+    key_id: neighboringKeyId,
+    request_id: "request-v3-neighbor",
+    billing_state: "settled",
+  });
 
   const deleteRequest = () =>
     handleAdminApiKeysDelete(
@@ -1230,14 +1407,75 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
       }),
     );
 
+  const unresolvedRequestKey = [
+    "uos_ai",
+    "paid_fallback",
+    "v3",
+    "request",
+    keyId,
+    "request-v3-unresolved",
+  ] as const;
+  const unresolvedPendingKey = [
+    "uos_ai",
+    "paid_fallback",
+    "v3",
+    "pending",
+    keyId,
+    "request-v3-unresolved",
+  ] as const;
+  kvStore.set(keyToString(unresolvedRequestKey), {
+    v: 3,
+    key_id: keyId,
+    request_id: "request-v3-unresolved",
+    billing_state: "unresolved",
+  });
+  kvStore.set(keyToString(unresolvedPendingKey), {
+    created_at_ms: Date.now() - 86_400_000,
+    next_reconciliation_at_ms: Date.now() + 60_000,
+  });
+
   atomicCommitsToFail = 1;
+  const guardConflict = await deleteRequest();
+  assert.equal(guardConflict.status, 409);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), false);
+  assert.equal(kvStore.has(keyToString(unresolvedRequestKey)), true);
+
+  const blocked = await deleteRequest();
+  assert.equal(blocked.status, 409);
+  const blockedPayload = await blocked.json() as {
+    error?: { code?: string; message?: string };
+  };
+  assert.equal(blockedPayload.error?.code, "paid_fallback_billing_outstanding");
+  assert.match(blockedPayload.error?.message ?? "", /unresolved=1/);
+  assert.match(blockedPayload.error?.message ?? "", /markers=1/);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), true);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), true);
+  kvStore.delete(keyToString(unresolvedRequestKey));
+  kvStore.delete(keyToString(unresolvedPendingKey));
+
+  // The V3 deletion guard and terminal-state cleanup commit first. Fail the
+  // following API-key CAS to prove the retained guard makes deletion retryable.
+  atomicCommitsBeforeFailure = 1;
   const conflicted = await deleteRequest();
   assert.equal(conflicted.status, 409);
   assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), true);
   assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "hash", hash])), true);
   assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "ledger", keyId]), true);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "request", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "window", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), true);
   assert.equal(kvStoreHasPrefix(["ubq_ai", "api_keys", "request_log", keyId]), true);
   assert.equal(kvStoreHasPrefix(["uos_ai", "api_key_usage", "v2", keyId]), true);
+  const unrevoke = await handleAdminApiKeysUnrevoke(
+    new Request("https://ai.ubq.fi/admin/api-keys/unrevoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: keyId }),
+    }),
+  );
+  assert.equal(unrevoke.status, 409);
+  const unrevokePayload = await unrevoke.json() as { error?: { code?: string } };
+  assert.equal(unrevokePayload.error?.code, "paid_fallback_deletion_in_progress");
 
   const response = await deleteRequest();
   assert.equal(response.status, 200);
@@ -1247,9 +1485,15 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "usage", keyId])), false);
   assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "usage_daily", keyId])), false);
   assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "ledger", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "request", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "window", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "pending", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "reconciliation_lease", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), true);
   assert.equal(kvStoreHasPrefix(["ubq_ai", "api_keys", "request_log", keyId]), false);
   assert.equal(kvStoreHasPrefix(["uos_ai", "api_key_usage", "v2", keyId]), false);
   assert.equal(kvStore.has(keyToString(neighboringPaidFallbackKey)), true);
+  assert.equal(kvStore.has(keyToString(neighboringV3RequestKey)), true);
   assert.equal(kvStore.has(keyToString(neighboringLegacyLogKey)), true);
   assert.equal(kvStore.has(keyToString(neighboringCounterKey)), true);
 });

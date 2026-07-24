@@ -52,7 +52,6 @@ import {
   apiKeyUsageDailyKey,
   apiKeyUsageKey,
   legacyApiKeyRequestLogPrefix,
-  listApiKeyRequestLogs,
 } from "./analytics.ts";
 import { reloadKernelPublicKeys } from "./auth.ts";
 import {
@@ -60,8 +59,13 @@ import {
   hasStrictPaidFallbackKeyPolicy,
   initializePaidFallbackPolicy,
   paidFallbackHashFields,
-  reconcileApiKeyPaidFallbacks,
 } from "./paid_fallback.ts";
+import {
+  deletePaidFallbackStateV3,
+  getPaidFallbackWindowProjectionV3,
+  listPaidFallbackRequestsV3,
+  paidFallbackDeletionGuardV3Key,
+} from "./paid_fallback_ledger.ts";
 import {
   deleteKernelOrgUsageLimit,
   deleteKernelUsageLimit,
@@ -583,14 +587,45 @@ const paidFallbackInitializationError = (error: unknown): Response => {
   });
 };
 
-const paidFallbackPublicFields = (record: ApiKeyRecord) => ({
-  paid_fallback_enabled: record.paid_fallback_enabled,
-  paid_fallback_limit_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_limit_microcredits),
-  paid_fallback_spent_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_spent_microcredits),
-  paid_fallback_reserved_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_reserved_microcredits),
-  paid_fallback_model_ids: record.paid_fallback_model_ids,
-  paid_fallback_pricing_checked_at_ms: record.paid_fallback_pricing_checked_at_ms,
-});
+const paidFallbackPublicFields = async (
+  record: ApiKeyRecord,
+  kv: Deno.Kv,
+  windowResetAtMs = record.usage_reset_at_ms,
+) => {
+  const projection = await getPaidFallbackWindowProjectionV3(
+    record.id,
+    windowResetAtMs,
+    record.paid_fallback_limit_microcredits,
+    kv,
+  );
+  return {
+    paid_fallback_enabled: record.paid_fallback_enabled,
+    paid_fallback_limit_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_limit_microcredits),
+    paid_fallback_spent_credits: paidFallbackMicrocreditsToCredits(projection?.settled_microcredits ?? 0),
+    paid_fallback_reserved_credits: paidFallbackMicrocreditsToCredits(projection?.reserved_microcredits ?? 0),
+    paid_fallback_pending_count: projection?.pending_count ?? 0,
+    paid_fallback_model_ids: record.paid_fallback_model_ids,
+    paid_fallback_pricing_checked_at_ms: record.paid_fallback_pricing_checked_at_ms,
+  };
+};
+
+const paidFallbackHistoryRecord = (request: Awaited<ReturnType<typeof listPaidFallbackRequestsV3>>[number]) => {
+  const startedAtMs = request.dispatched_at_ms ?? request.created_at_ms;
+  const completedAtMs = request.terminal_at_ms;
+  return {
+    ...request,
+    id: request.request_id,
+    method: "POST",
+    status_code: request.terminal_state === "completed" ? 200 : null,
+    provider: "yunwu",
+    fallback_reason: "codex_429",
+    started_at_ms: startedAtMs,
+    completed_at_ms: completedAtMs,
+    latency_ms: completedAtMs === null ? null : Math.max(0, completedAtMs - startedAtMs),
+    paid_fallback_window_reset_at_ms: request.window_reset_at_ms,
+    billing_status: request.billing_state === "settled" ? "reconciled" : request.billing_state,
+  };
+};
 
 const normalizeKernelRepoPart = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
@@ -836,7 +871,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
       usage_requests: record.usage_requests,
       usage_reset_at_ms: record.usage_reset_at_ms,
       window_ms: record.window_ms,
-      ...paidFallbackPublicFields(record),
+      ...await paidFallbackPublicFields(record, kv),
     },
     { "x-uos-upstream": "chatgpt_codex" },
   );
@@ -856,20 +891,25 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
 
   const includeUsage = shouldIncludeUsage(new URL(req.url).searchParams.get("include_usage"));
   const usageById = new Map<string, Record<string, number>>();
-  if (includeUsage) {
-    for (const record of records) {
-      const hashRecord: ApiKeyHashRecord = {
-        id: record.id,
-        expires_at_ms: record.expires_at_ms,
-        revoked_at_ms: record.revoked_at_ms,
-        usage_limit_requests: record.usage_limit_requests,
-        usage_requests: record.usage_requests,
-        usage_reset_at_ms: record.usage_reset_at_ms,
-        window_ms: record.window_ms,
-        ...paidFallbackHashFields(record),
-      };
-      const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, Date.now());
-      if (policy) {
+  const paidFallbackResetById = new Map<string, number>();
+  for (const record of records) {
+    const hashRecord: ApiKeyHashRecord = {
+      id: record.id,
+      expires_at_ms: record.expires_at_ms,
+      revoked_at_ms: record.revoked_at_ms,
+      usage_limit_requests: record.usage_limit_requests,
+      usage_requests: record.usage_requests,
+      usage_reset_at_ms: record.usage_reset_at_ms,
+      window_ms: record.window_ms,
+      ...paidFallbackHashFields(record),
+    };
+    const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, Date.now());
+    if (policy) {
+      paidFallbackResetById.set(
+        record.id,
+        record.revoked_at_ms === null ? policy.usage_reset_at_ms : record.usage_reset_at_ms,
+      );
+      if (includeUsage) {
         usageById.set(record.id, {
           request_count: await getApiKeyUsageV2(policy, kv),
           limit: policy.usage_limit_requests,
@@ -878,6 +918,20 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
       }
     }
   }
+  const paidFallbackById = new Map(
+    await Promise.all(
+      records.map(async (record) =>
+        [
+          record.id,
+          await paidFallbackPublicFields(
+            record,
+            kv,
+            paidFallbackResetById.get(record.id) ?? record.usage_reset_at_ms,
+          ),
+        ] as const
+      ),
+    ),
+  );
 
   return json(
     200,
@@ -893,7 +947,7 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
         usage_limit_requests: r.usage_limit_requests,
         usage_reset_at_ms: includeUsage ? usageById.get(r.id)?.reset_at_ms ?? r.usage_reset_at_ms : r.usage_reset_at_ms,
         window_ms: coerceApiKeyWindowMs(r),
-        ...paidFallbackPublicFields(r),
+        ...paidFallbackById.get(r.id),
         ...(includeUsage
           ? {
             usage_requests: usageById.get(r.id)?.request_count ?? 0,
@@ -935,8 +989,7 @@ export const handleAdminApiKeysPaidFallbacks = async (
   const limit = Math.min(requestedLimit, 100);
 
   try {
-    await reconcileApiKeyPaidFallbacks(normalizedKeyId);
-    const records = await listApiKeyRequestLogs(normalizedKeyId, { limit, kv });
+    const records = (await listPaidFallbackRequestsV3(normalizedKeyId, limit, kv)).map(paidFallbackHistoryRecord);
     return json(
       200,
       { object: "list", data: records },
@@ -1094,7 +1147,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
         usage_requests: entry.value.usage_requests,
         usage_reset_at_ms: entry.value.usage_reset_at_ms,
         window_ms: currentWindowMs,
-        ...paidFallbackPublicFields(entry.value),
+        ...await paidFallbackPublicFields(entry.value, kv),
       },
       { "x-uos-upstream": "chatgpt_codex" },
     );
@@ -1156,7 +1209,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
       usage_requests: updated.usage_requests,
       usage_reset_at_ms: updated.usage_reset_at_ms,
       window_ms: updated.window_ms,
-      ...paidFallbackPublicFields(updated),
+      ...await paidFallbackPublicFields(updated, kv),
     },
     { "x-uos-upstream": "chatgpt_codex" },
   );
@@ -1242,6 +1295,14 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
     });
   }
 
+  const deletionGuard = await kv.get(paidFallbackDeletionGuardV3Key(id), { consistency: "strong" });
+  if (deletionGuard.value) {
+    return openaiError(
+      409,
+      "API key deletion is in progress and cannot be reversed",
+      "paid_fallback_deletion_in_progress",
+    );
+  }
   if (!entry.value.revoked_at_ms) {
     return json(200, { id, revoked_at_ms: null }, { "x-uos-upstream": "chatgpt_codex" });
   }
@@ -1263,6 +1324,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
 
   const atomic = kv.atomic()
     .check(entry)
+    .check(deletionGuard)
     .set(idKey, updated)
     .set(hashKey, updatedHash);
   if (hashEntry.versionstamp) atomic.check(hashEntry);
@@ -1300,6 +1362,44 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
 
   if (!entry.value.revoked_at_ms) {
     return openaiError(400, "Only revoked keys can be deleted", "invalid_request_error");
+  }
+
+  const deletionGuardKey = paidFallbackDeletionGuardV3Key(id);
+  const deletionGuard = await kv.get(deletionGuardKey, { consistency: "strong" });
+  if (!deletionGuard.value) {
+    const guardCommit = await kv.atomic()
+      .check(entry)
+      .check(deletionGuard)
+      .set(deletionGuardKey, { created_at_ms: Date.now() })
+      .commit();
+    if (!guardCommit.ok) {
+      return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
+    }
+  }
+
+  let paidFallbackDeletion: Awaited<ReturnType<typeof deletePaidFallbackStateV3>>;
+  try {
+    paidFallbackDeletion = await deletePaidFallbackStateV3(id, kv);
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to clean V3 paid fallback state before API key deletion:", {
+      key_id: id,
+      error,
+    });
+    return openaiError(500, "Failed to prepare paid fallback state for API key deletion", "server_error");
+  }
+  if (paidFallbackDeletion.kind === "unavailable") {
+    return openaiError(500, "Deno KV is not available; cannot inspect paid fallback billing", "server_error");
+  }
+  if (paidFallbackDeletion.kind === "blocked") {
+    const outstandingPaidFallback = paidFallbackDeletion.outstanding;
+    return openaiError(
+      409,
+      `Cannot delete API key while Yunwu billing is pending or unresolved ` +
+        `(pending=${outstandingPaidFallback.pending_requests}, ` +
+        `unresolved=${outstandingPaidFallback.unresolved_requests}, ` +
+        `markers=${outstandingPaidFallback.pending_markers})`,
+      "paid_fallback_billing_outstanding",
+    );
   }
 
   const atomic = kv.atomic()

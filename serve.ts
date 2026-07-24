@@ -1,12 +1,17 @@
 /// <reference lib="deno.ns" />
 
 import handler from "./src/handler.ts";
+import { kvPromise } from "./src/kv.ts";
 import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
 
 if (Deno.env.get("DENO_DEPLOYMENT_ID")) {
+  // `kvPromise` fails closed when KV cannot be opened, so a transient KV
+  // outage does not prevent the deployment from serving requests.
+  const kv = await kvPromise;
   Deno.cron("reconcile pending Yunwu billing", "* * * * *", async () => {
     try {
-      await reconcileDuePaidFallbacksV3();
+      if (!kv) return;
+      await reconcileDuePaidFallbacksV3(Date.now(), kv);
     } catch (error) {
       console.error(
         "[ai.ubq.fi] Scheduled paid fallback reconciliation failed:",

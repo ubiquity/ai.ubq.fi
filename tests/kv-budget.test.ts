@@ -376,6 +376,7 @@ Deno.test("completed nonstream inference survives one failed quota increment att
     assert.deepEqual(JSON.parse(String(accountingWarnings[0]?.[1])), {
       route: "responses",
       key_id: "failed-nonstream-accounting",
+      request_id: response.headers.get("x-uos-request-id"),
       errors: ["api_key: injected API-key usage sum failure"],
     });
   } finally {
@@ -690,6 +691,7 @@ Deno.test("streaming completion increments API-key and kernel limits together ex
       assert.deepEqual(JSON.parse(String(accountingWarnings[0]?.[1])), {
         route: "responses",
         key_id: "stream-kernel-and-key",
+        request_id: failedAccountingResponse.headers.get("x-uos-request-id"),
         errors: ["api_key: injected API-key usage sum failure"],
       });
     } finally {
@@ -767,18 +769,26 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
     assert.equal(response.status, 200);
     const terminal = logs.find((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.ok(terminal);
+    const requestId = response.headers.get("x-uos-request-id");
+    assert.ok(requestId);
     assert.deepEqual(JSON.parse(String(terminal[1])), {
+      request_id: requestId,
       route: "responses",
       status: 200,
       provider: "chatgpt_codex",
       latency_ms: JSON.parse(String(terminal[1])).latency_ms,
-      input_tokens: 1,
-      output_tokens: 1,
       model: MODEL,
       reasoning: "medium",
       key_id: "telemetry",
       fallback_reason: null,
+      stream_terminal_type: "response.completed",
+      git_sha: "unknown",
+      deno_revision: "unknown",
+      router_revision: null,
     });
+    const accepted = logs.find((entry) => entry[0] === "[ai.ubq.fi] request_accepted");
+    assert.ok(accepted);
+    assert.equal(JSON.parse(String(accepted[1])).request_id, requestId);
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
@@ -855,8 +865,10 @@ Deno.test("streaming inference emits one terminal log only after the response bo
     assert.equal(terminal.provider, "chatgpt_codex");
     assert.equal(terminal.model, MODEL);
     assert.equal(terminal.reasoning, "medium");
-    assert.equal(terminal.input_tokens, 3);
-    assert.equal(terminal.output_tokens, 4);
+    assert.equal(terminal.stream_terminal_type, "response.completed");
+    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "input_tokens"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "output_tokens"), false);
+    assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
@@ -911,9 +923,132 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-codex-primary-used-percent"), "0");
     assert.equal(calls, 2);
-    assert.ok(kv.reads <= 9, `fallback response unexpectedly reread KV (${kv.reads} reads)`);
+    // V3 admission reads the immutable request, window, and deletion guard
+    // together before its atomic reservation; that adds one read over the
+    // legacy single-slot path while avoiding shared reservation contention.
+    assert.ok(kv.reads <= 10, `fallback response unexpectedly reread KV (${kv.reads} reads)`);
     await response.body?.cancel();
   } finally {
+    globalThis.fetch = originalFetch;
+    if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
+    else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
+  }
+});
+
+Deno.test("paid fallback terminal telemetry records YunWu lifecycle", async () => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
+    access_token: "access",
+    refresh_token: "refresh",
+    account_id: "acct",
+    updated_at_ms: Date.now(),
+  });
+  const token = `u_${"9".repeat(64)}`;
+  await seedPaidFallbackKey(token, "fallback-terminal-telemetry");
+
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
+  const logs: unknown[][] = [];
+  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  globalThis.fetch = (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === "https://yunwu.ai/v1/responses") return Promise.resolve(sse());
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  };
+  console.info = (...args: unknown[]) => logs.push(args);
+  try {
+    const response = await handler(request(token));
+    assert.equal(response.status, 200);
+    await response.text();
+    const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(terminalLogs.length, 1);
+    const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
+    assert.equal(terminal.provider, "yunwu");
+    assert.equal(terminal.fallback_reason, "primary_429");
+    assert.equal(terminal.stream_terminal_type, "response.completed");
+    assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
+  } finally {
+    console.info = originalInfo;
+    globalThis.fetch = originalFetch;
+    if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
+    else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
+  }
+});
+
+Deno.test("paid fallback cancellation telemetry records a cancelled YunWu lifecycle", async () => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
+    access_token: "access",
+    refresh_token: "refresh",
+    account_id: "acct",
+    updated_at_ms: Date.now(),
+  });
+  const token = `u_${"a".repeat(64)}`;
+  const keyId = "fallback-cancel-telemetry";
+  await seedPaidFallbackKey(token, keyId);
+
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
+  const logs: unknown[][] = [];
+  const encoder = new TextEncoder();
+  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  globalThis.fetch = (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === "https://yunwu.ai/v1/responses") {
+      return Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: "response.created", response: { id: "cancelled" } })}\n\n`,
+                ),
+              );
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  };
+  console.info = (...args: unknown[]) => logs.push(args);
+  try {
+    const response = await handler(streamingRequest(token, "responses"));
+    assert.equal(response.status, 200);
+    assert.ok(response.body);
+    const reader = response.body.getReader();
+    assert.equal((await reader.read()).done, false);
+    await reader.cancel("client disconnected");
+
+    const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(terminalLogs.length, 1);
+    const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
+    assert.equal(terminal.provider, "yunwu");
+    assert.equal(terminal.fallback_reason, "primary_429");
+    assert.equal(terminal.stream_terminal_type, "cancelled");
+  } finally {
+    console.info = originalInfo;
     globalThis.fetch = originalFetch;
     if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
     else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
@@ -1019,7 +1154,8 @@ Deno.test("KV budget: malformed tokens are rejected without KV and policy expiry
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     kv.resetCounts();
-    assert.equal((await handler(request("malformed"))).status, 401);
+    const malformedResponse = await handler(request("malformed"));
+    assert.equal(malformedResponse.status, 401);
     assert.deepEqual({ reads: kv.reads, writes: kv.writes }, { reads: 0, writes: 0 });
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
@@ -1027,6 +1163,9 @@ Deno.test("KV budget: malformed tokens are rejected without KV and policy expiry
     assert.equal(terminal.status, 401);
     assert.equal(terminal.provider, "gateway");
     assert.equal(terminal.key_id, null);
+    assert.equal(terminal.request_id, malformedResponse.headers.get("x-uos-request-id"));
+    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "input_tokens"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "output_tokens"), false);
   } finally {
     console.info = originalInfo;
   }

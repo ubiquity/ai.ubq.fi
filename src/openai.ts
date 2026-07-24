@@ -15,7 +15,14 @@ import { kvPromise } from "./kv.ts";
 import { loadRuntimeConfig } from "./runtime_config.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, EMBEDDINGS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
 import { readJsonBody } from "./request.ts";
-import { proxyResponsesStream, readResponsesStream, type ResponsesStreamEvent } from "./responses_stream.ts";
+import {
+  type PreflightedResponsesStream,
+  preflightResponsesStream,
+  proxyResponsesStreamIterator,
+  readResponsesStream,
+  ResponsesStreamError,
+  type ResponsesStreamEvent,
+} from "./responses_stream.ts";
 import {
   type PaidFallbackReservation,
   recordYunwuAmbiguousFailure,
@@ -75,7 +82,17 @@ export type ResponseTelemetry = Readonly<{
   outputTokens: number | null;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
+  streamTerminalType: ResponseStreamTerminalType | null;
 }>;
+
+export type ResponseStreamTerminalType =
+  | "response.completed"
+  | "response.failed"
+  | "response.incomplete"
+  | "error"
+  | "eof"
+  | "cancelled"
+  | "deadline";
 
 type ResponseTelemetryState = {
   provider: string | null;
@@ -86,6 +103,7 @@ type ResponseTelemetryState = {
   outputTokens: number | null;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
+  streamTerminalType: ResponseStreamTerminalType | null;
 };
 
 const responseTelemetry = new WeakMap<Response, ResponseTelemetryState>();
@@ -99,6 +117,7 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   outputTokens: null,
   quotaUsedPercent: undefined,
   completed: false,
+  streamTerminalType: null,
 });
 
 const withResponseTelemetryContext = (
@@ -133,6 +152,7 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     outputTokens: state.outputTokens,
     quotaUsedPercent: state.quotaUsedPercent,
     completed: state.completed,
+    streamTerminalType: state.streamTerminalType,
   };
 };
 
@@ -199,6 +219,24 @@ const recordCompletionUsage = (
 };
 
 const recordErrorUsage = (_context: UsageContext | undefined): Promise<void> => Promise.resolve();
+
+const recordStreamTerminalType = (
+  context: UsageContext | undefined,
+  terminalType: ResponseStreamTerminalType,
+): void => {
+  if (context?.responseTelemetry) context.responseTelemetry.streamTerminalType = terminalType;
+};
+
+const classifyStreamFailure = (
+  error: unknown,
+  signal: AbortSignal,
+  downstreamSignal: AbortSignal,
+): ResponseStreamTerminalType => {
+  if (downstreamSignal.aborted) return "cancelled";
+  if (signal.aborted) return "deadline";
+  if (error instanceof ResponsesStreamError && error.kind === "premature_eof") return "eof";
+  return "error";
+};
 
 const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   const raw = error instanceof Error ? error.message : String(error);
@@ -332,23 +370,50 @@ const bestEffortPaidFallbackBookkeeping = async (
   }
 };
 
-const scheduleYunwuTerminalReconciliation = (
+type YunwuTransportLifecycle = Readonly<{
+  terminal: (eventType: string) => void;
+  ambiguous: () => void;
+  cancelled: () => void;
+}>;
+
+const createYunwuTransportLifecycle = (
   reservation: PaidFallbackReservation | null,
-  eventType: string,
-): void => {
-  if (!reservation) return;
-  const terminalState = eventType === "response.completed"
-    ? "completed"
-    : eventType === "response.failed" || eventType === "error"
-    ? "failed"
-    : eventType === "response.incomplete"
-    ? "incomplete"
-    : null;
-  if (!terminalState) return;
-  void bestEffortPaidFallbackBookkeeping(
-    "terminal reconciliation",
-    () => recordYunwuTerminal(reservation, terminalState),
-  );
+): YunwuTransportLifecycle => {
+  let recorded = false;
+  const schedule = (
+    operation: string,
+    run: (reservation: PaidFallbackReservation) => Promise<void>,
+  ): void => {
+    if (!reservation || recorded) return;
+    recorded = true;
+    void bestEffortPaidFallbackBookkeeping(operation, () => run(reservation));
+  };
+  return {
+    terminal: (eventType) => {
+      const terminalState = eventType === "response.completed"
+        ? "completed"
+        : eventType === "response.failed" || eventType === "error"
+        ? "failed"
+        : eventType === "response.incomplete"
+        ? "incomplete"
+        : null;
+      if (!terminalState) return;
+      schedule(
+        "terminal reconciliation",
+        (activeReservation) => recordYunwuTerminal(activeReservation, terminalState),
+      );
+    },
+    ambiguous: () =>
+      schedule(
+        "ambiguous failure recording",
+        (activeReservation) => recordYunwuAmbiguousFailure(activeReservation),
+      ),
+    cancelled: () =>
+      schedule(
+        "dispatched cancellation recording",
+        (activeReservation) => recordYunwuTerminal(activeReservation, "cancelled"),
+      ),
+  };
 };
 
 const fetchResponsesWithPaidFallback = async (
@@ -2425,16 +2490,17 @@ const normalizeResponseInputItem = (value: unknown): ResponseMessageItem | null 
   return toResponseMessageItem(value);
 };
 
-const recordResponsesTerminal = async (
+const recordResponsesTerminal = (
   event: ResponsesStreamEvent,
   usageContext?: UsageContext,
-): Promise<void> => {
+): void => {
+  if (event.terminal) recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
   if (event.type !== "response.completed") {
-    await recordErrorUsage(usageContext);
+    void recordErrorUsage(usageContext);
     return;
   }
   const usage = isRecord(event.value.response) ? extractUsageTokens(event.value.response.usage) : null;
-  await recordCompletionUsage(usageContext, usage);
+  void recordCompletionUsage(usageContext, usage);
 };
 
 const responseHasOutputText = (output: unknown): boolean => {
@@ -2481,25 +2547,34 @@ const withAccumulatedResponseItems = (
 };
 
 const streamChatCompletions = (
-  upstream: Response,
+  source: PreflightedResponsesStream,
   model: string,
   usageContext: UsageContext | undefined,
   provider: UpstreamProvider,
-  paidFallback: PaidFallbackReservation | null,
+  lifecycle: YunwuTransportLifecycle,
+  signal: AbortSignal,
+  downstreamSignal: AbortSignal,
 ): Response => {
-  if (!upstream.body) {
-    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
-  }
-
   const encoder = new TextEncoder();
+  const iterator = source.iterator;
+  let pending: ResponsesStreamEvent | undefined = source.first;
+  let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
+  let created = Math.floor(Date.now() / 1000);
+  let sentRole = false;
+  let closed = false;
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
-      let created = Math.floor(Date.now() / 1000);
-      let sentRole = false;
-
+    async pull(controller) {
+      if (closed) return;
       try {
-        for await (const event of readResponsesStream(upstream.body!)) {
+        while (!closed) {
+          const next = pending ? { done: false as const, value: pending } : await iterator.next();
+          pending = undefined;
+          if (next.done) {
+            throw new ResponsesStreamError("Upstream Responses stream ended before a terminal event.", {
+              kind: "premature_eof",
+            });
+          }
+          const event = next.value;
           const ev = event.value;
           const type = event.type;
           if (type === "response.created" && isRecord(ev.response)) {
@@ -2527,13 +2602,14 @@ const streamChatCompletions = (
             };
             sentRole = true;
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-            continue;
+            return;
           }
 
           if (type === "response.completed") {
-            scheduleYunwuTerminalReconciliation(paidFallback, type);
+            lifecycle.terminal(type);
+            recordStreamTerminalType(usageContext, "response.completed");
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-            await recordCompletionUsage(usageContext, usageTokens);
+            void recordCompletionUsage(usageContext, usageTokens);
             const chunk: Record<string, unknown> = {
               id,
               object: "chat.completion.chunk",
@@ -2549,46 +2625,57 @@ const streamChatCompletions = (
             };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            closed = true;
             controller.close();
+            void iterator.return("Responses terminal event translated").catch(() => {});
             return;
           }
           if (event.terminal) {
-            scheduleYunwuTerminalReconciliation(paidFallback, type);
-            await recordErrorUsage(usageContext);
-            const errorChunk = {
-              id,
-              object: "chat.completion.chunk",
-              created,
-              model,
-              choices: [],
+            lifecycle.terminal(type);
+            recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
+            void recordErrorUsage(usageContext);
+            const errorValue = {
               error: {
                 message: `Upstream terminated with ${type}.`,
                 type: "server_error",
                 code: "upstream_stream_error",
               },
             };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorValue)}\n\n`));
+            closed = true;
             controller.close();
+            void iterator.return("Responses terminal error translated").catch(() => {});
             return;
           }
         }
-      } catch {
-        await recordErrorUsage(usageContext);
-        const errorChunk = {
-          id,
-          object: "chat.completion.chunk",
-          created,
-          model,
-          choices: [],
+      } catch (error) {
+        if (closed) return;
+        const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
+        recordStreamTerminalType(usageContext, terminalType);
+        if (terminalType === "cancelled") lifecycle.cancelled();
+        else lifecycle.ambiguous();
+        void recordErrorUsage(usageContext);
+        const errorValue = {
           error: {
             message: "The upstream stream ended unexpectedly.",
             type: "server_error",
             code: "upstream_stream_error",
           },
         };
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
+        if (!downstreamSignal.aborted) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorValue)}\n\n`));
+        }
+        closed = true;
         controller.close();
       }
+    },
+    cancel(reason) {
+      if (closed) return;
+      closed = true;
+      recordStreamTerminalType(usageContext, "cancelled");
+      lifecycle.cancelled();
+      void recordErrorUsage(usageContext);
+      void iterator.return(reason).catch(() => {});
     },
   });
 
@@ -2603,14 +2690,14 @@ const streamChatCompletions = (
 };
 
 const completeChatCompletions = async (
-  upstream: Response,
+  source: PreflightedResponsesStream,
   model: string,
-  usageContext?: UsageContext,
-  provider: UpstreamProvider = "chatgpt_codex",
-  paidFallback: PaidFallbackReservation | null = null,
+  usageContext: UsageContext | undefined,
+  provider: UpstreamProvider,
+  lifecycle: YunwuTransportLifecycle,
+  signal: AbortSignal,
+  downstreamSignal: AbortSignal,
 ): Promise<Response> => {
-  if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
-
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
   let content = "";
@@ -2618,9 +2705,18 @@ const completeChatCompletions = async (
 
   let completed = false;
   try {
-    for await (const event of readResponsesStream(upstream.body)) {
+    let pending: ResponsesStreamEvent | undefined = source.first;
+    for (;;) {
+      const next = pending ? { done: false as const, value: pending } : await source.iterator.next();
+      pending = undefined;
+      if (next.done) break;
+      const event = next.value;
       const ev = event.value;
       const type = event.type;
+      if (event.terminal) {
+        lifecycle.terminal(type);
+        recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
+      }
       if (type === "response.created" && isRecord(ev.response)) {
         const upstreamId = getString(ev.response.id);
         const createdAt = typeof ev.response.created_at === "number" ? ev.response.created_at : null;
@@ -2633,7 +2729,6 @@ const completeChatCompletions = async (
         continue;
       }
       if (type === "response.completed" && isRecord(ev.response)) {
-        scheduleYunwuTerminalReconciliation(paidFallback, type);
         const usageTokens = extractUsageTokens(ev.response.usage);
         if (usageTokens) {
           usage = {
@@ -2646,13 +2741,20 @@ const completeChatCompletions = async (
         completed = true;
         break;
       }
-      if (event.terminal) {
-        scheduleYunwuTerminalReconciliation(paidFallback, type);
-        break;
-      }
+      if (event.terminal) break;
     }
-  } catch {
+  } catch (error) {
+    const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
+    recordStreamTerminalType(usageContext, terminalType);
+    if (terminalType === "cancelled") lifecycle.cancelled();
+    else lifecycle.ambiguous();
     completed = false;
+  } finally {
+    // This path consumes the generator manually (rather than through
+    // `for await`), so explicitly close it after a terminal event or error.
+    // Otherwise the parser can remain suspended at its final `yield` while
+    // retaining the upstream reader lock.
+    await source.iterator.return("Chat Completions response consumed").catch(() => {});
   }
   if (!completed) {
     await recordErrorUsage(usageContext);
@@ -3809,6 +3911,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     stream,
     reasoning: reasoningLabel,
   });
+  const requestInferenceSignal = inferenceSignal(req);
 
   let routed: RoutedResponsesUpstream;
   try {
@@ -3819,7 +3922,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       reasoning: reasoningLabel,
       usageContext,
       clientVersion: modelMetadata.snapshot?.client_version,
-      signal: inferenceSignal(req),
+      signal: requestInferenceSignal,
     });
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
@@ -3827,27 +3930,62 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }
   const upstream = routed.response;
+  const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
 
   if (routed.gatewayResponse) {
+    recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
     return upstream;
   }
   if (!upstream.ok) {
+    lifecycle.terminal("response.failed");
+    recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
     const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
     return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
   }
 
   if (!upstream.body) {
+    lifecycle.ambiguous();
+    recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
     return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
       headers: { "x-uos-upstream": routed.provider },
     });
   }
 
+  let preflight: PreflightedResponsesStream;
+  try {
+    preflight = await preflightResponsesStream(upstream.body, requestInferenceSignal);
+  } catch (error) {
+    const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
+    recordStreamTerminalType(usageContext, terminalType);
+    if (terminalType === "cancelled") lifecycle.cancelled();
+    else lifecycle.ambiguous();
+    await recordErrorUsage(usageContext);
+    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
+      headers: { "x-uos-upstream": routed.provider },
+    });
+  }
   const response = stream
-    ? streamChatCompletions(upstream, model, usageContext, routed.provider, routed.paidFallback)
-    : await completeChatCompletions(upstream, model, usageContext, routed.provider, routed.paidFallback);
+    ? streamChatCompletions(
+      preflight,
+      model,
+      usageContext,
+      routed.provider,
+      lifecycle,
+      requestInferenceSignal,
+      req.signal,
+    )
+    : await completeChatCompletions(
+      preflight,
+      model,
+      usageContext,
+      routed.provider,
+      lifecycle,
+      requestInferenceSignal,
+      req.signal,
+    );
   return withUosWarning(response, warnings);
 };
 
@@ -4030,6 +4168,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     stream: clientWantsStream,
     reasoning: reasoningLabel,
   });
+  const requestInferenceSignal = inferenceSignal(req);
 
   let routed: RoutedResponsesUpstream;
   try {
@@ -4040,7 +4179,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       reasoning: reasoningLabel,
       usageContext,
       clientVersion: modelMetadata.snapshot?.client_version,
-      signal: inferenceSignal(req),
+      signal: requestInferenceSignal,
     });
   } catch (error) {
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
@@ -4048,12 +4187,16 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }
   const upstream = routed.response;
+  const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
 
   if (routed.gatewayResponse) {
+    recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
     return upstream;
   }
   if (!upstream.ok) {
+    lifecycle.terminal("response.failed");
+    recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
     const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
     return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
@@ -4061,21 +4204,53 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
 
   if (clientWantsStream) {
     if (!upstream.body) {
+      lifecycle.ambiguous();
+      recordStreamTerminalType(usageContext, "error");
       await recordErrorUsage(usageContext);
       return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
         headers: { "x-uos-upstream": routed.provider },
       });
     }
+    let preflight: PreflightedResponsesStream;
+    try {
+      preflight = await preflightResponsesStream(upstream.body, requestInferenceSignal);
+    } catch (error) {
+      const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
+      recordStreamTerminalType(usageContext, terminalType);
+      if (terminalType === "cancelled") lifecycle.cancelled();
+      else lifecycle.ambiguous();
+      await recordErrorUsage(usageContext);
+      return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
+        headers: { "x-uos-upstream": routed.provider },
+      });
+    }
     const headers = new Headers(upstream.headers);
+    // The gateway always emits the Responses wire format as SSE. Some
+    // compatible upstreams omit (or mislabel) this header; preserve the
+    // stream contract so handler-level terminal logging and clients consume
+    // it as an event stream.
+    headers.set("Content-Type", "text/event-stream");
     headers.set("x-uos-upstream", routed.provider);
-    const responseBody = proxyResponsesStream(upstream.body, {
-      signal: inferenceSignal(req),
+    const responseBody = proxyResponsesStreamIterator(preflight.iterator, {
+      signal: requestInferenceSignal,
+      downstreamSignal: req.signal,
       onEvent: (event) => {
-        scheduleYunwuTerminalReconciliation(routed.paidFallback, event.type);
-        return recordResponsesTerminal(event, usageContext);
+        lifecycle.terminal(event.type);
+        recordResponsesTerminal(event, usageContext);
       },
-      onFailure: () => recordErrorUsage(usageContext),
-    });
+      onFailure: (error) => {
+        const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
+        recordStreamTerminalType(usageContext, terminalType);
+        if (terminalType === "cancelled") lifecycle.cancelled();
+        else lifecycle.ambiguous();
+        void recordErrorUsage(usageContext);
+      },
+      onCancel: () => {
+        recordStreamTerminalType(usageContext, "cancelled");
+        lifecycle.cancelled();
+        void recordErrorUsage(usageContext);
+      },
+    }, preflight.first);
     const response = new Response(responseBody, {
       status: upstream.status,
       statusText: upstream.statusText,
@@ -4085,6 +4260,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
 
   if (!upstream.body) {
+    lifecycle.ambiguous();
+    recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
     return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
       headers: { "x-uos-upstream": routed.provider },
@@ -4096,8 +4273,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   let outputText = "";
   const outputItems: Record<string, unknown>[] = [];
   try {
-    for await (const event of readResponsesStream(upstream.body, inferenceSignal(req))) {
+    for await (const event of readResponsesStream(upstream.body, requestInferenceSignal)) {
       const ev = event.value;
+      if (event.terminal) {
+        lifecycle.terminal(event.type);
+        recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
+      }
       if (event.type === "response.output_text.delta") {
         outputText += getString(ev.delta) ?? "";
         continue;
@@ -4116,22 +4297,26 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         break;
       }
     }
-  } catch {
+  } catch (error) {
+    const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
+    recordStreamTerminalType(usageContext, terminalType);
+    if (terminalType === "cancelled") lifecycle.cancelled();
+    else lifecycle.ambiguous();
     finalResponse = null;
   }
   if (!finalResponse) {
+    lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
     return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
       headers: { "x-uos-upstream": routed.provider },
     });
   }
-  if (finalEventType) scheduleYunwuTerminalReconciliation(routed.paidFallback, finalEventType);
   finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
   finalResponse = withAccumulatedResponseText(finalResponse, outputText);
   const usageTokens = extractUsageTokens(finalResponse.usage);
-  const finalStatus = getString(finalResponse.status);
-  if (finalStatus === "failed" || finalStatus === "incomplete") await recordErrorUsage(usageContext);
-  else await recordCompletionUsage(usageContext, usageTokens);
+  if (finalEventType === "response.failed" || finalEventType === "response.incomplete") {
+    await recordErrorUsage(usageContext);
+  } else await recordCompletionUsage(usageContext, usageTokens);
   const response = json(200, finalResponse, { "x-uos-upstream": routed.provider });
   return withUosWarning(response, warnings);
 };

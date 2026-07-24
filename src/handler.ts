@@ -32,6 +32,7 @@ import {
   requireSuperAdminAuth,
 } from "./auth.ts";
 import { type ApiKeyPolicy, apiKeyQuotaUsedPercent } from "./api_key_policy.ts";
+import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
 import {
@@ -99,6 +100,16 @@ const normalizePath = (path: string): string => {
   return path.replace(/\/+$/, "");
 };
 
+const withRequestId = (response: Response, requestId: string): Response => {
+  const headers = new Headers(response.headers);
+  headers.set("x-uos-request-id", requestId);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
+
 const decorateInferenceQuota = (
   response: Response,
   policy: ApiKeyPolicy | null,
@@ -117,28 +128,32 @@ const logTerminalRequest = (
     telemetryResponse?: Response;
     startedAtMs: number;
     keyId: string | null;
+    requestId: string;
   }>,
 ): void => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
   console.info(
     "[ai.ubq.fi] request_terminal",
     JSON.stringify({
+      request_id: input.requestId,
       route: input.route,
       status: input.response.status,
       provider: telemetry?.provider ?? input.response.headers.get("x-uos-upstream") ?? "gateway",
       latency_ms: Math.max(0, Date.now() - input.startedAtMs),
-      input_tokens: telemetry?.inputTokens ?? null,
-      output_tokens: telemetry?.outputTokens ?? null,
       model: telemetry?.model ?? null,
       reasoning: telemetry?.reasoning ?? null,
       key_id: input.keyId,
       fallback_reason: telemetry?.fallbackReason ?? null,
+      stream_terminal_type: telemetry?.streamTerminalType ?? null,
+      git_sha: runtimeGitSha(),
+      deno_revision: runtimeDeploymentId(),
+      router_revision: input.response.headers.get("x-uos-router-revision"),
     }),
   );
 };
 
 const warnQuotaAccountingFailure = (
-  input: Readonly<{ route: string; keyId: string | null }>,
+  input: Readonly<{ route: string; keyId: string | null; requestId: string }>,
   error: unknown,
 ): void => {
   const errors = error instanceof AggregateError ? error.errors : [error];
@@ -146,6 +161,7 @@ const warnQuotaAccountingFailure = (
     console.warn(
       "[ai.ubq.fi] quota_accounting_failed",
       JSON.stringify({
+        request_id: input.requestId,
         route: input.route,
         key_id: input.keyId,
         errors: errors.map((item) => item instanceof Error ? item.message : String(item)),
@@ -164,6 +180,7 @@ const withTerminalRequestLog = (
     telemetryResponse?: Response;
     startedAtMs: number;
     keyId: string | null;
+    requestId: string;
     onCompleted?: () => Promise<void>;
   }>,
 ): Promise<Response> => {
@@ -205,31 +222,28 @@ const withTerminalRequestLog = (
       try {
         const { done, value } = await reader.read();
         if (done) {
+          // The terminal bytes have already been delivered. Finish accounting
+          // before closing the downstream body so callers observe durable
+          // counters without holding back the terminal frame itself.
           await finalizeCompletion();
           log();
           controller.close();
           return;
         }
         // The OpenAI stream observer marks response.completed before yielding
-        // the chunk that contains it, so quota accounting cannot be skipped by
-        // cancelling immediately after that chunk becomes visible to a client.
-        await finalizeCompletion();
+        // the chunk that contains it. Schedule accounting, but never hold back
+        // the provider bytes that are already ready for the client.
+        void finalizeCompletion();
         controller.enqueue(value);
       } catch (error) {
         log();
         controller.error(error);
       }
     },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        try {
-          await finalizeCompletion();
-        } finally {
-          log();
-        }
-      }
+    cancel(reason) {
+      void reader.cancel(reason).catch(() => {});
+      void finalizeCompletion();
+      log();
     },
   });
   return Promise.resolve(
@@ -252,6 +266,7 @@ const terminalRouteForRequest = (method: string, path: string): string | null =>
 
 export default async function handler(req: Request): Promise<Response> {
   const requestStartedAtMs = Date.now();
+  const requestId = crypto.randomUUID();
   if (req.method === "OPTIONS") {
     return withCors(new Response(null, { status: 204, headers: corsHeaders() }));
   }
@@ -482,16 +497,16 @@ export default async function handler(req: Request): Promise<Response> {
   const terminalRoute = terminalRouteForRequest(req.method, path);
   const authResult = await authenticateClient(req);
   if (!authResult.ok) {
-    const response = withCors(authResult.response);
+    const response = withCors(withRequestId(authResult.response, requestId));
     return terminalRoute
       ? await withTerminalRequestLog(response, {
         route: terminalRoute,
         startedAtMs: requestStartedAtMs,
         keyId: null,
+        requestId,
       })
       : response;
   }
-  const requestId = crypto.randomUUID();
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
   const usagePolicy = authResult.method.kind === "kv_api_key" ? authResult.method.policy : null;
   const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
@@ -515,6 +530,18 @@ export default async function handler(req: Request): Promise<Response> {
     requestId,
     startedAtMs: requestStartedAtMs,
   };
+  if (terminalRoute) {
+    console.info(
+      "[ai.ubq.fi] request_accepted",
+      JSON.stringify({
+        request_id: requestId,
+        route: terminalRoute,
+        key_id: usageKeyId,
+        git_sha: runtimeGitSha(),
+        deno_revision: runtimeDeploymentId(),
+      }),
+    );
+  }
   const resolveKernelLimitScope = async (): Promise<"org" | "repo" | null> => {
     if (!kernelRepo) return null;
     if (kernelLimitScope) return kernelLimitScope;
@@ -539,11 +566,12 @@ export default async function handler(req: Request): Promise<Response> {
   ): Promise<Response> => {
     const telemetry = getResponseTelemetry(response);
     const decorated = includeQuota ? decorateInferenceQuota(response, usagePolicy, telemetry) : response;
-    return await withTerminalRequestLog(withCors(decorated), {
+    return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
       route,
       telemetryResponse: response,
       startedAtMs: requestStartedAtMs,
       keyId: usageKeyId,
+      requestId,
       onCompleted,
     });
   };
@@ -567,6 +595,16 @@ export default async function handler(req: Request): Promise<Response> {
     );
     if (failures.length) throw new AggregateError(failures, "Inference quota accounting failed");
   };
+  const bestEffortInferenceUsage = async (): Promise<void> => {
+    try {
+      await incrementInferenceUsage();
+    } catch (error) {
+      warnQuotaAccountingFailure(
+        { route: terminalRoute ?? "inference", keyId: usageKeyId, requestId },
+        error,
+      );
+    }
+  };
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(await handleModels(req));
@@ -575,8 +613,7 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method === "POST" && path === "/uos/embeddings") {
     const response = await handleUosEmbeddings(req, usageContext);
     if (response.ok && response.headers.get("x-uos-idempotency-replayed") !== "true") {
-      if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
-      await incrementKernelLimitUsage();
+      await bestEffortInferenceUsage();
     }
     return await finishTerminalResponse(response, "embeddings");
   }
@@ -584,8 +621,7 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method === "POST" && path === "/uos/embedding-jobs") {
     const response = await handleEmbeddingsJobCreate(req, authResult.token, usageContext);
     if (response.ok) {
-      if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
-      await incrementKernelLimitUsage();
+      await bestEffortInferenceUsage();
     }
     return await finishTerminalResponse(response, "embeddings.jobs.create");
   }
@@ -602,8 +638,7 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method === "POST" && path === "/v1/embeddings") {
     const response = await handleEmbeddings(req, usageContext);
     if (response.ok) {
-      if (usagePolicy) await incrementApiKeyUsage(usagePolicy);
-      await incrementKernelLimitUsage();
+      await bestEffortInferenceUsage();
     }
     return await finishTerminalResponse(response, "embeddings");
   }

@@ -14,8 +14,10 @@ on:
         default: false
 
 concurrency:
-  group: ai-ubq-fi-${{ github.ref == 'refs/heads/development' && 'production' || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
+  # Every deployment mutates either the production app or the shared preview
+  # app. Queue all runs so a later preview cannot race an earlier one.
+  group: ai-ubq-fi-deploy
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -30,6 +32,82 @@ jobs:
       - run: deno task build
       - run: deno task test
 
+      - name: Package immutable source
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .release/source
+          git archive --format=tar --output=.release/source/.uos-source.tar "$GITHUB_SHA"
+          source_digest="$(sha256sum .release/source/.uos-source.tar | awk '{print $1}')"
+          tar -xf .release/source/.uos-source.tar -C .release/source
+          SOURCE_DIGEST="$source_digest" deno eval \
+            --allow-env=GITHUB_SHA,SOURCE_DIGEST \
+            --allow-write=.release/source/.uos-release.json \
+            '
+              const manifest = {
+                git_sha: Deno.env.get("GITHUB_SHA"),
+                source_archive_sha256: Deno.env.get("SOURCE_DIGEST"),
+              };
+              Deno.writeTextFileSync(
+                ".release/source/.uos-release.json",
+                `${JSON.stringify(manifest, null, 2)}\n`,
+              );
+            '
+          echo "source_digest=$source_digest" >> "$GITHUB_OUTPUT"
+          echo "Source archive SHA-256: \`$source_digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload immutable source
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-ubq-fi-source-${{ github.sha }}
+          path: .release/source
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+
+  verify-artifact:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download immutable source
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-ubq-fi-source-${{ github.sha }}
+          path: .deploy-artifact
+          run-id: ${{ github.run_id }}
+          repository: ${{ github.repository }}
+
+      - name: Verify immutable source manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=".deploy-artifact/.uos-source.tar"
+          manifest=".deploy-artifact/.uos-release.json"
+          test -f "$archive"
+          test -f "$manifest"
+
+          manifest_sha="$(jq -er '.git_sha' "$manifest")"
+          expected_digest="$(jq -er '.source_archive_sha256' "$manifest")"
+          actual_digest="$(sha256sum "$archive" | awk '{print $1}')"
+          if [ "$manifest_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Artifact manifest git_sha ${manifest_sha} does not match ${GITHUB_SHA}."
+            exit 1
+          fi
+          if [ "$actual_digest" != "$expected_digest" ]; then
+            echo "::error::Artifact source digest ${actual_digest} does not match ${expected_digest}."
+            exit 1
+          fi
+          {
+            echo "### Immutable artifact"
+            echo ""
+            echo "- Git SHA: \`${manifest_sha}\`"
+            echo "- Source archive SHA-256: \`${actual_digest}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   production-approval:
     if: github.ref == 'refs/heads/development'
     runs-on: ubuntu-latest
@@ -40,10 +118,12 @@ jobs:
   deploy:
     needs:
       - validate
+      - verify-artifact
       - production-approval
     if: >-
       always() &&
       needs.validate.result == 'success' &&
+      needs.verify-artifact.result == 'success' &&
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
         (
@@ -61,13 +141,41 @@ jobs:
     with:
       project: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
       preview_project: p-ai-ubq-fi
+      # p-ai-ubq-fi is a separate acceptance app. Its production timeline is
+      # intentionally used so its stable hostname and Deno.cron both exercise
+      # the same isolated revision; this never targets ai-ubq-fi.
+      prod_branch: ${{ github.ref_name }}
       deploy_platform: deno2
       entrypoint: serve.ts
+      artifact_name: ai-ubq-fi-source-${{ github.sha }}
+      artifact_run_id: ${{ github.run_id }}
       install_command: deno install
       build_command: deno task build
+      # CODEX_AUTH_JSON_B64 is intentionally omitted. The existing app value
+      # was minified and validated by the prior sync path; the pinned reusable
+      # workflow cannot safely transform the raw repository secret.
       runtime_env: |
         UOS_AI_TOKEN=$UBIQUITY_AI_USER_TOKEN
+        YUNWU_USER_ID=${{ vars.YUNWU_USER_ID || '' }}
         GIT_REVISION=${{ github.sha }}
+      project_secrets: |
+        CODEX_AUTH_JSON_B64=CODEX_AUTH_JSON_B64
+        UOS_AI_TOKEN=UBIQUITY_AI_USER_TOKEN
+        UOS_AI_KERNEL_PUBLIC_KEY=UBIQUITY_AI_KERNEL_PUBLIC_KEY
+        VOYAGEAI_API_KEY=VOYAGEAI_API_KEY
+        YUNWU_API_KEY=YUNWU_API_KEY
+        YUNWU_SYSTEM_TOKEN=YUNWU_SYSTEM_TOKEN
+      preview_project_secrets: |
+        CODEX_AUTH_JSON_B64=CODEX_AUTH_JSON_B64
+        UOS_AI_TOKEN=UBIQUITY_AI_USER_TOKEN
+        UOS_AI_KERNEL_PUBLIC_KEY=UBIQUITY_AI_KERNEL_PUBLIC_KEY
+        VOYAGEAI_API_KEY=VOYAGEAI_API_KEY
+        YUNWU_API_KEY=YUNWU_API_KEY
+        YUNWU_SYSTEM_TOKEN=YUNWU_SYSTEM_TOKEN
+      forward_all_secrets: true
+      forward_all_secrets_exclude: |
+        DENO_DEPLOY_TOKEN
+        GITHUB_TOKEN
       index_html_path: static/docs.html
       extra_paths: |
         /app.js
@@ -77,9 +185,19 @@ jobs:
         DENO_DEPLOY_TOKEN
     secrets: inherit
 
-  sync-ai-runtime-env:
+  verify-deployment:
     needs: deploy
-    if: github.ref_name == github.event.repository.default_branch
+    if: >-
+      always() &&
+      needs.deploy.result == 'success' &&
+      (
+        github.ref == 'refs/heads/development' ||
+        (
+          github.ref != 'refs/heads/development' &&
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.deploy_preview == 'true'
+        )
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,114 +206,82 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Sync AI runtime env
+      - name: Verify stable deployment identity and health
         shell: bash
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
-          DENO_DEPLOY_ORG: ubiquity-dao
-          DENO_DEPLOY_APP: ai-ubq-fi
-          CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 || vars.CODEX_AUTH_JSON_B64 || '' }}
-          UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UOS_AI_KERNEL_PUBLIC_KEY || secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY || vars.UOS_AI_KERNEL_PUBLIC_KEY || vars.UBIQUITY_AI_KERNEL_PUBLIC_KEY || '' }}
-          VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY || vars.VOYAGEAI_API_KEY || '' }}
-          YUNWU_API_KEY: ${{ secrets.YUNWU_API_KEY || vars.YUNWU_API_KEY || '' }}
-          YUNWU_SYSTEM_TOKEN: ${{ secrets.YUNWU_SYSTEM_TOKEN || '' }}
-          YUNWU_USER_ID: ${{ vars.YUNWU_USER_ID || secrets.YUNWU_USER_ID || '' }}
+          TARGET_PROJECT: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
         run: |
           set -euo pipefail
 
-          sync_value() {
-            local key="$1"
-            local value="$2"
-            if [ -z "$value" ]; then
-              return 0
-            fi
-
-            while IFS= read -r mask_line; do
-              [ -n "$mask_line" ] && echo "::add-mask::$mask_line"
-            done <<< "$value"
-            local cli_value="$value"
-            case "$cli_value" in
-              -*) cli_value=" $cli_value" ;;
-            esac
-
-            set +e
-            output="$(deno deploy env update-value "$key" "$cli_value" --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" --app "$DENO_DEPLOY_APP" 2>&1)"
-            status=$?
-            set -e
-            if [ $status -eq 0 ]; then
-              echo "$output"
-              return 0
-            fi
-
-            if printf '%s\n' "$output" | grep -qi "not found"; then
-              deno deploy env add "$key" "$cli_value" --secret --token "$DENO_DEPLOY_TOKEN" --org "$DENO_DEPLOY_ORG" --app "$DENO_DEPLOY_APP"
-              return 0
-            fi
-
-            echo "$output"
-            return $status
-          }
-
-          sync_secret() {
-            local key="$1"
-            sync_value "$key" "${!key:-}"
-          }
-
-          if [ -z "$CODEX_AUTH_JSON_B64" ]; then
-            echo "::error::CODEX_AUTH_JSON_B64 is required for Codex auth runtime env."
-            exit 1
-          fi
-          if [ -n "$YUNWU_SYSTEM_TOKEN" ] || [ -n "$YUNWU_USER_ID" ]; then
-            deno eval '
-          const systemToken = (Deno.env.get("YUNWU_SYSTEM_TOKEN") ?? "").trim();
-          const userId = (Deno.env.get("YUNWU_USER_ID") ?? "").trim();
-          if (!systemToken || /\s/.test(systemToken)) {
-            console.error("YUNWU_SYSTEM_TOKEN must be a non-empty token without internal whitespace.");
-            Deno.exit(1);
-          }
-          if (!/^\d+$/.test(userId)) {
-            console.error("YUNWU_USER_ID must contain only decimal digits.");
-            Deno.exit(1);
-          }
-          '
-          fi
-
-          codex_auth_minified="$(
-            deno eval '
-            const raw = Deno.env.get("CODEX_AUTH_JSON_B64") ?? "";
-            const bytes = Uint8Array.from(atob(raw.trim().replace(/\s+/g, "")), (ch) => ch.charCodeAt(0));
-            const parsed = JSON.parse(new TextDecoder().decode(bytes));
-            const tokens = parsed?.tokens;
-            if (
-              typeof tokens?.access_token !== "string" ||
-              typeof tokens?.refresh_token !== "string" ||
-              typeof tokens?.account_id !== "string"
-            ) {
-              console.error("CODEX_AUTH_JSON_B64 does not look like a Codex auth.json.");
-              Deno.exit(1);
+          if [ "$GITHUB_REF" = "refs/heads/development" ]; then
+            [ "$TARGET_PROJECT" = "ai-ubq-fi" ] || {
+              echo "::error::Development verification must target ai-ubq-fi."
+              exit 1
             }
-            const minimal = {
-              tokens: {
-                access_token: tokens.access_token,
-                refresh_token: tokens.refresh_token,
-                account_id: tokens.account_id,
-              },
-            };
-            const encoded = new TextEncoder().encode(JSON.stringify(minimal));
-            let binary = "";
-            for (const byte of encoded) binary += String.fromCharCode(byte);
-            console.log(btoa(binary));
-            '
-          )"
-          echo "::add-mask::$codex_auth_minified"
-          if [ ${#codex_auth_minified} -gt 4096 ]; then
-            echo "::error::Minified CODEX_AUTH_JSON_B64 is still too large for Deno Deploy app env (${#codex_auth_minified} > 4096)."
+          else
+            [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || {
+              echo "::error::Preview verification requires workflow_dispatch."
+              exit 1
+            }
+            [ "$TARGET_PROJECT" = "p-ai-ubq-fi" ] || {
+              echo "::error::Preview verification must target p-ai-ubq-fi."
+              exit 1
+            }
+          fi
+          [ -n "$DENO_DEPLOY_TOKEN" ] || {
+            echo "::error::DENO_DEPLOY_TOKEN is required for deployment verification."
+            exit 1
+          }
+          echo "::add-mask::$DENO_DEPLOY_TOKEN"
+
+          stable_url="https://${TARGET_PROJECT}.ubiquity-dao.deno.net"
+          revision_id=""
+          revision_url=""
+          last_status="000"
+          last_git_sha=""
+          last_deployment_id=""
+          for _attempt in $(seq 1 18); do
+            headers="$(mktemp)"
+            body="$(mktemp)"
+            trap 'rm -f "$headers" "$body"' EXIT
+            http_code="$(curl -sS --max-time 20 -D "$headers" -o "$body" -w '%{http_code}' "${stable_url}/health" || true)"
+            git_sha="$(awk 'tolower($1) == "x-uos-git-sha:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
+            deployment_id="$(awk 'tolower($1) == "x-uos-deployment-id:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
+            last_status="$http_code"
+            last_git_sha="$git_sha"
+            last_deployment_id="$deployment_id"
+
+            healthy=false
+            if [ "$http_code" = "200" ] && jq -e '.ok == true' "$body" >/dev/null 2>&1; then
+              healthy=true
+            fi
+            if [ "$healthy" = "true" ] && [ "$git_sha" = "$GITHUB_SHA" ] && [ -n "$deployment_id" ] && [ "$deployment_id" != "unknown" ]; then
+              deployments_json="$(deno deploy deployments list --json --non-interactive --org ubiquity-dao --app "$TARGET_PROJECT" --limit 50 --token "$DENO_DEPLOY_TOKEN" 2>/dev/null || true)"
+              if printf '%s' "$deployments_json" | jq -e --arg id "$deployment_id" \
+                '.items[] | select(.id == $id and (.status == "routed" or .status == "succeeded"))' \
+                >/dev/null 2>&1; then
+                revision_id="$deployment_id"
+                revision_url="https://console.deno.com/ubiquity-dao/${TARGET_PROJECT}/builds/${revision_id}"
+                rm -f "$headers" "$body"
+                break
+              fi
+            fi
+            rm -f "$headers" "$body"
+            sleep 10
+          done
+
+          if [ -z "$revision_id" ]; then
+            echo "::error::Stable deployment identity/health check failed for ${stable_url}/health (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}, expected ${GITHUB_SHA})."
             exit 1
           fi
-
-          sync_value CODEX_AUTH_JSON_B64 "$codex_auth_minified"
-          sync_secret UOS_AI_KERNEL_PUBLIC_KEY
-          sync_secret VOYAGEAI_API_KEY
-          sync_secret YUNWU_API_KEY
-          sync_secret YUNWU_SYSTEM_TOKEN
-          sync_secret YUNWU_USER_ID
+          {
+            echo "### Deployment attestation"
+            echo ""
+            echo "- Target: \`${TARGET_PROJECT}\`"
+            echo "- Stable URL: ${stable_url}"
+            echo "- Revision URL: ${revision_url}"
+            echo "- Revision ID: \`${revision_id}\`"
+            echo "- Git SHA: \`${GITHUB_SHA}\`"
+            echo "- Health: HTTP 200 with \`ok: true\`"
+          } >> "$GITHUB_STEP_SUMMARY"

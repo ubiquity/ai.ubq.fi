@@ -7,7 +7,13 @@ import {
   apiKeyUsageV2Key,
 } from "./api_key_policy.ts";
 import { buildRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
-import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyRequestLogRecord } from "./types.ts";
+import type {
+  ApiKeyHashRecord,
+  ApiKeyRecord,
+  ApiKeyRequestLogRecord,
+  PaidFallbackRequestV3,
+  PaidFallbackWindowV3,
+} from "./types.ts";
 import { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
 import { isRecord } from "./utils.ts";
 
@@ -53,6 +59,11 @@ export type KvMigrationValidationResult = {
     api_key_bounded_counter_baselines_v2: number;
     api_key_bounded_counter_reconciled_baselines_v2: number;
     paid_fallback_ledger: number;
+    paid_fallback_v3_windows: number;
+    paid_fallback_v3_requests: number;
+    paid_fallback_v3_pending: number;
+    paid_fallback_v3_reconciliation_leases: number;
+    paid_fallback_v3_deletion_guards: number;
     kernel_repo_limits: number;
     kernel_org_limits: number;
     passkey_users: number;
@@ -84,6 +95,17 @@ const DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "api_keys_request_log", prefix: ["ubq_ai", "api_keys", "request_log"] },
   { group: "api_key_usage_v2", prefix: ["uos_ai", "api_key_usage", "v2"] },
   { group: "paid_fallback_ledger", prefix: ["uos_ai", "paid_fallback", "ledger"] },
+  { group: "paid_fallback_v3_windows", prefix: ["uos_ai", "paid_fallback", "v3", "window"] },
+  { group: "paid_fallback_v3_requests", prefix: ["uos_ai", "paid_fallback", "v3", "request"] },
+  { group: "paid_fallback_v3_pending", prefix: ["uos_ai", "paid_fallback", "v3", "pending"] },
+  {
+    group: "paid_fallback_v3_reconciliation_leases",
+    prefix: ["uos_ai", "paid_fallback", "v3", "reconciliation_lease"],
+  },
+  {
+    group: "paid_fallback_v3_deletion_guards",
+    prefix: ["uos_ai", "paid_fallback", "v3", "deletion_guard"],
+  },
   { group: "runtime_config_v2", prefix: ["uos_ai", "runtime_config", "v2"] },
   { group: "kernel_usage", prefix: ["ubq_ai", "kernel_auth", "usage"] },
   { group: "kernel_usage_daily", prefix: ["ubq_ai", "kernel_auth", "usage_daily"] },
@@ -221,6 +243,18 @@ export async function importKvMigrationLines(
           counters.skipped += 1;
           continue;
         }
+        // Re-check the missing destination in the write transaction. A
+        // read-then-set pair can otherwise import the same row twice when two
+        // migration workers race with overwrite disabled.
+        if (!options.dryRun) {
+          const committed = await kv.atomic().check(existing).set(entry.key, entry.value).commit();
+          if (!committed.ok) {
+            counters.skipped += 1;
+            continue;
+          }
+          counters.imported += 1;
+          continue;
+        }
       }
       if (!options.dryRun && kv) {
         await kv.set(entry.key, entry.value);
@@ -257,6 +291,15 @@ const API_KEY_USAGE_V2_MIGRATION_BASELINE_PREFIX = [
 ] as const;
 const LEGACY_REQUEST_LOG_PREFIX = ["ubq_ai", "api_keys", "request_log"] as const;
 const PAID_FALLBACK_LEDGER_PREFIX = ["uos_ai", "paid_fallback", "ledger"] as const;
+const PAID_FALLBACK_V3_PREFIX = ["uos_ai", "paid_fallback", "v3"] as const;
+const PAID_FALLBACK_WINDOW_V3_PREFIX = [...PAID_FALLBACK_V3_PREFIX, "window"] as const;
+const PAID_FALLBACK_REQUEST_V3_PREFIX = [...PAID_FALLBACK_V3_PREFIX, "request"] as const;
+const PAID_FALLBACK_PENDING_V3_PREFIX = [...PAID_FALLBACK_V3_PREFIX, "pending"] as const;
+const PAID_FALLBACK_RECONCILIATION_LEASE_V3_PREFIX = [
+  ...PAID_FALLBACK_V3_PREFIX,
+  "reconciliation_lease",
+] as const;
+const PAID_FALLBACK_DELETION_GUARD_V3_PREFIX = [...PAID_FALLBACK_V3_PREFIX, "deletion_guard"] as const;
 const isRoutableApiKeyPrefix = (value: unknown): boolean => typeof value === "string" && /^u_[0-9a-f]{10}$/.test(value);
 const isSafeUsageCount = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -268,6 +311,12 @@ const isExpirationTimestamp = (value: unknown): value is number => value === -1 
 const isRevocationTimestamp = (value: unknown): value is number | null => value === null || isSafeUsageCount(value);
 const isUsageLimit = (value: unknown): value is number => value === -1 || isSafeUsageCount(value);
 const isPositiveSafeInteger = (value: unknown): value is number => isSafeUsageCount(value) && value > 0;
+const isFiniteNonNegativeNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
+const isNullablePositiveSafeInteger = (value: unknown): value is number | null =>
+  value === null || isPositiveSafeInteger(value);
+const isNullableNonEmptyString = (value: unknown): value is string | null =>
+  value === null || (typeof value === "string" && value.length > 0);
 
 const hasPaidFallbackLedgerIdentity = (value: unknown): value is ApiKeyRequestLogRecord =>
   isRecord(value) &&
@@ -348,6 +397,241 @@ const apiKeyHashPolicyMatches = (record: ApiKeyRecord, hashRecord: ApiKeyHashRec
   record.paid_fallback_spent_microcredits === hashRecord.paid_fallback_spent_microcredits &&
   record.paid_fallback_reserved_microcredits === hashRecord.paid_fallback_reserved_microcredits &&
   record.paid_fallback_reservation_request_id === hashRecord.paid_fallback_reservation_request_id;
+
+const isPaidFallbackWindowV3 = (value: unknown): value is PaidFallbackWindowV3 => {
+  if (!isRecord(value)) return false;
+  return value.v === 3 &&
+    isApiKeyId(value.key_id) &&
+    typeof value.policy_version === "string" &&
+    value.policy_version.length > 0 &&
+    isPositiveSafeInteger(value.window_reset_at_ms) &&
+    (value.limit_microcredits === -1 || isPositiveSafeInteger(value.limit_microcredits)) &&
+    isSafeUsageCount(value.settled_microcredits) &&
+    isSafeUsageCount(value.reserved_microcredits) &&
+    isSafeUsageCount(value.pending_count) &&
+    isPositiveSafeInteger(value.updated_at_ms);
+};
+
+const isPaidFallbackRequestV3 = (value: unknown): value is PaidFallbackRequestV3 => {
+  if (!isRecord(value)) return false;
+  return value.v === 3 &&
+    isApiKeyId(value.key_id) &&
+    isApiKeyId(value.request_id) &&
+    typeof value.policy_version === "string" &&
+    value.policy_version.length > 0 &&
+    typeof value.route === "string" &&
+    value.route.length > 0 &&
+    typeof value.path === "string" &&
+    value.path.length > 0 &&
+    typeof value.model === "string" &&
+    value.model.length > 0 &&
+    typeof value.stream === "boolean" &&
+    isNullableNonEmptyString(value.reasoning) &&
+    isPositiveSafeInteger(value.window_reset_at_ms) &&
+    isSafeUsageCount(value.reserved_microcredits) &&
+    isPositiveSafeInteger(value.quota_per_credit) &&
+    isNullableNonEmptyString(value.provider_request_id) &&
+    (value.provider_quota === null || isFiniteNonNegativeNumber(value.provider_quota)) &&
+    (value.input_tokens === null || isSafeUsageCount(value.input_tokens)) &&
+    (value.output_tokens === null || isSafeUsageCount(value.output_tokens)) &&
+    ["reserved", "dispatched", "not_dispatched"].includes(String(value.dispatch_state)) &&
+    ["pending", "completed", "failed", "incomplete", "cancelled", "ambiguous"].includes(
+      String(value.terminal_state),
+    ) &&
+    (value.spend_microcredits === null || isSafeUsageCount(value.spend_microcredits)) &&
+    ["pending", "settled", "not_billed", "unresolved"].includes(String(value.billing_state)) &&
+    isSafeUsageCount(value.reconciliation_attempts) &&
+    isNullablePositiveSafeInteger(value.last_reconciliation_at_ms) &&
+    isNullablePositiveSafeInteger(value.dispatched_at_ms) &&
+    isNullablePositiveSafeInteger(value.terminal_at_ms) &&
+    isNullablePositiveSafeInteger(value.settled_at_ms) &&
+    isPositiveSafeInteger(value.created_at_ms) &&
+    isPositiveSafeInteger(value.updated_at_ms);
+};
+
+type PaidFallbackV3Inventory = Readonly<{
+  windows: number;
+  requests: number;
+  pending: number;
+  reconciliationLeases: number;
+  deletionGuards: number;
+  errors: string[];
+}>;
+
+const paidFallbackV3Reference = (keyId: string, requestId: string): string => JSON.stringify([keyId, requestId]);
+const paidFallbackV3WindowReference = (keyId: string, windowResetAtMs: number): string =>
+  JSON.stringify([keyId, windowResetAtMs]);
+
+const inspectPaidFallbackV3 = async (
+  kv: Deno.Kv,
+  knownKeyIds: ReadonlySet<string>,
+): Promise<PaidFallbackV3Inventory> => {
+  const errors: string[] = [];
+  const windows = new Map<string, PaidFallbackWindowV3>();
+  const requests = new Map<string, PaidFallbackRequestV3>();
+  const pending = new Set<string>();
+  let windowCount = 0;
+  let requestCount = 0;
+  let pendingCount = 0;
+  let reconciliationLeases = 0;
+  let deletionGuards = 0;
+
+  for await (const entry of kv.list<unknown>({ prefix: PAID_FALLBACK_WINDOW_V3_PREFIX })) {
+    windowCount += 1;
+    const [keyId, windowResetAtMs] = entry.key.slice(PAID_FALLBACK_WINDOW_V3_PREFIX.length);
+    if (
+      entry.key.length !== PAID_FALLBACK_WINDOW_V3_PREFIX.length + 2 ||
+      !isApiKeyId(keyId) ||
+      !isPositiveSafeInteger(windowResetAtMs) ||
+      !isPaidFallbackWindowV3(entry.value) ||
+      entry.value.key_id !== keyId ||
+      entry.value.window_reset_at_ms !== windowResetAtMs
+    ) {
+      errors.push(`paid fallback V3 window is malformed: ${JSON.stringify(entry.key)}`);
+      continue;
+    }
+    if (!knownKeyIds.has(keyId)) errors.push(`paid fallback V3 window is orphaned: ${keyId}`);
+    windows.set(paidFallbackV3WindowReference(keyId, windowResetAtMs), entry.value);
+  }
+
+  for await (const entry of kv.list<unknown>({ prefix: PAID_FALLBACK_REQUEST_V3_PREFIX })) {
+    requestCount += 1;
+    const [keyId, requestId] = entry.key.slice(PAID_FALLBACK_REQUEST_V3_PREFIX.length);
+    if (
+      entry.key.length !== PAID_FALLBACK_REQUEST_V3_PREFIX.length + 2 ||
+      !isApiKeyId(keyId) ||
+      !isApiKeyId(requestId) ||
+      !isPaidFallbackRequestV3(entry.value) ||
+      entry.value.key_id !== keyId ||
+      entry.value.request_id !== requestId
+    ) {
+      errors.push(`paid fallback V3 request is malformed: ${JSON.stringify(entry.key)}`);
+      continue;
+    }
+    if (!knownKeyIds.has(keyId)) errors.push(`paid fallback V3 request is orphaned: ${keyId}/${requestId}`);
+    requests.set(paidFallbackV3Reference(keyId, requestId), entry.value);
+  }
+
+  for await (const entry of kv.list<unknown>({ prefix: PAID_FALLBACK_PENDING_V3_PREFIX })) {
+    pendingCount += 1;
+    const [keyId, requestId] = entry.key.slice(PAID_FALLBACK_PENDING_V3_PREFIX.length);
+    if (
+      entry.key.length !== PAID_FALLBACK_PENDING_V3_PREFIX.length + 2 ||
+      !isApiKeyId(keyId) ||
+      !isApiKeyId(requestId) ||
+      !isRecord(entry.value) ||
+      !isPositiveSafeInteger(entry.value.created_at_ms) ||
+      !isPositiveSafeInteger(entry.value.next_reconciliation_at_ms) ||
+      entry.value.next_reconciliation_at_ms < entry.value.created_at_ms ||
+      ("key_id" in entry.value && entry.value.key_id !== keyId) ||
+      ("request_id" in entry.value && entry.value.request_id !== requestId)
+    ) {
+      errors.push(`paid fallback V3 pending marker is malformed: ${JSON.stringify(entry.key)}`);
+      continue;
+    }
+    const reference = paidFallbackV3Reference(keyId, requestId);
+    pending.add(reference);
+  }
+
+  for await (
+    const entry of kv.list<unknown>({ prefix: PAID_FALLBACK_RECONCILIATION_LEASE_V3_PREFIX })
+  ) {
+    reconciliationLeases += 1;
+    const [keyId] = entry.key.slice(PAID_FALLBACK_RECONCILIATION_LEASE_V3_PREFIX.length);
+    if (
+      entry.key.length !== PAID_FALLBACK_RECONCILIATION_LEASE_V3_PREFIX.length + 1 ||
+      !isApiKeyId(keyId) ||
+      !isRecord(entry.value) ||
+      typeof entry.value.token !== "string" ||
+      entry.value.token.length === 0 ||
+      !isPositiveSafeInteger(entry.value.expires_at_ms)
+    ) {
+      errors.push(`paid fallback V3 reconciliation lease is malformed: ${JSON.stringify(entry.key)}`);
+      continue;
+    }
+    if (!knownKeyIds.has(keyId)) errors.push(`paid fallback V3 reconciliation lease is orphaned: ${keyId}`);
+  }
+
+  for await (const entry of kv.list<unknown>({ prefix: PAID_FALLBACK_DELETION_GUARD_V3_PREFIX })) {
+    deletionGuards += 1;
+    const [keyId] = entry.key.slice(PAID_FALLBACK_DELETION_GUARD_V3_PREFIX.length);
+    if (
+      entry.key.length !== PAID_FALLBACK_DELETION_GUARD_V3_PREFIX.length + 1 ||
+      !isApiKeyId(keyId) ||
+      !isRecord(entry.value) ||
+      !isPositiveSafeInteger(entry.value.created_at_ms)
+    ) {
+      errors.push(`paid fallback V3 deletion guard is malformed: ${JSON.stringify(entry.key)}`);
+    }
+  }
+
+  for (const [reference, request] of requests) {
+    const isOutstanding = request.billing_state === "pending" || request.billing_state === "unresolved";
+    if (isOutstanding && !pending.has(reference)) {
+      errors.push(`paid fallback V3 request is missing its pending marker: ${request.key_id}/${request.request_id}`);
+    }
+    if (!isOutstanding && pending.has(reference)) {
+      errors.push(
+        `paid fallback V3 terminal request retains a pending marker: ${request.key_id}/${request.request_id}`,
+      );
+    }
+    const window = windows.get(paidFallbackV3WindowReference(request.key_id, request.window_reset_at_ms));
+    if (
+      (request.reserved_microcredits > 0 ||
+        (request.billing_state === "settled" && (request.spend_microcredits ?? 0) > 0)) &&
+      !window
+    ) {
+      errors.push(`paid fallback V3 bounded request is missing its window: ${request.key_id}/${request.request_id}`);
+    }
+    if (request.billing_state === "settled" && request.spend_microcredits === null) {
+      errors.push(`paid fallback V3 settled request is missing spend: ${request.key_id}/${request.request_id}`);
+    }
+    if (
+      (request.billing_state === "pending" || request.billing_state === "unresolved") &&
+      request.spend_microcredits !== null
+    ) {
+      errors.push(`paid fallback V3 outstanding request has spend: ${request.key_id}/${request.request_id}`);
+    }
+    // Historical requests retain the policy version that admitted them. A
+    // window can carry a newer version after an admin policy edit.
+  }
+  for (const reference of pending) {
+    if (!requests.has(reference)) errors.push(`paid fallback V3 pending marker is orphaned: ${reference}`);
+  }
+
+  for (const [reference, window] of windows) {
+    const outstanding = [...requests.values()].filter((request) =>
+      request.key_id === window.key_id &&
+      request.window_reset_at_ms === window.window_reset_at_ms &&
+      (request.billing_state === "pending" || request.billing_state === "unresolved")
+    );
+    const reservedMicrocredits = outstanding.reduce((sum, request) => sum + request.reserved_microcredits, 0);
+    const settledRequests = [...requests.values()].filter((request) =>
+      request.key_id === window.key_id &&
+      request.window_reset_at_ms === window.window_reset_at_ms &&
+      request.billing_state === "settled"
+    );
+    const settledMicrocredits = settledRequests.reduce((sum, request) => sum + (request.spend_microcredits ?? 0), 0);
+    if (
+      !Number.isSafeInteger(reservedMicrocredits) ||
+      !Number.isSafeInteger(settledMicrocredits) ||
+      window.pending_count !== outstanding.length ||
+      window.reserved_microcredits !== reservedMicrocredits ||
+      window.settled_microcredits !== settledMicrocredits
+    ) {
+      errors.push(`paid fallback V3 window aggregate is inconsistent: ${reference}`);
+    }
+  }
+
+  return {
+    windows: windowCount,
+    requests: requestCount,
+    pending: pendingCount,
+    reconciliationLeases,
+    deletionGuards,
+    errors,
+  };
+};
 
 type StrictApiKeyPair = Readonly<{
   record: ApiKeyRecord;
@@ -575,6 +859,448 @@ type LegacyPaidFallbackLedgerCandidate = Readonly<{
   existing: Deno.KvEntryMaybe<ApiKeyRequestLogRecord>;
 }>;
 
+type LegacyPaidFallbackProjectionCandidate = Readonly<{
+  value: ApiKeyRequestLogRecord;
+  source_key: Deno.KvKey;
+}>;
+
+type LegacyPaidFallbackProjectionResult = Readonly<{
+  projected: number;
+  pending: number;
+}>;
+
+const LEGACY_PAID_FALLBACK_BILLING_STATES = new Set([
+  "pending",
+  "reconciled",
+  "not_billed",
+  "unresolved",
+]);
+
+const legacyPaidFallbackReference = (keyId: string, requestId: string): string => JSON.stringify([keyId, requestId]);
+
+const legacyPaidFallbackCandidate = (
+  entry: Pick<Deno.KvEntry<unknown>, "key" | "value">,
+): LegacyPaidFallbackProjectionCandidate | null => {
+  if (!isRecord(entry.value) || entry.value.provider !== "yunwu") return null;
+  const keyId = isApiKeyId(entry.value.key_id) ? entry.value.key_id : null;
+  const keySuffix = entry.key.at(-2);
+  const requestSuffix = entry.key.at(-1);
+  const requestId = isApiKeyId(entry.value.id) ? entry.value.id : isApiKeyId(requestSuffix) ? requestSuffix : null;
+  const createdAtMs = isPositiveSafeInteger(entry.value.created_at_ms)
+    ? entry.value.created_at_ms
+    : typeof keySuffix === "number" && isPositiveSafeInteger(keySuffix)
+    ? keySuffix
+    : null;
+  if (!keyId || !requestId || createdAtMs === null) return null;
+  const billing = entry.value.billing_status;
+  if (billing !== undefined && !LEGACY_PAID_FALLBACK_BILLING_STATES.has(String(billing))) return null;
+  return {
+    source_key: entry.key,
+    value: {
+      id: requestId,
+      key_id: keyId,
+      route: typeof entry.value.route === "string" && entry.value.route.trim() ? entry.value.route : "responses",
+      path: typeof entry.value.path === "string" && entry.value.path.trim() ? entry.value.path : "/v1/responses",
+      method: typeof entry.value.method === "string" && entry.value.method.trim() ? entry.value.method : "POST",
+      status_code: typeof entry.value.status_code === "number" && Number.isFinite(entry.value.status_code)
+        ? Math.max(0, Math.min(599, Math.trunc(entry.value.status_code)))
+        : 0,
+      stream: entry.value.stream === true,
+      model: typeof entry.value.model === "string" && entry.value.model.trim() ? entry.value.model : "legacy-unknown",
+      reasoning: typeof entry.value.reasoning === "string" && entry.value.reasoning.trim()
+        ? entry.value.reasoning
+        : null,
+      created_at_ms: createdAtMs,
+      provider: "yunwu",
+      fallback_reason: typeof entry.value.fallback_reason === "string" ? entry.value.fallback_reason : "primary_429",
+      provider_request_id: typeof entry.value.provider_request_id === "string" &&
+          entry.value.provider_request_id.trim()
+        ? entry.value.provider_request_id
+        : null,
+      completed_at_ms: isPositiveSafeInteger(entry.value.completed_at_ms) ? entry.value.completed_at_ms : null,
+      latency_ms: isSafeUsageCount(entry.value.latency_ms) ? entry.value.latency_ms : null,
+      input_tokens: isSafeUsageCount(entry.value.input_tokens) ? entry.value.input_tokens : null,
+      output_tokens: isSafeUsageCount(entry.value.output_tokens) ? entry.value.output_tokens : null,
+      provider_quota: isFiniteNonNegativeNumber(entry.value.provider_quota) ? entry.value.provider_quota : null,
+      quota_per_credit: isPositiveSafeInteger(entry.value.quota_per_credit) ? entry.value.quota_per_credit : null,
+      spend_microcredits: isSafeUsageCount(entry.value.spend_microcredits) ? entry.value.spend_microcredits : null,
+      paid_fallback_window_reset_at_ms: isPositiveSafeInteger(entry.value.paid_fallback_window_reset_at_ms)
+        ? entry.value.paid_fallback_window_reset_at_ms
+        : null,
+      billing_status: billing === "reconciled" || billing === "not_billed" || billing === "unresolved"
+        ? billing
+        : "pending",
+    },
+  };
+};
+
+const listLegacyPaidFallbackProjectionCandidates = async (
+  kv: Deno.Kv,
+): Promise<LegacyPaidFallbackProjectionCandidate[]> => {
+  const byReference = new Map<string, LegacyPaidFallbackProjectionCandidate>();
+  for (const prefix of [LEGACY_REQUEST_LOG_PREFIX, PAID_FALLBACK_LEDGER_PREFIX] as const) {
+    for await (const entry of kv.list<unknown>({ prefix })) {
+      const candidate = legacyPaidFallbackCandidate(entry);
+      if (!candidate) continue;
+      // The dedicated paid-fallback ledger is the newer copy of a request log.
+      // Prefer it when both prefixes contain the same immutable request.
+      const reference = legacyPaidFallbackReference(candidate.value.key_id, candidate.value.id);
+      if (prefix === PAID_FALLBACK_LEDGER_PREFIX || !byReference.has(reference)) {
+        byReference.set(reference, candidate);
+      }
+    }
+  }
+  return [...byReference.values()];
+};
+
+const legacyWindowResetAtMs = (
+  record: ApiKeyRecord,
+  request: ApiKeyRequestLogRecord,
+): number => {
+  if (request.paid_fallback_window_reset_at_ms !== null) return request.paid_fallback_window_reset_at_ms;
+  if (request.created_at_ms < record.usage_reset_at_ms) return record.usage_reset_at_ms;
+  const initialStart = record.usage_reset_at_ms - record.window_ms;
+  const elapsed = Math.floor((request.created_at_ms - initialStart) / record.window_ms);
+  return initialStart + (elapsed + 1) * record.window_ms;
+};
+
+const legacyPolicyVersion = (
+  record: ApiKeyRecord,
+  _request: ApiKeyRequestLogRecord,
+  windowResetAtMs: number,
+): string => `legacy:${windowResetAtMs}:${record.window_ms}:${record.paid_fallback_pricing_checked_at_ms ?? 0}`;
+
+const legacyMaximumExposure = (
+  record: ApiKeyRecord,
+  request: ApiKeyRequestLogRecord,
+): number => {
+  if (record.paid_fallback_limit_microcredits === -1) return 0;
+  if (
+    record.paid_fallback_reservation_request_id === request.id &&
+    isSafeUsageCount(record.paid_fallback_reserved_microcredits)
+  ) {
+    // The legacy policy stores the one live reservation's exact exposure.
+    // Prefer it over today's model policy, which may have changed since the
+    // request was admitted.
+    return record.paid_fallback_reserved_microcredits;
+  }
+  const configured = record.paid_fallback_max_exposure_microcredits
+    ? record.paid_fallback_max_exposure_microcredits[request.model ?? ""]
+    : 0;
+  if (isPositiveSafeInteger(configured)) return configured;
+  return 0;
+};
+
+const paidFallbackV3WindowKey = (keyId: string, windowResetAtMs: number): Deno.KvKey => [
+  ...PAID_FALLBACK_WINDOW_V3_PREFIX,
+  keyId,
+  windowResetAtMs,
+];
+
+const isPaidFallbackPendingV3 = (value: unknown): value is {
+  created_at_ms: number;
+  next_reconciliation_at_ms: number;
+} =>
+  isRecord(value) &&
+  isPositiveSafeInteger(value.created_at_ms) &&
+  isPositiveSafeInteger(value.next_reconciliation_at_ms) &&
+  value.next_reconciliation_at_ms >= value.created_at_ms;
+
+const paidFallbackPendingIdentityMatches = (
+  value: unknown,
+  keyId: string,
+  requestId: string,
+): boolean => {
+  if (!isPaidFallbackPendingV3(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (!("key_id" in record) || record.key_id === keyId) &&
+    (!("request_id" in record) || record.request_id === requestId);
+};
+
+const repairProjectedPaidFallbackPending = async (kv: Deno.Kv, nowMs: number): Promise<void> => {
+  for await (const requestEntry of kv.list<unknown>({ prefix: PAID_FALLBACK_REQUEST_V3_PREFIX })) {
+    if (!isPaidFallbackRequestV3(requestEntry.value)) continue;
+    const request = requestEntry.value;
+    const pendingKey = [...PAID_FALLBACK_PENDING_V3_PREFIX, request.key_id, request.request_id] as const;
+    const pendingEntry = await kv.get<unknown>(pendingKey, { consistency: "strong" });
+    const outstanding = request.billing_state === "pending" || request.billing_state === "unresolved";
+    if (
+      outstanding &&
+      pendingEntry.value !== null &&
+      paidFallbackPendingIdentityMatches(pendingEntry.value, request.key_id, request.request_id) &&
+      (pendingEntry.value as { created_at_ms: number }).created_at_ms >= request.created_at_ms
+    ) {
+      continue;
+    }
+    if (!outstanding && pendingEntry.value === null) continue;
+    let atomic = kv.atomic().check(requestEntry).check(pendingEntry);
+    if (outstanding) {
+      atomic = atomic.set(pendingKey, {
+        created_at_ms: request.created_at_ms,
+        next_reconciliation_at_ms: Math.max(nowMs, request.created_at_ms),
+      });
+    } else {
+      atomic = atomic.delete(pendingKey);
+    }
+    const committed = await atomic.commit();
+    if (!committed.ok) {
+      throw new Error(`Paid fallback V3 pending state changed concurrently: ${request.key_id}/${request.request_id}`);
+    }
+  }
+};
+
+const repairProjectedPaidFallbackWindows = async (
+  kv: Deno.Kv,
+  pairs: readonly StrictApiKeyPair[],
+  candidateWindowReferences: ReadonlySet<string>,
+  nowMs: number,
+): Promise<void> => {
+  const recordsByKey = new Map(pairs.map(({ record }) => [record.id, record]));
+  const windows = new Map<string, { key_id: string; window_reset_at_ms: number }>();
+  for (const reference of candidateWindowReferences) {
+    const parsed = JSON.parse(reference) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 2 ||
+      !isApiKeyId(parsed[0]) ||
+      !isPositiveSafeInteger(parsed[1])
+    ) {
+      continue;
+    }
+    const record = recordsByKey.get(parsed[0]);
+    if (record && record.paid_fallback_limit_microcredits !== -1) {
+      windows.set(reference, { key_id: parsed[0], window_reset_at_ms: parsed[1] });
+    }
+  }
+  for await (const entry of kv.list<unknown>({ prefix: PAID_FALLBACK_WINDOW_V3_PREFIX })) {
+    const [keyId, windowResetAtMs] = entry.key.slice(PAID_FALLBACK_WINDOW_V3_PREFIX.length);
+    if (
+      isApiKeyId(keyId) &&
+      isPositiveSafeInteger(windowResetAtMs) &&
+      recordsByKey.get(keyId)?.paid_fallback_limit_microcredits !== -1
+    ) {
+      windows.set(paidFallbackV3WindowReference(keyId, windowResetAtMs), {
+        key_id: keyId,
+        window_reset_at_ms: windowResetAtMs,
+      });
+    }
+  }
+  for await (const entry of kv.list<unknown>({ prefix: PAID_FALLBACK_REQUEST_V3_PREFIX })) {
+    if (!isPaidFallbackRequestV3(entry.value)) continue;
+    if (recordsByKey.get(entry.value.key_id)?.paid_fallback_limit_microcredits === -1) continue;
+    windows.set(paidFallbackV3WindowReference(entry.value.key_id, entry.value.window_reset_at_ms), {
+      key_id: entry.value.key_id,
+      window_reset_at_ms: entry.value.window_reset_at_ms,
+    });
+  }
+
+  for (const { key_id: keyId, window_reset_at_ms: windowResetAtMs } of windows.values()) {
+    const windowKey = paidFallbackV3WindowKey(keyId, windowResetAtMs);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const requests: PaidFallbackRequestV3[] = [];
+      for await (const requestEntry of kv.list<unknown>({ prefix: PAID_FALLBACK_REQUEST_V3_PREFIX })) {
+        if (
+          isPaidFallbackRequestV3(requestEntry.value) &&
+          requestEntry.value.key_id === keyId &&
+          requestEntry.value.window_reset_at_ms === windowResetAtMs
+        ) {
+          requests.push(requestEntry.value);
+        }
+      }
+      const settledMicrocredits = requests.reduce(
+        (sum, request) => sum + (request.billing_state === "settled" ? request.spend_microcredits ?? 0 : 0),
+        0,
+      );
+      const reservedMicrocredits = requests.reduce(
+        (sum, request) =>
+          sum +
+          (request.billing_state === "pending" || request.billing_state === "unresolved"
+            ? request.reserved_microcredits
+            : 0),
+        0,
+      );
+      const pendingCount = requests.reduce(
+        (count, request) =>
+          count + (request.billing_state === "pending" || request.billing_state === "unresolved" ? 1 : 0),
+        0,
+      );
+      if (
+        !Number.isSafeInteger(settledMicrocredits) ||
+        !Number.isSafeInteger(reservedMicrocredits) ||
+        !Number.isSafeInteger(pendingCount)
+      ) {
+        throw new Error(`Paid fallback V3 window aggregate overflow: ${keyId}/${windowResetAtMs}`);
+      }
+      const entry = await kv.get<PaidFallbackWindowV3>(windowKey, { consistency: "strong" });
+      if (entry.value !== null && !isPaidFallbackWindowV3(entry.value)) {
+        throw new Error(`Paid fallback V3 window is invalid: ${keyId}/${windowResetAtMs}`);
+      }
+      const firstRequest = requests[0];
+      const current = entry.value ?? {
+        v: 3,
+        key_id: keyId,
+        policy_version: firstRequest?.policy_version ??
+          `legacy:${windowResetAtMs}:${recordsByKey.get(keyId)?.window_ms ?? 0}:0`,
+        window_reset_at_ms: windowResetAtMs,
+        limit_microcredits: recordsByKey.get(keyId)?.paid_fallback_limit_microcredits ?? 0,
+        settled_microcredits: 0,
+        reserved_microcredits: 0,
+        pending_count: 0,
+        updated_at_ms: nowMs,
+      } satisfies PaidFallbackWindowV3;
+      if (
+        entry.value &&
+        current.settled_microcredits === settledMicrocredits &&
+        current.reserved_microcredits === reservedMicrocredits &&
+        current.pending_count === pendingCount
+      ) {
+        break;
+      }
+      const next = {
+        ...current,
+        settled_microcredits: settledMicrocredits,
+        reserved_microcredits: reservedMicrocredits,
+        pending_count: pendingCount,
+        updated_at_ms: Math.max(nowMs, current.updated_at_ms),
+      } satisfies PaidFallbackWindowV3;
+      const committed = await kv.atomic().check(entry).set(windowKey, next).commit();
+      if (committed.ok) break;
+      if (attempt === 4) {
+        throw new Error(`Paid fallback V3 window changed concurrently: ${keyId}/${windowResetAtMs}`);
+      }
+    }
+  }
+};
+
+const projectLegacyPaidFallbackV3 = async (
+  kv: Deno.Kv,
+  pairs: readonly StrictApiKeyPair[],
+  nowMs: number,
+): Promise<LegacyPaidFallbackProjectionResult> => {
+  const recordsByKey = new Map(pairs.map(({ record }) => [record.id, record]));
+  const candidates = await listLegacyPaidFallbackProjectionCandidates(kv);
+  let projected = 0;
+  let pending = 0;
+  const candidateWindowReferences = new Set<string>();
+  for (const candidate of candidates) {
+    const legacy = candidate.value;
+    const record = recordsByKey.get(legacy.key_id);
+    if (!record) continue;
+    const requestKey = [...PAID_FALLBACK_V3_PREFIX, "request", legacy.key_id, legacy.id] as const;
+    const pendingKey = [...PAID_FALLBACK_V3_PREFIX, "pending", legacy.key_id, legacy.id] as const;
+    const windowResetAtMs = legacyWindowResetAtMs(record, legacy);
+    if (record.paid_fallback_limit_microcredits !== -1) {
+      candidateWindowReferences.add(paidFallbackV3WindowReference(legacy.key_id, windowResetAtMs));
+    }
+    const billingState: PaidFallbackRequestV3["billing_state"] = legacy.billing_status === "reconciled"
+      ? "settled"
+      : legacy.billing_status === "not_billed"
+      ? "not_billed"
+      : legacy.billing_status === "unresolved"
+      ? "unresolved"
+      : "pending";
+    const outstanding = billingState === "pending" || billingState === "unresolved";
+    // Older request rows sometimes predate the exact spend fields. Preserve
+    // their terminal identity in V3 with a zero projection; unresolved rows
+    // retain their reservation and are reconciled from provider logs.
+    const spend = billingState === "settled" ? legacy.spend_microcredits ?? 0 : null;
+    const quotaPerCredit = legacy.quota_per_credit ?? record.paid_fallback_quota_per_credit;
+    if (!isPositiveSafeInteger(quotaPerCredit)) {
+      throw new Error(`Legacy paid fallback request has no valid pricing: ${legacy.key_id}/${legacy.id}`);
+    }
+    const dispatchState = legacy.provider_request_id || legacy.status_code > 0 ? "dispatched" : "reserved";
+    const terminalState = billingState === "settled"
+      ? legacy.status_code >= 200 && legacy.status_code < 300 ? "completed" : "failed"
+      : billingState === "not_billed"
+      ? "cancelled"
+      : billingState === "unresolved"
+      ? "ambiguous"
+      : "pending";
+    const updatedAtMs = Math.max(
+      legacy.created_at_ms,
+      legacy.completed_at_ms ?? 0,
+      nowMs,
+    );
+    const request: PaidFallbackRequestV3 = {
+      v: 3,
+      key_id: legacy.key_id,
+      request_id: legacy.id,
+      policy_version: legacyPolicyVersion(record, legacy, windowResetAtMs),
+      route: legacy.route,
+      path: legacy.path,
+      model: legacy.model ?? "legacy-unknown",
+      stream: legacy.stream,
+      reasoning: legacy.reasoning,
+      window_reset_at_ms: windowResetAtMs,
+      reserved_microcredits: outstanding ? legacyMaximumExposure(record, legacy) : 0,
+      quota_per_credit: quotaPerCredit,
+      provider_request_id: legacy.provider_request_id,
+      provider_quota: legacy.provider_quota,
+      input_tokens: legacy.input_tokens,
+      output_tokens: legacy.output_tokens,
+      dispatch_state: dispatchState,
+      terminal_state: terminalState,
+      spend_microcredits: spend,
+      billing_state: billingState,
+      reconciliation_attempts: 0,
+      last_reconciliation_at_ms: null,
+      dispatched_at_ms: dispatchState === "dispatched" ? legacy.created_at_ms : null,
+      terminal_at_ms: terminalState === "pending" ? null : legacy.completed_at_ms ?? legacy.created_at_ms,
+      settled_at_ms: billingState === "settled" ? legacy.completed_at_ms ?? legacy.created_at_ms : null,
+      created_at_ms: legacy.created_at_ms,
+      updated_at_ms: updatedAtMs,
+    };
+    const [requestEntry, pendingEntry] = await Promise.all([
+      kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" }),
+      kv.get<{ created_at_ms: number; next_reconciliation_at_ms: number }>(pendingKey, { consistency: "strong" }),
+    ]);
+    const existingRequest = requestEntry.value;
+    if (existingRequest) {
+      if (
+        !isPaidFallbackRequestV3(existingRequest) ||
+        existingRequest.key_id !== request.key_id ||
+        existingRequest.request_id !== request.request_id
+      ) {
+        throw new Error(`V3 paid fallback request identity collision: ${legacy.key_id}/${legacy.id}`);
+      }
+    }
+    const effectiveRequest = existingRequest ?? request;
+    let atomic = kv.atomic().check(requestEntry).check(pendingEntry);
+    let needsCommit = false;
+    if (!existingRequest) {
+      atomic = atomic.set(requestKey, request);
+      projected += 1;
+      needsCommit = true;
+    }
+    const effectiveOutstanding = effectiveRequest.billing_state === "pending" ||
+      effectiveRequest.billing_state === "unresolved";
+    if (effectiveOutstanding) {
+      atomic = atomic.set(pendingKey, {
+        created_at_ms: effectiveRequest.created_at_ms,
+        next_reconciliation_at_ms: Math.max(nowMs, effectiveRequest.created_at_ms),
+      });
+      if (pendingEntry.value === null) {
+        pending += 1;
+        needsCommit = true;
+      } else if (!paidFallbackPendingIdentityMatches(pendingEntry.value, legacy.key_id, legacy.id)) {
+        needsCommit = true;
+      }
+    } else if (pendingEntry.value !== null) {
+      atomic = atomic.delete(pendingKey);
+      needsCommit = true;
+    }
+    if (needsCommit) {
+      const committed = await atomic.commit();
+      if (!committed.ok) {
+        throw new Error(`Paid fallback V3 migration changed concurrently: ${legacy.key_id}/${legacy.id}`);
+      }
+    }
+  }
+  await repairProjectedPaidFallbackPending(kv, nowMs);
+  await repairProjectedPaidFallbackWindows(kv, pairs, candidateWindowReferences, nowMs);
+  return { projected, pending };
+};
+
 const inspectPendingPaidFallbackLedgers = async (
   kv: Deno.Kv,
   pairs: StrictApiKeyPair[],
@@ -725,6 +1451,7 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
     }
     paidFallbackRecords += 1;
   }
+  await projectLegacyPaidFallbackV3(kv, apiKeyInventory.pairs, migrationNowMs);
 
   await kv.atomic()
     .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)
@@ -793,6 +1520,11 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
 
   const apiKeyInventory = await inspectStrictApiKeyPairs(kv);
   errors.push(...apiKeyInventory.errors);
+  const paidFallbackV3 = await inspectPaidFallbackV3(
+    kv,
+    new Set(apiKeyInventory.pairs.map(({ record }) => record.id)),
+  );
+  errors.push(...paidFallbackV3.errors);
   const validationNowMs = Date.now();
   for (const { record, hashRecord } of apiKeyInventory.pairs) {
     const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, migrationPolicyNow(record, validationNowMs));
@@ -869,6 +1601,11 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
       api_key_bounded_counter_baselines_v2: boundedCounterBaselines,
       api_key_bounded_counter_reconciled_baselines_v2: reconciledBoundedCounterBaselines,
       paid_fallback_ledger: paidFallbackLedger,
+      paid_fallback_v3_windows: paidFallbackV3.windows,
+      paid_fallback_v3_requests: paidFallbackV3.requests,
+      paid_fallback_v3_pending: paidFallbackV3.pending,
+      paid_fallback_v3_reconciliation_leases: paidFallbackV3.reconciliationLeases,
+      paid_fallback_v3_deletion_guards: paidFallbackV3.deletionGuards,
       kernel_repo_limits: kernelLimits,
       kernel_org_limits: kernelOrgLimits,
       passkey_users: passkeyUsers,

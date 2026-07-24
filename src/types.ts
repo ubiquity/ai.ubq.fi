@@ -129,12 +129,18 @@ export type PaidFallbackRequestV3 = Readonly<{
   reserved_microcredits: number;
   quota_per_credit: number;
   provider_request_id: string | null;
+  provider_quota: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
   dispatch_state: "reserved" | "dispatched" | "not_dispatched";
   terminal_state: "pending" | "completed" | "failed" | "incomplete" | "cancelled" | "ambiguous";
   spend_microcredits: number | null;
   billing_state: "pending" | "settled" | "not_billed" | "unresolved";
   reconciliation_attempts: number;
   last_reconciliation_at_ms: number | null;
+  dispatched_at_ms: number | null;
+  terminal_at_ms: number | null;
+  settled_at_ms: number | null;
   created_at_ms: number;
   updated_at_ms: number;
 }>;

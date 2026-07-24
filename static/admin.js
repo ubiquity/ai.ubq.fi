@@ -3019,6 +3019,11 @@ const normalizeApiKeyRequestLogRecord = (record) => {
   const startedAtMs = normalizeFiniteNumber(record.started_at_ms);
   const createdAtMs = normalizeFiniteNumber(record.created_at_ms) ?? startedAtMs;
   const completedAtMs = normalizeFiniteNumber(record.completed_at_ms);
+  const dispatchedAtMs = normalizeFiniteNumber(record.dispatched_at_ms);
+  const terminalAtMs = normalizeFiniteNumber(record.terminal_at_ms);
+  const settledAtMs = normalizeFiniteNumber(record.settled_at_ms);
+  const updatedAtMs = normalizeFiniteNumber(record.updated_at_ms);
+  const lastReconciliationAtMs = normalizeFiniteNumber(record.last_reconciliation_at_ms);
   const statusCode = normalizeFiniteNumber(record.status_code);
   const method = typeof record.method === "string" ? record.method.trim().toUpperCase() : "";
   const route = typeof record.route === "string" ? record.route.trim() : "";
@@ -3034,6 +3039,11 @@ const normalizeApiKeyRequestLogRecord = (record) => {
     created_at_ms: createdAtMs === null ? null : Math.trunc(createdAtMs),
     started_at_ms: startedAtMs === null ? null : Math.trunc(startedAtMs),
     completed_at_ms: completedAtMs === null ? null : Math.trunc(completedAtMs),
+    dispatched_at_ms: dispatchedAtMs === null ? null : Math.trunc(dispatchedAtMs),
+    terminal_at_ms: terminalAtMs === null ? null : Math.trunc(terminalAtMs),
+    settled_at_ms: settledAtMs === null ? null : Math.trunc(settledAtMs),
+    updated_at_ms: updatedAtMs === null ? null : Math.trunc(updatedAtMs),
+    last_reconciliation_at_ms: lastReconciliationAtMs === null ? null : Math.trunc(lastReconciliationAtMs),
     latency_ms: normalizeFiniteNumber(record.latency_ms),
     status_code: statusCode === null ? null : Math.trunc(statusCode),
     method: method || "GET",
@@ -3048,8 +3058,16 @@ const normalizeApiKeyRequestLogRecord = (record) => {
     input_tokens: normalizeFiniteNumber(record.input_tokens),
     output_tokens: normalizeFiniteNumber(record.output_tokens),
     provider_quota: normalizeFiniteNumber(record.provider_quota),
+    quota_per_credit: normalizeFiniteNumber(record.quota_per_credit),
+    reserved_microcredits: normalizeFiniteNumber(record.reserved_microcredits),
     spend_microcredits: normalizeFiniteNumber(record.spend_microcredits),
-    billing_status: normalizeOptionalString(record.billing_status),
+    policy_version: normalizeOptionalString(record.policy_version),
+    dispatch_state: normalizeOptionalString(record.dispatch_state),
+    terminal_state: normalizeOptionalString(record.terminal_state),
+    billing_state: normalizeOptionalString(record.billing_state),
+    billing_status: normalizeOptionalString(record.billing_status ?? record.billing_state),
+    reconciliation_attempts: normalizeFiniteNumber(record.reconciliation_attempts),
+    window_reset_at_ms: normalizeFiniteNumber(record.window_reset_at_ms),
   };
 };
 
@@ -3102,11 +3120,11 @@ const createRequestLogRow = (record) => {
   const statusCode = normalizeFiniteNumber(record.status_code);
   const statusState = statusCode !== null && statusCode >= 400 ? "bad" : "";
   const provider = formatOptionalText(record.provider);
-  const billingStatus = formatOptionalText(record.billing_status);
+  const billingStatus = formatOptionalText(record.billing_state ?? record.billing_status);
   const normalizedBillingStatus = billingStatus.toLowerCase();
   const billingState = normalizedBillingStatus === "pending"
     ? "warning"
-    : (/failed|error/.test(normalizedBillingStatus) ? "bad" : "");
+    : (/failed|error|unresolved/.test(normalizedBillingStatus) ? "bad" : "");
   row.dataset.provider = provider.toLowerCase();
   if (record.billing_status) row.dataset.billingStatus = normalizedBillingStatus;
 
@@ -3127,6 +3145,26 @@ const createRequestLogRow = (record) => {
   appendMetaItem(row, "Provider", provider);
   appendMetaItem(row, "Model", formatOptionalText(record.model));
   appendMetaItem(row, "Reasoning", formatOptionalText(record.reasoning));
+  if (record.policy_version) {
+    appendMetaItem(row, "Policy", record.policy_version, { mono: true });
+  }
+  if (record.dispatch_state) {
+    appendMetaItem(row, "Dispatch", record.dispatch_state);
+  }
+  if (record.terminal_state) {
+    const terminalState = record.terminal_state === "completed"
+      ? ""
+      : (record.terminal_state === "pending" ? "warning" : "bad");
+    appendMetaItem(row, "Terminal", record.terminal_state, {
+      state: terminalState,
+    });
+  }
+  if (record.dispatched_at_ms !== null) {
+    appendMetaItem(row, "Dispatched", formatDate(record.dispatched_at_ms));
+  }
+  if (record.terminal_at_ms !== null) {
+    appendMetaItem(row, "Terminal at", formatDate(record.terminal_at_ms));
+  }
   if (record.completed_at_ms !== null) {
     appendMetaItem(row, "Completed", formatDate(record.completed_at_ms));
   }
@@ -3148,6 +3186,14 @@ const createRequestLogRow = (record) => {
   if (record.provider_quota !== null) {
     appendMetaItem(row, "Provider quota", formatDecimal(record.provider_quota));
   }
+  if (record.quota_per_credit !== null) {
+    appendMetaItem(row, "Quota per credit", formatDecimal(record.quota_per_credit));
+  }
+  if (record.reserved_microcredits !== null) {
+    appendMetaItem(row, "Reservation", formatMicrocreditsAsCredits(record.reserved_microcredits), {
+      title: `${formatNumber(record.reserved_microcredits)} microcredits`,
+    });
+  }
   if (record.spend_microcredits !== null) {
     appendMetaItem(row, "Exact spend", formatMicrocreditsAsCredits(record.spend_microcredits), {
       title: `${formatNumber(record.spend_microcredits)} microcredits`,
@@ -3157,6 +3203,21 @@ const createRequestLogRow = (record) => {
     appendMetaItem(row, "Billing", billingStatus, {
       state: billingState,
     });
+  }
+  if (record.reconciliation_attempts !== null) {
+    appendMetaItem(row, "Reconciliation attempts", formatNumber(record.reconciliation_attempts));
+  }
+  if (record.last_reconciliation_at_ms !== null) {
+    appendMetaItem(row, "Last reconciliation", formatDate(record.last_reconciliation_at_ms));
+  }
+  if (record.settled_at_ms !== null) {
+    appendMetaItem(row, "Settled", formatDate(record.settled_at_ms));
+  }
+  if (record.window_reset_at_ms !== null) {
+    appendMetaItem(row, "Window resets", formatDate(record.window_reset_at_ms));
+  }
+  if (record.updated_at_ms !== null) {
+    appendMetaItem(row, "Last updated", formatDate(record.updated_at_ms));
   }
 
   return row;
