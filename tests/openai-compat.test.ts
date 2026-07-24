@@ -208,6 +208,7 @@ type StoredPaidFallbackRequest = {
   dispatch_state?: string;
   terminal_state?: string;
   billing_state?: string;
+  provider_request_id?: string | null;
 };
 
 const getStoredPaidFallbackRequest = (keyId: string, requestId: string): StoredPaidFallbackRequest | null =>
@@ -1623,6 +1624,80 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
             },
           );
         }
+      }
+    });
+
+    await t.step("YunWu network ambiguity returns an attributed 502 without retrying", async () => {
+      const routeCases = [
+        { route: "responses", stream: false },
+        { route: "responses", stream: true },
+        { route: "chat", stream: false },
+        { route: "chat", stream: true },
+      ] as const;
+      for (const routeCase of routeCases) {
+        const suffix = `${routeCase.route}-${routeCase.stream ? "stream" : "buffered"}`;
+        const keyId = `fallback-network-error-${suffix}`;
+        const requestId = `request-${keyId}`;
+        seedPaidFallbackKey(keyId);
+        let yunwuAttempts = 0;
+        await withFetchMock(
+          (url) => {
+            if (url === "https://yunwu.ai/v1/responses") {
+              yunwuAttempts += 1;
+              throw new TypeError("network connection reset before response headers");
+            }
+            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+              status: 429,
+              headers: { "Content-Type": "application/json" },
+            });
+          },
+          async () => {
+            const context = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId,
+              startedAtMs: Date.now(),
+            };
+            const response = routeCase.route === "responses"
+              ? await handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    input: "ping",
+                    stream: routeCase.stream,
+                  }),
+                }),
+                context,
+              )
+              : await handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    messages: [{ role: "user", content: "ping" }],
+                    stream: routeCase.stream,
+                  }),
+                }),
+                context,
+              );
+            assert.equal(response.status, 502, suffix);
+            assert.equal(response.headers.get("x-uos-upstream"), "yunwu", suffix);
+            assert.equal(yunwuAttempts, 1, suffix);
+            const payload = await response.json() as {
+              error?: { type?: unknown; code?: unknown };
+            };
+            assert.equal(payload.error?.type, "server_error", suffix);
+            assert.equal(payload.error?.code, "yunwu_upstream_unreachable", suffix);
+            const stored = await waitForPaidFallbackTerminal(keyId, requestId, "ambiguous");
+            assert.equal(stored.dispatch_state, "dispatched", suffix);
+            assert.equal(stored.provider_request_id, null, suffix);
+            assert.equal(stored.billing_state, "pending", suffix);
+          },
+        );
       }
     });
 

@@ -548,7 +548,21 @@ const fetchResponsesWithPaidFallback = async (
         fallbackReason: reservationInput.reason,
       };
     }
-    throw error;
+    return {
+      response: openaiError(
+        502,
+        "YunWu upstream request failed before response headers were received.",
+        "upstream_error",
+        {
+          type: "server_error",
+          headers: { "x-uos-upstream": "yunwu" },
+        },
+      ),
+      provider: "yunwu",
+      paidFallback: decision.reservation,
+      gatewayResponse: true,
+      fallbackReason: reservationInput.reason,
+    };
   }
   await bestEffortPaidFallbackBookkeeping(
     "upstream response recording",
