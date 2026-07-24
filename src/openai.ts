@@ -505,10 +505,6 @@ const fetchResponsesWithPaidFallback = async (
   }
 
   await cancelResponseBody(primary);
-  if (telemetry) {
-    telemetry.provider = "yunwu";
-    telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
-  }
   if (options.signal?.aborted) {
     await bestEffortPaidFallbackBookkeeping(
       "undispatched cancellation recording",
@@ -517,6 +513,10 @@ const fetchResponsesWithPaidFallback = async (
     throw options.signal.reason instanceof Error
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
+  }
+  if (telemetry) {
+    telemetry.provider = "yunwu";
+    telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
   }
   let result: Awaited<ReturnType<typeof fetchYunwuResponses>>;
   try {

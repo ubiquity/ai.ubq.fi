@@ -1268,6 +1268,70 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
+    await t.step("cancellation after reservation but before dispatch releases exposure", async () => {
+      const keyId = "fallback-cancel-before-dispatch";
+      const requestId = "request-fallback-cancel-before-dispatch";
+      seedPaidFallbackKey(keyId);
+      const controller = new AbortController();
+      let codexCalls = 0;
+      let yunwuCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://yunwu.ai/v1/responses") {
+            yunwuCalls += 1;
+            return sseResponse(baseSseChunks());
+          }
+          codexCalls += 1;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(streamController) {
+                streamController.enqueue(TEXT_ENCODER.encode('{"error":{"message":"Primary limited"}}'));
+              },
+              cancel() {
+                controller.abort(new DOMException("client disconnected", "AbortError"));
+              },
+            }),
+            {
+              status: 429,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+              signal: controller.signal,
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 502);
+      assert.equal(codexCalls, 1);
+      assert.equal(yunwuCalls, 0);
+      assert.equal(getResponseTelemetry(response)?.provider, "chatgpt_codex");
+      const stored = getStoredPaidFallbackRequest(keyId, requestId);
+      assert.equal(stored?.dispatch_state, "not_dispatched");
+      assert.equal(stored?.terminal_state, "cancelled");
+      assert.equal(stored?.billing_state, "not_billed");
+      const keyRecord = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
+        usage_reset_at_ms: number;
+      };
+      const window = kvStore.get(
+        keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, keyRecord.usage_reset_at_ms]),
+      ) as { reserved_microcredits?: number; pending_count?: number } | undefined;
+      assert.equal(window?.reserved_microcredits, 0);
+      assert.equal(window?.pending_count, 0);
+    });
+
     await t.step("Responses sends the same canonical payload to YunWu exactly once", async () => {
       const keyId = "fallback-responses-success";
       seedPaidFallbackKey(keyId);
