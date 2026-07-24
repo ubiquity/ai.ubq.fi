@@ -241,7 +241,8 @@ const kvStub = {
 const { handleEmbeddings, handleEmbeddingsJobCreate, handleEmbeddingsJobGet, handleUosEmbeddings } = await import(
   "../src/openai.ts"
 );
-const { kvPromise } = await import("../src/kv.ts");
+const { getKv } = await import("../src/kv.ts");
+await getKv();
 
 type FetchMockQueue = {
   chain: Promise<void>;
@@ -1811,7 +1812,7 @@ Deno.test("uos embeddings: exhausted upstream 429 preserves status and Retry-Aft
 });
 
 Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   assert.ok(kv);
   await kv.set(VOYAGE_RATE_LIMIT_KEY, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
   try {
@@ -1998,7 +1999,7 @@ Deno.test("embedding jobs: remain resolvable across token refresh when scoped to
 });
 
 Deno.test("embedding jobs: create queues with 202 + Retry-After when KV rate limited", async () => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   assert.ok(kv);
   const rateKey: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
   await kv.set(rateKey, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
@@ -2037,7 +2038,7 @@ Deno.test("embedding jobs: create queues with 202 + Retry-After when KV rate lim
 });
 
 Deno.test("embedding jobs: queued query and document profiles persist through poll", async () => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   assert.ok(kv);
   await kv.set(VOYAGE_RATE_LIMIT_KEY, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
   const authToken = `queued-profiles-${crypto.randomUUID()}`;
@@ -2274,7 +2275,7 @@ Deno.test("embedding jobs: retryable upstream failures requeue and preserve the 
 });
 
 Deno.test("embedding jobs: locked and CAS-contention 202 responses identify Voyage", async () => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   assert.ok(kv);
   await kv.set(VOYAGE_RATE_LIMIT_KEY, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
   const authToken = `job-lock-${crypto.randomUUID()}`;
@@ -2352,7 +2353,7 @@ Deno.test("embedding jobs: locked and CAS-contention 202 responses identify Voya
 });
 
 Deno.test("embedding jobs: poll runs queued job to completion", async () => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   assert.ok(kv);
   const rateKey: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
   await kv.set(rateKey, { window_start_ms: Date.now(), requests: 3, tokens: 0 });

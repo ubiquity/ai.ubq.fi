@@ -89,7 +89,7 @@ import {
   type KvMigrationProfile,
   validateKvMigrationTarget,
 } from "./kv_migration.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import {
   buildRuntimeConfig,
   cacheRuntimeConfig,
@@ -116,7 +116,7 @@ const runtimeConfigErrorResponse = (error: unknown): Response | null => {
 };
 
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot persist Codex auth", "server_error");
   }
@@ -298,7 +298,7 @@ export const handleAdminCodexModelsSet = async (req: Request): Promise<Response>
 };
 
 export const handleAdminCodexPromptsPurge = async (): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot purge Codex prompts", "server_error");
   }
@@ -340,7 +340,7 @@ function* splitNdjsonLines(text: string): Iterable<string> {
 }
 
 export const handleAdminKvMigrationImport = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available; cannot import migration", "server_error");
 
   const url = new URL(req.url);
@@ -386,7 +386,7 @@ export const handleAdminKvMigrationImport = async (req: Request): Promise<Respon
 };
 
 export const handleAdminKvMigrationValidate = async (): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available; cannot validate migration", "server_error");
   return json(200, await validateKvMigrationTarget(kv));
 };
@@ -397,7 +397,7 @@ export const handleAdminDefaults = async (
     getYunwuQuotaDiagnostics?: typeof getYunwuQuotaDiagnostics;
   }> = {},
 ): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage defaults", "server_error");
   }
@@ -734,7 +734,7 @@ const MAX_KV_BYTES = 65_536;
 const SAFE_KV_BYTES = 60_000;
 
 export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
   }
@@ -878,7 +878,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
 };
 
 export const handleAdminApiKeysList = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
   }
@@ -965,7 +965,7 @@ export const handleAdminApiKeysPaidFallbacks = async (
   keyId: string,
   kvOverride?: Deno.Kv | null,
 ): Promise<Response> => {
-  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+  const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot load paid fallbacks", "server_error");
   }
@@ -1002,7 +1002,7 @@ export const handleAdminApiKeysPaidFallbacks = async (
 };
 
 export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
   }
@@ -1216,7 +1216,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
 };
 
 export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
   }
@@ -1276,7 +1276,7 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
 };
 
 export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
   }
@@ -1346,7 +1346,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
 };
 
 export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
   }
@@ -1436,7 +1436,7 @@ const normalizePem = (raw: unknown): string | null => {
 };
 
 export const handleAdminKernelPubKeysList = async (): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
   const kvEntry = await kv.get<Array<{ app_id: number; pem: string; owner: string; added_at_ms: number }>>(
     UOS_KERNEL_PUBKEYS_KEY,
@@ -1445,7 +1445,7 @@ export const handleAdminKernelPubKeysList = async (): Promise<Response> => {
 };
 
 export const handleAdminKernelPubKeysCreate = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
 
   const raw = await readJsonBody(req);
@@ -1478,7 +1478,7 @@ export const handleAdminKernelPubKeysCreate = async (req: Request): Promise<Resp
 };
 
 export const handleAdminKernelPubKeysDelete = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
 
   const url = new URL(req.url);
@@ -1508,7 +1508,7 @@ export const handleAdminKernelPolicyQueueList = async (): Promise<Response> => {
   if (!records) return openaiError(500, "Deno KV is not available", "server_error");
   if (records.length === 0) return json(200, { data: records });
 
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
 
   // This queue is meant to surface *current* gaps. Once an org/repo rate limit policy exists,
@@ -1541,7 +1541,7 @@ export const handleAdminKernelPolicyQueueList = async (): Promise<Response> => {
 };
 
 export const handleAdminKernelUsageGet = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
 
   const url = new URL(req.url);
@@ -1657,7 +1657,7 @@ export const handleAdminKernelUsageGet = async (req: Request): Promise<Response>
 };
 
 export const handleAdminKernelUsageSet = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
 
   const raw = await readJsonBody(req);
@@ -1720,7 +1720,7 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
 };
 
 export const handleAdminKernelUsageDelete = async (req: Request): Promise<Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
 
   const raw = await readJsonBody(req);

@@ -6,7 +6,7 @@ import {
   DEFAULT_KERNEL_POLICY_WINDOW_MS,
 } from "./defaults.ts";
 import { openaiError } from "./http.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { getString, isRecord } from "./utils.ts";
 import type {
   KernelAuthLimitRecord,
@@ -311,7 +311,7 @@ const applyDelta = (record: KernelAuthUsageRecord, delta: KernelUsageDelta, nowM
 
 export const recordKernelUsage = async (owner: string, repo: string, delta: KernelUsageDelta): Promise<void> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return;
 
     const key = kernelUsageKey(owner, repo);
@@ -372,7 +372,7 @@ export const getKernelUsage = async (
   options: { includeDaily?: boolean; dailyDays?: number } = {},
 ): Promise<(KernelAuthUsageRecord & { daily_requests?: number[] }) | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const nowMs = Date.now();
     const entry = await kv.get<KernelAuthUsageRecord>(kernelUsageKey(owner, repo));
@@ -456,7 +456,7 @@ const applyOrgDelta = (record: KernelOrgUsageRecord, delta: KernelUsageDelta, no
 
 export const recordKernelOrgUsage = async (owner: string, delta: KernelUsageDelta): Promise<void> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return;
 
     const key = kernelOrgUsageKey(owner);
@@ -515,7 +515,7 @@ export const getKernelOrgUsage = async (
   options: { includeDaily?: boolean; dailyDays?: number } = {},
 ): Promise<(KernelOrgUsageRecord & { daily_requests?: number[] }) | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const nowMs = Date.now();
     const entry = await kv.get<KernelOrgUsageRecord>(kernelOrgUsageKey(owner));
@@ -607,7 +607,7 @@ export const getKernelUsageLimitSnapshot = async (
   repo: string,
 ): Promise<KernelAuthLimitSnapshot | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
@@ -623,7 +623,7 @@ export const getKernelUsageLimitSnapshot = async (
 
 export const listKernelUsageLimits = async (): Promise<KernelAuthLimitRecord[] | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
@@ -649,7 +649,7 @@ export const listKernelUsageRecords = async (
   options: { includeDaily?: boolean; dailyDays?: number } = {},
 ): Promise<(KernelAuthUsageRecord & { daily_requests?: number[] })[] | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const nowMs = Date.now();
     const records: Array<KernelAuthUsageRecord & { daily_requests?: number[] }> = [];
@@ -687,7 +687,7 @@ export const setKernelUsageLimit = async (
   options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {},
 ): Promise<KernelAuthLimitRecord | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelLimitKey(owner, repo);
@@ -723,7 +723,7 @@ export const setKernelUsageLimit = async (
 
 export const deleteKernelUsageLimit = async (owner: string, repo: string): Promise<boolean | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const key = kernelLimitKey(owner, repo);
     const entry = await kv.get<KernelAuthLimitRecord>(key);
@@ -741,7 +741,7 @@ export const checkKernelUsageLimit = async (
   repo: string,
 ): Promise<{ ok: true } | { ok: false; response: Response }> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return { ok: true };
     const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelLimitKey(owner, repo);
@@ -815,7 +815,7 @@ export const checkKernelUsageLimit = async (
 
 export const incrementKernelUsageLimit = async (owner: string, repo: string): Promise<void> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return;
     const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelLimitKey(owner, repo);
@@ -890,7 +890,7 @@ export type KernelOrgLimitSnapshot = Readonly<{
 
 export const getKernelOrgUsageLimitSnapshot = async (owner: string): Promise<KernelOrgLimitSnapshot | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
@@ -906,7 +906,7 @@ export const getKernelOrgUsageLimitSnapshot = async (owner: string): Promise<Ker
 
 export const listKernelOrgUsageLimits = async (): Promise<KernelOrgLimitRecord[] | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
@@ -927,7 +927,7 @@ export const listKernelOrgUsageRecords = async (
   options: { includeDaily?: boolean; dailyDays?: number } = {},
 ): Promise<(KernelOrgUsageRecord & { daily_requests?: number[] })[] | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const nowMs = Date.now();
     const records: Array<KernelOrgUsageRecord & { daily_requests?: number[] }> = [];
@@ -959,7 +959,7 @@ export const setKernelOrgUsageLimit = async (
   options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {},
 ): Promise<KernelOrgLimitRecord | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelOrgLimitKey(owner);
@@ -995,7 +995,7 @@ export const setKernelOrgUsageLimit = async (
 
 export const deleteKernelOrgUsageLimit = async (owner: string): Promise<boolean | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const key = kernelOrgLimitKey(owner);
     const entry = await kv.get<KernelOrgLimitRecord>(key);
@@ -1012,7 +1012,7 @@ export const checkKernelOrgUsageLimit = async (
   owner: string,
 ): Promise<{ ok: true } | { ok: false; response: Response }> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return { ok: true };
     const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelOrgLimitKey(owner);
@@ -1086,7 +1086,7 @@ export const checkKernelOrgUsageLimit = async (
 
 export const incrementKernelOrgUsageLimit = async (owner: string): Promise<void> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return;
     const defaults = await loadKernelDefaultPolicy(kv);
     const key = kernelOrgLimitKey(owner);

@@ -119,6 +119,8 @@ const {
   paidFallbackRequestV3Key,
   paidFallbackWindowV3Key,
 } = await import("../src/paid_fallback_ledger.ts");
+const { getKv } = await import("../src/kv.ts");
+await getKv();
 type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;
 type PaidFallbackRequestV3 = import("../src/types.ts").PaidFallbackRequestV3;
 type PaidFallbackWindowV3 = import("../src/types.ts").PaidFallbackWindowV3;

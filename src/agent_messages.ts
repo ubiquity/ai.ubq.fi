@@ -1,6 +1,6 @@
 import { authenticateClient } from "./auth.ts";
 import { json, openaiError } from "./http.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord } from "./utils.ts";
 
@@ -96,7 +96,7 @@ export const handleAgentMessagesPost = async (req: Request, deps: AgentMessagesD
     return openaiError(403, "GitHub token auth required", "forbidden");
   }
 
-  const kv = deps.kv !== undefined ? deps.kv : await kvPromise;
+  const kv = deps.kv !== undefined ? deps.kv : await getKv();
   if (!kv) return openaiError(503, "Deno KV unavailable", "server_error");
 
   const raw = await readJsonBody(req);
@@ -151,7 +151,7 @@ export const handleAgentMessagesList = async (req: Request, deps: AgentMessagesD
     return openaiError(403, "GitHub token auth required", "forbidden");
   }
 
-  const kv = deps.kv !== undefined ? deps.kv : await kvPromise;
+  const kv = deps.kv !== undefined ? deps.kv : await getKv();
   if (!kv) return openaiError(503, "Deno KV unavailable", "server_error");
 
   const url = new URL(req.url);

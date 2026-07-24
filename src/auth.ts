@@ -15,7 +15,7 @@ import {
   getKernelUsageLimitSnapshot,
 } from "./kernel_usage.ts";
 import { recordKernelPolicyQueue } from "./kernel_policy_queue.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { getPasskeySession, isPasskeyUserAdmin } from "./passkeys.ts";
 import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type { ApiKeyRecord } from "./types.ts";
@@ -69,7 +69,7 @@ const getKernelPublicKeyPems = async (): Promise<string[]> => {
     }
   }
 
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (kv) {
     const kvEntry = await kv.get<Array<{ pem: string }>>(UOS_KERNEL_PUBKEYS_KEY);
     if (kvEntry.value) {
@@ -668,7 +668,7 @@ const logAuthDecision = (req: Request, entry: AuthLogEntry): void => {
 };
 
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   const localAuthDisabled = !config.isDeploy && config.authTokens.size === 0 && !kv;
   const token = getBearerToken(req);
   const tokenPresent = Boolean(token);
@@ -983,7 +983,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return authResult.response;
 
-  const kv = await kvPromise;
+  const kv = await getKv();
   const mode = config.isDeploy && config.authTokens.size === 0 && !kv
     ? "misconfigured"
     : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)

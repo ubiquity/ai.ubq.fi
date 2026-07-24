@@ -1,4 +1,4 @@
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { getString, isRecord } from "./utils.ts";
 import type { KernelPolicyQueueItem } from "./types.ts";
 
@@ -48,7 +48,7 @@ export const recordKernelPolicyQueue = async (
     const routeValue = normalizeOwnerRepo(route);
     const routeEntry = routeValue ? routeValue : null;
 
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return;
     const nowMs = Date.now();
 
@@ -102,7 +102,7 @@ export const recordKernelPolicyQueue = async (
 
 export const listKernelPolicyQueue = async (): Promise<KernelPolicyQueueItem[] | null> => {
   try {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (!kv) return null;
     const nowMs = Date.now();
     const entry = await kv.get<KernelPolicyQueueItem[]>(UOS_KERNEL_POLICY_QUEUE_KEY);

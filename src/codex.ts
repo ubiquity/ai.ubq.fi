@@ -1,6 +1,6 @@
 import { config } from "./config.ts";
 import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { buildRuntimeConfig, cacheRuntimeConfig, loadRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord } from "./utils.ts";
 import type { CodexAuthState, ResponseInputItem } from "./types.ts";
@@ -246,7 +246,7 @@ const loadedAuthEntry = (
 };
 
 const loadAuthEntry = async (generationAtStart: number): Promise<CodexAuthEntry> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     const auth = cachedAuth ?? getConfiguredCodexAuthSeed();
     if (!auth) {
@@ -620,7 +620,7 @@ export const preserveCodexDefaultModel = (
 export const loadFullCodexModelsSnapshot = async (
   kvOverride?: Deno.Kv | null,
 ): Promise<CodexModelsSnapshot | null> => {
-  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+  const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return null;
   const entry = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY, { consistency: "strong" });
   const snapshot = entry.value;
@@ -635,7 +635,7 @@ export const loadFullCodexModelsSnapshot = async (
 };
 
 export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): Promise<boolean> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return false;
   const current = await loadRuntimeConfig(kv);
   const runtimeConfig = buildRuntimeConfig(snapshot, {

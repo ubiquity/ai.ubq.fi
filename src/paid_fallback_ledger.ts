@@ -1,5 +1,5 @@
 import { MICROCREDITS_PER_CREDIT, PAID_FALLBACK_NO_LIMIT } from "./api_keys.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import type { PaidFallbackRequestV3, PaidFallbackWindowV3 } from "./types.ts";
 import { fetchYunwuTokenLogs, type YunwuTokenLogEntry } from "./yunwu.ts";
 
@@ -106,7 +106,7 @@ type AdmissionInput = Readonly<{
 }>;
 
 const resolveKv = async (kvOverride: Deno.Kv | null | undefined): Promise<Deno.Kv | null> =>
-  kvOverride === undefined ? await kvPromise : kvOverride;
+  kvOverride === undefined ? await getKv() : kvOverride;
 
 const queueOptions = {
   delay: 0,
@@ -325,7 +325,7 @@ export const admitPaidFallbackV3 = async (
   | Readonly<{ kind: "reserved"; reservation: PaidFallbackAdmissionV3 }>
   | Readonly<{ kind: "blocked"; reason: "limit_exceeded" | "invalid_policy" | "concurrent_update" }>
 > => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return { kind: "blocked", reason: "invalid_policy" };
   const unlimited = input.limitMicrocredits === PAID_FALLBACK_NO_LIMIT;
   if (
@@ -488,7 +488,7 @@ export const updatePaidFallbackRequestV3 = async (
   reservation: PaidFallbackAdmissionV3,
   patch: PaidFallbackRequestLifecyclePatchV3,
 ): Promise<void> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return;
   const key = paidFallbackRequestV3Key(reservation.key_id, reservation.request_id);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -538,7 +538,7 @@ export const updatePaidFallbackRequestV3 = async (
 };
 
 export const releaseUndispatchedPaidFallbackV3 = async (reservation: PaidFallbackAdmissionV3): Promise<void> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return;
   const requestKey = paidFallbackRequestV3Key(reservation.key_id, reservation.request_id);
   const pendingKey = paidFallbackPendingV3Key(reservation.key_id, reservation.request_id);
@@ -615,7 +615,7 @@ const _expeditePaidFallbackReconciliationV3 = async (
   reservation: PaidFallbackAdmissionV3,
   now: number,
 ): Promise<void> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return;
   const pendingKey = paidFallbackPendingV3Key(reservation.key_id, reservation.request_id);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {

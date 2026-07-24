@@ -6,7 +6,7 @@ import {
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
 import { getBearerToken, json, openaiError } from "./http.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { base64UrlDecode, base64UrlEncode, getString, isRecord, sha256Hex } from "./utils.ts";
 
 export type PasskeyUserRecord = {
@@ -170,7 +170,7 @@ export const getPasskeyRequestMeta = (req: Request, clientOrigin?: unknown): { o
 };
 
 const getKvOrError = async (): Promise<Deno.Kv | Response> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(503, "Passkey auth requires Deno KV", "server_error");
   return kv;
 };
@@ -183,7 +183,7 @@ const getUserByHandle = async (kv: Deno.Kv, handle: string): Promise<PasskeyUser
 };
 
 export const hasPasskeyUsers = async (): Promise<boolean> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return false;
   for await (const _entry of kv.list({ prefix: [...AUTH_PREFIX, "users"] }, { limit: 1 })) {
     return true;
@@ -314,7 +314,7 @@ export const saveVerifiedPasskeyRegistration = async (
 };
 
 export const getPasskeySession = async (token: string): Promise<PasskeySession | null> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return null;
   const sessionEntry = await kv.get<PasskeySessionRecord>(passkeySessionKey(token));
   if (!sessionEntry.value) return null;
@@ -634,7 +634,7 @@ export const handlePasskeySession = async (req: Request): Promise<Response> => {
 export const handlePasskeyLogout = async (req: Request): Promise<Response> => {
   const token = getBearerToken(req);
   if (token) {
-    const kv = await kvPromise;
+    const kv = await getKv();
     if (kv) await kv.delete(passkeySessionKey(token));
   }
   return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });

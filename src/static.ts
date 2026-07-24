@@ -1,6 +1,6 @@
 import { config } from "./config.ts";
 import { json } from "./http.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 
 type StaticBody = string | Uint8Array<ArrayBuffer>;
 
@@ -151,7 +151,7 @@ export const handleRoot = async (req: Request): Promise<Response> => {
     return await serveAsset(indexHtmlAsset, { "Vary": "Accept" });
   }
 
-  const kv = await kvPromise;
+  const kv = await getKv();
   const auth = config.isDeploy && config.authTokens.size === 0 && !kv
     ? "misconfigured"
     : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)

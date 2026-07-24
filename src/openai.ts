@@ -11,7 +11,7 @@ import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catal
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { json, openaiError } from "./http.ts";
 import { createInferenceSignal } from "./inference_deadline.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { loadRuntimeConfig } from "./runtime_config.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, EMBEDDINGS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
 import { readJsonBody } from "./request.ts";
@@ -2845,7 +2845,7 @@ const handleEmbeddingsRequest = async (
   if (!parsed.ok) return parsed.response;
   const { model, inputs, profile } = parsed.value;
 
-  const kv = Object.prototype.hasOwnProperty.call(options, "kv") ? options.kv ?? null : await kvPromise;
+  const kv = Object.prototype.hasOwnProperty.call(options, "kv") ? options.kv ?? null : await getKv();
   const hashes = await Promise.all(inputs.map((text) => sha256Hex(text)));
   let idempotencyLease: EmbeddingsIdempotencyLease | null = null;
   let idempotencyDispatched = false;
@@ -3569,7 +3569,7 @@ const handleEmbeddingsJobCreateInternal = async (
 
   await recordRequestUsage(usageContext, { model, route: "embeddings.jobs.create", stream: false, reasoning: null });
 
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     await recordErrorUsage(usageContext);
     return openaiError(503, "Embeddings jobs require Deno KV", "server_error", { type: "server_error", param: null });
@@ -3692,7 +3692,7 @@ const handleEmbeddingsJobGetInternal = async (
   const requestId = crypto.randomUUID();
   const startedAtMs = Date.now();
 
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) {
     await recordErrorUsage(usageContext);
     return openaiError(503, "Embeddings jobs require Deno KV", "server_error", { type: "server_error", param: null });

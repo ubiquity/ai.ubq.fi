@@ -1,7 +1,7 @@
 import { CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, fetchCodexModels, preserveCodexDefaultModel } from "./codex.ts";
 import { compareCodexClientVersions, normalizeCodexModelsPayload, parseCodexClientVersion } from "./codex_models.ts";
 import { openaiError } from "./http.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import {
   buildRuntimeConfig,
   cacheRuntimeConfig,
@@ -399,7 +399,7 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
       param: "client_version",
     });
   }
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
 
   let authGeneration: string;

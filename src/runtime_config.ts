@@ -1,7 +1,7 @@
 import type { CodexModelsSnapshot } from "./codex_models.ts";
 import { getCodexModelsSnapshotDefaultModel } from "./codex_models.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { getString, isRecord } from "./utils.ts";
 
 export const RUNTIME_CONFIG_V2_KEY = ["uos_ai", "runtime_config", "v2"] as const;
@@ -177,7 +177,7 @@ export const loadRuntimeConfig = async (
   const stale = cachedRuntimeConfig?.value ?? null;
   runtimeConfigLoadInFlight = (async () => {
     try {
-      const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+      const kv = kvOverride === undefined ? await getKv() : kvOverride;
       if (!kv) {
         if (stale) cachedRuntimeConfig = { value: stale, expires_at_ms: nowMs + RUNTIME_CONFIG_CACHE_TTL_MS };
         return stale;
@@ -203,7 +203,7 @@ export const storeRuntimeConfig = async (
 ): Promise<boolean> => {
   const normalized = normalizeRuntimeConfig(config);
   if (!normalized) throw new RuntimeConfigError("runtime config is invalid or exceeds one 4 KiB read unit");
-  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+  const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return false;
   await kv.set(RUNTIME_CONFIG_V2_KEY, normalized);
   cacheRuntimeConfig(normalized);

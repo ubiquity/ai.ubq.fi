@@ -1,4 +1,4 @@
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { getString, isRecord } from "./utils.ts";
 import { YUNWU_BASE_URL, type YunwuFetch } from "./yunwu.ts";
 
@@ -409,7 +409,7 @@ export const getYunwuQuotaSnapshot = async (
   credentials: YunwuAccountCredentials,
   options: GetYunwuQuotaSnapshotOptions = {},
 ): Promise<YunwuQuotaSnapshot | null> => {
-  const kv = options.kv === undefined ? await kvPromise : options.kv;
+  const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv || !parseCredentials(credentials)) return null;
   const now = options.now ?? Date.now;
   const nowMs = Math.trunc(now());
@@ -485,7 +485,7 @@ export const getYunwuQuotaSnapshot = async (
 export const getCachedYunwuQuotaSnapshot = async (
   options: Pick<GetYunwuQuotaSnapshotOptions, "kv" | "now"> = {},
 ): Promise<YunwuQuotaSnapshot | null> => {
-  const kv = options.kv === undefined ? await kvPromise : options.kv;
+  const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) return null;
   const nowMs = Math.trunc((options.now ?? Date.now)());
   try {
@@ -507,7 +507,7 @@ export const getCachedYunwuQuotaSnapshot = async (
 export const invalidateYunwuQuotaSnapshot = async (
   options: Pick<GetYunwuQuotaSnapshotOptions, "kv" | "now"> = {},
 ): Promise<void> => {
-  const kv = options.kv === undefined ? await kvPromise : options.kv;
+  const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) return;
   const invalidatedAtMs = Math.trunc((options.now ?? Date.now)());
   if (!isNonNegativeSafeInteger(invalidatedAtMs)) throw new Error("YunWu quota invalidation clock is invalid");

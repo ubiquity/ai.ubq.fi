@@ -1,4 +1,4 @@
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import type { ApiKeyRequestLogRecord } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
 
@@ -101,7 +101,7 @@ const mutateApiKeyRequestLog = async (
   mutate: (existing: ApiKeyRequestLogRecord | null) => ApiKeyRequestLogInput | ApiKeyRequestLogRecord | null,
   kvOverride?: Deno.Kv | null,
 ): Promise<void> => {
-  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+  const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv || !keyId.trim()) return;
   const key = apiKeyRequestLogKey(keyId, createdAtMs, requestId);
 
@@ -151,7 +151,7 @@ export const getApiKeyRequestLog = async (
   requestId: string,
   kvOverride?: Deno.Kv | null,
 ): Promise<ApiKeyRequestLogRecord | null> => {
-  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+  const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return null;
   const entry = await kv.get<ApiKeyRequestLogRecord>(apiKeyRequestLogKey(keyId, createdAtMs, requestId));
   return normalize(entry.value, keyId, requestId, createdAtMs);
@@ -177,7 +177,7 @@ export const listApiKeyRequestLogs = async (
   keyId: string,
   options: { limit?: number; kv?: Deno.Kv | null } = {},
 ): Promise<ApiKeyRequestLogRecord[]> => {
-  const kv = options.kv === undefined ? await kvPromise : options.kv;
+  const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv || !keyId.trim()) return [];
   const limit = Math.max(1, Math.min(MAX_REQUEST_LOGS, Math.trunc(options.limit ?? 20)));
   const records: ApiKeyRequestLogRecord[] = [];

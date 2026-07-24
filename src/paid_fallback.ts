@@ -6,7 +6,7 @@ import {
   updatePaidFallbackRequestV3,
 } from "./paid_fallback_ledger.ts";
 import { loadFullCodexModelsSnapshot } from "./codex.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
 import { initializeYunwuPricing, readYunwuApiKey, YunwuError } from "./yunwu.ts";
@@ -247,7 +247,7 @@ export const reservePaidFallback = async (
     reason: "primary_429";
   }>,
 ): Promise<PaidFallbackReservationDecision> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
   const record = await loadStrictKeyRecord(kv, input.keyId);
   if (!record) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };

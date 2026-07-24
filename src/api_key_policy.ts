@@ -5,7 +5,7 @@ import {
   normalizeApiKeyWindowMs,
 } from "./api_keys.ts";
 import { openaiError } from "./http.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
 import type { ApiKeyHashRecord } from "./types.ts";
 import { sha256Base64Url } from "./utils.ts";
@@ -95,7 +95,7 @@ export const authenticateApiKeyToken = async (
   }
   const nowMs = options.nowMs ?? Date.now();
   const tokenHash = await sha256Base64Url(token);
-  const kv = options.kv === undefined ? await kvPromise : options.kv;
+  const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) {
     return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
@@ -152,7 +152,7 @@ export const authenticateApiKeyToken = async (
 
 export const incrementApiKeyUsageV2 = async (policy: ApiKeyPolicy): Promise<void> => {
   if (policy.usage_limit_requests === API_KEY_NO_USAGE_LIMIT) return;
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (!kv) return;
   await kv.atomic().sum(apiKeyUsageV2Key(policy), 1n).commit();
 };
@@ -162,7 +162,7 @@ export const getApiKeyUsageV2 = async (
   kvOverride?: Deno.Kv | null,
 ): Promise<number> => {
   if (policy.usage_limit_requests === API_KEY_NO_USAGE_LIMIT) return 0;
-  const kv = kvOverride === undefined ? await kvPromise : kvOverride;
+  const kv = kvOverride === undefined ? await getKv() : kvOverride;
   return kv ? await readCounter(kv, policy) : 0;
 };
 

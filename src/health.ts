@@ -1,7 +1,7 @@
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { CODEX_KV_KEY, fetchCodexModels, getJwtExpMs, parseCodexAuthFromAuthJson } from "./codex.ts";
 import { json } from "./http.ts";
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { decodeBase64ToString } from "./utils.ts";
 
 const AUTH_REFRESH_WINDOW_MS = 2 * 60_000;
@@ -55,7 +55,7 @@ const loadEnvCodexAuth = (): HealthAuthMetaBase | null => {
 };
 
 const getCodexAuthMeta = async (): Promise<HealthAuthMetaBase> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (kv) {
     const entry = await kv.get<{ access_token: string; updated_at_ms: number }>(CODEX_KV_KEY);
     if (entry.value) {

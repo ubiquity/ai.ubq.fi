@@ -239,6 +239,8 @@ const {
   handlePaidFallbackReconciliationJobV3,
   updatePaidFallbackRequestV3,
 } = await import("../src/paid_fallback_ledger.ts");
+const { getKv } = await import("../src/kv.ts");
+await getKv();
 
 const strictKeyRecord = (
   overrides: Record<string, unknown> = {},
