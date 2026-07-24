@@ -1,6 +1,6 @@
 import {
-  cacheCodexAuth,
-  CODEX_KV_KEY,
+  cacheCodexAuthPool,
+  CODEX_AUTH_POOL_KV_KEY,
   CODEX_MODELS_KV_KEY,
   CodexError,
   type CodexModelsSnapshot,
@@ -8,8 +8,10 @@ import {
   loadCodexModelsSnapshot,
   loadFullCodexModelsSnapshot,
   parseCodexAuthFromAuthJson,
+  parseCodexAuthPool,
   preserveCodexDefaultModel,
   storeCodexModelsSnapshot,
+  upsertCodexAuthAccount,
   validateCodexAuthJson,
 } from "./codex.ts";
 import { normalizeCodexModelsPayload } from "./codex_models.ts";
@@ -100,7 +102,7 @@ import {
 } from "./runtime_config.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
-import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "./types.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthPoolState, CodexAuthState } from "./types.ts";
 import { YunwuError } from "./yunwu.ts";
 import { getYunwuQuotaDiagnostics } from "./yunwu_quota.ts";
 
@@ -146,7 +148,8 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     return openaiError(502, message, "codex_upstream_unreachable");
   }
 
-  if (!validated.ok) {
+  const authenticatedButLimited = !validated.ok && validated.status === 429;
+  if (!validated.ok && !authenticatedButLimited) {
     return openaiError(
       401,
       `Invalid Codex auth.json (upstream ${validated.status}): ${validated.body}`,
@@ -154,96 +157,134 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     );
   }
 
-  const validatedClientVersion = validated.clientVersion;
-  const snapshot = normalizeCodexModelsPayload(validated.models, {
-    source: "chatgpt_codex",
-    clientVersion: validatedClientVersion,
-  });
-  if (!snapshot) {
-    return openaiError(
-      502,
-      "Codex upstream models response did not include a non-empty model catalog",
-      "codex_upstream_unreachable",
-    );
-  }
-  const snapshotSize = estimateJsonSize(snapshot);
-  if (snapshotSize === null) {
-    return openaiError(400, "models payload could not be serialized", "invalid_request_error");
-  }
-  if (snapshotSize > SAFE_KV_BYTES) {
-    return openaiError(
-      413,
-      `models snapshot too large (${snapshotSize} bytes; max ${MAX_KV_BYTES}).`,
-      "invalid_request_error",
-    );
+  const validatedAuth = validated.ok ? validated.auth : seed;
+  const validatedClientVersion = validated.ok ? validated.clientVersion : clientVersion;
+  let snapshot: CodexModelsSnapshot | null = null;
+  let runtimeConfig: ReturnType<typeof buildRuntimeConfig> | null = null;
+  let authGeneration: string | null = null;
+  if (validated.ok) {
+    snapshot = normalizeCodexModelsPayload(validated.models, {
+      source: "chatgpt_codex",
+      clientVersion: validatedClientVersion,
+    });
+    if (!snapshot) {
+      return openaiError(
+        502,
+        "Codex upstream models response did not include a non-empty model catalog",
+        "codex_upstream_unreachable",
+      );
+    }
+    const snapshotSize = estimateJsonSize(snapshot);
+    if (snapshotSize === null) {
+      return openaiError(400, "models payload could not be serialized", "invalid_request_error");
+    }
+    if (snapshotSize > SAFE_KV_BYTES) {
+      return openaiError(
+        413,
+        `models snapshot too large (${snapshotSize} bytes; max ${MAX_KV_BYTES}).`,
+        "invalid_request_error",
+      );
+    }
+
+    authGeneration = crypto.randomUUID();
+    const currentRuntime = await loadRuntimeConfig(kv);
+    try {
+      runtimeConfig = buildRuntimeConfig(snapshot, {
+        defaultModel: preserveCodexDefaultModel(snapshot, currentRuntime?.default_model),
+        defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
+      });
+    } catch (error) {
+      const response = runtimeConfigErrorResponse(error);
+      if (response) return response;
+      throw error;
+    }
   }
 
-  const authGeneration = crypto.randomUUID();
-  const currentRuntime = await loadRuntimeConfig(kv);
-  let runtimeConfig;
-  try {
-    runtimeConfig = buildRuntimeConfig(snapshot, {
-      defaultModel: preserveCodexDefaultModel(snapshot, currentRuntime?.default_model),
-      defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
-    });
-  } catch (error) {
-    const response = runtimeConfigErrorResponse(error);
-    if (response) return response;
-    throw error;
-  }
   let stored = false;
+  let storedPool: CodexAuthPoolState | null = null;
+  let storedSnapshot: CodexModelsSnapshot | null = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const existingSnapshot = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
-    const atomic = kv.atomic()
+    const [existingPoolEntry, existingSnapshot] = await Promise.all([
+      kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY),
+      kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY),
+    ]);
+    const existingPool = parseCodexAuthPool(existingPoolEntry.value);
+    const nextPool = upsertCodexAuthAccount(existingPool, validatedAuth);
+    if (!nextPool) {
+      return openaiError(
+        409,
+        "Codex auth pool already contains two accounts; upload an auth.json for an existing account to rotate it",
+        "codex_auth_pool_full",
+      );
+    }
+    const nextSnapshot = snapshot ?? existingSnapshot.value;
+    if (!nextSnapshot) {
+      return openaiError(
+        409,
+        "Cannot store rate-limited Codex auth without an existing model catalog",
+        "codex_catalog_required",
+      );
+    }
+    let atomic = kv.atomic()
+      .check(existingPoolEntry)
       .check(existingSnapshot)
-      .set(CODEX_KV_KEY, validated.auth)
-      .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration)
-      .set(CODEX_MODELS_KV_KEY, snapshot)
-      .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig);
+      .set(CODEX_AUTH_POOL_KV_KEY, nextPool);
+    if (snapshot && runtimeConfig && authGeneration) {
+      atomic = atomic
+        .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration)
+        .set(CODEX_MODELS_KV_KEY, snapshot)
+        .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig);
+    }
     if ((await atomic.commit()).ok) {
       stored = true;
+      storedPool = nextPool;
+      storedSnapshot = nextSnapshot;
       break;
     }
   }
-  if (!stored) {
+  if (!stored || !storedPool || !storedSnapshot) {
     return openaiError(500, "Deno KV could not persist Codex auth and models", "server_error");
   }
-  cacheCodexAuth(validated.auth);
-  cacheRuntimeConfig(runtimeConfig);
+  cacheCodexAuthPool(storedPool);
+  if (runtimeConfig) cacheRuntimeConfig(runtimeConfig);
 
-  const catalogSeeded = await storeCodexCatalog(kv, {
-    clientVersion: validatedClientVersion,
-    authGeneration,
-    body: validated.modelsBody,
-    etag: validated.etag,
-    contentType: validated.contentType,
-    fetchedAtMs: Date.now(),
-  }).catch((error) => {
-    console.error("[ai.ubq.fi] Codex catalog seed failed:", error);
-    return false;
-  });
+  const catalogSeeded = validated.ok && authGeneration
+    ? await storeCodexCatalog(kv, {
+      clientVersion: validated.clientVersion,
+      authGeneration,
+      body: validated.modelsBody,
+      etag: validated.etag,
+      contentType: validated.contentType,
+      fetchedAtMs: Date.now(),
+    }).catch((error) => {
+      console.error("[ai.ubq.fi] Codex catalog seed failed:", error);
+      return false;
+    })
+    : false;
 
   const modelsStored = {
-    count: snapshot.models.length,
-    source: snapshot.source,
-    updated_at_ms: snapshot.updated_at_ms,
-    client_version: snapshot.client_version ?? null,
+    count: storedSnapshot.models.length,
+    source: storedSnapshot.source,
+    updated_at_ms: storedSnapshot.updated_at_ms,
+    client_version: storedSnapshot.client_version ?? null,
   };
 
-  const expMs = getJwtExpMs(validated.auth.access_token);
+  const expMs = getJwtExpMs(validatedAuth.access_token);
   return json(
     200,
     {
       stored: true,
-      refreshed: validated.refreshed,
-      account_id: validated.auth.account_id,
+      refreshed: validated.ok ? validated.refreshed : false,
+      account_id: validatedAuth.account_id,
+      account_count: storedPool.accounts.length,
+      account_ids: storedPool.accounts.map((account) => account.account_id),
       access_token_expires_at_ms: expMs,
-      updated_at_ms: validated.auth.updated_at_ms,
+      updated_at_ms: validatedAuth.updated_at_ms,
       upstream_status: validated.status,
-      upstream_content_type: validated.contentType,
+      upstream_content_type: validated.ok ? validated.contentType : null,
       models: modelsStored,
       catalog_seeded: catalogSeeded,
-      normalized_snapshot_updated: true,
+      normalized_snapshot_updated: validated.ok,
     },
     { "x-uos-upstream": "chatgpt_codex" },
   );
