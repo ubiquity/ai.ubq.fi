@@ -8,8 +8,20 @@ import {
 } from "./codex.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
+import {
+  getCodexProviderHealth,
+  getYunwuProviderHealth,
+  PROVIDER_HEALTH_STALE_AFTER_MS,
+  type ProviderHealthState,
+} from "./provider_health.ts";
 import { decodeBase64ToString } from "./utils.ts";
 import type { CodexAuthPoolState } from "./types.ts";
+import { readYunwuApiKey } from "./yunwu.ts";
+import {
+  getCachedConfiguredYunwuQuotaSnapshot,
+  readYunwuAccountCredentials,
+  type YunwuQuotaSnapshot,
+} from "./yunwu_quota.ts";
 
 const AUTH_REFRESH_WINDOW_MS = 2 * 60_000;
 const AUTH_NOT_CONFIGURED = "No Codex auth configured (CODEX_AUTH_JSON_B64 or KV entry missing).";
@@ -37,6 +49,11 @@ type HealthAuthMeta = HealthAuthMetaBase & {
     refresh_recommended: boolean | null;
   }>;
 };
+
+type CodexAuthContext = Readonly<{
+  meta: HealthAuthMetaBase;
+  account_ids: string[];
+}>;
 
 type HealthUpstreamProbe = {
   ok: boolean;
@@ -68,7 +85,7 @@ const enrichAuthMeta = (meta: HealthAuthMetaBase): HealthAuthMeta => {
   };
 };
 
-const loadEnvCodexAuth = (): HealthAuthMetaBase | null => {
+const loadEnvCodexAuth = (): CodexAuthContext | null => {
   if (!config.codexAuthJsonB64) return null;
   try {
     const decoded = decodeBase64ToString(config.codexAuthJsonB64);
@@ -77,22 +94,25 @@ const loadEnvCodexAuth = (): HealthAuthMetaBase | null => {
     if (!auth) return null;
     const accessTokenExpMs = getJwtExpMs(auth.access_token);
     return {
-      source: "env",
-      updated_at_ms: null,
-      access_token_exp_ms: accessTokenExpMs,
-      account_count: 1,
-      accounts: [{
-        slot: 1,
+      meta: {
+        source: "env",
         updated_at_ms: null,
         access_token_exp_ms: accessTokenExpMs,
-      }],
+        account_count: 1,
+        accounts: [{
+          slot: 1,
+          updated_at_ms: null,
+          access_token_exp_ms: accessTokenExpMs,
+        }],
+      },
+      account_ids: [auth.account_id],
     };
   } catch {
     return null;
   }
 };
 
-const getCodexAuthMeta = async (): Promise<HealthAuthMetaBase> => {
+const getCodexAuthContext = async (): Promise<CodexAuthContext> => {
   const kv = await getKv();
   if (kv) {
     const entry = await kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY);
@@ -107,26 +127,119 @@ const getCodexAuthMeta = async (): Promise<HealthAuthMetaBase> => {
         .map((account) => account.access_token_exp_ms)
         .filter((value): value is number => typeof value === "number");
       return {
-        source: "kv",
-        updated_at_ms: pool.updated_at_ms,
-        access_token_exp_ms: expirations.length > 0 ? Math.min(...expirations) : null,
-        account_count: accounts.length,
-        accounts,
+        meta: {
+          source: "kv",
+          updated_at_ms: pool.updated_at_ms,
+          access_token_exp_ms: expirations.length > 0 ? Math.min(...expirations) : null,
+          account_count: accounts.length,
+          accounts,
+        },
+        account_ids: pool.accounts.map((account) => account.account_id),
       };
     }
   }
 
   const envMeta = loadEnvCodexAuth();
-  if (envMeta) return { ...envMeta, updated_at_ms: null };
+  if (envMeta) return envMeta;
 
   return {
-    source: "none",
-    updated_at_ms: null,
-    access_token_exp_ms: null,
-    account_count: 0,
-    accounts: [],
+    meta: {
+      source: "none",
+      updated_at_ms: null,
+      access_token_exp_ms: null,
+      account_count: 0,
+      accounts: [],
+    },
+    account_ids: [],
   };
 };
+
+const getCodexAuthMeta = async (): Promise<HealthAuthMetaBase> => (await getCodexAuthContext()).meta;
+
+const aggregateProviderStates = (states: readonly ProviderHealthState[]): ProviderHealthState => {
+  if (states.length === 0 || states.every((state) => state === "unknown")) return "unknown";
+  if (states.some((state) => state === "healthy")) return "healthy";
+  if (states.every((state) => state === "invalid")) return "invalid";
+  if (states.every((state) => state === "exhausted")) return "exhausted";
+  return "degraded";
+};
+
+const quotaView = (snapshot: YunwuQuotaSnapshot | null) =>
+  snapshot
+    ? {
+      available: true,
+      cache_state: snapshot.cache_state,
+      balance_credits: snapshot.balance_credits,
+      baseline_credits: snapshot.baseline_credits,
+      remaining_percent: snapshot.remaining_percent,
+      used_percent: snapshot.used_percent,
+      observed_at_ms: snapshot.state.observed_at_ms,
+      confidence: snapshot.state.confidence,
+      cycle_started_at_ms: snapshot.state.cycle_started_at_ms,
+      last_credit_at_ms: snapshot.state.last_credit_at_ms,
+    }
+    : {
+      available: false,
+      cache_state: null,
+      balance_credits: null,
+      baseline_credits: null,
+      remaining_percent: null,
+      used_percent: null,
+      observed_at_ms: null,
+      confidence: null,
+      cycle_started_at_ms: null,
+      last_credit_at_ms: null,
+    };
+
+export const getPassiveProviderHealthSnapshot = async (
+  options: Readonly<{ includeQuota?: boolean }> = {},
+): Promise<Record<string, unknown>> => {
+  const context = await getCodexAuthContext();
+  const auth = enrichAuthMeta(context.meta);
+  const [codexHealth, yunwuHealth, yunwuQuota] = await Promise.all([
+    Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
+    getYunwuProviderHealth(),
+    getCachedConfiguredYunwuQuotaSnapshot(),
+  ]);
+  const codexAccounts = auth.accounts.map((account, index) => ({
+    ...account,
+    health: codexHealth[index],
+  }));
+  const quotaMonitoringConfigured = readYunwuAccountCredentials() !== null;
+  return {
+    mode: "passive",
+    generated_at_ms: Date.now(),
+    stale_after_ms: PROVIDER_HEALTH_STALE_AFTER_MS,
+    codex: {
+      configured: auth.source !== "none",
+      source: auth.source,
+      account_count: auth.account_count,
+      state: aggregateProviderStates(codexHealth.map((health) => health.state)),
+      accounts: codexAccounts,
+    },
+    yunwu: {
+      configured: readYunwuApiKey() !== null,
+      quota_monitoring_configured: quotaMonitoringConfigured,
+      health: yunwuHealth,
+      ...(options.includeQuota ? { quota: quotaView(yunwuQuota) } : {
+        quota: {
+          available: yunwuQuota !== null,
+          cache_state: yunwuQuota?.cache_state ?? null,
+          observed_at_ms: yunwuQuota?.state.observed_at_ms ?? null,
+        },
+      }),
+    },
+  };
+};
+
+export const handleHealthProviders = async (
+  options: Readonly<{ includeQuota?: boolean }> = {},
+): Promise<Response> =>
+  json(200, await getPassiveProviderHealthSnapshot(options), {
+    "Cache-Control": "no-store",
+    "x-uos-git-sha": runtimeGitSha(),
+    "x-uos-deployment-id": runtimeDeploymentId(),
+  });
 
 const probeUpstream = async (): Promise<HealthUpstreamProbe> => {
   const auth = enrichAuthMeta(await getCodexAuthMeta());

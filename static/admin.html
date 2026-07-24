@@ -53,6 +53,15 @@
             <button id="view-tab-defaults" type="button" role="tab" aria-controls="view-defaults" aria-selected="false">
               Defaults
             </button>
+            <button
+              id="view-tab-providers"
+              type="button"
+              role="tab"
+              aria-controls="view-providers"
+              aria-selected="false"
+            >
+              Providers
+            </button>
           </div>
         </section>
 
@@ -101,6 +110,10 @@
                 <div data-loading-item>
                   <span data-auth-label>Upstream auth</span>
                   <span id="loading-upstream-status" data-badge data-state="unknown">Waiting</span>
+                </div>
+                <div data-loading-item>
+                  <span data-auth-label>Providers</span>
+                  <span id="loading-providers-status" data-badge data-state="unknown">Waiting</span>
                 </div>
               </div>
             </div>
@@ -539,6 +552,69 @@
                   <dd id="yunwu-quota-cycle-started">—</dd>
                 </div>
               </dl>
+            </div>
+          </article>
+        </section>
+
+        <section
+          id="view-providers"
+          data-view="providers"
+          data-layout="grid"
+          role="tabpanel"
+          aria-labelledby="view-tab-providers"
+          hidden
+        >
+          <article data-card data-span="half" aria-labelledby="card-codex-providers">
+            <header>
+              <h2 id="card-codex-providers">Codex accounts</h2>
+              <p>Last-known state from normal gateway traffic. Account identifiers and credentials are never shown.</p>
+            </header>
+            <div data-card-body>
+              <div data-provider-heading>
+                <span id="codex-providers-badge" data-badge data-state="unknown">Not observed</span>
+                <span id="providers-updated" data-muted>Waiting for cached state</span>
+              </div>
+              <div id="codex-provider-list" data-provider-list role="list"></div>
+            </div>
+          </article>
+
+          <article data-card data-span="half" aria-labelledby="card-yunwu-provider">
+            <header>
+              <h2 id="card-yunwu-provider">YunWu</h2>
+              <p>Inference health is passive. Wallet data comes from the cached account snapshot, not a model request.</p>
+            </header>
+            <div data-card-body>
+              <span id="yunwu-provider-badge" data-badge data-state="unknown">Not observed</span>
+              <dl data-provider-diagnostics>
+                <div>
+                  <dt>Inference</dt>
+                  <dd id="yunwu-provider-state">—</dd>
+                </div>
+                <div>
+                  <dt>Last response</dt>
+                  <dd id="yunwu-provider-observed">—</dd>
+                </div>
+                <div>
+                  <dt>Balance</dt>
+                  <dd id="yunwu-provider-balance">—</dd>
+                </div>
+                <div>
+                  <dt>Remaining</dt>
+                  <dd id="yunwu-provider-remaining">—</dd>
+                </div>
+                <div>
+                  <dt>Wallet observed</dt>
+                  <dd id="yunwu-provider-quota-observed">—</dd>
+                </div>
+                <div>
+                  <dt>Cache</dt>
+                  <dd id="yunwu-provider-cache">—</dd>
+                </div>
+              </dl>
+              <p data-provider-note>
+                A state can be stale when no ordinary request has used that provider recently. Opening this view never
+                sends an inference request.
+              </p>
             </div>
           </article>
         </section>

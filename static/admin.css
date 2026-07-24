@@ -359,6 +359,74 @@ body[data-page="admin"] [data-quota-diagnostics] dd {
   font-weight: 600;
 }
 
+body[data-page="admin"] [data-provider-heading],
+body[data-page="admin"] [data-provider-account] > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+body[data-page="admin"] [data-provider-heading] [data-muted] {
+  text-align: right;
+  font-size: 11px;
+}
+
+body[data-page="admin"] [data-provider-list] {
+  display: grid;
+  gap: 8px;
+}
+
+body[data-page="admin"] [data-provider-account] {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+body[data-page="admin"] [data-provider-account] h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+body[data-page="admin"] [data-provider-diagnostics] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+body[data-page="admin"] [data-provider-diagnostics] > div {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+body[data-page="admin"] [data-provider-diagnostics] dt {
+  color: var(--muted-2);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+body[data-page="admin"] [data-provider-diagnostics] dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+body[data-page="admin"] [data-provider-note],
+body[data-page="admin"] [data-provider-empty] {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 body[data-page="admin"] [data-paid-fallback-create],
 body[data-page="admin"] [data-paid-fallback-editor],
 body[data-page="admin"] [data-paid-fallback-summary] {

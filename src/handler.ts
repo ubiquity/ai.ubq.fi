@@ -33,7 +33,7 @@ import {
 } from "./auth.ts";
 import { type ApiKeyPolicy, apiKeyQuotaUsedPercent } from "./api_key_policy.ts";
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
-import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
+import { handleHealth, handleHealthAuth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
 import {
   getKernelUsageLimitSnapshot,
@@ -291,6 +291,10 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleHealthAuth());
   }
 
+  if (req.method === "GET" && path === "/health/providers") {
+    return withCors(await handleHealthProviders());
+  }
+
   if (req.method === "GET" && path === "/health/upstream") {
     return withCors(await handleHealthUpstream());
   }
@@ -373,6 +377,12 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminDefaults(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/providers") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleHealthProviders({ includeQuota: true }));
   }
 
   if (req.method === "POST" && path === "/admin/api-keys") {

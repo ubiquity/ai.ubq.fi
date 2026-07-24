@@ -90,6 +90,7 @@ const loadingQueueStatus = mustGet("loading-queue-status");
 const loadingPubkeysStatus = mustGet("loading-pubkeys-status");
 const loadingDefaultsStatus = mustGet("loading-defaults-status");
 const loadingUpstreamStatus = mustGet("loading-upstream-status");
+const loadingProvidersStatus = mustGet("loading-providers-status");
 
 const keyNameInput = mustGet("key-name");
 const keyUsageLimitInput = mustGet("key-usage-limit");
@@ -120,6 +121,7 @@ const viewTabUsers = mustGet("view-tab-users");
 const viewTabKernel = mustGet("view-tab-kernel");
 const viewTabPubkeys = mustGet("view-tab-pubkeys");
 const viewTabDefaults = mustGet("view-tab-defaults");
+const viewTabProviders = mustGet("view-tab-providers");
 
 const viewLoading = mustGet("view-loading");
 const viewKeys = mustGet("view-keys");
@@ -127,6 +129,18 @@ const viewUsers = mustGet("view-users");
 const viewKernel = mustGet("view-kernel");
 const viewPubkeys = mustGet("view-pubkeys");
 const viewDefaults = mustGet("view-defaults");
+const viewProviders = mustGet("view-providers");
+
+const codexProvidersBadge = mustGet("codex-providers-badge");
+const codexProviderList = mustGet("codex-provider-list");
+const providersUpdated = mustGet("providers-updated");
+const yunwuProviderBadge = mustGet("yunwu-provider-badge");
+const yunwuProviderState = mustGet("yunwu-provider-state");
+const yunwuProviderObserved = mustGet("yunwu-provider-observed");
+const yunwuProviderBalance = mustGet("yunwu-provider-balance");
+const yunwuProviderRemaining = mustGet("yunwu-provider-remaining");
+const yunwuProviderQuotaObserved = mustGet("yunwu-provider-quota-observed");
+const yunwuProviderCache = mustGet("yunwu-provider-cache");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -139,6 +153,8 @@ let authWidgetAutoOpened = false;
 let allKeys = [];
 let keysLoading = false;
 let keysLoadedAt = 0;
+let providersLoading = false;
+let providersLoadedAt = 0;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
 const API_KEY_REQUEST_LOG_STATUS_OK = "OK";
@@ -255,6 +271,7 @@ const loadingStatusElements = {
   pubkeys: loadingPubkeysStatus,
   defaults: loadingDefaultsStatus,
   upstream: loadingUpstreamStatus,
+  providers: loadingProvidersStatus,
 };
 
 const setLoadingStatus = (key, state, text) => {
@@ -284,7 +301,7 @@ const updateLoadingAuthStatus = () => {
 };
 
 const resetLoadingPrefetchStatuses = (text = "Waiting") => {
-  ["keys", "users", "kernel", "queue", "pubkeys", "defaults", "upstream"].forEach((key) => {
+  ["keys", "users", "kernel", "queue", "pubkeys", "defaults", "upstream", "providers"].forEach((key) => {
     setLoadingStatus(key, "unknown", text);
   });
 };
@@ -646,6 +663,128 @@ const formatOptionalText = (value) => {
   if (typeof value !== "string") return "unknown";
   const trimmed = value.trim();
   return trimmed ? trimmed : "unknown";
+};
+
+const providerBadgeState = (state) => state === "healthy" ? "ok" : state === "unknown" ? "unknown" : "bad";
+
+const providerStateLabel = (health) => {
+  const state = formatOptionalText(health?.state);
+  return health?.stale === true ? `${state} · stale` : state;
+};
+
+const appendProviderFact = (list, label, value) => {
+  const item = document.createElement("div");
+  const term = document.createElement("dt");
+  const description = document.createElement("dd");
+  term.textContent = label;
+  description.textContent = value;
+  item.append(term, description);
+  list.appendChild(item);
+};
+
+const renderCodexProviders = (codex) => {
+  codexProviderList.replaceChildren();
+  const accounts = Array.isArray(codex?.accounts) ? codex.accounts : [];
+  if (accounts.length === 0) {
+    const empty = document.createElement("p");
+    empty.dataset.providerEmpty = "";
+    empty.textContent = codex?.configured === false
+      ? "No Codex accounts configured."
+      : "No account metadata available.";
+    codexProviderList.appendChild(empty);
+  }
+  for (const account of accounts) {
+    const card = document.createElement("article");
+    card.dataset.providerAccount = "";
+    card.setAttribute("role", "listitem");
+
+    const header = document.createElement("header");
+    const title = document.createElement("h3");
+    title.textContent = `Account ${account.slot ?? "—"}`;
+    const badge = document.createElement("span");
+    badge.dataset.badge = "";
+    const health = account.health ?? {};
+    setBadge(badge, providerBadgeState(health.state), providerStateLabel(health));
+    header.append(title, badge);
+
+    const facts = document.createElement("dl");
+    facts.dataset.providerDiagnostics = "";
+    appendProviderFact(facts, "Last response", formatDate(health.last_observed_at_ms));
+    appendProviderFact(
+      facts,
+      "HTTP status",
+      typeof health.last_status === "number" ? String(health.last_status) : "Not observed",
+    );
+    appendProviderFact(facts, "Token expires", formatDate(account.access_token_exp_ms));
+    appendProviderFact(
+      facts,
+      "Refresh",
+      health.last_refresh_succeeded === true
+        ? `Succeeded · ${formatDate(health.last_refresh_at_ms)}`
+        : health.last_refresh_succeeded === false
+        ? `Failed · ${formatDate(health.last_refresh_at_ms)}`
+        : "Not observed",
+    );
+    card.append(header, facts);
+    codexProviderList.appendChild(card);
+  }
+
+  const state = codex?.state ?? "unknown";
+  setBadge(
+    codexProvidersBadge,
+    providerBadgeState(state),
+    `${accounts.length} account${accounts.length === 1 ? "" : "s"} · ${state}`,
+  );
+};
+
+const renderYunwuProvider = (yunwu) => {
+  const health = yunwu?.health ?? {};
+  const quota = yunwu?.quota ?? {};
+  const state = yunwu?.configured === false ? "unconfigured" : health.state ?? "unknown";
+  setBadge(yunwuProviderBadge, providerBadgeState(state), providerStateLabel({ ...health, state }));
+  yunwuProviderState.textContent = providerStateLabel({ ...health, state });
+  yunwuProviderObserved.textContent = formatDate(health.last_observed_at_ms);
+  yunwuProviderBalance.textContent = quota.available ? formatCredits(quota.balance_credits) : "Not cached";
+  yunwuProviderRemaining.textContent = typeof quota.remaining_percent === "number"
+    ? `${quotaPercentFormatter.format(quota.remaining_percent)}%`
+    : "Unknown";
+  yunwuProviderQuotaObserved.textContent = formatDate(quota.observed_at_ms);
+  yunwuProviderCache.textContent = quota.cache_state ?? "Unavailable";
+};
+
+const loadProviders = async () => {
+  if (providersLoading) return;
+  const token = getAdminToken();
+  if (!adminAccessState.isAdmin || !token) {
+    setBadge(codexProvidersBadge, "bad", "Sign in required");
+    setBadge(yunwuProviderBadge, "bad", "Sign in required");
+    return;
+  }
+  providersLoading = true;
+  setBadge(codexProvidersBadge, "unknown", "Loading cached state");
+  setBadge(yunwuProviderBadge, "unknown", "Loading cached state");
+  try {
+    const response = await fetch(apiUrl("/admin/providers"), {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload) {
+      const message = payload?.error?.message ?? "Provider state unavailable";
+      setBadge(codexProvidersBadge, "bad", message);
+      setBadge(yunwuProviderBadge, "bad", message);
+      return;
+    }
+    renderCodexProviders(payload.codex);
+    renderYunwuProvider(payload.yunwu);
+    providersLoadedAt = Date.now();
+    providersUpdated.textContent = `Cached view updated ${formatDate(payload.generated_at_ms)}`;
+  } catch {
+    setBadge(codexProvidersBadge, "bad", "Offline");
+    setBadge(yunwuProviderBadge, "bad", "Offline");
+  } finally {
+    providersLoading = false;
+  }
 };
 
 const formatPemPreview = (value) => {
@@ -4237,6 +4376,7 @@ const VIEW_HASHES = {
   kernel: "kernel",
   pubkeys: "pubkeys",
   defaults: "defaults",
+  providers: "providers",
 };
 const VIEW_REQUIREMENTS = {
   keys: "admin",
@@ -4244,6 +4384,7 @@ const VIEW_REQUIREMENTS = {
   kernel: "admin",
   pubkeys: "admin",
   defaults: "admin",
+  providers: "admin",
 };
 const VIEW_HASH_ALIASES = new Map([
   ["loading", "loading"],
@@ -4261,6 +4402,8 @@ const VIEW_HASH_ALIASES = new Map([
   ["view-pubkeys", "pubkeys"],
   ["defaults", "defaults"],
   ["view-defaults", "defaults"],
+  ["providers", "providers"],
+  ["view-providers", "providers"],
   ["auth", "session"],
   ["session", "session"],
   ["view-session", "session"],
@@ -4295,6 +4438,7 @@ const viewTabs = {
   kernel: viewTabKernel,
   pubkeys: viewTabPubkeys,
   defaults: viewTabDefaults,
+  providers: viewTabProviders,
 };
 
 const viewSections = {
@@ -4304,6 +4448,7 @@ const viewSections = {
   kernel: viewKernel,
   pubkeys: viewPubkeys,
   defaults: viewDefaults,
+  providers: viewProviders,
 };
 
 const getHashView = () => {
@@ -4407,6 +4552,11 @@ const startAdminPrefetch = () => {
       load: refreshAccessUpstreamSummary,
       ready: () => accessUpstreamLoadedAt > 0,
     },
+    {
+      key: "providers",
+      load: loadProviders,
+      ready: () => providersLoadedAt > 0,
+    },
   ];
 
   adminPrefetchPromise = Promise.all(tasks.map((task) => runAdminPrefetchTask(runId, task))).then((results) => {
@@ -4463,6 +4613,9 @@ const loadAdminView = (view) => {
   }
   if (view === "pubkeys") {
     void ensureKernelPubKeysLoaded();
+  }
+  if (view === "providers") {
+    void loadProviders();
   }
 };
 
@@ -5373,6 +5526,9 @@ tokenInput.addEventListener("input", () => {
   if (currentAdminView === "pubkeys") {
     void ensureKernelPubKeysLoaded();
   }
+  if (currentAdminView === "providers") {
+    void loadProviders();
+  }
 });
 
 rememberTokenInput.addEventListener("change", () => {
@@ -5583,6 +5739,11 @@ viewTabUsers.addEventListener("click", () => setAdminView("users", { hashMode: "
 viewTabKernel.addEventListener("click", () => setAdminView("kernel", { hashMode: "push", focusAuth: true }));
 viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys", { hashMode: "push", focusAuth: true }));
 viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashMode: "push", focusAuth: true }));
+viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
+
+globalThis.setInterval(() => {
+  if (currentAdminView === "providers" && document.visibilityState === "visible") void loadProviders();
+}, 30_000);
 
 createKeyBtn.addEventListener("click", () => {
   void createKey();
