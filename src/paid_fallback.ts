@@ -244,7 +244,7 @@ export const reservePaidFallback = async (
     path: string;
     stream: boolean;
     reasoning: string | null;
-    reason: "primary_429";
+    reason: "primary_401" | "primary_429";
   }>,
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await getKv();
