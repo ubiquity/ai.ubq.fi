@@ -154,6 +154,11 @@ const {
   resetRuntimeConfigCacheForTest,
 } = await import("../src/runtime_config.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const {
+  getCodexProviderHealth,
+  getYunwuProviderHealth,
+  resetProviderHealthThrottleForTest,
+} = await import("../src/provider_health.ts");
 
 const MODEL = "gpt-5-kv-budget";
 const now = Date.now();
@@ -922,6 +927,7 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
 
 Deno.test("expired Codex credentials exhaust both accounts before paid Yunwu fallback", async () => {
   kv.values.clear();
+  resetProviderHealthThrottleForTest();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
@@ -979,6 +985,11 @@ Deno.test("expired Codex credentials exhaust both accounts before paid Yunwu fal
     assert.equal(new Set(accountIds).size, 2);
     assert.equal(refreshCalls, 2);
     assert.equal(yunwuCalls, 1);
+    assert.deepEqual(
+      await Promise.all(["acct-1", "acct-2"].map(async (accountId) => (await getCodexProviderHealth(accountId)).state)),
+      ["invalid", "invalid"],
+    );
+    assert.equal((await getYunwuProviderHealth()).state, "healthy");
 
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);

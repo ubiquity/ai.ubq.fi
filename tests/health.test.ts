@@ -53,8 +53,15 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleHealth, handleHealthAuth, handleHealthUpstream } = await import("../src/health.ts");
+const { handleHealth, handleHealthAuth, handleHealthProviders, handleHealthUpstream } = await import(
+  "../src/health.ts"
+);
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const {
+  recordCodexProviderHealth,
+  recordYunwuProviderHealth,
+  resetProviderHealthThrottleForTest,
+} = await import("../src/provider_health.ts");
 resetAuthCache = resetCodexAuthCacheForTest;
 
 const base64Url = (value: string): string => btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
@@ -65,7 +72,7 @@ const makeJwt = (expSeconds: number | null): string => {
   return `${header}.${payload}.`;
 };
 
-const makeAuthEntry = (accessTokenExpSeconds: number | null): {
+const makeAuthEntry = (accessTokenExpSeconds: number | null, accountId = "acct"): {
   access_token: string;
   refresh_token: string;
   account_id: string;
@@ -73,7 +80,7 @@ const makeAuthEntry = (accessTokenExpSeconds: number | null): {
 } => ({
   access_token: makeJwt(accessTokenExpSeconds),
   refresh_token: "refresh",
-  account_id: "acct",
+  account_id: accountId,
   updated_at_ms: Date.now(),
 });
 const makeAuthPool = (...accounts: ReturnType<typeof makeAuthEntry>[]) => ({
@@ -82,6 +89,70 @@ const makeAuthPool = (...accounts: ReturnType<typeof makeAuthEntry>[]) => ({
 });
 
 const CODEX_AUTH_KEY: Deno.KvKey = ["ubq_ai", "codex_auth"];
+
+Deno.test("passive provider health returns every Codex slot without contacting upstream", async () => {
+  kvStore.clear();
+  resetProviderHealthThrottleForTest();
+  const future = Math.floor(Date.now() / 1000) + 3600;
+  kvStore.set(
+    keyToString(CODEX_AUTH_KEY),
+    makeAuthPool(makeAuthEntry(future, "private-account-a"), makeAuthEntry(future, "private-account-b")),
+  );
+  await recordCodexProviderHealth("private-account-a", "quota_exhausted", 429, () => 1_000);
+  await recordCodexProviderHealth("private-account-b", "refresh_failed", 401, () => 2_000);
+  await recordYunwuProviderHealth("success", 200, () => 3_000);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => {
+    throw new Error("/health/providers must not contact any upstream");
+  };
+  try {
+    const response = await handleHealthProviders();
+    const text = await response.text();
+    const payload = JSON.parse(text) as {
+      mode?: string;
+      codex?: {
+        account_count?: number;
+        state?: string;
+        accounts?: Array<{ slot?: number; health?: { state?: string; last_status?: number | null } }>;
+      };
+      yunwu?: { health?: { state?: string; last_status?: number | null }; quota?: { balance_credits?: unknown } };
+    };
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.mode, "passive");
+    assert.equal(payload.codex?.account_count, 2);
+    assert.equal(payload.codex?.state, "degraded");
+    assert.deepEqual(
+      payload.codex?.accounts?.map((account) => [account.slot, account.health?.state, account.health?.last_status]),
+      [[1, "exhausted", 429], [2, "invalid", 401]],
+    );
+    assert.equal(payload.yunwu?.health?.state, "healthy");
+    assert.equal("balance_credits" in (payload.yunwu?.quota ?? {}), false);
+    assert.equal(text.includes("private-account-a"), false);
+    assert.equal(text.includes("private-account-b"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("admin provider health includes cached quota fields without an active refresh", async () => {
+  kvStore.clear();
+  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => {
+    throw new Error("/admin/providers must not contact any upstream");
+  };
+  try {
+    const response = await handleHealthProviders({ includeQuota: true });
+    const payload = await response.json() as { yunwu?: { quota?: { available?: boolean; balance_credits?: unknown } } };
+    assert.equal(response.status, 200);
+    assert.equal(typeof payload.yunwu?.quota?.available, "boolean");
+    assert.equal("balance_credits" in (payload.yunwu?.quota ?? {}), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 Deno.test("health readiness is healthy when Codex auth config exists and upstream probe succeeds", async () => {
   kvStore.clear();

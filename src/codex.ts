@@ -1,6 +1,7 @@
 import { config } from "./config.ts";
 import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
 import { getKv } from "./kv.ts";
+import { recordCodexProviderHealth } from "./provider_health.ts";
 import { buildRuntimeConfig, cacheRuntimeConfig, loadRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord } from "./utils.ts";
 import type { CodexAuthPoolState, CodexAuthState, ResponseInputItem } from "./types.ts";
@@ -497,6 +498,20 @@ const refreshAuth = async (
   return next;
 };
 
+const refreshAuthWithHealth = async (
+  current: CodexAuthAccountEntry,
+): Promise<CodexAuthState> => {
+  try {
+    const refreshed = await refreshAuth(current);
+    await recordCodexProviderHealth(current.auth.account_id, "refresh_success", 200);
+    return refreshed;
+  } catch (error) {
+    const status = error instanceof CodexError ? error.status : null;
+    await recordCodexProviderHealth(current.auth.account_id, "refresh_failed", status);
+    throw error;
+  }
+};
+
 const refreshAuthStateless = async (auth: CodexAuthState): Promise<CodexAuthState> => {
   let response: Response;
   try {
@@ -558,7 +573,7 @@ export const checkCodexAuthRefresh = async (): Promise<CodexAuthRefreshResult> =
     const current = await getAuthPoolEntry();
     const accounts: CodexAuthState[] = [];
     for (const auth of current.pool.accounts) {
-      accounts.push(await refreshAuth({ ...current, auth }));
+      accounts.push(await refreshAuthWithHealth({ ...current, auth }));
     }
     return { ok: true, accounts };
   } catch (error) {
@@ -575,7 +590,7 @@ const getValidAuth = async (current: CodexAuthAccountEntry): Promise<CodexAuthSt
 
   const existing = refreshesInFlight.get(current.auth.account_id);
   if (existing) return await existing;
-  const refresh = refreshAuth(current).finally(() => {
+  const refresh = refreshAuthWithHealth(current).finally(() => {
     refreshesInFlight.delete(current.auth.account_id);
   });
   refreshesInFlight.set(current.auth.account_id, refresh);
@@ -650,6 +665,28 @@ const cancelResponseBody = async (response: Response): Promise<void> => {
   }
 };
 
+const recordCodexResponseHealth = async (accountId: string, response: Response): Promise<void> => {
+  if (response.status === 401) {
+    await recordCodexProviderHealth(accountId, "auth_invalid", response.status);
+  } else if (response.status === 429) {
+    await recordCodexProviderHealth(accountId, "quota_exhausted", response.status);
+  } else if (response.status >= 500) {
+    await recordCodexProviderHealth(accountId, "upstream_error", response.status);
+  } else {
+    await recordCodexProviderHealth(accountId, response.ok ? "success" : "reachable", response.status);
+  }
+};
+
+const recordCodexThrownHealth = async (accountId: string, error: unknown): Promise<void> => {
+  if (
+    error instanceof CodexError &&
+    (error.code === "codex_auth_refresh_failed" || error.code === "codex_auth_refresh_unreachable")
+  ) {
+    return;
+  }
+  await recordCodexProviderHealth(accountId, "upstream_error", null);
+};
+
 const getCurrentAccountEntry = async (
   accountId: string,
   forceKv: boolean,
@@ -720,9 +757,10 @@ export const fetchCodexResponses = async (
         baseHeaders,
         options.signal,
       );
+      await recordCodexResponseHealth(auth.account_id, response);
       if (response.status === 401) {
         await cancelResponseBody(response);
-        auth = await refreshAuth(await getCurrentAccountEntry(auth.account_id, true));
+        auth = await refreshAuthWithHealth(await getCurrentAccountEntry(auth.account_id, true));
         response = await fetchCodexResponseWithAuth(
           auth,
           url,
@@ -730,6 +768,7 @@ export const fetchCodexResponses = async (
           baseHeaders,
           options.signal,
         );
+        await recordCodexResponseHealth(auth.account_id, response);
       }
       if (hasFallbackAccount && (response.status === 401 || response.status === 429)) {
         await cancelResponseBody(response);
@@ -739,6 +778,7 @@ export const fetchCodexResponses = async (
       return response;
     } catch (error) {
       lastError = error;
+      await recordCodexThrownHealth(accountEntry.auth.account_id, error);
       if (!hasFallbackAccount) throw error;
     }
   }
@@ -768,12 +808,15 @@ export const fetchCodexModels = async (
       try {
         auth = await getValidAuth(accountEntry);
         res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch);
+        await recordCodexResponseHealth(auth.account_id, res);
         if (res.status === 401) {
           await cancelResponseBody(res);
-          auth = await refreshAuth(await getCurrentAccountEntry(auth.account_id, true));
+          auth = await refreshAuthWithHealth(await getCurrentAccountEntry(auth.account_id, true));
           res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch);
+          await recordCodexResponseHealth(auth.account_id, res);
         }
       } catch (error) {
+        await recordCodexThrownHealth(accountEntry.auth.account_id, error);
         if (hasFallbackAccount) continue;
         throw error;
       }

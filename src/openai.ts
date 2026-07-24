@@ -31,6 +31,7 @@ import {
   recordYunwuUpstreamResponse,
   reservePaidFallback,
 } from "./paid_fallback.ts";
+import { recordYunwuProviderHealth } from "./provider_health.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type {
   ChatCompletionRequest,
@@ -400,14 +401,28 @@ const createYunwuTransportLifecycle = (
       if (!terminalState) return;
       schedule(
         "terminal reconciliation",
-        (activeReservation) => recordYunwuTerminal(activeReservation, terminalState),
+        async (activeReservation) => {
+          await Promise.all([
+            recordYunwuTerminal(activeReservation, terminalState),
+            recordYunwuProviderHealth(
+              terminalState === "completed" ? "success" : "upstream_error",
+              terminalState === "completed" ? 200 : null,
+            ),
+          ]);
+        },
       );
     },
-    ambiguous: () =>
+    ambiguous: () => {
       schedule(
         "ambiguous failure recording",
-        (activeReservation) => recordYunwuAmbiguousFailure(activeReservation),
-      ),
+        async (activeReservation) => {
+          await Promise.all([
+            recordYunwuAmbiguousFailure(activeReservation),
+            recordYunwuProviderHealth("upstream_error", null),
+          ]);
+        },
+      );
+    },
     cancelled: () =>
       schedule(
         "dispatched cancellation recording",
@@ -541,7 +556,25 @@ const fetchResponsesWithPaidFallback = async (
   let result: Awaited<ReturnType<typeof fetchYunwuResponses>>;
   try {
     result = await fetchYunwuResponses(body, { signal: options.signal });
+    if (result.response.status === 401 || result.response.status === 403) {
+      await recordYunwuProviderHealth("auth_invalid", result.response.status);
+    } else if (result.response.status === 429) {
+      await recordYunwuProviderHealth("quota_exhausted", result.response.status);
+    } else if (result.response.status >= 500) {
+      await recordYunwuProviderHealth("upstream_error", result.response.status);
+    } else if (!result.response.ok) {
+      await recordYunwuProviderHealth("reachable", result.response.status);
+    }
   } catch (error) {
+    const yunwuStatus = error instanceof YunwuError ? error.status : null;
+    await recordYunwuProviderHealth(
+      yunwuStatus === 401 || yunwuStatus === 403
+        ? "auth_invalid"
+        : yunwuStatus === 429
+        ? "quota_exhausted"
+        : "upstream_error",
+      yunwuStatus,
+    );
     await bestEffortPaidFallbackBookkeeping(
       "ambiguous failure recording",
       () => recordYunwuAmbiguousFailure(decision.reservation),
