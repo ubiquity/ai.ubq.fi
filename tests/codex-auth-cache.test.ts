@@ -130,6 +130,45 @@ Deno.test("Codex responses retry the other account when a 401 cannot refresh", a
   }
 });
 
+Deno.test("Codex responses report 401 only after every account has an invalid refresh credential", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  let refreshCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    if (request.url.includes("auth.openai.com/oauth/token")) {
+      refreshCalls += 1;
+      return Promise.resolve(new Response('{"error":"invalid_grant"}', { status: 401 }));
+    }
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(new Response("{}", { status: 401 }));
+  };
+
+  try {
+    await assert.rejects(
+      () => fetchCodexResponses({ input: "auth-exhaustion" }),
+      (error: unknown) =>
+        error instanceof Error &&
+        (error as Error & { status?: number; code?: string }).status === 401 &&
+        (error as Error & { status?: number; code?: string }).code === "codex_auth_refresh_failed",
+    );
+    assert.equal(accountIds.length, 2);
+    assert.equal(new Set(accountIds).size, 2);
+    assert.equal(refreshCalls, 2);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
 Deno.test("Codex auth cache revalidates rotations across warm isolates without per-request KV reads", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;

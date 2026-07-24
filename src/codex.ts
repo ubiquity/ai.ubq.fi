@@ -390,6 +390,8 @@ const buildRefreshFailureMessage = async (response: Response): Promise<string> =
     : `Codex auth refresh failed (status ${response.status}).`;
 };
 
+const refreshFailureStatus = (status: number): number => status === 400 || status === 401 || status === 403 ? 401 : 503;
+
 const refreshAuth = async (
   current: CodexAuthAccountEntry,
 ): Promise<CodexAuthState> => {
@@ -419,7 +421,11 @@ const refreshAuth = async (
   }
 
   if (!response.ok) {
-    throw new CodexError(await buildRefreshFailureMessage(response), "codex_auth_refresh_failed", 503);
+    throw new CodexError(
+      await buildRefreshFailureMessage(response),
+      "codex_auth_refresh_failed",
+      refreshFailureStatus(response.status),
+    );
   }
 
   const parsed = (await response.json().catch(() => null)) as null | Record<string, unknown>;
@@ -517,7 +523,11 @@ const refreshAuthStateless = async (auth: CodexAuthState): Promise<CodexAuthStat
   }
 
   if (!response.ok) {
-    throw new CodexError(await buildRefreshFailureMessage(response), "codex_auth_refresh_failed", 503);
+    throw new CodexError(
+      await buildRefreshFailureMessage(response),
+      "codex_auth_refresh_failed",
+      refreshFailureStatus(response.status),
+    );
   }
 
   const parsed = (await response.json().catch(() => null)) as null | Record<string, unknown>;

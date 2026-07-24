@@ -71,7 +71,7 @@ type UsageContext = Readonly<{
 }>;
 
 type UpstreamProvider = "chatgpt_codex" | "yunwu";
-export type InferenceFallbackReason = "primary_429";
+export type InferenceFallbackReason = "primary_401" | "primary_429";
 
 export type ResponseTelemetry = Readonly<{
   provider: string;
@@ -430,17 +430,27 @@ const fetchResponsesWithPaidFallback = async (
 ): Promise<RoutedResponsesUpstream> => {
   const telemetry = options.usageContext?.responseTelemetry;
   if (telemetry) telemetry.provider = "chatgpt_codex";
-  const primary = await fetchCodexResponses(body, {
-    clientVersion: options.clientVersion,
-    signal: options.signal,
-  });
+  let primary: Response;
+  try {
+    primary = await fetchCodexResponses(body, {
+      clientVersion: options.clientVersion,
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (!(error instanceof CodexError) || error.status !== 401) throw error;
+    primary = openaiError(error.status, error.message, error.code);
+  }
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  const fallbackReason: InferenceFallbackReason | null = primary.status === 429 ? "primary_429" : null;
+  const fallbackReason: InferenceFallbackReason | null = primary.status === 401
+    ? "primary_401"
+    : primary.status === 429
+    ? "primary_429"
+    : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
   if (
-    primary.status !== 429 ||
+    !fallbackReason ||
     options.usageContext?.paidFallbackEnabled === false ||
     !keyId ||
     !requestId ||
@@ -470,7 +480,7 @@ const fetchResponsesWithPaidFallback = async (
     path: options.route === "responses" ? "/v1/responses" : "/v1/chat/completions",
     stream: options.stream,
     reasoning: options.reasoning,
-    reason: "primary_429",
+    reason: fallbackReason,
   } as const;
   let decision: Awaited<ReturnType<typeof reservePaidFallback>>;
   try {

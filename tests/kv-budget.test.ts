@@ -920,6 +920,81 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
   }
 });
 
+Deno.test("expired Codex credentials exhaust both accounts before paid Yunwu fallback", async () => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool(2));
+  const token = `u_${"b".repeat(64)}`;
+  const keyId = "expired-codex-fallback";
+  await seedPaidFallbackKey(token, keyId);
+
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
+  const accountIds: string[] = [];
+  const logs: unknown[][] = [];
+  let refreshCalls = 0;
+  let yunwuCalls = 0;
+  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    if (request.url === "https://auth.openai.com/oauth/token") {
+      refreshCalls += 1;
+      return Promise.resolve(
+        new Response('{"error":"invalid_grant","error_description":"refresh token reused"}', {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }
+    if (request.url === "https://yunwu.ai/v1/responses") {
+      yunwuCalls += 1;
+      return Promise.resolve(sse());
+    }
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { message: "Access token expired" } }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  };
+  console.info = (...args: unknown[]) => logs.push(args);
+
+  try {
+    const response = await handler(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ input: "ping", stream: true }),
+      }),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+    await response.text();
+    assert.equal(accountIds.length, 2);
+    assert.equal(new Set(accountIds).size, 2);
+    assert.equal(refreshCalls, 2);
+    assert.equal(yunwuCalls, 1);
+
+    const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(terminalLogs.length, 1);
+    const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
+    assert.equal(terminal.provider, "yunwu");
+    assert.equal(terminal.fallback_reason, "primary_401");
+    assert.equal(terminal.stream_terminal_type, "response.completed");
+  } finally {
+    console.info = originalInfo;
+    globalThis.fetch = originalFetch;
+    resetCodexAuthCacheForTest();
+    if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
+    else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
+  }
+});
+
 Deno.test("paid fallback terminal telemetry records YunWu lifecycle", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();

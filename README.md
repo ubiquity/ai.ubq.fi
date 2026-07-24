@@ -13,8 +13,9 @@ LLM and app integration notes live in [`static/docs/llms-agents.md`](static/docs
 - The gateway **does not use or forward your client token upstream**.
   - For upstream requests, it uses a durable pool of up to two **Codex CLI ChatGPT auth** accounts. The first local seed
     can come from `CODEX_AUTH_JSON_B64` (base64 of `~/.codex/auth.json`); admin uploads populate the durable pool.
-  - Requests are distributed between the configured OpenAI accounts. An account-level `401` or `429` is retried once on
-    the other account before the gateway returns the error or considers paid fallback.
+  - Requests are distributed between the configured OpenAI accounts. An account-level `401` or `429` is retried on every
+    other account before the gateway returns the error or considers paid Yunwu fallback. Rejected OAuth refresh
+    credentials count as an account-level `401`; transient refresh-network failures do not.
   - Upstream usage/limits are tied to those OpenAI accounts and plans; client-provided OpenAI API keys are ignored.
   - The OAuth `client_id` used for refresh-token rotation is **public** (not a secret); the secrets are the tokens in
     `CODEX_AUTH_JSON_B64` and your client/admin tokens.
