@@ -755,9 +755,15 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   await seedKey(token, "telemetry", -1);
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
+  const originalGitRevision = Deno.env.get("GIT_REVISION");
+  const originalGithubSha = Deno.env.get("GITHUB_SHA");
+  const originalDeploymentId = Deno.env.get("DENO_DEPLOYMENT_ID");
   const logs: unknown[][] = [];
   globalThis.fetch = () => Promise.resolve(sse());
   console.info = (...args: unknown[]) => logs.push(args);
+  Deno.env.delete("GIT_REVISION");
+  Deno.env.delete("GITHUB_SHA");
+  Deno.env.delete("DENO_DEPLOYMENT_ID");
   try {
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
@@ -792,6 +798,12 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
+    if (originalGitRevision === undefined) Deno.env.delete("GIT_REVISION");
+    else Deno.env.set("GIT_REVISION", originalGitRevision);
+    if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
+    else Deno.env.set("GITHUB_SHA", originalGithubSha);
+    if (originalDeploymentId === undefined) Deno.env.delete("DENO_DEPLOYMENT_ID");
+    else Deno.env.set("DENO_DEPLOYMENT_ID", originalDeploymentId);
   }
 });
 
