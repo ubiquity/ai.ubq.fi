@@ -234,6 +234,7 @@ const {
   reconcileDuePaidFallbacksV3,
   reconcilePaidFallbackV3,
   recordPaidFallbackTerminalV3,
+  releasePaidFallbackBeforeProviderFetchV3,
   releaseUndispatchedPaidFallbackV3,
   enqueueDuePaidFallbackReconciliationJobsV3,
   handlePaidFallbackReconciliationJobV3,
@@ -1148,6 +1149,27 @@ Deno.test("V3 undispatched release is idempotent and cannot erase dispatched exp
       .value !== null,
     true,
   );
+
+  const prefetch = await admitPaidFallbackV3(
+    v3AdmissionInput(keyId, "release-prefetch-intent", {
+      windowResetAtMs: resetAtMs,
+      dispatchIntent: true,
+    }),
+  );
+  assert.equal(prefetch.kind, "reserved");
+  if (prefetch.kind !== "reserved") throw new Error("expected reservation");
+  const dispatchIntent = await memoryKv.get<Record<string, unknown>>(
+    paidFallbackRequestV3Key(keyId, prefetch.reservation.request_id),
+  );
+  assert.equal(dispatchIntent.value?.dispatch_state, "dispatched");
+  assert.equal(typeof dispatchIntent.value?.dispatched_at_ms, "number");
+  await releasePaidFallbackBeforeProviderFetchV3(prefetch.reservation);
+  const prefetchRequest = await memoryKv.get<Record<string, unknown>>(
+    paidFallbackRequestV3Key(keyId, prefetch.reservation.request_id),
+  );
+  assert.equal(prefetchRequest.value?.billing_state, "not_billed");
+  assert.equal(prefetchRequest.value?.dispatch_state, "not_dispatched");
+  assert.equal(prefetchRequest.value?.terminal_state, "cancelled");
 });
 
 Deno.test("V3 queue delivery coalesces due rows by key and duplicate delivery is idempotent", async () => {

@@ -26,8 +26,8 @@ import {
 import {
   type PaidFallbackReservation,
   recordYunwuAmbiguousFailure,
+  recordYunwuPrefetchCancellation,
   recordYunwuTerminal,
-  recordYunwuUndispatchedCancellation,
   recordYunwuUpstreamResponse,
   reservePaidFallback,
 } from "./paid_fallback.ts";
@@ -504,11 +504,21 @@ const fetchResponsesWithPaidFallback = async (
     };
   }
 
+  if (options.signal?.aborted) {
+    await cancelResponseBody(primary);
+    await bestEffortPaidFallbackBookkeeping(
+      "prefetch cancellation recording",
+      () => recordYunwuPrefetchCancellation(decision.reservation),
+    );
+    throw options.signal.reason instanceof Error
+      ? options.signal.reason
+      : new DOMException("The request was aborted.", "AbortError");
+  }
   await cancelResponseBody(primary);
   if (options.signal?.aborted) {
     await bestEffortPaidFallbackBookkeeping(
-      "undispatched cancellation recording",
-      () => recordYunwuUndispatchedCancellation(decision.reservation),
+      "prefetch cancellation recording",
+      () => recordYunwuPrefetchCancellation(decision.reservation),
     );
     throw options.signal.reason instanceof Error
       ? options.signal.reason

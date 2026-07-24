@@ -103,6 +103,7 @@ type AdmissionInput = Readonly<{
   path: string;
   stream: boolean;
   reasoning: string | null;
+  dispatchIntent?: boolean;
 }>;
 
 const resolveKv = async (kvOverride: Deno.Kv | null | undefined): Promise<Deno.Kv | null> =>
@@ -423,13 +424,13 @@ export const admitPaidFallbackV3 = async (
       provider_quota: null,
       input_tokens: null,
       output_tokens: null,
-      dispatch_state: "reserved",
+      dispatch_state: input.dispatchIntent ? "dispatched" : "reserved",
       terminal_state: "pending",
       spend_microcredits: null,
       billing_state: "pending",
       reconciliation_attempts: 0,
       last_reconciliation_at_ms: null,
-      dispatched_at_ms: null,
+      dispatched_at_ms: input.dispatchIntent ? now : null,
       terminal_at_ms: null,
       settled_at_ms: null,
       created_at_ms: input.createdAtMs,
@@ -537,7 +538,10 @@ export const updatePaidFallbackRequestV3 = async (
   throw new Error("Paid fallback request changed concurrently.");
 };
 
-export const releaseUndispatchedPaidFallbackV3 = async (reservation: PaidFallbackAdmissionV3): Promise<void> => {
+const releasePaidFallbackBeforeDispatchV3 = async (
+  reservation: PaidFallbackAdmissionV3,
+  allowDispatchIntent: boolean,
+): Promise<void> => {
   const kv = await getKv();
   if (!kv) return;
   const requestKey = paidFallbackRequestV3Key(reservation.key_id, reservation.request_id);
@@ -551,7 +555,11 @@ export const releaseUndispatchedPaidFallbackV3 = async (reservation: PaidFallbac
     if (
       !requestEntry.value ||
       requestEntry.value.billing_state !== "pending" ||
-      requestEntry.value.dispatch_state !== "reserved"
+      requestEntry.value.provider_request_id !== null ||
+      (
+        requestEntry.value.dispatch_state !== "reserved" &&
+        !(allowDispatchIntent && requestEntry.value.dispatch_state === "dispatched")
+      )
     ) return;
     const now = Date.now();
     let atomic = kv.atomic().check(requestEntry).set(requestKey, {
@@ -578,6 +586,18 @@ export const releaseUndispatchedPaidFallbackV3 = async (reservation: PaidFallbac
   }
   throw new Error("Paid fallback release changed concurrently.");
 };
+
+export const releaseUndispatchedPaidFallbackV3 = async (reservation: PaidFallbackAdmissionV3): Promise<void> =>
+  await releasePaidFallbackBeforeDispatchV3(reservation, false);
+
+/**
+ * Releases a reservation after a durable dispatch intent was written but
+ * before provider fetch was invoked. This must never be called once provider
+ * fetch can have started.
+ */
+export const releasePaidFallbackBeforeProviderFetchV3 = async (
+  reservation: PaidFallbackAdmissionV3,
+): Promise<void> => await releasePaidFallbackBeforeDispatchV3(reservation, true);
 
 const acquireReconciliationLease = async (
   kv: Deno.Kv,

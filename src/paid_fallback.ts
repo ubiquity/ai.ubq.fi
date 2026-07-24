@@ -2,7 +2,7 @@ import { apiKeyIdKey, MICROCREDITS_PER_CREDIT, PAID_FALLBACK_NO_LIMIT } from "./
 import {
   admitPaidFallbackV3,
   markPaidFallbackTerminalV3,
-  releaseUndispatchedPaidFallbackV3,
+  releasePaidFallbackBeforeProviderFetchV3,
   updatePaidFallbackRequestV3,
 } from "./paid_fallback_ledger.ts";
 import { loadFullCodexModelsSnapshot } from "./codex.ts";
@@ -264,6 +264,10 @@ export const reservePaidFallback = async (
     initialSettledMicrocredits: 0,
     quotaPerCredit: record.paid_fallback_quota_per_credit,
     windowResetAtMs,
+    // Persist the billable-ambiguity boundary in the admission transaction.
+    // Provider fetch must never begin from a row that still looks safely
+    // undispatched.
+    dispatchIntent: true,
   });
   if (admitted.kind === "blocked") {
     return { kind: "blocked", reason: admitted.reason, reset_at_ms: windowResetAtMs };
@@ -290,7 +294,13 @@ export const recordYunwuAmbiguousFailure = async (reservation: PaidFallbackReser
 export const recordYunwuUndispatchedCancellation = async (
   reservation: PaidFallbackReservation,
 ): Promise<void> => {
-  await releaseUndispatchedPaidFallbackV3(reservation);
+  await releasePaidFallbackBeforeProviderFetchV3(reservation);
+};
+
+export const recordYunwuPrefetchCancellation = async (
+  reservation: PaidFallbackReservation,
+): Promise<void> => {
+  await releasePaidFallbackBeforeProviderFetchV3(reservation);
 };
 
 export const recordYunwuTerminal = async (

@@ -1342,6 +1342,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           urls.push(url);
           if (bodyText) bodies.push(JSON.parse(bodyText) as Record<string, unknown>);
           if (url === "https://yunwu.ai/v1/responses") {
+            const stored = getStoredPaidFallbackRequest(
+              keyId,
+              "request-fallback-responses-success",
+            );
+            assert.equal(stored?.dispatch_state, "dispatched");
             assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer yunwu-test-key");
             return new Response(sseResponse(baseSseChunks()).body, {
               status: 200,
