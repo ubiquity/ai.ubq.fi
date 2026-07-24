@@ -87,9 +87,12 @@ Deno.test({
         } satisfies ApiKeyHashRecord,
       );
       await kv.set(["ubq_ai", "codex_auth"], {
-        access_token: "real-http-access-token",
-        refresh_token: "real-http-refresh-token",
-        account_id: "real-http-account",
+        accounts: [{
+          access_token: "real-http-access-token",
+          refresh_token: "real-http-refresh-token",
+          account_id: "real-http-account",
+          updated_at_ms: now,
+        }],
         updated_at_ms: now,
       });
       const catalog = {

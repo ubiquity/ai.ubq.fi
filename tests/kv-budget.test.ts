@@ -173,13 +173,13 @@ const runtime = {
   },
   updated_at_ms: now,
 };
-const codexAuthPool = () => ({
-  accounts: [{
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
+const codexAuthPool = (accountCount = 1) => ({
+  accounts: Array.from({ length: accountCount }, (_, index) => ({
+    access_token: `access-${index + 1}`,
+    refresh_token: `refresh-${index + 1}`,
+    account_id: `acct-${index + 1}`,
     updated_at_ms: Date.now(),
-  }],
+  })),
   updated_at_ms: Date.now(),
 });
 
@@ -866,7 +866,7 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool(2));
   const token = `u_${"8".repeat(64)}`;
   const keyId = "first-fallback-quota";
   await seedPaidFallbackKey(token, keyId);
@@ -874,16 +874,19 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
   const originalFetch = globalThis.fetch;
   const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
   let calls = 0;
+  const primaryAccountIds: string[] = [];
   Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
-  globalThis.fetch = (input) => {
+  globalThis.fetch = (input, init) => {
     calls += 1;
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const request = new Request(input, init);
+    const url = request.url;
     if (url === "https://yunwu.ai/v1/responses") {
       const response = sse();
       const headers = new Headers(response.headers);
       headers.set("X-Oneapi-Request-Id", "first-fallback-provider-request");
       return Promise.resolve(new Response(response.body, { status: 200, headers }));
     }
+    primaryAccountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(
       new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
         status: 429,
@@ -902,7 +905,9 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-codex-primary-used-percent"), "0");
-    assert.equal(calls, 2);
+    assert.equal(calls, 3);
+    assert.equal(primaryAccountIds.length, 2);
+    assert.equal(new Set(primaryAccountIds).size, 2);
     // V3 admission reads the immutable request, window, and deletion guard
     // together before its atomic reservation; that adds one read over the
     // legacy single-slot path while avoiding shared reservation contention.
@@ -921,12 +926,7 @@ Deno.test("paid fallback terminal telemetry records YunWu lifecycle", async () =
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"9".repeat(64)}`;
   await seedPaidFallbackKey(token, "fallback-terminal-telemetry");
 
@@ -971,12 +971,7 @@ Deno.test("paid fallback cancellation telemetry records a cancelled YunWu lifecy
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"a".repeat(64)}`;
   const keyId = "fallback-cancel-telemetry";
   await seedPaidFallbackKey(token, keyId);
