@@ -19,3 +19,7 @@ export const getKv = (): Promise<Deno.Kv | null> => {
   openPromise ??= openKv();
   return openPromise;
 };
+
+export const setKvForTest = (kv: Deno.Kv | null): void => {
+  openPromise = Promise.resolve(kv);
+};
