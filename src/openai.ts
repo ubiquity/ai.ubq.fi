@@ -536,6 +536,28 @@ const fetchResponsesWithPaidFallback = async (
       "ambiguous failure recording",
       () => recordYunwuAmbiguousFailure(decision.reservation),
     );
+    const abortReason = options.signal?.reason;
+    if (
+      options.signal?.aborted &&
+      abortReason instanceof Error &&
+      abortReason.name === "TimeoutError"
+    ) {
+      return {
+        response: openaiError(
+          504,
+          "YunWu upstream exceeded the gateway deadline before response headers were received.",
+          "gateway_timeout",
+          {
+            type: "server_error",
+            headers: { "x-uos-upstream": "yunwu" },
+          },
+        ),
+        provider: "yunwu",
+        paidFallback: decision.reservation,
+        gatewayResponse: true,
+        fallbackReason: reservationInput.reason,
+      };
+    }
     if (error instanceof YunwuError) {
       return {
         response: openaiError(error.status, error.message, error.code, {

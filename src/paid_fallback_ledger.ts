@@ -642,14 +642,14 @@ const _expeditePaidFallbackReconciliationV3 = async (
     const pending = await kv.get<PaidFallbackPendingV3>(pendingKey, { consistency: "strong" });
     if (!pending.value) return;
     if (pending.value.next_reconciliation_at_ms <= now) return;
-    const commit = await kv.atomic().check(pending).set(
+    const atomic = kv.atomic().check(pending).set(
       pendingKey,
       {
         ...pending.value,
         next_reconciliation_at_ms: now,
       } satisfies PaidFallbackPendingV3,
     );
-    if ((await commit.commit()).ok) {
+    if ((await atomic.commit()).ok) {
       return;
     }
   }

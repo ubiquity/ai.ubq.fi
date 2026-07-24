@@ -195,6 +195,11 @@ class MemoryKv {
         return Promise.resolve({ ok: true, versionstamp });
       },
     };
+    Object.defineProperty(operation, "then", {
+      get() {
+        throw new TypeError("'Deno.AtomicOperation' is not a promise: did you forget to call 'commit()'");
+      },
+    });
     return operation as unknown as Deno.AtomicOperation;
   }
 

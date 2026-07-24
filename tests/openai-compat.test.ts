@@ -1701,6 +1701,84 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
+    await t.step("YunWu pre-header deadlines return an attributed 504 without retrying", async () => {
+      const routeCases = [
+        { route: "responses", stream: false },
+        { route: "responses", stream: true },
+        { route: "chat", stream: false },
+        { route: "chat", stream: true },
+      ] as const;
+      for (const routeCase of routeCases) {
+        const suffix = `${routeCase.route}-${routeCase.stream ? "stream" : "buffered"}`;
+        const keyId = `fallback-deadline-${suffix}`;
+        const requestId = `request-${keyId}`;
+        seedPaidFallbackKey(keyId);
+        const controller = new AbortController();
+        let yunwuAttempts = 0;
+        await withFetchMock(
+          (url) => {
+            if (url === "https://yunwu.ai/v1/responses") {
+              yunwuAttempts += 1;
+              controller.abort(new DOMException("gateway deadline exceeded", "TimeoutError"));
+              throw controller.signal.reason;
+            }
+            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+              status: 429,
+              headers: { "Content-Type": "application/json" },
+            });
+          },
+          async () => {
+            const context = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId,
+              startedAtMs: Date.now(),
+            };
+            const response = routeCase.route === "responses"
+              ? await handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    input: "ping",
+                    stream: routeCase.stream,
+                  }),
+                  signal: controller.signal,
+                }),
+                context,
+              )
+              : await handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    messages: [{ role: "user", content: "ping" }],
+                    stream: routeCase.stream,
+                  }),
+                  signal: controller.signal,
+                }),
+                context,
+              );
+            assert.equal(response.status, 504, suffix);
+            assert.equal(response.headers.get("x-uos-upstream"), "yunwu", suffix);
+            assert.equal(yunwuAttempts, 1, suffix);
+            const payload = await response.json() as {
+              error?: { type?: unknown; code?: unknown };
+            };
+            assert.equal(payload.error?.type, "server_error", suffix);
+            assert.equal(payload.error?.code, "gateway_timeout", suffix);
+            const stored = await waitForPaidFallbackTerminal(keyId, requestId, "ambiguous");
+            assert.equal(stored.dispatch_state, "dispatched", suffix);
+            assert.equal(stored.provider_request_id, null, suffix);
+            assert.equal(stored.billing_state, "pending", suffix);
+          },
+        );
+      }
+    });
+
     await t.step("missing YunWu bodies are recorded as ambiguous across routes and stream modes", async () => {
       const routeCases = [
         { route: "responses", stream: false },
