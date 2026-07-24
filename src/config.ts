@@ -47,4 +47,8 @@ const loadConfig = (): Config => {
 export const config = loadConfig();
 
 export const runtimeGitSha = (): string => getEnv("GIT_REVISION")?.trim() || getEnv("GITHUB_SHA")?.trim() || "unknown";
-export const runtimeDeploymentId = (): string => getEnv("DENO_DEPLOYMENT_ID")?.trim() || "unknown";
+// Deploy 2 exposes the routed revision as DENO_DEPLOY_BUILD_ID. Keep the
+// Classic variable as a local/rollback fallback so older rollback artifacts
+// still identify themselves truthfully.
+export const runtimeDeploymentId = (): string =>
+  getEnv("DENO_DEPLOY_BUILD_ID")?.trim() || getEnv("DENO_DEPLOYMENT_ID")?.trim() || "unknown";

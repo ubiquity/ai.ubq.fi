@@ -757,12 +757,14 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   const originalInfo = console.info;
   const originalGitRevision = Deno.env.get("GIT_REVISION");
   const originalGithubSha = Deno.env.get("GITHUB_SHA");
+  const originalBuildId = Deno.env.get("DENO_DEPLOY_BUILD_ID");
   const originalDeploymentId = Deno.env.get("DENO_DEPLOYMENT_ID");
   const logs: unknown[][] = [];
   globalThis.fetch = () => Promise.resolve(sse());
   console.info = (...args: unknown[]) => logs.push(args);
   Deno.env.delete("GIT_REVISION");
   Deno.env.delete("GITHUB_SHA");
+  Deno.env.delete("DENO_DEPLOY_BUILD_ID");
   Deno.env.delete("DENO_DEPLOYMENT_ID");
   try {
     const response = await handler(
@@ -802,6 +804,8 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
     else Deno.env.set("GIT_REVISION", originalGitRevision);
     if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
     else Deno.env.set("GITHUB_SHA", originalGithubSha);
+    if (originalBuildId === undefined) Deno.env.delete("DENO_DEPLOY_BUILD_ID");
+    else Deno.env.set("DENO_DEPLOY_BUILD_ID", originalBuildId);
     if (originalDeploymentId === undefined) Deno.env.delete("DENO_DEPLOYMENT_ID");
     else Deno.env.set("DENO_DEPLOYMENT_ID", originalDeploymentId);
   }

@@ -5,6 +5,10 @@ const YUNWU_RATIO_CONFIG_URL = `${YUNWU_BASE_URL}/api/ratio_config`;
 const YUNWU_STATUS_URL = `${YUNWU_BASE_URL}/api/status`;
 const YUNWU_RESPONSES_URL = `${YUNWU_BASE_URL}/v1/responses`;
 const YUNWU_TOKEN_LOGS_URL = `${YUNWU_BASE_URL}/api/log/token`;
+// Billing reconciliation runs after the client response and must not hold a
+// queue delivery indefinitely when the provider stalls.
+export const YUNWU_FETCH_TIMEOUT_MS = 10_000;
+export const YUNWU_TOKEN_LOG_FETCH_TIMEOUT_MS = YUNWU_FETCH_TIMEOUT_MS;
 
 export type YunwuFetch = (
   input: RequestInfo | URL,
@@ -118,6 +122,34 @@ const nonEmptyString = (value: unknown): string | null => {
 const rethrowCancellation = (error: unknown, signal: AbortSignal | undefined): void => {
   if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
 };
+
+const boundedTokenLogSignal = (signal: AbortSignal | undefined): AbortSignal => {
+  const timeout = AbortSignal.timeout(YUNWU_FETCH_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+};
+
+const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = (): void => {
+      finish(() => reject(signal.reason ?? new DOMException("Aborted", "AbortError")));
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(operation).then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
 
 export const readYunwuApiKey = (): string | null => {
   try {
@@ -437,6 +469,7 @@ export const fetchYunwuTokenLogs = async (
   options: YunwuTokenLogFetchOptions = {},
 ): Promise<readonly YunwuTokenLogEntry[]> => {
   const apiKey = requireYunwuApiKey(options.apiKey);
+  const signal = boundedTokenLogSignal(options.signal);
   const requestedIds = new Set(options.requestIds?.map((id) => id.trim()).filter(Boolean) ?? []);
   const foundIds = new Set<string>();
   const logs: YunwuTokenLogEntry[] = [];
@@ -456,14 +489,18 @@ export const fetchYunwuTokenLogs = async (
 
     let response: Response;
     try {
-      response = await (options.fetcher ?? fetch)(url, {
+      const responsePromise = (options.fetcher ?? fetch)(url, {
         method: "GET",
         headers: metadataHeaders(),
         redirect: "manual",
-        signal: options.signal,
+        signal,
       });
+      response = await awaitWithAbort(
+        responsePromise,
+        signal,
+      );
     } catch (error) {
-      rethrowCancellation(error, options.signal);
+      rethrowCancellation(error, signal);
       throw new YunwuError(
         "YunWu billing logs could not be reached.",
         "yunwu_logs_unavailable",
@@ -482,8 +519,9 @@ export const fetchYunwuTokenLogs = async (
 
     let envelope: unknown;
     try {
-      envelope = await response.json() as unknown;
-    } catch {
+      envelope = await awaitWithAbort(response.json(), signal) as unknown;
+    } catch (error) {
+      rethrowCancellation(error, signal);
       throw new YunwuError(
         "YunWu billing logs returned invalid JSON.",
         "yunwu_logs_invalid",

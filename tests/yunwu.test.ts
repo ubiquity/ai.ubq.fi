@@ -3,6 +3,7 @@ import {
   fetchYunwuResponses,
   fetchYunwuTokenLogs,
   initializeYunwuPricing,
+  YUNWU_FETCH_TIMEOUT_MS,
   YunwuError,
   type YunwuFetch,
 } from "../src/yunwu.ts";
@@ -279,4 +280,39 @@ Deno.test("fetchYunwuTokenLogs returns only strict allowlisted billing fields", 
     "model",
     "created_at",
   ]);
+});
+
+Deno.test("fetchYunwuTokenLogs aborts a stalled provider fetch at the bounded timeout", async () => {
+  const originalTimeout = AbortSignal.timeout;
+  const timeoutController = new AbortController();
+  let observedSignal: AbortSignal | null = null;
+  (AbortSignal as typeof AbortSignal & {
+    timeout: (milliseconds: number) => AbortSignal;
+  }).timeout = (milliseconds: number) => {
+    assert.equal(milliseconds, YUNWU_FETCH_TIMEOUT_MS);
+    return timeoutController.signal;
+  };
+  const fetcher: YunwuFetch = (_input, init) => {
+    observedSignal = init?.signal ?? null;
+    return new Promise<Response>((_resolve, reject) => {
+      observedSignal?.addEventListener(
+        "abort",
+        () => reject(observedSignal?.reason ?? new DOMException("Timed out", "AbortError")),
+        { once: true },
+      );
+    });
+  };
+  try {
+    const pending = fetchYunwuTokenLogs({ apiKey: "test-yunwu-key", fetcher });
+    assert.equal(observedSignal, timeoutController.signal);
+    timeoutController.abort(new DOMException("Billing log timeout", "TimeoutError"));
+    await assert.rejects(
+      pending,
+      (error: unknown) => error instanceof DOMException && error.name === "TimeoutError",
+    );
+  } finally {
+    (AbortSignal as typeof AbortSignal & {
+      timeout: (milliseconds: number) => AbortSignal;
+    }).timeout = originalTimeout;
+  }
 });

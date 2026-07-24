@@ -2205,14 +2205,16 @@ Deno.test("http: CORS wrapper exposes a gateway request id", () => {
 Deno.test("http: CORS wrapper exposes configured runtime identity headers", () => {
   const originalGitRevision = Deno.env.get("GIT_REVISION");
   const originalGithubSha = Deno.env.get("GITHUB_SHA");
+  const originalBuildId = Deno.env.get("DENO_DEPLOY_BUILD_ID");
   const originalDeploymentId = Deno.env.get("DENO_DEPLOYMENT_ID");
   try {
     Deno.env.set("GIT_REVISION", "git-test-revision");
     Deno.env.set("GITHUB_SHA", "github-test-sha");
+    Deno.env.set("DENO_DEPLOY_BUILD_ID", "build-test-id");
     Deno.env.set("DENO_DEPLOYMENT_ID", "deployment-test-id");
     const response = withCors(new Response("{}", { headers: { "Content-Type": "application/json" } }));
     assert.equal(response.headers.get("x-uos-git-sha"), "git-test-revision");
-    assert.equal(response.headers.get("x-uos-deployment-id"), "deployment-test-id");
+    assert.equal(response.headers.get("x-uos-deployment-id"), "build-test-id");
     const exposed = response.headers.get("Access-Control-Expose-Headers") ?? "";
     assert.match(exposed, /x-uos-git-sha/);
     assert.match(exposed, /x-uos-deployment-id/);
@@ -2221,6 +2223,8 @@ Deno.test("http: CORS wrapper exposes configured runtime identity headers", () =
     else Deno.env.set("GIT_REVISION", originalGitRevision);
     if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
     else Deno.env.set("GITHUB_SHA", originalGithubSha);
+    if (originalBuildId === undefined) Deno.env.delete("DENO_DEPLOY_BUILD_ID");
+    else Deno.env.set("DENO_DEPLOY_BUILD_ID", originalBuildId);
     if (originalDeploymentId === undefined) Deno.env.delete("DENO_DEPLOYMENT_ID");
     else Deno.env.set("DENO_DEPLOYMENT_ID", originalDeploymentId);
   }
