@@ -13,9 +13,12 @@ let atomicCommitFailure: ((ops: readonly OpenAiAtomicOp[]) => Error | null) | nu
 let exposePaidFallbackLedgerEntries = false;
 kvStore.set(keyToString(DEFAULT_REASONING_EFFORT_KEY), "low");
 kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
-  access_token: "access",
-  refresh_token: "refresh",
-  account_id: "acct",
+  accounts: [{
+    access_token: "access",
+    refresh_token: "refresh",
+    account_id: "acct",
+    updated_at_ms: Date.now(),
+  }],
   updated_at_ms: Date.now(),
 });
 kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {

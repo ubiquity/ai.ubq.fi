@@ -101,9 +101,12 @@ const seedBaseState = (snapshotVersion = "0.200.0"): void => {
   });
   kvStore.set(keyToString(AUTH_KEY), {
     value: {
-      access_token: "server-access",
-      refresh_token: "server-refresh",
-      account_id: "server-account",
+      accounts: [{
+        access_token: "server-access",
+        refresh_token: "server-refresh",
+        account_id: "server-account",
+        updated_at_ms: Date.now(),
+      }],
       updated_at_ms: Date.now(),
     },
     versionstamp: nextVersion(),

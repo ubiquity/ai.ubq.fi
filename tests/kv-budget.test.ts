@@ -173,6 +173,15 @@ const runtime = {
   },
   updated_at_ms: now,
 };
+const codexAuthPool = () => ({
+  accounts: [{
+    access_token: "access",
+    refresh_token: "refresh",
+    account_id: "acct",
+    updated_at_ms: Date.now(),
+  }],
+  updated_at_ms: Date.now(),
+});
 
 const seedKey = async (token: string, id: string, limit: number) => {
   const hash = await sha256Base64Url(token);
@@ -279,12 +288,7 @@ Deno.test("KV budget: warm unlimited inference performs zero KV operations", asy
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(["uos_ai", "runtime_config", "v2"]), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"1".repeat(64)}`;
   await seedKey(token, "unlimited", -1);
   const originalFetch = globalThis.fetch;
@@ -339,12 +343,7 @@ Deno.test("completed nonstream inference survives one failed quota increment att
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"a".repeat(64)}`;
   const { hash, record } = await seedKey(token, "failed-nonstream-accounting", 100);
   const policy = apiKeyPolicyFromHashRecord(hash, record, now);
@@ -391,12 +390,7 @@ Deno.test("KV budget: concurrent bounded successes keep every increment and gate
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"b".repeat(64)}`;
   const { hash, record } = await seedKey(token, "concurrent-bounded", 1);
   const policy = apiKeyPolicyFromHashRecord(hash, record, now);
@@ -454,12 +448,7 @@ Deno.test("streaming limits increment once only after response.completed", async
     resetRuntimeConfigCacheForTest();
     resetCodexAuthCacheForTest();
     kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-    kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-      access_token: "access",
-      refresh_token: "refresh",
-      account_id: "acct",
-      updated_at_ms: Date.now(),
-    });
+    kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
     const token = `u_${tokenDigit.repeat(64)}`;
     const { hash, record } = await seedKey(token, keyId, 100);
     const policy = apiKeyPolicyFromHashRecord(hash, record, now);
@@ -573,12 +562,7 @@ Deno.test("streaming completion increments API-key and kernel limits together ex
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
 
   const token = `u_${"0".repeat(64)}`;
   const { hash, record } = await seedKey(token, "stream-kernel-and-key", 100);
@@ -707,12 +691,7 @@ Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates"
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () => Promise.resolve(sse());
   const kernelContext = {
@@ -745,12 +724,7 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"5".repeat(64)}`;
   await seedKey(token, "telemetry", -1);
   const originalFetch = globalThis.fetch;
@@ -817,12 +791,7 @@ Deno.test("streaming inference emits one terminal log only after the response bo
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"7".repeat(64)}`;
   await seedKey(token, "stream-telemetry", -1);
 
@@ -897,12 +866,7 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"8".repeat(64)}`;
   const keyId = "first-fallback-quota";
   await seedPaidFallbackKey(token, keyId);

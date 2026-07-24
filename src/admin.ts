@@ -1,6 +1,6 @@
 import {
-  cacheCodexAuth,
-  CODEX_KV_KEY,
+  cacheCodexAuthPool,
+  CODEX_AUTH_POOL_KV_KEY,
   CODEX_MODELS_KV_KEY,
   CodexError,
   type CodexModelsSnapshot,
@@ -8,8 +8,10 @@ import {
   loadCodexModelsSnapshot,
   loadFullCodexModelsSnapshot,
   parseCodexAuthFromAuthJson,
+  parseCodexAuthPool,
   preserveCodexDefaultModel,
   storeCodexModelsSnapshot,
+  upsertCodexAuthAccount,
   validateCodexAuthJson,
 } from "./codex.ts";
 import { normalizeCodexModelsPayload } from "./codex_models.ts";
@@ -100,7 +102,7 @@ import {
 } from "./runtime_config.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
-import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "./types.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthPoolState, CodexAuthState } from "./types.ts";
 import { YunwuError } from "./yunwu.ts";
 import { getYunwuQuotaDiagnostics } from "./yunwu_quota.ts";
 
@@ -192,23 +194,38 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     throw error;
   }
   let stored = false;
+  let storedPool: CodexAuthPoolState | null = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const existingSnapshot = await kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY);
+    const [existingPoolEntry, existingSnapshot] = await Promise.all([
+      kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY),
+      kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY),
+    ]);
+    const existingPool = parseCodexAuthPool(existingPoolEntry.value);
+    const nextPool = upsertCodexAuthAccount(existingPool, validated.auth);
+    if (!nextPool) {
+      return openaiError(
+        409,
+        "Codex auth pool already contains two accounts; upload an auth.json for an existing account to rotate it",
+        "codex_auth_pool_full",
+      );
+    }
     const atomic = kv.atomic()
+      .check(existingPoolEntry)
       .check(existingSnapshot)
-      .set(CODEX_KV_KEY, validated.auth)
+      .set(CODEX_AUTH_POOL_KV_KEY, nextPool)
       .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration)
       .set(CODEX_MODELS_KV_KEY, snapshot)
       .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig);
     if ((await atomic.commit()).ok) {
       stored = true;
+      storedPool = nextPool;
       break;
     }
   }
-  if (!stored) {
+  if (!stored || !storedPool) {
     return openaiError(500, "Deno KV could not persist Codex auth and models", "server_error");
   }
-  cacheCodexAuth(validated.auth);
+  cacheCodexAuthPool(storedPool);
   cacheRuntimeConfig(runtimeConfig);
 
   const catalogSeeded = await storeCodexCatalog(kv, {
@@ -237,6 +254,8 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       stored: true,
       refreshed: validated.refreshed,
       account_id: validated.auth.account_id,
+      account_count: storedPool.accounts.length,
+      account_ids: storedPool.accounts.map((account) => account.account_id),
       access_token_expires_at_ms: expMs,
       updated_at_ms: validated.auth.updated_at_ms,
       upstream_status: validated.status,

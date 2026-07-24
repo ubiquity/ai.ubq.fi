@@ -138,10 +138,11 @@ no snapshot has been initialized, it returns an empty list.
 `GET /v1/models?client_version=X.Y.Z` is a separate Codex-native compatibility contract. It accepts exactly one
 three-part numeric version and returns the untouched rich upstream `{ "models": [...] }` JSON for that exact Codex
 version. It is intentionally not part of the official OpenAI model-list schema. The gateway uses only its server-held
-Codex authentication upstream, caches validated gzip-compressed JSON by version in Deno KV for five minutes, retains a
-last valid copy for 24 hours, and uses a durable refresh lease to collapse concurrent upstream refreshes. Upstream
-`ETag` values are returned and matching `If-None-Match` requests receive `304`. A temporary refresh failure serves the
-last valid version-specific copy; the route returns `502` when no valid copy exists.
+two-account Codex authentication pool upstream, caches validated gzip-compressed JSON by version in Deno KV for five
+minutes, retains a last valid copy for 24 hours, and uses a durable refresh lease to collapse concurrent upstream
+refreshes. Inference distributes requests across the two accounts and retries the other account after an account-level
+`401` or `429`. Upstream `ETag` values are returned and matching `If-None-Match` requests receive `304`. A temporary
+refresh failure serves the last valid version-specific copy; the route returns `502` when no valid copy exists.
 
 Use `/v1/models` as the source of truth instead of assuming OpenAI public API aliases are supported. The gateway is
 backed by Codex with a ChatGPT account, so some OpenAI API model aliases may not be available through this gateway.
@@ -476,7 +477,7 @@ token, a KV API key, an admin token, a passkey session, or a GitHub/kernel token
 ## Health
 
 - `GET /health` is the readiness check: it validates configured Codex auth metadata and performs an upstream probe.
-- `GET /health/auth` returns Codex auth metadata without refreshing or contacting upstream.
+- `GET /health/auth` returns per-account Codex auth metadata without refreshing or contacting upstream.
 - `GET /health/upstream` runs the same upstream probe semantics as `/health` without readiness metadata.
 
 Use `/health/auth` for passive auth state inspection. If it reports an expired access token or

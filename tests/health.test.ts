@@ -76,12 +76,16 @@ const makeAuthEntry = (accessTokenExpSeconds: number | null): {
   account_id: "acct",
   updated_at_ms: Date.now(),
 });
+const makeAuthPool = (...accounts: ReturnType<typeof makeAuthEntry>[]) => ({
+  accounts,
+  updated_at_ms: Date.now(),
+});
 
 const CODEX_AUTH_KEY: Deno.KvKey = ["ubq_ai", "codex_auth"];
 
 Deno.test("health readiness is healthy when Codex auth config exists and upstream probe succeeds", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthEntry(Math.floor(Date.now() / 1000) + 3600));
+  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () =>
@@ -138,7 +142,7 @@ Deno.test("health readiness is unavailable without configured Codex auth", async
 
 Deno.test("health readiness reports 503 when Codex upstream refresh fails (401 upstream auth flow)", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthEntry(Math.floor(Date.now() / 1000) - 10_000));
+  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) - 10_000)));
 
   const originalFetch = globalThis.fetch;
   const originalDeployFlag = (config as { isDeploy: boolean }).isDeploy;
@@ -182,7 +186,7 @@ Deno.test("health readiness reports 503 when Codex upstream refresh fails (401 u
 
 Deno.test("/health and /health/upstream share upstream semantics", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthEntry(Math.floor(Date.now() / 1000) + 3600));
+  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () =>
@@ -223,12 +227,15 @@ Deno.test("/health and /health/upstream share upstream semantics", async () => {
 
 Deno.test("health auth summary remains passive and does not refresh upstream auth", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(CODEX_AUTH_KEY), {
-    access_token: makeJwt(Math.floor(Date.now() / 1000) + 3600),
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
+  kvStore.set(
+    keyToString(CODEX_AUTH_KEY),
+    makeAuthPool({
+      access_token: makeJwt(Math.floor(Date.now() / 1000) + 3600),
+      refresh_token: "refresh",
+      account_id: "acct",
+      updated_at_ms: Date.now(),
+    }),
+  );
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () => {
@@ -244,4 +251,24 @@ Deno.test("health auth summary remains passive and does not refresh upstream aut
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("health auth summary reports both slots without exposing account ids", async () => {
+  kvStore.clear();
+  kvStore.set(
+    keyToString(CODEX_AUTH_KEY),
+    makeAuthPool(
+      { ...makeAuthEntry(Math.floor(Date.now() / 1000) + 3600), account_id: "private-account-one" },
+      { ...makeAuthEntry(Math.floor(Date.now() / 1000) + 7200), account_id: "private-account-two" },
+    ),
+  );
+
+  const response = await handleHealthAuth();
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    auth?: { account_count?: number; accounts?: Array<{ slot?: number }> };
+  };
+  assert.equal(payload.auth?.account_count, 2);
+  assert.deepEqual(payload.auth?.accounts?.map((account) => account.slot), [1, 2]);
+  assert.equal(JSON.stringify(payload).includes("private-account"), false);
 });
