@@ -11,9 +11,11 @@ LLM and app integration notes live in [`static/docs/llms-agents.md`](static/docs
   - Accepted tokens come from `UOS_AI_TOKEN` and/or API keys stored in Deno KV (created via `/admin/api-keys`).
   - Admin tokens (including Deno Deploy tokens) also grant access to client routes (`/v1/*`).
 - The gateway **does not use or forward your client token upstream**.
-  - For upstream requests, it uses **Codex CLI ChatGPT auth** from `CODEX_AUTH_JSON_B64` (base64 of
-    `~/.codex/auth.json`).
-  - Upstream usage/limits are tied to that OpenAI account + plan; client-provided OpenAI API keys are ignored.
+  - For upstream requests, it uses a durable pool of up to two **Codex CLI ChatGPT auth** accounts. The first local seed
+    can come from `CODEX_AUTH_JSON_B64` (base64 of `~/.codex/auth.json`); admin uploads populate the durable pool.
+  - Requests are distributed between the configured OpenAI accounts. An account-level `401` or `429` is retried once on
+    the other account before the gateway returns the error or considers paid fallback.
+  - Upstream usage/limits are tied to those OpenAI accounts and plans; client-provided OpenAI API keys are ignored.
   - The OAuth `client_id` used for refresh-token rotation is **public** (not a secret); the secrets are the tokens in
     `CODEX_AUTH_JSON_B64` and your client/admin tokens.
 
@@ -300,6 +302,7 @@ Admin examples (uses `DENO_DEPLOY_TOKEN`):
 ```bash
 export DENO_DEPLOY_TOKEN="..."
 ubq-ai admin upload-auth --auth-json ~/.codex/auth.json | jq
+ubq-ai admin upload-auth --auth-json /secure/path/to/second-account-auth.json | jq
 ubq-ai admin keys create "example key"
 ubq-ai admin keys create "tmp key" --expires week
 ubq-ai admin keys list | jq
@@ -307,7 +310,8 @@ ubq-ai admin keys list | jq
 
 ## Runtime env
 
-- `CODEX_AUTH_JSON_B64` (required): base64 of `~/.codex/auth.json` from a machine that ran `codex login`.
+- `CODEX_AUTH_JSON_B64` (required for the initial seed): base64 of `~/.codex/auth.json` from a machine that ran
+  `codex login`. It seeds one account; use the admin upload flow for the durable two-account pool.
 - `UOS_AI_TOKEN` (optional): Comma- or newline-separated client tokens accepted via `Authorization: Bearer ...`. The
   gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
@@ -324,12 +328,18 @@ ubq-ai admin keys list | jq
 
 ## Admin: upload/validate Codex auth.json
 
-This validates your posted `auth.json` against the upstream Codex endpoint and, if valid, stores the tokens in Deno KV
-(becoming the active upstream auth for subsequent requests). During validation, the server seeds the versioned catalog
-for the validated client version and updates the normalized snapshot used by unversioned `/v1/models` and the default
-model picker. Replacing authentication invalidates all previously cached versioned catalogs. Future Codex versions are
-fetched dynamically when they first request `/v1/models?client_version=...`; no Codex binary or manual catalog upload is
-required.
+This validates a posted `auth.json` against the upstream Codex endpoint and stores it in a two-account Deno KV pool.
+Uploading a different `account_id` fills the empty slot; uploading an existing `account_id` rotates that account's
+tokens without changing its slot. A third distinct account is rejected with `409 codex_auth_pool_full`.
+
+Inference chooses a starting account randomly, which distributes independent requests without a per-request KV counter.
+If that account returns `401` after refresh or returns `429`, the request is retried on the other account. Only a
+failure from both accounts reaches the existing gateway error or paid-fallback path.
+
+During validation, the server seeds the versioned catalog for the validated client version and updates the normalized
+snapshot used by unversioned `/v1/models` and the default model picker. Replacing authentication invalidates all
+previously cached versioned catalogs. Future Codex versions are fetched dynamically when they first request
+`/v1/models?client_version=...`; no Codex binary or manual catalog upload is required.
 
 Treat `auth.json` as a secret (it contains refresh tokens). Use the repo helper CLI:
 
@@ -337,10 +347,12 @@ Treat `auth.json` as a secret (it contains refresh tokens). Use the repo helper 
 cd lib/ai.ubq.fi
 export DENO_DEPLOY_TOKEN="..."
 deno task upload:auth --url https://ai.ubq.fi
+deno task upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
 ```
 
 The helper CLI uses `DENO_DEPLOY_TOKEN`. If a local `codex` package is available, the helper sends its client version as
-a hint so upstream returns the current Codex product catalog.
+a hint so upstream returns the current Codex product catalog. The auth KV value is a hard-cutover pool record; after
+deploying this change, upload both intended accounts because a pre-cutover single-account value is not read as a pool.
 
 ## Admin: create/manage UBQ API keys
 
@@ -462,7 +474,7 @@ deno task ubq-ai admin keys revoke --id "<id>"
 
 - `GET /`, `GET /docs`, `GET /chat`, `GET /admin`, and static assets
 - `GET /health` (readiness: Codex auth presence + upstream probe)
-- `GET /health/auth` (Codex auth metadata; no upstream refresh and no chat tokens used)
+- `GET /health/auth` (per-account Codex auth metadata; no upstream refresh and no chat tokens used)
 - `GET /health/upstream` (upstream connectivity check; same auth probe logic as `/health`)
 - `POST /api/auth/register/start`, `POST /api/auth/register/finish`
 - `POST /api/auth/login/start`, `POST /api/auth/login/finish`

@@ -3,7 +3,7 @@ import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_model
 import { kvPromise } from "./kv.ts";
 import { buildRuntimeConfig, cacheRuntimeConfig, loadRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord } from "./utils.ts";
-import type { CodexAuthState, ResponseInputItem } from "./types.ts";
+import type { CodexAuthPoolState, CodexAuthState, ResponseInputItem } from "./types.ts";
 
 const CODEX_REFRESH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -63,9 +63,10 @@ export class CodexError extends Error {
   }
 }
 
-export const CODEX_KV_KEY = ["ubq_ai", "codex_auth"] as const;
+export const CODEX_AUTH_POOL_KV_KEY = ["ubq_ai", "codex_auth"] as const;
 export const CODEX_MODELS_KV_KEY = ["ubq_ai", "codex_models"] as const;
 export const CODEX_AUTH_CACHE_TTL_MS = 5 * 60_000;
+export const CODEX_AUTH_POOL_MAX_ACCOUNTS = 2;
 
 export type { CodexModelsSnapshot } from "./codex_models.ts";
 export { getCodexModelsSnapshotDefaultModel } from "./codex_models.ts";
@@ -79,6 +80,56 @@ export const parseCodexAuthFromAuthJson = (value: unknown): Omit<CodexAuthState,
   const account_id = getString(tokens.account_id);
   if (!access_token || !refresh_token || !account_id) return null;
   return { access_token, refresh_token, account_id };
+};
+
+export const parseCodexAuthPool = (value: unknown): CodexAuthPoolState | null => {
+  if (!isRecord(value) || !Array.isArray(value.accounts)) return null;
+  if (value.accounts.length < 1 || value.accounts.length > CODEX_AUTH_POOL_MAX_ACCOUNTS) return null;
+  const updatedAtMs = typeof value.updated_at_ms === "number" && Number.isFinite(value.updated_at_ms)
+    ? value.updated_at_ms
+    : null;
+  if (updatedAtMs === null) return null;
+
+  const accountIds = new Set<string>();
+  const accounts: CodexAuthState[] = [];
+  for (const candidate of value.accounts) {
+    if (!isRecord(candidate)) return null;
+    const accessToken = getString(candidate.access_token);
+    const refreshToken = getString(candidate.refresh_token);
+    const accountId = getString(candidate.account_id);
+    const accountUpdatedAtMs = typeof candidate.updated_at_ms === "number" &&
+        Number.isFinite(candidate.updated_at_ms)
+      ? candidate.updated_at_ms
+      : null;
+    if (!accessToken || !refreshToken || !accountId || accountUpdatedAtMs === null || accountIds.has(accountId)) {
+      return null;
+    }
+    accountIds.add(accountId);
+    accounts.push({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      account_id: accountId,
+      updated_at_ms: accountUpdatedAtMs,
+    });
+  }
+
+  return { accounts, updated_at_ms: updatedAtMs };
+};
+
+export const upsertCodexAuthAccount = (
+  pool: CodexAuthPoolState | null,
+  auth: CodexAuthState,
+): CodexAuthPoolState | null => {
+  const accounts = pool ? [...pool.accounts] : [];
+  const matchingIndex = accounts.findIndex((candidate) => candidate.account_id === auth.account_id);
+  if (matchingIndex >= 0) {
+    accounts[matchingIndex] = auth;
+  } else if (accounts.length < CODEX_AUTH_POOL_MAX_ACCOUNTS) {
+    accounts.push(auth);
+  } else {
+    return null;
+  }
+  return { accounts, updated_at_ms: Date.now() };
 };
 
 export const getJwtExpMs = (token: string): number | null => {
@@ -103,30 +154,34 @@ const needsRefresh = (auth: CodexAuthState): boolean => {
   return now - auth.updated_at_ms > 7 * 60_000;
 };
 
-type CodexAuthEntry = {
+type CodexAuthPoolEntry = {
   kv: Deno.Kv | null;
-  entry: Deno.KvEntryMaybe<CodexAuthState> | null;
+  entry: Deno.KvEntryMaybe<CodexAuthPoolState> | null;
+  pool: CodexAuthPoolState;
+};
+
+type CodexAuthAccountEntry = CodexAuthPoolEntry & {
   auth: CodexAuthState;
 };
 
-let cachedAuth: CodexAuthState | null = null;
-let cachedAuthExpiresAtMs = 0;
+let cachedAuthPool: CodexAuthPoolState | null = null;
+let cachedAuthPoolExpiresAtMs = 0;
 let authCacheGeneration = 0;
-let authEntryInFlight: Promise<CodexAuthEntry> | null = null;
-let refreshInFlight: Promise<CodexAuthState> | null = null;
+let authPoolEntryInFlight: Promise<CodexAuthPoolEntry> | null = null;
+const refreshesInFlight = new Map<string, Promise<CodexAuthState>>();
 
-export const cacheCodexAuth = (auth: CodexAuthState): void => {
+export const cacheCodexAuthPool = (pool: CodexAuthPoolState): void => {
   authCacheGeneration += 1;
-  cachedAuth = auth;
-  cachedAuthExpiresAtMs = Date.now() + CODEX_AUTH_CACHE_TTL_MS;
+  cachedAuthPool = pool;
+  cachedAuthPoolExpiresAtMs = Date.now() + CODEX_AUTH_CACHE_TTL_MS;
 };
 
 export const resetCodexAuthCacheForTest = (): void => {
   authCacheGeneration += 1;
-  cachedAuth = null;
-  cachedAuthExpiresAtMs = 0;
-  authEntryInFlight = null;
-  refreshInFlight = null;
+  cachedAuthPool = null;
+  cachedAuthPoolExpiresAtMs = 0;
+  authPoolEntryInFlight = null;
+  refreshesInFlight.clear();
 };
 
 const loadAuthSeedFromEnv = (): CodexAuthState => {
@@ -232,50 +287,62 @@ const getConfiguredCodexAuthSeed = (): CodexAuthState | null => {
   }
 };
 
-const loadedAuthEntry = (
-  auth: CodexAuthState,
+const poolFromSeed = (auth: CodexAuthState): CodexAuthPoolState => ({
+  accounts: [auth],
+  updated_at_ms: auth.updated_at_ms,
+});
+
+const loadedAuthPoolEntry = (
+  pool: CodexAuthPoolState,
   generationAtStart: number,
   kv: Deno.Kv | null,
-  entry: Deno.KvEntryMaybe<CodexAuthState> | null,
-): CodexAuthEntry => {
-  if (authCacheGeneration !== generationAtStart && cachedAuth) {
-    return { kv: null, entry: null, auth: cachedAuth };
+  entry: Deno.KvEntryMaybe<CodexAuthPoolState> | null,
+): CodexAuthPoolEntry => {
+  if (authCacheGeneration !== generationAtStart && cachedAuthPool) {
+    return { kv: null, entry: null, pool: cachedAuthPool };
   }
-  cacheCodexAuth(auth);
-  return { kv, entry, auth };
+  cacheCodexAuthPool(pool);
+  return { kv, entry, pool };
 };
 
-const loadAuthEntry = async (generationAtStart: number): Promise<CodexAuthEntry> => {
+const loadAuthPoolEntry = async (generationAtStart: number): Promise<CodexAuthPoolEntry> => {
   const kv = await kvPromise;
   if (!kv) {
-    const auth = cachedAuth ?? getConfiguredCodexAuthSeed();
-    if (!auth) {
+    const pool = cachedAuthPool ?? (() => {
+      const seed = getConfiguredCodexAuthSeed();
+      return seed ? poolFromSeed(seed) : null;
+    })();
+    if (!pool) {
       throw new CodexError(
         "Codex auth missing: CODEX_AUTH_JSON_B64 unset and no KV entry.",
         "codex_auth_missing",
         503,
       );
     }
-    return loadedAuthEntry(auth, generationAtStart, null, null);
+    return loadedAuthPoolEntry(pool, generationAtStart, null, null);
   }
 
-  const entry = await kv.get<CodexAuthState>(CODEX_KV_KEY, { consistency: "strong" });
-  if (entry.value) {
+  const entry = await kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" });
+  const storedPool = parseCodexAuthPool(entry.value);
+  if (storedPool) {
     if (!config.isDeploy) {
       try {
         const localSeed = getConfiguredCodexAuthSeed();
         if (localSeed) {
-          if (authCacheGeneration !== generationAtStart && cachedAuth) {
-            return { kv: null, entry: null, auth: cachedAuth };
+          if (authCacheGeneration !== generationAtStart && cachedAuthPool) {
+            return { kv: null, entry: null, pool: cachedAuthPool };
           }
-          await kv.set(CODEX_KV_KEY, localSeed);
-          return loadedAuthEntry(localSeed, generationAtStart, kv, entry);
+          const withLocalSeed = upsertCodexAuthAccount(storedPool, localSeed);
+          if (withLocalSeed) {
+            await kv.set(CODEX_AUTH_POOL_KV_KEY, withLocalSeed);
+            return loadedAuthPoolEntry(withLocalSeed, generationAtStart, kv, null);
+          }
         }
       } catch {
         // Keep working from persisted KV credentials when local seed loading fails.
       }
     }
-    return loadedAuthEntry(entry.value, generationAtStart, kv, entry);
+    return loadedAuthPoolEntry(storedPool, generationAtStart, kv, entry);
   }
 
   const seed = getConfiguredCodexAuthSeed();
@@ -286,25 +353,26 @@ const loadAuthEntry = async (generationAtStart: number): Promise<CodexAuthEntry>
       503,
     );
   }
-  if (authCacheGeneration !== generationAtStart && cachedAuth) {
-    return { kv: null, entry: null, auth: cachedAuth };
+  if (authCacheGeneration !== generationAtStart && cachedAuthPool) {
+    return { kv: null, entry: null, pool: cachedAuthPool };
   }
-  await kv.set(CODEX_KV_KEY, seed);
-  return loadedAuthEntry(seed, generationAtStart, kv, null);
+  const pool = poolFromSeed(seed);
+  await kv.set(CODEX_AUTH_POOL_KV_KEY, pool);
+  return loadedAuthPoolEntry(pool, generationAtStart, kv, null);
 };
 
-const getAuthEntry = async (forceKv = false): Promise<CodexAuthEntry> => {
-  if (!forceKv && cachedAuth && !needsRefresh(cachedAuth) && Date.now() < cachedAuthExpiresAtMs) {
-    return { kv: null, entry: null, auth: cachedAuth };
+const getAuthPoolEntry = async (forceKv = false): Promise<CodexAuthPoolEntry> => {
+  if (!forceKv && cachedAuthPool && Date.now() < cachedAuthPoolExpiresAtMs) {
+    return { kv: null, entry: null, pool: cachedAuthPool };
   }
 
   // A bounded single read makes credential replacement converge across warm
   // isolates without restoring a KV lookup to every inference request.
-  if (authEntryInFlight) return await authEntryInFlight;
-  authEntryInFlight = loadAuthEntry(authCacheGeneration).finally(() => {
-    authEntryInFlight = null;
+  if (authPoolEntryInFlight) return await authPoolEntryInFlight;
+  authPoolEntryInFlight = loadAuthPoolEntry(authCacheGeneration).finally(() => {
+    authPoolEntryInFlight = null;
   });
-  return await authEntryInFlight;
+  return await authPoolEntryInFlight;
 };
 
 const formatFailureSnippet = (raw: string, maxLen = 240): string => {
@@ -323,7 +391,7 @@ const buildRefreshFailureMessage = async (response: Response): Promise<string> =
 };
 
 const refreshAuth = async (
-  current: { kv: Deno.Kv | null; entry: Deno.KvEntryMaybe<CodexAuthState> | null; auth: CodexAuthState },
+  current: CodexAuthAccountEntry,
 ): Promise<CodexAuthState> => {
   const generationAtStart = authCacheGeneration;
   let response: Response;
@@ -365,24 +433,61 @@ const refreshAuth = async (
     updated_at_ms: Date.now(),
   };
 
-  if (authCacheGeneration !== generationAtStart && cachedAuth) return cachedAuth;
-
-  if (current.kv) {
-    if (current.entry) {
-      const commit = await current.kv.atomic().check(current.entry).set(CODEX_KV_KEY, next).commit();
-      if (!commit.ok) {
-        const latest = await current.kv.get<CodexAuthState>(CODEX_KV_KEY);
-        if (latest.value) {
-          return loadedAuthEntry(latest.value, generationAtStart, current.kv, latest).auth;
-        }
-      }
-    } else {
-      await current.kv.set(CODEX_KV_KEY, next);
+  if (authCacheGeneration !== generationAtStart && cachedAuthPool) {
+    const cached = cachedAuthPool.accounts.find((candidate) => candidate.account_id === current.auth.account_id);
+    if (
+      cached &&
+      (cached.access_token !== current.auth.access_token || cached.refresh_token !== current.auth.refresh_token)
+    ) {
+      return cached;
     }
   }
 
-  if (authCacheGeneration !== generationAtStart && cachedAuth) return cachedAuth;
-  cacheCodexAuth(next);
+  if (current.kv) {
+    let poolEntry = current.entry;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      poolEntry ??= await current.kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" });
+      const latestPool = parseCodexAuthPool(poolEntry.value);
+      const latestIndex = latestPool?.accounts.findIndex((candidate) =>
+        candidate.account_id === current.auth.account_id
+      ) ?? -1;
+      if (!latestPool || latestIndex < 0) {
+        throw new CodexError("Codex auth account disappeared during refresh.", "codex_auth_missing", 503);
+      }
+      const latestAuth = latestPool.accounts[latestIndex];
+      if (
+        latestAuth.access_token !== current.auth.access_token ||
+        latestAuth.refresh_token !== current.auth.refresh_token
+      ) {
+        cacheCodexAuthPool(latestPool);
+        return latestAuth;
+      }
+
+      const accounts = [...latestPool.accounts];
+      accounts[latestIndex] = next;
+      const nextPool: CodexAuthPoolState = { accounts, updated_at_ms: Date.now() };
+      const commit = await current.kv.atomic()
+        .check(poolEntry)
+        .set(CODEX_AUTH_POOL_KV_KEY, nextPool)
+        .commit();
+      if (commit.ok) {
+        cacheCodexAuthPool(nextPool);
+        return next;
+      }
+      poolEntry = await current.kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" });
+    }
+    throw new CodexError(
+      "Codex auth refresh could not persist after concurrent updates.",
+      "codex_auth_refresh_failed",
+      503,
+    );
+  }
+
+  const basePool = cachedAuthPool ?? current.pool;
+  const accounts = basePool.accounts.map((candidate) =>
+    candidate.account_id === current.auth.account_id ? next : candidate
+  );
+  cacheCodexAuthPool({ accounts, updated_at_ms: Date.now() });
   return next;
 };
 
@@ -435,14 +540,17 @@ const refreshAuthStateless = async (auth: CodexAuthState): Promise<CodexAuthStat
 };
 
 type CodexAuthRefreshResult =
-  | { ok: true; auth: CodexAuthState }
+  | { ok: true; accounts: CodexAuthState[] }
   | { ok: false; status: number; code: CodexErrorCode; error: string };
 
 export const checkCodexAuthRefresh = async (): Promise<CodexAuthRefreshResult> => {
-  const current = await getAuthEntry();
   try {
-    const auth = await refreshAuth(current);
-    return { ok: true, auth };
+    const current = await getAuthPoolEntry();
+    const accounts: CodexAuthState[] = [];
+    for (const auth of current.pool.accounts) {
+      accounts.push(await refreshAuth({ ...current, auth }));
+    }
+    return { ok: true, accounts };
   } catch (error) {
     if (error instanceof CodexError) {
       return { ok: false, status: error.status, code: error.code, error: error.message };
@@ -452,18 +560,16 @@ export const checkCodexAuthRefresh = async (): Promise<CodexAuthRefreshResult> =
   }
 };
 
-const getValidAuth = async (): Promise<CodexAuthState> => {
-  const current = await getAuthEntry();
+const getValidAuth = async (current: CodexAuthAccountEntry): Promise<CodexAuthState> => {
   if (!needsRefresh(current.auth)) return current.auth;
 
-  if (refreshInFlight) return await refreshInFlight;
-  refreshInFlight = (async () => {
-    const refreshed = await refreshAuth(current);
-    return refreshed;
-  })().finally(() => {
-    refreshInFlight = null;
+  const existing = refreshesInFlight.get(current.auth.account_id);
+  if (existing) return await existing;
+  const refresh = refreshAuth(current).finally(() => {
+    refreshesInFlight.delete(current.auth.account_id);
   });
-  return await refreshInFlight;
+  refreshesInFlight.set(current.auth.account_id, refresh);
+  return await refresh;
 };
 
 const codexModelsBaseUrls = (clientVersion: string | null): string[] => {
@@ -512,54 +618,57 @@ const fetchCodexModelsWithAuth = async (
   }
 };
 
-export const fetchCodexResponses = async (
-  body: unknown,
-  options: Readonly<{ clientVersion?: string | null; signal?: AbortSignal }> = {},
-): Promise<Response> => {
-  const auth = await getValidAuth();
-  const url = `${config.codexBaseUrl}/responses`;
+export const orderCodexAuthAccounts = (
+  accounts: readonly CodexAuthState[],
+  startIndex: number,
+): CodexAuthState[] => {
+  if (accounts.length === 0) return [];
+  const normalizedStart = ((Math.trunc(startIndex) % accounts.length) + accounts.length) % accounts.length;
+  return accounts.map((_, offset) => accounts[(normalizedStart + offset) % accounts.length]);
+};
 
-  const headers = new Headers();
+const randomizedAuthEntries = (poolEntry: CodexAuthPoolEntry): CodexAuthAccountEntry[] => {
+  const entropy = crypto.getRandomValues(new Uint8Array(1))[0];
+  return orderCodexAuthAccounts(poolEntry.pool.accounts, entropy).map((auth) => ({ ...poolEntry, auth }));
+};
+
+const cancelResponseBody = async (response: Response): Promise<void> => {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Best effort before retrying another account.
+  }
+};
+
+const getCurrentAccountEntry = async (
+  accountId: string,
+  forceKv: boolean,
+): Promise<CodexAuthAccountEntry> => {
+  const poolEntry = await getAuthPoolEntry(forceKv);
+  const auth = poolEntry.pool.accounts.find((candidate) => candidate.account_id === accountId);
+  if (!auth) {
+    throw new CodexError("Codex auth account is no longer configured.", "codex_auth_missing", 503);
+  }
+  return { ...poolEntry, auth };
+};
+
+const fetchCodexResponseWithAuth = async (
+  auth: CodexAuthState,
+  url: string,
+  serializedBody: string,
+  baseHeaders: Headers,
+  signal?: AbortSignal,
+): Promise<Response> => {
+  const headers = new Headers(baseHeaders);
   headers.set("Authorization", `Bearer ${auth.access_token}`);
   headers.set("ChatGPT-Account-ID", auth.account_id);
-  headers.set("originator", CODEX_ORIGINATOR);
-  headers.set("user-agent", codexUserAgent(options.clientVersion));
-  headers.set("Content-Type", "application/json");
-  headers.set("Accept", "text/event-stream");
-  headers.set("conversation_id", crypto.randomUUID());
-
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      redirect: "manual",
-      signal: options.signal,
-    });
-  } catch (error) {
-    throw new CodexError(
-      "Codex upstream request failed: upstream unreachable.",
-      "codex_upstream_unreachable",
-      502,
-      error,
-    );
-  }
-
-  if (res.status !== 401) return res;
-
-  await refreshAuth(await getAuthEntry(true));
-
-  const auth2 = await getValidAuth();
-  headers.set("Authorization", `Bearer ${auth2.access_token}`);
-  headers.set("ChatGPT-Account-ID", auth2.account_id);
   try {
     return await fetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(body),
+      body: serializedBody,
       redirect: "manual",
-      signal: options.signal,
+      signal,
     });
   } catch (error) {
     throw new CodexError(
@@ -571,10 +680,68 @@ export const fetchCodexResponses = async (
   }
 };
 
+export const fetchCodexResponses = async (
+  body: unknown,
+  options: Readonly<{ clientVersion?: string | null; signal?: AbortSignal }> = {},
+): Promise<Response> => {
+  const poolEntry = await getAuthPoolEntry();
+  const accountEntries = randomizedAuthEntries(poolEntry);
+  const url = `${config.codexBaseUrl}/responses`;
+  const serializedBody = JSON.stringify(body);
+  const baseHeaders = new Headers({
+    "originator": CODEX_ORIGINATOR,
+    "user-agent": codexUserAgent(options.clientVersion),
+    "Content-Type": "application/json",
+    "Accept": "text/event-stream",
+    "conversation_id": crypto.randomUUID(),
+  });
+  let lastResponse: Response | null = null;
+  let lastError: unknown = null;
+
+  for (let index = 0; index < accountEntries.length; index += 1) {
+    const accountEntry = accountEntries[index];
+    const hasFallbackAccount = index < accountEntries.length - 1;
+    try {
+      let auth = await getValidAuth(accountEntry);
+      let response = await fetchCodexResponseWithAuth(
+        auth,
+        url,
+        serializedBody,
+        baseHeaders,
+        options.signal,
+      );
+      if (response.status === 401) {
+        await cancelResponseBody(response);
+        auth = await refreshAuth(await getCurrentAccountEntry(auth.account_id, true));
+        response = await fetchCodexResponseWithAuth(
+          auth,
+          url,
+          serializedBody,
+          baseHeaders,
+          options.signal,
+        );
+      }
+      if (hasFallbackAccount && (response.status === 401 || response.status === 429)) {
+        await cancelResponseBody(response);
+        lastResponse = response;
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (!hasFallbackAccount) throw error;
+    }
+  }
+
+  if (lastResponse) return lastResponse;
+  throw lastError ?? new CodexError("Codex auth pool is empty.", "codex_auth_missing", 503);
+};
+
 export const fetchCodexModels = async (
   options: Readonly<{ clientVersion?: string | null; ifNoneMatch?: string | null }> = {},
 ): Promise<Response> => {
-  const auth = await getValidAuth();
+  const poolEntry = await getAuthPoolEntry();
+  const accountEntries = randomizedAuthEntries(poolEntry);
   const requestedVersion = options.clientVersion?.trim() || null;
   const clientVersion = requestedVersion && parseCodexClientVersion(requestedVersion)
     ? requestedVersion
@@ -583,17 +750,34 @@ export const fetchCodexModels = async (
   let lastResponse: Response | null = null;
 
   for (const url of urls) {
-    let res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch);
-    if (res.status === 401) {
-      await refreshAuth(await getAuthEntry(true));
-      const auth2 = await getValidAuth();
-      res = await fetchCodexModelsWithAuth(auth2, url, clientVersion, options.ifNoneMatch);
+    for (let index = 0; index < accountEntries.length; index += 1) {
+      const accountEntry = accountEntries[index];
+      const hasFallbackAccount = index < accountEntries.length - 1;
+      let auth: CodexAuthState;
+      let res: Response;
+      try {
+        auth = await getValidAuth(accountEntry);
+        res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch);
+        if (res.status === 401) {
+          await cancelResponseBody(res);
+          auth = await refreshAuth(await getCurrentAccountEntry(auth.account_id, true));
+          res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch);
+        }
+      } catch (error) {
+        if (hasFallbackAccount) continue;
+        throw error;
+      }
+      if (hasFallbackAccount && (res.status === 401 || res.status === 429)) {
+        await cancelResponseBody(res);
+        lastResponse = res;
+        continue;
+      }
+      if ((res.status === 404 || res.status === 400) && urls.length > 1) {
+        lastResponse = res;
+        break;
+      }
+      return res;
     }
-    if ((res.status === 404 || res.status === 400) && urls.length > 1) {
-      lastResponse = res;
-      continue;
-    }
-    return res;
   }
 
   return lastResponse ?? new Response("Codex upstream models endpoint not found.", { status: 404 });

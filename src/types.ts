@@ -5,6 +5,11 @@ export type CodexAuthState = Readonly<{
   updated_at_ms: number;
 }>;
 
+export type CodexAuthPoolState = Readonly<{
+  accounts: readonly CodexAuthState[];
+  updated_at_ms: number;
+}>;
+
 export type ApiKeyRecord = Readonly<{
   id: string;
   name: string;

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import type { CodexAuthState } from "../src/types.ts";
+import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
 
 class AuthKv {
-  auth: CodexAuthState;
+  auth: CodexAuthPoolState;
   reads = 0;
   nextReadGate: Promise<void> | null = null;
 
-  constructor(auth: CodexAuthState) {
+  constructor(auth: CodexAuthPoolState) {
     this.auth = auth;
   }
 
@@ -25,7 +25,7 @@ class AuthKv {
 
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
     assert.deepEqual(key, AUTH_KEY);
-    this.auth = value as CodexAuthState;
+    this.auth = value as CodexAuthPoolState;
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
   }
 }
@@ -41,18 +41,94 @@ const auth = (label: string): CodexAuthState => ({
   account_id: `account-${label}`,
   updated_at_ms: fixedStartMs,
 });
+const pool = (...accounts: CodexAuthState[]): CodexAuthPoolState => ({
+  accounts,
+  updated_at_ms: fixedStartMs,
+});
 
-const kv = new AuthKv(auth("old"));
+const kv = new AuthKv(pool(auth("old")));
 (Deno as unknown as { openKv: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
 
 const { config } = await import("../src/config.ts");
 
 const {
-  cacheCodexAuth,
+  cacheCodexAuthPool,
   CODEX_AUTH_CACHE_TTL_MS,
   fetchCodexResponses,
+  orderCodexAuthAccounts,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
+
+Deno.test("Codex auth account ordering rotates from the selected account", () => {
+  const accounts = [auth("one"), auth("two")];
+  assert.deepEqual(orderCodexAuthAccounts(accounts, 0).map((candidate) => candidate.account_id), [
+    "account-one",
+    "account-two",
+  ]);
+  assert.deepEqual(orderCodexAuthAccounts(accounts, 1).map((candidate) => candidate.account_id), [
+    "account-two",
+    "account-one",
+  ]);
+});
+
+Deno.test("Codex responses retry the other account after an account-level 429", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(new Response("{}", { status: accountIds.length === 1 ? 429 : 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "balance" });
+    assert.equal(response.status, 200);
+    assert.equal(accountIds.length, 2);
+    assert.equal(new Set(accountIds).size, 2);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("Codex responses retry the other account when a 401 cannot refresh", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    if (request.url.includes("auth.openai.com/oauth/token")) {
+      return Promise.resolve(new Response('{"error":"invalid_grant"}', { status: 401 }));
+    }
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(new Response("{}", { status: accountIds.length === 1 ? 401 : 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "auth-failover" });
+    assert.equal(response.status, 200);
+    assert.equal(accountIds.length, 2);
+    assert.equal(new Set(accountIds).size, 2);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
 
 Deno.test("Codex auth cache revalidates rotations across warm isolates without per-request KV reads", async () => {
   const originalFetch = globalThis.fetch;
@@ -71,7 +147,7 @@ Deno.test("Codex auth cache revalidates rotations across warm isolates without p
   };
 
   try {
-    kv.auth = auth("old");
+    kv.auth = pool(auth("old"));
     kv.reads = 0;
     resetCodexAuthCacheForTest();
 
@@ -79,7 +155,7 @@ Deno.test("Codex auth cache revalidates rotations across warm isolates without p
     assert.equal(kv.reads, 1);
     assert.equal(authorizations.at(-1), `Bearer ${accessToken("old")}`);
 
-    kv.auth = auth("rotated");
+    kv.auth = pool(auth("rotated"));
     nowMs += CODEX_AUTH_CACHE_TTL_MS - 1;
     await fetchCodexResponses({ input: "warm" });
     assert.equal(kv.reads, 1, "warm auth-cache hits must not read KV");
@@ -100,14 +176,14 @@ Deno.test("Codex auth cache revalidates rotations across warm isolates without p
     kv.nextReadGate = new Promise<void>((resolve) => {
       releaseDelayedRead = resolve;
     });
-    kv.auth = auth("stale-read");
+    kv.auth = pool(auth("stale-read"));
     nowMs += CODEX_AUTH_CACHE_TTL_MS + 1;
     const delayedRequest = fetchCodexResponses({ input: "delayed-revalidation" });
     while (kv.reads < 3) await Promise.resolve();
 
     const racedAdmin = auth("admin-race");
-    kv.auth = racedAdmin;
-    cacheCodexAuth(racedAdmin);
+    kv.auth = pool(racedAdmin);
+    cacheCodexAuthPool(pool(racedAdmin));
     releaseDelayedRead();
     await delayedRequest;
     assert.equal(authorizations.at(-1), `Bearer ${accessToken("admin-race")}`);
@@ -118,8 +194,8 @@ Deno.test("Codex auth cache revalidates rotations across warm isolates without p
     assert.equal(authorizations.at(-1), `Bearer ${accessToken("admin-race")}`);
 
     const immediate = auth("admin");
-    kv.auth = immediate;
-    cacheCodexAuth(immediate);
+    kv.auth = pool(immediate);
+    cacheCodexAuthPool(pool(immediate));
     await fetchCodexResponses({ input: "admin-update" });
     assert.equal(kv.reads, 3, "the admin isolate cache update must take effect without another KV read");
     assert.equal(authorizations.at(-1), `Bearer ${accessToken("admin")}`);

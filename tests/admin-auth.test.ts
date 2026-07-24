@@ -10,10 +10,12 @@ const stringEntryLine = (key: Deno.KvKey, value: string): string =>
   });
 
 let resetRuntimeCache = (): void => {};
+let resetAuthCache = (): void => {};
 class TestKvStore extends Map<string, unknown> {
   override clear(): void {
     super.clear();
     resetRuntimeCache();
+    resetAuthCache();
   }
 }
 const kvStore = new TestKvStore();
@@ -113,10 +115,12 @@ const {
 } = await import("../src/admin.ts");
 const { listApiKeyRequestLogs, recordApiKeyRequestLog } = await import("../src/analytics.ts");
 const { handleHealthAuth } = await import("../src/health.ts");
+const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const { buildRuntimeConfig, cacheRuntimeConfig, resetRuntimeConfigCacheForTest } = await import(
   "../src/runtime_config.ts"
 );
 resetRuntimeCache = resetRuntimeConfigCacheForTest;
+resetAuthCache = resetCodexAuthCacheForTest;
 
 const seedCodexSnapshot = (snapshot: Parameters<typeof buildRuntimeConfig>[0]): void => {
   kvStore.set(keyToString(["ubq_ai", "codex_models"]), snapshot);
@@ -473,6 +477,61 @@ Deno.test("admin codex auth stores live model catalog without caller model snaps
     assert.equal(response.status, 200);
     const stored = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as { models?: Array<{ slug?: string }> };
     assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.3-codex-spark"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("admin Codex auth adds, rotates, and caps the two-account pool", async () => {
+  kvStore.clear();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  const upload = (accountId: string, accessToken: string) =>
+    handleAdminCodexAuth(
+      makeRequest({
+        auth: {
+          tokens: {
+            access_token: accessToken,
+            refresh_token: `refresh-${accountId}`,
+            account_id: accountId,
+          },
+        },
+      }),
+    );
+
+  try {
+    assert.equal((await upload("account-one", "access-one")).status, 200);
+    const second = await upload("account-two", "access-two");
+    assert.equal(second.status, 200);
+    const secondPayload = await second.json() as { account_count?: number; account_ids?: string[] };
+    assert.equal(secondPayload.account_count, 2);
+    assert.deepEqual(secondPayload.account_ids, ["account-one", "account-two"]);
+
+    assert.equal((await upload("account-one", "access-one-rotated")).status, 200);
+    const poolAfterRotation = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as {
+      accounts?: Array<{ account_id?: string; access_token?: string }>;
+    };
+    assert.deepEqual(poolAfterRotation.accounts?.map((account) => account.account_id), [
+      "account-one",
+      "account-two",
+    ]);
+    assert.equal(poolAfterRotation.accounts?.[0]?.access_token, "access-one-rotated");
+    assert.equal(poolAfterRotation.accounts?.[1]?.access_token, "access-two");
+
+    const third = await upload("account-three", "access-three");
+    assert.equal(third.status, 409);
+    const thirdPayload = await third.json() as { error?: { code?: string } };
+    assert.equal(thirdPayload.error?.code, "codex_auth_pool_full");
+    const poolAfterThird = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as {
+      accounts?: Array<{ account_id?: string }>;
+    };
+    assert.deepEqual(poolAfterThird.accounts?.map((account) => account.account_id), ["account-one", "account-two"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1257,9 +1316,12 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
 Deno.test("health auth summary does not refresh Codex auth", async () => {
   kvStore.clear();
   kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
+    accounts: [{
+      access_token: "access",
+      refresh_token: "refresh",
+      account_id: "acct",
+      updated_at_ms: Date.now(),
+    }],
     updated_at_ms: Date.now(),
   });
 
