@@ -547,6 +547,58 @@ Deno.test("admin codex auth stores live model catalog without caller model snaps
   }
 });
 
+Deno.test("admin Codex auth accepts authenticated 429 and preserves the last known-good catalog", async () => {
+  kvStore.clear();
+  const snapshot = {
+    source: "chatgpt_codex" as const,
+    client_version: "0.200.0",
+    updated_at_ms: 123,
+    models: [{ slug: "gpt-5.6", display_name: "GPT-5.6" }],
+  };
+  seedCodexSnapshot(snapshot);
+  kvStore.set(keyToString(["ubq_ai", "codex_catalog_auth_generation"]), "existing-generation");
+  kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
+    accounts: [{
+      access_token: "limited-access",
+      refresh_token: "limited-refresh",
+      account_id: "limited-account",
+      updated_at_ms: 100,
+    }],
+    updated_at_ms: 100,
+  });
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response('{"statusCode":429,"description":"Too Many Requests"}', {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+  try {
+    const response = await handleAdminCodexAuth(makeRequest({ auth: authPayload }));
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      account_count?: number;
+      upstream_status?: number;
+      catalog_seeded?: boolean;
+      normalized_snapshot_updated?: boolean;
+    };
+    assert.equal(payload.account_count, 2);
+    assert.equal(payload.upstream_status, 429);
+    assert.equal(payload.catalog_seeded, false);
+    assert.equal(payload.normalized_snapshot_updated, false);
+    assert.deepEqual(kvStore.get(keyToString(["ubq_ai", "codex_models"])), snapshot);
+    assert.equal(
+      kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"])),
+      "existing-generation",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("admin Codex auth adds, rotates, and caps the two-account pool", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
