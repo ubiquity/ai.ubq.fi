@@ -138,6 +138,17 @@ const probeUpstream = async (): Promise<HealthUpstreamProbe> => {
 
 export const handleHealth = async (): Promise<Response> => {
   const probe = await probeUpstream();
+  const gitSha = runtimeGitSha();
+  const deploymentId = runtimeDeploymentId();
+  console.info(
+    "[ai.ubq.fi] health_probe",
+    JSON.stringify({
+      git_sha: gitSha,
+      deno_deployment_id: deploymentId,
+      upstream_status: probe.status,
+      healthy: probe.ok,
+    }),
+  );
 
   return json(probe.status, {
     ok: probe.ok,
@@ -149,8 +160,8 @@ export const handleHealth = async (): Promise<Response> => {
     ...(probe.details !== undefined ? { details: probe.details } : {}),
     auth: probe.auth,
   }, {
-    "x-uos-git-sha": runtimeGitSha(),
-    "x-uos-deployment-id": runtimeDeploymentId(),
+    "x-uos-git-sha": gitSha,
+    "x-uos-deployment-id": deploymentId,
   });
 };
 

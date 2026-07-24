@@ -6,11 +6,12 @@ import { kvPromise } from "./src/kv.ts";
 import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
 
 if (config.isDeploy) {
-  // `kvPromise` fails closed when KV cannot be opened, so a transient KV
-  // outage does not prevent the deployment from serving requests.
-  const kv = await kvPromise;
   Deno.cron("reconcile pending Yunwu billing", "* * * * *", async () => {
     try {
+      // KV is optional at process boot. Resolve it only when the scheduled
+      // reconciliation actually runs so a slow KV connection cannot prevent
+      // a new Deploy revision from reaching the serving state.
+      const kv = await kvPromise;
       if (!kv) return;
       await reconcileDuePaidFallbacksV3(Date.now(), kv);
     } catch (error) {

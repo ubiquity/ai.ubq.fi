@@ -235,34 +235,55 @@ jobs:
           stable_url="https://${TARGET_PROJECT}.ubiquity-dao.deno.net"
           revision_id=""
           revision_url=""
+          deployment_id=""
           last_status="000"
           last_git_sha=""
-          last_revision_id=""
+          last_deployment_id=""
+          logs_start="$(date -u -d '15 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
           for _attempt in $(seq 1 18); do
             headers="$(mktemp)"
             body="$(mktemp)"
             trap 'rm -f "$headers" "$body"' EXIT
             http_code="$(curl -sS --max-time 20 -D "$headers" -o "$body" -w '%{http_code}' "${stable_url}/health" || true)"
             git_sha="$(awk 'tolower($1) == "x-uos-git-sha:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
-            # x-uos-deployment-id is backed by DENO_DEPLOY_BUILD_ID, which is
-            # the routed Deno Deploy 2 revision. DENO_DEPLOYMENT_ID is the
-            # larger immutable configuration identity and is not listed as a
-            # revision by `deno deploy deployments list`.
-            reported_revision_id="$(awk 'tolower($1) == "x-uos-deployment-id:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
+            reported_deployment_id="$(awk 'tolower($1) == "x-uos-deployment-id:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
             last_status="$http_code"
             last_git_sha="$git_sha"
-            last_revision_id="$reported_revision_id"
+            last_deployment_id="$reported_deployment_id"
 
             healthy=false
             if [ "$http_code" = "200" ] && jq -e '.ok == true' "$body" >/dev/null 2>&1; then
               healthy=true
             fi
-            if [ "$healthy" = "true" ] && [ "$git_sha" = "$GITHUB_SHA" ] && [ -n "$reported_revision_id" ] && [ "$reported_revision_id" != "unknown" ]; then
+            if [ "$healthy" = "true" ] && [ "$git_sha" = "$GITHUB_SHA" ] && [ -n "$reported_deployment_id" ] && [ "$reported_deployment_id" != "unknown" ]; then
+              # Deploy 2 currently exposes the immutable configuration ID in
+              # DENO_DEPLOYMENT_ID, while `deployments list` reports the
+              # serving build/revision ID. Correlate the exact health probe
+              # through the platform log envelope, whose `revision` field is
+              # the authoritative build ID, before attesting the route.
+              logs_json="$(timeout 30s deno deploy logs --once --json --non-interactive \
+                --org ubiquity-dao \
+                --app "$TARGET_PROJECT" \
+                --start "$logs_start" \
+                --token "$DENO_DEPLOY_TOKEN" 2>/dev/null || true)"
+              mapped_revision_id="$(printf '%s\n' "$logs_json" | jq -r \
+                --arg sha "$git_sha" \
+                --arg deployment "$reported_deployment_id" '
+                  select((.body? | type) == "string")
+                  | select(.body | startswith("[ai.ubq.fi] health_probe "))
+                  | (.body | sub("^\\[ai\\.ubq\\.fi\\] health_probe "; "") | fromjson?) as $probe
+                  | select(
+                      $probe.git_sha == $sha and
+                      $probe.deno_deployment_id == $deployment
+                    )
+                  | .revision
+                ' | tail -n 1)"
               deployments_json="$(deno deploy deployments list --json --non-interactive --org ubiquity-dao --app "$TARGET_PROJECT" --limit 50 --token "$DENO_DEPLOY_TOKEN" 2>/dev/null || true)"
-              if printf '%s' "$deployments_json" | jq -e --arg id "$reported_revision_id" \
+              if [ -n "$mapped_revision_id" ] && printf '%s' "$deployments_json" | jq -e --arg id "$mapped_revision_id" \
                 '.items[] | select(.id == $id and (.status == "routed" or .status == "succeeded"))' \
                 >/dev/null 2>&1; then
-                revision_id="$reported_revision_id"
+                revision_id="$mapped_revision_id"
+                deployment_id="$reported_deployment_id"
                 revision_url="https://console.deno.com/ubiquity-dao/${TARGET_PROJECT}/builds/${revision_id}"
                 rm -f "$headers" "$body"
                 break
@@ -273,7 +294,7 @@ jobs:
           done
 
           if [ -z "$revision_id" ]; then
-            echo "::error::Stable deployment identity/health check failed for ${stable_url}/health (HTTP ${last_status}, git ${last_git_sha:-<missing>}, revision ${last_revision_id:-<missing>}, expected ${GITHUB_SHA})."
+            echo "::error::Stable deployment identity/health check failed for ${stable_url}/health (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}, expected ${GITHUB_SHA})."
             exit 1
           fi
           {
@@ -283,6 +304,7 @@ jobs:
             echo "- Stable URL: ${stable_url}"
             echo "- Revision URL: ${revision_url}"
             echo "- Revision ID: \`${revision_id}\`"
+            echo "- Deployment ID: \`${deployment_id}\`"
             echo "- Git SHA: \`${GITHUB_SHA}\`"
             echo "- Health: HTTP 200 with \`ok: true\`"
           } >> "$GITHUB_STEP_SUMMARY"
