@@ -1150,6 +1150,54 @@ Deno.test("openai: gateway first-event deadlines return 504 on both streaming ro
   }
 });
 
+Deno.test("openai: Codex pre-header gateway deadlines use server_error on both streaming routes", async () => {
+  setStreamFirstEventDeadlineMsForTest(10);
+  try {
+    for (const route of ["responses", "chat"] as const) {
+      await withFetchMock(
+        (_url, _bodyText, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) {
+              reject(new Error("Codex request did not receive a gateway deadline signal"));
+              return;
+            }
+            const rejectWithAbortReason = () => reject(signal.reason);
+            if (signal.aborted) rejectWithAbortReason();
+            else signal.addEventListener("abort", rejectWithAbortReason, { once: true });
+          }),
+        async () => {
+          const response = route === "responses"
+            ? await handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+              }),
+            )
+            : await handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  messages: [{ role: "user", content: "ping" }],
+                  stream: true,
+                }),
+              }),
+            );
+          const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
+          assert.equal(response.status, 504, route);
+          assert.equal(payload.error?.type, "server_error", route);
+          assert.equal(payload.error?.code, "gateway_timeout", route);
+        },
+      );
+    }
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+  }
+});
+
 Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
   const originalApiKey = Deno.env.get("YUNWU_API_KEY");
   Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
