@@ -302,8 +302,15 @@ export default async function handler(req: Request): Promise<Response> {
     if (staticResponse) return withCors(staticResponse);
   }
 
-  if (req.method === "GET" && path === "/health") {
-    return withCors(await handleHealth());
+  if ((req.method === "GET" || req.method === "HEAD") && path === "/health") {
+    const health = await handleHealth();
+    // Keep HEAD semantically equivalent to public GET liveness while correctly
+    // omitting the body.
+    return withCors(
+      req.method === "HEAD"
+        ? new Response(null, { status: health.status, statusText: health.statusText, headers: health.headers })
+        : health,
+    );
   }
 
   if (req.method === "GET" && path === "/health/providers") {
