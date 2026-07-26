@@ -76,7 +76,9 @@ const {
   CODEX_CATALOG_MAX_VERSIONS,
   CODEX_CATALOG_PREFIX,
   CODEX_CATALOG_RETENTION_MS,
+  getCodexCatalogMemoVersionsForTest,
   handleCodexCatalogModels,
+  resetCodexCatalogMemoForTest,
   storeCodexCatalog,
 } = await import("../src/codex_catalog.ts");
 const { handleModels } = await import("../src/openai.ts");
@@ -94,6 +96,7 @@ const CATALOG_KEY = (version: string): Deno.KvKey => ["ubq_ai", "codex_catalog",
 const seedBaseState = (snapshotVersion = "0.200.0"): void => {
   kvStore.clear();
   beforeAtomicCommit = null;
+  resetCodexCatalogMemoForTest();
   resetRuntimeConfigCacheForTest();
   kvStore.set(keyToString(CODEX_CATALOG_AUTH_GENERATION_KEY), {
     value: AUTH_GENERATION,
@@ -548,6 +551,9 @@ Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bou
       }),
       true,
     );
+    const loaded = await handleCodexCatalogModels(request(version), version);
+    assert.equal(loaded.status, 200);
+    await loaded.body?.cancel();
   }
 
   const metadataEntries = [...kvStore.entries()].filter(([encoded, stored]) => {
@@ -566,6 +572,12 @@ Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bou
     assert.equal(chunks.length, 0);
   }
   assert.equal(kvStore.has(keyToString(CATALOG_KEY(`1.0.${totalVersions - 1}`))), true);
+  const memoVersions = getCodexCatalogMemoVersionsForTest();
+  assert.equal(memoVersions.length, CODEX_CATALOG_MAX_VERSIONS);
+  for (let index = 0; index < totalVersions - CODEX_CATALOG_MAX_VERSIONS; index += 1) {
+    assert.equal(memoVersions.includes(`1.0.${index}`), false);
+  }
+  assert.equal(memoVersions.at(-1), `1.0.${totalVersions - 1}`);
 });
 
 Deno.test("codex catalog: only same-or-newer clients update the normalized snapshot", async () => {

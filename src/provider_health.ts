@@ -48,6 +48,10 @@ const PROVIDER_RECORDS = [
 
 const lastHeartbeatWriteAtMs = new Map<string, number>();
 const lastObservation = new Map<string, ProviderHealthObservation>();
+const providerTransitionQueues = new Map<
+  string,
+  Readonly<{ event: ProviderHealthEvent; status: number | null; tail: Promise<void> }>
+>();
 
 const providerHealthKey = (
   provider: RecordProvider,
@@ -115,15 +119,14 @@ const historyRecordFor = (event: ProviderHealthEvent): (typeof PROVIDER_RECORDS)
   return "refresh";
 };
 
-const recordProviderHealth = async (
+const persistProviderHealth = async (
   provider: RecordProvider,
   identity: string,
   event: ProviderHealthEvent,
   status: number | null,
-  now: () => number,
+  observedAtMs: number,
 ): Promise<void> => {
   try {
-    const observedAtMs = Math.trunc(now());
     if (shouldThrottleObservation(provider, identity, event, status, observedAtMs)) return;
     const kv = await getKv();
     if (!kv) return;
@@ -143,6 +146,36 @@ const recordProviderHealth = async (
   } catch {
     // Health observations are optional telemetry and must never affect routing.
   }
+};
+
+const recordProviderHealth = (
+  provider: RecordProvider,
+  identity: string,
+  event: ProviderHealthEvent,
+  status: number | null,
+  now: () => number,
+): Promise<void> => {
+  const queueKey = `${provider}:${identity}`;
+  const current = providerTransitionQueues.get(queueKey);
+  if (current?.event === event && current.status === status) return current.tail;
+  let observedAtMs: number;
+  try {
+    observedAtMs = Math.trunc(now());
+  } catch {
+    return Promise.resolve();
+  }
+
+  // Reserve the transition synchronously, before getKv() or any other await.
+  // Identical cold-burst observations share this promise, while a different
+  // event is appended to the same provider queue in arrival order.
+  const tail = (current?.tail ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => persistProviderHealth(provider, identity, event, status, observedAtMs));
+  providerTransitionQueues.set(queueKey, { event, status, tail });
+  void tail.finally(() => {
+    if (providerTransitionQueues.get(queueKey)?.tail === tail) providerTransitionQueues.delete(queueKey);
+  });
+  return tail;
 };
 
 export const recordCodexProviderHealth = (
@@ -248,4 +281,5 @@ export const getYunwuProviderHealth = (
 export const resetProviderHealthThrottleForTest = (): void => {
   lastHeartbeatWriteAtMs.clear();
   lastObservation.clear();
+  providerTransitionQueues.clear();
 };

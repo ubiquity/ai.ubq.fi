@@ -10,6 +10,7 @@ class HealthKvStore extends Map<string, unknown> {
   }
 }
 const kvStore = new HealthKvStore();
+let atomicCommitCount = 0;
 
 const kvStub = {
   get: (key: Deno.KvKey) =>
@@ -38,6 +39,7 @@ const kvStub = {
         return chain;
       },
       commit: () => {
+        atomicCommitCount += 1;
         for (const op of ops) {
           if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
           else kvStore.delete(keyToString(op.key));
@@ -52,7 +54,12 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleHealth, handleHealthProviders, handleHealthUpstream } = await import(
+const {
+  handleHealth,
+  handleHealthProviders,
+  handleHealthUpstream,
+  setActiveUpstreamHealthTimeoutMsForTest,
+} = await import(
   "../src/health.ts"
 );
 const { default: handler } = await import("../src/handler.ts");
@@ -171,23 +178,42 @@ Deno.test("provider health persists a recovery immediately while retaining the l
 Deno.test("provider health coalesces identical quota observations without hiding a later transition", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();
-  await recordCodexProviderHealth("coalesced-account", "quota_exhausted", 429, () => 1_000);
+  atomicCommitCount = 0;
   await Promise.all(
     Array.from(
       { length: 100 },
-      () => recordCodexProviderHealth("coalesced-account", "quota_exhausted", 429, () => 1_001),
+      () => recordCodexProviderHealth("coalesced-account", "quota_exhausted", 429, () => 1_000),
     ),
   );
 
-  const coalesced = await getCodexProviderHealth("coalesced-account", () => 1_002);
+  const coalesced = await getCodexProviderHealth("coalesced-account", () => 1_001);
   assert.equal(coalesced.state, "exhausted");
   assert.equal(coalesced.last_observed_at_ms, 1_000);
+  assert.equal(atomicCommitCount, 1);
 
-  await recordCodexProviderHealth("coalesced-account", "success", 200, () => 1_003);
-  const recovered = await getCodexProviderHealth("coalesced-account", () => 1_004);
+  await recordCodexProviderHealth("coalesced-account", "success", 200, () => 2_000);
+  const recovered = await getCodexProviderHealth("coalesced-account", () => 2_001);
   assert.equal(recovered.state, "healthy");
-  assert.equal(recovered.last_observed_at_ms, 1_003);
+  assert.equal(recovered.last_observed_at_ms, 2_000);
   assert.equal(recovered.last_429_at_ms, 1_000);
+});
+
+Deno.test("provider health serializes success to 429 to success transitions", async () => {
+  kvStore.clear();
+  resetProviderHealthThrottleForTest();
+  atomicCommitCount = 0;
+  await Promise.all([
+    recordCodexProviderHealth("ordered-account", "success", 200, () => 1_000),
+    recordCodexProviderHealth("ordered-account", "quota_exhausted", 429, () => 2_000),
+    recordCodexProviderHealth("ordered-account", "success", 200, () => 3_000),
+  ]);
+
+  const health = await getCodexProviderHealth("ordered-account", () => 3_001);
+  assert.equal(health.state, "healthy");
+  assert.equal(health.last_observed_at_ms, 3_000);
+  assert.equal(health.last_success_at_ms, 3_000);
+  assert.equal(health.last_429_at_ms, 2_000);
+  assert.equal(atomicCommitCount, 3);
 });
 
 Deno.test("public health is passive release provenance with zero upstream and KV work", async () => {
@@ -263,5 +289,76 @@ Deno.test("active upstream health retains detailed failure diagnostics", async (
     assert.equal((upstreamPayload.probes as { codex?: { status?: number } } | undefined)?.codex?.status, 503);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("active upstream health preserves the provider that finishes before the shared deadline", async () => {
+  const originalToken = Deno.env.get("YUNWU_SYSTEM_TOKEN");
+  const originalUserId = Deno.env.get("YUNWU_USER_ID");
+  const originalFetch = globalThis.fetch;
+  Deno.env.set("YUNWU_SYSTEM_TOKEN", "system-token");
+  Deno.env.set("YUNWU_USER_ID", "717235");
+  setActiveUpstreamHealthTimeoutMsForTest(20);
+
+  const restoreEnv = (key: string, value: string | undefined): void => {
+    if (value === undefined) Deno.env.delete(key);
+    else Deno.env.set(key, value);
+  };
+  const waitForAbort = (signal: AbortSignal | null | undefined): Promise<Response> =>
+    new Promise<Response>((_resolve, reject) => {
+      if (!signal) {
+        reject(new Error("health probe did not pass an abort signal"));
+        return;
+      }
+      const rejectWithReason = () => reject(signal.reason);
+      if (signal.aborted) rejectWithReason();
+      else signal.addEventListener("abort", rejectWithReason, { once: true });
+    });
+  const jsonResponse = (value: unknown): Response =>
+    new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+
+  try {
+    for (const stalledProvider of ["codex", "yunwu"] as const) {
+      kvStore.clear();
+      kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
+      globalThis.fetch = (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        const isCodex = url.hostname === "chatgpt.com";
+        if ((stalledProvider === "codex" && isCodex) || (stalledProvider === "yunwu" && !isCodex)) {
+          return waitForAbort(init?.signal);
+        }
+        if (isCodex) return Promise.resolve(jsonResponse({ models: [{ slug: "gpt-health" }] }));
+        if (url.pathname === "/api/user/self") {
+          return Promise.resolve(jsonResponse({ success: true, data: { quota: 1_000_000, used_quota: 10 } }));
+        }
+        if (url.pathname === "/api/user/topuprecords") {
+          return Promise.resolve(jsonResponse({ success: true, data: { records: [] } }));
+        }
+        return Promise.resolve(jsonResponse({ success: true, data: { quota_per_unit: 500_000 } }));
+      };
+
+      const response = await handleHealthUpstream();
+      const payload = await response.json() as {
+        probes?: {
+          codex?: { status?: number; error?: string };
+          yunwu_quota?: { status?: number; error?: string } | null;
+        };
+      };
+      assert.equal(response.status, 503, stalledProvider);
+      if (stalledProvider === "codex") {
+        assert.equal(payload.probes?.codex?.status, 503);
+        assert.equal(payload.probes?.codex?.error, "Codex models probe timed out.");
+        assert.equal(payload.probes?.yunwu_quota?.status, 200);
+      } else {
+        assert.equal(payload.probes?.codex?.status, 200);
+        assert.equal(payload.probes?.yunwu_quota?.status, 503);
+        assert.equal(payload.probes?.yunwu_quota?.error, "YunWu quota probe timed out.");
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    setActiveUpstreamHealthTimeoutMsForTest(null);
+    restoreEnv("YUNWU_SYSTEM_TOKEN", originalToken);
+    restoreEnv("YUNWU_USER_ID", originalUserId);
   }
 });

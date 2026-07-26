@@ -6,6 +6,8 @@ export const STREAM_FIRST_EVENT_DEADLINE_MS = 85_000;
 export const STREAM_INACTIVITY_DEADLINE_MS = 85_000;
 export const BUFFERED_INFERENCE_DEADLINE_MS = 85_000;
 
+let streamFirstEventDeadlineMs = STREAM_FIRST_EVENT_DEADLINE_MS;
+
 export const createInferenceSignal = (
   requestSignal: AbortSignal,
   timeoutMs = BUFFERED_INFERENCE_DEADLINE_MS,
@@ -18,7 +20,7 @@ export const createInferenceSignal = (
  */
 export const createStreamFirstEventDeadline = (
   requestSignal: AbortSignal,
-  timeoutMs = STREAM_FIRST_EVENT_DEADLINE_MS,
+  timeoutMs = streamFirstEventDeadlineMs,
 ): Readonly<{ signal: AbortSignal; clear: () => void }> => {
   const deadline = new AbortController();
   let active = true;
@@ -34,4 +36,8 @@ export const createStreamFirstEventDeadline = (
       clearTimeout(timer);
     },
   };
+};
+
+export const setStreamFirstEventDeadlineMsForTest = (timeoutMs: number | null): void => {
+  streamFirstEventDeadlineMs = timeoutMs ?? STREAM_FIRST_EVENT_DEADLINE_MS;
 };

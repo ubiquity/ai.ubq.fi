@@ -21,11 +21,13 @@ import {
   fetchYunwuQuotaObservation,
   getCachedConfiguredYunwuQuotaSnapshot,
   readYunwuAccountCredentials,
+  type YunwuAccountCredentials,
   type YunwuQuotaSnapshot,
 } from "./yunwu_quota.ts";
 
 const AUTH_REFRESH_WINDOW_MS = 2 * 60_000;
 const ACTIVE_UPSTREAM_HEALTH_TIMEOUT_MS = 3_000;
+let activeUpstreamHealthTimeoutMs = ACTIVE_UPSTREAM_HEALTH_TIMEOUT_MS;
 const AUTH_NOT_CONFIGURED = "No Codex auth configured (CODEX_AUTH_JSON_B64 or KV entry missing).";
 
 type HealthAuthMetaBase = {
@@ -73,7 +75,17 @@ type HealthUpstreamProbe = {
   };
 };
 
+type HealthProbeProgress = {
+  auth: HealthAuthMeta | null;
+  codex: ActiveProviderProbe | undefined;
+  yunwu_quota: ActiveProviderProbe | null | undefined;
+};
+
 let upstreamProbeInFlight: Promise<HealthUpstreamProbe> | null = null;
+
+export const setActiveUpstreamHealthTimeoutMsForTest = (timeoutMs: number | null): void => {
+  activeUpstreamHealthTimeoutMs = timeoutMs ?? ACTIVE_UPSTREAM_HEALTH_TIMEOUT_MS;
+};
 
 const nowMs = (): number => Date.now();
 
@@ -278,8 +290,10 @@ const codexProbe = async (auth: HealthAuthMeta, signal: AbortSignal): Promise<Ac
 // This non-billable endpoint authenticates the monitoring account, which is
 // intentionally distinct from the inference API key. Name it accordingly so
 // a green quota check is never mistaken for paid-fallback availability.
-const yunwuQuotaProbe = async (signal: AbortSignal): Promise<ActiveProviderProbe | null> => {
-  const credentials = readYunwuAccountCredentials();
+const yunwuQuotaProbe = async (
+  credentials: YunwuAccountCredentials | null,
+  signal: AbortSignal,
+): Promise<ActiveProviderProbe | null> => {
   if (!credentials) return null;
   try {
     await fetchYunwuQuotaObservation(credentials, { signal });
@@ -294,9 +308,22 @@ const yunwuQuotaProbe = async (signal: AbortSignal): Promise<ActiveProviderProbe
   }
 };
 
+const aggregateUpstreamProbe = (
+  auth: HealthAuthMeta | null,
+  codex: ActiveProviderProbe,
+  yunwuQuota: ActiveProviderProbe | null,
+): HealthUpstreamProbe => {
+  const failures = [codex, yunwuQuota].filter((probe): probe is ActiveProviderProbe =>
+    probe !== null && probe.status >= 400
+  );
+  const status = failures.length === 0 ? 200 : failures.some((probe) => probe.status === 401) ? 401 : 503;
+  return { status, auth, probes: { codex, yunwu_quota: yunwuQuota } };
+};
+
 const probeUpstream = async (
   signal: AbortSignal,
-  onAuth: (auth: HealthAuthMeta) => void,
+  yunwuCredentials: YunwuAccountCredentials | null,
+  progress: HealthProbeProgress,
 ): Promise<HealthUpstreamProbe> => {
   let auth: HealthAuthMeta;
   try {
@@ -316,44 +343,47 @@ const probeUpstream = async (
       },
     };
   }
-  onAuth(auth);
-  const [codex, yunwuQuota] = await Promise.all([codexProbe(auth, signal), yunwuQuotaProbe(signal)]);
-  const failures = [codex, yunwuQuota].filter((probe): probe is ActiveProviderProbe =>
-    probe !== null && probe.status >= 400
-  );
-  const status = failures.length === 0 ? 200 : failures.some((probe) => probe.status === 401) ? 401 : 503;
-  return { status, auth, probes: { codex, yunwu_quota: yunwuQuota } };
+  progress.auth = auth;
+  const codexPromise = codexProbe(auth, signal).then((probe) => progress.codex = probe);
+  const yunwuPromise = yunwuQuotaProbe(yunwuCredentials, signal).then((probe) => progress.yunwu_quota = probe);
+  const [codex, yunwuQuota] = await Promise.all([codexPromise, yunwuPromise]);
+  return aggregateUpstreamProbe(auth, codex, yunwuQuota);
 };
 
-const timeoutProbe = (auth: HealthAuthMeta | null): HealthUpstreamProbe => ({
+const timedOutProviderProbe = (
+  provider: ActiveProviderProbe["provider"],
+): ActiveProviderProbe => ({
   status: 503,
-  auth,
-  probes: {
-    codex: {
-      status: 503,
-      provider: "chatgpt_codex",
-      content_type: null,
-      error: "Active upstream health probe timed out.",
-    },
-    yunwu_quota: null,
-  },
+  provider,
+  content_type: null,
+  error: provider === "chatgpt_codex" ? "Codex models probe timed out." : "YunWu quota probe timed out.",
 });
+
+const timeoutProbe = (progress: HealthProbeProgress): HealthUpstreamProbe =>
+  aggregateUpstreamProbe(
+    progress.auth,
+    progress.codex ?? timedOutProviderProbe("chatgpt_codex"),
+    progress.yunwu_quota === undefined ? timedOutProviderProbe("yunwu_quota") : progress.yunwu_quota,
+  );
 
 const probeUpstreamCoalesced = async (): Promise<HealthUpstreamProbe> => {
   if (upstreamProbeInFlight) return await upstreamProbeInFlight;
   const controller = new AbortController();
-  let observedAuth: HealthAuthMeta | null = null;
+  const yunwuCredentials = readYunwuAccountCredentials();
+  const progress: HealthProbeProgress = {
+    auth: null,
+    codex: undefined,
+    yunwu_quota: yunwuCredentials ? undefined : null,
+  };
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<HealthUpstreamProbe>((resolve) => {
     timeoutId = setTimeout(() => {
       controller.abort(new DOMException("Active upstream health probe timed out.", "TimeoutError"));
-      resolve(timeoutProbe(observedAuth));
-    }, ACTIVE_UPSTREAM_HEALTH_TIMEOUT_MS);
+      resolve(timeoutProbe(progress));
+    }, activeUpstreamHealthTimeoutMs);
   });
   upstreamProbeInFlight = Promise.race([
-    probeUpstream(controller.signal, (auth) => {
-      observedAuth = auth;
-    }),
+    probeUpstream(controller.signal, yunwuCredentials, progress),
     timeout,
   ]).finally(() => {
     if (timeoutId !== null) clearTimeout(timeoutId);

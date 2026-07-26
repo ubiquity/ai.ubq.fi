@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
+import { setStreamFirstEventDeadlineMsForTest } from "../src/inference_deadline.ts";
 import { RELEASE_GIT_SHA } from "../src/release.ts";
 import { sha256Base64Url } from "../src/utils.ts";
 
@@ -1096,6 +1097,57 @@ Deno.test("openai: upstream detail errors are normalized to OpenAI-style envelop
   assert.equal(payload.error?.type, "invalid_request_error");
   assert.equal(payload.error?.code, "upstream_error");
   assert.match(payload.error?.message ?? "", /not supported when using Codex/);
+});
+
+Deno.test("openai: gateway first-event deadlines return 504 on both streaming routes", async () => {
+  setStreamFirstEventDeadlineMsForTest(10);
+  try {
+    for (const route of ["responses", "chat"] as const) {
+      await withFetchMock(
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start() {
+                // Response headers arrive, but the upstream never emits an SSE event.
+              },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream" },
+            },
+          ),
+        async () => {
+          const response = route === "responses"
+            ? await handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+              }),
+            )
+            : await handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  messages: [{ role: "user", content: "ping" }],
+                  stream: true,
+                }),
+              }),
+            );
+          const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
+          assert.equal(response.status, 504, route);
+          assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex", route);
+          assert.equal(payload.error?.type, "server_error", route);
+          assert.equal(payload.error?.code, "gateway_timeout", route);
+          assert.equal(getResponseTelemetry(response)?.streamTerminalType, "deadline", route);
+        },
+      );
+    }
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+  }
 });
 
 Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {

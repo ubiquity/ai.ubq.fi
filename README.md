@@ -292,10 +292,12 @@ ubq-ai -v models
 Health probe (cron-friendly):
 
 ```bash
+# Public release liveness only:
 deno task health:check --url https://ai.ubq.fi
-# auth metadata only (does not refresh auth or consume chat tokens):
-deno task health:check --url https://ai.ubq.fi --auth
-# or: deno run --allow-net scripts/health-check.ts --url https://ai.ubq.fi --json --auth
+
+# Operational diagnostics require admin authentication:
+curl -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" https://ai.ubq.fi/health/providers
+curl -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" https://ai.ubq.fi/health/upstream
 ```
 
 Admin examples (uses `DENO_DEPLOY_TOKEN`):

@@ -48,6 +48,30 @@ const catalogMemo = new Map<string, LoadedCodexCatalog>();
 const catalogMemoKey = (metadata: CodexCatalogMetadata): string =>
   `${metadata.client_version}:${metadata.auth_generation}:${metadata.body_generation}`;
 
+const deleteCatalogMemoVersion = (version: string): void => {
+  for (const [key, catalog] of catalogMemo) {
+    if (catalog.metadata.client_version === version) catalogMemo.delete(key);
+  }
+};
+
+const memoizeCatalog = (catalog: LoadedCodexCatalog): void => {
+  const key = catalogMemoKey(catalog.metadata);
+  // Map insertion order is the LRU order. Reinsert hits and replacements so
+  // the first entry is always the least recently used catalog.
+  catalogMemo.delete(key);
+  catalogMemo.set(key, catalog);
+  while (catalogMemo.size > CODEX_CATALOG_MAX_VERSIONS) {
+    const leastRecentlyUsed = catalogMemo.keys().next().value;
+    if (leastRecentlyUsed === undefined) break;
+    catalogMemo.delete(leastRecentlyUsed);
+  }
+};
+
+export const resetCodexCatalogMemoForTest = (): void => catalogMemo.clear();
+
+export const getCodexCatalogMemoVersionsForTest = (): string[] =>
+  [...catalogMemo.values()].map((catalog) => catalog.metadata.client_version);
+
 const metadataKey = (version: string): Deno.KvKey => [...CODEX_CATALOG_PREFIX, version];
 const chunkKey = (version: string, generation: string, index: number): Deno.KvKey => [
   ...CODEX_CATALOG_CHUNK_PREFIX,
@@ -82,6 +106,7 @@ const pruneCatalogVersions = async (kv: Deno.Kv, currentVersion: string): Promis
     if (metadata.client_version === currentVersion) continue;
     const deleted = await kv.atomic().check(entry).delete(entry.key).commit();
     if (!deleted.ok) continue;
+    deleteCatalogMemoVersion(metadata.client_version);
     await deleteCatalogChunks(kv, metadata.client_version, metadata.body_generation, metadata.chunk_count);
     remaining -= 1;
   }
@@ -141,8 +166,12 @@ const loadCatalog = async (
   const metadata = entry.value;
   if (!isCatalogMetadata(metadata) || metadata.auth_generation !== authGeneration) return null;
   if (nowMs - metadata.fetched_at_ms >= CODEX_CATALOG_RETENTION_MS) return null;
-  const cached = catalogMemo.get(catalogMemoKey(metadata));
-  if (cached) return cached;
+  const memoKey = catalogMemoKey(metadata);
+  const cached = catalogMemo.get(memoKey);
+  if (cached) {
+    memoizeCatalog(cached);
+    return cached;
+  }
 
   const entries = await Promise.all(
     Array.from(
@@ -173,7 +202,7 @@ const loadCatalog = async (
     const parsed = parseCatalogBody(body);
     if (!parsed) return null;
     const loaded = { metadata, body, parsed };
-    catalogMemo.set(catalogMemoKey(metadata), loaded);
+    memoizeCatalog(loaded);
     return loaded;
   } catch {
     return null;
@@ -234,9 +263,7 @@ export const storeCodexCatalog = async (
     await deleteCatalogChunks(kv, input.clientVersion, bodyGeneration, chunkCount);
     return false;
   }
-  for (const key of catalogMemo.keys()) {
-    if (key.startsWith(`${input.clientVersion}:`)) catalogMemo.delete(key);
-  }
+  deleteCatalogMemoVersion(input.clientVersion);
   const previous = metadataEntry.value;
   if (isCatalogMetadata(previous) && previous.body_generation !== bodyGeneration) {
     await deleteCatalogChunks(kv, input.clientVersion, previous.body_generation, previous.chunk_count);
