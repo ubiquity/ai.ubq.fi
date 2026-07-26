@@ -960,9 +960,27 @@ const routingErrorResponse = (
   );
 };
 
+type CodexResponseTimingHooks = Readonly<{
+  onDispatch?: () => void;
+  onHeaders?: () => void;
+}>;
+
+const reportCodexResponseTiming = (callback: (() => void) | undefined): void => {
+  try {
+    callback?.();
+  } catch {
+    // Observability must not affect inference routing or delivery.
+  }
+};
+
 export const fetchCodexResponses = async (
   body: unknown,
-  options: Readonly<{ clientVersion?: string | null; signal?: AbortSignal; affinityKey?: string | null }> = {},
+  options: Readonly<{
+    clientVersion?: string | null;
+    signal?: AbortSignal;
+    affinityKey?: string | null;
+    timing?: CodexResponseTimingHooks;
+  }> = {},
 ): Promise<Response> => {
   const poolEntry = await getAuthPoolEntry();
   const randomized = randomizedAuthEntries(poolEntry);
@@ -1024,6 +1042,7 @@ export const fetchCodexResponses = async (
     try {
       let auth = await awaitWithoutCancellingSharedWork(getValidAuth(accountEntry), options.signal);
       let routing = accountEntry.routing ? await reconcileCodexRoutingAccount(accountEntry.routing, auth) : undefined;
+      reportCodexResponseTiming(options.timing?.onDispatch);
       let response = await fetchCodexResponseWithAuth(
         auth,
         url,
@@ -1031,6 +1050,7 @@ export const fetchCodexResponses = async (
         baseHeaders,
         options.signal,
       );
+      reportCodexResponseTiming(options.timing?.onHeaders);
       void recordCodexResponseHealth(auth.account_id, response);
       if (response.status === 401) {
         await cancelResponseBody(response);
@@ -1040,6 +1060,7 @@ export const fetchCodexResponses = async (
             options.signal,
           );
           routing = routing ? await reconcileCodexRoutingAccount(routing, auth) : undefined;
+          reportCodexResponseTiming(options.timing?.onDispatch);
           response = await fetchCodexResponseWithAuth(
             auth,
             url,
@@ -1047,6 +1068,7 @@ export const fetchCodexResponses = async (
             baseHeaders,
             options.signal,
           );
+          reportCodexResponseTiming(options.timing?.onHeaders);
           void recordCodexResponseHealth(auth.account_id, response);
           if (response.status === 401 && routing) await markCodexCredentialInvalid(routing);
         } catch (error) {
