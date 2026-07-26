@@ -322,7 +322,6 @@ jobs:
           last_status="000"
           last_git_sha=""
           last_deployment_id=""
-          logs_start="$(date -u -d '15 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
           for _attempt in $(seq 1 18); do
             headers="$(mktemp)"
             body="$(mktemp)"
@@ -356,33 +355,14 @@ jobs:
               attestable_health=true
             fi
             if [ "$attestable_health" = "true" ] && [ "$git_sha" = "$GITHUB_SHA" ] && [ -n "$reported_deployment_id" ] && [ "$reported_deployment_id" != "unknown" ]; then
-              # Deploy 2 currently exposes the immutable configuration ID in
-              # DENO_DEPLOYMENT_ID, while `deployments list` reports the
-              # serving build/revision ID. Correlate the exact health probe
-              # through the platform log envelope, whose `revision` field is
-              # the authoritative build ID, before attesting the route.
-              logs_json="$(timeout 30s deno deploy logs --once --json --non-interactive \
-                --org ubiquity-dao \
-                --app "$TARGET_PROJECT" \
-                --start "$logs_start" \
-                --token "$DENO_DEPLOY_TOKEN" 2>/dev/null || true)"
-              mapped_revision_id="$(printf '%s\n' "$logs_json" | jq -r \
-                --arg sha "$git_sha" \
-                --arg deployment "$reported_deployment_id" '
-                  select((.body? | type) == "string")
-                  | select(.body | startswith("[ai.ubq.fi] health_probe "))
-                  | (.body | sub("^\\[ai\\.ubq\\.fi\\] health_probe "; "") | fromjson?) as $probe
-                  | select(
-                      $probe.git_sha == $sha and
-                      $probe.deno_deployment_id == $deployment
-                    )
-                  | .revision
-                ' | tail -n 1)"
+              # DENO_DEPLOY_BUILD_ID is emitted by stable health as the
+              # serving build ID. Health proves routing; this confirms that
+              # build completed successfully in the target app.
               deployments_json="$(deno deploy deployments list --json --non-interactive --org ubiquity-dao --app "$TARGET_PROJECT" --limit 50 --token "$DENO_DEPLOY_TOKEN" 2>/dev/null || true)"
-              if [ -n "$mapped_revision_id" ] && printf '%s' "$deployments_json" | jq -e --arg id "$mapped_revision_id" \
-                '.items[] | select(.id == $id and (.status == "routed" or .status == "succeeded"))' \
+              if printf '%s' "$deployments_json" | jq -e --arg id "$reported_deployment_id" \
+                '.items[] | select(.id == $id and .status == "succeeded")' \
                 >/dev/null 2>&1; then
-                revision_id="$mapped_revision_id"
+                revision_id="$reported_deployment_id"
                 deployment_id="$reported_deployment_id"
                 revision_url="https://console.deno.com/ubiquity-dao/${TARGET_PROJECT}/builds/${revision_id}"
                 rm -f "$headers" "$body"
