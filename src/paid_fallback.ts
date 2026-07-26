@@ -218,13 +218,21 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
   };
 };
 
+type PaidFallbackPolicyEntry = Readonly<{
+  record: ApiKeyRecord;
+  check: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>;
+}>;
+
 const loadStrictKeyRecord = async (
   kv: Deno.Kv,
   keyId: string,
-): Promise<ApiKeyRecord | null> => {
+): Promise<PaidFallbackPolicyEntry | null> => {
   const idEntry = await kv.get<ApiKeyRecord>(apiKeyIdKey(keyId), { consistency: "strong" });
   if (!idEntry.value || !hasStrictPaidFallbackKeyPolicy(idEntry.value)) return null;
-  return idEntry.value;
+  return {
+    record: idEntry.value,
+    check: { key: idEntry.key, versionstamp: idEntry.versionstamp },
+  };
 };
 
 const advanceUsageWindow = (resetAtMs: number, windowMs: number, nowMs: number): number => {
@@ -249,30 +257,37 @@ export const reservePaidFallback = async (
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await getKv();
   if (!kv) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-  const record = await loadStrictKeyRecord(kv, input.keyId);
-  if (!record) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
-  const eligibility = evaluatePaidFallbackEligibility(record, input.model);
-  if (eligibility.kind !== "eligible") return eligibility;
-  if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
-  const windowResetAtMs = advanceUsageWindow(record.usage_reset_at_ms, record.window_ms, input.createdAtMs);
-  const policyVersion = `${record.window_ms}:${record.paid_fallback_pricing_checked_at_ms ?? 0}`;
-  const admitted = await admitPaidFallbackV3({
-    ...input,
-    policyVersion,
-    limitMicrocredits: record.paid_fallback_limit_microcredits,
-    maximumExposureMicrocredits: record.paid_fallback_max_exposure_microcredits?.[input.model] ?? null,
-    initialSettledMicrocredits: 0,
-    quotaPerCredit: record.paid_fallback_quota_per_credit,
-    windowResetAtMs,
-    // Persist the billable-ambiguity boundary in the admission transaction.
-    // Provider fetch must never begin from a row that still looks safely
-    // undispatched.
-    dispatchIntent: true,
-  });
-  if (admitted.kind === "blocked") {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    // This strongly-read check is part of the admission CAS. A just-committed
+    // disable or cap reduction therefore prevents new paid exposure even when
+    // a request had already read the older policy snapshot.
+    const policy = await loadStrictKeyRecord(kv, input.keyId);
+    if (!policy) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
+    const record = policy.record;
+    const eligibility = evaluatePaidFallbackEligibility(record, input.model);
+    if (eligibility.kind !== "eligible") return eligibility;
+    if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
+    const windowResetAtMs = advanceUsageWindow(record.usage_reset_at_ms, record.window_ms, input.createdAtMs);
+    const policyVersion = `${record.window_ms}:${record.paid_fallback_pricing_checked_at_ms ?? 0}`;
+    const admitted = await admitPaidFallbackV3({
+      ...input,
+      policyVersion,
+      policyCheck: policy.check,
+      limitMicrocredits: record.paid_fallback_limit_microcredits,
+      maximumExposureMicrocredits: record.paid_fallback_max_exposure_microcredits?.[input.model] ?? null,
+      initialSettledMicrocredits: 0,
+      quotaPerCredit: record.paid_fallback_quota_per_credit,
+      windowResetAtMs,
+      // Persist the billable-ambiguity boundary in the admission transaction.
+      // Provider fetch must never begin from a row that still looks safely
+      // undispatched.
+      dispatchIntent: true,
+    });
+    if (admitted.kind === "reserved") return { kind: "reserved", reservation: admitted.reservation };
+    if (admitted.reason === "concurrent_update" && attempt < 2) continue;
     return { kind: "blocked", reason: admitted.reason, reset_at_ms: windowResetAtMs };
   }
-  return { kind: "reserved", reservation: admitted.reservation };
+  return { kind: "blocked", reason: "concurrent_update", reset_at_ms: null };
 };
 
 export const recordYunwuUpstreamResponse = async (

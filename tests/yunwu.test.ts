@@ -144,7 +144,10 @@ Deno.test("fetchYunwuResponses applies YunWu Sol reasoning suffixes and forwards
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://yunwu.ai/v1/responses");
   assert.equal(calls[0].init?.method, "POST");
-  assert.equal(calls[0].init?.signal, controller.signal);
+  // The request signal also carries the provider header deadline, so it is a
+  // composed signal rather than the caller's signal by reference.
+  assert.ok(calls[0].init?.signal);
+  assert.equal(calls[0].init?.signal.aborted, false);
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
     model: "gpt-5.6-sol-high",
     input: canonicalBody.input,
@@ -180,15 +183,15 @@ Deno.test("fetchYunwuResponses maps no-reasoning and ultra Sol presets to live a
   ]);
 });
 
-Deno.test("fetchYunwuResponses propagates streaming cancellation", async () => {
+Deno.test("fetchYunwuResponses propagates client cancellation through the header deadline signal", async () => {
   const controller = new AbortController();
-  let observedSignal: AbortSignal | null = null;
+  const observed = { signal: null as AbortSignal | null };
   const fetcher: YunwuFetch = (_input, init) => {
-    observedSignal = init?.signal ?? null;
+    observed.signal = init?.signal ?? null;
     return new Promise<Response>((_resolve, reject) => {
-      observedSignal?.addEventListener(
+      observed.signal?.addEventListener(
         "abort",
-        () => reject(observedSignal?.reason ?? new DOMException("Aborted", "AbortError")),
+        () => reject(observed.signal?.reason ?? new DOMException("Aborted", "AbortError")),
         { once: true },
       );
     });
@@ -202,13 +205,17 @@ Deno.test("fetchYunwuResponses propagates streaming cancellation", async () => {
       signal: controller.signal,
     },
   );
-  controller.abort(new DOMException("Client disconnected", "AbortError"));
+  const cancellation = new DOMException("Client disconnected", "AbortError");
+  controller.abort(cancellation);
 
   await assert.rejects(
     pending,
-    (error: unknown) => error instanceof DOMException && error.name === "AbortError",
+    (error: unknown) => error === cancellation,
   );
-  assert.equal(observedSignal, controller.signal);
+  const observedSignal = observed.signal;
+  assert.ok(observedSignal);
+  assert.equal(observedSignal.aborted, true);
+  assert.equal(observedSignal.reason, cancellation);
 });
 
 Deno.test("fetchYunwuTokenLogs returns only strict allowlisted billing fields", async () => {

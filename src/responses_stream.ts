@@ -1,4 +1,5 @@
 import { getString, isRecord } from "./utils.ts";
+import { STREAM_FIRST_EVENT_DEADLINE_MS, STREAM_INACTIVITY_DEADLINE_MS } from "./inference_deadline.ts";
 
 export const RESPONSES_TERMINAL_EVENT_TYPES = new Set([
   "error",
@@ -14,7 +15,14 @@ export type ResponsesStreamEvent = Readonly<{
   terminal: boolean;
 }>;
 
-export type ResponsesStreamFailureKind = "malformed_event" | "premature_eof" | "read_error";
+export type ResponsesStreamFailureKind =
+  | "malformed_event"
+  | "premature_eof"
+  | "read_error"
+  | "inactivity_timeout"
+  | "event_too_large";
+
+export const MAX_RESPONSES_SSE_EVENT_BYTES = 16 * 1024 * 1024;
 
 export type ResponsesStreamIterator = AsyncGenerator<ResponsesStreamEvent, unknown, unknown>;
 
@@ -32,11 +40,6 @@ export class ResponsesStreamError extends Error {
     this.kind = options?.kind ?? "read_error";
   }
 }
-
-const eventBoundary = (buffer: string): { index: number; length: number } | null => {
-  const match = /\r\n\r\n|\n\n|\r\r/.exec(buffer);
-  return match ? { index: match.index, length: match[0].length } : null;
-};
 
 const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
   const data: string[] = [];
@@ -81,10 +84,18 @@ const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
 export const readResponsesStream = async function* (
   stream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
+  options: Readonly<{ firstEventTimeoutMs?: number; inactivityTimeoutMs?: number }> = {},
 ): ResponsesStreamIterator {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
+  // The event buffer grows geometrically and never exceeds the protocol's
+  // ceiling. Unlike a string accumulator, this neither re-encodes every
+  // fragmented event nor allocates an unbounded intermediate string.
+  let eventBuffer = new Uint8Array(Math.min(4_096, MAX_RESPONSES_SSE_EVENT_BYTES));
+  let eventLength = 0;
+  let thirdPreviousByte = -1;
+  let secondPreviousByte = -1;
+  let previousByte = -1;
   let terminal = false;
   let readerDone = false;
   let cancelStarted = false;
@@ -95,40 +106,117 @@ export const readResponsesStream = async function* (
   };
   const abort = () => cancelReaderOnce(signal?.reason);
   signal?.addEventListener("abort", abort, { once: true });
+  let sawEvent = false;
+  const firstEventDeadlineAtMs = Date.now() + (options.firstEventTimeoutMs ?? STREAM_FIRST_EVENT_DEADLINE_MS);
+  const oversizedEvent = (): ResponsesStreamError =>
+    new ResponsesStreamError("Upstream emitted an oversized Responses SSE event.", {
+      kind: "event_too_large",
+    });
+  const appendEventBytes = (value: Uint8Array): void => {
+    const nextLength = eventLength + value.byteLength;
+    if (nextLength > MAX_RESPONSES_SSE_EVENT_BYTES) throw oversizedEvent();
+    if (nextLength > eventBuffer.byteLength) {
+      const nextCapacity = Math.min(
+        MAX_RESPONSES_SSE_EVENT_BYTES,
+        Math.max(nextLength, eventBuffer.byteLength * 2),
+      );
+      const next = new Uint8Array(nextCapacity);
+      next.set(eventBuffer.subarray(0, eventLength));
+      eventBuffer = next;
+    }
+    eventBuffer.set(value, eventLength);
+    eventLength = nextLength;
+  };
+  const takeEvent = (): string => {
+    const raw = decoder.decode(eventBuffer.subarray(0, eventLength));
+    eventLength = 0;
+    thirdPreviousByte = -1;
+    secondPreviousByte = -1;
+    previousByte = -1;
+    return raw;
+  };
+  const isEventBoundary = (byte: number): boolean =>
+    (thirdPreviousByte === 13 && secondPreviousByte === 10 && previousByte === 13 && byte === 10) ||
+    (previousByte === 10 && byte === 10) ||
+    (previousByte === 13 && byte === 13);
+  const advanceBoundaryState = (byte: number): void => {
+    thirdPreviousByte = secondPreviousByte;
+    secondPreviousByte = previousByte;
+    previousByte = byte;
+  };
+  const markParsedEvent = (parsed: ResponsesStreamEvent): void => {
+    sawEvent = true;
+    if (parsed.terminal) {
+      terminal = true;
+      cancelReaderOnce("Responses terminal event received");
+    }
+  };
+  const processTrailingEvent = (): ResponsesStreamEvent | null => {
+    if (!eventLength) return null;
+    const parsed = parseEventBlock(takeEvent());
+    if (parsed) markParsedEvent(parsed);
+    return parsed;
+  };
+  const ensurePendingSegmentWithinLimit = (pendingBytes: number): void => {
+    if (eventLength + pendingBytes > MAX_RESPONSES_SSE_EVENT_BYTES) {
+      throw new ResponsesStreamError("Upstream emitted an oversized Responses SSE event.", {
+        kind: "event_too_large",
+      });
+    }
+  };
+  const readWithDeadline = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+    const timeoutMs = sawEvent
+      ? options.inactivityTimeoutMs ?? STREAM_INACTIVITY_DEADLINE_MS
+      : Math.max(0, firstEventDeadlineAtMs - Date.now());
+    const timeout = AbortSignal.timeout(timeoutMs);
+    let abortTimeout = (): void => {};
+    try {
+      return await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          abortTimeout = () =>
+            reject(
+              new ResponsesStreamError("Upstream Responses stream became inactive.", {
+                kind: "inactivity_timeout",
+              }),
+            );
+          timeout.addEventListener("abort", abortTimeout, { once: true });
+        }),
+      ]);
+    } finally {
+      timeout.removeEventListener("abort", abortTimeout);
+    }
+  };
   try {
     while (!terminal) {
       if (signal?.aborted) throw signal.reason;
-      const { value, done } = await reader.read();
+      const { value, done } = await readWithDeadline();
       if (signal?.aborted) throw signal.reason;
       readerDone = done;
-      buffer += decoder.decode(value, { stream: !done });
-
-      while (true) {
-        const boundary = eventBoundary(buffer);
-        if (!boundary) break;
-        const end = boundary.index + boundary.length;
-        const parsed = parseEventBlock(buffer.slice(0, end));
-        buffer = buffer.slice(end);
-        if (!parsed) continue;
-        if (parsed.terminal) {
-          terminal = true;
-          cancelReaderOnce("Responses terminal event received");
+      if (value?.byteLength) {
+        let segmentStart = 0;
+        for (let index = 0; index < value.byteLength; index += 1) {
+          const byte = value[index]!;
+          ensurePendingSegmentWithinLimit(index - segmentStart + 1);
+          if (!isEventBoundary(byte)) {
+            advanceBoundaryState(byte);
+            continue;
+          }
+          appendEventBytes(value.subarray(segmentStart, index + 1));
+          segmentStart = index + 1;
+          const parsed = parseEventBlock(takeEvent());
+          if (!parsed) continue;
+          markParsedEvent(parsed);
+          yield parsed;
+          if (parsed.terminal) return;
         }
-        yield parsed;
-        if (parsed.terminal) return;
+        if (segmentStart < value.byteLength) appendEventBytes(value.subarray(segmentStart));
       }
       if (done) {
-        if (buffer.trim()) {
-          const parsed = parseEventBlock(buffer);
-          buffer = "";
-          if (parsed) {
-            if (parsed.terminal) {
-              terminal = true;
-              cancelReaderOnce("Responses terminal event received");
-            }
-            yield parsed;
-            if (parsed.terminal) return;
-          }
+        const parsed = processTrailingEvent();
+        if (parsed) {
+          yield parsed;
+          if (parsed.terminal) return;
         }
         throw new ResponsesStreamError("Upstream Responses stream ended before a terminal event.", {
           kind: "premature_eof",

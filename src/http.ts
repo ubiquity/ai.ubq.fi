@@ -58,7 +58,6 @@ export const openaiError = (
   code?: string,
   options: { type?: string; param?: string | null; headers?: HeadersInit } = {},
 ): Response => {
-  console.trace(`[ai.ubq.fi] OpenAI API error (${status}):`, message);
   const type = (options.type ?? "invalid_request_error").trim() || "invalid_request_error";
   const error: Record<string, unknown> = {
     message,

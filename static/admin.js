@@ -1008,14 +1008,28 @@ let accessUpstreamLoading = false;
 let accessUpstreamLoadedAt = 0;
 const refreshAccessUpstreamSummary = async () => {
   if (accessUpstreamLoading) return;
+  const token = getAdminToken();
+  if (!token) {
+    setAccessValue(accessUpstreamSource, "Missing token");
+    setAccessValue(accessUpstreamExpiry, "Missing token");
+    return;
+  }
   accessUpstreamLoading = true;
   setAccessValue(accessUpstreamSource, "Loading...");
   setAccessValue(accessUpstreamExpiry, "Loading...");
   try {
-    const res = await fetch(apiUrl("/health/auth"), { cache: "no-store" });
+    const res = await fetch(apiUrl("/health/providers"), {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const data = await res.json().catch(() => null);
-    const source = data?.auth?.source ?? "unknown";
-    const expMs = data?.auth?.access_token_exp_ms ?? null;
+    const source = data?.codex?.source ?? "unknown";
+    const expirations = Array.isArray(data?.codex?.accounts)
+      ? data.codex.accounts
+        .map((account) => account?.access_token_exp_ms)
+        .filter((value) => typeof value === "number")
+      : [];
+    const expMs = expirations.length ? Math.min(...expirations) : null;
     if (!res.ok) {
       setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
       setAccessValue(accessUpstreamExpiry, data?.error ?? "Unavailable");

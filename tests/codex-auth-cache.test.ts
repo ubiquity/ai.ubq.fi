@@ -7,26 +7,83 @@ class AuthKv {
   auth: CodexAuthPoolState;
   reads = 0;
   nextReadGate: Promise<void> | null = null;
+  authVersion = 1;
+  readonly extra = new Map<string, { value: unknown; version: number }>();
 
   constructor(auth: CodexAuthPoolState) {
     this.auth = auth;
   }
 
   get<T>(key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
-    assert.deepEqual(key, AUTH_KEY);
     assert.equal(options?.consistency, "strong");
+    if (JSON.stringify(key) !== JSON.stringify(AUTH_KEY)) {
+      const entry = this.extra.get(JSON.stringify(key));
+      return Promise.resolve({
+        key,
+        value: (entry?.value ?? null) as T | null,
+        versionstamp: entry ? String(entry.version).padStart(20, "0") : null,
+      } as Deno.KvEntryMaybe<T>);
+    }
     this.reads += 1;
     const value = this.auth as T;
-    const versionstamp = String(this.reads).padStart(20, "0");
+    const versionstamp = String(this.authVersion).padStart(20, "0");
     const gate = this.nextReadGate;
     this.nextReadGate = null;
     return (gate ?? Promise.resolve()).then(() => ({ key, value, versionstamp }));
   }
 
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
-    assert.deepEqual(key, AUTH_KEY);
-    this.auth = value as CodexAuthPoolState;
+    if (JSON.stringify(key) === JSON.stringify(AUTH_KEY)) {
+      this.auth = value as CodexAuthPoolState;
+      this.authVersion += 1;
+    } else {
+      const encoded = JSON.stringify(key);
+      this.extra.set(encoded, { value, version: (this.extra.get(encoded)?.version ?? 0) + 1 });
+    }
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
+  }
+
+  atomic(): Deno.AtomicOperation {
+    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
+    const writes: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
+    const chain = {
+      check: (...entries: Array<{ key: Deno.KvKey; versionstamp: string | null }>) => {
+        checks.push(...entries);
+        return chain;
+      },
+      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+        writes.push({ type: "set", key, value });
+        return chain;
+      },
+      delete: (key: Deno.KvKey) => {
+        writes.push({ type: "delete", key });
+        return chain;
+      },
+      commit: () => {
+        for (const check of checks) {
+          const isAuth = JSON.stringify(check.key) === JSON.stringify(AUTH_KEY);
+          const version = isAuth
+            ? String(this.authVersion).padStart(20, "0")
+            : this.extra.has(JSON.stringify(check.key))
+            ? String(this.extra.get(JSON.stringify(check.key))!.version).padStart(20, "0")
+            : null;
+          if (version !== check.versionstamp) return Promise.resolve({ ok: false } as const);
+        }
+        for (const write of writes) {
+          const isAuth = JSON.stringify(write.key) === JSON.stringify(AUTH_KEY);
+          if (isAuth) {
+            if (write.type === "set") this.auth = write.value as CodexAuthPoolState;
+            this.authVersion += 1;
+            continue;
+          }
+          const encoded = JSON.stringify(write.key);
+          if (write.type === "delete") this.extra.delete(encoded);
+          else this.extra.set(encoded, { value: write.value, version: (this.extra.get(encoded)?.version ?? 0) + 1 });
+        }
+        return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as const);
+      },
+    };
+    return chain as unknown as Deno.AtomicOperation;
   }
 }
 
@@ -40,6 +97,12 @@ const auth = (label: string): CodexAuthState => ({
   refresh_token: `refresh-${label}`,
   account_id: `account-${label}`,
   updated_at_ms: fixedStartMs,
+});
+const staleAuth = (label: string): CodexAuthState => ({
+  ...auth(label),
+  access_token: `${encodeBase64Url({ alg: "none" })}.${
+    encodeBase64Url({ exp: (fixedStartMs + 30_000) / 1000 })
+  }.${label}`,
 });
 const pool = (...accounts: CodexAuthState[]): CodexAuthPoolState => ({
   accounts,
@@ -79,6 +142,7 @@ Deno.test("Codex responses retry the other account after an account-level 429", 
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
   kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
   resetCodexAuthCacheForTest();
   globalThis.fetch = (input, init) => {
     const request = new Request(input, init);
@@ -107,6 +171,7 @@ Deno.test("Codex responses retry the other account when a 401 cannot refresh", a
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
   kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
   resetCodexAuthCacheForTest();
   globalThis.fetch = (input, init) => {
     const request = new Request(input, init);
@@ -130,7 +195,7 @@ Deno.test("Codex responses retry the other account when a 401 cannot refresh", a
   }
 });
 
-Deno.test("Codex responses report 401 only after every account has an invalid refresh credential", async () => {
+Deno.test("Codex responses synthesize 401 only after every account has an invalid refresh credential", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -139,6 +204,7 @@ Deno.test("Codex responses report 401 only after every account has an invalid re
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
   kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
   resetCodexAuthCacheForTest();
   globalThis.fetch = (input, init) => {
     const request = new Request(input, init);
@@ -151,16 +217,94 @@ Deno.test("Codex responses report 401 only after every account has an invalid re
   };
 
   try {
-    await assert.rejects(
-      () => fetchCodexResponses({ input: "auth-exhaustion" }),
-      (error: unknown) =>
-        error instanceof Error &&
-        (error as Error & { status?: number; code?: string }).status === 401 &&
-        (error as Error & { status?: number; code?: string }).code === "codex_auth_refresh_failed",
-    );
+    const response = await fetchCodexResponses({ input: "auth-exhaustion" });
+    assert.equal(response.status, 401);
+    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "codex_auth_invalid");
     assert.equal(accountIds.length, 2);
     assert.equal(new Set(accountIds).size, 2);
     assert.equal(refreshCalls, 2);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("concurrent proactive refreshes share one OAuth exchange", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  let refreshCalls = 0;
+  let releaseRefresh = (): void => {};
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(staleAuth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("auth.openai.com/oauth/token")) {
+      refreshCalls += 1;
+      await refreshGate;
+      return new Response(JSON.stringify({ access_token: "refreshed-access", refresh_token: "refreshed-refresh" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("{}", { status: 200 });
+  };
+
+  try {
+    const requests = Array.from({ length: 8 }, (_, index) => fetchCodexResponses({ input: `refresh-${index}` }));
+    for (let attempt = 0; attempt < 100 && refreshCalls === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(refreshCalls, 1, "expected one refresh to begin");
+    releaseRefresh();
+    const responses = await Promise.all(requests);
+    assert.equal(refreshCalls, 1);
+    assert.deepEqual(responses.map((response) => response.status), Array(8).fill(200));
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a deterministic proactive refresh rejection quarantines the credential before inference", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  let refreshCalls = 0;
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(staleAuth("invalid"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("auth.openai.com/oauth/token")) {
+      refreshCalls += 1;
+      return Promise.resolve(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 401 }));
+    }
+    inferenceCalls += 1;
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const first = await fetchCodexResponses({ input: "expired-auth" });
+    const second = await fetchCodexResponses({ input: "expired-auth-again" });
+    assert.equal(first.status, 401);
+    assert.equal(second.status, 401);
+    assert.equal(refreshCalls, 1);
+    assert.equal(inferenceCalls, 0);
+    assert.equal((await first.json() as { error?: { code?: string } }).error?.code, "codex_auth_invalid");
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
@@ -187,6 +331,7 @@ Deno.test("Codex auth cache revalidates rotations across warm isolates without p
 
   try {
     kv.auth = pool(auth("old"));
+    kv.extra.clear();
     kv.reads = 0;
     resetCodexAuthCacheForTest();
 

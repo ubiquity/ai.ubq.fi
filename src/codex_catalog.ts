@@ -43,6 +43,10 @@ type LoadedCodexCatalog = Readonly<{
 }>;
 
 type RefreshLease = Readonly<{ owner: string; lease_until_ms: number }>;
+const catalogMemo = new Map<string, LoadedCodexCatalog>();
+
+const catalogMemoKey = (metadata: CodexCatalogMetadata): string =>
+  `${metadata.client_version}:${metadata.auth_generation}:${metadata.body_generation}`;
 
 const metadataKey = (version: string): Deno.KvKey => [...CODEX_CATALOG_PREFIX, version];
 const chunkKey = (version: string, generation: string, index: number): Deno.KvKey => [
@@ -137,11 +141,19 @@ const loadCatalog = async (
   const metadata = entry.value;
   if (!isCatalogMetadata(metadata) || metadata.auth_generation !== authGeneration) return null;
   if (nowMs - metadata.fetched_at_ms >= CODEX_CATALOG_RETENTION_MS) return null;
+  const cached = catalogMemo.get(catalogMemoKey(metadata));
+  if (cached) return cached;
 
+  const entries = await Promise.all(
+    Array.from(
+      { length: metadata.chunk_count },
+      (_, index) => kv.get<Uint8Array>(chunkKey(version, metadata.body_generation, index)),
+    ),
+  );
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
-  for (let index = 0; index < metadata.chunk_count; index += 1) {
-    const chunk = (await kv.get<Uint8Array>(chunkKey(version, metadata.body_generation, index))).value;
+  for (const entry of entries) {
+    const chunk = entry.value;
     if (!(chunk instanceof Uint8Array)) return null;
     chunks.push(chunk);
     totalBytes += chunk.byteLength;
@@ -159,7 +171,10 @@ const loadCatalog = async (
     if (new TextEncoder().encode(body).byteLength !== metadata.body_bytes) return null;
     if (await sha256Hex(body) !== metadata.sha256) return null;
     const parsed = parseCatalogBody(body);
-    return parsed ? { metadata, body, parsed } : null;
+    if (!parsed) return null;
+    const loaded = { metadata, body, parsed };
+    catalogMemo.set(catalogMemoKey(metadata), loaded);
+    return loaded;
   } catch {
     return null;
   }
@@ -178,6 +193,9 @@ export const storeCodexCatalog = async (
 ): Promise<boolean> => {
   if (!parseCodexClientVersion(input.clientVersion) || !parseCatalogBody(input.body)) return false;
   const fetchedAtMs = input.fetchedAtMs ?? Date.now();
+  for (const key of catalogMemo.keys()) {
+    if (key.startsWith(`${input.clientVersion}:`)) catalogMemo.delete(key);
+  }
   const compressed = await gzip(input.body);
   const bodyGeneration = crypto.randomUUID();
   const chunkCount = Math.ceil(compressed.byteLength / CODEX_CATALOG_CHUNK_BYTES);

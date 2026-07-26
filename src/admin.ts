@@ -14,6 +14,7 @@ import {
   upsertCodexAuthAccount,
   validateCodexAuthJson,
 } from "./codex.ts";
+import { recheckCodexRoutingSlot } from "./codex_account_routing.ts";
 import { normalizeCodexModelsPayload } from "./codex_models.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY, storeCodexCatalog } from "./codex_catalog.ts";
 import {
@@ -115,6 +116,19 @@ const runtimeConfigErrorResponse = (error: unknown): Response | null => {
   if (!(error instanceof RuntimeConfigError)) return null;
   const status = error.message.includes("too large") || error.message.includes("4 KiB") ? 413 : 409;
   return openaiError(status, error.message, "runtime_config_invalid", { type: "invalid_request_error" });
+};
+
+/**
+ * Does not issue inference. It merely makes an operator-redeemed quota reset
+ * eligible for the next single, coordinated half-open request.
+ */
+export const handleAdminCodexRecheck = async (slot: number): Promise<Response> => {
+  if (!Number.isInteger(slot) || slot < 1 || slot > 2) {
+    return openaiError(404, "Codex account slot not found", "not_found");
+  }
+  const accepted = await recheckCodexRoutingSlot(slot);
+  if (!accepted) return openaiError(404, "Codex account slot is not configured", "not_found");
+  return new Response(null, { status: 204 });
 };
 
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {

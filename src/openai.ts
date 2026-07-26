@@ -6,11 +6,12 @@ import {
   getCodexModelsSnapshotDefaultModel,
   loadCodexModelsSnapshot,
   loadFullCodexModelsSnapshot,
+  markCodexResponseCompleted,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { json, openaiError } from "./http.ts";
-import { createInferenceSignal } from "./inference_deadline.ts";
+import { createInferenceSignal, createStreamFirstEventDeadline } from "./inference_deadline.ts";
 import { getKv } from "./kv.ts";
 import { loadRuntimeConfig } from "./runtime_config.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, EMBEDDINGS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
@@ -235,6 +236,7 @@ const classifyStreamFailure = (
 ): ResponseStreamTerminalType => {
   if (downstreamSignal.aborted) return "cancelled";
   if (signal.aborted) return "deadline";
+  if (error instanceof ResponsesStreamError && error.kind === "inactivity_timeout") return "deadline";
   if (error instanceof ResponsesStreamError && error.kind === "premature_eof") return "eof";
   return "error";
 };
@@ -581,9 +583,8 @@ const fetchResponsesWithPaidFallback = async (
     );
     const abortReason = options.signal?.reason;
     if (
-      options.signal?.aborted &&
-      abortReason instanceof Error &&
-      abortReason.name === "TimeoutError"
+      (options.signal?.aborted && abortReason instanceof Error && abortReason.name === "TimeoutError") ||
+      (error instanceof Error && error.name === "TimeoutError")
     ) {
       return {
         response: openaiError(
@@ -2643,6 +2644,7 @@ const streamChatCompletions = (
   lifecycle: YunwuTransportLifecycle,
   signal: AbortSignal,
   downstreamSignal: AbortSignal,
+  onResponseCompleted?: () => void,
 ): Response => {
   const encoder = new TextEncoder();
   const iterator = source.iterator;
@@ -2695,6 +2697,7 @@ const streamChatCompletions = (
           }
 
           if (type === "response.completed") {
+            onResponseCompleted?.();
             lifecycle.terminal(type);
             recordStreamTerminalType(usageContext, "response.completed");
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
@@ -2786,6 +2789,7 @@ const completeChatCompletions = async (
   lifecycle: YunwuTransportLifecycle,
   signal: AbortSignal,
   downstreamSignal: AbortSignal,
+  onResponseCompleted?: () => void,
 ): Promise<Response> => {
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
@@ -2818,6 +2822,7 @@ const completeChatCompletions = async (
         continue;
       }
       if (type === "response.completed" && isRecord(ev.response)) {
+        onResponseCompleted?.();
         const usageTokens = extractUsageTokens(ev.response.usage);
         if (usageTokens) {
           usage = {
@@ -4000,7 +4005,12 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     stream,
     reasoning: reasoningLabel,
   });
-  const requestInferenceSignal = inferenceSignal(req);
+  // One timer covers both provider dispatch/headers and the first SSE event.
+  // It is cleared immediately after preflight so active streams get their own
+  // renewable inactivity deadline rather than an 85-second absolute cutoff.
+  const streamFirstEventDeadline = stream ? createStreamFirstEventDeadline(req.signal) : null;
+  const requestInferenceSignal = streamFirstEventDeadline?.signal ?? inferenceSignal(req);
+  const clearStreamFirstEventDeadline = (): void => streamFirstEventDeadline?.clear();
 
   let routed: RoutedResponsesUpstream;
   try {
@@ -4014,19 +4024,25 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       signal: requestInferenceSignal,
     });
   } catch (error) {
+    clearStreamFirstEventDeadline();
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
     return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }
   const upstream = routed.response;
   const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
+  const confirmCodexProbe = (): void => {
+    if (routed.provider === "chatgpt_codex") void markCodexResponseCompleted(upstream);
+  };
 
   if (routed.gatewayResponse) {
+    clearStreamFirstEventDeadline();
     recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
     return upstream;
   }
   if (!upstream.ok) {
+    clearStreamFirstEventDeadline();
     lifecycle.terminal("response.failed");
     recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
@@ -4035,6 +4051,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   }
 
   if (!upstream.body) {
+    clearStreamFirstEventDeadline();
     lifecycle.ambiguous();
     recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
@@ -4046,7 +4063,9 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   let preflight: PreflightedResponsesStream;
   try {
     preflight = await preflightResponsesStream(upstream.body, requestInferenceSignal);
+    clearStreamFirstEventDeadline();
   } catch (error) {
+    clearStreamFirstEventDeadline();
     const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType === "cancelled") lifecycle.cancelled();
@@ -4065,6 +4084,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       lifecycle,
       requestInferenceSignal,
       req.signal,
+      confirmCodexProbe,
     )
     : await completeChatCompletions(
       preflight,
@@ -4074,6 +4094,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       lifecycle,
       requestInferenceSignal,
       req.signal,
+      confirmCodexProbe,
     );
   return withUosWarning(response, warnings);
 };
@@ -4257,7 +4278,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     stream: clientWantsStream,
     reasoning: reasoningLabel,
   });
-  const requestInferenceSignal = inferenceSignal(req);
+  const streamFirstEventDeadline = clientWantsStream ? createStreamFirstEventDeadline(req.signal) : null;
+  const requestInferenceSignal = streamFirstEventDeadline?.signal ?? inferenceSignal(req);
+  const clearStreamFirstEventDeadline = (): void => streamFirstEventDeadline?.clear();
 
   let routed: RoutedResponsesUpstream;
   try {
@@ -4271,19 +4294,25 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       signal: requestInferenceSignal,
     });
   } catch (error) {
+    clearStreamFirstEventDeadline();
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
     return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }
   const upstream = routed.response;
   const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
+  const confirmCodexProbe = (): void => {
+    if (routed.provider === "chatgpt_codex") void markCodexResponseCompleted(upstream);
+  };
 
   if (routed.gatewayResponse) {
+    clearStreamFirstEventDeadline();
     recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
     return upstream;
   }
   if (!upstream.ok) {
+    clearStreamFirstEventDeadline();
     lifecycle.terminal("response.failed");
     recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
@@ -4293,6 +4322,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
 
   if (clientWantsStream) {
     if (!upstream.body) {
+      clearStreamFirstEventDeadline();
       lifecycle.ambiguous();
       recordStreamTerminalType(usageContext, "error");
       await recordErrorUsage(usageContext);
@@ -4303,7 +4333,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     let preflight: PreflightedResponsesStream;
     try {
       preflight = await preflightResponsesStream(upstream.body, requestInferenceSignal);
+      clearStreamFirstEventDeadline();
     } catch (error) {
+      clearStreamFirstEventDeadline();
       const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
       recordStreamTerminalType(usageContext, terminalType);
       if (terminalType === "cancelled") lifecycle.cancelled();
@@ -4324,6 +4356,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       signal: requestInferenceSignal,
       downstreamSignal: req.signal,
       onEvent: (event) => {
+        if (event.type === "response.completed") confirmCodexProbe();
         lifecycle.terminal(event.type);
         recordResponsesTerminal(event, usageContext);
       },
@@ -4365,6 +4398,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     for await (const event of readResponsesStream(upstream.body, requestInferenceSignal)) {
       const ev = event.value;
       if (event.terminal) {
+        if (event.type === "response.completed") confirmCodexProbe();
         lifecycle.terminal(event.type);
         recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
       }

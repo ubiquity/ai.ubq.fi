@@ -916,7 +916,10 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
     // V3 admission reads the immutable request, window, and deletion guard
     // together before its atomic reservation; that adds one read over the
     // legacy single-slot path while avoiding shared reservation contention.
-    assert.ok(kv.reads <= 10, `fallback response unexpectedly reread KV (${kv.reads} reads)`);
+    // The first quota transition hydrates durable account-routing state once;
+    // warm healthy traffic remains zero-read and subsequent blocked requests
+    // bypass Codex entirely.
+    assert.ok(kv.reads <= 11, `fallback response unexpectedly reread KV (${kv.reads} reads)`);
     await response.body?.cancel();
   } finally {
     globalThis.fetch = originalFetch;

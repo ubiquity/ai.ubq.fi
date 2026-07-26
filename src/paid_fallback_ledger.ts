@@ -104,6 +104,10 @@ type AdmissionInput = Readonly<{
   stream: boolean;
   reasoning: string | null;
   dispatchIntent?: boolean;
+  // Present for real gateway admissions. It fences the immutable API-key
+  // policy snapshot that authorized paid exposure; direct ledger tests may
+  // omit it because they do not represent an API-key admission path.
+  policyCheck?: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>;
 }>;
 
 const resolveKv = async (kvOverride: Deno.Kv | null | undefined): Promise<Deno.Kv | null> =>
@@ -398,11 +402,9 @@ export const admitPaidFallbackV3 = async (
       : transitioned.limit_microcredits - transitioned.settled_microcredits - transitioned.reserved_microcredits;
     if (!unlimited && remaining <= 0) {
       if (!policyChanged) return { kind: "blocked", reason: "limit_exceeded" };
-      const transition = await kv.atomic()
-        .check(windowEntry)
-        .check(deletionGuardEntry)
-        .set(windowKey, transitioned)
-        .commit();
+      let atomic = kv.atomic().check(windowEntry).check(deletionGuardEntry);
+      if (input.policyCheck) atomic = atomic.check(input.policyCheck);
+      const transition = await atomic.set(windowKey, transitioned).commit();
       if (transition.ok) return { kind: "blocked", reason: "limit_exceeded" };
       continue;
     }
@@ -436,7 +438,9 @@ export const admitPaidFallbackV3 = async (
       created_at_ms: input.createdAtMs,
       updated_at_ms: now,
     };
-    let atomic = kv.atomic().check(requestEntry).check(deletionGuardEntry).set(requestKey, request).set(
+    let atomic = kv.atomic().check(requestEntry).check(deletionGuardEntry);
+    if (input.policyCheck) atomic = atomic.check(input.policyCheck);
+    atomic = atomic.set(requestKey, request).set(
       pendingKey,
       {
         created_at_ms: now,

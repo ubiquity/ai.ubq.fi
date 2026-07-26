@@ -18,12 +18,14 @@ import { decodeBase64ToString } from "./utils.ts";
 import type { CodexAuthPoolState } from "./types.ts";
 import { readYunwuApiKey } from "./yunwu.ts";
 import {
+  fetchYunwuQuotaObservation,
   getCachedConfiguredYunwuQuotaSnapshot,
   readYunwuAccountCredentials,
   type YunwuQuotaSnapshot,
 } from "./yunwu_quota.ts";
 
 const AUTH_REFRESH_WINDOW_MS = 2 * 60_000;
+const ACTIVE_UPSTREAM_HEALTH_TIMEOUT_MS = 3_000;
 const AUTH_NOT_CONFIGURED = "No Codex auth configured (CODEX_AUTH_JSON_B64 or KV entry missing).";
 
 type HealthAuthMetaBase = {
@@ -55,16 +57,23 @@ type CodexAuthContext = Readonly<{
   account_ids: string[];
 }>;
 
-type HealthUpstreamProbe = {
-  ok: boolean;
+type ActiveProviderProbe = {
   status: number;
-  upstream: "chatgpt_codex";
+  provider: "chatgpt_codex" | "yunwu_quota";
   content_type: string | null;
-  auth: HealthAuthMeta;
   error?: string;
-  details?: string;
-  problems: string[];
 };
+
+type HealthUpstreamProbe = {
+  status: number;
+  auth: HealthAuthMeta | null;
+  probes: {
+    codex: ActiveProviderProbe;
+    yunwu_quota: ActiveProviderProbe | null;
+  };
+};
+
+let upstreamProbeInFlight: Promise<HealthUpstreamProbe> | null = null;
 
 const nowMs = (): number => Date.now();
 
@@ -241,125 +250,124 @@ export const handleHealthProviders = async (
     "x-uos-deployment-id": runtimeDeploymentId(),
   });
 
-const probeUpstream = async (): Promise<HealthUpstreamProbe> => {
-  const auth = enrichAuthMeta(await getCodexAuthMeta());
-
+const codexProbe = async (auth: HealthAuthMeta, signal: AbortSignal): Promise<ActiveProviderProbe> => {
   if (auth.source === "none") {
-    return {
-      ok: false,
-      status: 503,
-      upstream: "chatgpt_codex",
-      content_type: null,
-      auth,
-      error: AUTH_NOT_CONFIGURED,
-      details: AUTH_NOT_CONFIGURED,
-      problems: [AUTH_NOT_CONFIGURED],
-    };
+    return { status: 503, provider: "chatgpt_codex", content_type: null, error: AUTH_NOT_CONFIGURED };
   }
-
   try {
-    const res = await fetchCodexModels();
+    const res = await fetchCodexModels({ signal });
     const contentType = res.headers.get("Content-Type");
-    if (res.ok) {
-      try {
-        await res.body?.cancel();
-      } catch {
-        // ignore
-      }
-      return {
-        ok: true,
-        status: 200,
-        upstream: "chatgpt_codex",
-        content_type: contentType,
-        auth,
-        problems: [],
-      };
-    }
-
-    const text = await res.text().catch(() => "");
-    const snippet = text.trim().slice(0, 800) || res.statusText;
-    const status = res.status === 401 ? 401 : 503;
+    await res.body?.cancel().catch(() => {});
+    if (res.ok) return { status: 200, provider: "chatgpt_codex", content_type: contentType };
     return {
-      ok: false,
-      status,
-      upstream: "chatgpt_codex",
+      status: res.status === 401 ? 401 : 503,
+      provider: "chatgpt_codex",
       content_type: contentType,
-      auth,
-      error: snippet,
-      details: `Codex upstream models endpoint returned ${res.status}.`,
-      problems: status === 401 ? ["Upstream auth is invalid."] : ["Upstream unavailable."],
+      error: "Codex models probe returned an error status.",
     };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+  } catch {
     return {
-      ok: false,
       status: 503,
-      upstream: "chatgpt_codex",
+      provider: "chatgpt_codex",
       content_type: null,
-      auth,
-      error: "Upstream fetch failed",
-      details: detail,
-      problems: [`Upstream fetch failed: ${detail || "network error"}`],
+      error: signal.aborted ? "Codex models probe timed out." : "Codex models probe failed.",
     };
   }
 };
 
-export const handleHealth = async (): Promise<Response> => {
-  const probe = await probeUpstream();
+// This non-billable endpoint authenticates the monitoring account, which is
+// intentionally distinct from the inference API key. Name it accordingly so
+// a green quota check is never mistaken for paid-fallback availability.
+const yunwuQuotaProbe = async (signal: AbortSignal): Promise<ActiveProviderProbe | null> => {
+  const credentials = readYunwuAccountCredentials();
+  if (!credentials) return null;
+  try {
+    await fetchYunwuQuotaObservation(credentials, { signal });
+    return { status: 200, provider: "yunwu_quota", content_type: "application/json" };
+  } catch {
+    return {
+      status: 503,
+      provider: "yunwu_quota",
+      content_type: null,
+      error: signal.aborted ? "YunWu quota probe timed out." : "YunWu quota probe failed.",
+    };
+  }
+};
+
+const probeUpstream = async (
+  signal: AbortSignal,
+  onAuth: (auth: HealthAuthMeta) => void,
+): Promise<HealthUpstreamProbe> => {
+  const auth = enrichAuthMeta(await getCodexAuthMeta());
+  onAuth(auth);
+  const [codex, yunwuQuota] = await Promise.all([codexProbe(auth, signal), yunwuQuotaProbe(signal)]);
+  const failures = [codex, yunwuQuota].filter((probe): probe is ActiveProviderProbe =>
+    probe !== null && probe.status >= 400
+  );
+  const status = failures.length === 0 ? 200 : failures.some((probe) => probe.status === 401) ? 401 : 503;
+  return { status, auth, probes: { codex, yunwu_quota: yunwuQuota } };
+};
+
+const timeoutProbe = (auth: HealthAuthMeta | null): HealthUpstreamProbe => ({
+  status: 503,
+  auth,
+  probes: {
+    codex: {
+      status: 503,
+      provider: "chatgpt_codex",
+      content_type: null,
+      error: "Active upstream health probe timed out.",
+    },
+    yunwu_quota: null,
+  },
+});
+
+const probeUpstreamCoalesced = async (): Promise<HealthUpstreamProbe> => {
+  if (upstreamProbeInFlight) return await upstreamProbeInFlight;
+  const controller = new AbortController();
+  let observedAuth: HealthAuthMeta | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<HealthUpstreamProbe>((resolve) => {
+    timeoutId = setTimeout(() => {
+      controller.abort(new DOMException("Active upstream health probe timed out.", "TimeoutError"));
+      resolve(timeoutProbe(observedAuth));
+    }, ACTIVE_UPSTREAM_HEALTH_TIMEOUT_MS);
+  });
+  upstreamProbeInFlight = Promise.race([
+    probeUpstream(controller.signal, (auth) => {
+      observedAuth = auth;
+    }),
+    timeout,
+  ]).finally(() => {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+    upstreamProbeInFlight = null;
+  });
+  return await upstreamProbeInFlight;
+};
+
+export const handleHealth = (): Response => {
   const gitSha = runtimeGitSha();
   const deploymentId = runtimeDeploymentId();
-  console.info(
-    "[ai.ubq.fi] health_probe",
-    JSON.stringify({
+  // This endpoint is deliberately a release liveness signal, not an active
+  // dependency check. It must remain available during provider/KV incidents.
+  return json(200, {
+    status: "available",
+    release: {
       git_sha: gitSha,
-      deno_deployment_id: deploymentId,
-      upstream_status: probe.status,
-      healthy: probe.ok,
-    }),
-  );
-
-  return json(probe.status, {
-    ok: probe.ok,
-    problems: probe.problems,
-    upstream: probe.upstream,
-    status: probe.status,
-    content_type: probe.content_type,
-    ...(probe.error !== undefined ? { error: probe.error } : {}),
-    ...(probe.details !== undefined ? { details: probe.details } : {}),
-    auth: probe.auth,
+      deployment_id: deploymentId,
+    },
   }, {
+    "Cache-Control": "no-store",
     "x-uos-git-sha": gitSha,
     "x-uos-deployment-id": deploymentId,
   });
 };
 
-export const handleHealthAuth = async (): Promise<Response> => {
-  const auth = enrichAuthMeta(await getCodexAuthMeta());
-  if (auth.source === "none") {
-    return json(503, {
-      ok: false,
-      upstream: "chatgpt_codex",
-      error: AUTH_NOT_CONFIGURED,
-      auth,
-    }, { "x-uos-git-sha": runtimeGitSha(), "x-uos-deployment-id": runtimeDeploymentId() });
-  }
-
-  return json(200, {
-    ok: true,
-    upstream: "chatgpt_codex",
-    auth,
-  }, { "x-uos-git-sha": runtimeGitSha(), "x-uos-deployment-id": runtimeDeploymentId() });
-};
-
 export const handleHealthUpstream = async (): Promise<Response> => {
-  const probe = await probeUpstream();
+  const probe = await probeUpstreamCoalesced();
   return json(probe.status, {
-    ok: probe.ok,
-    upstream: probe.upstream,
     status: probe.status,
-    content_type: probe.content_type,
-    ...(probe.error !== undefined ? { error: probe.error } : {}),
-    ...(probe.details !== undefined ? { details: probe.details } : {}),
+    probes: probe.probes,
     auth: probe.auth,
   }, { "x-uos-git-sha": runtimeGitSha(), "x-uos-deployment-id": runtimeDeploymentId() });
 };

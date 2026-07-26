@@ -2,7 +2,7 @@ import { getKv } from "./kv.ts";
 import { isRecord } from "./utils.ts";
 
 export const PROVIDER_HEALTH_KEY_PREFIX = ["uos_ai", "provider_health", "v1"] as const;
-export const PROVIDER_HEALTH_SUCCESS_WRITE_INTERVAL_MS = 60_000;
+export const PROVIDER_HEALTH_HEARTBEAT_WRITE_INTERVAL_MS = 60_000;
 export const PROVIDER_HEALTH_STALE_AFTER_MS = 30 * 60_000;
 
 export type ProviderHealthState = "healthy" | "degraded" | "exhausted" | "invalid" | "unknown";
@@ -37,9 +37,17 @@ export type ProviderHealthView = Readonly<{
 
 type RecordProvider = "codex" | "yunwu";
 
-const PROVIDER_RECORDS = ["current", "refresh_success"] as const;
+const PROVIDER_RECORDS = [
+  "current",
+  "success",
+  "auth_invalid",
+  "quota_exhausted",
+  "upstream_error",
+  "refresh",
+] as const;
 
-const lastSuccessWriteAtMs = new Map<string, number>();
+const lastHeartbeatWriteAtMs = new Map<string, number>();
+const lastObservation = new Map<string, ProviderHealthObservation>();
 
 const providerHealthKey = (
   provider: RecordProvider,
@@ -68,23 +76,43 @@ export const parseProviderHealthObservation = (value: unknown): ProviderHealthOb
   return value as ProviderHealthObservation;
 };
 
-const stateForEvent = (event: ProviderHealthEvent): Exclude<ProviderHealthState, "unknown"> => {
+const stateForObservation = (observation: ProviderHealthObservation): Exclude<ProviderHealthState, "unknown"> => {
+  const { event } = observation;
   if (event === "success" || event === "reachable" || event === "refresh_success") return "healthy";
-  if (event === "auth_invalid" || event === "refresh_failed") return "invalid";
+  if (event === "auth_invalid") return "invalid";
+  if (event === "refresh_failed") {
+    return observation.status === 400 || observation.status === 401 || observation.status === 403
+      ? "invalid"
+      : "degraded";
+  }
   if (event === "quota_exhausted") return "exhausted";
   return "degraded";
 };
 
-const shouldThrottleSuccess = (
+const shouldThrottleObservation = (
   provider: RecordProvider,
   identity: string,
   event: ProviderHealthEvent,
+  status: number | null,
   nowMs: number,
 ): boolean => {
-  if (event !== "success" && event !== "reachable") return false;
   const throttleKey = `${provider}:${identity}`;
-  const previous = lastSuccessWriteAtMs.get(throttleKey);
-  return previous !== undefined && nowMs - previous < PROVIDER_HEALTH_SUCCESS_WRITE_INTERVAL_MS;
+  const previousObservation = lastObservation.get(throttleKey);
+  // A recovery is a transition, never a heartbeat. Persist it immediately
+  // even when the previous healthy heartbeat was recent.
+  if (!previousObservation || previousObservation.event !== event || previousObservation.status !== status) {
+    return false;
+  }
+  const previous = lastHeartbeatWriteAtMs.get(throttleKey);
+  return previous !== undefined && nowMs - previous < PROVIDER_HEALTH_HEARTBEAT_WRITE_INTERVAL_MS;
+};
+
+const historyRecordFor = (event: ProviderHealthEvent): (typeof PROVIDER_RECORDS)[number] => {
+  if (event === "success" || event === "reachable") return "success";
+  if (event === "auth_invalid") return "auth_invalid";
+  if (event === "quota_exhausted") return "quota_exhausted";
+  if (event === "upstream_error") return "upstream_error";
+  return "refresh";
 };
 
 const recordProviderHealth = async (
@@ -96,21 +124,22 @@ const recordProviderHealth = async (
 ): Promise<void> => {
   try {
     const observedAtMs = Math.trunc(now());
-    if (shouldThrottleSuccess(provider, identity, event, observedAtMs)) return;
+    if (shouldThrottleObservation(provider, identity, event, status, observedAtMs)) return;
     const kv = await getKv();
     if (!kv) return;
-    const commit = await kv.set(
-      providerHealthKey(provider, identity, event === "refresh_success" ? "refresh_success" : "current"),
-      {
-        event,
-        status,
-        observed_at_ms: observedAtMs,
-      } satisfies ProviderHealthObservation,
-    );
+    const observation = {
+      event,
+      status,
+      observed_at_ms: observedAtMs,
+    } satisfies ProviderHealthObservation;
+    const commit = await kv.atomic()
+      .set(providerHealthKey(provider, identity, "current"), observation)
+      .set(providerHealthKey(provider, identity, historyRecordFor(event)), observation)
+      .commit();
     if (!commit.ok) return;
-    if (event === "success" || event === "reachable") {
-      lastSuccessWriteAtMs.set(`${provider}:${identity}`, observedAtMs);
-    }
+    const throttleKey = `${provider}:${identity}`;
+    lastObservation.set(throttleKey, observation);
+    lastHeartbeatWriteAtMs.set(throttleKey, observedAtMs);
   } catch {
     // Health observations are optional telemetry and must never affect routing.
   }
@@ -168,6 +197,7 @@ const toView = (
     "auth_invalid",
     "quota_exhausted",
     "upstream_error",
+    "refresh_success",
     "refresh_failed",
   ]);
   const success = latestObservation(observations, ["success", "reachable"]);
@@ -176,7 +206,7 @@ const toView = (
   const error = latestObservation(observations, ["upstream_error", "refresh_failed"]);
   const refresh = latestObservation(observations, ["refresh_success", "refresh_failed"]);
   return {
-    state: latestState ? stateForEvent(latestState.event) : "unknown",
+    state: latestState ? stateForObservation(latestState) : "unknown",
     stale: nowMs - latest.observed_at_ms > PROVIDER_HEALTH_STALE_AFTER_MS,
     last_event: latest.event,
     last_status: latest.status,
@@ -216,5 +246,6 @@ export const getYunwuProviderHealth = (
 ): Promise<ProviderHealthView> => readProviderHealth("yunwu", "default", now);
 
 export const resetProviderHealthThrottleForTest = (): void => {
-  lastSuccessWriteAtMs.clear();
+  lastHeartbeatWriteAtMs.clear();
+  lastObservation.clear();
 };

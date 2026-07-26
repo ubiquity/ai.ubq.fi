@@ -24,11 +24,10 @@ const usage = () => {
   console.log(`ubq-ai health check
 
 Checks gateway readiness and exits non-zero when unhealthy.
-Use --auth for passive auth metadata without upstream probing.
-Default target is '/health' (readiness). Use '--auth' for '/health/auth'.
+Default target is '/health' (passive release readiness).
 
 Usage:
-  deno run --allow-net --allow-env scripts/health-check.ts [--url https://ai.ubq.fi] [--json] [--auth]
+  deno run --allow-net --allow-env scripts/health-check.ts [--url https://ai.ubq.fi] [--json]
 `);
 };
 
@@ -40,8 +39,7 @@ if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
 const parsed = parseArgs(Deno.args);
 const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
 const wantJson = parsed.json === true;
-const useAuthOnly = parsed.auth === true;
-const endpoint = new URL(useAuthOnly ? "/health/auth" : "/health", baseUrl);
+const endpoint = new URL("/health", baseUrl);
 
 let res: Response;
 try {
@@ -62,12 +60,12 @@ if (wantJson) {
   console.log(JSON.stringify({ status: res.status, ok, payload }, null, 2));
 } else if (ok) {
   console.log(
-    `OK ${res.status} upstream=chatgpt_codex mode=${useAuthOnly ? "auth" : "readiness"}`,
+    `OK ${res.status} mode=readiness`,
   );
 } else {
   const errorText = payload?.error ?? res.statusText;
   console.error(
-    `FAIL ${res.status} upstream=chatgpt_codex mode=${useAuthOnly ? "auth" : "readiness"} error=${errorText}`,
+    `FAIL ${res.status} mode=readiness error=${errorText}`,
   );
 }
 

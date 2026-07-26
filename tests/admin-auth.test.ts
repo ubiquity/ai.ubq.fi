@@ -125,7 +125,6 @@ const {
   handleAdminKvMigrationImport,
 } = await import("../src/admin.ts");
 const { listApiKeyRequestLogs, recordApiKeyRequestLog } = await import("../src/analytics.ts");
-const { handleHealthAuth } = await import("../src/health.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const { buildRuntimeConfig, cacheRuntimeConfig, resetRuntimeConfigCacheForTest } = await import(
   "../src/runtime_config.ts"
@@ -1607,37 +1606,4 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   assert.equal(kvStore.has(keyToString(neighboringV3RequestKey)), true);
   assert.equal(kvStore.has(keyToString(neighboringLegacyLogKey)), true);
   assert.equal(kvStore.has(keyToString(neighboringCounterKey)), true);
-});
-
-Deno.test("health auth summary does not refresh Codex auth", async () => {
-  kvStore.clear();
-  kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
-    accounts: [{
-      access_token: "access",
-      refresh_token: "refresh",
-      account_id: "acct",
-      updated_at_ms: Date.now(),
-    }],
-    updated_at_ms: Date.now(),
-  });
-
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
-    throw new Error("/health/auth should not contact upstream auth");
-  };
-
-  try {
-    const response = await handleHealthAuth();
-    assert.equal(response.status, 200);
-    const payload = await response.json() as {
-      upstream?: string;
-      auth?: { source?: string; access_token_expired?: boolean | null; refresh_recommended?: boolean | null };
-    };
-    assert.equal(payload.upstream, "chatgpt_codex");
-    assert.equal(payload.auth?.source, "kv");
-    assert.equal(payload.auth?.access_token_expired, null);
-    assert.equal(payload.auth?.refresh_recommended, null);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
 });
