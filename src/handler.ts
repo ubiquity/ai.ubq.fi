@@ -127,12 +127,21 @@ const logTerminalRequest = (
     route: string;
     response: Response;
     telemetryResponse?: Response;
-    startedAtMs: number;
+    startedAtMonotonicMs: number;
+    downstreamDrainedAtMonotonicMs?: number;
     keyId: string | null;
     requestId: string;
   }>,
 ): void => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
+  const latencyMs = Math.max(0, Math.round(performance.now() - input.startedAtMonotonicMs));
+  const downstreamDrainMs = telemetry?.stream === true && telemetry.firstSseEventMs !== null &&
+      telemetry.streamTerminalMs !== null && input.downstreamDrainedAtMonotonicMs !== undefined
+    ? Math.max(
+      0,
+      Math.round(input.downstreamDrainedAtMonotonicMs - input.startedAtMonotonicMs) - telemetry.streamTerminalMs,
+    )
+    : null;
   console.info(
     "[ai.ubq.fi] request_terminal",
     JSON.stringify({
@@ -140,7 +149,12 @@ const logTerminalRequest = (
       route: input.route,
       status: input.response.status,
       provider: telemetry?.provider ?? input.response.headers.get("x-uos-upstream") ?? "gateway",
-      latency_ms: Math.max(0, Date.now() - input.startedAtMs),
+      latency_ms: latencyMs,
+      first_codex_dispatch_ms: telemetry?.firstCodexDispatchMs ?? null,
+      first_codex_headers_ms: telemetry?.firstCodexHeadersMs ?? null,
+      first_sse_event_ms: telemetry?.firstSseEventMs ?? null,
+      stream_terminal_ms: telemetry?.streamTerminalMs ?? null,
+      downstream_drain_ms: downstreamDrainMs,
       model: telemetry?.model ?? null,
       reasoning: telemetry?.reasoning ?? null,
       key_id: input.keyId,
@@ -179,7 +193,7 @@ const withTerminalRequestLog = (
   input: Readonly<{
     route: string;
     telemetryResponse?: Response;
-    startedAtMs: number;
+    startedAtMonotonicMs: number;
     keyId: string | null;
     requestId: string;
     onCompleted?: () => Promise<void>;
@@ -187,10 +201,10 @@ const withTerminalRequestLog = (
 ): Promise<Response> => {
   let logged = false;
   let completionFinalization: Promise<void> | null = null;
-  const log = (): void => {
+  const log = (downstreamDrainedAtMonotonicMs?: number): void => {
     if (logged) return;
     logged = true;
-    logTerminalRequest({ ...input, response });
+    logTerminalRequest({ ...input, response, downstreamDrainedAtMonotonicMs });
   };
   const finalizeCompletion = (): Promise<void> => {
     const onCompleted = input.onCompleted;
@@ -223,11 +237,14 @@ const withTerminalRequestLog = (
       try {
         const { done, value } = await reader.read();
         if (done) {
+          // Snapshot the downstream drain before finalization. Accounting can
+          // wait on KV and belongs in total latency, not drain telemetry.
+          const downstreamDrainedAtMonotonicMs = performance.now();
           // The terminal bytes have already been delivered. Finish accounting
           // before closing the downstream body so callers observe durable
           // counters without holding back the terminal frame itself.
           await finalizeCompletion();
-          log();
+          log(downstreamDrainedAtMonotonicMs);
           controller.close();
           return;
         }
@@ -267,6 +284,7 @@ const terminalRouteForRequest = (method: string, path: string): string | null =>
 
 export default async function handler(req: Request): Promise<Response> {
   const requestStartedAtMs = Date.now();
+  const requestStartedAtMonotonicMs = performance.now();
   const requestId = crypto.randomUUID();
   if (req.method === "OPTIONS") {
     return withCors(new Response(null, { status: 204, headers: corsHeaders() }));
@@ -519,7 +537,7 @@ export default async function handler(req: Request): Promise<Response> {
     return terminalRoute
       ? await withTerminalRequestLog(response, {
         route: terminalRoute,
-        startedAtMs: requestStartedAtMs,
+        startedAtMonotonicMs: requestStartedAtMonotonicMs,
         keyId: null,
         requestId,
       })
@@ -547,6 +565,7 @@ export default async function handler(req: Request): Promise<Response> {
     idempotencyPrincipal,
     requestId,
     startedAtMs: requestStartedAtMs,
+    startedAtMonotonicMs: requestStartedAtMonotonicMs,
   };
   if (terminalRoute) {
     console.info(
@@ -587,7 +606,7 @@ export default async function handler(req: Request): Promise<Response> {
     return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
       route,
       telemetryResponse: response,
-      startedAtMs: requestStartedAtMs,
+      startedAtMonotonicMs: requestStartedAtMonotonicMs,
       keyId: usageKeyId,
       requestId,
       onCompleted,
