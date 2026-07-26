@@ -298,7 +298,24 @@ const probeUpstream = async (
   signal: AbortSignal,
   onAuth: (auth: HealthAuthMeta) => void,
 ): Promise<HealthUpstreamProbe> => {
-  const auth = enrichAuthMeta(await getCodexAuthMeta());
+  let auth: HealthAuthMeta;
+  try {
+    auth = enrichAuthMeta(await getCodexAuthMeta());
+  } catch {
+    return {
+      status: 503,
+      auth: null,
+      probes: {
+        codex: {
+          status: 503,
+          provider: "chatgpt_codex",
+          content_type: null,
+          error: "Codex auth metadata could not be read.",
+        },
+        yunwu_quota: null,
+      },
+    };
+  }
   onAuth(auth);
   const [codex, yunwuQuota] = await Promise.all([codexProbe(auth, signal), yunwuQuotaProbe(signal)]);
   const failures = [codex, yunwuQuota].filter((probe): probe is ActiveProviderProbe =>

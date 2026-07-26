@@ -23,8 +23,9 @@ const parseArgs = (args: string[]): Record<string, string | boolean> => {
 const usage = () => {
   console.log(`ubq-ai health check
 
-Checks gateway readiness and exits non-zero when unhealthy.
-Default target is '/health' (passive release readiness).
+Checks public gateway release liveness and exits non-zero when unreachable.
+It does not attest provider or KV health; use authenticated admin health
+endpoints for those diagnostics.
 
 Usage:
   deno run --allow-net --allow-env scripts/health-check.ts [--url https://ai.ubq.fi] [--json]
@@ -60,12 +61,12 @@ if (wantJson) {
   console.log(JSON.stringify({ status: res.status, ok, payload }, null, 2));
 } else if (ok) {
   console.log(
-    `OK ${res.status} mode=readiness`,
+    `OK ${res.status} mode=release_liveness`,
   );
 } else {
   const errorText = payload?.error ?? res.statusText;
   console.error(
-    `FAIL ${res.status} mode=readiness error=${errorText}`,
+    `FAIL ${res.status} mode=release_liveness error=${errorText}`,
   );
 }
 

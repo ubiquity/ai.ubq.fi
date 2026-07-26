@@ -322,6 +322,7 @@ export const readCodex429 = async (response: Response): Promise<{ response: Resp
   const headers = new Headers(response.headers);
   const chunks: Uint8Array[] = [];
   let length = 0;
+  let complete = !response.body;
   const reader = response.body?.getReader();
   let cancelPromise: Promise<void> | null = null;
   const cancelReader = (): void => {
@@ -367,7 +368,10 @@ export const readCodex429 = async (response: Response): Promise<{ response: Resp
         ]).finally(() => {
           if (timeoutListener) deadline.removeEventListener("abort", timeoutListener);
         });
-        if (next.done) break;
+        if (next.done) {
+          complete = true;
+          break;
+        }
         const remaining = MAX_429_BODY_BYTES - length;
         const part = next.value.slice(0, remaining);
         chunks.push(part);
@@ -388,14 +392,33 @@ export const readCodex429 = async (response: Response): Promise<{ response: Resp
     offset += part.byteLength;
   }
   let resetsAtMs: number | null = null;
-  try {
-    const body = JSON.parse(new TextDecoder().decode(bytes));
-    const error = isRecord(body) && isRecord(body.error) ? body.error : null;
-    if (getString(error?.type) === "usage_limit_reached") {
-      resetsAtMs = futureUnixSecondsToMs(error?.resets_at, Date.now());
+  if (complete) {
+    try {
+      const body = JSON.parse(new TextDecoder().decode(bytes));
+      const error = isRecord(body) && isRecord(body.error) ? body.error : null;
+      if (getString(error?.type) === "usage_limit_reached") {
+        resetsAtMs = futureUnixSecondsToMs(error?.resets_at, Date.now());
+      }
+    } catch {
+      // Header fallbacks below cover non-JSON payloads.
     }
-  } catch {
-    // Header fallbacks below cover non-JSON and oversize payloads.
+  }
+  if (!complete) {
+    headers.set("Content-Type", "application/json");
+    return {
+      response: new Response(
+        JSON.stringify({
+          error: {
+            message: "Codex returned an oversized or incomplete rate-limit response.",
+            type: "rate_limit_error",
+            code: "codex_rate_limit_response_truncated",
+            param: null,
+          },
+        }),
+        { status: response.status, statusText: response.statusText, headers },
+      ),
+      resetsAtMs: null,
+    };
   }
   return {
     response: new Response(bytes, { status: response.status, statusText: response.statusText, headers }),
@@ -425,8 +448,10 @@ export const markCodexQuotaBlocked = async (
       ...current,
       quota_blocked_until_ms: deadline,
       quota_block_source: deadline === current.quota_blocked_until_ms ? current.quota_block_source : candidate.source,
-      primary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-primary-used-percent")),
-      secondary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-secondary-used-percent")),
+      primary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-primary-used-percent")) ??
+        current.primary_used_percent,
+      secondary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-secondary-used-percent")) ??
+        current.secondary_used_percent,
       observed_reset_at_ms: parsed.resetsAtMs ?? current.observed_reset_at_ms,
       generation: current.generation + 1,
       probe_lease: null,
@@ -582,7 +607,6 @@ export const selectCodexRoutingAccounts = async (
   const skipped: number[] = [];
   let retryAt: number | null = null;
   let hasQuotaBlock = false;
-  let hasInvalid = false;
   for (const auth of orderedAccounts) {
     const mapped = byId.get(auth.account_id);
     if (!mapped) continue;
@@ -601,7 +625,6 @@ export const selectCodexRoutingAccounts = async (
     const routedAccount = { ...account, quotaHeadroom: quotaHeadroomFor(slot) };
     if (slot.invalid_credential_version === account.credentialVersion) {
       skipped.push(mapped.slot + 1);
-      hasInvalid = true;
       continue;
     }
     if (slot.quota_blocked_until_ms && slot.quota_blocked_until_ms > now) {
@@ -628,7 +651,6 @@ export const selectCodexRoutingAccounts = async (
   }
   if (available.length) return { kind: "eligible", accounts: available, skippedSlots: skipped };
   if (hasQuotaBlock) return { kind: "quota_blocked", skippedSlots: skipped, retryAtMs: retryAt };
-  if (hasInvalid) return { kind: "credentials_invalid", skippedSlots: skipped };
   return { kind: "credentials_invalid", skippedSlots: skipped };
 };
 

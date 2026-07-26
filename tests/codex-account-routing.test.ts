@@ -54,12 +54,14 @@ class RoutingKv {
           const versionstamp = current === undefined ? null : String(current).padStart(20, "0");
           if (versionstamp !== entry.versionstamp) return Promise.resolve({ ok: false } as const);
         }
+        let last = 0;
         for (const write of writes) this.values.set(key(write.key), write.value);
         for (const write of writes) {
           const encoded = key(write.key);
-          this.versions.set(encoded, (this.versions.get(encoded) ?? 0) + 1);
+          last = (this.versions.get(encoded) ?? 0) + 1;
+          this.versions.set(encoded, last);
         }
-        return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as const);
+        return Promise.resolve({ ok: true, versionstamp: String(last).padStart(20, "0") } as const);
       },
     };
     return chain as unknown as Deno.AtomicOperation;
@@ -136,6 +138,22 @@ Deno.test("429 classification reads fragmented JSON before falling back to heade
   );
   assert.equal(parsed.resetsAtMs, resetSeconds * 1_000);
   assert.equal(await parsed.response.text(), payload);
+});
+
+Deno.test("429 classification returns a valid error when capture is truncated", async () => {
+  const oversized = JSON.stringify({ error: { type: "usage_limit_reached", detail: "x".repeat(70 * 1_024) } });
+  const parsed = await readCodex429(
+    new Response(oversized, { status: 429, headers: { "Content-Type": "application/json" } }),
+  );
+  assert.equal(parsed.resetsAtMs, null);
+  assert.deepEqual(await parsed.response.json(), {
+    error: {
+      message: "Codex returned an oversized or incomplete rate-limit response.",
+      type: "rate_limit_error",
+      code: "codex_rate_limit_response_truncated",
+      param: null,
+    },
+  });
 });
 
 Deno.test("expired circuits grant one fenced probe and reject stale completion", async () => {

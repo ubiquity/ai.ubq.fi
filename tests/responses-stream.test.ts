@@ -52,6 +52,17 @@ Deno.test("Responses SSE parser handles mixed separators, multiline data, and fr
   }
 });
 
+Deno.test("Responses SSE parser accepts an LF then CRLF event boundary", async () => {
+  const source = chunked(
+    'data: {"type":"response.output_text.delta","delta":"x"}\n\r\n' +
+      'data: {"type":"response.completed","response":{"status":"completed"}}\r\n\r\n',
+    [],
+  );
+  const events = [];
+  for await (const event of readResponsesStream(source)) events.push(event);
+  assert.deepEqual(events.map((event) => event.type), ["response.output_text.delta", "response.completed"]);
+});
+
 Deno.test("Responses SSE parser rejects malformed JSON and EOF before terminal", async () => {
   const malformed = await captureError(async () => {
     for await (const _ of readResponsesStream(chunked("data: nope\n\n", []))) {

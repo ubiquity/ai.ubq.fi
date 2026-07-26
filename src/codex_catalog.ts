@@ -193,9 +193,6 @@ export const storeCodexCatalog = async (
 ): Promise<boolean> => {
   if (!parseCodexClientVersion(input.clientVersion) || !parseCatalogBody(input.body)) return false;
   const fetchedAtMs = input.fetchedAtMs ?? Date.now();
-  for (const key of catalogMemo.keys()) {
-    if (key.startsWith(`${input.clientVersion}:`)) catalogMemo.delete(key);
-  }
   const compressed = await gzip(input.body);
   const bodyGeneration = crypto.randomUUID();
   const chunkCount = Math.ceil(compressed.byteLength / CODEX_CATALOG_CHUNK_BYTES);
@@ -236,6 +233,9 @@ export const storeCodexCatalog = async (
   if (!published) {
     await deleteCatalogChunks(kv, input.clientVersion, bodyGeneration, chunkCount);
     return false;
+  }
+  for (const key of catalogMemo.keys()) {
+    if (key.startsWith(`${input.clientVersion}:`)) catalogMemo.delete(key);
   }
   const previous = metadataEntry.value;
   if (isCatalogMetadata(previous) && previous.body_generation !== bodyGeneration) {

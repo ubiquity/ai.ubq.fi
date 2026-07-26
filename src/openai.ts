@@ -9,6 +9,7 @@ import {
   markCodexResponseCompleted,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
+import { deriveCodexAffinityKey } from "./codex_affinity.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { json, openaiError } from "./http.ts";
 import { createInferenceSignal, createStreamFirstEventDeadline } from "./inference_deadline.ts";
@@ -443,6 +444,7 @@ const fetchResponsesWithPaidFallback = async (
     usageContext?: UsageContext;
     clientVersion?: string | null;
     signal?: AbortSignal;
+    affinityKey?: string | null;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
   const telemetry = options.usageContext?.responseTelemetry;
@@ -452,6 +454,7 @@ const fetchResponsesWithPaidFallback = async (
     primary = await fetchCodexResponses(body, {
       clientVersion: options.clientVersion,
       signal: options.signal,
+      affinityKey: options.affinityKey,
     });
   } catch (error) {
     if (!(error instanceof CodexError) || error.status !== 401) throw error;
@@ -4129,6 +4132,10 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       );
     }
   }
+  // `client_metadata` is a gateway compatibility extension and is removed
+  // from the upstream payload. Derive its hash before that removal; raw IDs
+  // remain request-local and are never persisted or logged.
+  const affinityKey = await deriveCodexAffinityKey(rawBody);
   const warnings = buildIgnoredWarnings(
     rawRecord,
     new Set([
@@ -4292,6 +4299,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       usageContext,
       clientVersion: modelMetadata.snapshot?.client_version,
       signal: requestInferenceSignal,
+      affinityKey,
     });
   } catch (error) {
     clearStreamFirstEventDeadline();

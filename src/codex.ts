@@ -57,7 +57,8 @@ export type CodexErrorCode =
   | "codex_auth_invalid"
   | "codex_auth_refresh_failed"
   | "codex_auth_refresh_unreachable"
-  | "codex_upstream_unreachable";
+  | "codex_upstream_unreachable"
+  | "gateway_timeout";
 
 export class CodexError extends Error {
   readonly code: CodexErrorCode;
@@ -648,10 +649,12 @@ const refreshAuthCoordinated = async (input: CodexAuthAccountEntry): Promise<Cod
       // Callers race the resulting shared promise independently, so one aborted
       // client cannot cancel a refresh another client still needs.
       let waitedMs = 0;
+      let stepMs = 50;
       const maxWaitMs = Math.min(CODEX_AUTH_REFRESH_WAIT_MS, Math.max(0, lease.lease_until_ms - now));
       while (waitedMs < maxWaitMs) {
-        await delay(50);
-        waitedMs += 50;
+        await delay(stepMs);
+        waitedMs += stepMs;
+        stepMs = Math.min(500, stepMs * 2);
         try {
           const newest = await getCurrentAccountEntry(current.auth.account_id, true);
           if (!sameCodexCredentials(newest.auth, current.auth)) return newest.auth;
@@ -661,7 +664,20 @@ const refreshAuthCoordinated = async (input: CodexAuthAccountEntry): Promise<Cod
           // until the bounded lease observation window elapses.
         }
         const currentLease = await kv.get<CodexRefreshLease>(key, { consistency: "strong" });
-        if (!currentLease.value || currentLease.value.lease_until_ms <= Date.now()) break;
+        if (!currentLease.value || currentLease.value.lease_until_ms <= Date.now()) {
+          // A lease owner may have persisted rotating credentials immediately
+          // before releasing its lease. Re-read once at that handoff so this
+          // waiter never refreshes an obsolete token.
+          try {
+            const newest = await getCurrentAccountEntry(current.auth.account_id, true);
+            if (!sameCodexCredentials(newest.auth, current.auth)) return newest.auth;
+            current = newest;
+          } catch {
+            // The normal fail-open refresh below remains available if KV is
+            // transiently unavailable at the handoff.
+          }
+          break;
+        }
       }
       if (ownedLease) break;
     }
@@ -900,6 +916,16 @@ const fetchCodexResponseWithAuth = async (
       signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal,
     });
   } catch (error) {
+    const timedOut = deadline.signal.aborted ||
+      (signal?.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError");
+    if (timedOut) {
+      throw new CodexError(
+        "Codex upstream exceeded the gateway deadline before response headers were received.",
+        "gateway_timeout",
+        504,
+        error,
+      );
+    }
     throw new CodexError(
       "Codex upstream request failed: upstream unreachable.",
       "codex_upstream_unreachable",
@@ -936,7 +962,7 @@ const routingErrorResponse = (
 
 export const fetchCodexResponses = async (
   body: unknown,
-  options: Readonly<{ clientVersion?: string | null; signal?: AbortSignal }> = {},
+  options: Readonly<{ clientVersion?: string | null; signal?: AbortSignal; affinityKey?: string | null }> = {},
 ): Promise<Response> => {
   const poolEntry = await getAuthPoolEntry();
   const randomized = randomizedAuthEntries(poolEntry);
@@ -960,7 +986,7 @@ export const fetchCodexResponses = async (
     );
   }
   let routedAccounts = [...selected.accounts];
-  const affinityKey = await deriveCodexAffinityKey(body);
+  const affinityKey = options.affinityKey === undefined ? await deriveCodexAffinityKey(body) : options.affinityKey;
   if (affinityKey && routedAccounts.length > 1) {
     const eligibleIds = new Set(routedAccounts.map((account) => account.auth.account_id));
     const cachedId = codexAffinityCache.get(affinityKey, eligibleIds);
@@ -1041,6 +1067,7 @@ export const fetchCodexResponses = async (
         lastResponse = response;
         continue;
       }
+      if (lastResponse) await cancelResponseBody(lastResponse);
       return response;
     } catch (error) {
       lastError = error;
@@ -1052,15 +1079,18 @@ export const fetchCodexResponses = async (
       if (error instanceof CodexError && error.status === 401 && accountEntry.routing) {
         await markCodexCredentialInvalid(accountEntry.routing);
         if (hasFallbackAccount) continue;
+        if (lastResponse) await cancelResponseBody(lastResponse);
         return routingErrorResponse(401, "All configured Codex credentials are invalid.", "codex_auth_invalid");
       }
       // Fetch failures, aborts, deadlines, and 5xxs are account-independent.
       // Switching credentials only makes an attributable 401/429 worse.
+      if (lastResponse) await cancelResponseBody(lastResponse);
       throw error;
     }
   }
 
   if (lastError instanceof CodexError && lastError.status === 401) {
+    if (lastResponse) await cancelResponseBody(lastResponse);
     return routingErrorResponse(401, "All configured Codex credentials are invalid.", "codex_auth_invalid");
   }
   if (lastResponse) return lastResponse;

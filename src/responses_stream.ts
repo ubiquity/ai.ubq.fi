@@ -135,10 +135,17 @@ export const readResponsesStream = async function* (
     previousByte = -1;
     return raw;
   };
-  const isEventBoundary = (byte: number): boolean =>
-    (thirdPreviousByte === 13 && secondPreviousByte === 10 && previousByte === 13 && byte === 10) ||
-    (previousByte === 10 && byte === 10) ||
-    (previousByte === 13 && byte === 13);
+  const isEventBoundary = (byte: number): boolean => {
+    // CRLF is one line terminator. The CR in CRLFCRLF must not terminate
+    // early, while mixed LF+CRLF framing (\n\r\n) must still split.
+    if (byte === 10) {
+      return previousByte === 10 ||
+        (previousByte === 13 && thirdPreviousByte === 13 && secondPreviousByte === 10);
+    }
+    if (byte !== 13) return false;
+    if (previousByte === 13) return true;
+    return previousByte === 10 && secondPreviousByte !== 13;
+  };
   const advanceBoundaryState = (byte: number): void => {
     thirdPreviousByte = secondPreviousByte;
     secondPreviousByte = previousByte;

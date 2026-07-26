@@ -41,9 +41,9 @@ curl -sS https://ai.ubq.fi/admin/api-keys \
 Health:
 
 ```bash
-curl -sS https://ai.ubq.fi/health         # readiness probe: auth + upstream
-curl -sS https://ai.ubq.fi/health/upstream  # upstream probe only
-curl -sS https://ai.ubq.fi/health/auth
+curl -sS https://ai.ubq.fi/health  # public release liveness only
+curl -sS https://ai.ubq.fi/health/providers -H "Authorization: Bearer $DENO_DEPLOY_TOKEN"
+curl -sS https://ai.ubq.fi/health/upstream -H "Authorization: Bearer $DENO_DEPLOY_TOKEN"
 ```
 
 List models:
@@ -474,9 +474,9 @@ deno task ubq-ai admin keys revoke --id "<id>"
 ## Supported routes
 
 - `GET /`, `GET /docs`, `GET /chat`, `GET /admin`, and static assets
-- `GET /health` (readiness: Codex auth presence + upstream probe)
-- `GET /health/auth` (per-account Codex auth metadata; no upstream refresh and no chat tokens used)
-- `GET /health/upstream` (upstream connectivity check; same auth probe logic as `/health`)
+- `GET /health` (public passive release liveness)
+- `GET /health/providers` (admin-only passive provider diagnostics)
+- `GET /health/upstream` (admin-only active upstream diagnostics)
 - `POST /api/auth/register/start`, `POST /api/auth/register/finish`
 - `POST /api/auth/login/start`, `POST /api/auth/login/finish`
 - `GET /api/auth/session`, `POST /api/auth/logout`
