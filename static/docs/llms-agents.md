@@ -126,7 +126,6 @@ UOS gateway endpoints:
 Health endpoints:
 
 - `GET /health`
-- `GET /health/auth`
 - `GET /health/providers`
 - `GET /health/upstream`
 
@@ -477,18 +476,18 @@ token, a KV API key, an admin token, a passkey session, or a GitHub/kernel token
 
 ## Health
 
-- `GET /health` is the readiness check: it validates configured Codex auth metadata and performs an upstream probe.
-- `GET /health/auth` returns per-account Codex auth metadata without refreshing or contacting upstream.
+- `GET /health` is a public passive release-liveness check. It makes no upstream or KV calls.
 - `GET /health/providers` returns passive, last-known Codex-slot and YunWu health from Deno KV. It never sends an
-  upstream or inference request and never exposes Codex account identifiers.
-- `GET /health/upstream` runs the same upstream probe semantics as `/health` without readiness metadata.
+  upstream or inference request and never exposes Codex account identifiers. It requires admin authentication.
+- `GET /health/upstream` is an admin-only active probe of Codex models and the configured non-billable YunWu quota
+  endpoint. It never sends inference and never returns upstream bodies.
 
 The authenticated `GET /admin/providers` view adds cached YunWu wallet diagnostics to the passive provider state. The
 admin Providers tab refreshes this cached view automatically. A stale state means ordinary traffic has not exercised
 that provider recently; opening either view does not verify or spend a model request.
 
-Use `/health/auth` for passive auth state inspection. If it reports an expired access token or
-`codex_auth_refresh_failed`, client authentication may still be valid; the server-side Codex auth needs repair.
+Use `/health/providers` for passive auth/provider state inspection. A stale or invalid Codex slot means server-side
+Codex auth needs repair even if a client credential remains valid.
 
 ## Errors
 

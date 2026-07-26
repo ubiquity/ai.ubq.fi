@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  MAX_RESPONSES_SSE_EVENT_BYTES,
   preflightResponsesStream,
   proxyResponsesStream,
   readResponsesStream,
@@ -49,6 +50,17 @@ Deno.test("Responses SSE parser handles mixed separators, multiline data, and fr
     for await (const event of readResponsesStream(source)) events.push(event);
     assert.deepEqual(events.map((event) => event.type), ["response.output_text.delta", "response.completed"]);
   }
+});
+
+Deno.test("Responses SSE parser accepts an LF then CRLF event boundary", async () => {
+  const source = chunked(
+    'data: {"type":"response.output_text.delta","delta":"x"}\n\r\n' +
+      'data: {"type":"response.completed","response":{"status":"completed"}}\r\n\r\n',
+    [],
+  );
+  const events = [];
+  for await (const event of readResponsesStream(source)) events.push(event);
+  assert.deepEqual(events.map((event) => event.type), ["response.output_text.delta", "response.completed"]);
 });
 
 Deno.test("Responses SSE parser rejects malformed JSON and EOF before terminal", async () => {
@@ -111,6 +123,54 @@ Deno.test("Responses parser wraps reader exceptions and releases its lock", asyn
   assert.ok(error instanceof ResponsesStreamError);
   assert.equal(error.kind, "read_error");
   assert.equal(source.locked, false);
+});
+
+Deno.test("Responses parser keeps one absolute first-event deadline across non-event frames", async () => {
+  let cancelled = 0;
+  let active = true;
+  const source = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      setTimeout(() => {
+        if (active) controller.enqueue(bytes(": keepalive\n\n"));
+      }, 2);
+    },
+    cancel() {
+      active = false;
+      cancelled += 1;
+    },
+  });
+  const error = await captureError(async () => {
+    for await (const _ of readResponsesStream(source, undefined, { firstEventTimeoutMs: 12 })) {
+      // No data event is ever emitted.
+    }
+  });
+  assert.ok(error instanceof ResponsesStreamError);
+  assert.equal(error.kind, "inactivity_timeout");
+  assert.equal(cancelled, 1);
+});
+
+Deno.test("Responses parser rejects one fragmented oversized SSE event and cancels once", async () => {
+  let cancelled = 0;
+  const oversized = `data: ${"x".repeat(MAX_RESPONSES_SSE_EVENT_BYTES + 1)}`;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const value = bytes(oversized);
+      const middle = Math.floor(value.byteLength / 2);
+      controller.enqueue(value.slice(0, middle));
+      controller.enqueue(value.slice(middle));
+    },
+    cancel() {
+      cancelled += 1;
+    },
+  });
+  const error = await captureError(async () => {
+    for await (const _ of readResponsesStream(source)) {
+      // consume
+    }
+  });
+  assert.ok(error instanceof ResponsesStreamError);
+  assert.equal(error.kind, "event_too_large");
+  assert.equal(cancelled, 1);
 });
 
 Deno.test("Responses proxy forwards only the first terminal and cancels a hanging upstream once", async () => {

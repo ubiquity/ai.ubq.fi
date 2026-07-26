@@ -10,6 +10,7 @@ import {
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
   handleAdminCodexPromptsPurge,
+  handleAdminCodexRecheck,
   handleAdminDefaults,
   handleAdminKernelPolicyQueueList,
   handleAdminKernelPubKeysCreate,
@@ -33,7 +34,7 @@ import {
 } from "./auth.ts";
 import { type ApiKeyPolicy, apiKeyQuotaUsedPercent } from "./api_key_policy.ts";
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
-import { handleHealth, handleHealthAuth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
+import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
 import {
   getKernelUsageLimitSnapshot,
@@ -287,15 +288,15 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleHealth());
   }
 
-  if (req.method === "GET" && path === "/health/auth") {
-    return withCors(await handleHealthAuth());
-  }
-
   if (req.method === "GET" && path === "/health/providers") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
     return withCors(await handleHealthProviders());
   }
 
   if (req.method === "GET" && path === "/health/upstream") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
     return withCors(await handleHealthUpstream());
   }
 
@@ -341,6 +342,13 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminCodexAuth(req));
+  }
+
+  const codexRecheckMatch = path.match(/^\/admin\/providers\/codex\/(\d+)\/recheck$/);
+  if (req.method === "POST" && codexRecheckMatch) {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminCodexRecheck(Number(codexRecheckMatch[1])));
   }
 
   if (req.method === "GET" && path === "/admin/codex/models") {

@@ -535,6 +535,36 @@ Deno.test("V3 admits concurrent bounded requests without a single reservation sl
   assert.equal(typeof pending.value?.next_reconciliation_at_ms, "number");
 });
 
+Deno.test("paid fallback admission re-reads policy when a committed disable races its CAS", async () => {
+  memoryKv.clear();
+  const record = await seedStrictKey({ id: "key-policy-cas-barrier", hash: "hash-policy-cas-barrier" });
+  const keyId = String(record.id);
+  const requestId = "request-policy-cas-barrier";
+  let policyMutationApplied = false;
+  memoryKv.beforeAtomicCommit = () => {
+    policyMutationApplied = true;
+    void memoryKv.set(apiKeyIdKey(keyId), {
+      ...record,
+      paid_fallback_enabled: false,
+      paid_fallback_limit_microcredits: 0,
+      paid_fallback_model_ids: [],
+      paid_fallback_quota_per_credit: 0,
+      paid_fallback_max_exposure_microcredits: {},
+      paid_fallback_pricing_checked_at_ms: null,
+    });
+  };
+
+  await withYunwuApiKey(async () => {
+    const decision = await reservePaidFallback(reservationInput(keyId, requestId));
+    assert.deepEqual(decision, { kind: "skip", reason: "disabled" });
+  });
+
+  assert.equal(policyMutationApplied, true);
+  assert.equal((await memoryKv.get(paidFallbackRequestV3Key(keyId, requestId))).value, null);
+  const policy = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(keyId));
+  assert.equal(policy.value?.paid_fallback_enabled, false);
+});
+
 Deno.test("V3 unlimited admission writes independent rows without a shared window", async () => {
   memoryKv.clear();
   const keyId = "v3-unlimited";

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { config } from "../src/config.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 
@@ -53,11 +52,13 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleHealth, handleHealthAuth, handleHealthProviders, handleHealthUpstream } = await import(
+const { handleHealth, handleHealthProviders, handleHealthUpstream } = await import(
   "../src/health.ts"
 );
+const { default: handler } = await import("../src/handler.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const {
+  getCodexProviderHealth,
   recordCodexProviderHealth,
   recordYunwuProviderHealth,
   resetProviderHealthThrottleForTest,
@@ -154,108 +155,89 @@ Deno.test("admin provider health includes cached quota fields without an active 
   }
 });
 
-Deno.test("health readiness is healthy when Codex auth config exists and upstream probe succeeds", async () => {
+Deno.test("provider health persists a recovery immediately while retaining the last 429", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
+  resetProviderHealthThrottleForTest();
+  await recordCodexProviderHealth("recovering-account", "success", 200, () => 1_000);
+  await recordCodexProviderHealth("recovering-account", "quota_exhausted", 429, () => 2_000);
+  await recordCodexProviderHealth("recovering-account", "success", 200, () => 3_000);
 
+  const health = await getCodexProviderHealth("recovering-account", () => 3_001);
+  assert.equal(health.state, "healthy");
+  assert.equal(health.last_429_at_ms, 2_000);
+  assert.equal(health.last_success_at_ms, 3_000);
+});
+
+Deno.test("provider health coalesces identical quota observations without hiding a later transition", async () => {
+  kvStore.clear();
+  resetProviderHealthThrottleForTest();
+  await recordCodexProviderHealth("coalesced-account", "quota_exhausted", 429, () => 1_000);
+  await Promise.all(
+    Array.from(
+      { length: 100 },
+      () => recordCodexProviderHealth("coalesced-account", "quota_exhausted", 429, () => 1_001),
+    ),
+  );
+
+  const coalesced = await getCodexProviderHealth("coalesced-account", () => 1_002);
+  assert.equal(coalesced.state, "exhausted");
+  assert.equal(coalesced.last_observed_at_ms, 1_000);
+
+  await recordCodexProviderHealth("coalesced-account", "success", 200, () => 1_003);
+  const recovered = await getCodexProviderHealth("coalesced-account", () => 1_004);
+  assert.equal(recovered.state, "healthy");
+  assert.equal(recovered.last_observed_at_ms, 1_003);
+  assert.equal(recovered.last_429_at_ms, 1_000);
+});
+
+Deno.test("public health is passive release provenance with zero upstream and KV work", async () => {
+  kvStore.clear();
+  let fetchCalls = 0;
+  let kvCalls = 0;
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
-    Promise.resolve(
-      new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+  const originalGet = kvStub.get;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    throw new Error("public health must not fetch");
+  };
+  (kvStub as { get: typeof kvStub.get }).get = (...args) => {
+    kvCalls += 1;
+    return originalGet(...args);
+  };
 
   try {
     const response = await handleHealth();
     const payload = await response.json() as {
-      ok?: boolean;
-      status?: number;
-      upstream?: string;
-      problems?: string[];
-      auth?: { source?: string; access_token_expired?: boolean | null; refresh_recommended?: boolean | null };
+      status?: string;
+      release?: { git_sha?: string; deployment_id?: string };
     };
 
     assert.equal(response.status, 200);
-    assert.equal(payload.ok, true);
-    assert.equal(payload.upstream, "chatgpt_codex");
-    assert.equal(payload.status, 200);
-    assert.equal(payload.problems?.length, 0);
-    assert.equal(payload.auth?.source, "kv");
+    assert.equal(payload.status, "available");
+    assert.equal(typeof payload.release?.git_sha, "string");
+    assert.equal(typeof payload.release?.deployment_id, "string");
+    assert.equal(fetchCalls, 0);
+    assert.equal(kvCalls, 0);
   } finally {
     globalThis.fetch = originalFetch;
+    (kvStub as { get: typeof kvStub.get }).get = originalGet;
   }
 });
 
-Deno.test("health readiness is unavailable without configured Codex auth", async () => {
-  kvStore.clear();
-  const originalFetch = globalThis.fetch;
-  const originalConfigAuth = config.codexAuthJsonB64;
-
-  globalThis.fetch = () => {
-    throw new Error("/health should not contact upstream auth when auth is missing");
-  };
-
-  try {
-    (config as { codexAuthJsonB64: string }).codexAuthJsonB64 = "";
-    const response = await handleHealth();
-    const payload = await response.json() as { ok?: boolean; status?: number; problems?: string[] };
-    assert.equal(response.status, 503);
-    assert.equal(payload.ok, false);
-    assert.equal(payload.status, 503);
-    assert.ok(payload.problems?.some((problem) => problem.includes("No Codex auth configured")));
-  } finally {
-    (config as { codexAuthJsonB64: string }).codexAuthJsonB64 = originalConfigAuth;
-    globalThis.fetch = originalFetch;
+Deno.test("detailed provider health and recheck routes require admin authentication", async () => {
+  for (
+    const request of [
+      new Request("https://ai.ubq.fi/health/providers"),
+      new Request("https://ai.ubq.fi/health/upstream"),
+      new Request("https://ai.ubq.fi/admin/providers/codex/1/recheck", { method: "POST" }),
+    ]
+  ) {
+    const response = await handler(request);
+    assert.equal(response.status, 401);
   }
 });
 
-Deno.test("health readiness reports 503 when Codex upstream refresh fails (401 upstream auth flow)", async () => {
-  kvStore.clear();
-  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) - 10_000)));
-
-  const originalFetch = globalThis.fetch;
-  const originalDeployFlag = (config as { isDeploy: boolean }).isDeploy;
-  const originalConfigAuth = config.codexAuthJsonB64;
-  (config as { isDeploy: boolean }).isDeploy = true;
-  globalThis.fetch = (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url.includes("auth.openai.com/oauth/token")) {
-      return Promise.resolve(
-        new Response(JSON.stringify({ error: "invalid_grant" }), {
-          status: 401,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    }
-    return Promise.resolve(new Response("upstream", { status: 200, headers: { "Content-Type": "text/plain" } }));
-  };
-
-  try {
-    (config as { codexAuthJsonB64: string }).codexAuthJsonB64 = "";
-    const response = await handleHealth();
-    const payload = await response.json() as {
-      ok?: boolean;
-      status?: number;
-      error?: string;
-      details?: string;
-      upstream?: string;
-    };
-    assert.equal(response.status, 503);
-    assert.equal(payload.ok, false);
-    assert.equal(payload.status, 503);
-    assert.equal(payload.error, "Upstream fetch failed");
-    assert.equal(payload.upstream, "chatgpt_codex");
-    assert.match(payload.details ?? "", /Codex auth refresh failed/);
-  } finally {
-    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
-    (config as { codexAuthJsonB64: string }).codexAuthJsonB64 = originalConfigAuth;
-    globalThis.fetch = originalFetch;
-  }
-});
-
-Deno.test("/health and /health/upstream share upstream semantics", async () => {
+Deno.test("active upstream health retains detailed failure diagnostics", async () => {
   kvStore.clear();
   kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
 
@@ -269,77 +251,17 @@ Deno.test("/health and /health/upstream share upstream semantics", async () => {
     );
 
   try {
-    const readiness = await handleHealth();
     const upstream = await handleHealthUpstream();
-
-    const readinessPayload = await readiness.json() as Record<string, unknown>;
     const upstreamPayload = await upstream.json() as Record<string, unknown>;
 
-    assert.equal(readiness.status, 503);
     assert.equal(upstream.status, 503);
-    assert.equal(readinessPayload.ok, false);
-    assert.equal(upstreamPayload.ok, false);
-    assert.equal(readinessPayload.upstream, upstreamPayload.upstream);
-    assert.equal(readinessPayload.status, upstreamPayload.status);
-    assert.equal(readinessPayload.content_type, upstreamPayload.content_type);
-    assert.equal(readinessPayload.error, upstreamPayload.error);
-    assert.equal(readinessPayload.details, upstreamPayload.details);
+    assert.equal(upstreamPayload.status, 503);
     assert.equal(
-      (readinessPayload.auth as { source?: string } | undefined)?.source,
-      (upstreamPayload.auth as {
-        source?: string;
-      } | undefined)?.source,
+      (upstreamPayload.probes as { codex?: { provider?: string; status?: number } } | undefined)?.codex?.provider,
+      "chatgpt_codex",
     );
-    assert.ok(Array.isArray(readinessPayload.problems));
+    assert.equal((upstreamPayload.probes as { codex?: { status?: number } } | undefined)?.codex?.status, 503);
   } finally {
     globalThis.fetch = originalFetch;
   }
-});
-
-Deno.test("health auth summary remains passive and does not refresh upstream auth", async () => {
-  kvStore.clear();
-  kvStore.set(
-    keyToString(CODEX_AUTH_KEY),
-    makeAuthPool({
-      access_token: makeJwt(Math.floor(Date.now() / 1000) + 3600),
-      refresh_token: "refresh",
-      account_id: "acct",
-      updated_at_ms: Date.now(),
-    }),
-  );
-
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
-    throw new Error("/health/auth should not contact upstream auth");
-  };
-
-  try {
-    const response = await handleHealthAuth();
-    assert.equal(response.status, 200);
-    const payload = await response.json() as { upstream?: string; auth?: { source?: string } };
-    assert.equal(payload.upstream, "chatgpt_codex");
-    assert.equal(payload.auth?.source, "kv");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-Deno.test("health auth summary reports both slots without exposing account ids", async () => {
-  kvStore.clear();
-  kvStore.set(
-    keyToString(CODEX_AUTH_KEY),
-    makeAuthPool(
-      { ...makeAuthEntry(Math.floor(Date.now() / 1000) + 3600), account_id: "private-account-one" },
-      { ...makeAuthEntry(Math.floor(Date.now() / 1000) + 7200), account_id: "private-account-two" },
-    ),
-  );
-
-  const response = await handleHealthAuth();
-  assert.equal(response.status, 200);
-  const payload = await response.json() as {
-    auth?: { account_count?: number; accounts?: Array<{ slot?: number }> };
-  };
-  assert.equal(payload.auth?.account_count, 2);
-  assert.deepEqual(payload.auth?.accounts?.map((account) => account.slot), [1, 2]);
-  assert.equal(JSON.stringify(payload).includes("private-account"), false);
 });

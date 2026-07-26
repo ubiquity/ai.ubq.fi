@@ -1,3 +1,5 @@
+import { STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
+
 export const YUNWU_BASE_URL = "https://yunwu.ai";
 
 const YUNWU_API_KEY_ENV = "YUNWU_API_KEY";
@@ -406,21 +408,33 @@ export const fetchYunwuResponses = async (
   headers.set("Content-Type", "application/json");
 
   let response: Response;
+  const headersDeadline = new AbortController();
+  const headersTimer = setTimeout(
+    () => headersDeadline.abort(new DOMException("YunWu response headers timed out.", "TimeoutError")),
+    STREAM_FIRST_EVENT_DEADLINE_MS,
+  );
+  const signal = options.signal ? AbortSignal.any([options.signal, headersDeadline.signal]) : headersDeadline.signal;
   try {
     response = await (options.fetcher ?? fetch)(YUNWU_RESPONSES_URL, {
       method: "POST",
       headers,
       body: encodedBody,
       redirect: "manual",
-      signal: options.signal,
+      signal,
     });
   } catch (error) {
-    rethrowCancellation(error, options.signal);
+    if (options.signal?.aborted) throw options.signal.reason ?? error;
+    if (headersDeadline.signal.aborted) throw headersDeadline.signal.reason ?? error;
+    rethrowCancellation(error, signal);
     throw new YunwuError(
       "YunWu Responses request could not reach the upstream service.",
       "yunwu_upstream_unreachable",
       502,
     );
+  } finally {
+    // The deadline covers only request dispatch and response headers. Once a
+    // streaming body exists, the shared SSE reader owns renewable inactivity.
+    clearTimeout(headersTimer);
   }
 
   return {

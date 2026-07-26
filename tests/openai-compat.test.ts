@@ -94,6 +94,7 @@ const { getResponseTelemetry, handleChatCompletions, handleModelCapabilities, ha
   );
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
+const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -301,6 +302,10 @@ const withFetchMock = async <T>(
     kvStore.delete(keyToString(["uos_ai", "runtime_config", "v2"]));
   }
   resetRuntimeConfigCacheForTest();
+  // Each mocked exchange is an independent gateway isolate/request fixture.
+  // Circuit behavior itself is covered by codex-account-routing.test.ts.
+  kvStore.delete(keyToString(["uos_ai", "codex_account_routing", "v1"]));
+  resetCodexAuthCacheForTest();
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1272,7 +1277,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("cancellation after reservation but before dispatch releases exposure", async () => {
+    await t.step("cancellation before fallback admission creates no paid exposure", async () => {
       const keyId = "fallback-cancel-before-dispatch";
       const requestId = "request-fallback-cancel-before-dispatch";
       seedPaidFallbackKey(keyId);
@@ -1323,17 +1328,14 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       assert.equal(yunwuCalls, 0);
       assert.equal(getResponseTelemetry(response)?.provider, "chatgpt_codex");
       const stored = getStoredPaidFallbackRequest(keyId, requestId);
-      assert.equal(stored?.dispatch_state, "not_dispatched");
-      assert.equal(stored?.terminal_state, "cancelled");
-      assert.equal(stored?.billing_state, "not_billed");
+      assert.equal(stored, null);
       const keyRecord = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
         usage_reset_at_ms: number;
       };
       const window = kvStore.get(
         keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, keyRecord.usage_reset_at_ms]),
       ) as { reserved_microcredits?: number; pending_count?: number } | undefined;
-      assert.equal(window?.reserved_microcredits, 0);
-      assert.equal(window?.pending_count, 0);
+      assert.equal(window, undefined);
     });
 
     await t.step("Responses sends the same canonical payload to YunWu exactly once", async () => {
