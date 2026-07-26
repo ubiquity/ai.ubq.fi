@@ -284,7 +284,8 @@ const withUpstreamProviderHeader = (response: Response, provider: string | null 
 const toCodexErrorResponse = (error: unknown, provider?: string | null): Response => {
   let response: Response;
   if (error instanceof CodexError) {
-    response = openaiError(error.status, error.message, error.code);
+    const options = error.code === "gateway_timeout" ? { type: "server_error" } : undefined;
+    response = openaiError(error.status, error.message, error.code, options);
   } else {
     const detail = formatErrorSnippet(error);
     const message = detail ? `Codex upstream request failed: ${detail}` : "Codex upstream request failed.";
