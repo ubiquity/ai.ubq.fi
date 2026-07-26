@@ -250,6 +250,16 @@ Deno.test("public health is passive release provenance with zero upstream and KV
   }
 });
 
+Deno.test("public health HEAD is release liveness without a response body", async () => {
+  const response = await handler(new Request("https://ai.ubq.fi/health", { method: "HEAD" }));
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/json");
+  assert.equal(typeof response.headers.get("x-uos-git-sha"), "string");
+  assert.equal(typeof response.headers.get("x-uos-deployment-id"), "string");
+  assert.equal(await response.text(), "");
+});
+
 Deno.test("detailed provider health and recheck routes require admin authentication", async () => {
   for (
     const request of [
