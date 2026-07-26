@@ -6,6 +6,7 @@ import {
   markCodexSuccess,
   readCodex429,
   recheckCodexRoutingSlot,
+  reconcileCodexRoutingAccount,
   resetCodexAccountRoutingForTest,
   selectCodexRoutingAccounts,
 } from "../src/codex_account_routing.ts";
@@ -237,6 +238,52 @@ Deno.test("an expired circuit receives one half-open probe before a healthy sibl
     assert.equal(selection.accounts[0]?.auth.account_id, "one");
     assert.notEqual(selection.accounts[0]?.probeToken, null);
     assert.equal(selection.accounts[1]?.auth.account_id, "two");
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("unchanged auth reconciliation preserves a single-account half-open success fence", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = Date.now();
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(
+        JSON.stringify({ error: { type: "usage_limit_reached", resets_at: Math.floor(now / 1_000) + 60 } }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+      now,
+    );
+
+    const selection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 61_000);
+    assert.equal(selection.kind, "eligible");
+    if (selection.kind !== "eligible") return;
+    const probe = selection.accounts[0]!;
+    assert.notEqual(probe.probeGeneration, null);
+    assert.notEqual(probe.probeToken, null);
+
+    const reconciled = await reconcileCodexRoutingAccount(probe, probe.auth);
+    assert.equal(reconciled.probeGeneration, probe.probeGeneration);
+    assert.equal(reconciled.probeToken, probe.probeToken);
+    await markCodexSuccess(reconciled);
+
+    resetCodexAccountRoutingForTest();
+    const recovered = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 61_001);
+    assert.equal(recovered.kind, "eligible");
+    if (recovered.kind === "eligible") {
+      assert.equal(recovered.accounts[0]?.probeGeneration, null);
+      assert.equal(recovered.accounts[0]?.probeToken, null);
+    }
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();

@@ -483,6 +483,11 @@ export const reconcileCodexRoutingAccount = async (
   auth: CodexAuthState,
 ): Promise<RoutingAccount> => {
   const credentialVersion = await codexCredentialVersion(auth);
+  // The normal refresh check can return unchanged credentials. Preserve any
+  // half-open probe fence so a successful response can clear the quota
+  // circuit claimed for this request.
+  if (credentialVersion === account.credentialVersion) return { ...account, auth };
+
   const reconciled: RoutingAccount = {
     ...account,
     auth,
@@ -490,13 +495,11 @@ export const reconcileCodexRoutingAccount = async (
     probeGeneration: null,
     probeToken: null,
   };
-  // The common path reaches here with the same auth object selected for
-  // routing. It must not turn a healthy warm request into a routing KV read.
-  if (credentialVersion === account.credentialVersion) return reconciled;
 
   // Credential rotation is exceptional and must durably neutralize only its
-  // slot before the retried response is classified. The CAS protects a newer
-  // cross-isolate replacement from an in-flight request carrying old auth.
+  // slot and release its obsolete probe fence before the retried response is
+  // classified. The CAS protects a newer cross-isolate replacement from an
+  // in-flight request carrying old auth.
   await updateRoutingState((state) => {
     const current = slotFor(state, account);
     if (current.credential_version === credentialVersion) return null;

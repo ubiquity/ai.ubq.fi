@@ -242,6 +242,26 @@ const classifyStreamFailure = (
   return "error";
 };
 
+const streamPreflightFailureResponse = (
+  terminalType: ResponseStreamTerminalType,
+  provider: UpstreamProvider,
+): Response => {
+  if (terminalType === "deadline") {
+    return openaiError(
+      504,
+      "Upstream stream exceeded the gateway deadline before its first SSE event.",
+      "gateway_timeout",
+      {
+        type: "server_error",
+        headers: { "x-uos-upstream": provider },
+      },
+    );
+  }
+  return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
+    headers: { "x-uos-upstream": provider },
+  });
+};
+
 const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   const raw = error instanceof Error ? error.message : String(error);
   const trimmed = raw.trim();
@@ -4074,9 +4094,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     if (terminalType === "cancelled") lifecycle.cancelled();
     else lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return streamPreflightFailureResponse(terminalType, routed.provider);
   }
   const response = stream
     ? streamChatCompletions(
@@ -4349,9 +4367,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       if (terminalType === "cancelled") lifecycle.cancelled();
       else lifecycle.ambiguous();
       await recordErrorUsage(usageContext);
-      return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
-        headers: { "x-uos-upstream": routed.provider },
-      });
+      return streamPreflightFailureResponse(terminalType, routed.provider);
     }
     const headers = new Headers(upstream.headers);
     // The gateway always emits the Responses wire format as SSE. Some
