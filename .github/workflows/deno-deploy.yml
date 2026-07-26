@@ -335,7 +335,13 @@ jobs:
             last_deployment_id="$reported_deployment_id"
 
             attestable_health=false
-            if [ "$http_code" = "200" ] && jq -e '.ok == true' "$body" >/dev/null 2>&1; then
+            if [ "$http_code" = "200" ] && jq -e \
+              --arg git_sha "$git_sha" \
+              --arg deployment_id "$reported_deployment_id" '
+              .status == "available" and
+              .release.git_sha == $git_sha and
+              .release.deployment_id == $deployment_id
+            ' "$body" >/dev/null 2>&1; then
               attestable_health=true
             elif [ "$http_code" = "503" ] && jq -e '
               .ok == false and
