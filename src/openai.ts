@@ -70,6 +70,7 @@ type UsageContext = Readonly<{
   idempotencyPrincipal?: string | null;
   requestId?: string;
   startedAtMs?: number;
+  startedAtMonotonicMs?: number;
   responseTelemetry?: ResponseTelemetryState;
 }>;
 
@@ -86,6 +87,11 @@ export type ResponseTelemetry = Readonly<{
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
+  stream: boolean | null;
+  firstCodexDispatchMs: number | null;
+  firstCodexHeadersMs: number | null;
+  firstSseEventMs: number | null;
+  streamTerminalMs: number | null;
 }>;
 
 export type ResponseStreamTerminalType =
@@ -107,6 +113,11 @@ type ResponseTelemetryState = {
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
+  stream: boolean | null;
+  firstCodexDispatchMs: number | null;
+  firstCodexHeadersMs: number | null;
+  firstSseEventMs: number | null;
+  streamTerminalMs: number | null;
 };
 
 const responseTelemetry = new WeakMap<Response, ResponseTelemetryState>();
@@ -121,6 +132,11 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   quotaUsedPercent: undefined,
   completed: false,
   streamTerminalType: null,
+  stream: null,
+  firstCodexDispatchMs: null,
+  firstCodexHeadersMs: null,
+  firstSseEventMs: null,
+  streamTerminalMs: null,
 });
 
 const withResponseTelemetryContext = (
@@ -134,6 +150,7 @@ const withResponseTelemetryContext = (
   idempotencyPrincipal: context?.idempotencyPrincipal,
   requestId: context?.requestId,
   startedAtMs: context?.startedAtMs,
+  startedAtMonotonicMs: context?.startedAtMonotonicMs,
   responseTelemetry: state,
 });
 
@@ -156,7 +173,46 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     quotaUsedPercent: state.quotaUsedPercent,
     completed: state.completed,
     streamTerminalType: state.streamTerminalType,
+    stream: state.stream,
+    firstCodexDispatchMs: state.firstCodexDispatchMs,
+    firstCodexHeadersMs: state.firstCodexHeadersMs,
+    firstSseEventMs: state.firstSseEventMs,
+    streamTerminalMs: state.streamTerminalMs,
   };
+};
+
+type ResponseTelemetryTimingField =
+  | "firstCodexDispatchMs"
+  | "firstCodexHeadersMs"
+  | "firstSseEventMs"
+  | "streamTerminalMs";
+
+// Timings are elapsed from handler ingress using a monotonic clock. They are
+// telemetry only: missing context leaves the corresponding field unavailable.
+const recordResponseTiming = (
+  context: UsageContext | undefined,
+  field: ResponseTelemetryTimingField,
+): void => {
+  const state = context?.responseTelemetry;
+  const startedAtMs = context?.startedAtMonotonicMs;
+  if (!state || state[field] !== null || typeof startedAtMs !== "number" || !Number.isFinite(startedAtMs)) return;
+  state[field] = Math.max(0, Math.round(performance.now() - startedAtMs));
+};
+
+const recordFirstCodexDispatch = (context: UsageContext | undefined): void => {
+  recordResponseTiming(context, "firstCodexDispatchMs");
+};
+
+const recordFirstCodexHeaders = (context: UsageContext | undefined): void => {
+  recordResponseTiming(context, "firstCodexHeadersMs");
+};
+
+const recordFirstSseEvent = (context: UsageContext | undefined): void => {
+  recordResponseTiming(context, "firstSseEventMs");
+};
+
+const recordStreamTerminal = (context: UsageContext | undefined): void => {
+  recordResponseTiming(context, "streamTerminalMs");
 };
 
 const runWithResponseTelemetry = async (
@@ -205,6 +261,7 @@ const recordRequestUsage = (
   if (context?.responseTelemetry) {
     context.responseTelemetry.model = details.model;
     context.responseTelemetry.reasoning = details.reasoning;
+    context.responseTelemetry.stream = details.stream;
   }
   return Promise.resolve();
 };
@@ -227,7 +284,10 @@ const recordStreamTerminalType = (
   context: UsageContext | undefined,
   terminalType: ResponseStreamTerminalType,
 ): void => {
-  if (context?.responseTelemetry) context.responseTelemetry.streamTerminalType = terminalType;
+  const telemetry = context?.responseTelemetry;
+  if (!telemetry) return;
+  telemetry.streamTerminalType = terminalType;
+  if (telemetry.firstSseEventMs !== null) recordStreamTerminal(context);
 };
 
 const classifyStreamFailure = (
@@ -284,7 +344,8 @@ const withUpstreamProviderHeader = (response: Response, provider: string | null 
 const toCodexErrorResponse = (error: unknown, provider?: string | null): Response => {
   let response: Response;
   if (error instanceof CodexError) {
-    response = openaiError(error.status, error.message, error.code);
+    const options = error.code === "gateway_timeout" ? { type: "server_error" } : undefined;
+    response = openaiError(error.status, error.message, error.code, options);
   } else {
     const detail = formatErrorSnippet(error);
     const message = detail ? `Codex upstream request failed: ${detail}` : "Codex upstream request failed.";
@@ -475,6 +536,12 @@ const fetchResponsesWithPaidFallback = async (
       clientVersion: options.clientVersion,
       signal: options.signal,
       affinityKey: options.affinityKey,
+      // Keep terminal telemetry bounded: only the first real Codex transport
+      // attempt contributes dispatch/header timings, even when routing retries.
+      timing: {
+        onDispatch: () => recordFirstCodexDispatch(options.usageContext),
+        onHeaders: () => recordFirstCodexHeaders(options.usageContext),
+      },
     });
   } catch (error) {
     if (!(error instanceof CodexError) || error.status !== 401) throw error;
@@ -4096,6 +4163,8 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     await recordErrorUsage(usageContext);
     return streamPreflightFailureResponse(terminalType, routed.provider);
   }
+  recordFirstSseEvent(usageContext);
+  if (preflight.first.terminal) recordStreamTerminal(usageContext);
   const response = stream
     ? streamChatCompletions(
       preflight,
@@ -4369,6 +4438,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       await recordErrorUsage(usageContext);
       return streamPreflightFailureResponse(terminalType, routed.provider);
     }
+    recordFirstSseEvent(usageContext);
+    if (preflight.first.terminal) recordStreamTerminal(usageContext);
     const headers = new Headers(upstream.headers);
     // The gateway always emits the Responses wire format as SSE. Some
     // compatible upstreams omit (or mislabel) this header; preserve the
@@ -4420,6 +4491,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const outputItems: Record<string, unknown>[] = [];
   try {
     for await (const event of readResponsesStream(upstream.body, requestInferenceSignal)) {
+      recordFirstSseEvent(usageContext);
       const ev = event.value;
       if (event.terminal) {
         if (event.type === "response.completed") confirmCodexProbe();

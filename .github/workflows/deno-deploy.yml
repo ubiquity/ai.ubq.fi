@@ -406,5 +406,5 @@ jobs:
             echo "- Revision ID: \`${revision_id}\`"
             echo "- Deployment ID: \`${deployment_id}\`"
             echo "- Git SHA: \`${GITHUB_SHA}\`"
-            echo "- Health: HTTP 200 with \`ok: true\`"
+            echo "- Health: HTTP ${last_status}; release identity attested"
           } >> "$GITHUB_STEP_SUMMARY"

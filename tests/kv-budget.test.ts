@@ -33,6 +33,7 @@ class CountingKv {
   sums = 0;
   sumCommitAttempts = 0;
   failNextSumCommits = 0;
+  sumCommitDelayMs = 0;
   retries = 0;
   readonly readKeys: Deno.KvKey[] = [];
 
@@ -43,6 +44,7 @@ class CountingKv {
     this.sums = 0;
     this.sumCommitAttempts = 0;
     this.failNextSumCommits = 0;
+    this.sumCommitDelayMs = 0;
     this.retries = 0;
     this.readKeys.length = 0;
   }
@@ -109,13 +111,17 @@ class CountingKv {
         mutations.push({ kind: "sum", key, value });
         return operation;
       },
-      commit: () => {
-        if (mutations.some((mutation) => mutation.kind === "sum")) {
+      commit: async () => {
+        const hasSum = mutations.some((mutation) => mutation.kind === "sum");
+        if (hasSum) {
           this.sumCommitAttempts += 1;
           if (this.failNextSumCommits > 0) {
             this.failNextSumCommits -= 1;
-            return Promise.reject(new Error("injected API-key usage sum failure"));
+            throw new Error("injected API-key usage sum failure");
           }
+        }
+        if (hasSum && this.sumCommitDelayMs > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, this.sumCommitDelayMs));
         }
         for (const mutation of mutations) {
           const encoded = encodeKey(mutation.key);
@@ -128,7 +134,7 @@ class CountingKv {
           }
           this.writes += 1;
         }
-        return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
+        return { ok: true, versionstamp: "00000000000000000001" };
       },
     };
     return operation as unknown as Deno.AtomicOperation;
@@ -286,6 +292,36 @@ const sse = (): Response =>
     }\n\n`,
     { status: 200, headers: { "Content-Type": "text/event-stream" } },
   );
+
+const requiredTerminalTiming = (terminal: Record<string, unknown>, field: string): number => {
+  const value = terminal[field];
+  if (typeof value !== "number") assert.fail(`${field} must be a number`);
+  assert.ok(Number.isFinite(value), `${field} must be finite`);
+  assert.ok(value >= 0, `${field} must be nonnegative`);
+  return value;
+};
+
+const assertOrderedTerminalTimings = (
+  terminal: Record<string, unknown>,
+  expectsDownstreamDrain: boolean,
+): void => {
+  const ordered = [
+    "first_codex_dispatch_ms",
+    "first_codex_headers_ms",
+    "first_sse_event_ms",
+    "stream_terminal_ms",
+    "latency_ms",
+  ].map((field) => requiredTerminalTiming(terminal, field));
+  for (let index = 1; index < ordered.length; index += 1) {
+    assert.ok(ordered[index - 1]! <= ordered[index]!, "terminal timing fields must be ordered");
+  }
+  if (!expectsDownstreamDrain) {
+    assert.equal(terminal.downstream_drain_ms, null);
+    return;
+  }
+  const downstreamDrain = requiredTerminalTiming(terminal, "downstream_drain_ms");
+  assert.ok(ordered[3]! + downstreamDrain <= ordered[4]!);
+};
 
 Deno.test("KV budget: warm unlimited inference performs zero KV operations", async () => {
   kv.values.clear();
@@ -758,12 +794,18 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
     assert.ok(terminal);
     const requestId = response.headers.get("x-uos-request-id");
     assert.ok(requestId);
-    assert.deepEqual(JSON.parse(String(terminal[1])), {
+    const terminalPayload = JSON.parse(String(terminal[1])) as Record<string, unknown>;
+    assert.deepEqual(terminalPayload, {
       request_id: requestId,
       route: "responses",
       status: 200,
       provider: "chatgpt_codex",
-      latency_ms: JSON.parse(String(terminal[1])).latency_ms,
+      latency_ms: terminalPayload.latency_ms,
+      first_codex_dispatch_ms: terminalPayload.first_codex_dispatch_ms,
+      first_codex_headers_ms: terminalPayload.first_codex_headers_ms,
+      first_sse_event_ms: terminalPayload.first_sse_event_ms,
+      stream_terminal_ms: terminalPayload.stream_terminal_ms,
+      downstream_drain_ms: null,
       model: MODEL,
       reasoning: "medium",
       key_id: "telemetry",
@@ -773,6 +815,8 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       deno_revision: "unknown",
       router_revision: null,
     });
+    assertOrderedTerminalTimings(terminalPayload, false);
+    assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 1);
     const accepted = logs.find((entry) => entry[0] === "[ai.ubq.fi] request_accepted");
     assert.ok(accepted);
     assert.equal(JSON.parse(String(accepted[1])).request_id, requestId);
@@ -856,9 +900,103 @@ Deno.test("streaming inference emits one terminal log only after the response bo
     assert.equal(terminal.model, MODEL);
     assert.equal(terminal.reasoning, "medium");
     assert.equal(terminal.stream_terminal_type, "response.completed");
+    assertOrderedTerminalTimings(terminal, true);
     assert.equal(Object.prototype.hasOwnProperty.call(terminal, "input_tokens"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(terminal, "output_tokens"), false);
     assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
+  } finally {
+    console.info = originalInfo;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("streaming drain timing excludes post-terminal accounting", async () => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
+  const token = `u_${"c".repeat(64)}`;
+  await seedKey(token, "stream-drain-timing", 5);
+
+  const encoder = new TextEncoder();
+  let resolveUpstreamController: (controller: ReadableStreamDefaultController<Uint8Array>) => void = () => {};
+  const upstreamControllerPromise = new Promise<ReadableStreamDefaultController<Uint8Array>>((resolve) => {
+    resolveUpstreamController = resolve;
+  });
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const logs: unknown[][] = [];
+  kv.sumCommitDelayMs = 60;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            resolveUpstreamController(controller);
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "stream" } })}\n\n`),
+            );
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+  console.info = (...args: unknown[]) => logs.push(args);
+  try {
+    const response = await handler(streamingRequest(token, "responses"));
+    assert.ok(response.body);
+    const reader = response.body.getReader();
+    assert.equal((await reader.read()).done, false);
+
+    const upstreamController = await upstreamControllerPromise;
+    upstreamController.enqueue(encoder.encode(completedSseEvent(3, 4)));
+    upstreamController.close();
+    assert.equal((await reader.read()).done, false);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.equal((await reader.read()).done, true);
+
+    const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(terminalLogs.length, 1);
+    const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
+    assertOrderedTerminalTimings(terminal, true);
+    const postTerminalMs = requiredTerminalTiming(terminal, "latency_ms") -
+      requiredTerminalTiming(terminal, "stream_terminal_ms");
+    const downstreamDrainMs = requiredTerminalTiming(terminal, "downstream_drain_ms");
+    assert.ok(postTerminalMs - downstreamDrainMs >= 30, "accounting must not inflate downstream drain time");
+  } finally {
+    console.info = originalInfo;
+    globalThis.fetch = originalFetch;
+    kv.sumCommitDelayMs = 0;
+  }
+});
+
+Deno.test("Chat streaming terminal telemetry reports ordered timings once", async () => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
+  const token = `u_${"b".repeat(64)}`;
+  await seedKey(token, "chat-stream-telemetry", -1);
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const logs: unknown[][] = [];
+  globalThis.fetch = () => Promise.resolve(sse());
+  console.info = (...args: unknown[]) => logs.push(args);
+  try {
+    const response = await handler(streamingRequest(token, "chat"));
+    assert.equal(response.status, 200);
+    await response.text();
+
+    const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(terminalLogs.length, 1);
+    const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
+    assert.equal(terminal.route, "chat.completions");
+    assert.equal(terminal.stream_terminal_type, "response.completed");
+    assertOrderedTerminalTimings(terminal, true);
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
@@ -1026,7 +1164,9 @@ Deno.test("paid fallback terminal telemetry records YunWu lifecycle", async () =
   Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
   globalThis.fetch = (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url === "https://yunwu.ai/v1/responses") return Promise.resolve(sse());
+    if (url === "https://yunwu.ai/v1/responses") {
+      return new Promise<Response>((resolve) => setTimeout(() => resolve(sse()), 30));
+    }
     return Promise.resolve(
       new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
         status: 429,
@@ -1046,6 +1186,13 @@ Deno.test("paid fallback terminal telemetry records YunWu lifecycle", async () =
     assert.equal(terminal.fallback_reason, "primary_429");
     assert.equal(terminal.stream_terminal_type, "response.completed");
     assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
+    const firstCodexHeadersMs = requiredTerminalTiming(terminal, "first_codex_headers_ms");
+    const firstSseEventMs = requiredTerminalTiming(terminal, "first_sse_event_ms");
+    assert.ok(
+      firstSseEventMs >= firstCodexHeadersMs + 10,
+      "YunWu response time must remain outside first Codex timing",
+    );
+    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "upstream_headers_ms"), false);
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
