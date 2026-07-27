@@ -383,7 +383,9 @@ const promptCacheModeFor = (rawRecord: Record<string, unknown>): PromptCacheMode
     ? rawRecord.prompt_cache_options
     : null;
   if (options?.mode === "explicit") return "explicit";
-  if (options?.mode === "implicit") return "implicit";
+  // OpenAI's cache policy defaults to implicit whenever options are supplied
+  // without an explicit mode (for example, a ttl-only configuration).
+  if (options !== null) return "implicit";
   if (Object.prototype.hasOwnProperty.call(rawRecord, "prompt_cache_retention")) return "legacy_retention";
   return "unspecified";
 };
