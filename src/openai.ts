@@ -2863,6 +2863,8 @@ const normalizeChatContentItems = (
     }
     const partType = getString(part.type);
     if (partType === "text") {
+      const unknown = findUnknownContentField(part, ["type", "text", "prompt_cache_breakpoint"]);
+      if (unknown) return invalidNormalizedField(`${partParam}.${unknown}`, `Unknown content field: ${unknown}`);
       if (typeof part.text !== "string") {
         return invalidNormalizedField(`${partParam}.text`, `${partParam}.text must be a string`);
       }
@@ -2885,6 +2887,8 @@ const normalizeChatContentItems = (
       continue;
     }
     if (partType === "refusal") {
+      const unknown = findUnknownContentField(part, ["type", "refusal", "prompt_cache_breakpoint"]);
+      if (unknown) return invalidNormalizedField(`${partParam}.${unknown}`, `Unknown content field: ${unknown}`);
       if (!isAssistant) {
         return invalidNormalizedField(`${partParam}.type`, `${partParam}.type is only valid for assistant messages`);
       }
@@ -2903,24 +2907,27 @@ const normalizeChatContentItems = (
       items.push({ type: "output_text", text: part.refusal });
       continue;
     }
-    if (partType === "image_url" || partType === "input_image") {
-      if (isAssistant) {
-        return invalidNormalizedField(`${partParam}.type`, "assistant messages cannot contain image input");
+    if (partType === "image_url") {
+      const unknown = findUnknownContentField(part, ["type", "image_url", "prompt_cache_breakpoint"]);
+      if (unknown) return invalidNormalizedField(`${partParam}.${unknown}`, `Unknown content field: ${unknown}`);
+      if (role !== "user") {
+        return invalidNormalizedField(`${partParam}.type`, `${partParam}.type is only valid for user messages`);
       }
-      let imageUrl: string | null = null;
-      let rawDetail: unknown;
-      if (partType === "image_url") {
-        const image = isRecord(part.image_url) && !Array.isArray(part.image_url) ? part.image_url : null;
-        imageUrl = image ? getString(image.url) : null;
-        rawDetail = image?.detail ?? part.detail;
-      } else {
-        imageUrl = getString(part.image_url);
-        rawDetail = part.detail;
+      const image = isRecord(part.image_url) && !Array.isArray(part.image_url) ? part.image_url : null;
+      if (!image) {
+        return invalidNormalizedField(`${partParam}.image_url`, `${partParam}.image_url must be an object`);
       }
-      if (!imageUrl?.trim()) {
-        return invalidNormalizedField(`${partParam}.image_url`, `${partParam}.image_url must contain a URL`);
+      const imageUnknown = findUnknownContentField(image, ["url", "detail"]);
+      if (imageUnknown) {
+        return invalidNormalizedField(
+          `${partParam}.image_url.${imageUnknown}`,
+          `Unknown image_url field: ${imageUnknown}`,
+        );
       }
-      const detail = parseImageDetail(rawDetail, `${partParam}.detail`);
+      if (typeof image.url !== "string" || !image.url.trim()) {
+        return invalidNormalizedField(`${partParam}.image_url.url`, `${partParam}.image_url.url must contain a URL`);
+      }
+      const detail = parseImageDetail(image.detail, `${partParam}.image_url.detail`);
       if (!detail.ok) return detail;
       const breakpoint = normalizePromptCacheBreakpoint(
         part.prompt_cache_breakpoint,
@@ -2928,10 +2935,59 @@ const normalizeChatContentItems = (
       );
       if (!breakpoint.ok) return breakpoint;
       const item: Extract<MessageContentItem, { type: "input_image" }> = detail.value === undefined
-        ? { type: "input_image", image_url: imageUrl.trim() }
-        : { type: "input_image", image_url: imageUrl.trim(), detail: detail.value };
+        ? { type: "input_image", image_url: image.url.trim() }
+        : { type: "input_image", image_url: image.url.trim(), detail: detail.value };
       items.push(withPromptCacheBreakpoint(item, breakpoint.value));
       continue;
+    }
+    if (partType === "file") {
+      const unknown = findUnknownContentField(part, ["type", "file", "prompt_cache_breakpoint"]);
+      if (unknown) return invalidNormalizedField(`${partParam}.${unknown}`, `Unknown content field: ${unknown}`);
+      if (role !== "user") {
+        return invalidNormalizedField(`${partParam}.type`, `${partParam}.type is only valid for user messages`);
+      }
+      const file = isRecord(part.file) && !Array.isArray(part.file) ? part.file : null;
+      if (!file) return invalidNormalizedField(`${partParam}.file`, `${partParam}.file must be an object`);
+      const fileUnknown = findUnknownContentField(file, ["file_id", "file_data", "filename"]);
+      if (fileUnknown) {
+        return invalidNormalizedField(`${partParam}.file.${fileUnknown}`, `Unknown file field: ${fileUnknown}`);
+      }
+      if (file.file_id !== undefined && typeof file.file_id !== "string") {
+        return invalidNormalizedField(`${partParam}.file.file_id`, `${partParam}.file.file_id must be a string`);
+      }
+      if (file.file_data !== undefined && typeof file.file_data !== "string") {
+        return invalidNormalizedField(`${partParam}.file.file_data`, `${partParam}.file.file_data must be a string`);
+      }
+      if (file.filename !== undefined && typeof file.filename !== "string") {
+        return invalidNormalizedField(`${partParam}.file.filename`, `${partParam}.file.filename must be a string`);
+      }
+      const fileId = typeof file.file_id === "string" ? file.file_id : undefined;
+      const fileData = typeof file.file_data === "string" ? file.file_data : undefined;
+      if (!fileId?.trim() && !fileData?.trim()) {
+        return invalidNormalizedField(
+          `${partParam}.file.file_id`,
+          `${partParam}.file must include file_id or file_data`,
+        );
+      }
+      const breakpoint = normalizePromptCacheBreakpoint(
+        part.prompt_cache_breakpoint,
+        `${partParam}.prompt_cache_breakpoint`,
+      );
+      if (!breakpoint.ok) return breakpoint;
+      const item: Extract<MessageContentItem, { type: "input_file" }> = {
+        type: "input_file",
+        ...(fileId === undefined ? {} : { file_id: fileId }),
+        ...(fileData === undefined ? {} : { file_data: fileData }),
+        ...(file.filename === undefined ? {} : { filename: file.filename }),
+      };
+      items.push(withPromptCacheBreakpoint(item, breakpoint.value));
+      continue;
+    }
+    if (partType === "input_audio" && Object.prototype.hasOwnProperty.call(part, "prompt_cache_breakpoint")) {
+      return invalidNormalizedField(
+        `${partParam}.prompt_cache_breakpoint`,
+        "prompt_cache_breakpoint is not supported for input_audio content in this gateway",
+      );
     }
     return invalidNormalizedField(`${partParam}.type`, `${partParam}.type is not supported`);
   }
@@ -3147,6 +3203,12 @@ const normalizeResponseMessageItem = (
   param: string,
 ): NormalizationResult<ResponseMessageItem> => {
   if (!isRecord(value) || Array.isArray(value)) return invalidNormalizedField(param, `${param} must be an object`);
+  if (Object.prototype.hasOwnProperty.call(value, "prompt_cache_breakpoint")) {
+    return invalidNormalizedField(
+      `${param}.prompt_cache_breakpoint`,
+      "prompt_cache_breakpoint is only valid on supported input content blocks",
+    );
+  }
   if (Object.prototype.hasOwnProperty.call(value, "type") && value.type !== "message") {
     return invalidNormalizedField(`${param}.type`, `${param}.type must be message`);
   }
@@ -3241,6 +3303,8 @@ const normalizeChatToolOutput = (
     if (type !== "text") {
       return invalidNormalizedField(`${partParam}.type`, `${partParam}.type must be a text content part`);
     }
+    const unknown = findUnknownContentField(part, ["type", "text", "prompt_cache_breakpoint"]);
+    if (unknown) return invalidNormalizedField(`${partParam}.${unknown}`, `Unknown content field: ${unknown}`);
     if (typeof part.text !== "string") {
       return invalidNormalizedField(`${partParam}.text`, `${partParam}.text must be a string`);
     }
@@ -3271,6 +3335,12 @@ const normalizeChatMessage = (
 > => {
   const param = `messages[${index}]`;
   if (!isRecord(value) || Array.isArray(value)) return invalidNormalizedField(param, `${param} must be an object`);
+  if (Object.prototype.hasOwnProperty.call(value, "prompt_cache_breakpoint")) {
+    return invalidNormalizedField(
+      `${param}.prompt_cache_breakpoint`,
+      "prompt_cache_breakpoint is only valid on supported input content blocks",
+    );
+  }
   const roleRaw = getString(value.role);
   if (!roleRaw) return invalidNormalizedField(`${param}.role`, `${param}.role must be a string`);
   const role = chatRoleToCodexRole(roleRaw);
@@ -5487,6 +5557,18 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           contentBuffer.push(contentItem.value);
         }
         continue;
+      }
+
+      if (
+        isRecord(msg) && !Array.isArray(msg) &&
+        Object.prototype.hasOwnProperty.call(msg, "prompt_cache_breakpoint")
+      ) {
+        return openaiError(
+          400,
+          "prompt_cache_breakpoint is only valid on supported input content blocks",
+          "invalid_request_error",
+          { param: `${param}.prompt_cache_breakpoint` },
+        );
       }
 
       // Codex CLI uses the Responses API and can send additional input item types
