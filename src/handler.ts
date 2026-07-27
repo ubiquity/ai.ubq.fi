@@ -31,7 +31,7 @@ import {
   requireAdminAuth,
   requireSuperAdminAuth,
 } from "./auth.ts";
-import { handleHealth, handleHealthAuth, handleHealthUpstream } from "./health.ts";
+import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
 import {
   getKernelUsageLimitSnapshot,
@@ -87,8 +87,8 @@ export default async function handler(req: Request): Promise<Response> {
     return withCors(await handleHealth());
   }
 
-  if (req.method === "GET" && path === "/health/auth") {
-    return withCors(await handleHealthAuth());
+  if (req.method === "GET" && path === "/health/providers") {
+    return withCors(await handleHealthProviders());
   }
 
   if (req.method === "GET" && path === "/health/upstream") {

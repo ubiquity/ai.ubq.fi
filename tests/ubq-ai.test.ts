@@ -97,14 +97,18 @@ Deno.test("ubq-ai: health prints JSON", async () => {
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/health"));
       assert.equal(recorded.method, "GET");
-      return jsonResponse(200, { ok: true, problems: [] });
+      return jsonResponse(200, {
+        status: "available",
+        release: { git_sha: "8ebf0106b7326caba7cbaf88d66ab249ff02a1b1", deployment_id: "cpstdx4nda80" },
+      });
     },
   });
 
   const code = await runUbqAi(["health"], runtime);
   assert.equal(code, 0);
   assert.equal(errText(), "");
-  assert.ok(outText().includes('"ok": true'));
+  assert.ok(outText().includes('"status":"available"') || outText().includes('"status": "available"'));
+  assert.ok(outText().includes('"release"'));
   assert.equal(requests.length, 1);
 });
 

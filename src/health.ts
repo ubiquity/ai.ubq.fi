@@ -140,34 +140,11 @@ export const handleHealth = async (): Promise<Response> => {
   const probe = await probeUpstream();
 
   return json(probe.status, {
-    ok: probe.ok,
-    problems: probe.problems,
-    upstream: probe.upstream,
-    status: probe.status,
-    content_type: probe.content_type,
-    ...(probe.error !== undefined ? { error: probe.error } : {}),
-    ...(probe.details !== undefined ? { details: probe.details } : {}),
-    auth: probe.auth,
+    status: probe.ok ? "available" : "degraded",
   });
 };
 
-export const handleHealthAuth = async (): Promise<Response> => {
-  const auth = enrichAuthMeta(await getCodexAuthMeta());
-  if (auth.source === "none") {
-    return json(503, {
-      ok: false,
-      upstream: "chatgpt_codex",
-      error: AUTH_NOT_CONFIGURED,
-      auth,
-    });
-  }
-
-  return json(200, {
-    ok: true,
-    upstream: "chatgpt_codex",
-    auth,
-  });
-};
+export const handleHealthProviders = (): Promise<Response> => handleHealthUpstream();
 
 export const handleHealthUpstream = async (): Promise<Response> => {
   const probe = await probeUpstream();
