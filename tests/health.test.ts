@@ -260,6 +260,11 @@ Deno.test("public health HEAD is release liveness without a response body", asyn
   assert.equal(await response.text(), "");
 });
 
+Deno.test("obsolete auth health route is not exposed", async () => {
+  const response = await handler(new Request("https://ai.ubq.fi/health/auth"));
+  assert.equal(response.status, 404);
+});
+
 Deno.test("detailed provider health and recheck routes require admin authentication", async () => {
   for (
     const request of [
