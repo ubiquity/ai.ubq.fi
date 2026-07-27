@@ -4087,6 +4087,26 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       }\n\n`,
     ]);
 
+  await t.step("ttl-only cache options report the documented implicit mode", async () => {
+    const response = await withFetchMock(
+      () => completed(),
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              prompt_cache_options: { ttl: "30m" },
+              input: "ttl-only cache policy",
+            }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(getResponseTelemetry(response)?.promptCacheMode, "implicit");
+  });
+
   await t.step("buffered Chat maps standard usage details", async () => {
     const response = await withFetchMock(
       () => completed(),
