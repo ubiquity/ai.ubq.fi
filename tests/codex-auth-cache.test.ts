@@ -117,6 +117,7 @@ const { config } = await import("../src/config.ts");
 const {
   cacheCodexAuthPool,
   CODEX_AUTH_CACHE_TTL_MS,
+  CodexError,
   fetchCodexResponses,
   orderCodexAuthAccounts,
   resetCodexAuthCacheForTest,
@@ -231,6 +232,109 @@ Deno.test("Codex responses make one bounded final retry after both accounts retu
     assert.equal(response.status, 200);
     assert.deepEqual(accountIds, ["account-one", "account-two", "account-one"]);
     assert.deepEqual(retryDelays, [1_000]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("Codex 429 retry sleep normalizes a shared timeout as a gateway timeout", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  const controller = new AbortController();
+  const timeoutReason = new DOMException("request deadline exceeded", "TimeoutError");
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "1" },
+      }),
+    );
+  };
+
+  try {
+    await assert.rejects(
+      () =>
+        fetchCodexResponses(
+          { input: "retry-timeout" },
+          {
+            signal: controller.signal,
+            retrySleep: () => {
+              queueMicrotask(() => controller.abort(timeoutReason));
+              return new Promise<void>(() => {});
+            },
+          },
+        ),
+      (error: unknown) => {
+        if (!(error instanceof CodexError)) return false;
+        assert.equal(error.code, "gateway_timeout");
+        assert.equal(error.status, 504);
+        assert.equal((error as Error & { cause?: unknown }).cause, timeoutReason);
+        return true;
+      },
+    );
+    assert.deepEqual(accountIds, ["account-one", "account-two"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("Codex 429 retry sleep preserves ordinary cancellation", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  const controller = new AbortController();
+  const abortReason = new DOMException("client disconnected", "AbortError");
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "1" },
+      }),
+    );
+  };
+
+  try {
+    await assert.rejects(
+      () =>
+        fetchCodexResponses(
+          { input: "retry-cancelled" },
+          {
+            signal: controller.signal,
+            retrySleep: () => {
+              queueMicrotask(() => controller.abort(abortReason));
+              return new Promise<void>(() => {});
+            },
+          },
+        ),
+      (error: unknown) => {
+        assert.equal(error, abortReason);
+        return true;
+      },
+    );
+    assert.deepEqual(accountIds, ["account-one", "account-two"]);
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
@@ -373,7 +477,7 @@ Deno.test("Codex routing logs attempts, refresh, and bounded retry without sensi
         "full-sensitive-upstream-error-body",
       ]
     ) {
-      assert.doesNotMatch(output, new RegExp(forbidden));
+      assert.equal(output.includes(forbidden), false, forbidden);
     }
   } finally {
     resetCodexAuthCacheForTest();
@@ -926,5 +1030,49 @@ Deno.test("Codex auth cache revalidates rotations across warm isolates without p
     globalThis.fetch = originalFetch;
     Date.now = originalNow;
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a valid persisted Codex pool is not overlaid by a local configured seed", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const originalSeed = config.codexAuthJsonB64;
+  const authorizations: string[] = [];
+  const persisted = auth("persisted");
+  const localSeed = { ...auth("local-stale"), account_id: persisted.account_id };
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean; codexAuthJsonB64: string }).isDeploy = false;
+  (config as { isDeploy: boolean; codexAuthJsonB64: string }).codexAuthJsonB64 = btoa(
+    JSON.stringify({
+      tokens: {
+        access_token: localSeed.access_token,
+        refresh_token: localSeed.refresh_token,
+        account_id: localSeed.account_id,
+      },
+    }),
+  );
+  kv.auth = pool(persisted);
+  kv.extra.clear();
+  const versionBefore = kv.authVersion;
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    authorizations.push(request.headers.get("authorization") ?? "");
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "persisted-authority" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(authorizations, [`Bearer ${persisted.access_token}`]);
+    assert.deepEqual(kv.auth, pool(persisted));
+    assert.equal(kv.authVersion, versionBefore, "loading a persisted pool must not write a local seed into KV");
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean; codexAuthJsonB64: string }).isDeploy = originalDeployFlag;
+    (config as { isDeploy: boolean; codexAuthJsonB64: string }).codexAuthJsonB64 = originalSeed;
   }
 });

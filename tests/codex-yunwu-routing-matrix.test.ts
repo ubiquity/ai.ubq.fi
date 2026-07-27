@@ -375,9 +375,7 @@ const retryLogs = (logs: readonly unknown[][]): Array<Record<string, unknown>> =
     }
   });
 
-const drainBackgroundMicrotasks = async (): Promise<void> => {
-  for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
-};
+const drainBackgroundTasks = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 const runCase = async (
   first: Outcome,
@@ -453,7 +451,7 @@ const runCase = async (
       assert.equal(retries[0]?.delay_ms, 0, `${label}: generic 429 retry must be immediate`);
     }
     await response.arrayBuffer();
-    await drainBackgroundMicrotasks();
+    await drainBackgroundTasks();
   } finally {
     activeRun = null;
   }
@@ -504,7 +502,7 @@ Deno.test("two-account Codex-to-YunWu /v1/responses routing matrix", async (t) =
       }
     });
   } finally {
-    await drainBackgroundMicrotasks();
+    await drainBackgroundTasks();
     activeRun = null;
     globalThis.fetch = originalFetch;
     console.info = originalInfo;

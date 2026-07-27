@@ -22,6 +22,12 @@ export type ApiKeyRecord = Readonly<{
   usage_requests: number;
   usage_reset_at_ms: number;
   window_ms: number;
+  /**
+   * Runtime request-quota ledger version. Version 3 reserves capacity before
+   * route handling and commits it immediately before the first provider
+   * transport; V2 counters are migration input only.
+   */
+  usage_quota_version: 3;
   paid_fallback_enabled: boolean;
   paid_fallback_limit_microcredits: number;
   paid_fallback_spent_microcredits: number;
@@ -41,11 +47,37 @@ export type ApiKeyHashRecord = Readonly<{
   usage_requests: number;
   usage_reset_at_ms: number;
   window_ms: number;
+  usage_quota_version: 3;
   paid_fallback_enabled: boolean;
   paid_fallback_limit_microcredits: number;
   paid_fallback_spent_microcredits: number;
   paid_fallback_reserved_microcredits: number;
   paid_fallback_reservation_request_id: string | null;
+}>;
+
+export type ApiKeyUsageWindowV3 = Readonly<{
+  v: 3;
+  key_id: string;
+  policy_version: string;
+  window_start_ms: number;
+  window_reset_at_ms: number;
+  committed_requests: number;
+  reserved_requests: number;
+  updated_at_ms: number;
+}>;
+
+export type ApiKeyUsageRequestV3 = Readonly<{
+  v: 3;
+  key_id: string;
+  request_id: string;
+  route: string;
+  state: "reserved" | "dispatched" | "released";
+  reserved_at_ms: number;
+  lease_expires_at_ms: number;
+  provider: "chatgpt_codex" | "yunwu" | "voyage" | null;
+  dispatched_at_ms: number | null;
+  released_at_ms: number | null;
+  release_reason: string | null;
 }>;
 
 export type ApiKeyUsageRecord = Readonly<{
@@ -259,7 +291,19 @@ export type ResponsesRequest = Readonly<{
 export type MessageContentItem = Readonly<
   | { type: "input_text"; text: string }
   | { type: "output_text"; text: string }
-  | { type: "input_image"; image_url: string; detail?: string }
+  | {
+    type: "input_image";
+    image_url?: string;
+    file_id?: string;
+    detail?: "auto" | "low" | "high" | "original" | null;
+  }
+  | {
+    type: "input_file";
+    file_id?: string;
+    file_data?: string;
+    file_url?: string;
+    filename?: string | null;
+  }
 >;
 
 export type ResponseMessageItem = Readonly<{

@@ -1,11 +1,6 @@
 import { config } from "./config.ts";
 import { apiKeyIdKey, coerceApiKeyExpiresAtMs } from "./api_keys.ts";
-import {
-  type ApiKeyPolicy,
-  authenticateApiKeyToken,
-  incrementApiKeyUsageV2,
-  looksLikeUosApiKey,
-} from "./api_key_policy.ts";
+import { type ApiKeyPolicy, authenticateApiKeyToken, getApiKeyUsageV3, looksLikeUosApiKey } from "./api_key_policy.ts";
 import { json, openaiError } from "./http.ts";
 import { getBearerToken } from "./http.ts";
 import {
@@ -509,7 +504,7 @@ type ClientAuthMethod =
   | { kind: "disabled" }
   | { kind: "github_token"; owner: string; repo: string; state_id: string; limit_scope: "org" | "repo" }
   | { kind: "auth_tokens_allowlist" }
-  | { kind: "kv_api_key"; key_id: string; policy: ApiKeyPolicy; usage_requests: number }
+  | { kind: "kv_api_key"; key_id: string; policy: ApiKeyPolicy }
   | { kind: "admin_allowlist" }
   | { kind: "deno_deploy_token" }
   | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean; credential_count: number };
@@ -746,7 +741,6 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
         kind: "kv_api_key",
         key_id: result.policy.key_id,
         policy: result.policy,
-        usage_requests: result.usage_requests,
       },
     };
   }
@@ -977,8 +971,6 @@ export const requireSuperAdminAuth = async (req: Request): Promise<Response | nu
   return openaiError(403, "Super admin token required", "forbidden");
 };
 
-export const incrementApiKeyUsage = incrementApiKeyUsageV2;
-
 export const handleV1Auth = async (req: Request): Promise<Response> => {
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return authResult.response;
@@ -1023,6 +1015,13 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
     if (kv) {
       const entry = await kv.get<ApiKeyRecord>(apiKeyIdKey(id));
       if (entry.value) {
+        let usageRequests: number;
+        try {
+          usageRequests = await getApiKeyUsageV3(authResult.method.policy, kv);
+        } catch (error) {
+          console.warn("[ai.ubq.fi] Failed to read API key quota usage for /uos/auth:", error);
+          return openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" });
+        }
         key = {
           id: entry.value.id,
           name: entry.value.name,
@@ -1031,7 +1030,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
           expires_at_ms: coerceApiKeyExpiresAtMs(entry.value),
           revoked_at_ms: entry.value.revoked_at_ms,
           usage_limit_requests: authResult.method.policy.usage_limit_requests,
-          usage_requests: authResult.method.usage_requests,
+          usage_requests: usageRequests,
           usage_reset_at_ms: authResult.method.policy.usage_reset_at_ms,
           window_ms: authResult.method.policy.window_ms,
         };

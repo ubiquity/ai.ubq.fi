@@ -9,12 +9,14 @@ import {
   releaseCodexResponseProbe,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
+import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
+import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { json, openaiError } from "./http.ts";
 import { createInferenceSignal, createStreamFirstEventDeadline } from "./inference_deadline.ts";
 import { getKv } from "./kv.ts";
 import { loadRuntimeConfig } from "./runtime_config.ts";
-import { CHAT_COMPLETIONS_REQUEST_KEYS, EMBEDDINGS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
+import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
 import { readJsonBody } from "./request.ts";
 import {
   type PreflightedResponsesStream,
@@ -29,6 +31,7 @@ import {
   recordYunwuAmbiguousFailure,
   recordYunwuPrefetchCancellation,
   recordYunwuTerminal,
+  recordYunwuUndispatchedCancellation,
   recordYunwuUpstreamResponse,
   reservePaidFallback,
 } from "./paid_fallback.ts";
@@ -71,6 +74,8 @@ type UsageContext = Readonly<{
   startedAtMs?: number;
   startedAtMonotonicMs?: number;
   responseTelemetry?: ResponseTelemetryState;
+  /** Commits an admitted API-key reservation exactly once before transport. */
+  beforeProviderDispatch?: (provider: "chatgpt_codex" | "yunwu" | "voyage") => Promise<ApiKeyProviderDispatch | void>;
 }>;
 
 type UpstreamProvider = "chatgpt_codex" | "yunwu";
@@ -150,6 +155,7 @@ const withResponseTelemetryContext = (
   requestId: context?.requestId,
   startedAtMs: context?.startedAtMs,
   startedAtMonotonicMs: context?.startedAtMonotonicMs,
+  beforeProviderDispatch: context?.beforeProviderDispatch,
   responseTelemetry: state,
 });
 
@@ -342,7 +348,12 @@ const withUpstreamProviderHeader = (response: Response, provider: string | null 
 
 const toCodexErrorResponse = (error: unknown, provider?: string | null): Response => {
   let response: Response;
-  if (error instanceof CodexError) {
+  if (error instanceof ApiKeyQuotaDispatchError) {
+    response = openaiError(error.status, error.message, error.code, {
+      type: error.errorType,
+      ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {}),
+    });
+  } else if (error instanceof CodexError) {
     const options = error.code === "gateway_timeout" ? { type: "server_error" } : undefined;
     response = openaiError(error.status, error.message, error.code, options);
   } else {
@@ -353,10 +364,85 @@ const toCodexErrorResponse = (error: unknown, provider?: string | null): Respons
   return withUpstreamProviderHeader(response, provider);
 };
 
-const toOpenAiUpstreamErrorResponse = (
+type UpstreamErrorDetails = Readonly<{
+  message: string;
+  type?: string;
+  code?: string;
+  param?: string | null;
+}>;
+
+const readUpstreamErrorBody = async (
   upstream: Response,
-  provider: UpstreamProvider = "chatgpt_codex",
-): Response => withUpstreamProviderHeader(upstream, provider);
+  signal: AbortSignal,
+): Promise<Readonly<{ text: string; complete: boolean }>> => {
+  const { bytes, complete } = await readBoundedResponseBody(upstream, {
+    signal,
+    cancellationReason: "Upstream error body captured",
+  });
+  // Error normalization must never surface a partial provider payload.
+  return complete ? { text: new TextDecoder().decode(bytes), complete: true } : { text: "", complete: false };
+};
+
+const getJsonString = (value: unknown, key: string): string | null => {
+  if (!isRecord(value)) return null;
+  const stringValue = getString(value[key]);
+  return stringValue?.trim() || null;
+};
+
+const parseUpstreamErrorDetails = (text: string, statusText: string): UpstreamErrorDetails => {
+  const trimmed = text.trim();
+  if (trimmed) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (isRecord(parsed)) {
+        const error = isRecord(parsed.error) ? parsed.error : null;
+        const message = getJsonString(error, "message") ?? getJsonString(parsed, "detail") ??
+          getJsonString(parsed, "message");
+        if (message) {
+          const details: UpstreamErrorDetails = {
+            message,
+            type: getJsonString(error, "type") ?? getJsonString(parsed, "type") ?? undefined,
+            code: getJsonString(error, "code") ?? getJsonString(parsed, "code") ?? undefined,
+          };
+          return error && Object.prototype.hasOwnProperty.call(error, "param")
+            ? { ...details, param: getString(error.param) ?? null }
+            : details;
+        }
+      }
+    } catch {
+      // Non-JSON bodies are normalized as plain text below.
+    }
+  }
+
+  const snippet = trimmed ? formatErrorSnippet(trimmed) : "";
+  return { message: snippet || statusText || "Upstream request failed." };
+};
+
+const upstreamStatusToErrorType = (status: number, upstreamType?: string): string => {
+  if (upstreamType) return upstreamType;
+  if (status >= 500) return "server_error";
+  return status === 429 ? "rate_limit_error" : "invalid_request_error";
+};
+
+const toOpenAiUpstreamErrorResponse = async (
+  upstream: Response,
+  provider: UpstreamProvider,
+  signal: AbortSignal,
+): Promise<Response> => {
+  const captured = await readUpstreamErrorBody(upstream, signal);
+  const details = captured.complete
+    ? parseUpstreamErrorDetails(captured.text, upstream.statusText)
+    : { message: "Upstream returned an oversized or incomplete error response." };
+  const headers: Record<string, string> = { "x-uos-upstream": provider };
+  const retryAfter = upstream.headers.get("Retry-After");
+  if (retryAfter) headers["Retry-After"] = retryAfter;
+  const options: { type?: string; param?: string | null; headers: HeadersInit } = {
+    type: upstreamStatusToErrorType(upstream.status, details.type),
+    headers,
+  };
+  if (Object.prototype.hasOwnProperty.call(details, "param")) options.param = details.param ?? null;
+  return openaiError(upstream.status, details.message, details.code ?? "upstream_error", options);
+};
 
 const cancelResponseBody = (response: Response): void => {
   try {
@@ -479,6 +565,7 @@ const fetchResponsesWithPaidFallback = async (
         onDispatch: () => recordFirstCodexDispatch(options.usageContext),
         onHeaders: () => recordFirstCodexHeaders(options.usageContext),
       },
+      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(),
     });
   } catch (error) {
     if (!(error instanceof CodexError) || error.status !== 401) throw error;
@@ -511,7 +598,7 @@ const fetchResponsesWithPaidFallback = async (
     };
   }
   if (options.signal?.aborted) {
-    if (primary) await cancelResponseBody(primary);
+    if (primary) cancelResponseBody(primary);
     throw options.signal.reason instanceof Error
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
@@ -561,7 +648,7 @@ const fetchResponsesWithPaidFallback = async (
   }
 
   if (options.signal?.aborted) {
-    await cancelResponseBody(primary);
+    cancelResponseBody(primary);
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
       () => recordYunwuPrefetchCancellation(decision.reservation),
@@ -570,7 +657,7 @@ const fetchResponsesWithPaidFallback = async (
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
-  await cancelResponseBody(primary);
+  cancelResponseBody(primary);
   if (options.signal?.aborted) {
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
@@ -587,7 +674,10 @@ const fetchResponsesWithPaidFallback = async (
   logYunwuSelected(requestId, fallbackReason);
   let result: Awaited<ReturnType<typeof fetchYunwuResponses>>;
   try {
-    result = await fetchYunwuResponses(body, { signal: options.signal });
+    result = await fetchYunwuResponses(body, {
+      signal: options.signal,
+      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("yunwu") ?? Promise.resolve(),
+    });
     if (result.response.status === 401 || result.response.status === 403) {
       await recordYunwuProviderHealth("auth_invalid", result.response.status);
     } else if (result.response.status === 429) {
@@ -598,6 +688,16 @@ const fetchResponsesWithPaidFallback = async (
       await recordYunwuProviderHealth("reachable", result.response.status);
     }
   } catch (error) {
+    if (error instanceof ApiKeyQuotaDispatchError) {
+      // Paid fallback writes a durable dispatch intent before Yunwu transport.
+      // If the API-key quota CAS rejects that transport, it is still known not
+      // to have started and must be released rather than reconciled as billed.
+      await bestEffortPaidFallbackBookkeeping(
+        "pre-dispatch quota cancellation recording",
+        () => recordYunwuUndispatchedCancellation(decision.reservation),
+      );
+      throw error;
+    }
     const yunwuStatus = error instanceof YunwuError ? error.status : null;
     await recordYunwuProviderHealth(
       yunwuStatus === 401 || yunwuStatus === 403
@@ -757,17 +857,9 @@ const validateCodexModelAvailable = (model: string, metadata: CodexModelMetadata
 };
 
 const resolveDefaultReasoningLabel = (
-  modelReasoning: CodexModelReasoning,
+  _modelReasoning: CodexModelReasoning,
   defaultEffort: ReasoningEffort,
-): ReasoningEffort => {
-  if (defaultEffort === "none") return "none";
-  if (modelReasoning.levels.includes(defaultEffort)) return defaultEffort;
-  if (modelReasoning.defaultLevel === "none") return "none";
-  if (modelReasoning.defaultLevel && modelReasoning.levels.includes(modelReasoning.defaultLevel)) {
-    return modelReasoning.defaultLevel;
-  }
-  return modelReasoning.levels[0] ?? "none";
-};
+): ReasoningEffort => defaultEffort;
 
 const resolveReasoningLabelFromEffort = (
   effort: ReasoningEffort | undefined,
@@ -801,7 +893,14 @@ const extractReasoningParamEffort = (
 const reasoningEffortForCodexRequest = (
   effort: ReasoningEffort,
   modelReasoning: CodexModelReasoning,
-): ReasoningEffort => modelReasoning.wireEfforts.get(effort) ?? effort;
+): ReasoningEffort => {
+  if (effort === "none") return "none";
+  // Codex CLI's advanced `ultra` preset is client-side orchestration and
+  // always uses `max` on the upstream wire, even for an older catalog that
+  // has not yet published its wire map.
+  if (effort === "ultra") return "max";
+  return modelReasoning.wireEfforts.get(effort) ?? effort;
+};
 
 const normalizeReasoningParamForCodex = (
   reasoning: Record<string, unknown> | undefined,
@@ -839,6 +938,8 @@ type PassthroughToolSchemaKey =
   | "tool_choice"
   | "parallel_tool_calls"
   | "prompt_cache_key"
+  | "prompt_cache_options"
+  | "prompt_cache_retention"
   | "text"
   | "include"
   | "context_management";
@@ -932,7 +1033,7 @@ const parseReasoningParam = (
   value: unknown,
 ): { ok: true; value: Record<string, unknown> | undefined } | { ok: false; message: string } => {
   if (value === undefined || value === null) return { ok: true, value: undefined };
-  if (!isRecord(value)) return { ok: false, message: "reasoning must be an object" };
+  if (!isRecord(value) || Array.isArray(value)) return { ok: false, message: "reasoning must be an object" };
   const normalized = { ...value };
   if ("effort" in normalized) {
     const effort = parseReasoningEffortField(normalized.effort, "reasoning.effort");
@@ -958,10 +1059,17 @@ const parseReasoningParam = (
   return { ok: true, value: Object.keys(normalized).length ? normalized : undefined };
 };
 
+const parseStreamField = (
+  value: unknown,
+): { ok: true; value: boolean } | { ok: false; message: string } => {
+  if (value === undefined || value === false) return { ok: true, value: false };
+  if (value === true) return { ok: true, value: true };
+  return { ok: false, message: "stream must be a boolean" };
+};
+
 const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
 const RESPONSES_ALLOWED_KEYS = new Set(RESPONSES_REQUEST_KEYS);
 const CODEX_RESPONSES_EXTENSION_KEYS = new Set(["client_metadata"]);
-const EMBEDDINGS_ALLOWED_KEYS = new Set(EMBEDDINGS_REQUEST_KEYS);
 
 const findUnknownKey = (
   record: Record<string, unknown>,
@@ -1036,7 +1144,18 @@ const VOYAGE_EMBEDDINGS_MODEL = "voyage-4-large";
 const VOYAGE_DEFAULT_DIMENSIONS: VoyageEmbeddingsDimension = 1024;
 const VOYAGE_OUTPUT_DTYPE: VoyageEmbeddingsOutputDtype = "float";
 const VOYAGE_SUPPORTED_DIMENSIONS = new Set<number>([256, 512, 1024, 2048]);
-const UOS_EMBEDDINGS_ALLOWED_KEYS = new Set([
+const UOS_SYNC_EMBEDDINGS_ALLOWED_KEYS = new Set([
+  "dimensions",
+  "encoding_format",
+  "input",
+  "input_type",
+  "model",
+  "truncation",
+  "user",
+]);
+// Jobs deliberately retain the original Voyage-only profile. In particular,
+// they require an explicit retrieval input type and only persist float vectors.
+const UOS_EMBEDDINGS_JOB_ALLOWED_KEYS = new Set([
   "dimensions",
   "encoding_format",
   "input",
@@ -2028,23 +2147,12 @@ const buildResolvedEmbeddingsProfile = (
   cache_profile_key: buildEmbeddingsCacheProfileKey(inputType, dimensions, encodingFormat, truncation),
 });
 
-const resolveOpenAiEmbeddingsModel = (raw: string): "voyage-4-large" | null => {
-  const normalized = raw.trim().toLowerCase();
-  if (
-    normalized === VOYAGE_EMBEDDINGS_MODEL ||
-    normalized === "text-embedding-3-small" ||
-    normalized === "text-embedding-3-large"
-  ) {
-    return VOYAGE_EMBEDDINGS_MODEL;
-  }
-  return null;
-};
-
 const parseEmbeddingsRequest = (
   rawBody: Record<string, unknown>,
-  contract: "openai" | "uos",
+  contract: "uos_sync" | "uos_job",
 ): EmbeddingsParseResult => {
-  const allowedKeys = contract === "openai" ? EMBEDDINGS_ALLOWED_KEYS : UOS_EMBEDDINGS_ALLOWED_KEYS;
+  const isJob = contract === "uos_job";
+  const allowedKeys = isJob ? UOS_EMBEDDINGS_JOB_ALLOWED_KEYS : UOS_SYNC_EMBEDDINGS_ALLOWED_KEYS;
   const unknownKey = findUnknownKey(rawBody, allowedKeys);
   if (unknownKey) {
     return {
@@ -2062,12 +2170,8 @@ const parseEmbeddingsRequest = (
       }),
     };
   }
-  const model = contract === "openai" ? modelRaw.trim() : modelRaw;
-  if (
-    contract === "uos"
-      ? model !== VOYAGE_EMBEDDINGS_MODEL
-      : resolveOpenAiEmbeddingsModel(model) !== VOYAGE_EMBEDDINGS_MODEL
-  ) {
+  const model = modelRaw;
+  if (model !== VOYAGE_EMBEDDINGS_MODEL) {
     return {
       ok: false,
       response: openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" }),
@@ -2089,12 +2193,12 @@ const parseEmbeddingsRequest = (
       response: openaiError(400, encodingFormat.message, "invalid_request_error", { param: "encoding_format" }),
     };
   }
-  if (contract === "uos" && encodingFormat.value !== "float") {
+  if (isJob && encodingFormat.value !== "float") {
     return {
       ok: false,
       response: openaiError(
         400,
-        'encoding_format must be "float" for UOS embeddings',
+        'encoding_format must be "float" for embeddings jobs',
         "invalid_request_error",
         { param: "encoding_format" },
       ),
@@ -2103,8 +2207,8 @@ const parseEmbeddingsRequest = (
 
   let inputType: VoyageEmbeddingsInputType = "document";
   let truncation = true;
-  if (contract === "uos") {
-    if (rawBody.input_type !== "query" && rawBody.input_type !== "document") {
+  if (rawBody.input_type === undefined) {
+    if (isJob) {
       return {
         ok: false,
         response: openaiError(
@@ -2115,17 +2219,30 @@ const parseEmbeddingsRequest = (
         ),
       };
     }
+  } else if (rawBody.input_type === "query" || rawBody.input_type === "document") {
     inputType = rawBody.input_type;
-    if (rawBody.truncation !== undefined && typeof rawBody.truncation !== "boolean") {
-      return {
-        ok: false,
-        response: openaiError(400, "truncation must be a boolean", "invalid_request_error", {
-          param: "truncation",
-        }),
-      };
-    }
-    truncation = rawBody.truncation === undefined ? true : rawBody.truncation;
-  } else if (Object.prototype.hasOwnProperty.call(rawBody, "user")) {
+  } else {
+    return {
+      ok: false,
+      response: openaiError(
+        400,
+        'input_type must be one of: "query", "document"',
+        "invalid_request_error",
+        { param: "input_type" },
+      ),
+    };
+  }
+  if (rawBody.truncation !== undefined && typeof rawBody.truncation !== "boolean") {
+    return {
+      ok: false,
+      response: openaiError(400, "truncation must be a boolean", "invalid_request_error", {
+        param: "truncation",
+      }),
+    };
+  }
+  truncation = rawBody.truncation === undefined ? true : rawBody.truncation;
+
+  if (!isJob && Object.prototype.hasOwnProperty.call(rawBody, "user")) {
     const user = rawBody.user;
     if (user !== undefined && user !== null && typeof user !== "string") {
       return {
@@ -2233,6 +2350,12 @@ const parseEmbeddingsRequest = (
     },
   };
 };
+
+const parseUosEmbeddingsRequest = (rawBody: Record<string, unknown>): EmbeddingsParseResult =>
+  parseEmbeddingsRequest(rawBody, "uos_sync");
+
+const parseEmbeddingsJobRequest = (rawBody: Record<string, unknown>): EmbeddingsParseResult =>
+  parseEmbeddingsRequest(rawBody, "uos_job");
 
 const isValidEmbeddingVector = (value: unknown, dimensions: VoyageEmbeddingsDimension): value is number[] =>
   Array.isArray(value) &&
@@ -2359,12 +2482,19 @@ const fetchVoyageEmbeddings = async (params: {
   outputDtype: VoyageEmbeddingsOutputDtype;
   truncation: boolean;
   deadlineMs: number;
+  beforeProviderDispatch?: UsageContext["beforeProviderDispatch"];
 }): Promise<{ vectors: number[][]; totalTokens: number | null }> => {
   const controller = new AbortController();
   const now = Date.now();
   const timeoutMs = Math.max(1, Math.min(EMBEDDINGS_TIMEOUT_MS, params.deadlineMs - now));
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const dispatch = params.beforeProviderDispatch ? await params.beforeProviderDispatch("voyage") : undefined;
+    if (controller.signal.aborted) {
+      await dispatch?.cancelBeforeTransport();
+      throw controller.signal.reason ?? new DOMException("The request was aborted.", "AbortError");
+    }
+    dispatch?.markTransportStarted();
     const resp = await fetch(VOYAGE_EMBEDDINGS_URL, {
       method: "POST",
       headers: {
@@ -2426,58 +2556,109 @@ const fetchVoyageEmbeddings = async (params: {
   }
 };
 
-const extractMessageContentItems = (role: ResponseMessageItem["role"], content: unknown): MessageContentItem[] => {
-  const isAssistant = role === "assistant";
-  const textItemType: MessageContentItem["type"] = isAssistant ? "output_text" : "input_text";
+const apiKeyQuotaDispatchErrorResponse = (error: ApiKeyQuotaDispatchError): Response =>
+  openaiError(error.status, error.message, error.code, {
+    type: error.errorType,
+    param: null,
+    ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {}),
+  });
 
-  if (typeof content === "string") {
-    return [{ type: textItemType, text: content }];
+type NormalizationResult<T> =
+  | Readonly<{ ok: true; value: T }>
+  | Readonly<{ ok: false; message: string; param: string }>;
+
+type InputImageDetail = "auto" | "low" | "high" | "original";
+
+const invalidNormalizedField = <T>(param: string, message: string): NormalizationResult<T> => ({
+  ok: false,
+  message,
+  param,
+});
+
+const parseImageDetail = (
+  value: unknown,
+  param: string,
+): NormalizationResult<InputImageDetail | null | undefined> => {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (value === null) return { ok: true, value: null };
+  if (value === "auto" || value === "low" || value === "high" || value === "original") {
+    return { ok: true, value };
   }
-
-  if (!Array.isArray(content)) {
-    return [{ type: textItemType, text: "" }];
-  }
-
-  const items: MessageContentItem[] = [];
-  for (const part of content) {
-    if (!isRecord(part)) continue;
-    const partType = getString(part.type);
-
-    if (partType === "text" || partType === "input_text" || partType === "output_text") {
-      const text = getString(part.text);
-      if (text) items.push({ type: textItemType, text });
-      continue;
-    }
-
-    if (partType === "image_url" || partType === "input_image") {
-      if (isAssistant) continue;
-      let url: string | null = null;
-      let detail: string | undefined;
-      if (partType === "image_url") {
-        const image = isRecord(part.image_url) ? part.image_url : null;
-        url = image ? getString(image.url) : null;
-        detail = normalizeImageDetail(image?.detail ?? part.detail);
-      } else {
-        url = getString(part.image_url);
-        detail = normalizeImageDetail(part.detail);
-      }
-      const trimmed = (url ?? "").trim();
-      if (trimmed) {
-        items.push(
-          detail ? { type: "input_image", image_url: trimmed, detail } : { type: "input_image", image_url: trimmed },
-        );
-      }
-      continue;
-    }
-  }
-
-  if (items.length > 0) return items;
-  return [{ type: textItemType, text: "" }];
+  return invalidNormalizedField(param, `${param} must be one of auto, low, high, or original`);
 };
 
-const normalizeImageDetail = (value: unknown): string | undefined => {
-  const detail = getString(value)?.trim();
-  return detail || undefined;
+const findUnknownContentField = (value: Record<string, unknown>, allowed: readonly string[]): string | null => {
+  const allowedFields = new Set(allowed);
+  return Object.keys(value).find((key) => !allowedFields.has(key)) ?? null;
+};
+
+const normalizeChatContentItems = (
+  role: ResponseMessageItem["role"],
+  content: unknown,
+  param: string,
+): NormalizationResult<MessageContentItem[]> => {
+  const isAssistant = role === "assistant";
+  const textItemType: "input_text" | "output_text" = isAssistant ? "output_text" : "input_text";
+  if (typeof content === "string") return { ok: true, value: [{ type: textItemType, text: content }] };
+  if (content === null && isAssistant) return { ok: true, value: [] };
+  if (!Array.isArray(content)) return invalidNormalizedField(param, `${param} must be a string or an array`);
+
+  const items: MessageContentItem[] = [];
+  for (const [index, part] of content.entries()) {
+    const partParam = `${param}[${index}]`;
+    if (!isRecord(part) || Array.isArray(part)) {
+      return invalidNormalizedField(partParam, `${partParam} must be an object`);
+    }
+    const partType = getString(part.type);
+    if (partType === "text") {
+      if (typeof part.text !== "string") {
+        return invalidNormalizedField(`${partParam}.text`, `${partParam}.text must be a string`);
+      }
+      items.push({ type: textItemType, text: part.text });
+      continue;
+    }
+    if (partType === "refusal") {
+      if (!isAssistant) {
+        return invalidNormalizedField(`${partParam}.type`, `${partParam}.type is only valid for assistant messages`);
+      }
+      if (content.length !== 1) {
+        return invalidNormalizedField(`${partParam}.type`, "assistant refusal content must be the only part");
+      }
+      if (typeof part.refusal !== "string") {
+        return invalidNormalizedField(`${partParam}.refusal`, `${partParam}.refusal must be a string`);
+      }
+      items.push({ type: "output_text", text: part.refusal });
+      continue;
+    }
+    if (partType === "image_url" || partType === "input_image") {
+      if (isAssistant) {
+        return invalidNormalizedField(`${partParam}.type`, "assistant messages cannot contain image input");
+      }
+      let imageUrl: string | null = null;
+      let rawDetail: unknown;
+      if (partType === "image_url") {
+        const image = isRecord(part.image_url) && !Array.isArray(part.image_url) ? part.image_url : null;
+        imageUrl = image ? getString(image.url) : null;
+        rawDetail = image?.detail ?? part.detail;
+      } else {
+        imageUrl = getString(part.image_url);
+        rawDetail = part.detail;
+      }
+      if (!imageUrl?.trim()) {
+        return invalidNormalizedField(`${partParam}.image_url`, `${partParam}.image_url must contain a URL`);
+      }
+      const detail = parseImageDetail(rawDetail, `${partParam}.detail`);
+      if (!detail.ok) return detail;
+      items.push(
+        detail.value === undefined
+          ? { type: "input_image", image_url: imageUrl.trim() }
+          : { type: "input_image", image_url: imageUrl.trim(), detail: detail.value },
+      );
+      continue;
+    }
+    return invalidNormalizedField(`${partParam}.type`, `${partParam}.type is not supported`);
+  }
+  return { ok: true, value: items };
 };
 
 const messageContentToText = (items: MessageContentItem[]): string =>
@@ -2563,51 +2744,275 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
   };
 };
 
-const toResponseMessageItem = (message: unknown): ResponseMessageItem | null => {
-  if (!isRecord(message)) return null;
-  const roleRaw = getString(message.role);
-  if (!roleRaw) return null;
-  const role = chatRoleToCodexRole(roleRaw);
-  if (!role) return null;
-  const content = extractMessageContentItems(role, message.content);
-  return { type: "message", role, content };
-};
-
-const normalizeResponseContentItem = (value: unknown): MessageContentItem | null => {
-  if (!isRecord(value)) return null;
+const normalizeResponseContentItem = (
+  value: unknown,
+  param: string,
+  role: ResponseMessageItem["role"],
+): NormalizationResult<MessageContentItem> => {
+  if (!isRecord(value) || Array.isArray(value)) {
+    return invalidNormalizedField(param, `${param} must be an object`);
+  }
   const partType = getString(value.type);
-  if (!partType) return null;
+  if (!partType) return invalidNormalizedField(`${param}.type`, `${param}.type must be a string`);
 
-  if (partType === "input_text" || partType === "text") {
-    const text = getString(value.text);
-    if (text === null) return null;
-    return { type: "input_text", text };
-  }
-
-  if (partType === "input_image" || partType === "image_url") {
-    let url: string | null = null;
-    let detail: string | undefined;
-    if (partType === "image_url") {
-      const image = isRecord(value.image_url) ? value.image_url : null;
-      url = image ? getString(image.url) : null;
-      detail = normalizeImageDetail(image?.detail ?? value.detail);
-    } else {
-      url = getString(value.image_url);
-      detail = normalizeImageDetail(value.detail);
+  if (partType === "input_text" || partType === "output_text") {
+    if (partType === "output_text" && role !== "assistant") {
+      return invalidNormalizedField(`${param}.type`, `${param}.type is only valid for assistant messages`);
     }
-    const trimmed = (url ?? "").trim();
-    if (!trimmed) return null;
-    return detail ? { type: "input_image", image_url: trimmed, detail } : { type: "input_image", image_url: trimmed };
+    const unknown = findUnknownContentField(
+      value,
+      partType === "output_text" ? ["type", "text", "annotations"] : ["type", "text"],
+    );
+    if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
+    if (typeof value.text !== "string") {
+      return invalidNormalizedField(`${param}.text`, `${param}.text must be a string`);
+    }
+    if (partType === "output_text" && value.annotations !== undefined && !Array.isArray(value.annotations)) {
+      return invalidNormalizedField(`${param}.annotations`, `${param}.annotations must be an array`);
+    }
+    return { ok: true, value: { type: partType, text: value.text } };
   }
 
-  return null;
+  if (partType === "input_image") {
+    const unknown = findUnknownContentField(value, ["type", "image_url", "file_id", "detail"]);
+    if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
+    const imageUrl = getString(value.image_url)?.trim() ?? "";
+    const fileId = getString(value.file_id)?.trim() ?? "";
+    if ((imageUrl && fileId) || (!imageUrl && !fileId)) {
+      return invalidNormalizedField(`${param}.image_url`, `${param} must include exactly one of image_url or file_id`);
+    }
+    if (value.image_url !== undefined && typeof value.image_url !== "string") {
+      return invalidNormalizedField(`${param}.image_url`, `${param}.image_url must be a string`);
+    }
+    if (value.file_id !== undefined && typeof value.file_id !== "string") {
+      return invalidNormalizedField(`${param}.file_id`, `${param}.file_id must be a string`);
+    }
+    const detail = parseImageDetail(value.detail, `${param}.detail`);
+    if (!detail.ok) return detail;
+    const item = detail.value === undefined
+      ? imageUrl
+        ? { type: "input_image" as const, image_url: imageUrl }
+        : { type: "input_image" as const, file_id: fileId }
+      : imageUrl
+      ? { type: "input_image" as const, image_url: imageUrl, detail: detail.value }
+      : { type: "input_image" as const, file_id: fileId, detail: detail.value };
+    return { ok: true, value: item };
+  }
+
+  if (partType === "input_file") {
+    const unknown = findUnknownContentField(value, ["type", "file_id", "file_data", "file_url", "filename"]);
+    if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
+    const fields = ["file_id", "file_data", "file_url"] as const;
+    const present = fields.filter((field) => typeof value[field] === "string" && value[field].trim());
+    if (!present.length) {
+      return invalidNormalizedField(`${param}.file_id`, `${param} must include file_id, file_data, or file_url`);
+    }
+    for (const field of fields) {
+      if (value[field] !== undefined && typeof value[field] !== "string") {
+        return invalidNormalizedField(`${param}.${field}`, `${param}.${field} must be a string`);
+      }
+    }
+    if (value.filename !== undefined && value.filename !== null && typeof value.filename !== "string") {
+      return invalidNormalizedField(`${param}.filename`, `${param}.filename must be a string or null`);
+    }
+    const item: {
+      type: "input_file";
+      file_id?: string;
+      file_data?: string;
+      file_url?: string;
+      filename?: string | null;
+    } = { type: "input_file" };
+    for (const field of fields) {
+      const fieldValue = getString(value[field]);
+      if (fieldValue) item[field] = fieldValue;
+    }
+    if (Object.prototype.hasOwnProperty.call(value, "filename")) item.filename = value.filename as string | null;
+    return { ok: true, value: item };
+  }
+
+  return invalidNormalizedField(`${param}.type`, `${param}.type is not supported`);
 };
 
-const normalizeResponseInputItem = (value: unknown): ResponseMessageItem | null => {
-  if (!isRecord(value)) return null;
-  const itemType = getString(value.type);
-  if (itemType && itemType !== "message") return null;
-  return toResponseMessageItem(value);
+const normalizeResponseMessageItem = (
+  value: unknown,
+  param: string,
+): NormalizationResult<ResponseMessageItem> => {
+  if (!isRecord(value) || Array.isArray(value)) return invalidNormalizedField(param, `${param} must be an object`);
+  if (Object.prototype.hasOwnProperty.call(value, "type") && value.type !== "message") {
+    return invalidNormalizedField(`${param}.type`, `${param}.type must be message`);
+  }
+  const roleRaw = getString(value.role);
+  // Native Responses tool output is a top-level function_call_output item;
+  // do not silently reinterpret a message role:"tool" as developer text.
+  const role = roleRaw && roleRaw !== "tool" ? chatRoleToCodexRole(roleRaw) : null;
+  if (!role) return invalidNormalizedField(`${param}.role`, `${param}.role is invalid`);
+  const content = value.content;
+  if (typeof content === "string") {
+    return {
+      ok: true,
+      value: {
+        type: "message",
+        role,
+        content: [{ type: role === "assistant" ? "output_text" : "input_text", text: content }],
+      },
+    };
+  }
+  if (!Array.isArray(content)) {
+    return invalidNormalizedField(`${param}.content`, `${param}.content must be a string or an array`);
+  }
+  const items: MessageContentItem[] = [];
+  for (const [index, part] of content.entries()) {
+    const normalized = normalizeResponseContentItem(part, `${param}.content[${index}]`, role);
+    if (!normalized.ok) return normalized;
+    items.push(normalized.value);
+  }
+  return { ok: true, value: { type: "message", role, content: items } };
+};
+
+const normalizeChatToolCall = (
+  value: unknown,
+  param: string,
+): NormalizationResult<Readonly<Record<string, unknown> & { type: "function_call" }>> => {
+  if (!isRecord(value) || Array.isArray(value)) return invalidNormalizedField(param, `${param} must be an object`);
+  const unknownField = findUnknownContentField(value, ["id", "type", "function"]);
+  if (unknownField) {
+    return invalidNormalizedField(`${param}.${unknownField}`, `Unknown tool call field: ${unknownField}`);
+  }
+  if (value.type !== "function") {
+    return invalidNormalizedField(`${param}.type`, `${param}.type must be function`);
+  }
+  const callId = getString(value.id)?.trim();
+  if (!callId) return invalidNormalizedField(`${param}.id`, `${param}.id must be a non-empty string`);
+  if (!isRecord(value.function) || Array.isArray(value.function)) {
+    return invalidNormalizedField(`${param}.function`, `${param}.function must be an object`);
+  }
+  const unknownFunctionField = findUnknownContentField(value.function, ["name", "arguments"]);
+  if (unknownFunctionField) {
+    return invalidNormalizedField(
+      `${param}.function.${unknownFunctionField}`,
+      `Unknown tool call function field: ${unknownFunctionField}`,
+    );
+  }
+  const name = getString(value.function.name)?.trim();
+  if (!name) {
+    return invalidNormalizedField(`${param}.function.name`, `${param}.function.name must be a non-empty string`);
+  }
+  if (typeof value.function.arguments !== "string") {
+    return invalidNormalizedField(
+      `${param}.function.arguments`,
+      `${param}.function.arguments must be a string`,
+    );
+  }
+  // Arguments are an opaque JSON string in the Chat contract. Do not parse,
+  // validate, or reserialize them: callers rely on byte-for-byte fidelity.
+  return {
+    ok: true,
+    value: {
+      type: "function_call",
+      call_id: callId,
+      name,
+      arguments: value.function.arguments,
+    },
+  };
+};
+
+const normalizeChatToolOutput = (
+  value: unknown,
+  param: string,
+): NormalizationResult<string | Array<Readonly<{ type: "input_text"; text: string }>>> => {
+  if (typeof value === "string") return { ok: true, value };
+  if (!Array.isArray(value)) return invalidNormalizedField(param, `${param} must be a string or an array`);
+  const output: Array<Readonly<{ type: "input_text"; text: string }>> = [];
+  for (const [index, part] of value.entries()) {
+    const partParam = `${param}[${index}]`;
+    if (!isRecord(part) || Array.isArray(part)) {
+      return invalidNormalizedField(partParam, `${partParam} must be an object`);
+    }
+    const type = getString(part.type);
+    if (type !== "text") {
+      return invalidNormalizedField(`${partParam}.type`, `${partParam}.type must be a text content part`);
+    }
+    if (typeof part.text !== "string") {
+      return invalidNormalizedField(`${partParam}.text`, `${partParam}.text must be a string`);
+    }
+    output.push({ type: "input_text", text: part.text });
+  }
+  return { ok: true, value: output };
+};
+
+const normalizeChatMessage = (
+  value: unknown,
+  index: number,
+): NormalizationResult<Readonly<{ instruction: string | null; input: ResponseInputItem[] }>> => {
+  const param = `messages[${index}]`;
+  if (!isRecord(value) || Array.isArray(value)) return invalidNormalizedField(param, `${param} must be an object`);
+  const roleRaw = getString(value.role);
+  if (!roleRaw) return invalidNormalizedField(`${param}.role`, `${param}.role must be a string`);
+  const role = chatRoleToCodexRole(roleRaw);
+  if (!role) return invalidNormalizedField(`${param}.role`, `${param}.role is not supported`);
+
+  if (roleRaw === "tool") {
+    if (Object.prototype.hasOwnProperty.call(value, "tool_calls")) {
+      return invalidNormalizedField(`${param}.tool_calls`, "tool_calls are only valid for assistant messages");
+    }
+    const callId = getString(value.tool_call_id)?.trim();
+    if (!callId) {
+      return invalidNormalizedField(`${param}.tool_call_id`, `${param}.tool_call_id must be a non-empty string`);
+    }
+    const output = normalizeChatToolOutput(value.content, `${param}.content`);
+    if (!output.ok) return output;
+    return {
+      ok: true,
+      value: { instruction: null, input: [{ type: "function_call_output", call_id: callId, output: output.value }] },
+    };
+  }
+
+  if (Object.prototype.hasOwnProperty.call(value, "tool_call_id")) {
+    return invalidNormalizedField(`${param}.tool_call_id`, "tool_call_id is only valid for tool messages");
+  }
+  if (roleRaw === "assistant") {
+    const hasToolCalls = Object.prototype.hasOwnProperty.call(value, "tool_calls");
+    // Chat permits an omitted assistant content field when the message is
+    // solely a function-call turn. Normalize it as the same empty content as
+    // the explicit null form, but keep missing content invalid otherwise.
+    const content = value.content === undefined && hasToolCalls
+      ? { ok: true as const, value: [] as MessageContentItem[] }
+      : normalizeChatContentItems(role, value.content, `${param}.content`);
+    if (!content.ok) return content;
+    const input: ResponseInputItem[] = [];
+    // A Chat assistant's natural-language output must precede its function
+    // calls so a multi-turn tool conversation retains the original order.
+    if (content.value.length) input.push({ type: "message", role, content: content.value });
+    if (hasToolCalls) {
+      if (!Array.isArray(value.tool_calls)) {
+        return invalidNormalizedField(`${param}.tool_calls`, `${param}.tool_calls must be an array`);
+      }
+      for (const [callIndex, call] of value.tool_calls.entries()) {
+        const normalized = normalizeChatToolCall(call, `${param}.tool_calls[${callIndex}]`);
+        if (!normalized.ok) return normalized;
+        input.push(normalized.value);
+      }
+    }
+    if (!input.length) {
+      return invalidNormalizedField(`${param}.content`, "assistant messages require content or tool_calls");
+    }
+    return { ok: true, value: { instruction: null, input } };
+  }
+
+  const content = normalizeChatContentItems(role, value.content, `${param}.content`);
+  if (!content.ok) return content;
+
+  if (roleRaw === "system" || roleRaw === "developer") {
+    if (Object.prototype.hasOwnProperty.call(value, "tool_calls")) {
+      return invalidNormalizedField(`${param}.tool_calls`, "tool_calls are only valid for assistant messages");
+    }
+    return { ok: true, value: { instruction: messageContentToText(content.value), input: [] } };
+  }
+
+  if (Object.prototype.hasOwnProperty.call(value, "tool_calls")) {
+    return invalidNormalizedField(`${param}.tool_calls`, "tool_calls are only valid for assistant messages");
+  }
+  return { ok: true, value: { instruction: null, input: [{ type: "message", role, content: content.value }] } };
 };
 
 const recordResponsesTerminal = (
@@ -2635,6 +3040,35 @@ const responseHasOutputText = (output: unknown): boolean => {
     }
   }
   return false;
+};
+
+/**
+ * Buffered and streamed Responses transports normally emit output_text.delta
+ * events.  Some compatible upstreams only provide the completed output item,
+ * however, so recover that text without turning a mixed text/tool result into
+ * a tool-call-only Chat completion.
+ */
+const responseOutputText = (output: unknown): string => {
+  if (!Array.isArray(output)) return "";
+  let text = "";
+  for (const item of output) {
+    if (!isRecord(item) || !Array.isArray(item.content)) continue;
+    for (const contentItem of item.content) {
+      if (!isRecord(contentItem)) continue;
+      const type = getString(contentItem.type);
+      if (type !== "output_text" && type !== "text") continue;
+      const value = getString(contentItem.text);
+      if (value !== null) text += value;
+    }
+  }
+  return text;
+};
+
+const reconcileResponseOutputText = (emittedText: string, output: unknown): string => {
+  const finalText = responseOutputText(output);
+  if (!finalText || finalText === emittedText || emittedText.startsWith(finalText)) return "";
+  if (finalText.startsWith(emittedText)) return finalText.slice(emittedText.length);
+  return malformedFunctionCallStream("Upstream response output text conflicts with prior text deltas.");
 };
 
 const withAccumulatedResponseText = (response: Record<string, unknown>, text: string): Record<string, unknown> => {
@@ -2666,6 +3100,213 @@ const withAccumulatedResponseItems = (
   return { ...response, output };
 };
 
+type ChatFunctionCall = {
+  key: string;
+  index: number;
+  callId: string;
+  name: string;
+  arguments: string;
+  argumentsDone: boolean;
+};
+
+const malformedFunctionCallStream = (message: string): never => {
+  throw new ResponsesStreamError(message, { kind: "malformed_event" });
+};
+
+/**
+ * Reconciles Responses function-call events into the Chat Completions shape.
+ * Both buffered and SSE translations use this one accumulator so a final
+ * output item cannot duplicate arguments already emitted as deltas.
+ */
+class ChatFunctionCallAccumulator {
+  #calls: ChatFunctionCall[] = [];
+  #byKey = new Map<string, ChatFunctionCall>();
+
+  get hasCalls(): boolean {
+    return this.#calls.length > 0;
+  }
+
+  get calls(): readonly ChatFunctionCall[] {
+    return this.#calls;
+  }
+
+  assertFinalized(): void {
+    const unfinished = this.#calls.find((call) => !call.argumentsDone);
+    if (unfinished) {
+      return malformedFunctionCallStream(
+        "Upstream function-call stream ended before finalized arguments were received.",
+      );
+    }
+  }
+
+  has(event: Record<string, unknown>, item?: Record<string, unknown>): boolean {
+    const key = this.#key(event, item);
+    return Boolean(key && this.#byKey.has(key));
+  }
+
+  #key(event: Record<string, unknown>, item?: Record<string, unknown>): string | null {
+    const itemId = getString(event.item_id) ?? getString(item?.id);
+    if (itemId?.trim()) return `item:${itemId}`;
+    const outputIndex = event.output_index;
+    if (typeof outputIndex === "number" && Number.isInteger(outputIndex) && outputIndex >= 0) {
+      return `output:${outputIndex}`;
+    }
+    return null;
+  }
+
+  #create(event: Record<string, unknown>, item: Record<string, unknown>): ChatFunctionCall {
+    if (getString(item.type) !== "function_call") {
+      return malformedFunctionCallStream("Upstream function-call event did not contain a function_call item.");
+    }
+    const key = this.#key(event, item);
+    if (!key) return malformedFunctionCallStream("Upstream function-call event omitted item_id and output_index.");
+    const callId = getString(item.call_id)?.trim();
+    const name = getString(item.name)?.trim();
+    // Added items may omit arguments because the argument stream follows.
+    const argumentsText = item.arguments === undefined ? "" : getString(item.arguments);
+    if (!callId || !name || argumentsText === null) {
+      return malformedFunctionCallStream("Upstream function-call item is missing call_id, name, or string arguments.");
+    }
+    const existing = this.#byKey.get(key);
+    if (existing) {
+      if (existing.callId !== callId || existing.name !== name) {
+        return malformedFunctionCallStream("Upstream function-call item changed its call_id or name.");
+      }
+      this.#reconcileArguments(existing, argumentsText);
+      return existing;
+    }
+    const call: ChatFunctionCall = {
+      key,
+      index: this.#calls.length,
+      callId,
+      name,
+      arguments: argumentsText,
+      argumentsDone: false,
+    };
+    this.#calls.push(call);
+    this.#byKey.set(key, call);
+    return call;
+  }
+
+  #reconcileArguments(call: ChatFunctionCall, finalArguments: string): string {
+    if (finalArguments === call.arguments) return "";
+    if (!finalArguments.startsWith(call.arguments)) {
+      return malformedFunctionCallStream("Upstream function-call arguments conflict with prior argument deltas.");
+    }
+    const suffix = finalArguments.slice(call.arguments.length);
+    call.arguments = finalArguments;
+    return suffix;
+  }
+
+  add(
+    event: Record<string, unknown>,
+    item: unknown,
+  ): Readonly<{ call: ChatFunctionCall; includeIdentity: boolean; suffix: string }> | null {
+    if (!isRecord(item) || Array.isArray(item) || getString(item.type) !== "function_call") return null;
+    const existing = this.#byKey.get(this.#key(event, item) ?? "");
+    const priorArguments = existing?.arguments;
+    const call = this.#create(event, item);
+    return {
+      call,
+      includeIdentity: !existing,
+      suffix: priorArguments === undefined ? call.arguments : call.arguments.slice(priorArguments.length),
+    };
+  }
+
+  delta(event: Record<string, unknown>): Readonly<{ call: ChatFunctionCall; delta: string }> {
+    const key = this.#key(event);
+    const call = key ? this.#byKey.get(key) : undefined;
+    if (!call) return malformedFunctionCallStream("Upstream function-call argument delta has no matching item.");
+    if (call.argumentsDone) {
+      return malformedFunctionCallStream("Upstream function-call emitted arguments after its completion event.");
+    }
+    const delta = getString(event.delta);
+    if (delta === null) return malformedFunctionCallStream("Upstream function-call argument delta is not a string.");
+    call.arguments += delta;
+    return { call, delta };
+  }
+
+  done(event: Record<string, unknown>): Readonly<{ call: ChatFunctionCall; suffix: string }> {
+    const key = this.#key(event);
+    const call = key ? this.#byKey.get(key) : undefined;
+    if (!call) return malformedFunctionCallStream("Upstream function-call completion has no matching item.");
+    const finalArguments = getString(event.arguments);
+    if (finalArguments === null) {
+      return malformedFunctionCallStream("Upstream function-call completion is missing string arguments.");
+    }
+    if (call.argumentsDone) {
+      if (finalArguments !== call.arguments) {
+        return malformedFunctionCallStream("Upstream function-call completion changed finalized arguments.");
+      }
+      return { call, suffix: "" };
+    }
+    const suffix = this.#reconcileArguments(call, finalArguments);
+    call.argumentsDone = true;
+    return { call, suffix };
+  }
+
+  reconcileItem(
+    event: Record<string, unknown>,
+    item: unknown,
+  ): Readonly<{ call: ChatFunctionCall; suffix: string }> | null {
+    if (!isRecord(item) || Array.isArray(item) || getString(item.type) !== "function_call") return null;
+    const key = this.#key(event, item);
+    const existing = key ? this.#byKey.get(key) : undefined;
+    // An item that is done or appears in final output, on the other hand,
+    // must carry a concrete arguments string. Accepting a missing value would
+    // emit a successful terminal for a malformed upstream function call.
+    const argumentsText = getString(item.arguments);
+    if (argumentsText === null) {
+      return malformedFunctionCallStream("Upstream function-call item is missing string arguments.");
+    }
+    if (!existing) {
+      const created = this.#create(event, item);
+      created.argumentsDone = true;
+      return { call: created, suffix: created.arguments };
+    }
+    if (existing.callId !== getString(item.call_id)?.trim() || existing.name !== getString(item.name)?.trim()) {
+      return malformedFunctionCallStream("Upstream function-call item changed its call_id or name.");
+    }
+    if (existing.argumentsDone) {
+      if (argumentsText !== existing.arguments) {
+        return malformedFunctionCallStream("Upstream function-call item changed finalized arguments.");
+      }
+      return { call: existing, suffix: "" };
+    }
+    const suffix = this.#reconcileArguments(existing, argumentsText);
+    existing.argumentsDone = true;
+    return { call: existing, suffix };
+  }
+
+  reconcileOutput(
+    event: Record<string, unknown>,
+    output: unknown,
+  ): Array<Readonly<{ call: ChatFunctionCall; suffix: string }>> {
+    if (!Array.isArray(output)) return [];
+    const reconciled: Array<Readonly<{ call: ChatFunctionCall; suffix: string }>> = [];
+    for (const item of output) {
+      const result = this.reconcileItem(event, item);
+      if (result) reconciled.push(result);
+    }
+    return reconciled;
+  }
+}
+
+const chatToolCallDelta = (
+  call: ChatFunctionCall,
+  options: Readonly<{ includeIdentity: boolean; argumentsDelta?: string }> = { includeIdentity: false },
+): Record<string, unknown> => {
+  const fn: Record<string, unknown> = {};
+  if (options.includeIdentity) fn.name = call.name;
+  if (options.argumentsDelta !== undefined) fn.arguments = options.argumentsDelta;
+  const value: Record<string, unknown> = { index: call.index, function: fn };
+  if (options.includeIdentity) {
+    value.id = call.callId;
+    value.type = "function";
+  }
+  return value;
+};
+
 const streamChatCompletions = (
   source: PreflightedResponsesStream,
   model: string,
@@ -2683,10 +3324,83 @@ const streamChatCompletions = (
   let created = Math.floor(Date.now() / 1000);
   let sentRole = false;
   let closed = false;
+  let outputText = "";
+  const functionCalls = new ChatFunctionCallAccumulator();
+  const queuedDeltas: Array<
+    | Readonly<{ kind: "content"; content: string }>
+    | Readonly<{
+      kind: "tool";
+      call: ChatFunctionCall;
+      includeIdentity: boolean;
+      argumentsDelta: string;
+    }>
+  > = [];
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (closed) return;
       try {
+        const emitContent = (content: string): void => {
+          const chunk: Record<string, unknown> = {
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [
+              {
+                index: 0,
+                delta: sentRole ? { content } : { role: "assistant", content },
+                finish_reason: null,
+              },
+            ],
+          };
+          sentRole = true;
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        };
+        const emitToolCall = (
+          call: ChatFunctionCall,
+          includeIdentity: boolean,
+          argumentsDelta: string | undefined,
+        ): void => {
+          const toolCall = chatToolCallDelta(call, { includeIdentity, argumentsDelta });
+          const delta: Record<string, unknown> = sentRole
+            ? { tool_calls: [toolCall] }
+            : { role: "assistant", tool_calls: [toolCall] };
+          const chunk: Record<string, unknown> = {
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [{ index: 0, delta, finish_reason: null }],
+          };
+          sentRole = true;
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        };
+        const queueFinalOutput = (event: Record<string, unknown>, output: unknown): void => {
+          const textSuffix = reconcileResponseOutputText(outputText, output);
+          if (textSuffix) {
+            outputText += textSuffix;
+            queuedDeltas.push({ kind: "content", content: textSuffix });
+          }
+          const beforeCount = functionCalls.calls.length;
+          const reconciled = functionCalls.reconcileOutput(event, output);
+          for (const result of reconciled) {
+            const includeIdentity = result.call.index >= beforeCount;
+            if (includeIdentity || result.suffix) {
+              queuedDeltas.push({
+                kind: "tool",
+                call: result.call,
+                includeIdentity,
+                argumentsDelta: result.suffix,
+              });
+            }
+          }
+        };
+        const queued = queuedDeltas.shift();
+        if (queued) {
+          if (queued.kind === "content") emitContent(queued.content);
+          else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
+          return;
+        }
         while (!closed) {
           const next = pending ? { done: false as const, value: pending } : await iterator.next();
           pending = undefined;
@@ -2707,26 +3421,85 @@ const streamChatCompletions = (
           }
 
           if (type === "response.output_text.delta") {
-            const delta = getString(ev.delta) ?? "";
-            const chunk: Record<string, unknown> = {
-              id,
-              object: "chat.completion.chunk",
-              created,
-              model,
-              choices: [
-                {
-                  index: 0,
-                  delta: sentRole ? { content: delta } : { role: "assistant", content: delta },
-                  finish_reason: null,
-                },
-              ],
-            };
-            sentRole = true;
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            const delta = getString(ev.delta);
+            if (delta === null) {
+              return malformedFunctionCallStream("Upstream output-text delta is not a string.");
+            }
+            outputText += delta;
+            emitContent(delta);
             return;
           }
 
+          if (type === "response.output_item.added") {
+            const added = functionCalls.add(ev, ev.item);
+            if (added && (added.includeIdentity || added.suffix)) {
+              emitToolCall(added.call, added.includeIdentity, added.suffix);
+              return;
+            }
+            continue;
+          }
+
+          if (type === "response.function_call_arguments.delta") {
+            const { call, delta } = functionCalls.delta(ev);
+            emitToolCall(call, false, delta);
+            return;
+          }
+
+          if (type === "response.function_call_arguments.done") {
+            const { call, suffix } = functionCalls.done(ev);
+            if (suffix) {
+              emitToolCall(call, false, suffix);
+              return;
+            }
+            continue;
+          }
+
+          if (type === "response.output_item.done") {
+            const wasKnown = isRecord(ev.item) && !Array.isArray(ev.item) && functionCalls.has(ev, ev.item);
+            const reconciled = functionCalls.reconcileItem(ev, ev.item);
+            if (reconciled) {
+              if (!wasKnown || reconciled.suffix) {
+                emitToolCall(reconciled.call, !wasKnown, reconciled.suffix);
+                return;
+              }
+            } else {
+              const textSuffix = reconcileResponseOutputText(outputText, [ev.item]);
+              if (textSuffix) {
+                outputText += textSuffix;
+                emitContent(textSuffix);
+                return;
+              }
+            }
+            continue;
+          }
+
+          if (type === "response.output") {
+            const output = ev.output ?? (isRecord(ev.response) ? ev.response.output : undefined);
+            queueFinalOutput(ev, output);
+            if (queuedDeltas.length) {
+              pending = event;
+              const queued = queuedDeltas.shift()!;
+              if (queued.kind === "content") emitContent(queued.content);
+              else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
+              return;
+            }
+            continue;
+          }
+
           if (type === "response.completed") {
+            if (!isRecord(ev.response) || Array.isArray(ev.response)) {
+              return malformedFunctionCallStream("Upstream response.completed event is missing its response object.");
+            }
+            const output = ev.response.output;
+            queueFinalOutput(ev, output);
+            functionCalls.assertFinalized();
+            if (queuedDeltas.length) {
+              pending = event;
+              const queued = queuedDeltas.shift()!;
+              if (queued.kind === "content") emitContent(queued.content);
+              else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
+              return;
+            }
             onResponseTerminal?.();
             lifecycle.terminal(type);
             recordStreamTerminalType(usageContext, "response.completed");
@@ -2741,7 +3514,7 @@ const streamChatCompletions = (
                 {
                   index: 0,
                   delta: sentRole ? {} : { role: "assistant" },
-                  finish_reason: "stop",
+                  finish_reason: functionCalls.hasCalls ? "tool_calls" : "stop",
                 },
               ],
             };
@@ -2828,6 +3601,7 @@ const completeChatCompletions = async (
   let created = Math.floor(Date.now() / 1000);
   let content = "";
   let usage: Record<string, unknown> | null = null;
+  const functionCalls = new ChatFunctionCallAccumulator();
 
   let completed = false;
   try {
@@ -2852,10 +3626,39 @@ const completeChatCompletions = async (
         continue;
       }
       if (type === "response.output_text.delta") {
-        content += getString(ev.delta) ?? "";
+        const delta = getString(ev.delta);
+        if (delta === null) {
+          return malformedFunctionCallStream("Upstream output-text delta is not a string.");
+        }
+        content += delta;
+        continue;
+      }
+      if (type === "response.output_item.added") {
+        functionCalls.add(ev, ev.item);
+        continue;
+      }
+      if (type === "response.function_call_arguments.delta") {
+        functionCalls.delta(ev);
+        continue;
+      }
+      if (type === "response.function_call_arguments.done") {
+        functionCalls.done(ev);
+        continue;
+      }
+      if (type === "response.output_item.done") {
+        functionCalls.reconcileItem(ev, ev.item);
+        continue;
+      }
+      if (type === "response.output") {
+        const output = ev.output ?? (isRecord(ev.response) ? ev.response.output : undefined);
+        content += reconcileResponseOutputText(content, output);
+        functionCalls.reconcileOutput(ev, output);
         continue;
       }
       if (type === "response.completed" && isRecord(ev.response)) {
+        content += reconcileResponseOutputText(content, ev.response.output);
+        functionCalls.reconcileOutput(ev, ev.response.output);
+        functionCalls.assertFinalized();
         const usageTokens = extractUsageTokens(ev.response.usage);
         if (usageTokens) {
           usage = {
@@ -2871,7 +3674,6 @@ const completeChatCompletions = async (
       if (event.terminal) break;
     }
   } catch (error) {
-    onResponseTerminal?.();
     const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType === "cancelled") lifecycle.cancelled();
@@ -2892,6 +3694,17 @@ const completeChatCompletions = async (
     });
   }
 
+  const message: Record<string, unknown> = {
+    role: "assistant",
+    content: content || !functionCalls.hasCalls ? content : null,
+  };
+  if (functionCalls.hasCalls) {
+    message.tool_calls = functionCalls.calls.map((call) => ({
+      id: call.callId,
+      type: "function",
+      function: { name: call.name, arguments: call.arguments },
+    }));
+  }
   const body: Record<string, unknown> = {
     id,
     object: "chat.completion",
@@ -2900,8 +3713,8 @@ const completeChatCompletions = async (
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content },
-        finish_reason: "stop",
+        message,
+        finish_reason: functionCalls.hasCalls ? "tool_calls" : "stop",
       },
     ],
   };
@@ -2958,7 +3771,6 @@ const withVoyageUpstreamHeader = (response: Response): Response => {
 
 const handleEmbeddingsRequest = async (
   req: Request,
-  contract: "openai" | "uos",
   usageContext?: UsageContext,
   options: Readonly<{ kv?: Deno.Kv | null }> = {},
 ): Promise<Response> => {
@@ -2970,7 +3782,7 @@ const handleEmbeddingsRequest = async (
     return openaiError(400, "Invalid JSON body", "invalid_request_error");
   }
 
-  const parsed = parseEmbeddingsRequest(rawBody, contract);
+  const parsed = parseUosEmbeddingsRequest(rawBody);
   if (!parsed.ok) return parsed.response;
   const { model, inputs, profile } = parsed.value;
 
@@ -2979,7 +3791,7 @@ const handleEmbeddingsRequest = async (
   let idempotencyLease: EmbeddingsIdempotencyLease | null = null;
   let idempotencyDispatched = false;
   let idempotencyHasConfirmedSuccess = false;
-  const idempotencyKey = contract === "uos" ? req.headers.get("Idempotency-Key") : null;
+  const idempotencyKey = req.headers.get("Idempotency-Key");
   if (idempotencyKey !== null) {
     if (
       !idempotencyKey ||
@@ -3146,6 +3958,7 @@ const handleEmbeddingsRequest = async (
             outputDtype: profile.output_dtype,
             truncation: profile.truncation,
             deadlineMs,
+            beforeProviderDispatch: usageContext?.beforeProviderDispatch,
           });
           vectors = upstream.vectors;
           if (idempotencyLease) idempotencyHasConfirmedSuccess = true;
@@ -3155,6 +3968,18 @@ const handleEmbeddingsRequest = async (
           }
           break;
         } catch (error) {
+          if (error instanceof ApiKeyQuotaDispatchError) {
+            await recordErrorUsage(usageContext);
+            if (idempotencyLease) {
+              const released = await releaseEmbeddingsIdempotencyReservation(
+                idempotencyLease,
+                idempotencyDispatched,
+              );
+              if (!released) return embeddingsIdempotencyUnavailableResponse();
+              idempotencyDispatched = false;
+            }
+            return apiKeyQuotaDispatchErrorResponse(error);
+          }
           const status = (error as { status?: number }).status;
           const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
           const snippet = formatErrorSnippet(error);
@@ -3304,12 +4129,6 @@ const handleEmbeddingsRequest = async (
   return response;
 };
 
-export const handleEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
-  await runWithResponseTelemetry(
-    usageContext,
-    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "openai", context)),
-  );
-
 export const handleUosEmbeddings = async (
   req: Request,
   usageContext?: UsageContext,
@@ -3317,7 +4136,7 @@ export const handleUosEmbeddings = async (
 ): Promise<Response> =>
   await runWithResponseTelemetry(
     usageContext,
-    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "uos", context, options)),
+    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, context, options)),
   );
 
 const buildEmbeddingsJobBody = (
@@ -3620,10 +4439,14 @@ const runEmbeddingsJobAttempt = async (params: {
         outputDtype: currentJob.output_dtype,
         truncation: currentJob.truncation,
         deadlineMs: params.deadlineMs,
+        beforeProviderDispatch: params.usageContext?.beforeProviderDispatch,
       });
       vectors = upstream.vectors;
       totalTokens = upstream.totalTokens;
     } catch (error) {
+      if (error instanceof ApiKeyQuotaDispatchError) {
+        return await queueJob(1_000);
+      }
       const status = (error as { status?: number }).status;
       const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
       if (status && EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
@@ -3689,7 +4512,7 @@ const handleEmbeddingsJobCreateInternal = async (
     return openaiError(400, "Invalid JSON body", "invalid_request_error");
   }
 
-  const parsed = parseEmbeddingsRequest(rawBody, "uos");
+  const parsed = parseEmbeddingsJobRequest(rawBody);
   if (!parsed.ok) {
     await recordErrorUsage(usageContext);
     return parsed.response;
@@ -3952,6 +4775,8 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       "tool_choice",
       "parallel_tool_calls",
       "prompt_cache_key",
+      "prompt_cache_options",
+      "prompt_cache_retention",
     ]),
   );
 
@@ -3981,22 +4806,20 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     return openaiError(400, reasoningEffort.message, "invalid_request_error", { param: "reasoning_effort" });
   }
 
-  const input: ResponseMessageItem[] = [];
+  const parsedStream = parseStreamField(body.stream);
+  if (!parsedStream.ok) {
+    return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
+  }
+
+  const input: ResponseInputItem[] = [];
   const instructionParts: string[] = [];
-  for (const msg of messagesRaw) {
-    if (!isRecord(msg)) return openaiError(400, "Invalid message in messages[]", "invalid_request_error");
-    const roleRaw = getString(msg.role);
-    if (!roleRaw) return openaiError(400, "Invalid message in messages[]", "invalid_request_error");
-    if (roleRaw === "system" || roleRaw === "developer") {
-      const converted = toResponseMessageItem(msg);
-      if (!converted) return openaiError(400, "Invalid message in messages[]", "invalid_request_error");
-      const instructionText = messageContentToText(converted.content).trim();
-      if (instructionText) instructionParts.push(instructionText);
-      continue;
+  for (const [index, msg] of messagesRaw.entries()) {
+    const converted = normalizeChatMessage(msg, index);
+    if (!converted.ok) {
+      return openaiError(400, converted.message, "invalid_request_error", { param: converted.param });
     }
-    const converted = toResponseMessageItem(msg);
-    if (!converted) return openaiError(400, "Invalid message in messages[]", "invalid_request_error");
-    input.push(converted);
+    if (converted.value.instruction?.trim()) instructionParts.push(converted.value.instruction.trim());
+    input.push(...converted.value.input);
   }
 
   if (input.length === 0) {
@@ -4027,11 +4850,13 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     "tool_choice",
     "parallel_tool_calls",
     "prompt_cache_key",
+    "prompt_cache_options",
+    "prompt_cache_retention",
   ];
   applyPassthroughToCodexRequest(codexBody, rawRecord, passthroughKeys);
   codexBody.store = false;
 
-  const stream = Boolean(body.stream);
+  const stream = parsedStream.value;
   const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.reasoning = reasoningLabel;
   await recordRequestUsage(usageContext, {
@@ -4077,12 +4902,15 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     return upstream;
   }
   if (!upstream.ok) {
-    clearStreamFirstEventDeadline();
     lifecycle.terminal("response.failed");
     recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
-    const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
-    return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    try {
+      const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider, requestInferenceSignal);
+      return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    } finally {
+      clearStreamFirstEventDeadline();
+    }
   }
 
   if (!upstream.body) {
@@ -4178,6 +5006,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       "tool_choice",
       "parallel_tool_calls",
       "prompt_cache_key",
+      "prompt_cache_options",
+      "prompt_cache_retention",
       "text",
       "include",
       "context_management",
@@ -4185,7 +5015,11 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     ]),
   );
 
-  const clientWantsStream = Boolean(rawBody.stream);
+  const parsedStream = parseStreamField(rawBody.stream);
+  if (!parsedStream.ok) {
+    return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
+  }
+  const clientWantsStream = parsedStream.value;
 
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
   const rawModelValue = rawRecord.model;
@@ -4222,11 +5056,16 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     };
 
     let sawNonContentItem = false;
-    for (const msg of inputRaw) {
-      const mapped = normalizeResponseInputItem(msg);
-      if (mapped) {
+    for (const [index, msg] of inputRaw.entries()) {
+      const param = `input[${index}]`;
+      const messageType = isRecord(msg) && !Array.isArray(msg) ? getString(msg.type) : null;
+      if (messageType === "message" || (messageType === null && isRecord(msg) && "role" in msg)) {
+        const mapped = normalizeResponseMessageItem(msg, param);
+        if (!mapped.ok) {
+          return openaiError(400, mapped.message, "invalid_request_error", { param: mapped.param });
+        }
         flushContentBuffer();
-        converted.push(mapped);
+        converted.push(mapped.value);
         sawNonContentItem = true;
         continue;
       }
@@ -4241,12 +5080,18 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         continue;
       }
 
-      const contentItem = normalizeResponseContentItem(msg);
-      if (contentItem) {
+      const contentType = isRecord(msg) && !Array.isArray(msg) ? getString(msg.type) : null;
+      if (
+        contentType === "input_text" || contentType === "input_image" || contentType === "input_file"
+      ) {
+        const contentItem = normalizeResponseContentItem(msg, param, "user");
+        if (!contentItem.ok) {
+          return openaiError(400, contentItem.message, "invalid_request_error", { param: contentItem.param });
+        }
         if (sawNonContentItem) {
-          converted.push({ type: "message", role: "user", content: [contentItem] });
+          converted.push({ type: "message", role: "user", content: [contentItem.value] });
         } else {
-          contentBuffer.push(contentItem);
+          contentBuffer.push(contentItem.value);
         }
         continue;
       }
@@ -4255,13 +5100,24 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       // (e.g. reasoning + function_call + function_call_output). Pass them through
       // so tool-calling conversations work end-to-end.
       if (isRecord(msg) && typeof msg.type === "string" && msg.type !== "message") {
+        // Content items belong inside a message (or are normalized above).
+        // Do not mistake an unsupported input_* content type for an arbitrary
+        // Responses item and silently relay it upstream.
+        if (
+          msg.type.startsWith("input_") || msg.type === "text" || msg.type === "image_url" ||
+          msg.type === "output_text"
+        ) {
+          return openaiError(400, `${param}.type is not supported`, "invalid_request_error", {
+            param: `${param}.type`,
+          });
+        }
         flushContentBuffer();
         converted.push(msg as ResponseInputItem);
         sawNonContentItem = true;
         continue;
       }
 
-      return openaiError(400, "Invalid message in input[]", "invalid_request_error");
+      return openaiError(400, "Invalid message in input[]", "invalid_request_error", { param });
     }
     if (!sawNonContentItem || contentBuffer.length) {
       flushContentBuffer();
@@ -4274,13 +5130,15 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error", { param: "reasoning" });
 
-  let instructions = "";
+  let instructions: string | undefined;
   if (Object.prototype.hasOwnProperty.call(rawRecord, "instructions")) {
-    const rawInstructions = getString(rawBody.instructions);
-    if (rawInstructions === null) {
+    if (rawBody.instructions === null) {
+      instructions = undefined;
+    } else if (typeof rawBody.instructions === "string") {
+      instructions = rawBody.instructions;
+    } else {
       return openaiError(400, "instructions must be a string", "invalid_request_error");
     }
-    instructions = rawInstructions;
   }
   const defaultEffort = await getDefaultReasoningEffort();
   const modelReasoning = modelMetadata.reasoning;
@@ -4299,6 +5157,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     "tool_choice",
     "parallel_tool_calls",
     "prompt_cache_key",
+    "prompt_cache_options",
+    "prompt_cache_retention",
     "text",
     "include",
     "context_management",
@@ -4349,12 +5209,15 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     return upstream;
   }
   if (!upstream.ok) {
-    clearStreamFirstEventDeadline();
     lifecycle.terminal("response.failed");
     recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
-    const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
-    return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    try {
+      const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider, requestInferenceSignal);
+      return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    } finally {
+      clearStreamFirstEventDeadline();
+    }
   }
 
   if (clientWantsStream) {

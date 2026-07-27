@@ -354,7 +354,6 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(warnings.includes("moderation_ignored"));
-    assert.ok(warnings.includes("prompt_cache_options_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
@@ -362,7 +361,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
     assert.equal("moderation" in recorded, false);
-    assert.equal("prompt_cache_options" in recorded, false);
+    assert.deepEqual(recorded["prompt_cache_options"], { mode: "implicit", ttl: "30m" });
   });
 
   await t.step("chat preserves none reasoning effort upstream", async () => {
@@ -451,7 +450,6 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(warnings.includes("moderation_ignored"));
-    assert.ok(warnings.includes("prompt_cache_options_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
@@ -459,7 +457,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
     assert.equal("moderation" in recorded, false);
-    assert.equal("prompt_cache_options" in recorded, false);
+    assert.deepEqual(recorded["prompt_cache_options"], { mode: "implicit", ttl: "30m" });
   });
 
   await t.step("responses accepts and strips Codex CLI client metadata", async () => {
@@ -679,7 +677,7 @@ Deno.test("openai: default model requires configured model or stored snapshot", 
   }
 });
 
-Deno.test("openai: default reasoning comes from stored model metadata, not model name", async () => {
+Deno.test("openai: configured default reasoning survives missing catalog metadata", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const defaultModelKey = keyToString(DEFAULT_MODEL_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
@@ -728,7 +726,7 @@ Deno.test("openai: default reasoning comes from stored model metadata, not model
     assert.equal(response.status, 200);
     assert.ok(recordedBody);
     assert.equal((recordedBody as Record<string, unknown>).model, modelWithoutReasoningMetadata);
-    assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "none" });
+    assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "low" });
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
@@ -856,6 +854,61 @@ Deno.test("openai: none remains a gateway special case when snapshot levels omit
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
+  }
+});
+
+Deno.test("openai: hostile catalog wire maps cannot rewrite none reasoning", async () => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const defaultReasoningKey = keyToString(DEFAULT_REASONING_EFFORT_KEY);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  const previousDefaultReasoning = kvStore.get(defaultReasoningKey);
+  kvStore.set(defaultReasoningKey, "none");
+  kvStore.set(snapshotKey, {
+    source: "chatgpt_codex",
+    updated_at_ms: Date.now(),
+    models: [{
+      slug: DEFAULT_TEST_MODEL,
+      display_name: "Hostile wire-map fixture",
+      default_reasoning_level: "none",
+      supported_reasoning_levels: ["none", "max"],
+      reasoning_effort_wire_map: { none: "max" },
+    }],
+  });
+
+  try {
+    const recordedEfforts: unknown[] = [];
+    await withFetchMock(
+      (_url, bodyText) => {
+        const body = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : {};
+        recordedEfforts.push((body.reasoning as Record<string, unknown> | undefined)?.effort);
+        return sseResponse(baseSseChunks());
+      },
+      async () => {
+        const chat = await handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages: [{ role: "user", content: "ping" }] }),
+          }),
+        );
+        const responses = await handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ input: "ping", reasoning: { effort: "none" } }),
+          }),
+        );
+        assert.equal(chat.status, 200);
+        assert.equal(responses.status, 200);
+      },
+    );
+    assert.deepEqual(recordedEfforts, ["none", "none"]);
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+    if (previousDefaultReasoning === undefined) kvStore.delete(defaultReasoningKey);
+    else kvStore.set(defaultReasoningKey, previousDefaultReasoning);
+    resetRuntimeConfigCacheForTest();
   }
 });
 
@@ -1045,6 +1098,49 @@ Deno.test("openai: catalog wire metadata maps Codex CLI ultra to upstream max", 
   assert.equal(recordedUserAgent, "codex_cli_rs/0.125.0 (ai.ubq.fi)");
 });
 
+Deno.test("openai: ultra still dispatches as max when a stored catalog has no wire map", async () => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  kvStore.set(snapshotKey, {
+    source: "chatgpt_codex",
+    updated_at_ms: Date.now(),
+    models: [{
+      slug: DEFAULT_TEST_MODEL,
+      display_name: "No wire-map fixture",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: ["none", "medium", "ultra"],
+    }],
+  });
+  try {
+    let recordedBody: Record<string, unknown> | null = null;
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              messages: [{ role: "user", content: "ping" }],
+              reasoning_effort: "ultra",
+            }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+    resetRuntimeConfigCacheForTest();
+  }
+});
+
 Deno.test("openai: responses applies catalog reasoning wire metadata", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
@@ -1070,42 +1166,211 @@ Deno.test("openai: responses applies catalog reasoning wire metadata", async () 
   assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
 });
 
-Deno.test("openai: Codex HTTP errors are returned unchanged", async () => {
-  const upstreamBody = JSON.stringify({
-    detail: "The 'gpt-5-chat-latest' model is not supported when using Codex with a ChatGPT account.",
-    opaque: { keep: true },
-  });
-  const response = await withFetchMock(
-    () =>
-      new Response(
-        upstreamBody,
-        {
-          status: 400,
-          statusText: "Codex Invalid Request",
-          headers: {
-            "Content-Type": "application/problem+json",
-            "X-Codex-Diagnostic": "preserved",
-          },
+Deno.test("openai: Codex HTTP errors use OpenAI envelopes without changing routing", async (t) => {
+  const cases = [
+    {
+      name: "chat completions parses a provider-root detail",
+      route: "chat.completions",
+      status: 400,
+      statusText: "Codex Invalid Request",
+      body: JSON.stringify({
+        detail: "The requested model is not supported with a ChatGPT account.",
+        opaque: { drop: true },
+      }),
+      retryAfter: "7",
+      expectedError: {
+        message: "The requested model is not supported with a ChatGPT account.",
+        type: "invalid_request_error",
+        code: "upstream_error",
+      },
+    },
+    {
+      name: "responses preserves an existing error envelope",
+      route: "responses",
+      status: 503,
+      statusText: "Codex Unavailable",
+      body: JSON.stringify({
+        error: {
+          message: "Codex is temporarily unavailable.",
+          type: "server_error",
+          code: "provider_unavailable",
+          param: "model",
         },
-      ),
-    () =>
-      handleChatCompletions(
-        new Request("https://ai.ubq.fi/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: [{ role: "user", content: "ping" }],
-          }),
-        }),
-      ),
-  );
+        opaque: { drop: true },
+      }),
+      retryAfter: null,
+      expectedError: {
+        message: "Codex is temporarily unavailable.",
+        type: "server_error",
+        code: "provider_unavailable",
+        param: "model",
+      },
+    },
+    {
+      name: "responses converts plain text",
+      route: "responses",
+      status: 422,
+      statusText: "Codex Rejected",
+      body: "Codex rejected the request body.",
+      retryAfter: null,
+      expectedError: {
+        message: "Codex rejected the request body.",
+        type: "invalid_request_error",
+        code: "upstream_error",
+      },
+    },
+  ] as const;
 
-  assert.equal(response.status, 400);
-  assert.equal(response.statusText, "Codex Invalid Request");
-  assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
-  assert.equal(response.headers.get("Content-Type"), "application/problem+json");
-  assert.equal(response.headers.get("X-Codex-Diagnostic"), "preserved");
-  assert.equal(await response.text(), upstreamBody);
+  for (const testCase of cases) {
+    await t.step(testCase.name, async () => {
+      let codexCalls = 0;
+      const response = await withFetchMock(
+        () => {
+          codexCalls += 1;
+          const headers = new Headers({
+            "Content-Type": "application/problem+json",
+            "X-Codex-Diagnostic": "drop-me",
+          });
+          if (testCase.retryAfter) headers.set("Retry-After", testCase.retryAfter);
+          return new Response(testCase.body, {
+            status: testCase.status,
+            statusText: testCase.statusText,
+            headers,
+          });
+        },
+        () =>
+          testCase.route === "chat.completions"
+            ? handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  messages: [{ role: "user", content: "ping" }],
+                }),
+              }),
+            )
+            : handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+              }),
+            ),
+      );
+
+      assert.equal(response.status, testCase.status);
+      assert.equal(response.statusText, "");
+      assert.equal(response.headers.get("Content-Type"), "application/json");
+      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+      assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
+      assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
+      assert.deepEqual(await response.json(), { error: testCase.expectedError });
+      assert.equal(codexCalls, 1);
+    });
+  }
+});
+
+Deno.test("openai: error normalization bounds oversized and stalled upstream bodies", async (t) => {
+  const expectedError = {
+    error: {
+      message: "Upstream returned an oversized or incomplete error response.",
+      type: "invalid_request_error",
+      code: "upstream_error",
+    },
+  };
+
+  await t.step("oversized bodies are cancelled without exposing partial content", async () => {
+    let cancellations = 0;
+    const oversized = new Uint8Array(65 * 1024);
+    oversized.fill("x".charCodeAt(0));
+    const startedAt = performance.now();
+    const response = await withFetchMock(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(oversized);
+            },
+            cancel() {
+              cancellations += 1;
+            },
+          }),
+          {
+            status: 422,
+            headers: {
+              "Content-Type": "application/problem+json",
+              "X-Codex-Diagnostic": "drop-me",
+            },
+          },
+        ),
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+          }),
+        ),
+    );
+
+    assert.ok(performance.now() - startedAt < 500, "oversized body must be rejected before the reader deadline");
+    assert.equal(response.status, 422);
+    assert.equal(response.headers.get("Content-Type"), "application/json");
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
+    assert.deepEqual(await response.json(), expectedError);
+    assert.equal(cancellations, 1);
+  });
+
+  setStreamFirstEventDeadlineMsForTest(100);
+  try {
+    for (const route of ["responses", "chat.completions"] as const) {
+      await t.step(`${route} keeps the request deadline while reading an error body`, async () => {
+        let cancellations = 0;
+        const startedAt = performance.now();
+        const response = await withFetchMock(
+          () =>
+            new Response(
+              new ReadableStream<Uint8Array>({
+                pull: () => new Promise<void>(() => {}),
+                cancel() {
+                  cancellations += 1;
+                },
+              }),
+              { status: 400, headers: { "Content-Type": "application/problem+json" } },
+            ),
+          () =>
+            route === "responses"
+              ? handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+                }),
+              )
+              : handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    messages: [{ role: "user", content: "ping" }],
+                    stream: true,
+                  }),
+                }),
+              ),
+        );
+
+        assert.ok(performance.now() - startedAt < 500, route);
+        assert.equal(response.status, 400);
+        assert.deepEqual(await response.json(), expectedError);
+        assert.equal(cancellations, 1);
+      });
+    }
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+  }
 });
 
 Deno.test("openai: a failed half-open 2xx stream releases its routing lease", async () => {
@@ -1365,7 +1630,13 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         );
         assert.equal(response.status, 429, testCase.id);
         assert.equal(calls, 2);
-        assert.deepEqual(await response.json(), { error: { message: "Primary limited" } });
+        assert.deepEqual(await response.json(), {
+          error: {
+            message: "Primary limited",
+            type: "rate_limit_error",
+            code: "upstream_error",
+          },
+        });
       }
     });
 
@@ -2388,69 +2659,152 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       assert.equal(upstreamCancelCount, 1);
     });
 
-    await t.step("a YunWu HTTP error is returned unchanged after exactly one attempt", async () => {
-      const keyId = "fallback-yunwu-error";
-      const requestId = "request-fallback-yunwu-error";
-      const upstreamBody = '{"error":{"message":"YunWu busy","code":"provider_rate_limit"},"opaque":{"keep":true}}';
-      seedPaidFallbackKey(keyId);
-      let yunwuCalls = 0;
-      const response = await withFetchMock(
-        (url) => {
-          if (url === "https://yunwu.ai/v1/responses") {
-            yunwuCalls += 1;
-            return new Response(upstreamBody, {
-              status: 429,
-              statusText: "YunWu Rate Limited",
-              headers: {
-                "Content-Type": "application/problem+json",
-                "Retry-After": "17",
-                "X-Oneapi-Request-Id": "yunwu-error-request",
-                "X-Yunwu-Diagnostic": "preserved",
-              },
-            });
-          }
-          if (url === "https://yunwu.ai/api/log/token") {
-            return new Response(JSON.stringify({ success: true, data: [] }), {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            });
-          }
-          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-            status: 429,
-            headers: { "Content-Type": "application/json" },
-          });
-        },
-        () =>
-          handleResponses(
-            new Request("https://ai.ubq.fi/v1/responses", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
-            }),
-            {
-              keyId,
-              kernelRepo: null,
-              kernelOrg: null,
-              requestId,
-              startedAtMs: Date.now(),
+    await t.step("YunWu HTTP errors use OpenAI envelopes without changing routing", async (t) => {
+      const cases = [
+        {
+          name: "responses preserves an existing error envelope and 429",
+          route: "responses",
+          status: 429,
+          statusText: "YunWu Rate Limited",
+          body: JSON.stringify({
+            error: {
+              message: "YunWu is rate limited.",
+              type: "rate_limit_error",
+              code: "provider_rate_limit",
+              param: null,
             },
-          ),
-      );
-      assert.equal(response.status, 429);
-      assert.equal(response.statusText, "YunWu Rate Limited");
-      assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
-      assert.equal(response.headers.get("Content-Type"), "application/problem+json");
-      assert.equal(response.headers.get("Retry-After"), "17");
-      assert.equal(response.headers.get("X-Oneapi-Request-Id"), "yunwu-error-request");
-      assert.equal(response.headers.get("X-Yunwu-Diagnostic"), "preserved");
-      assert.equal(yunwuCalls, 1);
-      assert.equal(await response.text(), upstreamBody);
-      const request = kvStore.get(
-        keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, requestId]),
-      ) as { billing_state?: string; terminal_state?: string };
-      assert.equal(request.billing_state, "pending");
-      const failed = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
-      assert.equal(failed.terminal_state, "failed");
+            opaque: { drop: true },
+          }),
+          retryAfter: "17",
+          expectedError: {
+            message: "YunWu is rate limited.",
+            type: "rate_limit_error",
+            code: "provider_rate_limit",
+            param: null,
+          },
+        },
+        {
+          name: "chat completions parses a provider-root message and preserves 502",
+          route: "chat.completions",
+          status: 502,
+          statusText: "YunWu Bad Gateway",
+          body: JSON.stringify({
+            message: "YunWu could not reach its model backend.",
+            type: "server_error",
+            code: "provider_unavailable",
+            opaque: { drop: true },
+          }),
+          retryAfter: null,
+          expectedError: {
+            message: "YunWu could not reach its model backend.",
+            type: "server_error",
+            code: "provider_unavailable",
+          },
+        },
+        {
+          name: "chat completions converts plain text and preserves 401",
+          route: "chat.completions",
+          status: 401,
+          statusText: "YunWu Unauthorized",
+          body: "YunWu rejected the configured credential.",
+          retryAfter: null,
+          expectedError: {
+            message: "YunWu rejected the configured credential.",
+            type: "invalid_request_error",
+            code: "upstream_error",
+          },
+        },
+        {
+          name: "responses classifies an untyped upstream 429 as rate limited",
+          route: "responses",
+          status: 429,
+          statusText: "YunWu Rate Limited",
+          body: JSON.stringify({ detail: "YunWu has no capacity." }),
+          retryAfter: "3",
+          expectedError: {
+            message: "YunWu has no capacity.",
+            type: "rate_limit_error",
+            code: "upstream_error",
+          },
+        },
+      ] as const;
+
+      for (const [index, testCase] of cases.entries()) {
+        await t.step(testCase.name, async () => {
+          const keyId = `fallback-yunwu-normalized-${index}`;
+          const requestId = `request-fallback-yunwu-normalized-${index}`;
+          seedPaidFallbackKey(keyId);
+          let codexCalls = 0;
+          let yunwuCalls = 0;
+          const response = await withFetchMock(
+            (url) => {
+              if (url === "https://yunwu.ai/v1/responses") {
+                yunwuCalls += 1;
+                const headers = new Headers({
+                  "Content-Type": "application/problem+json",
+                  "X-Yunwu-Diagnostic": "drop-me",
+                });
+                if (testCase.retryAfter) headers.set("Retry-After", testCase.retryAfter);
+                return new Response(testCase.body, {
+                  status: testCase.status,
+                  statusText: testCase.statusText,
+                  headers,
+                });
+              }
+              codexCalls += 1;
+              return new Response(JSON.stringify({ error: { message: "Primary forbidden" } }), {
+                status: 403,
+                headers: { "Content-Type": "application/json" },
+              });
+            },
+            () =>
+              testCase.route === "chat.completions"
+                ? handleChatCompletions(
+                  new Request("https://ai.ubq.fi/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: DEFAULT_TEST_MODEL,
+                      messages: [{ role: "user", content: "ping" }],
+                    }),
+                  }),
+                  {
+                    keyId,
+                    kernelRepo: null,
+                    kernelOrg: null,
+                    requestId,
+                    startedAtMs: Date.now(),
+                  },
+                )
+                : handleResponses(
+                  new Request("https://ai.ubq.fi/v1/responses", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+                  }),
+                  {
+                    keyId,
+                    kernelRepo: null,
+                    kernelOrg: null,
+                    requestId,
+                    startedAtMs: Date.now(),
+                  },
+                ),
+          );
+
+          assert.equal(response.status, testCase.status);
+          assert.equal(response.statusText, "");
+          assert.equal(response.headers.get("Content-Type"), "application/json");
+          assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+          assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
+          assert.equal(response.headers.get("X-Yunwu-Diagnostic"), null);
+          assert.deepEqual(await response.json(), { error: testCase.expectedError });
+          assert.equal(codexCalls, 1);
+          assert.equal(yunwuCalls, 1);
+          const failed = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
+          assert.equal(failed.terminal_state, "failed");
+        });
+      }
     });
 
     await t.step("a ledger write failure after YunWu accepts preserves the usable response", async () => {
@@ -2888,6 +3242,11 @@ Deno.test("openai: responses accept non-message input items", async () => {
                 role: "user",
                 content: [{ type: "input_text", text: "ping" }],
               },
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Prior answer", annotations: [] }],
+              },
               { type: "reasoning", summary: "thinking..." },
               { type: "function_call", name: "test", call_id: "call_1", arguments: "{}" },
               { type: "function_call_output", call_id: "call_1", output: "ok" },
@@ -2910,6 +3269,8 @@ Deno.test("openai: responses accept non-message input items", async () => {
   assert.ok(types.includes("reasoning"));
   assert.ok(types.includes("function_call"));
   assert.ok(types.includes("function_call_output"));
+  const assistant = (input as Array<Record<string, unknown>>).find((item) => item.role === "assistant");
+  assert.deepEqual(assistant?.content, [{ type: "output_text", text: "Prior answer" }]);
 });
 
 Deno.test("openai: buffered responses preserve function calls emitted as output items", async () => {
@@ -3015,6 +3376,935 @@ Deno.test("openai: responses preserve image detail on normalized input images", 
   const image = (content as Record<string, unknown>[]).find((part) => part.type === "input_image");
   assert.equal(image?.image_url, "data:image/jpeg;base64,/9j/4AAQ");
   assert.equal(image?.detail, "high");
+});
+
+Deno.test("openai: Chat tool conversations retain tool-call order and opaque arguments", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  let upstreamCalls = 0;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      upstreamCalls += 1;
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [
+              { role: "user", content: "Schedule it." },
+              {
+                role: "assistant",
+                content: "I need two details.",
+                tool_calls: [
+                  { id: "call_calendar", type: "function", function: { name: "calendar", arguments: " { bad json" } },
+                  { id: "call_weather", type: "function", function: { name: "weather", arguments: "{}" } },
+                ],
+              },
+              { role: "tool", tool_call_id: "call_calendar", content: "Calendar is free." },
+              {
+                role: "tool",
+                tool_call_id: "call_weather",
+                content: [{ type: "text", text: "Sunny" }, { type: "text", text: " and warm" }],
+              },
+            ],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(upstreamCalls, 1);
+  assert.ok(recordedBody);
+  const input = recordedBody["input"] as Array<Record<string, unknown>>;
+  assert.deepEqual(input.map((item) => item.type), [
+    "message",
+    "message",
+    "function_call",
+    "function_call",
+    "function_call_output",
+    "function_call_output",
+  ]);
+  assert.deepEqual(input[2], {
+    type: "function_call",
+    call_id: "call_calendar",
+    name: "calendar",
+    arguments: " { bad json",
+  });
+  assert.deepEqual(input[5], {
+    type: "function_call_output",
+    call_id: "call_weather",
+    output: [{ type: "input_text", text: "Sunny" }, { type: "input_text", text: " and warm" }],
+  });
+});
+
+Deno.test("openai: Chat assistant refusal content replays as output text", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{ role: "assistant", content: [{ type: "refusal", refusal: "Cannot help." }] }],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  const requestBody = recordedBody as Record<string, unknown>;
+  assert.deepEqual(requestBody.input, [{
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "Cannot help." }],
+  }]);
+});
+
+Deno.test("openai: malformed Chat tool calls are rejected before provider dispatch", async () => {
+  let upstreamCalls = 0;
+  const response = await withFetchMock(
+    () => {
+      upstreamCalls += 1;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{
+              role: "assistant",
+              content: null,
+              tool_calls: [{ id: "call_bad", type: "function", function: { name: "bad", arguments: {} } }],
+            }],
+          }),
+        }),
+      ),
+  );
+  assert.equal(response.status, 400);
+  assert.equal(upstreamCalls, 0);
+  const payload = await response.json() as { error?: { param?: string } };
+  assert.equal(payload.error?.param, "messages[0].tool_calls[0].function.arguments");
+});
+
+Deno.test("openai: Chat accepts a tool-call-only assistant message with omitted content", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{
+              role: "assistant",
+              tool_calls: [{ id: "call_omitted", type: "function", function: { name: "lookup", arguments: "{}" } }],
+            }],
+          }),
+        }),
+      ),
+  );
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  assert.deepEqual((recordedBody as Record<string, unknown>).input, [{
+    type: "function_call",
+    call_id: "call_omitted",
+    name: "lookup",
+    arguments: "{}",
+  }]);
+});
+
+Deno.test("openai: Chat function calls translate consistently in buffered and streamed output", async (t) => {
+  const callOne = {
+    id: "fc_1",
+    type: "function_call",
+    call_id: "call_one",
+    name: "first",
+    arguments: '{"a":1}',
+  };
+  const callTwo = {
+    id: "fc_2",
+    type: "function_call",
+    call_id: "call_two",
+    name: "second",
+    arguments: '{"b":2}',
+  };
+  const chunks = [
+    `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_calls", created_at: 1 } })}\n\n`,
+    `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Before tools. " })}\n\n`,
+    `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 9, item: callOne })}\n\n`,
+    `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 9, item: callOne })}\n\n`,
+    `data: ${
+      JSON.stringify({ type: "response.output_item.added", output_index: 4, item: { ...callTwo, arguments: "" } })
+    }\n\n`,
+    `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "fc_2", delta: '{"b":' })}\n\n`,
+    `data: ${
+      JSON.stringify({ type: "response.function_call_arguments.done", item_id: "fc_2", arguments: '{"b":2}' })
+    }\n\n`,
+    `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 9, item: callOne })}\n\n`,
+    `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 4, item: callTwo })}\n\n`,
+    `data: ${
+      JSON.stringify({
+        type: "response.completed",
+        response: {
+          output: [callOne, callTwo],
+          usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+        },
+      })
+    }\n\n`,
+  ];
+
+  await t.step("buffered", async () => {
+    const response = await withFetchMock(
+      () => sseResponse(chunks),
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, messages: [{ role: "user", content: "tools" }] }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      choices: Array<{ message: Record<string, unknown>; finish_reason: string }>;
+    };
+    assert.equal(payload.choices[0]?.finish_reason, "tool_calls");
+    assert.equal(payload.choices[0]?.message.content, "Before tools. ");
+    assert.deepEqual(payload.choices[0]?.message.tool_calls, [
+      { id: "call_one", type: "function", function: { name: "first", arguments: '{"a":1}' } },
+      { id: "call_two", type: "function", function: { name: "second", arguments: '{"b":2}' } },
+    ]);
+  });
+
+  await t.step("streamed", async () => {
+    const response = await withFetchMock(
+      () => sseResponse(chunks),
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              stream: true,
+              messages: [{ role: "user", content: "tools" }],
+            }),
+          }),
+        ),
+    );
+    const text = await response.text();
+    assert.match(text, /"tool_calls"/);
+    assert.match(text, /"finish_reason":"tool_calls"/);
+    assert.match(text, /data: \[DONE\]/);
+    const toolArgumentDeltas = text
+      .split("\n\n")
+      .filter((frame) => frame.startsWith("data: {") && frame.includes("tool_calls"))
+      .flatMap((frame) => {
+        const payload = JSON.parse(frame.slice("data: ".length)) as {
+          choices?: Array<{ delta?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }>;
+        };
+        return payload.choices?.flatMap((choice) => choice.delta?.tool_calls ?? []) ?? [];
+      })
+      .map((call) => call.function?.arguments);
+    // A duplicate added event does not replay its complete argument string.
+    assert.deepEqual(toolArgumentDeltas, ['{"a":1}', "", '{"b":', "2}"]);
+  });
+});
+
+Deno.test("openai: inconsistent function-call stream arguments never emit Chat [DONE]", async () => {
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${
+          JSON.stringify({
+            type: "response.output_item.added",
+            output_index: 0,
+            item: { id: "fc_bad", type: "function_call", call_id: "call_bad", name: "bad", arguments: "" },
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "fc_bad", delta: "{" })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({ type: "response.function_call_arguments.done", item_id: "fc_bad", arguments: "[]" })
+        }\n\n`,
+      ]),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            stream: true,
+            messages: [{ role: "user", content: "tools" }],
+          }),
+        }),
+      ),
+  );
+  const text = await response.text();
+  assert.match(text, /upstream_stream_error/);
+  assert.doesNotMatch(text, /data: \[DONE\]/);
+});
+
+Deno.test("openai: terminal function calls without arguments fail for buffered and streamed Chat", async (t) => {
+  const malformedEvents = [
+    `data: ${
+      JSON.stringify({
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { id: "fc_missing_args", type: "function_call", call_id: "call_missing_args", name: "bad" },
+      })
+    }\n\n`,
+    `data: ${
+      JSON.stringify({
+        type: "response.output_item.done",
+        output_index: 0,
+        item: { id: "fc_missing_args", type: "function_call", call_id: "call_missing_args", name: "bad" },
+      })
+    }\n\n`,
+  ];
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        () => sseResponse(malformedEvents),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                messages: [{ role: "user", content: "tools" }],
+              }),
+            }),
+          ),
+      );
+      if (stream) {
+        const text = await response.text();
+        assert.match(text, /upstream_stream_error/);
+        assert.doesNotMatch(text, /data: \[DONE\]/);
+      } else {
+        assert.equal(response.status, 502);
+      }
+    });
+  }
+});
+
+Deno.test("openai: late function-call argument deltas never produce a successful Chat terminal", async (t) => {
+  const malformedEvents = [
+    `data: ${
+      JSON.stringify({
+        type: "response.output_item.added",
+        output_index: 0,
+        item: {
+          id: "fc_late_delta",
+          type: "function_call",
+          call_id: "call_late_delta",
+          name: "bad",
+          arguments: "",
+        },
+      })
+    }\n\n`,
+    `data: ${
+      JSON.stringify({ type: "response.function_call_arguments.done", item_id: "fc_late_delta", arguments: "{}" })
+    }\n\n`,
+    `data: ${
+      JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "fc_late_delta", delta: "x" })
+    }\n\n`,
+    `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+  ];
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        () => sseResponse(malformedEvents),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                messages: [{ role: "user", content: "tools" }],
+              }),
+            }),
+          ),
+      );
+      if (stream) {
+        const text = await response.text();
+        assert.match(text, /upstream_stream_error/);
+        assert.doesNotMatch(text, /data: \[DONE\]/);
+      } else {
+        assert.equal(response.status, 502);
+      }
+    });
+  }
+});
+
+Deno.test("openai: unfinished function calls never produce a successful Chat terminal", async (t) => {
+  const malformedEvents = [
+    `data: ${
+      JSON.stringify({
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { id: "fc_unfinished", type: "function_call", call_id: "call_unfinished", name: "bad" },
+      })
+    }\n\n`,
+    `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+  ];
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        () => sseResponse(malformedEvents),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                messages: [{ role: "user", content: "tools" }],
+              }),
+            }),
+          ),
+      );
+      if (stream) {
+        const text = await response.text();
+        assert.match(text, /upstream_stream_error/);
+        assert.doesNotMatch(text, /data: \[DONE\]/);
+      } else {
+        assert.equal(response.status, 502);
+      }
+    });
+  }
+});
+
+Deno.test("openai: malformed output-text deltas never produce a successful Chat terminal", async (t) => {
+  const malformedEvents = [
+    `data: ${JSON.stringify({ type: "response.output_text.delta", delta: null })}\n\n`,
+    `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+  ];
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        () => sseResponse(malformedEvents),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                messages: [{ role: "user", content: "text" }],
+              }),
+            }),
+          ),
+      );
+      if (stream) {
+        const text = await response.text();
+        assert.match(text, /upstream_stream_error/);
+        assert.doesNotMatch(text, /data: \[DONE\]/);
+      } else {
+        assert.equal(response.status, 502);
+      }
+    });
+  }
+});
+
+Deno.test("openai: tool-call-only buffered Chat output uses null content", async () => {
+  const call = { id: "fc_only", type: "function_call", call_id: "call_only", name: "only", arguments: "{}" };
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: call })}\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [call] } })}\n\n`,
+      ]),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: DEFAULT_TEST_MODEL, messages: [{ role: "user", content: "tools" }] }),
+        }),
+      ),
+  );
+  const payload = await response.json() as { choices: Array<{ message: { content: unknown }; finish_reason: string }> };
+  assert.equal(payload.choices[0]?.message.content, null);
+  assert.equal(payload.choices[0]?.finish_reason, "tool_calls");
+});
+
+Deno.test("openai: buffered Chat preserves final-only text alongside function calls", async () => {
+  const call = {
+    id: "fc_final_text",
+    type: "function_call",
+    call_id: "call_final_text",
+    name: "lookup",
+    arguments: "{}",
+  };
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${
+          JSON.stringify({
+            type: "response.completed",
+            response: {
+              output: [
+                {
+                  id: "msg_final_text",
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "I will look that up." }],
+                },
+                call,
+              ],
+            },
+          })
+        }\n\n`,
+      ]),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: DEFAULT_TEST_MODEL, messages: [{ role: "user", content: "tools" }] }),
+        }),
+      ),
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    choices?: Array<{ message?: { content?: unknown; tool_calls?: unknown }; finish_reason?: string }>;
+  };
+  assert.equal(payload.choices?.[0]?.finish_reason, "tool_calls");
+  assert.equal(payload.choices?.[0]?.message?.content, "I will look that up.");
+  assert.deepEqual(payload.choices?.[0]?.message?.tool_calls, [
+    { id: "call_final_text", type: "function", function: { name: "lookup", arguments: "{}" } },
+  ]);
+});
+
+Deno.test("openai: buffered Chat preserves final text from response.output", async () => {
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${
+          JSON.stringify({
+            type: "response.output",
+            output: [{
+              id: "msg_output_event",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Text supplied by response.output." }],
+            }],
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ]),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: DEFAULT_TEST_MODEL, messages: [{ role: "user", content: "text" }] }),
+        }),
+      ),
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+  assert.equal(payload.choices?.[0]?.message?.content, "Text supplied by response.output.");
+});
+
+Deno.test("openai: streamed Chat preserves final-only text alongside function calls", async () => {
+  const call = {
+    id: "fc_stream_final_text",
+    type: "function_call",
+    call_id: "call_stream_final_text",
+    name: "lookup",
+    arguments: "{}",
+  };
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${
+          JSON.stringify({
+            type: "response.completed",
+            response: {
+              output: [
+                {
+                  id: "msg_stream_final_text",
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "I will look that up." }],
+                },
+                call,
+              ],
+            },
+          })
+        }\n\n`,
+      ]),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            stream: true,
+            messages: [{ role: "user", content: "tools" }],
+          }),
+        }),
+      ),
+  );
+  const text = await response.text();
+  assert.match(text, /I will look that up\./);
+  assert.match(text, /"tool_calls"/);
+  assert.match(text, /"finish_reason":"tool_calls"/);
+  assert.match(text, /data: \[DONE\]/);
+});
+
+Deno.test("openai: native Responses preserve files, explicit nulls, and prompt-cache fields", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            instructions: null,
+            prompt_cache_key: "cache-key",
+            prompt_cache_options: { mode: "implicit" },
+            prompt_cache_retention: "24h",
+            input: [{
+              type: "message",
+              role: "user",
+              content: [
+                { type: "input_image", file_id: "file_image", detail: null },
+                {
+                  type: "input_file",
+                  file_id: "file_id",
+                  file_data: "data",
+                  file_url: "https://example.test/file",
+                  filename: null,
+                },
+              ],
+            }],
+          }),
+        }),
+      ),
+  );
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  const recorded = recordedBody as Record<string, unknown>;
+  assert.equal("instructions" in recorded, false);
+  assert.deepEqual(recorded.prompt_cache_options, { mode: "implicit" });
+  assert.equal(recorded.prompt_cache_retention, "24h");
+  const content = ((recorded.input as Array<Record<string, unknown>>)[0]?.content ?? []) as Array<
+    Record<string, unknown>
+  >;
+  assert.deepEqual(content[0], { type: "input_image", file_id: "file_image", detail: null });
+  assert.deepEqual(content[1], {
+    type: "input_file",
+    file_id: "file_id",
+    file_data: "data",
+    file_url: "https://example.test/file",
+    filename: null,
+  });
+});
+
+Deno.test("openai: Responses preserves an explicit empty instructions string", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", instructions: "" }),
+        }),
+      ),
+  );
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  assert.equal((recordedBody as Record<string, unknown>).instructions, "");
+});
+
+Deno.test("openai: strict request fields reject malformed values without dispatch", async (t) => {
+  const cases = [
+    {
+      route: "responses",
+      body: { input: "ping", stream: null },
+      param: "stream",
+    },
+    {
+      route: "chat.completions",
+      body: { messages: [{ role: "user", content: "ping" }], stream: "true" },
+      param: "stream",
+    },
+    {
+      route: "responses",
+      body: { input: "ping", reasoning: [] },
+      param: "reasoning",
+    },
+    {
+      route: "responses",
+      body: { input: [{ role: "user", content: [{ type: "input_image", image_url: "x", unexpected: true }] }] },
+      param: "input[0].content[0].unexpected",
+    },
+    {
+      route: "chat.completions",
+      body: { messages: [{ role: "tool", tool_call_id: "call", content: "result", tool_calls: [] }] },
+      param: "messages[0].tool_calls",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "tool", tool_call_id: "call", content: [{ type: "input_text", text: "result" }] }],
+      },
+      param: "messages[0].content[0].type",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "tool", tool_call_id: "call", content: [{ type: "output_text", text: "result" }] }],
+      },
+      param: "messages[0].content[0].type",
+    },
+    {
+      route: "responses",
+      body: { input: [{ type: "message", role: "tool", content: "result" }] },
+      param: "input[0].role",
+    },
+    {
+      route: "responses",
+      body: { input: [{ type: "message", role: "user", content: [{ type: "output_text", text: "result" }] }] },
+      param: "input[0].content[0].type",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "assistant",
+          content: null,
+          tool_calls: [{
+            id: "call",
+            type: "function",
+            function: { name: "tool", arguments: "{}" },
+            unexpected: true,
+          }],
+        }],
+      },
+      param: "messages[0].tool_calls[0].unexpected",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "assistant",
+          content: null,
+          tool_calls: [{
+            id: "call",
+            type: "function",
+            function: { name: "tool", arguments: "{}", unexpected: true },
+          }],
+        }],
+      },
+      param: "messages[0].tool_calls[0].function.unexpected",
+    },
+  ] as const;
+  for (const testCase of cases) {
+    await t.step(`${testCase.route}/${testCase.param}`, async () => {
+      let calls = 0;
+      const response = await withFetchMock(
+        () => {
+          calls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          testCase.route === "responses"
+            ? handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+              }),
+            )
+            : handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+              }),
+            ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal(calls, 0);
+      const payload = await response.json() as { error?: { param?: string } };
+      assert.equal(payload.error?.param, testCase.param);
+    });
+  }
+  await t.step("input[0].type", async () => {
+    let dispatches = 0;
+    const response = await withFetchMock(
+      () => {
+        dispatches += 1;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: [{ type: "text", text: "Chat-only alias" }] }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 400);
+    assert.equal(dispatches, 0);
+    const payload = await response.json() as { error?: { param?: string } };
+    assert.equal(payload.error?.param, "input[0].type");
+  });
+});
+
+Deno.test("openai: both endpoints reject every non-boolean stream shape before dispatch", async (t) => {
+  const invalidValues: Array<readonly [string, unknown]> = [
+    ["null", null],
+    ["string", "true"],
+    ["number", 1],
+    ["array", []],
+    ["object", {}],
+  ];
+  for (const route of ["chat.completions", "responses"] as const) {
+    for (const [label, stream] of invalidValues) {
+      await t.step(`${route}/${label}`, async () => {
+        let dispatches = 0;
+        const response = await withFetchMock(
+          () => {
+            dispatches += 1;
+            return sseResponse(baseSseChunks());
+          },
+          () =>
+            route === "chat.completions"
+              ? handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    stream,
+                    messages: [{ role: "user", content: "ping" }],
+                  }),
+                }),
+              )
+              : handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, stream, input: "ping" }),
+                }),
+              ),
+        );
+        assert.equal(response.status, 400);
+        assert.equal(dispatches, 0);
+        const payload = await response.json() as { error?: { param?: string } };
+        assert.equal(payload.error?.param, "stream");
+      });
+    }
+  }
+});
+
+Deno.test("openai: native Responses reject malformed known content fields and unsupported content types", async (t) => {
+  const cases = [
+    {
+      content: [{ type: "input_image", image_url: "https://example.test/image", file_id: "file_image" }],
+      param: "input[0].content[0].image_url",
+    },
+    {
+      content: [{ type: "input_image", detail: "low" }],
+      param: "input[0].content[0].image_url",
+    },
+    {
+      content: [{ type: "input_file", file_id: 3 }],
+      param: "input[0].content[0].file_id",
+    },
+    {
+      content: [{ type: "input_file", filename: "missing-source.txt" }],
+      param: "input[0].content[0].file_id",
+    },
+    {
+      content: [{ type: "input_audio", data: "ignored" }],
+      param: "input[0].content[0].type",
+    },
+    {
+      content: [{ type: "text", text: "Chat-only alias" }],
+      param: "input[0].content[0].type",
+    },
+    {
+      content: [{ type: "image_url", image_url: "https://example.test/image" }],
+      param: "input[0].content[0].type",
+    },
+    {
+      content: [{ type: "input_text" }],
+      param: "input[0].content[0].text",
+    },
+  ] as const;
+  for (const testCase of cases) {
+    await t.step(testCase.param, async () => {
+      let dispatches = 0;
+      const response = await withFetchMock(
+        () => {
+          dispatches += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                input: [{ type: "message", role: "user", content: testCase.content }],
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal(dispatches, 0);
+      const payload = await response.json() as { error?: { param?: string } };
+      assert.equal(payload.error?.param, testCase.param);
+    });
+  }
 });
 
 Deno.test("openai: buffered Chat Completions release the upstream stream reader", async () => {

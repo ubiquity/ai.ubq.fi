@@ -12,6 +12,7 @@ import {
 } from "./codex_account_routing.ts";
 import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
 import { getKv } from "./kv.ts";
+import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { recordCodexProviderHealth } from "./provider_health.ts";
 import { buildRuntimeConfig, cacheRuntimeConfig, loadRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord, sha256Hex } from "./utils.ts";
@@ -371,23 +372,9 @@ const loadAuthPoolEntry = async (generationAtStart: number): Promise<CodexAuthPo
   const entry = await kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" });
   const storedPool = parseCodexAuthPool(entry.value);
   if (storedPool) {
-    if (!config.isDeploy) {
-      try {
-        const localSeed = getConfiguredCodexAuthSeed();
-        if (localSeed) {
-          if (authCacheGeneration !== generationAtStart && cachedAuthPool) {
-            return { kv: null, entry: null, pool: cachedAuthPool };
-          }
-          const withLocalSeed = upsertCodexAuthAccount(storedPool, localSeed);
-          if (withLocalSeed) {
-            await kv.set(CODEX_AUTH_POOL_KV_KEY, withLocalSeed);
-            return loadedAuthPoolEntry(withLocalSeed, generationAtStart, kv, null);
-          }
-        }
-      } catch {
-        // Keep working from persisted KV credentials when local seed loading fails.
-      }
-    }
+    // A valid persisted pool is the authority. Local/disk seeds may bootstrap
+    // an absent row or run without KV, but must never overwrite or append to
+    // credentials an admin has already uploaded.
     return loadedAuthPoolEntry(storedPool, generationAtStart, kv, entry);
   }
 
@@ -895,6 +882,8 @@ const fetchCodexResponseWithAuth = async (
   serializedBody: string,
   baseHeaders: Headers,
   signal?: AbortSignal,
+  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>,
+  onDispatch?: () => void,
 ): Promise<Response> => {
   const headers = new Headers(baseHeaders);
   headers.set("Authorization", `Bearer ${auth.access_token}`);
@@ -904,15 +893,27 @@ const fetchCodexResponseWithAuth = async (
     () => deadline.abort(new DOMException("Codex response headers timed out.", "TimeoutError")),
     85_000,
   );
+  const transportSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
   try {
+    // This is intentionally immediately adjacent to the actual provider
+    // transport: request-quota reservations commit on dispatch, not on
+    // validation, routing, or a later retry outcome.
+    const dispatch = beforeDispatch ? await beforeDispatch() : undefined;
+    if (dispatch && transportSignal.aborted) {
+      await dispatch?.cancelBeforeTransport();
+      throw transportSignal.reason ?? new DOMException("The request was aborted.", "AbortError");
+    }
+    dispatch?.markTransportStarted();
+    onDispatch?.();
     return await fetch(url, {
       method: "POST",
       headers,
       body: serializedBody,
       redirect: "manual",
-      signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal,
+      signal: transportSignal,
     });
   } catch (error) {
+    if (error instanceof ApiKeyQuotaDispatchError) throw error;
     const timedOut = deadline.signal.aborted ||
       (signal?.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError");
     if (timedOut) {
@@ -1010,7 +1011,20 @@ const waitForCodexRetry = async (
   signal: AbortSignal | undefined,
   sleep: (milliseconds: number) => Promise<void>,
 ): Promise<void> => {
-  if (signal?.aborted) throw signal.reason ?? new DOMException("The request was aborted.", "AbortError");
+  const abortReason = (): unknown => {
+    const reason = signal?.reason ?? new DOMException("The request was aborted.", "AbortError");
+    if (reason instanceof Error && reason.name === "TimeoutError") {
+      return new CodexError(
+        "Codex upstream exceeded the gateway deadline while waiting to retry.",
+        "gateway_timeout",
+        504,
+        reason,
+      );
+    }
+    return reason;
+  };
+
+  if (signal?.aborted) throw abortReason();
   if (milliseconds <= 0) return;
   if (!signal) {
     await sleep(milliseconds);
@@ -1018,12 +1032,14 @@ const waitForCodexRetry = async (
   }
   let onAbort = (): void => {};
   try {
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(abortReason());
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
     await Promise.race([
       sleep(milliseconds),
-      new Promise<never>((_, reject) => {
-        onAbort = () => reject(signal.reason ?? new DOMException("The request was aborted.", "AbortError"));
-        signal.addEventListener("abort", onAbort, { once: true });
-      }),
+      aborted,
     ]);
   } finally {
     signal.removeEventListener("abort", onAbort);
@@ -1038,6 +1054,7 @@ export const fetchCodexResponses = async (
     requestId?: string | null;
     timing?: CodexResponseTimingHooks;
     retrySleep?: (milliseconds: number) => Promise<void>;
+    beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
   }> = {},
 ): Promise<Response> => {
   if (codexProbeTransitionsInFlight.size) {
@@ -1098,7 +1115,6 @@ export const fetchCodexResponses = async (
     phase: CodexAttemptPhase,
   ): Promise<Response> => {
     attemptNumber += 1;
-    reportCodexResponseTiming(options.timing?.onDispatch);
     try {
       const response = await fetchCodexResponseWithAuth(
         auth,
@@ -1106,6 +1122,8 @@ export const fetchCodexResponses = async (
         serializedBody,
         baseHeaders,
         options.signal,
+        options.beforeDispatch,
+        () => reportCodexResponseTiming(options.timing?.onDispatch),
       );
       reportCodexResponseTiming(options.timing?.onHeaders);
       void recordCodexResponseHealth(auth.account_id, response);
@@ -1224,7 +1242,7 @@ export const fetchCodexResponses = async (
         if (refreshedSlots.has(routing.slot)) {
           await markCodexCredentialInvalid(routing);
         } else {
-          await cancelResponseBody(response);
+          cancelResponseBody(response);
           try {
             ({ auth, routing } = await refreshAfter401(routing, auth, "401"));
             response = await fetchAttempt(accountEntry, auth, routing, "post_refresh");
@@ -1246,11 +1264,11 @@ export const fetchCodexResponses = async (
       }
       if (response.ok && routing.probeGeneration !== null) codexProbeByResponse.set(response, routing);
       if (response.status === 401 || response.status === 403 || response.status === 429) {
-        if (lastResponse) await cancelResponseBody(lastResponse);
+        if (lastResponse) cancelResponseBody(lastResponse);
         lastResponse = response;
         continue;
       }
-      if (lastResponse) await cancelResponseBody(lastResponse);
+      if (lastResponse) cancelResponseBody(lastResponse);
       return response;
     } catch (error) {
       lastError = error;
@@ -1264,7 +1282,7 @@ export const fetchCodexResponses = async (
       }
       await releaseCodexRoutingProbe(routing);
       // Fetch failures, aborts, and deadlines are account-independent.
-      if (lastResponse) await cancelResponseBody(lastResponse);
+      if (lastResponse) cancelResponseBody(lastResponse);
       throw error;
     }
   }
@@ -1329,7 +1347,7 @@ export const fetchCodexResponses = async (
       slot: retryCandidate.routing.slot + 1,
       delay_ms: retryDelayMs,
     });
-    if (lastResponse) await cancelResponseBody(lastResponse);
+    if (lastResponse) cancelResponseBody(lastResponse);
     let response: Response;
     try {
       response = await fetchAttempt(
@@ -1346,7 +1364,7 @@ export const fetchCodexResponses = async (
       if (refreshedSlots.has(retryRouting.slot)) {
         await markCodexCredentialInvalid(retryRouting);
       } else {
-        await cancelResponseBody(response);
+        cancelResponseBody(response);
         try {
           ({ auth: retryAuth, routing: retryRouting } = await refreshAfter401(retryRouting, retryAuth, "401"));
           response = await fetchAttempt(
@@ -1413,7 +1431,7 @@ export const fetchCodexModels = async (
         res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch, options.signal);
         await recordCodexResponseHealth(auth.account_id, res);
         if (res.status === 401) {
-          await cancelResponseBody(res);
+          cancelResponseBody(res);
           auth = await awaitWithoutCancellingSharedWork(
             refreshAuthCoordinated(await getCurrentAccountEntry(auth.account_id, true)),
             options.signal,
@@ -1427,7 +1445,7 @@ export const fetchCodexModels = async (
         throw error;
       }
       if (hasFallbackAccount && (res.status === 401 || res.status === 429)) {
-        await cancelResponseBody(res);
+        cancelResponseBody(res);
         lastResponse = res;
         continue;
       }

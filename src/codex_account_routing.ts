@@ -1,4 +1,5 @@
 import { getKv } from "./kv.ts";
+import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "./types.ts";
 
@@ -9,7 +10,6 @@ import type { CodexAuthPoolState, CodexAuthState } from "./types.ts";
  */
 export const CODEX_ACCOUNT_ROUTING_KV_KEY = ["uos_ai", "codex_account_routing", "v2"] as const;
 export const CODEX_HALF_OPEN_LEASE_MS = 30_000;
-const MAX_429_BODY_BYTES = 64 * 1024;
 // A warm isolate avoids per-request routing reads, but it must eventually
 // observe circuits opened by another isolate. This bounded revalidation keeps
 // normal traffic off KV while limiting cross-isolate stale routing decisions.
@@ -320,77 +320,11 @@ export const readCodex429 = async (
   now = Date.now(),
 ): Promise<Codex429Classification> => {
   const headers = new Headers(response.headers);
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  let complete = !response.body;
-  const reader = response.body?.getReader();
-  let cancelPromise: Promise<void> | null = null;
-  const cancelReader = (): void => {
-    if (!reader || cancelPromise) return;
-    try {
-      // Do not await cancellation here: a broken upstream may leave its
-      // pending read unsettled, but invoking cancel is enough to propagate
-      // the caller's abort and must not extend the bounded classification
-      // latency. The continuation releases the lock exactly once.
-      cancelPromise = reader.cancel("Codex 429 classified").catch(() => {}).then(() => {
-        try {
-          reader.releaseLock();
-        } catch {
-          // A reader can already be released after an upstream failure.
-        }
-      });
-    } catch {
-      try {
-        reader.releaseLock();
-      } catch {
-        // Best effort only.
-      }
-    }
-  };
-  try {
-    if (reader) {
-      // Error payloads are small but may be fragmented. Read up to the fixed
-      // ceiling under one short deadline so classification is both accurate
-      // for normal JSON and bounded for a broken infinite response body.
-      const deadline = AbortSignal.timeout(1_000);
-      let timedOut = false;
-      while (length < MAX_429_BODY_BYTES && !timedOut) {
-        let timeoutListener: (() => void) | undefined;
-        const next = await Promise.race([
-          reader.read(),
-          new Promise<never>((_, reject) => {
-            timeoutListener = () => {
-              timedOut = true;
-              reject(new DOMException("Codex 429 body read timed out.", "TimeoutError"));
-            };
-            deadline.addEventListener("abort", timeoutListener, { once: true });
-          }),
-        ]).finally(() => {
-          if (timeoutListener) deadline.removeEventListener("abort", timeoutListener);
-        });
-        if (next.done) {
-          complete = true;
-          break;
-        }
-        const remaining = MAX_429_BODY_BYTES - length;
-        const part = next.value.slice(0, remaining);
-        chunks.push(part);
-        length += part.byteLength;
-        if (next.value.byteLength > part.byteLength) break;
-      }
-    }
-  } catch {
-    // A response body is optional for classification; preserve what was read.
-  } finally {
-    cancelReader();
-  }
-  const bytes = new Uint8Array(Math.min(length, MAX_429_BODY_BYTES));
-  let offset = 0;
-  for (const chunk of chunks) {
-    const part = chunk.slice(0, Math.max(0, bytes.byteLength - offset));
-    bytes.set(part, offset);
-    offset += part.byteLength;
-  }
+  // Preserve a complete upstream body for the final response while refusing
+  // to classify or forward an incomplete body.
+  const { bytes, complete } = await readBoundedResponseBody(response, {
+    cancellationReason: "Codex 429 classified",
+  });
   let usageLimitReached = false;
   if (complete) {
     try {
@@ -460,6 +394,9 @@ export const markCodexQuotaBlocked = async (
   await updateRoutingState((state) => {
     const current = slotFor(state, account);
     if (current.credential_version !== account.credentialVersion) return null;
+    // An ordinary request can predate a foreign half-open claim. It must not
+    // replace that lease or admit a parallel probe.
+    if (account.probeGeneration === null && current.probe_lease !== null) return null;
     if (
       account.probeGeneration !== null &&
       (current.generation !== account.probeGeneration || current.probe_lease?.token !== account.probeToken)

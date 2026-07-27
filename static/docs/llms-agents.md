@@ -91,13 +91,13 @@ curl -sS https://ai.ubq.fi/v1/chat/completions \
   }'
 ```
 
-Request embeddings:
+Request UOS text embeddings:
 
 ```bash
-curl -sS https://ai.ubq.fi/v1/embeddings \
+curl -sS https://ai.ubq.fi/uos/embeddings \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"model":"text-embedding-3-small","input":["hello","world"]}'
+  --data '{"model":"voyage-4-large","input":["hello","world"],"input_type":"document"}'
 ```
 
 ## Endpoints
@@ -107,7 +107,6 @@ OpenAI-compatible endpoints:
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
-- `POST /v1/embeddings`
 
 Codex compatibility endpoints:
 
@@ -316,29 +315,44 @@ is `true`, the upstream SSE stream is passed through.
 
 ## Embeddings
 
-`POST /v1/embeddings`
+`POST /uos/embeddings`
 
-OpenAI-compatible embeddings endpoint backed by Voyage (cached in Deno KV). The cache is quota-driven: it keeps writing
-until KV is full, then evicts the oldest entries (FIFO) and retries.
+UOS's text-only embeddings endpoint is backed by Voyage and cached in Deno KV. It is not a fully OpenAI-compatible
+embeddings endpoint: OpenAI accepts token arrays, while this Voyage-backed route accepts text only. The response keeps
+the OpenAI-style `{object:"list", data, model, usage}` shape.
 
 Request:
 
-- `model` (string, required): accepts `text-embedding-3-small`, `text-embedding-3-large`, or `voyage-4-large`.
-- `input` (string or string[], required).
-- `encoding_format` (optional): `float` (default) or `base64`.
+- `model` (string, required): `voyage-4-large`.
+- `input` (string or string[], required). Token arrays are rejected.
+- `input_type` (optional): `query` or `document`; defaults to `document`. Send it explicitly for retrieval workloads.
 - `dimensions` (optional): `256`, `512`, `1024` (default), or `2048`.
+- `encoding_format` (optional): `float` (default) or `base64`.
+- `truncation` (optional boolean): defaults to `true`.
+- `user` (optional string or `null`): accepted and ignored.
+- `Idempotency-Key` (optional header): enables durable UOS replay.
 
-The gateway returns an OpenAI-style response with `object: "list"` and one `data[]` entry per input string.
+The gateway sends `voyage-4-large` to Voyage and returns one `data[]` entry per input string. OpenAI embedding model
+names are not accepted or mapped to Voyage.
 
 Notes:
 
 - Batching is strongly recommended (send `input` as an array).
 - When rate limited (by Voyage or the gateway's own KV throttling), the gateway responds `429` with `Retry-After`.
+- `base64` encoding is converted by the gateway; Voyage is always called with float output.
 
-`POST /uos/embeddings` exposes the retrieval-specific Voyage profile without adding provider-only fields to the
-OpenAI-compatible endpoint. It requires `model="voyage-4-large"` and `input_type="query"|"document"`; `dimensions`
-defaults to `1024`, `truncation` defaults to `true`, and `encoding_format` is fixed to `float`. Callers that need an
-over-length input to fail instead of being shortened must send `truncation=false` explicitly.
+### Migration from the removed embeddings route
+
+`POST /v1/embeddings` has been removed. Text clients must change both the URL and model:
+
+```text
+old (removed): POST https://ai.ubq.fi/v1/embeddings  model: text-embedding-3-small|text-embedding-3-large
+new:           POST https://ai.ubq.fi/uos/embeddings model: voyage-4-large
+```
+
+The former text defaults remain (`document`, `1024`, `float`, and `truncation=true`), and the response shape remains
+stable. OpenAI embedding model names are not accepted or mapped to Voyage. Send `input_type` explicitly before migrating
+when query/document intent matters.
 
 ## Embedding Jobs (Async)
 
@@ -349,8 +363,8 @@ over-length input to fail instead of being shortened must send `truncation=false
 
 Notes:
 
-- Jobs use the same Voyage profile fields and validation as `/uos/embeddings` and support `encoding_format="float"`
-  only.
+- Jobs retain a narrower contract: `model` must be exactly `voyage-4-large`, `input_type` is required, and
+  `encoding_format` must be `float`.
 - When queued, the gateway responds with `Retry-After` and `retry_after_seconds`.
 - Jobs are scoped to the authenticated client identity; poll using credentials that resolve to the same identity scope
   used to create the job (same API key, or for GitHub/kernel auth the same `{owner, repo}` attestation context).
@@ -396,6 +410,8 @@ Keys forwarded for chat completions:
 - `tool_choice`
 - `parallel_tool_calls`
 - `prompt_cache_key`
+- `prompt_cache_options`
+- `prompt_cache_retention`
 
 Keys forwarded for responses:
 
@@ -403,6 +419,8 @@ Keys forwarded for responses:
 - `tool_choice`
 - `parallel_tool_calls`
 - `prompt_cache_key`
+- `prompt_cache_options`
+- `prompt_cache_retention`
 - `text`
 - `include`
 
@@ -415,7 +433,6 @@ upstream request metadata instead of forwarding client-supplied session identifi
 - `temperature` -> `temperature_ignored`
 - `max_tokens`, `max_completion_tokens`, `max_output_tokens` -> `max_output_tokens_ignored`
 - `moderation` -> `moderation_ignored`
-- `prompt_cache_options` -> `prompt_cache_options_ignored`
 
 Any other accepted-but-unused key will emit a `<key>_ignored` warning.
 

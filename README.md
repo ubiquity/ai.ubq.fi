@@ -173,26 +173,7 @@ response durably invalidates the pre-debit observation so the next request refre
 for five minutes. Admins can inspect the balance, baseline, confidence, latest refill, inferred credit, and cache state
 in the Defaults view or the `yunwu_quota` object returned by `GET /admin/defaults`.
 
-Embeddings (OpenAI-compatible):
-
-```bash
-curl -sS https://ai.ubq.fi/v1/embeddings \
-  -H "Authorization: Bearer $UOS_AI_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"model":"text-embedding-3-small","input":"hello","dimensions":1024}'
-```
-
-Notes:
-
-- `input` can be a string or an array of strings (batching is strongly recommended).
-- `dimensions` accepts `256`, `512`, `1024` (default), or `2048`; `encoding_format` accepts `float` (default) or
-  `base64`. These are the standard OpenAI request fields; Voyage-only controls are not accepted on `/v1/embeddings`.
-- Backed by Voyage (`voyage-4-large`) and cached in Deno KV. The cache is quota-driven: it keeps writing until KV is
-  full, then evicts the oldest entries (FIFO) and retries.
-- When rate limited (by Voyage or the gateway's own KV throttling), the gateway returns `429` with `Retry-After`;
-  clients should retry (or use the async jobs API below).
-
-Voyage-aware embeddings (gateway-specific):
+Embeddings (UOS text contract):
 
 ```bash
 curl -sS https://ai.ubq.fi/uos/embeddings \
@@ -200,18 +181,46 @@ curl -sS https://ai.ubq.fi/uos/embeddings \
   -H "Content-Type: application/json" \
   --data '{
     "model":"voyage-4-large",
-    "input":"hello",
+    "input":["hello","world"],
     "input_type":"document",
     "dimensions":1024,
-    "truncation":false,
-    "encoding_format":"float"
+    "encoding_format":"float",
+    "truncation":true
   }'
 ```
 
-`input_type` is required and must be `query` or `document`. `dimensions` defaults to `1024`, `truncation` defaults to
-`true`, and `encoding_format` is fixed to `float`. The gateway sends Voyage `output_dimension` and
-`output_dtype="float"`; numeric arrays do not request an upstream response encoding. See the
+`POST /uos/embeddings` is a UOS endpoint backed by Voyage and cached in Deno KV. It accepts text strings only, so it is
+not presented as a fully OpenAI-compatible embeddings endpoint: OpenAI's endpoint also accepts token arrays, while
+Voyage's text API does not. The response remains the familiar OpenAI-style `{object:"list", data, model, usage}` shape.
+
+Request fields:
+
+- `model` (required): `voyage-4-large`.
+- `input` (required): one string or an array of strings. Token arrays are rejected.
+- `input_type` (optional): `query` or `document`; defaults to `document`. Send it explicitly for retrieval workloads.
+- `dimensions` (optional): `256`, `512`, `1024` (default), or `2048`.
+- `encoding_format` (optional): `float` (default) or `base64`.
+- `truncation` (optional boolean): defaults to `true`.
+- `user` (optional string or `null`): accepted and ignored.
+- `Idempotency-Key` (optional request header): enables the UOS durable replay contract.
+
+The gateway sends Voyage `output_dimension` and `output_dtype="float"`; `base64` conversion happens in the gateway. When
+rate limited (by Voyage or the gateway's own KV throttling), it returns `429` with `Retry-After`. See the
 [Voyage embeddings documentation](https://docs.voyageai.com/docs/embeddings).
+
+### Migration from the removed embeddings route
+
+`POST /v1/embeddings` has been removed. Existing text clients must change both the URL and model:
+
+```text
+old (removed): POST https://ai.ubq.fi/v1/embeddings  model: text-embedding-3-small|text-embedding-3-large
+new:           POST https://ai.ubq.fi/uos/embeddings model: voyage-4-large
+```
+
+The former text defaults are preserved: `input_type` defaults to `document`, dimensions default to `1024`,
+`encoding_format` defaults to `float`, and truncation defaults to `true`. OpenAI embedding model names are not accepted
+or mapped to Voyage; the response shape remains stable. Set `input_type` explicitly before migrating if query/document
+intent matters.
 
 Embeddings jobs (async, gateway-specific):
 
@@ -244,8 +253,8 @@ curl -sS "https://ai.ubq.fi/uos/embedding-jobs/${job_id}" \
 
 Notes:
 
-- Jobs use the same `voyage-4-large`, `input_type`, `dimensions`, `truncation`, and float encoding contract as
-  `/uos/embeddings`.
+- Jobs intentionally retain their narrower profile: `model` must be exactly `voyage-4-large`, `input_type` is required,
+  and `encoding_format` must be `float`.
 - When queued, the gateway responds `202` with `Retry-After` and `retry_after_seconds`; poll until `status="succeeded"`.
 - Jobs are scoped to the authenticated client identity; poll using credentials that resolve to the same identity scope
   used to create the job (same API key, or for GitHub/kernel auth the same `{owner, repo}` attestation context).
@@ -499,7 +508,6 @@ deno task ubq-ai admin keys revoke --id "<id>"
 - `POST /uos/embedding-jobs`, `GET /uos/embedding-jobs/:id`
 - `GET /uos/agent-messages`, `POST /uos/agent-messages`
 - `GET /v1/models`
-- `POST /v1/embeddings`
 - `POST /v1/chat/completions` (streaming and non-streaming)
 - `POST /v1/responses` (streaming and non-streaming; non-streaming buffers upstream SSE)
 

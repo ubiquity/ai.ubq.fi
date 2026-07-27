@@ -46,9 +46,15 @@ import {
 import {
   API_KEY_USAGE_V2_PREFIX,
   apiKeyPolicyFromHashRecord,
-  getApiKeyUsageV2,
+  apiKeyUsageV3RetentionMs,
+  apiKeyUsageV3WindowKey,
+  deleteApiKeyUsageV3,
+  getApiKeyUsageV3,
+  hasLiveApiKeyUsageReservationsV3,
   invalidateApiKeyPolicy,
   looksLikeUosApiKey,
+  makeApiKeyUsageWindowV3,
+  reclaimApiKeyUsageReservationsForKeyV3,
 } from "./api_key_policy.ts";
 import {
   apiKeyRequestLogPrefix,
@@ -97,13 +103,19 @@ import {
   buildRuntimeConfig,
   cacheRuntimeConfig,
   loadRuntimeConfig,
+  normalizeRuntimeConfig,
   RUNTIME_CONFIG_V2_KEY,
   RuntimeConfigError,
-  storeRuntimeConfig,
 } from "./runtime_config.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
-import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthPoolState, CodexAuthState } from "./types.ts";
+import type {
+  ApiKeyHashRecord,
+  ApiKeyRecord,
+  ApiKeyUsageWindowV3,
+  CodexAuthPoolState,
+  CodexAuthState,
+} from "./types.ts";
 import { YunwuError } from "./yunwu.ts";
 import { getYunwuQuotaDiagnostics } from "./yunwu_quota.ts";
 
@@ -430,14 +442,18 @@ export const handleAdminKvMigrationImport = async (req: Request): Promise<Respon
     dryRun,
   });
 
-  return json(200, {
+  const summary = {
     profile,
     include_cache: includeCache,
     include_legacy: includeLegacy,
     overwrite,
     dry_run: dryRun,
     ...result,
-  });
+  };
+  // Import is intentionally allowed to apply valid rows before reporting
+  // malformed ones, but callers must receive a non-success status whenever
+  // the summary contains any errors.
+  return json(result.errors > 0 ? 422 : 200, summary);
 };
 
 export const handleAdminKvMigrationValidate = async (): Promise<Response> => {
@@ -483,92 +499,128 @@ export const handleAdminDefaults = async (
   if (req.method === "POST") {
     const raw = await readJsonBody(req);
     if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
-
-    const runtime = await loadRuntimeConfig(kv);
-    const kernelLimitEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY);
-    const kernelWindowEntry = await kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY);
-
-    let model = runtime?.default_model ?? "";
-    let reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
-    let kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
-      DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
-    let kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
-
-    const wantsModelUpdate = Object.prototype.hasOwnProperty.call(raw, "model") ||
-      Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
-    if (wantsModelUpdate) {
-      if (!runtime) return openaiError(503, "Runtime configuration is unavailable", "server_error");
-      const nextModel = normalizeDefaultModel(raw.model ?? model);
-      if (!nextModel) return openaiError(400, "model must be a non-empty string", "invalid_request_error");
-
-      const snapshot = await loadCodexModelsSnapshot();
-      if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) {
-        return openaiError(409, "No Codex model snapshot stored", "invalid_request_error");
+    const allowedFields = new Set([
+      "model",
+      "reasoning_effort",
+      "kernel_policy_limit_requests",
+      "kernel_policy_window_ms",
+    ]);
+    for (const field of Object.keys(raw)) {
+      if (!allowedFields.has(field)) {
+        return openaiError(400, `Unknown defaults field: ${field}`, "invalid_request_error", { param: field });
       }
-
-      const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === nextModel) ??
-        null;
-      if (!modelRecord) {
-        return openaiError(400, "model is not in the stored Codex model list", "invalid_request_error");
-      }
-
-      const wantsReasoningUpdate = Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
-      const modelDefault = modelRecord.default_reasoning_level === null
-        ? "none"
-        : normalizeReasoningEffort(modelRecord.default_reasoning_level);
-      const levels = extractModelReasoningLevels(modelRecord);
-      let nextReasoning: ReasoningEffort;
-      if (wantsReasoningUpdate) {
-        const explicitReasoning = normalizeReasoningEffort(raw.reasoning_effort);
-        if (!explicitReasoning) {
-          return openaiError(400, "reasoning_effort must be a non-empty string", "invalid_request_error");
-        }
-        nextReasoning = explicitReasoning;
-      } else {
-        nextReasoning = modelDefault ?? levels[0] ?? "none";
-      }
-
-      model = nextModel;
-      reasoningEffort = nextReasoning;
-      await storeRuntimeConfig(
-        buildRuntimeConfig(snapshot, {
-          defaultModel: model,
-          defaultReasoningEffort: reasoningEffort,
-        }),
-        kv,
+    }
+    const writesModel = Object.prototype.hasOwnProperty.call(raw, "model");
+    const writesReasoning = Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
+    const wantsModelUpdate = writesModel || writesReasoning;
+    const writesKernelLimit = Object.prototype.hasOwnProperty.call(raw, "kernel_policy_limit_requests");
+    const writesKernelWindow = Object.prototype.hasOwnProperty.call(raw, "kernel_policy_window_ms");
+    const requestedKernelLimit = writesKernelLimit
+      ? normalizeKernelUsageLimitInput(raw.kernel_policy_limit_requests)
+      : undefined;
+    if (writesKernelLimit && requestedKernelLimit === null) {
+      return openaiError(
+        400,
+        "kernel_policy_limit_requests must be a non-negative number or -1 for unlimited",
+        "invalid_request_error",
       );
     }
-
-    if (Object.prototype.hasOwnProperty.call(raw, "kernel_policy_limit_requests")) {
-      const parsed = normalizeKernelUsageLimitInput(raw.kernel_policy_limit_requests);
-      if (parsed === null) {
-        return openaiError(
-          400,
-          "kernel_policy_limit_requests must be a non-negative number or -1 for unlimited",
-          "invalid_request_error",
-        );
-      }
-      kernelPolicyLimit = parsed;
-      await kv.set(DEFAULT_KERNEL_POLICY_LIMIT_KEY, kernelPolicyLimit);
+    const requestedKernelWindow = writesKernelWindow
+      ? normalizeKernelWindowMsInput(raw.kernel_policy_window_ms)
+      : undefined;
+    if (writesKernelWindow && requestedKernelWindow === null) {
+      return openaiError(400, "kernel_policy_window_ms must be a positive number", "invalid_request_error");
     }
 
-    if (Object.prototype.hasOwnProperty.call(raw, "kernel_policy_window_ms")) {
-      const parsed = normalizeKernelWindowMsInput(raw.kernel_policy_window_ms);
-      if (parsed === null) {
-        return openaiError(400, "kernel_policy_window_ms must be a positive number", "invalid_request_error");
-      }
-      kernelPolicyWindow = parsed;
-      await kv.set(DEFAULT_KERNEL_POLICY_WINDOW_KEY, kernelPolicyWindow);
-    }
+    // Everything is parsed and every candidate is built before the one atomic
+    // commit. In particular, a late kernel field error or a runtime-size error
+    // cannot leave a model/defaults half-update behind.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const [runtimeEntry, kernelLimitEntry, kernelWindowEntry] = await Promise.all([
+        kv.get(RUNTIME_CONFIG_V2_KEY, { consistency: "strong" }),
+        kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY, { consistency: "strong" }),
+        kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY, { consistency: "strong" }),
+      ]);
+      const runtime = normalizeRuntimeConfig(runtimeEntry.value);
+      let model = runtime?.default_model ?? "";
+      let reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
+      const kernelPolicyLimit = requestedKernelLimit ??
+        normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
+      const kernelPolicyWindow = requestedKernelWindow ??
+        normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
+      let nextRuntime = null as ReturnType<typeof buildRuntimeConfig> | null;
 
-    return json(200, {
-      defaults: {
-        model,
-        reasoning_effort: reasoningEffort,
-        kernel_policy_limit_requests: kernelPolicyLimit,
-        kernel_policy_window_ms: kernelPolicyWindow,
-      },
-    });
+      if (wantsModelUpdate) {
+        if (!runtime) return openaiError(503, "Runtime configuration is unavailable", "server_error");
+        const nextModel = writesModel ? normalizeDefaultModel(raw.model) : model;
+        if (!nextModel) return openaiError(400, "model must be a non-empty string", "invalid_request_error");
+
+        const snapshot = await loadCodexModelsSnapshot();
+        if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) {
+          return openaiError(409, "No Codex model snapshot stored", "invalid_request_error");
+        }
+        const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === nextModel) ??
+          null;
+        if (!modelRecord) {
+          return openaiError(400, "model is not in the stored Codex model list", "invalid_request_error");
+        }
+
+        const wantsReasoningUpdate = writesReasoning;
+        const modelDefault = modelRecord.default_reasoning_level === null
+          ? "none"
+          : normalizeReasoningEffort(modelRecord.default_reasoning_level);
+        const levels = extractModelReasoningLevels(modelRecord);
+        const nextReasoning = wantsReasoningUpdate
+          ? normalizeReasoningEffort(raw.reasoning_effort)
+          : modelDefault ?? levels[0] ?? "none";
+        if (!nextReasoning) {
+          return openaiError(400, "reasoning_effort must be a non-empty string", "invalid_request_error");
+        }
+        model = nextModel;
+        reasoningEffort = nextReasoning;
+        try {
+          nextRuntime = buildRuntimeConfig(snapshot, {
+            defaultModel: model,
+            defaultReasoningEffort: reasoningEffort,
+          });
+        } catch (error) {
+          const response = runtimeConfigErrorResponse(error);
+          if (response) return response;
+          throw error;
+        }
+      }
+
+      if (!nextRuntime && !writesKernelLimit && !writesKernelWindow) {
+        return json(200, {
+          defaults: {
+            model,
+            reasoning_effort: reasoningEffort,
+            kernel_policy_limit_requests: kernelPolicyLimit,
+            kernel_policy_window_ms: kernelPolicyWindow,
+          },
+        });
+      }
+
+      let atomic = kv.atomic()
+        .check(runtimeEntry)
+        .check(kernelLimitEntry)
+        .check(kernelWindowEntry);
+      if (nextRuntime) atomic = atomic.set(RUNTIME_CONFIG_V2_KEY, nextRuntime);
+      if (writesKernelLimit) atomic = atomic.set(DEFAULT_KERNEL_POLICY_LIMIT_KEY, kernelPolicyLimit);
+      if (writesKernelWindow) atomic = atomic.set(DEFAULT_KERNEL_POLICY_WINDOW_KEY, kernelPolicyWindow);
+      const committed = await atomic.commit();
+      if (!committed.ok) continue;
+      if (nextRuntime) cacheRuntimeConfig(nextRuntime);
+      return json(200, {
+        defaults: {
+          model,
+          reasoning_effort: reasoningEffort,
+          kernel_policy_limit_requests: kernelPolicyLimit,
+          kernel_policy_window_ms: kernelPolicyWindow,
+        },
+      });
+    }
+    return openaiError(409, "Defaults were modified concurrently; retry", "invalid_request_error");
   }
 
   return openaiError(405, "Method not allowed", "method_not_allowed");
@@ -748,10 +800,7 @@ const normalizeKernelScope = (value: unknown): "repo" | "org" => {
 };
 
 const normalizeOptionalBoolean = (value: unknown): boolean => {
-  if (value === true) return true;
-  if (typeof value !== "string") return false;
-  const trimmed = value.trim().toLowerCase();
-  return trimmed === "true" || trimmed === "1" || trimmed === "yes";
+  return value === true;
 };
 
 const normalizeDefaultModel = (value: unknown): string | null => {
@@ -891,6 +940,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_requests: 0,
     usage_reset_at_ms: usageResetAtMs,
     window_ms: resolvedWindowMs,
+    usage_quota_version: 3,
     ...paidFallbackPolicy,
   };
   const hashRecord: ApiKeyHashRecord = {
@@ -901,13 +951,22 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_requests: 0,
     usage_reset_at_ms: usageResetAtMs,
     window_ms: resolvedWindowMs,
+    usage_quota_version: 3,
     ...paidFallbackHashFields(record),
   };
+  const quotaPolicy = apiKeyPolicyFromHashRecord(hash, hashRecord, now);
+  if (!quotaPolicy) {
+    return openaiError(500, "Failed to build API key quota policy", "server_error");
+  }
+  const quotaWindow = makeApiKeyUsageWindowV3(quotaPolicy, now);
 
   const commit = await kv.atomic()
     .check(hashEntry)
     .set(apiKeyIdKey(id), record)
     .set(hashKey, hashRecord)
+    .set(apiKeyUsageV3WindowKey(quotaPolicy), quotaWindow, {
+      expireIn: apiKeyUsageV3RetentionMs(quotaWindow.window_reset_at_ms, now),
+    })
     .commit();
   if (!commit.ok) {
     return openaiError(500, "Failed to persist API key", "server_error");
@@ -956,6 +1015,7 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
       usage_requests: record.usage_requests,
       usage_reset_at_ms: record.usage_reset_at_ms,
       window_ms: record.window_ms,
+      usage_quota_version: record.usage_quota_version,
       ...paidFallbackHashFields(record),
     };
     const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, Date.now());
@@ -966,7 +1026,7 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
       );
       if (includeUsage) {
         usageById.set(record.id, {
-          request_count: await getApiKeyUsageV2(policy, kv),
+          request_count: await getApiKeyUsageV3(policy, kv),
           limit: policy.usage_limit_requests,
           reset_at_ms: policy.usage_reset_at_ms,
         });
@@ -1166,10 +1226,18 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     }
   }
 
+  if (Object.prototype.hasOwnProperty.call(raw, "reset_usage") && typeof raw.reset_usage !== "boolean") {
+    return openaiError(400, "reset_usage must be a boolean", "invalid_request_error");
+  }
   const resetUsage = normalizeOptionalBoolean(raw.reset_usage);
   if (resetUsage || nextWindowMs !== currentWindowMs) {
     nextUsageRequests = 0;
-    nextUsageResetAtMs = calculateNextResetMs(now, nextWindowMs);
+    // A reset must always select a distinct V3 aggregate identity. A create
+    // followed by an immediate reset can otherwise share the same millisecond
+    // start and overwrite the current window instead of opening a fresh one.
+    const currentWindowStartMs = entry.value.usage_reset_at_ms - currentWindowMs;
+    const freshWindowStartMs = Math.max(now, currentWindowStartMs + 1);
+    nextUsageResetAtMs = freshWindowStartMs + nextWindowMs;
     nextPaidFallbackSpentMicrocredits = 0;
   }
 
@@ -1189,6 +1257,17 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
       (nextUsageRequests !== entry.value.usage_requests || nextUsageResetAtMs !== entry.value.usage_reset_at_ms));
 
   if (!hasChanges) {
+    const currentPolicy = apiKeyPolicyFromHashRecord(entry.value.hash, {
+      id: entry.value.id,
+      expires_at_ms: entry.value.expires_at_ms,
+      revoked_at_ms: entry.value.revoked_at_ms,
+      usage_limit_requests: entry.value.usage_limit_requests,
+      usage_requests: entry.value.usage_requests,
+      usage_reset_at_ms: entry.value.usage_reset_at_ms,
+      window_ms: entry.value.window_ms,
+      usage_quota_version: entry.value.usage_quota_version,
+      ...paidFallbackHashFields(entry.value),
+    }, now);
     return json(
       200,
       {
@@ -1199,7 +1278,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
         expires_at_ms: currentExpiresAtMs,
         revoked_at_ms: entry.value.revoked_at_ms,
         usage_limit_requests: entry.value.usage_limit_requests,
-        usage_requests: entry.value.usage_requests,
+        usage_requests: currentPolicy ? await getApiKeyUsageV3(currentPolicy, kv) : 0,
         usage_reset_at_ms: entry.value.usage_reset_at_ms,
         window_ms: currentWindowMs,
         ...await paidFallbackPublicFields(entry.value, kv),
@@ -1236,17 +1315,77 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     usage_requests: updated.usage_requests,
     usage_reset_at_ms: updated.usage_reset_at_ms,
     window_ms: updated.window_ms,
+    usage_quota_version: updated.usage_quota_version,
     ...paidFallbackHashFields(updated),
   };
 
+  const quotaPolicy = apiKeyPolicyFromHashRecord(updated.hash, updatedHash, now);
+  if (!quotaPolicy) {
+    return openaiError(503, "API key quota migration is incomplete", "server_error", { type: "server_error" });
+  }
+  const replaceQuotaWindow = resetUsage || nextWindowMs !== currentWindowMs;
+  const currentQuotaPolicy = replaceQuotaWindow ? apiKeyPolicyFromHashRecord(entry.value.hash, entry.value, now) : null;
+  if (replaceQuotaWindow && !currentQuotaPolicy) {
+    return openaiError(503, "API key quota migration is incomplete", "server_error", { type: "server_error" });
+  }
+  let currentQuotaWindowEntry: Deno.KvEntryMaybe<ApiKeyUsageWindowV3> | null = null;
+  if (replaceQuotaWindow) {
+    try {
+      await reclaimApiKeyUsageReservationsForKeyV3(kv, updated.id, now);
+      // Read the old aggregate after reclaim and before the live scan. A
+      // reservation before this read is included in the scan; one after it
+      // mutates this checked entry and makes the reset conflict atomically.
+      currentQuotaWindowEntry = await kv.get<ApiKeyUsageWindowV3>(
+        apiKeyUsageV3WindowKey(currentQuotaPolicy!),
+        { consistency: "strong" },
+      );
+      if (await hasLiveApiKeyUsageReservationsV3(kv, updated.id, now)) {
+        return openaiError(
+          409,
+          "Cannot reset API key quota while requests are reserved; retry after their five-minute lease expires",
+          "invalid_request_error",
+        );
+      }
+    } catch (error) {
+      console.warn("[ai.ubq.fi] Failed to inspect API key quota reservations before reset:", error);
+      return openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" });
+    }
+  }
+
+  const quotaWindow = replaceQuotaWindow ? makeApiKeyUsageWindowV3(quotaPolicy, now) : null;
+  const quotaWindowEntry = quotaWindow
+    ? await kv.get(apiKeyUsageV3WindowKey(quotaPolicy), { consistency: "strong" })
+    : null;
+
   const atomic = kv.atomic()
     .check(entry)
+    .check(hashEntry)
     .set(idKey, updated)
     .set(hashKey, updatedHash);
-  if (hashEntry.versionstamp) atomic.check(hashEntry);
+  if (quotaWindow && quotaWindowEntry) {
+    atomic.check(quotaWindowEntry).set(apiKeyUsageV3WindowKey(quotaPolicy), quotaWindow, {
+      expireIn: apiKeyUsageV3RetentionMs(quotaWindow.window_reset_at_ms, now),
+    });
+  }
+  if (currentQuotaWindowEntry) atomic.check(currentQuotaWindowEntry);
 
   const commit = await atomic.commit();
   if (!commit.ok) {
+    if (replaceQuotaWindow) {
+      try {
+        await reclaimApiKeyUsageReservationsForKeyV3(kv, updated.id, now);
+        if (await hasLiveApiKeyUsageReservationsV3(kv, updated.id, now)) {
+          return openaiError(
+            409,
+            "Cannot reset API key quota while requests are reserved; retry after their five-minute lease expires",
+            "invalid_request_error",
+          );
+        }
+      } catch (error) {
+        console.warn("[ai.ubq.fi] Failed to recheck API key quota reservations after reset conflict:", error);
+        return openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" });
+      }
+    }
     return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   }
   invalidateApiKeyPolicy(updated.id);
@@ -1261,7 +1400,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
       expires_at_ms: coerceApiKeyExpiresAtMs(updated),
       revoked_at_ms: updated.revoked_at_ms,
       usage_limit_requests: updated.usage_limit_requests,
-      usage_requests: updated.usage_requests,
+      usage_requests: await getApiKeyUsageV3(quotaPolicy, kv),
       usage_reset_at_ms: updated.usage_reset_at_ms,
       window_ms: updated.window_ms,
       ...await paidFallbackPublicFields(updated, kv),
@@ -1305,6 +1444,7 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
     usage_requests: updated.usage_requests,
     usage_reset_at_ms: updated.usage_reset_at_ms,
     window_ms: updated.window_ms,
+    usage_quota_version: updated.usage_quota_version,
     ...paidFallbackHashFields(updated),
   };
 
@@ -1374,6 +1514,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
     usage_requests: updated.usage_requests,
     usage_reset_at_ms: updated.usage_reset_at_ms,
     window_ms: updated.window_ms,
+    usage_quota_version: updated.usage_quota_version,
     ...paidFallbackHashFields(updated),
   };
 
@@ -1479,6 +1620,7 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
   for await (const counterEntry of kv.list({ prefix: [...API_KEY_USAGE_V2_PREFIX, id] })) {
     await kv.delete(counterEntry.key);
   }
+  await deleteApiKeyUsageV3(kv, id);
 
   return json(200, { id }, { "x-uos-upstream": "chatgpt_codex" });
 };
@@ -1751,11 +1893,16 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
       "invalid_request_error",
     );
   }
+  if (Object.prototype.hasOwnProperty.call(raw, "reset_usage") && typeof raw.reset_usage !== "boolean") {
+    return openaiError(400, "reset_usage must be a boolean", "invalid_request_error");
+  }
+  const resetUsage = raw.reset_usage === true;
 
   if (scope === "org") {
     const updated = await setKernelOrgUsageLimit(owner, usageLimitRequests, {
       windowMs: windowMs ?? undefined,
       expiresAtMs: expiresAtMs ?? undefined,
+      resetUsage,
     });
     if (!updated) {
       return openaiError(409, "Concurrent modification; retry", "invalid_request_error");
@@ -1766,6 +1913,7 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
   const updated = await setKernelUsageLimit(owner, repo!, usageLimitRequests, {
     windowMs: windowMs ?? undefined,
     expiresAtMs: expiresAtMs ?? undefined,
+    resetUsage,
   });
   if (!updated) {
     return openaiError(409, "Concurrent modification; retry", "invalid_request_error");
