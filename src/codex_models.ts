@@ -227,7 +227,11 @@ const normalizePromptCacheScope = (value: unknown): PromptCacheScope | null => {
   const reproducibleCycles = normalizePromptCacheCycles(value.reproducible_cycles);
   const verifiedAtMs = normalizePromptCacheTimestamp(value.verified_at_ms);
   if (reproducibleCycles === null || verifiedAtMs === null) return null;
-  if (value.account_slots === "account_scoped" && reproducibleCycles < 3) return null;
+  // Scope is only published after the bounded live probe has reproduced the
+  // complete classification. An unverified "shared" result is no safer than
+  // an unverified "account_scoped" result, and callers should treat omitted
+  // scope as unknown rather than consuming an early classification.
+  if (reproducibleCycles < 3) return null;
   const effectiveModel = hasOwn(value, "effective_model")
     ? normalizePromptCacheString(value.effective_model)
     : undefined;
