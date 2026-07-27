@@ -134,6 +134,7 @@ const seedPaidFallbackKey = (
     modelIds?: readonly string[];
   } = {},
 ): void => {
+  kvStore.delete(keyToString(["uos_ai", "codex_rate_limit"]));
   const hash = `hash-${id}`;
   const common = {
     paid_fallback_enabled: options.enabled ?? true,
@@ -359,6 +360,83 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.deepEqual(recorded["reasoning"], { effort: "low" });
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
+  });
+
+  await t.step("responses accepts and strips Codex CLI client metadata", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              input: "ping",
+              client_metadata: {
+                session_id: "session_test",
+                thread_id: "thread_test",
+                request_kind: "turn",
+              },
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(parseWarnings(response.headers.get("x-uos-warning")), []);
+    assert.ok(recordedBody);
+    assert.equal("client_metadata" in recordedBody, false);
+  });
+
+  await t.step("responses rejects malformed Codex CLI client metadata before upstream dispatch", async () => {
+    const malformedValues = [
+      null,
+      [],
+      "session_test",
+      { session_id: 123 },
+      { session_id: "session_test", request_kind: null },
+      { nested: { value: "not-flat" } },
+    ];
+
+    for (const clientMetadata of malformedValues) {
+      let upstreamCalls = 0;
+      const response = await withFetchMock(
+        () => {
+          upstreamCalls += 1;
+          throw new Error("Malformed client_metadata must not reach upstream");
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                input: "ping",
+                client_metadata: clientMetadata,
+              }),
+            }),
+          ),
+      );
+
+      assert.equal(response.status, 400);
+      assert.equal(upstreamCalls, 0);
+      const payload = await response.json() as {
+        error?: { message?: string; type?: string; code?: string; param?: string };
+      };
+      assert.deepEqual(payload.error, {
+        message: "client_metadata must be an object with string values",
+        type: "invalid_request_error",
+        code: "invalid_request_error",
+        param: "client_metadata",
+      });
+    }
   });
 
   await t.step("responses preserves none reasoning upstream", async () => {
@@ -987,6 +1065,139 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
+    await t.step("a live 429 opens the circuit and the next request bypasses Codex", async () => {
+      const cachedKeyId = "fallback-cached-success";
+      const openerKeyId = "fallback-circuit-opener";
+      seedPaidFallbackKey(cachedKeyId);
+      seedPaidFallbackKey(openerKeyId, { enabled: false });
+      const cachedStartedAtMs = Date.now();
+      const urls: string[] = [];
+      const result = await withFetchMock(
+        (url) => {
+          urls.push(url);
+          if (url === "https://yunwu.ai/v1/responses") {
+            return new Response(sseResponse(baseSseChunks()).body, {
+              status: 200,
+              headers: {
+                "Content-Type": "text/event-stream",
+                "X-Oneapi-Request-Id": "yunwu-cached-request",
+              },
+            });
+          }
+          if (url === "https://yunwu.ai/api/log/token") {
+            return new Response(JSON.stringify({ success: true, data: [] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json", "Retry-After": "45" },
+          });
+        },
+        async () => {
+          const opener = await handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "open" }),
+            }),
+            {
+              keyId: openerKeyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "request-fallback-circuit-opener",
+              startedAtMs: Date.now(),
+            },
+          );
+          const cached = await handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "cached" }),
+            }),
+            {
+              keyId: cachedKeyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "request-fallback-cached-success",
+              startedAtMs: cachedStartedAtMs,
+            },
+          );
+          return { opener, cached };
+        },
+      );
+
+      assert.equal(result.opener.status, 429);
+      assert.equal(result.cached.status, 200);
+      assert.equal(result.cached.headers.get("x-ubq-upstream"), "yunwu");
+      assert.equal(urls.filter((url) => url.includes("chatgpt.com/backend-api/codex/responses")).length, 1);
+      assert.equal(urls.filter((url) => url === "https://yunwu.ai/v1/responses").length, 1);
+      const log = kvStore.get(keyToString([
+        "ubq_ai",
+        "api_keys",
+        "request_log",
+        cachedKeyId,
+        cachedStartedAtMs,
+        "request-fallback-cached-success",
+      ])) as { fallback_reason?: string } | undefined;
+      assert.equal(log?.fallback_reason, "primary_rate_limit_cached");
+    });
+
+    await t.step("cached cooldown returns rate_limit_exceeded when paid fallback is unavailable", async () => {
+      const cases = [
+        { id: "cached-disabled", options: { enabled: false } },
+        { id: "cached-unpriced", options: { modelIds: ["some-other-model"] } },
+        { id: "cached-exhausted", options: { limitMicrocredits: 100, spentMicrocredits: 100 } },
+        {
+          id: "cached-reconciliation",
+          options: { reservedMicrocredits: 100, reservationRequestId: "previous-request" },
+        },
+      ] as const;
+      for (const testCase of cases) {
+        seedPaidFallbackKey(testCase.id, testCase.options);
+        kvStore.set(keyToString(["uos_ai", "codex_rate_limit"]), {
+          observed_at_ms: Date.now(),
+          retry_at_ms: Date.now() + 30_000,
+        });
+        let codexCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url.includes("chatgpt.com/backend-api/codex/responses")) codexCalls += 1;
+            if (url === "https://yunwu.ai/api/log/token") {
+              return new Response(JSON.stringify({ success: true, data: [] }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+            throw new Error(`Unexpected upstream call: ${url}`);
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "cached" }),
+              }),
+              {
+                keyId: testCase.id,
+                kernelRepo: null,
+                kernelOrg: null,
+                requestId: `request-${testCase.id}`,
+                startedAtMs: Date.now(),
+              },
+            ),
+        );
+        assert.equal(codexCalls, 0);
+        assert.equal(response.status, 429);
+        assert.ok(Number(response.headers.get("Retry-After")) > 0);
+        assert.equal(response.headers.get("x-ubq-upstream"), "chatgpt_codex");
+        const payload = await response.json() as { error?: { type?: string; code?: string } };
+        assert.equal(payload.error?.type, "rate_limit_error");
+        assert.equal(payload.error?.code, "rate_limit_exceeded");
+      }
+    });
+
     await t.step("primary errors and network failures other than 429 never dispatch YunWu", async () => {
       for (const scenario of ["http_500", "network"] as const) {
         const keyId = `fallback-${scenario}`;
@@ -1177,6 +1388,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       assert.equal(stored.paid_fallback_reserved_microcredits, 1_000_000);
     });
   } finally {
+    kvStore.delete(keyToString(["uos_ai", "codex_rate_limit"]));
     if (originalApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
     else Deno.env.set("YUNWU_API_KEY", originalApiKey);
   }

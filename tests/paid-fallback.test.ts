@@ -203,7 +203,10 @@ const {
   apiKeyRequestLogKey,
   apiKeyUsageDailyKey,
   apiKeyUsageKey,
+  getApiKeyUsage,
   listApiKeyRequestLogs,
+  recordApiKeyRequestLog,
+  recordApiKeyUsage,
 } = await import("../src/analytics.ts");
 const {
   ensurePaidFallbackBackfill,
@@ -293,6 +296,7 @@ const reservationInput = (
   path: "/v1/responses",
   stream: false,
   reasoning: "high",
+  reason: "primary_429" as const,
 });
 
 Deno.test("paid fallback backfill is one-time and idempotent for legacy ID/hash pairs", async () => {
@@ -463,6 +467,41 @@ Deno.test("paid fallback atomically reserves the remaining cap and permits only 
       0,
     );
   });
+});
+
+Deno.test("analytics writes tolerate concurrent API key counter updates", async () => {
+  memoryKv.clear();
+  const record = await seedStrictKey();
+  const keyId = String(record.id);
+  const idKey = apiKeyIdKey(keyId);
+  const mutateIdRecord = () => {
+    const existing = memoryKv.entries.get(encodeKey(idKey));
+    if (!existing) throw new Error("missing analytics test key");
+    void memoryKv.set(idKey, {
+      ...(existing.value as Record<string, unknown>),
+      usage_requests: Number((existing.value as Record<string, unknown>).usage_requests) + 1,
+    });
+  };
+
+  memoryKv.beforeAtomicCommit = mutateIdRecord;
+  await recordApiKeyUsage(keyId, { request_count: 1, seen_at_ms: Date.now() });
+  assert.equal((await getApiKeyUsage(keyId))?.total_requests, 1);
+
+  const createdAtMs = Date.now();
+  memoryKv.beforeAtomicCommit = mutateIdRecord;
+  await recordApiKeyRequestLog(keyId, {
+    id: "analytics-concurrent-log",
+    route: "responses",
+    path: "/v1/responses",
+    method: "POST",
+    status_code: 200,
+    stream: false,
+    model: "gpt-5-codex",
+    reasoning: "high",
+    created_at_ms: createdAtMs,
+    provider: "chatgpt_codex",
+  });
+  assert.equal((await listApiKeyRequestLogs(keyId)).some((entry) => entry.id === "analytics-concurrent-log"), true);
 });
 
 Deno.test("YunWu reconciliation records exact microcredits once and releases the reservation", async () => {

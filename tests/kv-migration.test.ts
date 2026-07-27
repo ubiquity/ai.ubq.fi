@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
 import { appendBooleanParam } from "../scripts/kv-migrate.ts";
-import { importKvMigrationLines, validateKvMigrationTarget } from "../src/kv_migration.ts";
+import { classifyKvMigrationKey, importKvMigrationLines, validateKvMigrationTarget } from "../src/kv_migration.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 
@@ -53,6 +53,17 @@ Deno.test("KV migration HTTP CLI serializes explicit false flags", () => {
 
   assert.equal(url.searchParams.get("include_legacy"), "0");
   assert.equal(url.searchParams.get("overwrite"), "1");
+});
+
+Deno.test("KV migration classifies the Codex rate-limit circuit as transient", () => {
+  assert.deepEqual(
+    classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], {
+      profile: "local",
+      includeCache: true,
+      includeLegacy: true,
+    }),
+    { action: "skip", group: "codex_rate_limit", reason: "transient_runtime_state" },
+  );
 });
 
 Deno.test("prod KV migration imports only modern durable rows by default", async () => {

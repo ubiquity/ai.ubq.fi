@@ -38,9 +38,9 @@ curl -sS https://ai.ubq.fi/admin/api-keys \
 Health:
 
 ```bash
-curl -sS https://ai.ubq.fi/health         # readiness probe: auth + upstream
-curl -sS https://ai.ubq.fi/health/upstream  # upstream probe only
-curl -sS https://ai.ubq.fi/health/auth
+curl -sS https://ai.ubq.fi/health # release liveness
+curl -sS https://ai.ubq.fi/health/providers # diagnostics
+curl -sS https://ai.ubq.fi/health/upstream # diagnostics
 ```
 
 List models:
@@ -222,9 +222,11 @@ Health probe (cron-friendly):
 
 ```bash
 deno task health:check --url https://ai.ubq.fi
-# auth metadata only (does not refresh auth or consume chat tokens):
-deno task health:check --url https://ai.ubq.fi --auth
-# or: deno run --allow-net scripts/health-check.ts --url https://ai.ubq.fi --json --auth
+# diagnostics:
+curl -sS https://ai.ubq.fi/health/providers | jq
+curl -sS https://ai.ubq.fi/health/upstream | jq
+# or diagnostics via health script:
+deno run --allow-net scripts/health-check.ts --url https://ai.ubq.fi --json
 ```
 
 Admin examples (uses `DENO_DEPLOY_TOKEN`):
@@ -386,9 +388,9 @@ deno task ubq-ai admin keys revoke --id "<id>"
 ## Supported routes
 
 - `GET /`, `GET /docs`, `GET /chat`, `GET /admin`, and static assets
-- `GET /health` (readiness: Codex auth presence + upstream probe)
-- `GET /health/auth` (Codex auth metadata; no upstream refresh and no chat tokens used)
-- `GET /health/upstream` (upstream connectivity check; same auth probe logic as `/health`)
+- `GET /health` (public release liveness, no auth probe details)
+- `GET /health/providers` (diagnostic health with upstream/auth probe details)
+- `GET /health/upstream` (diagnostic health with upstream/auth probe details)
 - `POST /api/auth/register/start`, `POST /api/auth/register/finish`
 - `POST /api/auth/login/start`, `POST /api/auth/login/finish`
 - `GET /api/auth/session`, `POST /api/auth/logout`

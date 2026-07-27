@@ -121,7 +121,7 @@ UOS gateway endpoints:
 Health endpoints:
 
 - `GET /health`
-- `GET /health/auth`
+- `GET /health/providers`
 - `GET /health/upstream`
 
 ## Models
@@ -421,12 +421,9 @@ token, a KV API key, an admin token, a passkey session, or a GitHub/kernel token
 
 ## Health
 
-- `GET /health` is the readiness check: it validates configured Codex auth metadata and performs an upstream probe.
-- `GET /health/auth` returns Codex auth metadata without refreshing or contacting upstream.
-- `GET /health/upstream` runs the same upstream probe semantics as `/health` without readiness metadata.
-
-Use `/health/auth` for passive auth state inspection. If it reports an expired access token or
-`codex_auth_refresh_failed`, client authentication may still be valid; the server-side Codex auth needs repair.
+- `GET /health` is the public release liveness endpoint and returns `status: "available"` when healthy.
+- `GET /health/providers` is a diagnostic endpoint with upstream/auth probe details.
+- `GET /health/upstream` is a diagnostic endpoint with upstream/auth probe details.
 
 ## Errors
 

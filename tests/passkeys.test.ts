@@ -115,6 +115,8 @@ const {
   updatePasskeyCredentialSignCount,
 } = await import("../src/passkeys.ts");
 const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
+const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api_keys.ts");
+const { sha256Base64Url } = await import("../src/utils.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
   const originalGet = Deno.env.get;
@@ -211,6 +213,54 @@ Deno.test("non-admin passkey session authenticates as client but not admin", asy
   assert.equal(body.auth.is_super_admin, false);
   assert.equal(body.auth.method.user.is_admin, false);
   assert.equal(body.auth.method.user.credential_count, 1);
+});
+
+Deno.test("API key window reset releases stale paid fallback reservations", async () => {
+  kvStore.clear();
+  const token = "uos_ai_key_window_reset_test";
+  const hash = await sha256Base64Url(token);
+  const id = "key-window-reset";
+  const now = Date.now();
+  const common = {
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 100,
+    usage_requests: 9,
+    usage_reset_at_ms: now - 1,
+    window_ms: 60_000,
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: 1_000_000,
+    paid_fallback_spent_microcredits: 250_000,
+    paid_fallback_reserved_microcredits: 750_000,
+    paid_fallback_reservation_request_id: "stale-request",
+  };
+  kvStore.set(keyToString(apiKeyIdKey(id)), {
+    id,
+    name: "Window reset key",
+    prefix: "uos_ai_key",
+    hash,
+    created_at_ms: now - 120_000,
+    ...common,
+    paid_fallback_model_ids: ["gpt-5-codex"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_pricing_checked_at_ms: now - 60_000,
+  });
+  kvStore.set(keyToString(apiKeyHashKey(hash)), { id, ...common });
+
+  const result = await authenticateClient(
+    new Request("https://ai.ubq.fi/uos/auth", {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  );
+  assert.equal(result.ok, true);
+
+  for (const key of [apiKeyIdKey(id), apiKeyHashKey(hash)]) {
+    const stored = kvStore.get(keyToString(key)) as Record<string, unknown>;
+    assert.equal(stored.usage_requests, 0);
+    assert.equal(stored.paid_fallback_spent_microcredits, 0);
+    assert.equal(stored.paid_fallback_reserved_microcredits, 0);
+    assert.equal(stored.paid_fallback_reservation_request_id, null);
+  }
 });
 
 Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed runtime", async () => {

@@ -100,7 +100,7 @@ const {
   handleAdminKvMigrationImport,
 } = await import("../src/admin.ts");
 const { listApiKeyRequestLogs, recordApiKeyRequestLog } = await import("../src/analytics.ts");
-const { handleHealthAuth } = await import("../src/health.ts");
+const { handleHealthProviders } = await import("../src/health.ts");
 
 const authPayload = {
   tokens: {
@@ -785,7 +785,7 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   }
 });
 
-Deno.test("health auth summary does not refresh Codex auth", async () => {
+Deno.test("health providers summary is diagnostics with upstream auth state", async () => {
   kvStore.clear();
   kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
     access_token: "access",
@@ -795,12 +795,16 @@ Deno.test("health auth summary does not refresh Codex auth", async () => {
   });
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
-    throw new Error("/health/auth should not contact upstream auth");
-  };
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
 
   try {
-    const response = await handleHealthAuth();
+    const response = await handleHealthProviders();
     assert.equal(response.status, 200);
     const payload = await response.json() as {
       upstream?: string;
@@ -808,8 +812,6 @@ Deno.test("health auth summary does not refresh Codex auth", async () => {
     };
     assert.equal(payload.upstream, "chatgpt_codex");
     assert.equal(payload.auth?.source, "kv");
-    assert.equal(payload.auth?.access_token_expired, null);
-    assert.equal(payload.auth?.refresh_recommended, null);
   } finally {
     globalThis.fetch = originalFetch;
   }

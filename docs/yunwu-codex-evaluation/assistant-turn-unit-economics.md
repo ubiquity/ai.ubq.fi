@@ -1,7 +1,6 @@
 # Assistant turn unit economics
 
-Date calculated: 2026-07-21
-Long-context update: 2026-07-26
+Date calculated: 2026-07-21 Long-context update: 2026-07-26
 
 ## Recommendation
 
@@ -74,19 +73,19 @@ M300K_18F4A7C2|M500K_6D91E3B8|M580K_A52C79D4
 
 The Responses result and billing console reported:
 
-| Measure              | Result                                      |
-| -------------------- | ------------------------------------------- |
-| Model                | `gpt-5.6-terra`                             |
-| Input                | 600,086 tokens                              |
-| Cached input         | 0 tokens                                    |
-| Output               | 65 tokens, including 26 reasoning tokens    |
-| End-to-end time      | 326.2 seconds; console rounded to 324 seconds |
-| Retrieval            | All three markers recovered                 |
-| Yunwu group          | `官转`, not the cheap `Codex专属` group     |
-| Model ratio          | 1.25                                        |
-| Group ratio          | 3                                           |
-| Tier multiplier      | Input 2; output 1.5                         |
-| Deduction            | 9.005678 Yunwu credits                      |
+| Measure         | Result                                        |
+| --------------- | --------------------------------------------- |
+| Model           | `gpt-5.6-terra`                               |
+| Input           | 600,086 tokens                                |
+| Cached input    | 0 tokens                                      |
+| Output          | 65 tokens, including 26 reasoning tokens      |
+| End-to-end time | 326.2 seconds; console rounded to 324 seconds |
+| Retrieval       | All three markers recovered                   |
+| Yunwu group     | `官转`, not the cheap `Codex专属` group       |
+| Model ratio     | 1.25                                          |
+| Group ratio     | 3                                             |
+| Tier multiplier | Input 2; output 1.5                           |
+| Deduction       | 9.005678 Yunwu credits                        |
 
 The console displayed this exact billing formula:
 
@@ -102,9 +101,9 @@ retail is approximately $3.0019. Yunwu's measured long-context route therefore c
 The measured effective long-context rates are:
 
 | Token type | OpenAI retail | Yunwu `官转` | OpenAI/Yunwu |
-| ---------- | ------------: | -----------: | ------------: |
-| Input      |       $5.00/M |   $1.0964/M |         4.56x |
-| Output     |      $22.50/M |   $4.9338/M |         4.56x |
+| ---------- | ------------: | -----------: | -----------: |
+| Input      |       $5.00/M |    $1.0964/M |        4.56x |
+| Output     |      $22.50/M |    $4.9338/M |        4.56x |
 
 ### Flex-processing hypothesis
 
@@ -115,15 +114,15 @@ unavailability, and recommends allowing timeouts up to 15 minutes for lengthy pr
 
 For the measured request:
 
-| Route                   | Equivalent cost | Relative to Yunwu |
-| ----------------------- | --------------: | ----------------: |
-| OpenAI standard         |         $3.0019 |             4.56x |
-| OpenAI public Flex      |         $1.5009 |             2.28x |
-| Yunwu measured `官转`   |         $0.6583 |             1.00x |
+| Route                 | Equivalent cost | Relative to Yunwu |
+| --------------------- | --------------: | ----------------: |
+| OpenAI standard       |         $3.0019 |             4.56x |
+| OpenAI public Flex    |         $1.5009 |             2.28x |
+| Yunwu measured `官转` |         $0.6583 |             1.00x |
 
-The 326-second response time is consistent with Flex-like processing. If Yunwu injected `service_tier: "flex"`
-upstream, public Flex pricing explains the first 50% discount. Yunwu would then still be charging only 43.86% of public
-Flex pricing, requiring another 56.14% reduction or subsidy.
+The 326-second response time is consistent with Flex-like processing. If Yunwu injected `service_tier: "flex"` upstream,
+public Flex pricing explains the first 50% discount. Yunwu would then still be charging only 43.86% of public Flex
+pricing, requiring another 56.14% reduction or subsidy.
 
 This remains an inference: the original Yunwu result was not saved with its full `service_tier` field, Yunwu does not
 support retrieving the completed response by ID, and the billing console does not display the upstream service tier.
@@ -149,8 +148,8 @@ The resulting limits are:
 
 This makes a blended grey-market pool economically coherent without requiring OpenAI to grant one customer a 78%
 discount. Reported mechanisms in the broader Chinese relay market include farming free or promotional credits,
-subdividing fixed-price subscriptions where applicable, stolen credentials or payment cards, corporate discounts,
-model substitution, and treating collected prompts and outputs as the economically valuable product. Those reports are
+subdividing fixed-price subscriptions where applicable, stolen credentials or payment cards, corporate discounts, model
+substitution, and treating collected prompts and outputs as the economically valuable product. Those reports are
 evidence about the market, not proof of Yunwu's specific supply chain.
 
 For Yunwu's verified long-context route, subscription subdivision cannot explain inputs above 272K. The remaining

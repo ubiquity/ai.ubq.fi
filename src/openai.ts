@@ -14,6 +14,11 @@ import {
   type ReasoningEffort,
 } from "./defaults.ts";
 import { recordApiKeyRequestLog, recordApiKeyUsage, updateApiKeyRequestLog } from "./analytics.ts";
+import {
+  closeGlobalCodexRateLimitProbe,
+  getGlobalCodexRateLimitDecision,
+  openGlobalCodexRateLimitCircuit,
+} from "./codex_rate_limit.ts";
 import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
 import { json, openaiError } from "./http.ts";
 import { kvPromise } from "./kv.ts";
@@ -335,6 +340,22 @@ const paidFallbackBlockedResponse = (
   );
 };
 
+const cachedCodexRateLimitResponse = (retryAtMs: number): Response => {
+  const retryAfterSeconds = Math.max(1, Math.ceil((retryAtMs - Date.now()) / 1000));
+  return openaiError(
+    429,
+    "The shared Codex subscription is rate limited. Retry after the current cooldown.",
+    "rate_limit_exceeded",
+    {
+      type: "rate_limit_error",
+      headers: {
+        "Retry-After": String(retryAfterSeconds),
+        "x-ubq-upstream": "chatgpt_codex",
+      },
+    },
+  );
+};
+
 const fetchResponsesWithPaidFallback = async (
   body: Record<string, unknown>,
   options: Readonly<{
@@ -347,23 +368,44 @@ const fetchResponsesWithPaidFallback = async (
     signal?: AbortSignal;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
-  const primary = await fetchCodexResponses(body, {
-    clientVersion: options.clientVersion,
-    signal: options.signal,
-  });
+  const circuitDecision = await getGlobalCodexRateLimitDecision();
+  let primary: Response | null = null;
+  let cachedRetryAtMs: number | null = null;
+  if (circuitDecision.kind === "cached") {
+    cachedRetryAtMs = circuitDecision.retryAtMs;
+  } else {
+    primary = await fetchCodexResponses(body, {
+      clientVersion: options.clientVersion,
+      signal: options.signal,
+    });
+    if (primary.status === 429) {
+      cachedRetryAtMs = await openGlobalCodexRateLimitCircuit(primary.headers.get("Retry-After"));
+    } else if (circuitDecision.kind === "probe") {
+      await closeGlobalCodexRateLimitProbe(circuitDecision.probeId);
+    }
+  }
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  if (primary.status !== 429 || !keyId || !requestId || createdAtMs === undefined) {
+  const isCachedRateLimit = primary === null;
+  if ((primary?.status !== 429 && !isCachedRateLimit) || !keyId || !requestId || createdAtMs === undefined) {
+    if (isCachedRateLimit) {
+      return {
+        response: cachedCodexRateLimitResponse(cachedRetryAtMs ?? Date.now() + 60_000),
+        provider: "chatgpt_codex",
+        paidFallback: null,
+        gatewayResponse: true,
+      };
+    }
     return {
-      response: primary,
+      response: primary!,
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: false,
     };
   }
   if (options.signal?.aborted) {
-    await cancelResponseBody(primary);
+    if (primary) await cancelResponseBody(primary);
     throw options.signal.reason instanceof Error
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
@@ -378,6 +420,7 @@ const fetchResponsesWithPaidFallback = async (
     path: options.route === "responses" ? "/v1/responses" : "/v1/chat/completions",
     stream: options.stream,
     reasoning: options.reasoning,
+    reason: isCachedRateLimit ? "primary_rate_limit_cached" : "primary_429",
   } as const;
   let decision = await reservePaidFallback(reservationInput);
   if (decision.kind === "blocked" && decision.reason === "reconciliation_pending") {
@@ -386,24 +429,34 @@ const fetchResponsesWithPaidFallback = async (
   }
 
   if (decision.kind === "skip") {
+    if (isCachedRateLimit) {
+      return {
+        response: cachedCodexRateLimitResponse(cachedRetryAtMs ?? Date.now() + 60_000),
+        provider: "chatgpt_codex",
+        paidFallback: null,
+        gatewayResponse: true,
+      };
+    }
     return {
-      response: primary,
+      response: primary!,
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: false,
     };
   }
   if (decision.kind === "blocked") {
-    await cancelResponseBody(primary);
+    if (primary) await cancelResponseBody(primary);
     return {
-      response: paidFallbackBlockedResponse(decision.reason, decision.reset_at_ms),
+      response: isCachedRateLimit
+        ? cachedCodexRateLimitResponse(cachedRetryAtMs ?? Date.now() + 60_000)
+        : paidFallbackBlockedResponse(decision.reason, decision.reset_at_ms),
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: true,
     };
   }
 
-  await cancelResponseBody(primary);
+  if (primary) await cancelResponseBody(primary);
   if (options.signal?.aborted) {
     await recordYunwuUndispatchedCancellation(decision.reservation);
     throw options.signal.reason instanceof Error
@@ -1516,6 +1569,21 @@ const normalizeResponseInputItem = (value: unknown): ResponseMessageItem | null 
   return toResponseMessageItem(value);
 };
 
+const parseSseEventPayload = (part: string): unknown | null => {
+  if (!part.trim()) return null;
+  const lines = part.split("\n");
+  const dataLines = lines.filter((line) => line.startsWith("data:"));
+  const data = dataLines.map((line) => line.slice(5).trim()).join("\n");
+  if (!data) return null;
+  try {
+    return JSON.parse(data);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[ai.ubq.fi] SSE parse error:", message);
+    return null;
+  }
+};
+
 const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -1529,20 +1597,14 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
       const parts = normalized.split("\n\n");
       buffer = parts.pop() ?? "";
       for (const part of parts) {
-        if (!part.trim()) continue;
-        const lines = part.split("\n");
-        const dataLines = lines.filter((line) => line.startsWith("data:"));
-        const data = dataLines.map((line) => line.slice(5).trim()).join("\n");
-        if (!data) continue;
-        try {
-          yield JSON.parse(data);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.warn("[ai.ubq.fi] SSE parse error:", message);
-          continue;
-        }
+        const eventPayload = parseSseEventPayload(part);
+        if (eventPayload !== null) yield eventPayload;
       }
     }
+
+    buffer += decoder.decode();
+    const finalPayload = parseSseEventPayload(buffer);
+    if (finalPayload !== null) yield finalPayload;
   } finally {
     try {
       await reader.cancel();
@@ -2925,6 +2987,21 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "client_metadata")) {
+    const clientMetadata = rawBody.client_metadata;
+    if (
+      !isRecord(clientMetadata) ||
+      Array.isArray(clientMetadata) ||
+      Object.values(clientMetadata).some((value) => typeof value !== "string")
+    ) {
+      return openaiError(
+        400,
+        "client_metadata must be an object with string values",
+        "invalid_request_error",
+        { param: "client_metadata" },
+      );
+    }
+  }
   const warnings = buildIgnoredWarnings(
     rawRecord,
     new Set([
@@ -2940,6 +3017,7 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
       "text",
       "include",
       "context_management",
+      "client_metadata",
     ]),
   );
 

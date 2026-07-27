@@ -258,6 +258,7 @@ export const reservePaidFallback = async (
     path: string;
     stream: boolean;
     reasoning: string | null;
+    reason: "primary_429" | "primary_rate_limit_cached";
   }>,
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await kvPromise;
@@ -324,7 +325,7 @@ export const reservePaidFallback = async (
       billing_status: "not_applicable",
     }),
     provider: "yunwu",
-    fallback_reason: "primary_429",
+    fallback_reason: input.reason,
     provider_request_id: null,
     quota_per_credit: record.paid_fallback_quota_per_credit,
     paid_fallback_window_reset_at_ms: record.usage_reset_at_ms,

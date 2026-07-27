@@ -771,6 +771,8 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
             usage_reset_at_ms: newResetAtMs,
             window_ms: resolvedWindowMs,
             paid_fallback_spent_microcredits: 0,
+            paid_fallback_reserved_microcredits: 0,
+            paid_fallback_reservation_request_id: null,
           };
           const updatedHash: ApiKeyHashRecord = {
             ...hashEntry.value,
@@ -778,6 +780,8 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
             usage_reset_at_ms: newResetAtMs,
             window_ms: resolvedWindowMs,
             paid_fallback_spent_microcredits: 0,
+            paid_fallback_reserved_microcredits: 0,
+            paid_fallback_reservation_request_id: null,
           };
           await kv.atomic()
             .check(idEntry)

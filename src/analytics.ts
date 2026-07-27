@@ -414,7 +414,7 @@ export const recordApiKeyUsage = async (keyId: string, delta: ApiKeyUsageDelta):
       const entry = await kv.get<ApiKeyUsageRecord>(key);
       const current = normalizeUsageRecord(entry.value, keyId, nowMs);
       const updated = applyDelta(current, delta, nowMs);
-      const commit = await kv.atomic().check(keyEntry).check(entry).set(key, updated).commit();
+      const commit = await kv.atomic().check(entry).set(key, updated).commit();
       if (commit.ok) {
         usageUpdated = true;
         break;
@@ -430,43 +430,14 @@ export const recordApiKeyUsage = async (keyId: string, delta: ApiKeyUsageDelta):
     const yunwuFallbackRequests = clampDelta(delta.yunwu_fallback_requests);
     const yunwuSpendMicrocredits = clampDelta(delta.yunwu_spend_microcredits);
     if (requestCount > 0 || yunwuFallbackRequests > 0 || yunwuSpendMicrocredits > 0) {
-      const seenAt = typeof delta.seen_at_ms === "number" && Number.isFinite(delta.seen_at_ms)
-        ? Math.trunc(delta.seen_at_ms)
-        : nowMs;
-      const dayKey = dayKeyFromMs(seenAt);
       for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
         const keyEntry = await kv.get(apiKeyIdKey(keyId));
         if (!keyEntry.value) return;
         const entry = await kv.get<ApiKeyUsageDailyRecord>(apiKeyUsageDailyKey(keyId));
         const current = normalizeDailyUsageRecord(entry.value, keyId, nowMs);
-        let nextDays = [...current.days];
-        const existing = nextDays.find((item) => item.day === dayKey);
-        if (existing) {
-          nextDays = nextDays.map((item) =>
-            item.day === dayKey
-              ? {
-                ...item,
-                request_count: item.request_count + requestCount,
-                yunwu_fallback_requests: item.yunwu_fallback_requests + yunwuFallbackRequests,
-                yunwu_spend_microcredits: item.yunwu_spend_microcredits + yunwuSpendMicrocredits,
-              }
-              : item
-          );
-        } else {
-          nextDays = [...nextDays, {
-            day: dayKey,
-            request_count: requestCount,
-            yunwu_fallback_requests: yunwuFallbackRequests,
-            yunwu_spend_microcredits: yunwuSpendMicrocredits,
-          }];
-        }
-        const updated: ApiKeyUsageDailyRecord = {
-          key_id: keyId,
-          days: pruneDailyUsageDays(nextDays, nowMs),
-          updated_at_ms: nowMs,
-        };
+        const updated = applyDailyDelta(current, keyId, delta, nowMs);
+        if (!updated) return;
         const commit = await kv.atomic()
-          .check(keyEntry)
           .check(entry)
           .set(apiKeyUsageDailyKey(keyId), updated)
           .commit();
@@ -568,7 +539,6 @@ export const recordApiKeyRequestLog = async (
       if (!record) return;
       const expireIn = Math.max(1, createdAtMs + API_KEY_REQUEST_LOG_RETENTION_MS - nowMs);
       const commit = await kv.atomic()
-        .check(keyEntry)
         .check(entry)
         .set(key, record, { expireIn })
         .commit();

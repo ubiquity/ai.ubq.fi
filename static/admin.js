@@ -857,7 +857,7 @@ const refreshAccessUpstreamSummary = async () => {
   setAccessValue(accessUpstreamSource, "Loading...");
   setAccessValue(accessUpstreamExpiry, "Loading...");
   try {
-    const res = await fetch(apiUrl("/health/auth"), { cache: "no-store" });
+    const res = await fetch(apiUrl("/health/upstream"), { cache: "no-store" });
     const data = await res.json().catch(() => null);
     const source = data?.auth?.source ?? "unknown";
     const expMs = data?.auth?.access_token_exp_ms ?? null;
