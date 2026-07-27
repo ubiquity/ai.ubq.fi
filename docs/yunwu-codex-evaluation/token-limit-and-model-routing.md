@@ -112,3 +112,37 @@ tested Yunwu route.
 
 Use prompt-level constraints where possible, monitor actual usage, and apply a client-side streaming cutoff only if the
 route supports streaming cancellation without charging for the remainder. That cancellation behavior was not tested.
+
+## Fast-mode and service-tier diagnostic
+
+Date measured: 2026-07-21
+
+OpenAI's user-facing Codex `/fast` mode uses more ChatGPT credits in exchange for higher inference speed. It is distinct
+from Yunwu's “price priority” router setting, which chooses among Yunwu groups by cost.
+
+Three small, deterministic Yunwu requests were used to test the wire-level tier field:
+
+| Requested tier | HTTP | Returned tier | Input | Output | Reasoning | Latency |
+| -------------- | ---: | ------------- | ----: | -----: | --------: | ------: |
+| omitted        |  200 | `default`     |    33 |     13 |         0 | 2.124 s |
+| `fast`         |  200 | `default`     |    33 |     13 |         0 | 2.706 s |
+| `priority`     |  200 | `default`     |    34 |     15 |         0 | 1.734 s |
+
+The omitted-tier and `fast` requests used exactly the same prompt and produced exactly the requested literal output. A
+single latency sample is not a speed benchmark, but the response metadata establishes that Yunwu did not preserve either
+requested non-default tier.
+
+Controls against the direct ChatGPT Codex backend showed:
+
+- raw `service_tier: "fast"` was rejected with HTTP 400 as unsupported; and
+- raw `service_tier: "priority"` completed, but the returned response still reported `service_tier: "default"`.
+
+The current Codex client treats Fast as a product feature and maps its configuration to supported upstream behavior;
+passing the literal word `fast` to the backend is not equivalent to activating `/fast` in the client.
+
+Yunwu's live `gpt-5.6-sol` catalog advertised `-low`, `-medium`, `-high`, `-xhigh`, `-max`, and `-ultra` reasoning
+suffixes. It did not advertise a `-fast` suffix or a Fast-specific price. No Fast behavior is documented in the exported
+Yunwu documentation either.
+
+Conclusion: the tested Yunwu route silently downgrades or strips Fast/Priority tier requests. There is no observed 2.5x
+Fast surcharge because there is no observed Fast service. “Price priority” should not be conflated with Codex `/fast`.

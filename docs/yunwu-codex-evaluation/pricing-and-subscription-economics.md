@@ -63,6 +63,81 @@ $200 × 6.7767 CNY/USD / 0.495 CNY per credit ≈ 2,738 credits
 
 That is an equal-spend comparison, not an equal-compute comparison.
 
+## Official OpenAI overage credits
+
+OpenAI now lets Plus and Pro users purchase credits that extend Codex usage after the plan's included allowance is
+exhausted. Included usage is consumed first; only subsequent usage draws from the purchased balance.
+
+The Codex auto-reload screen observed on 2026-07-21 showed:
+
+```text
+500 OpenAI credits = $20
+5,000 OpenAI credits = $200
+1 OpenAI credit = $0.04
+```
+
+OpenAI's current token-based Codex rate card charges GPT-5.6 Sol 125 credits per million input tokens, 12.5 credits per
+million cached-input tokens, and 750 credits per million output tokens. At $0.04 per credit, this converts to:
+
+| Token type   | OpenAI credits/M | OpenAI overage price | Measured Yunwu price | OpenAI/Yunwu |
+| ------------ | ---------------: | -------------------: | -------------------: | -----------: |
+| Input        |              125 |              $5.00/M |             $0.292/M |        17.1x |
+| Cached input |             12.5 |              $0.50/M |         Not measured |            - |
+| Output       |              750 |             $30.00/M |             $1.753/M |        17.1x |
+
+OpenAI states that Codex credit pricing was changed to align with API token usage. These credits are therefore
+convenient official overage, not subscription-subsidized compute. For the tested GPT-5.6 Sol route, Yunwu costs about
+5.84% as much:
+
+| Official OpenAI overage spend | Yunwu cost for approximately the same compute |
+| ----------------------------: | --------------------------------------------: |
+|                           $20 |                                         $1.17 |
+|                          $100 |                                         $5.84 |
+|                          $200 |                                        $11.68 |
+
+The analytics screen also showed 2,918.309 credits in one usage-history entry. If that amount were charged against a
+purchased balance, it would represent:
+
+```text
+2,918.309 credits x $0.04 = $116.73 of OpenAI overage
+$116.73 x 0.0584          = about $6.82 through Yunwu
+```
+
+The history entry may represent included usage expressed in credit units rather than an actual overage charge; the
+calculation above is the counterfactual paid value.
+
+Auto-reload should always have a monthly spending ceiling. A 500-credit minimum and 5,000-credit target can trigger a
+charge that restores the balance toward $200, and leaving the monthly maximum blank allows repeated reloads.
+
+## Codex `/fast` economics
+
+OpenAI documents Codex `/fast` as approximately 1.5x faster for supported models. For GPT-5.6 and GPT-5.5 it consumes
+ChatGPT credits at 2.5x the standard rate. Applied to the GPT-5.6 Sol overage rate card, that is equivalent to:
+
+| Token type   | Standard OpenAI overage | OpenAI `/fast` at 2.5x |
+| ------------ | ----------------------: | ---------------------: |
+| Input        |                 $5.00/M |               $12.50/M |
+| Cached input |                 $0.50/M |                $1.25/M |
+| Output       |                $30.00/M |               $75.00/M |
+
+OpenAI separately documents Priority processing for API-key traffic at 2x standard GPT-5.6 API pricing. That is not the
+same billing surface as the ChatGPT-credit `/fast` mode.
+
+Yunwu did not expose an equivalent working speed tier in testing on 2026-07-21:
+
+- a normal request returned `service_tier: "default"`;
+- `service_tier: "fast"` was accepted but also returned `service_tier: "default"`;
+- `service_tier: "priority"` was accepted but also returned `service_tier: "default"`; and
+- Yunwu's model catalog advertised reasoning-effort suffixes, but no `-fast` model suffix or Fast surcharge.
+
+Consequently, Yunwu's tested standard route should not be described as a cheaper implementation of Codex `/fast`. It is
+a cheaper default-speed route. Comparing OpenAI Fast overage with Yunwu default pricing produces a nominal 42.8x price
+difference (`17.1 x 2.5`), but that is not an apples-to-apples speed-tier comparison.
+
+Yunwu's dashboard separately announced a new “special-price Codex group” with a 0.2 group multiplier on 2026-07-21,
+while the live `gpt-5.6-sol` catalog still displayed the tested `Codex专属` group at 0.8. This appears to be a
+routing-price change, not a Fast-mode feature, and should be remeasured after the catalog and usage ledger agree.
+
 ## Comparing Yunwu with the $200 Codex subscription
 
 OpenAI does not publish a fixed API-equivalent dollar value for a fully used ChatGPT Pro/Codex subscription. The
@@ -107,7 +182,9 @@ Consequently:
 
 ## Practical recommendation
 
-Use the subscription first and Yunwu as overflow. Determine the correct Yunwu top-up from observed overflow:
+Use the subscription first and Yunwu as overflow for non-sensitive workloads. Use official OpenAI overage when privacy,
+supportability, or direct-provider reliability is worth the approximately 17.1x price premium. Determine the correct
+Yunwu top-up from observed overflow:
 
 ```text
 required Yunwu dollars = overflow API-equivalent dollars × 0.0584
@@ -121,4 +198,6 @@ Avoid holding a large prepaid balance until route stability, privacy, and longer
 - [Yunwu pricing](https://yunwu.ai/pricing)
 - [Yunwu API documentation](https://yunwu.apifox.cn/)
 - [OpenAI Codex rate card](https://help.openai.com/en/articles/20001106)
+- [OpenAI Codex speed configuration](https://learn.chatgpt.com/docs/agent-configuration/speed)
+- [OpenAI credits for flexible Plus/Pro usage](https://help.openai.com/en/articles/12642688-using-credits-for-flexible-usage-in-chatgpt-pluspro)
 - [About ChatGPT Pro](https://help.openai.com/en/articles/9793128-about-chatgpt-pro)

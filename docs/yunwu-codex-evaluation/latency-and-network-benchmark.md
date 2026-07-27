@@ -71,6 +71,38 @@ Direct Codex had the best raw median and p95. Relative to direct:
 Yunwu responses around 235–250 output tokens generally completed in roughly 4.3–4.9 seconds. Its inference throughput
 therefore appeared competitive even though its uncapped outputs were often longer.
 
+## Expected `ai.ubq.fi` UX impact
+
+For the tested short response, `ai.ubq.fi` was 17.9% slower at the median and 22.7% slower at p95:
+
+| Measure | Direct Codex | `ai.ubq.fi` | Added time | Relative increase |
+| ------- | -----------: | ----------: | ---------: | ----------------: |
+| Median  |      5.750 s |     6.782 s |    1.032 s |             17.9% |
+| p95     |      7.454 s |     9.147 s |    1.693 s |             22.7% |
+| Mean    |      6.161 s |     7.284 s |    1.123 s |             18.2% |
+
+The gateway streams the upstream response rather than waiting for the complete answer. Local tool execution, file I/O,
+terminal commands, and user think time are therefore unaffected. Only new model HTTP round trips incur the route's
+additional latency.
+
+A simple accumulation model using the measured median delta is:
+
+```text
+added task time ≈ model round trips × 1.032 seconds
+```
+
+| Model round trips | Naive accumulated median delay |
+| ----------------: | -----------------------------: |
+|                10 |                         10.3 s |
+|                20 |                         20.6 s |
+|                50 |                         51.6 s |
+|               100 |                        103.2 s |
+
+These totals are planning estimates, not predictions: the synchronized results show substantial provider-specific
+queueing variance, so the observed 1.032-second difference should not be treated as a fixed proxy tax. The benchmark
+also measured total completion time, not time to first token. A dedicated streaming benchmark is needed to quantify the
+delay a user feels before text first appears.
+
 ## Cross-route correlation
 
 The synchronized per-round Pearson latency correlations were:
