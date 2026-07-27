@@ -1034,6 +1034,31 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
     assert.equal(invalidTerminal.cached_input_tokens, 2);
     assert.equal(invalidTerminal.cache_write_input_tokens, 0);
     assert.equal(invalidTerminal.usage_telemetry_status, "invalid");
+
+    // An omitted cache-details object is distinct from the provider explicitly
+    // reporting a zero cache read/write. Keep that distinction in the terminal
+    // event so downstream counter aggregation does not turn missing telemetry
+    // into a false zero-token observation.
+    globalThis.fetch = () =>
+      Promise.resolve(sse({
+        input_tokens: 1,
+        output_tokens: 0,
+        total_tokens: 1,
+      }));
+    const partial = await handler(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ input: "cache details omitted" }),
+      }),
+    );
+    assert.equal(partial.status, 200);
+    const partialTerminalEvents = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(partialTerminalEvents.length, 3);
+    const partialTerminal = JSON.parse(String(partialTerminalEvents[2]?.[1])) as Record<string, unknown>;
+    assert.equal(partialTerminal.cached_input_tokens, null);
+    assert.equal(partialTerminal.cache_write_input_tokens, null);
+    assert.equal(partialTerminal.usage_telemetry_status, "partial");
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
