@@ -4,6 +4,7 @@ import {
   type CodexModelsSnapshot,
   fetchCodexResponses,
   getCodexModelsSnapshotDefaultModel,
+  getCodexResponseSlot,
   loadCodexModelsSnapshot,
   loadFullCodexModelsSnapshot,
   releaseCodexResponseProbe,
@@ -99,6 +100,7 @@ export type ResponseTelemetry = Readonly<{
   promptCacheKeyPresent: boolean;
   promptCacheMode: PromptCacheMode;
   explicitBreakpointCount: number;
+  accountSlot: number | null;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
@@ -133,6 +135,7 @@ type ResponseTelemetryState = {
   promptCacheKeyPresent: boolean;
   promptCacheMode: PromptCacheMode;
   explicitBreakpointCount: number;
+  accountSlot: number | null;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
@@ -160,6 +163,7 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   promptCacheKeyPresent: false,
   promptCacheMode: "unspecified",
   explicitBreakpointCount: 0,
+  accountSlot: null,
   quotaUsedPercent: undefined,
   completed: false,
   streamTerminalType: null,
@@ -210,6 +214,7 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     promptCacheKeyPresent: state.promptCacheKeyPresent,
     promptCacheMode: state.promptCacheMode,
     explicitBreakpointCount: state.explicitBreakpointCount,
+    accountSlot: state.accountSlot,
     quotaUsedPercent: state.quotaUsedPercent,
     completed: state.completed,
     streamTerminalType: state.streamTerminalType,
@@ -724,6 +729,7 @@ const fetchResponsesWithPaidFallback = async (
     if (!(error instanceof CodexError) || error.status !== 401) throw error;
     primary = openaiError(error.status, error.message, error.code);
   }
+  if (telemetry) telemetry.accountSlot = getCodexResponseSlot(primary);
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
@@ -822,6 +828,7 @@ const fetchResponsesWithPaidFallback = async (
   }
   if (telemetry) {
     telemetry.provider = "yunwu";
+    telemetry.accountSlot = null;
     telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
   }
   logYunwuSelected(requestId, fallbackReason);
@@ -2772,6 +2779,51 @@ const normalizePromptCacheBreakpoint = (
     return invalidNormalizedField(`${param}.mode`, `${param}.mode must be explicit`);
   }
   return { ok: true, value: { mode: "explicit" } };
+};
+
+const validatePromptCacheControls = (rawRecord: Record<string, unknown>): NormalizationResult<void> => {
+  if (
+    Object.prototype.hasOwnProperty.call(rawRecord, "prompt_cache_key") &&
+    typeof rawRecord.prompt_cache_key !== "string"
+  ) {
+    return invalidNormalizedField("prompt_cache_key", "prompt_cache_key must be a string");
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "prompt_cache_options")) {
+    const options = rawRecord.prompt_cache_options;
+    if (!isRecord(options) || Array.isArray(options)) {
+      return invalidNormalizedField("prompt_cache_options", "prompt_cache_options must be an object");
+    }
+    const unknown = findUnknownContentField(options, ["mode", "ttl"]);
+    if (unknown) {
+      return invalidNormalizedField(
+        `prompt_cache_options.${unknown}`,
+        `Unknown prompt cache option: ${unknown}`,
+      );
+    }
+    if (options.mode !== undefined && options.mode !== "implicit" && options.mode !== "explicit") {
+      return invalidNormalizedField(
+        "prompt_cache_options.mode",
+        "prompt_cache_options.mode must be implicit or explicit",
+      );
+    }
+    if (options.ttl !== undefined && options.ttl !== "30m") {
+      return invalidNormalizedField("prompt_cache_options.ttl", "prompt_cache_options.ttl must be 30m");
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(rawRecord, "prompt_cache_retention") &&
+    rawRecord.prompt_cache_retention !== "in_memory" &&
+    rawRecord.prompt_cache_retention !== "24h"
+  ) {
+    return invalidNormalizedField(
+      "prompt_cache_retention",
+      "prompt_cache_retention must be in_memory or 24h",
+    );
+  }
+
+  return { ok: true, value: undefined };
 };
 
 const withPromptCacheBreakpoint = <T extends object>(
@@ -5043,6 +5095,10 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
+  const promptCacheControls = validatePromptCacheControls(rawRecord);
+  if (!promptCacheControls.ok) {
+    return openaiError(400, promptCacheControls.message, "invalid_request_error", { param: promptCacheControls.param });
+  }
   const warnings = buildIgnoredWarnings(
     rawRecord,
     new Set([
@@ -5285,6 +5341,10 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS, CODEX_RESPONSES_EXTENSION_KEYS);
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
+  }
+  const promptCacheControls = validatePromptCacheControls(rawRecord);
+  if (!promptCacheControls.ok) {
+    return openaiError(400, promptCacheControls.message, "invalid_request_error", { param: promptCacheControls.param });
   }
   if (Object.prototype.hasOwnProperty.call(rawRecord, "client_metadata")) {
     const clientMetadata = rawBody.client_metadata;
