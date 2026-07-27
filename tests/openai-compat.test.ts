@@ -4089,6 +4089,7 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       promptCacheKeyPresent: false,
       promptCacheMode: "unspecified",
       explicitBreakpointCount: 0,
+      accountSlot: 1,
       quotaUsedPercent: undefined,
       completed: true,
       streamTerminalType: "response.completed",
@@ -4569,6 +4570,116 @@ Deno.test("openai: strict request fields reject malformed values without dispatc
     const payload = await response.json() as { error?: { param?: string } };
     assert.equal(payload.error?.param, "input[0].type");
   });
+});
+
+Deno.test("openai: validates standard prompt-cache controls before dispatch", async (t) => {
+  const cases = [
+    {
+      route: "responses",
+      body: { input: "ping", prompt_cache_key: 1 },
+      param: "prompt_cache_key",
+    },
+    {
+      route: "chat.completions",
+      body: { messages: [{ role: "user", content: "ping" }], prompt_cache_options: null },
+      param: "prompt_cache_options",
+    },
+    {
+      route: "responses",
+      body: { input: "ping", prompt_cache_options: { mode: "automatic" } },
+      param: "prompt_cache_options.mode",
+    },
+    {
+      route: "chat.completions",
+      body: { messages: [{ role: "user", content: "ping" }], prompt_cache_options: { ttl: "24h" } },
+      param: "prompt_cache_options.ttl",
+    },
+    {
+      route: "responses",
+      body: { input: "ping", prompt_cache_options: { mode: "implicit", unexpected: true } },
+      param: "prompt_cache_options.unexpected",
+    },
+    {
+      route: "chat.completions",
+      body: { messages: [{ role: "user", content: "ping" }], prompt_cache_retention: "forever" },
+      param: "prompt_cache_retention",
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    await t.step(`${testCase.route}/${testCase.param}`, async () => {
+      let calls = 0;
+      const response = await withFetchMock(
+        () => {
+          calls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          testCase.route === "responses"
+            ? handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+              }),
+            )
+            : handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+              }),
+            ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal(calls, 0);
+      const payload = await response.json() as { error?: { param?: string } };
+      assert.equal(payload.error?.param, testCase.param);
+    });
+  }
+});
+
+Deno.test("openai: rejects gateway-only cache aliases before dispatch", async (t) => {
+  const cases = [
+    { route: "responses", body: { input: "ping", cache_key: "not-standard" }, field: "cache_key" },
+    {
+      route: "chat.completions",
+      body: { messages: [{ role: "user", content: "ping" }], cache_affinity: "not-standard" },
+      field: "cache_affinity",
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    await t.step(`${testCase.route}/${testCase.field}`, async () => {
+      let calls = 0;
+      const response = await withFetchMock(
+        () => {
+          calls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          testCase.route === "responses"
+            ? handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+              }),
+            )
+            : handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+              }),
+            ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal(calls, 0);
+      const payload = await response.json() as { error?: { message?: string } };
+      assert.match(payload.error?.message ?? "", new RegExp(testCase.field));
+    });
+  }
 });
 
 Deno.test("openai: both endpoints reject every non-boolean stream shape before dispatch", async (t) => {

@@ -194,11 +194,15 @@ let authCacheGeneration = 0;
 let authPoolEntryInFlight: Promise<CodexAuthPoolEntry> | null = null;
 const refreshesInFlight = new Map<string, Promise<CodexAuthState>>();
 const codexProbeByResponse = new WeakMap<Response, RoutingAccount>();
+const codexSlotByResponse = new WeakMap<Response, number>();
 const codexProbeTransitionsInFlight = new Set<Promise<void>>();
 
 /** The metadata stays isolate-local and never becomes a response header or durable credential record. */
 export const getCodexRoutingProbe = (response: Response): RoutingAccount | null =>
   codexProbeByResponse.get(response) ?? null;
+
+/** The slot is isolate-local telemetry only; account IDs never leave the routing layer. */
+export const getCodexResponseSlot = (response: Response): number | null => codexSlotByResponse.get(response) ?? null;
 
 export const releaseCodexResponseProbe = async (response: Response): Promise<void> => {
   const probe = codexProbeByResponse.get(response);
@@ -1125,6 +1129,7 @@ export const fetchCodexResponses = async (
         options.beforeDispatch,
         () => reportCodexResponseTiming(options.timing?.onDispatch),
       );
+      codexSlotByResponse.set(response, routing.slot + 1);
       reportCodexResponseTiming(options.timing?.onHeaders);
       void recordCodexResponseHealth(auth.account_id, response);
       logCodexRouting("codex_attempt", {
@@ -1259,6 +1264,7 @@ export const fetchCodexResponses = async (
       }
       if (response.status === 429) {
         response = await classify429(accountEntry, routing, auth, response);
+        codexSlotByResponse.set(response, routing.slot + 1);
       } else if (!response.ok) {
         await releaseCodexRoutingProbe(routing);
       }
@@ -1386,6 +1392,7 @@ export const fetchCodexResponses = async (
     }
     if (response.status === 429) {
       response = (await markCodexQuotaBlocked(retryRouting, response)).response;
+      codexSlotByResponse.set(response, retryRouting.slot + 1);
     } else if (!response.ok) {
       await releaseCodexRoutingProbe(retryRouting);
     }

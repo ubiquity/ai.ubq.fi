@@ -119,6 +119,7 @@ const {
   CODEX_AUTH_CACHE_TTL_MS,
   CodexError,
   fetchCodexResponses,
+  getCodexResponseSlot,
   orderCodexAuthAccounts,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
@@ -159,6 +160,7 @@ Deno.test("Codex responses retry the other account after an account-level 429", 
     const response = await fetchCodexResponses({ input: "balance" });
     assert.equal(response.status, 200);
     assert.deepEqual(accountIds, ["account-one", "account-two"]);
+    assert.equal(getCodexResponseSlot(response), 2);
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;

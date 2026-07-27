@@ -950,12 +950,13 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   Deno.env.delete("GITHUB_SHA");
   Deno.env.delete("DENO_DEPLOY_BUILD_ID");
   Deno.env.delete("DENO_DEPLOYMENT_ID");
+  const promptCacheKey = "must-not-appear-in-terminal-telemetry";
   try {
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ input: "ping" }),
+        body: JSON.stringify({ input: "ping", prompt_cache_key: promptCacheKey }),
       }),
     );
     assert.equal(response.status, 200);
@@ -984,16 +985,19 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       total_tokens: 2,
       usage_observed: true,
       usage_telemetry_status: "reported",
-      prompt_cache_key_present: false,
+      prompt_cache_key_present: true,
       prompt_cache_mode: "unspecified",
       explicit_breakpoint_count: 0,
+      account_slot: 1,
       key_id: "telemetry",
       fallback_reason: null,
+      stream: false,
       stream_terminal_type: "response.completed",
       git_sha: "unknown",
       deno_revision: "unknown",
       router_revision: null,
     });
+    assert.doesNotMatch(String(terminal[1]), new RegExp(promptCacheKey));
     assertOrderedTerminalTimings(terminalPayload, false);
     assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 1);
     const accepted = logs.find((entry) => entry[0] === "[ai.ubq.fi] request_accepted");
