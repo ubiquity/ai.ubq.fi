@@ -4526,6 +4526,242 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
     const body = await response.json() as { error?: { param?: string } };
     assert.equal(body.error?.param, "messages[0].content[0].prompt_cache_breakpoint");
   });
+
+  await t.step("Chat maps native file parts and preserves an interleaved developer prefix", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              prompt_cache_options: { mode: "explicit" },
+              messages: [
+                {
+                  role: "system",
+                  content: [{ type: "text", text: "stable system", prompt_cache_breakpoint: { mode: "explicit" } }],
+                },
+                { role: "user", content: "first question" },
+                { role: "developer", content: [{ type: "text", text: "stable developer" }] },
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: "Read these files", prompt_cache_breakpoint: { mode: "explicit" } },
+                    {
+                      type: "file",
+                      file: { file_id: "file_stable", filename: "stable.txt" },
+                      prompt_cache_breakpoint: { mode: "explicit" },
+                    },
+                    {
+                      type: "file",
+                      file: { file_data: "data:text/plain;base64,c3RhYmxl", filename: "inline.txt" },
+                      prompt_cache_breakpoint: { mode: "explicit" },
+                    },
+                  ],
+                },
+              ],
+            }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    assert.equal("instructions" in recorded, false);
+    const input = recorded.input as Array<Record<string, unknown>>;
+    assert.deepEqual(input.map((item) => item.role), ["developer", "user", "developer", "user"]);
+    assert.deepEqual(input[0]?.content, [
+      { type: "input_text", text: "stable system", prompt_cache_breakpoint: { mode: "explicit" } },
+    ]);
+    assert.deepEqual(input[2]?.content, [{ type: "input_text", text: "stable developer" }]);
+    assert.deepEqual(input[3]?.content, [
+      { type: "input_text", text: "Read these files", prompt_cache_breakpoint: { mode: "explicit" } },
+      {
+        type: "input_file",
+        file_id: "file_stable",
+        filename: "stable.txt",
+        prompt_cache_breakpoint: { mode: "explicit" },
+      },
+      {
+        type: "input_file",
+        file_data: "data:text/plain;base64,c3RhYmxl",
+        filename: "inline.txt",
+        prompt_cache_breakpoint: { mode: "explicit" },
+      },
+    ]);
+    assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 4);
+  });
+});
+
+Deno.test("openai: rejects lossy Chat cache breakpoint content before dispatch", async (t) => {
+  const cases = [
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "system",
+          content: [{ type: "image_url", image_url: { url: "https://example.test/a.png" } }],
+        }],
+      },
+      param: "messages[0].content[0].type",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "developer", content: [{ type: "file", file: { file_id: "file_stable" } }] }],
+      },
+      param: "messages[0].content[0].type",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "developer",
+          content: [{ type: "input_audio", input_audio: { data: "abc", format: "wav" } }],
+        }],
+      },
+      param: "messages[0].content[0].type",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "user", content: [{ type: "input_image", image_url: "https://example.test/a.png" }] }],
+      },
+      param: "messages[0].content[0].type",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "user",
+          content: [{ type: "image_url", image_url: { url: "https://example.test/a.png" }, detail: "high" }],
+        }],
+      },
+      param: "messages[0].content[0].detail",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "user", content: [{ type: "text", text: "stable", unexpected: true }] }],
+      },
+      param: "messages[0].content[0].unexpected",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "user",
+          content: [{ type: "image_url", image_url: { url: "https://example.test/a.png", unexpected: true } }],
+        }],
+      },
+      param: "messages[0].content[0].image_url.unexpected",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "assistant", content: [{ type: "refusal", refusal: "No", unexpected: true }] }],
+      },
+      param: "messages[0].content[0].unexpected",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "user",
+          content: "stable",
+          prompt_cache_breakpoint: { mode: "explicit" },
+        }],
+      },
+      param: "messages[0].prompt_cache_breakpoint",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "refusal", refusal: "No", prompt_cache_breakpoint: { mode: "explicit" } }],
+        }],
+      },
+      param: "messages[0].content[0].prompt_cache_breakpoint",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "user",
+          content: [{
+            type: "input_audio",
+            input_audio: { data: "abc", format: "wav" },
+            prompt_cache_breakpoint: { mode: "explicit" },
+          }],
+        }],
+      },
+      param: "messages[0].content[0].prompt_cache_breakpoint",
+    },
+    {
+      route: "responses",
+      body: {
+        input: [{
+          type: "message",
+          role: "user",
+          content: "stable",
+          prompt_cache_breakpoint: { mode: "explicit" },
+        }],
+      },
+      param: "input[0].prompt_cache_breakpoint",
+    },
+    {
+      route: "responses",
+      body: {
+        input: [{
+          type: "function_call_output",
+          call_id: "call_stable",
+          output: "stable",
+          prompt_cache_breakpoint: { mode: "explicit" },
+        }],
+      },
+      param: "input[0].prompt_cache_breakpoint",
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    await t.step(`${testCase.route}/${testCase.param}`, async () => {
+      let dispatches = 0;
+      const response = await withFetchMock(
+        () => {
+          dispatches += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          testCase.route === "chat.completions"
+            ? handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+              }),
+            )
+            : handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+              }),
+            ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal(dispatches, 0);
+      const payload = await response.json() as { error?: { param?: string; type?: string } };
+      assert.equal(payload.error?.type, "invalid_request_error");
+      assert.equal(payload.error?.param, testCase.param);
+    });
+  }
 });
 
 Deno.test("openai: Responses preserves an explicit empty instructions string", async () => {
