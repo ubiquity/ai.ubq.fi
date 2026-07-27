@@ -22,8 +22,8 @@ route against:
 
 - Yunwu's tested Codex-specific route charged about **5.84% of the displayed official API price**, or approximately
   **1/17.1 of API list pricing**.
-- That short-context discount does not extend to Terra requests above 272K. A verified 600,086-token request switched
-  to Yunwu's separate `官转` group, recovered markers placed through 580K, and cost about **21.93% of OpenAI retail**
+- That short-context discount does not extend to Terra requests above 272K. A verified 600,086-token request switched to
+  Yunwu's separate `官转` group, recovered markers placed through 580K, and cost about **21.93% of OpenAI retail**
   (**4.56x cheaper**). An 870K-local-token payload was rejected against Yunwu's 1M system limit.
 - A fully utilized $200 ChatGPT Pro/Codex subscription may still deliver cheaper compute than Yunwu. The exact
   comparison cannot be known without measuring the subscription's monthly API-equivalent usage.

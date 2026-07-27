@@ -1048,15 +1048,13 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-codex-primary-used-percent"), "0");
-    assert.equal(calls, 3);
-    assert.equal(primaryAccountIds.length, 2);
-    assert.equal(new Set(primaryAccountIds).size, 2);
+    assert.equal(calls, 4);
+    assert.deepEqual(primaryAccountIds, ["acct-1", "acct-2", "acct-1"]);
     // V3 admission reads the immutable request, window, and deletion guard
     // together before its atomic reservation; that adds one read over the
     // legacy single-slot path while avoiding shared reservation contention.
-    // The first quota transition hydrates durable account-routing state once;
-    // warm healthy traffic remains zero-read and subsequent blocked requests
-    // bypass Codex entirely.
+    // An ordinary 429 does not persist routing state. After both accounts are
+    // tried, one bounded retry returns 429 before the paid provider is selected.
     assert.ok(kv.reads <= 11, `fallback response unexpectedly reread KV (${kv.reads} reads)`);
     await response.body?.cancel();
   } finally {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import type { ApiKeyHashRecord, ApiKeyRecord, PaidFallbackRequestV3, PaidFallbackWindowV3 } from "../src/types.ts";
+import { PAID_FALLBACK_NO_LIMIT } from "../src/api_keys.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord, PaidFallbackRequestV3 } from "../src/types.ts";
 import { sha256Base64Url } from "../src/utils.ts";
 
 const loopbackPermission = await Deno.permissions.query({ name: "net", host: "127.0.0.1" });
@@ -20,8 +21,22 @@ const listEntries = async <T>(kv: Deno.Kv, prefix: Deno.KvKey): Promise<Deno.KvE
   return entries;
 };
 
+const awaitWithin = async (promise: Promise<void>, milliseconds: number, message: () => string): Promise<void> => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message())), milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+};
+
 Deno.test({
-  name: "100 concurrent real HTTP 429 failovers settle exactly once without lost ledger rows",
+  name: "100 concurrent real HTTP 429 failovers reach unlimited YunWu together and settle exactly once",
   ignore: loopbackPermission.state !== "granted" || typeof Deno.openKv !== "function",
   sanitizeResources: false,
   sanitizeOps: false,
@@ -34,6 +49,7 @@ Deno.test({
     const warnings: string[] = [];
     let providerServer: Deno.HttpServer | null = null;
     let gatewayServer: Deno.HttpServer | null = null;
+    let releaseYunwuResponses = (): void => {};
 
     try {
       Deno.env.set("YUNWU_API_KEY", "yunwu-real-http-stress-key");
@@ -50,8 +66,6 @@ Deno.test({
       const windowMs = 60 * 60_000;
       const windowResetAtMs = now + windowMs;
       const pricingCheckedAtMs = now;
-      const limitMicrocredits = 1_000_000;
-      const reservationMicrocredits = 10_000;
       const quotaPerCredit = 500_000;
       const commonPolicy = {
         expires_at_ms: -1,
@@ -61,7 +75,7 @@ Deno.test({
         usage_reset_at_ms: windowResetAtMs,
         window_ms: windowMs,
         paid_fallback_enabled: true,
-        paid_fallback_limit_microcredits: limitMicrocredits,
+        paid_fallback_limit_microcredits: PAID_FALLBACK_NO_LIMIT,
         paid_fallback_spent_microcredits: 0,
         paid_fallback_reserved_microcredits: 0,
         paid_fallback_reservation_request_id: null,
@@ -75,7 +89,7 @@ Deno.test({
         ...commonPolicy,
         paid_fallback_model_ids: [model],
         paid_fallback_quota_per_credit: quotaPerCredit,
-        paid_fallback_max_exposure_microcredits: { [model]: reservationMicrocredits },
+        paid_fallback_max_exposure_microcredits: {},
         paid_fallback_pricing_checked_at_ms: pricingCheckedAtMs,
       };
       await kv.set(["ubq_ai", "api_keys", "id", keyId], keyRecord);
@@ -128,7 +142,21 @@ Deno.test({
       }>();
       let codexCalls = 0;
       let yunwuCalls = 0;
+      let yunwuInFlight = 0;
+      let maxYunwuInFlight = 0;
       let billingLogCalls = 0;
+      let resolveAllYunwuDispatched = (): void => {};
+      const allYunwuDispatched = new Promise<void>((resolve) => {
+        resolveAllYunwuDispatched = resolve;
+      });
+      const yunwuResponseBarrier = new Promise<void>((resolve) => {
+        let released = false;
+        releaseYunwuResponses = () => {
+          if (released) return;
+          released = true;
+          resolve();
+        };
+      });
       providerServer = Deno.serve(
         { hostname: "127.0.0.1", port: 0, onListen: () => {} },
         async (request) => {
@@ -137,55 +165,64 @@ Deno.test({
             codexCalls += 1;
             return Response.json(
               { error: { message: "Primary quota exhausted", type: "rate_limit_error", code: "rate_limit_exceeded" } },
-              { status: 429, headers: { "Retry-After": "60" } },
+              { status: 429 },
             );
           }
           if (url.pathname === "/yunwu/responses") {
-            yunwuCalls += 1;
-            const body = await request.json() as {
-              input?: string | Array<{ content?: Array<{ text?: unknown }> }>;
-            };
-            const sentinel = typeof body.input === "string"
-              ? body.input
-              : body.input?.flatMap((item) => item.content ?? [])
-                .map((content) => typeof content.text === "string" ? content.text : "")
-                .join("") ?? "";
-            const providerRequestId = `yunwu-real-http-${yunwuCalls}`;
-            providerLogs.set(providerRequestId, {
-              request_id: providerRequestId,
-              quota: 500,
-              prompt_tokens: 2,
-              completion_tokens: 1,
-              model_name: model,
-              created_at: Math.trunc(Date.now() / 1_000),
-            });
-            const responseId = `resp_${providerRequestId}`;
-            const completed = {
-              id: responseId,
-              object: "response",
-              created_at: Math.trunc(Date.now() / 1_000),
-              status: "completed",
-              model,
-              output: [{
-                type: "message",
-                id: `msg_${providerRequestId}`,
+            const callNumber = ++yunwuCalls;
+            if (callNumber > 100) throw new Error(`Unexpected YunWu dispatch ${callNumber}`);
+            yunwuInFlight += 1;
+            maxYunwuInFlight = Math.max(maxYunwuInFlight, yunwuInFlight);
+            if (callNumber === 100) resolveAllYunwuDispatched();
+            try {
+              const body = await request.json() as {
+                input?: string | Array<{ content?: Array<{ text?: unknown }> }>;
+              };
+              const sentinel = typeof body.input === "string"
+                ? body.input
+                : body.input?.flatMap((item) => item.content ?? [])
+                  .map((content) => typeof content.text === "string" ? content.text : "")
+                  .join("") ?? "";
+              await yunwuResponseBarrier;
+              const providerRequestId = `yunwu-real-http-${callNumber}`;
+              providerLogs.set(providerRequestId, {
+                request_id: providerRequestId,
+                quota: 500,
+                prompt_tokens: 2,
+                completion_tokens: 1,
+                model_name: model,
+                created_at: Math.trunc(Date.now() / 1_000),
+              });
+              const responseId = `resp_${providerRequestId}`;
+              const completed = {
+                id: responseId,
+                object: "response",
+                created_at: Math.trunc(Date.now() / 1_000),
                 status: "completed",
-                role: "assistant",
-                content: [{ type: "output_text", text: sentinel, annotations: [] }],
-              }],
-              usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 },
-            };
-            const sse = [
-              `data: ${JSON.stringify({ type: "response.created", response: { id: responseId } })}\n\n`,
-              `data: ${JSON.stringify({ type: "response.output_text.delta", delta: sentinel })}\n\n`,
-              `data: ${JSON.stringify({ type: "response.completed", response: completed })}\n\n`,
-            ].join("");
-            return new Response(sse, {
-              headers: {
-                "Content-Type": "text/event-stream",
-                "X-Oneapi-Request-Id": providerRequestId,
-              },
-            });
+                model,
+                output: [{
+                  type: "message",
+                  id: `msg_${providerRequestId}`,
+                  status: "completed",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: sentinel, annotations: [] }],
+                }],
+                usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 },
+              };
+              const sse = [
+                `data: ${JSON.stringify({ type: "response.created", response: { id: responseId } })}\n\n`,
+                `data: ${JSON.stringify({ type: "response.output_text.delta", delta: sentinel })}\n\n`,
+                `data: ${JSON.stringify({ type: "response.completed", response: completed })}\n\n`,
+              ].join("");
+              return new Response(sse, {
+                headers: {
+                  "Content-Type": "text/event-stream",
+                  "X-Oneapi-Request-Id": providerRequestId,
+                },
+              });
+            } finally {
+              yunwuInFlight -= 1;
+            }
           }
           if (url.pathname === "/yunwu/log/token") {
             billingLogCalls += 1;
@@ -230,7 +267,7 @@ Deno.test({
       const gatewayAddress = gatewayServer.addr as Deno.NetAddr;
       const gatewayUrl = `http://127.0.0.1:${gatewayAddress.port}/v1/responses`;
 
-      const results = await Promise.all(
+      const pendingResults = Promise.all(
         Array.from({ length: 100 }, async (_, index) => {
           const sentinel = `UOS_REAL_HTTP_FAILOVER_${index}`;
           const response = await fetch(gatewayUrl, {
@@ -257,13 +294,33 @@ Deno.test({
           };
         }),
       );
+      let dispatchBarrierError: unknown = null;
+      try {
+        await awaitWithin(
+          allYunwuDispatched,
+          15_000,
+          () => `Only ${yunwuCalls}/100 YunWu requests dispatched before the concurrency deadline`,
+        );
+        assert.equal(yunwuCalls, 100);
+        assert.equal(yunwuInFlight, 100);
+        assert.equal(maxYunwuInFlight, 100);
+        assert.equal(codexCalls, 200);
+      } catch (error) {
+        dispatchBarrierError = error;
+      } finally {
+        releaseYunwuResponses();
+      }
+      const results = await pendingResults;
+      if (dispatchBarrierError) throw dispatchBarrierError;
 
       assert.deepEqual(results.map((result) => result.status), Array(100).fill(200));
       assert.deepEqual(results.map((result) => result.provider), Array(100).fill("yunwu"));
       const invalidResults = results.filter((result) => !result.completed || !result.exact || result.error !== null);
       assert.deepEqual(invalidResults, []);
-      assert.equal(codexCalls, 100);
+      assert.equal(codexCalls, 200);
       assert.equal(yunwuCalls, 100);
+      assert.equal(yunwuInFlight, 0);
+      assert.equal(maxYunwuInFlight, 100);
       assert.equal(providerLogs.size, 100);
 
       let requests: Deno.KvEntry<PaidFallbackRequestV3>[] = [];
@@ -290,26 +347,26 @@ Deno.test({
       assert.equal(requests.length, 100);
       assert.equal(requests.every((entry) => entry.value.billing_state === "settled"), true);
       assert.equal(requests.every((entry) => entry.value.spend_microcredits === 1_000), true);
+      assert.equal(requests.every((entry) => entry.value.reserved_microcredits === 0), true);
       assert.equal(requests.every((entry) => entry.value.reconciliation_attempts === 1), true);
+      assert.equal(
+        requests.reduce((total, entry) => total + (entry.value.spend_microcredits ?? 0), 0),
+        100_000,
+      );
       assert.equal((await listEntries(kv, pendingPrefix)).length, 0);
 
-      const window = await kv.get<PaidFallbackWindowV3>(
+      const window = await kv.get(
         paidFallbackWindowV3Key(keyId, windowResetAtMs),
         { consistency: "strong" },
       );
-      assert.ok(window.value);
-      assert.equal(window.value.settled_microcredits, 100_000);
-      assert.equal(window.value.reserved_microcredits, 0);
-      assert.equal(window.value.pending_count, 0);
-      assert.equal(window.value.settled_microcredits >= 0, true);
-      assert.equal(window.value.reserved_microcredits >= 0, true);
+      assert.equal(window.value, null);
 
       assert.equal(await reconcileDuePaidFallbacksV3(Date.now() + 2_000, kv), 0);
-      const replayedWindow = await kv.get<PaidFallbackWindowV3>(
-        paidFallbackWindowV3Key(keyId, windowResetAtMs),
-        { consistency: "strong" },
-      );
-      assert.equal(replayedWindow.value?.settled_microcredits, 100_000);
+      const replayedRequests = await listEntries<PaidFallbackRequestV3>(kv, requestPrefix);
+      assert.equal(replayedRequests.length, 100);
+      assert.equal(replayedRequests.every((entry) => entry.value.billing_state === "settled"), true);
+      assert.equal(replayedRequests.every((entry) => entry.value.spend_microcredits === 1_000), true);
+      assert.equal(replayedRequests.every((entry) => entry.value.reconciliation_attempts === 1), true);
       assert.equal(billingLogCalls, 1);
       assert.equal(
         warnings.some((warning) =>
@@ -321,6 +378,7 @@ Deno.test({
         warnings.join("\n"),
       );
     } finally {
+      releaseYunwuResponses();
       globalThis.fetch = originalFetch;
       const { setKvForTest } = await import("../src/kv.ts");
       setKvForTest(null);
