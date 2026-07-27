@@ -19,7 +19,7 @@ const promptCacheEvidence = {
         legacy_retentions: ["24h"],
         breakpoint_block_types: {
           responses: ["input_text", "input_image", "input_file"],
-          chat_completions: ["text", "image_url", "file", "refusal"],
+          chat_completions: ["text", "image_url", "file"],
         },
         expected_usage_fields: ["cached_tokens", "cache_write_tokens"],
         source: "catalog",
@@ -91,31 +91,45 @@ Deno.test("prompt-cache metadata rejects unknown shape and duplicate provider id
   );
 });
 
-Deno.test("prompt-cache scope requires three reproducible cycles before account-scoped classification", () => {
-  const earlyAccountScoped = {
+Deno.test("prompt-cache scope requires three reproducible cycles before publication", () => {
+  const earlyScope = {
     version: 1,
     providers: [{
       id: "codex_chatgpt",
       scope: {
-        account_slots: "account_scoped",
-        token_refresh: "changed",
-        conversation_id: "scoped",
+        account_slots: "shared",
+        token_refresh: "preserved",
+        conversation_id: "independent",
         reproducible_cycles: 2,
         source: "live_probe",
         verified_at_ms: 1_100,
       },
     }],
   };
-  assert.equal(normalizePromptCacheCapabilities(earlyAccountScoped), null);
+  assert.equal(normalizePromptCacheCapabilities(earlyScope), null);
 
   const earlyUnknown = {
-    ...earlyAccountScoped,
+    ...earlyScope,
     providers: [{
-      ...earlyAccountScoped.providers[0],
-      scope: { ...earlyAccountScoped.providers[0].scope, account_slots: "unknown" },
+      ...earlyScope.providers[0],
+      scope: {
+        ...earlyScope.providers[0].scope,
+        account_slots: "unknown",
+        token_refresh: "unknown",
+        conversation_id: "unknown",
+      },
     }],
   };
-  assert.deepEqual(normalizePromptCacheCapabilities(earlyUnknown), earlyUnknown);
+  assert.equal(normalizePromptCacheCapabilities(earlyUnknown), null);
+
+  const verifiedScope = {
+    ...earlyScope,
+    providers: [{
+      ...earlyScope.providers[0],
+      scope: { ...earlyScope.providers[0].scope, reproducible_cycles: 3 },
+    }],
+  };
+  assert.deepEqual(normalizePromptCacheCapabilities(verifiedScope), verifiedScope);
 });
 
 Deno.test("catalog prompt-cache merges retain same-slug provider evidence without cross-provider collapse", () => {
