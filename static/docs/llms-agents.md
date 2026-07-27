@@ -109,15 +109,10 @@ OpenAI-compatible endpoints:
 - `POST /v1/responses`
 - `POST /v1/embeddings`
 
-Codex compatibility endpoints:
-
-- `GET /v1/models?client_version=X.Y.Z`
-
 UOS gateway endpoints:
 
 - `GET /uos/auth`
 - `GET /uos/models/capabilities`
-- `POST /uos/embeddings`
 - `POST /uos/embedding-jobs`
 - `GET /uos/embedding-jobs/{id}`
 - `GET /uos/agent-messages`
@@ -135,51 +130,14 @@ Health endpoints:
 model catalog. Each model object contains only the OpenAI model fields: `id`, `object`, `created`, and `owned_by`. When
 no snapshot has been initialized, it returns an empty list.
 
-`GET /v1/models?client_version=X.Y.Z` is a separate Codex-native compatibility contract. It accepts exactly one
-three-part numeric version and returns the untouched rich upstream `{ "models": [...] }` JSON for that exact Codex
-version. It is intentionally not part of the official OpenAI model-list schema. The gateway uses only its server-held
-two-account Codex authentication pool upstream, caches validated gzip-compressed JSON by version in Deno KV for five
-minutes, retains a last valid copy for 24 hours, and uses a durable refresh lease to collapse concurrent upstream
-refreshes. Inference distributes requests across the two accounts and retries the other account after an account-level
-`401` or `429`. Upstream `ETag` values are returned and matching `If-None-Match` requests receive `304`. A temporary
-refresh failure serves the last valid version-specific copy; the route returns `502` when no valid copy exists.
-
 Use `/v1/models` as the source of truth instead of assuming OpenAI public API aliases are supported. The gateway is
 backed by Codex with a ChatGPT account, so some OpenAI API model aliases may not be available through this gateway.
-Hidden Codex catalog entries such as internal review models are filtered when the normalized snapshot is refreshed and
-are not exposed by the unversioned OpenAI model list.
+Hidden Codex catalog entries such as internal review models are filtered during snapshot upload and are not exposed.
 
 Use `GET /uos/models/capabilities` for gateway-specific model metadata such as `supported_reasoning_levels`,
 `default_reasoning_effort`, `context_window_tokens`, `max_context_window_tokens`, `auto_compact_token_limit_tokens`,
 `supported_endpoints`, and `upstream_provider`. This metadata is intentionally not included in `/v1/models` so
 OpenAI-compatible SDKs receive an OpenAI-shaped response.
-
-## Codex quota reporting
-
-After an inference response, stock Codex terminal and GUI clients can show the YunWu wallet in `/status` and emit their
-built-in 25%, 10%, and 5% remaining warnings. The gateway publishes only the canonical `x-codex-*` family, named
-`YunWu balance`.
-
-Codex 0.144.6 parses multiple response-header families but persists only one response-derived rate-limit snapshot. Named
-OpenAI and YunWu families therefore overwrite one another instead of remaining independent. The gateway strips every
-parseable upstream quota family and prioritizes the client-relevant YunWu balance. It does not combine YunWu with the
-shared ChatGPT subscription percentage because OpenAI provides no absolute token denominator and the shared account is
-not an individual AI.UBQ client's truthful capacity.
-
-The YunWu wallet is not a weekly quota. The gateway does not emit a synthetic `primary-window-minutes` or
-`primary-reset-at` value for it. A client that opens `/status` before its first inference response may still say that
-limit data is unavailable because Codex learns these headers from inference responses. If no valid YunWu snapshot is
-available, the gateway emits no quota percentage.
-
-The YunWu percentage uses a Deno KV-backed refill cycle rather than adding all historical top-ups. Its first baseline is
-the larger of the observed wallet balance and latest successful top-up. Later credits are inferred from wallet movement
-and the account usage counter; a new top-up record always starts a new cycle. If the usage counter also advanced, known
-inter-observation debits are restored to the observed balance before choosing that cycle's capacity so post-refill spend
-does not shrink the denominator. Snapshots are fresh for five minutes, retained for 24 hours, protected by a durable
-refresh lease, and served stale during temporary account API failures. Inference never waits for a slow account refresh:
-it uses only a snapshot that is already available. YunWu-routed responses invalidate their pre-debit observation so the
-next request refreshes it. `GET /admin/defaults` exposes non-secret diagnostics in `yunwu_quota`; credentials are never
-returned.
 
 Observed integration behavior:
 
@@ -323,10 +281,9 @@ until KV is full, then evicts the oldest entries (FIFO) and retries.
 
 Request:
 
-- `model` (string, required): accepts `text-embedding-3-small`, `text-embedding-3-large`, or `voyage-4-large`.
+- `model` (string, required): accepts `text-embedding-3-small`, `text-embedding-3-large`, or `voyage-*`.
 - `input` (string or string[], required).
 - `encoding_format` (optional): `float` (default) or `base64`.
-- `dimensions` (optional): `256`, `512`, `1024` (default), or `2048`.
 
 The gateway returns an OpenAI-style response with `object: "list"` and one `data[]` entry per input string.
 
@@ -334,11 +291,6 @@ Notes:
 
 - Batching is strongly recommended (send `input` as an array).
 - When rate limited (by Voyage or the gateway's own KV throttling), the gateway responds `429` with `Retry-After`.
-
-`POST /uos/embeddings` exposes the retrieval-specific Voyage profile without adding provider-only fields to the
-OpenAI-compatible endpoint. It requires `model="voyage-4-large"` and `input_type="query"|"document"`; `dimensions`
-defaults to `1024`, `truncation` defaults to `true`, and `encoding_format` is fixed to `float`. Callers that need an
-over-length input to fail instead of being shortened must send `truncation=false` explicitly.
 
 ## Embedding Jobs (Async)
 
@@ -349,8 +301,7 @@ over-length input to fail instead of being shortened must send `truncation=false
 
 Notes:
 
-- Jobs use the same Voyage profile fields and validation as `/uos/embeddings` and support `encoding_format="float"`
-  only.
+- Jobs currently support `encoding_format="float"` only.
 - When queued, the gateway responds with `Retry-After` and `retry_after_seconds`.
 - Jobs are scoped to the authenticated client identity; poll using credentials that resolve to the same identity scope
   used to create the job (same API key, or for GitHub/kernel auth the same `{owner, repo}` attestation context).
@@ -406,16 +357,10 @@ Keys forwarded for responses:
 - `text`
 - `include`
 
-The Codex CLI compatibility extension `client_metadata` is accepted as a string map and stripped before the gateway
-builds the upstream request. It remains separate from the official OpenAI request schema. The gateway generates its own
-upstream request metadata instead of forwarding client-supplied session identifiers.
-
 `store` is always set to `false` by the gateway. The following are always ignored and will produce warnings:
 
 - `temperature` -> `temperature_ignored`
 - `max_tokens`, `max_completion_tokens`, `max_output_tokens` -> `max_output_tokens_ignored`
-- `moderation` -> `moderation_ignored`
-- `prompt_cache_options` -> `prompt_cache_options_ignored`
 
 Any other accepted-but-unused key will emit a `<key>_ignored` warning.
 
@@ -476,18 +421,9 @@ token, a KV API key, an admin token, a passkey session, or a GitHub/kernel token
 
 ## Health
 
-- `GET /health` is a public passive release-liveness check. It makes no upstream or KV calls.
-- `GET /health/providers` returns passive, last-known Codex-slot and YunWu health from Deno KV. It never sends an
-  upstream or inference request and never exposes Codex account identifiers. It requires admin authentication.
-- `GET /health/upstream` is an admin-only active probe of Codex models and the configured non-billable YunWu quota
-  endpoint. It never sends inference and never returns upstream bodies.
-
-The authenticated `GET /admin/providers` view adds cached YunWu wallet diagnostics to the passive provider state. The
-admin Providers tab refreshes this cached view automatically. A stale state means ordinary traffic has not exercised
-that provider recently; opening either view does not verify or spend a model request.
-
-Use `/health/providers` for passive auth/provider state inspection. A stale or invalid Codex slot means server-side
-Codex auth needs repair even if a client credential remains valid.
+- `GET /health` is the public release liveness endpoint and returns `status: "available"` when healthy.
+- `GET /health/providers` is a diagnostic endpoint with upstream/auth probe details.
+- `GET /health/upstream` is a diagnostic endpoint with upstream/auth probe details.
 
 ## Errors
 
@@ -526,5 +462,5 @@ Useful response headers for debugging:
 
 - `x-deno-trace-id`
 - `x-uos-request-id`
-- `x-uos-upstream`
+- `x-ubq-upstream`
 - `x-uos-router-revision`

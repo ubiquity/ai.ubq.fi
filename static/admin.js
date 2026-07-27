@@ -90,7 +90,6 @@ const loadingQueueStatus = mustGet("loading-queue-status");
 const loadingPubkeysStatus = mustGet("loading-pubkeys-status");
 const loadingDefaultsStatus = mustGet("loading-defaults-status");
 const loadingUpstreamStatus = mustGet("loading-upstream-status");
-const loadingProvidersStatus = mustGet("loading-providers-status");
 
 const keyNameInput = mustGet("key-name");
 const keyUsageLimitInput = mustGet("key-usage-limit");
@@ -121,7 +120,6 @@ const viewTabUsers = mustGet("view-tab-users");
 const viewTabKernel = mustGet("view-tab-kernel");
 const viewTabPubkeys = mustGet("view-tab-pubkeys");
 const viewTabDefaults = mustGet("view-tab-defaults");
-const viewTabProviders = mustGet("view-tab-providers");
 
 const viewLoading = mustGet("view-loading");
 const viewKeys = mustGet("view-keys");
@@ -129,18 +127,6 @@ const viewUsers = mustGet("view-users");
 const viewKernel = mustGet("view-kernel");
 const viewPubkeys = mustGet("view-pubkeys");
 const viewDefaults = mustGet("view-defaults");
-const viewProviders = mustGet("view-providers");
-
-const codexProvidersBadge = mustGet("codex-providers-badge");
-const codexProviderList = mustGet("codex-provider-list");
-const providersUpdated = mustGet("providers-updated");
-const yunwuProviderBadge = mustGet("yunwu-provider-badge");
-const yunwuProviderState = mustGet("yunwu-provider-state");
-const yunwuProviderObserved = mustGet("yunwu-provider-observed");
-const yunwuProviderBalance = mustGet("yunwu-provider-balance");
-const yunwuProviderRemaining = mustGet("yunwu-provider-remaining");
-const yunwuProviderQuotaObserved = mustGet("yunwu-provider-quota-observed");
-const yunwuProviderCache = mustGet("yunwu-provider-cache");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -153,8 +139,6 @@ let authWidgetAutoOpened = false;
 let allKeys = [];
 let keysLoading = false;
 let keysLoadedAt = 0;
-let providersLoading = false;
-let providersLoadedAt = 0;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
 const API_KEY_REQUEST_LOG_STATUS_OK = "OK";
@@ -189,17 +173,6 @@ const defaultsKernelWindowPreset1h = mustGet("defaults-kernel-window-1h");
 const defaultsKernelWindowPreset1d = mustGet("defaults-kernel-window-1d");
 const defaultsKernelWindowPreset1w = mustGet("defaults-kernel-window-1w");
 const defaultsBadge = mustGet("defaults-badge");
-const yunwuQuotaBadge = mustGet("yunwu-quota-badge");
-const yunwuQuotaRemaining = mustGet("yunwu-quota-remaining");
-const yunwuQuotaProgress = mustGet("yunwu-quota-progress");
-const yunwuQuotaBalance = mustGet("yunwu-quota-balance");
-const yunwuQuotaBaseline = mustGet("yunwu-quota-baseline");
-const yunwuQuotaLatestRefill = mustGet("yunwu-quota-latest-refill");
-const yunwuQuotaInferredCredit = mustGet("yunwu-quota-inferred-credit");
-const yunwuQuotaCache = mustGet("yunwu-quota-cache");
-const yunwuQuotaConfidence = mustGet("yunwu-quota-confidence");
-const yunwuQuotaObserved = mustGet("yunwu-quota-observed");
-const yunwuQuotaCycleStarted = mustGet("yunwu-quota-cycle-started");
 let defaultsLoaded = false;
 let defaultsSaving = false;
 let defaultsModelMap = new Map();
@@ -271,7 +244,6 @@ const loadingStatusElements = {
   pubkeys: loadingPubkeysStatus,
   defaults: loadingDefaultsStatus,
   upstream: loadingUpstreamStatus,
-  providers: loadingProvidersStatus,
 };
 
 const setLoadingStatus = (key, state, text) => {
@@ -301,7 +273,7 @@ const updateLoadingAuthStatus = () => {
 };
 
 const resetLoadingPrefetchStatuses = (text = "Waiting") => {
-  ["keys", "users", "kernel", "queue", "pubkeys", "defaults", "upstream", "providers"].forEach((key) => {
+  ["keys", "users", "kernel", "queue", "pubkeys", "defaults", "upstream"].forEach((key) => {
     setLoadingStatus(key, "unknown", text);
   });
 };
@@ -336,7 +308,6 @@ const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
 const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
 const setPasskeyUsersBadge = (state, text) => setBadge(passkeyUsersBadge, state, text);
 const setDefaultsBadge = (state, text) => setBadge(defaultsBadge, state, text);
-const setYunwuQuotaBadge = (state, text) => setBadge(yunwuQuotaBadge, state, text);
 const setKernelListBadge = (state, text) => setBadge(kernelListBadge, state, text);
 const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text);
 const setKernelQueueBadge = (state, text) => setBadge(kernelQueueBadge, state, text);
@@ -628,10 +599,6 @@ const decimalFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 0,
   maximumFractionDigits: 6,
 });
-const quotaPercentFormatter = new Intl.NumberFormat(undefined, {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-});
 const MICROCREDITS_PER_CREDIT = 1_000_000;
 
 const toNumber = (value) => {
@@ -663,128 +630,6 @@ const formatOptionalText = (value) => {
   if (typeof value !== "string") return "unknown";
   const trimmed = value.trim();
   return trimmed ? trimmed : "unknown";
-};
-
-const providerBadgeState = (state) => state === "healthy" ? "ok" : state === "unknown" ? "unknown" : "bad";
-
-const providerStateLabel = (health) => {
-  const state = formatOptionalText(health?.state);
-  return health?.stale === true ? `${state} · stale` : state;
-};
-
-const appendProviderFact = (list, label, value) => {
-  const item = document.createElement("div");
-  const term = document.createElement("dt");
-  const description = document.createElement("dd");
-  term.textContent = label;
-  description.textContent = value;
-  item.append(term, description);
-  list.appendChild(item);
-};
-
-const renderCodexProviders = (codex) => {
-  codexProviderList.replaceChildren();
-  const accounts = Array.isArray(codex?.accounts) ? codex.accounts : [];
-  if (accounts.length === 0) {
-    const empty = document.createElement("p");
-    empty.dataset.providerEmpty = "";
-    empty.textContent = codex?.configured === false
-      ? "No Codex accounts configured."
-      : "No account metadata available.";
-    codexProviderList.appendChild(empty);
-  }
-  for (const account of accounts) {
-    const card = document.createElement("article");
-    card.dataset.providerAccount = "";
-    card.setAttribute("role", "listitem");
-
-    const header = document.createElement("header");
-    const title = document.createElement("h3");
-    title.textContent = `Account ${account.slot ?? "—"}`;
-    const badge = document.createElement("span");
-    badge.dataset.badge = "";
-    const health = account.health ?? {};
-    setBadge(badge, providerBadgeState(health.state), providerStateLabel(health));
-    header.append(title, badge);
-
-    const facts = document.createElement("dl");
-    facts.dataset.providerDiagnostics = "";
-    appendProviderFact(facts, "Last response", formatDate(health.last_observed_at_ms));
-    appendProviderFact(
-      facts,
-      "HTTP status",
-      typeof health.last_status === "number" ? String(health.last_status) : "Not observed",
-    );
-    appendProviderFact(facts, "Token expires", formatDate(account.access_token_exp_ms));
-    appendProviderFact(
-      facts,
-      "Refresh",
-      health.last_refresh_succeeded === true
-        ? `Succeeded · ${formatDate(health.last_refresh_at_ms)}`
-        : health.last_refresh_succeeded === false
-        ? `Failed · ${formatDate(health.last_refresh_at_ms)}`
-        : "Not observed",
-    );
-    card.append(header, facts);
-    codexProviderList.appendChild(card);
-  }
-
-  const state = codex?.state ?? "unknown";
-  setBadge(
-    codexProvidersBadge,
-    providerBadgeState(state),
-    `${accounts.length} account${accounts.length === 1 ? "" : "s"} · ${state}`,
-  );
-};
-
-const renderYunwuProvider = (yunwu) => {
-  const health = yunwu?.health ?? {};
-  const quota = yunwu?.quota ?? {};
-  const state = yunwu?.configured === false ? "unconfigured" : health.state ?? "unknown";
-  setBadge(yunwuProviderBadge, providerBadgeState(state), providerStateLabel({ ...health, state }));
-  yunwuProviderState.textContent = providerStateLabel({ ...health, state });
-  yunwuProviderObserved.textContent = formatDate(health.last_observed_at_ms);
-  yunwuProviderBalance.textContent = quota.available ? formatCredits(quota.balance_credits) : "Not cached";
-  yunwuProviderRemaining.textContent = typeof quota.remaining_percent === "number"
-    ? `${quotaPercentFormatter.format(quota.remaining_percent)}%`
-    : "Unknown";
-  yunwuProviderQuotaObserved.textContent = formatDate(quota.observed_at_ms);
-  yunwuProviderCache.textContent = quota.cache_state ?? "Unavailable";
-};
-
-const loadProviders = async () => {
-  if (providersLoading) return;
-  const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !token) {
-    setBadge(codexProvidersBadge, "bad", "Sign in required");
-    setBadge(yunwuProviderBadge, "bad", "Sign in required");
-    return;
-  }
-  providersLoading = true;
-  setBadge(codexProvidersBadge, "unknown", "Loading cached state");
-  setBadge(yunwuProviderBadge, "unknown", "Loading cached state");
-  try {
-    const response = await fetch(apiUrl("/admin/providers"), {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload) {
-      const message = payload?.error?.message ?? "Provider state unavailable";
-      setBadge(codexProvidersBadge, "bad", message);
-      setBadge(yunwuProviderBadge, "bad", message);
-      return;
-    }
-    renderCodexProviders(payload.codex);
-    renderYunwuProvider(payload.yunwu);
-    providersLoadedAt = Date.now();
-    providersUpdated.textContent = `Cached view updated ${formatDate(payload.generated_at_ms)}`;
-  } catch {
-    setBadge(codexProvidersBadge, "bad", "Offline");
-    setBadge(yunwuProviderBadge, "bad", "Offline");
-  } finally {
-    providersLoading = false;
-  }
 };
 
 const formatPemPreview = (value) => {
@@ -1008,28 +853,14 @@ let accessUpstreamLoading = false;
 let accessUpstreamLoadedAt = 0;
 const refreshAccessUpstreamSummary = async () => {
   if (accessUpstreamLoading) return;
-  const token = getAdminToken();
-  if (!token) {
-    setAccessValue(accessUpstreamSource, "Missing token");
-    setAccessValue(accessUpstreamExpiry, "Missing token");
-    return;
-  }
   accessUpstreamLoading = true;
   setAccessValue(accessUpstreamSource, "Loading...");
   setAccessValue(accessUpstreamExpiry, "Loading...");
   try {
-    const res = await fetch(apiUrl("/health/providers"), {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(apiUrl("/health/upstream"), { cache: "no-store" });
     const data = await res.json().catch(() => null);
-    const source = data?.codex?.source ?? "unknown";
-    const expirations = Array.isArray(data?.codex?.accounts)
-      ? data.codex.accounts
-        .map((account) => account?.access_token_exp_ms)
-        .filter((value) => typeof value === "number")
-      : [];
-    const expMs = expirations.length ? Math.min(...expirations) : null;
+    const source = data?.auth?.source ?? "unknown";
+    const expMs = data?.auth?.access_token_exp_ms ?? null;
     if (!res.ok) {
       setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
       setAccessValue(accessUpstreamExpiry, data?.error ?? "Unavailable");
@@ -2997,19 +2828,6 @@ const buildUsageSummary = (usage) => {
     return summary;
   }
 
-  if (Object.prototype.hasOwnProperty.call(usage, "request_count")) {
-    appendUsagePill(summary, "Requests", formatCompactNumber(usage.request_count), {
-      title: formatNumber(usage.request_count),
-    });
-    appendUsagePill(
-      summary,
-      "Limit",
-      toNumber(usage.limit) === -1 ? "Unlimited" : formatCompactNumber(usage.limit),
-    );
-    appendUsagePill(summary, "Resets", formatDate(usage.reset_at_ms));
-    return summary;
-  }
-
   appendUsagePill(summary, "Requests", formatCompactNumber(usage.total_requests), {
     title: formatNumber(usage.total_requests),
   });
@@ -3058,20 +2876,6 @@ const buildUsageDetails = (usage, options = {}) => {
   usageTitle.appendChild(usageLabel);
   usageTitle.appendChild(buildUsageSummary(usage));
   usageSection.appendChild(usageTitle);
-
-  if (usage && typeof usage === "object" && Object.prototype.hasOwnProperty.call(usage, "request_count")) {
-    const usageList = document.createElement("div");
-    usageList.dataset.usageList = "list";
-    appendMetaItem(usageList, "Requests", formatNumber(usage.request_count));
-    appendMetaItem(
-      usageList,
-      "Limit",
-      toNumber(usage.limit) === -1 ? "Unlimited" : formatNumber(usage.limit),
-    );
-    appendMetaItem(usageList, "Resets", formatDate(usage.reset_at_ms));
-    usageSection.appendChild(usageList);
-    return usageSection;
-  }
 
   const sparkline = buildUsageSparkline(usage);
   if (sparkline) usageSection.appendChild(sparkline);
@@ -3172,11 +2976,6 @@ const normalizeApiKeyRequestLogRecord = (record) => {
   const startedAtMs = normalizeFiniteNumber(record.started_at_ms);
   const createdAtMs = normalizeFiniteNumber(record.created_at_ms) ?? startedAtMs;
   const completedAtMs = normalizeFiniteNumber(record.completed_at_ms);
-  const dispatchedAtMs = normalizeFiniteNumber(record.dispatched_at_ms);
-  const terminalAtMs = normalizeFiniteNumber(record.terminal_at_ms);
-  const settledAtMs = normalizeFiniteNumber(record.settled_at_ms);
-  const updatedAtMs = normalizeFiniteNumber(record.updated_at_ms);
-  const lastReconciliationAtMs = normalizeFiniteNumber(record.last_reconciliation_at_ms);
   const statusCode = normalizeFiniteNumber(record.status_code);
   const method = typeof record.method === "string" ? record.method.trim().toUpperCase() : "";
   const route = typeof record.route === "string" ? record.route.trim() : "";
@@ -3192,11 +2991,6 @@ const normalizeApiKeyRequestLogRecord = (record) => {
     created_at_ms: createdAtMs === null ? null : Math.trunc(createdAtMs),
     started_at_ms: startedAtMs === null ? null : Math.trunc(startedAtMs),
     completed_at_ms: completedAtMs === null ? null : Math.trunc(completedAtMs),
-    dispatched_at_ms: dispatchedAtMs === null ? null : Math.trunc(dispatchedAtMs),
-    terminal_at_ms: terminalAtMs === null ? null : Math.trunc(terminalAtMs),
-    settled_at_ms: settledAtMs === null ? null : Math.trunc(settledAtMs),
-    updated_at_ms: updatedAtMs === null ? null : Math.trunc(updatedAtMs),
-    last_reconciliation_at_ms: lastReconciliationAtMs === null ? null : Math.trunc(lastReconciliationAtMs),
     latency_ms: normalizeFiniteNumber(record.latency_ms),
     status_code: statusCode === null ? null : Math.trunc(statusCode),
     method: method || "GET",
@@ -3211,16 +3005,8 @@ const normalizeApiKeyRequestLogRecord = (record) => {
     input_tokens: normalizeFiniteNumber(record.input_tokens),
     output_tokens: normalizeFiniteNumber(record.output_tokens),
     provider_quota: normalizeFiniteNumber(record.provider_quota),
-    quota_per_credit: normalizeFiniteNumber(record.quota_per_credit),
-    reserved_microcredits: normalizeFiniteNumber(record.reserved_microcredits),
     spend_microcredits: normalizeFiniteNumber(record.spend_microcredits),
-    policy_version: normalizeOptionalString(record.policy_version),
-    dispatch_state: normalizeOptionalString(record.dispatch_state),
-    terminal_state: normalizeOptionalString(record.terminal_state),
-    billing_state: normalizeOptionalString(record.billing_state),
-    billing_status: normalizeOptionalString(record.billing_status ?? record.billing_state),
-    reconciliation_attempts: normalizeFiniteNumber(record.reconciliation_attempts),
-    window_reset_at_ms: normalizeFiniteNumber(record.window_reset_at_ms),
+    billing_status: normalizeOptionalString(record.billing_status),
   };
 };
 
@@ -3235,7 +3021,7 @@ const buildApiKeyRequestLogsPanel = (keyId) => {
 
   const label = document.createElement("span");
   label.dataset.usageLabel = "label";
-  label.textContent = "Paid fallbacks";
+  label.textContent = "Recent requests";
 
   const summary = document.createElement("span");
   summary.dataset.usageSummary = "summary";
@@ -3273,11 +3059,11 @@ const createRequestLogRow = (record) => {
   const statusCode = normalizeFiniteNumber(record.status_code);
   const statusState = statusCode !== null && statusCode >= 400 ? "bad" : "";
   const provider = formatOptionalText(record.provider);
-  const billingStatus = formatOptionalText(record.billing_state ?? record.billing_status);
+  const billingStatus = formatOptionalText(record.billing_status);
   const normalizedBillingStatus = billingStatus.toLowerCase();
   const billingState = normalizedBillingStatus === "pending"
     ? "warning"
-    : (/failed|error|unresolved/.test(normalizedBillingStatus) ? "bad" : "");
+    : (/failed|error/.test(normalizedBillingStatus) ? "bad" : "");
   row.dataset.provider = provider.toLowerCase();
   if (record.billing_status) row.dataset.billingStatus = normalizedBillingStatus;
 
@@ -3298,26 +3084,6 @@ const createRequestLogRow = (record) => {
   appendMetaItem(row, "Provider", provider);
   appendMetaItem(row, "Model", formatOptionalText(record.model));
   appendMetaItem(row, "Reasoning", formatOptionalText(record.reasoning));
-  if (record.policy_version) {
-    appendMetaItem(row, "Policy", record.policy_version, { mono: true });
-  }
-  if (record.dispatch_state) {
-    appendMetaItem(row, "Dispatch", record.dispatch_state);
-  }
-  if (record.terminal_state) {
-    const terminalState = record.terminal_state === "completed"
-      ? ""
-      : (record.terminal_state === "pending" ? "warning" : "bad");
-    appendMetaItem(row, "Terminal", record.terminal_state, {
-      state: terminalState,
-    });
-  }
-  if (record.dispatched_at_ms !== null) {
-    appendMetaItem(row, "Dispatched", formatDate(record.dispatched_at_ms));
-  }
-  if (record.terminal_at_ms !== null) {
-    appendMetaItem(row, "Terminal at", formatDate(record.terminal_at_ms));
-  }
   if (record.completed_at_ms !== null) {
     appendMetaItem(row, "Completed", formatDate(record.completed_at_ms));
   }
@@ -3339,14 +3105,6 @@ const createRequestLogRow = (record) => {
   if (record.provider_quota !== null) {
     appendMetaItem(row, "Provider quota", formatDecimal(record.provider_quota));
   }
-  if (record.quota_per_credit !== null) {
-    appendMetaItem(row, "Quota per credit", formatDecimal(record.quota_per_credit));
-  }
-  if (record.reserved_microcredits !== null) {
-    appendMetaItem(row, "Reservation", formatMicrocreditsAsCredits(record.reserved_microcredits), {
-      title: `${formatNumber(record.reserved_microcredits)} microcredits`,
-    });
-  }
   if (record.spend_microcredits !== null) {
     appendMetaItem(row, "Exact spend", formatMicrocreditsAsCredits(record.spend_microcredits), {
       title: `${formatNumber(record.spend_microcredits)} microcredits`,
@@ -3356,21 +3114,6 @@ const createRequestLogRow = (record) => {
     appendMetaItem(row, "Billing", billingStatus, {
       state: billingState,
     });
-  }
-  if (record.reconciliation_attempts !== null) {
-    appendMetaItem(row, "Reconciliation attempts", formatNumber(record.reconciliation_attempts));
-  }
-  if (record.last_reconciliation_at_ms !== null) {
-    appendMetaItem(row, "Last reconciliation", formatDate(record.last_reconciliation_at_ms));
-  }
-  if (record.settled_at_ms !== null) {
-    appendMetaItem(row, "Settled", formatDate(record.settled_at_ms));
-  }
-  if (record.window_reset_at_ms !== null) {
-    appendMetaItem(row, "Window resets", formatDate(record.window_reset_at_ms));
-  }
-  if (record.updated_at_ms !== null) {
-    appendMetaItem(row, "Last updated", formatDate(record.updated_at_ms));
   }
 
   return row;
@@ -3394,7 +3137,7 @@ const loadApiKeyRequestLogs = (keyId) => {
 
   const request = (async () => {
     try {
-      const url = new URL(apiUrl(`/admin/api-keys/${encodeURIComponent(cacheKey)}/paid-fallbacks`));
+      const url = new URL(apiUrl(`/admin/api-keys/${encodeURIComponent(cacheKey)}/requests`));
       url.searchParams.set("limit", String(API_KEY_REQUEST_LOGS_LIMIT));
 
       const res = await fetch(url.toString(), {
@@ -3475,12 +3218,12 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
   panel.dataset.requestLogsState = "ready";
   const records = response.records || [];
   if (!records.length) {
-    setRequestLogsPanelMessage(list, summary, "No paid fallbacks recorded");
+    setRequestLogsPanelMessage(list, summary, `No requests in the last ${API_KEY_REQUEST_LOGS_LIMIT} calls`);
     panel.dataset.requestLogsLoading = "0";
     return;
   }
 
-  const countText = records.length === 1 ? "1 paid fallback" : `${records.length} paid fallbacks`;
+  const countText = records.length === 1 ? "1 request" : `${records.length} requests`;
   summary.textContent = `${countText} (showing last ${API_KEY_REQUEST_LOGS_LIMIT})`;
   list.textContent = "";
   records.forEach((record) => {
@@ -4211,11 +3954,7 @@ const renderKeys = (keys, view = "all") => {
     const usage = hasUsageField ? key.usage : undefined;
 
     if (hasUsageField) {
-      main.appendChild(buildUsageDetails(usage, {
-        label: "Request limit",
-        unavailable: "Request count unavailable.",
-        empty: "No request count available.",
-      }));
+      main.appendChild(buildUsageDetails(usage));
     }
 
     row.appendChild(main);
@@ -4390,7 +4129,6 @@ const VIEW_HASHES = {
   kernel: "kernel",
   pubkeys: "pubkeys",
   defaults: "defaults",
-  providers: "providers",
 };
 const VIEW_REQUIREMENTS = {
   keys: "admin",
@@ -4398,7 +4136,6 @@ const VIEW_REQUIREMENTS = {
   kernel: "admin",
   pubkeys: "admin",
   defaults: "admin",
-  providers: "admin",
 };
 const VIEW_HASH_ALIASES = new Map([
   ["loading", "loading"],
@@ -4416,8 +4153,6 @@ const VIEW_HASH_ALIASES = new Map([
   ["view-pubkeys", "pubkeys"],
   ["defaults", "defaults"],
   ["view-defaults", "defaults"],
-  ["providers", "providers"],
-  ["view-providers", "providers"],
   ["auth", "session"],
   ["session", "session"],
   ["view-session", "session"],
@@ -4452,7 +4187,6 @@ const viewTabs = {
   kernel: viewTabKernel,
   pubkeys: viewTabPubkeys,
   defaults: viewTabDefaults,
-  providers: viewTabProviders,
 };
 
 const viewSections = {
@@ -4462,7 +4196,6 @@ const viewSections = {
   kernel: viewKernel,
   pubkeys: viewPubkeys,
   defaults: viewDefaults,
-  providers: viewProviders,
 };
 
 const getHashView = () => {
@@ -4566,11 +4299,6 @@ const startAdminPrefetch = () => {
       load: refreshAccessUpstreamSummary,
       ready: () => accessUpstreamLoadedAt > 0,
     },
-    {
-      key: "providers",
-      load: loadProviders,
-      ready: () => providersLoadedAt > 0,
-    },
   ];
 
   adminPrefetchPromise = Promise.all(tasks.map((task) => runAdminPrefetchTask(runId, task))).then((results) => {
@@ -4627,9 +4355,6 @@ const loadAdminView = (view) => {
   }
   if (view === "pubkeys") {
     void ensureKernelPubKeysLoaded();
-  }
-  if (view === "providers") {
-    void loadProviders();
   }
 };
 
@@ -5108,83 +4833,6 @@ const extractCachedDefaults = (cached) => {
   return { model, reasoning_effort: reasoning, kernel_policy_limit_requests: limit, kernel_policy_window_ms: windowMs };
 };
 
-const clearYunwuQuotaDiagnostics = () => {
-  yunwuQuotaRemaining.textContent = "—";
-  yunwuQuotaProgress.hidden = true;
-  yunwuQuotaProgress.value = 0;
-  yunwuQuotaProgress.removeAttribute("aria-valuetext");
-  yunwuQuotaBalance.textContent = "—";
-  yunwuQuotaBaseline.textContent = "—";
-  yunwuQuotaLatestRefill.textContent = "—";
-  yunwuQuotaLatestRefill.removeAttribute("title");
-  yunwuQuotaInferredCredit.textContent = "—";
-  yunwuQuotaCache.textContent = "—";
-  yunwuQuotaConfidence.textContent = "—";
-  yunwuQuotaObserved.textContent = "—";
-  yunwuQuotaCycleStarted.textContent = "—";
-};
-
-const formatQuotaCredits = (value) =>
-  typeof value === "number" && Number.isFinite(value) ? `${creditFormatter.format(value)} credits` : "—";
-
-const formatQuotaLabel = (value) => {
-  if (typeof value !== "string" || !value) return "—";
-  return value.replaceAll("_", " ").replace(/^./, (first) => first.toUpperCase());
-};
-
-const renderYunwuQuotaDiagnostics = (diagnostics) => {
-  clearYunwuQuotaDiagnostics();
-  if (!diagnostics || typeof diagnostics !== "object") {
-    setYunwuQuotaBadge("bad", "Unavailable");
-    return;
-  }
-  if (diagnostics.configured !== true) {
-    setYunwuQuotaBadge("unknown", "Not configured");
-    return;
-  }
-  if (diagnostics.available !== true) {
-    setYunwuQuotaBadge("bad", "Unavailable");
-    return;
-  }
-
-  const remaining = typeof diagnostics.remaining_percent === "number" && Number.isFinite(diagnostics.remaining_percent)
-    ? Math.min(100, Math.max(0, diagnostics.remaining_percent))
-    : null;
-  if (remaining !== null) {
-    const formatted = quotaPercentFormatter.format(remaining);
-    yunwuQuotaRemaining.textContent = `${formatted}%`;
-    yunwuQuotaProgress.value = remaining;
-    yunwuQuotaProgress.hidden = false;
-    yunwuQuotaProgress.setAttribute("aria-valuetext", `${formatted}% remaining`);
-  }
-
-  yunwuQuotaBalance.textContent = formatQuotaCredits(diagnostics.balance_credits);
-  yunwuQuotaBaseline.textContent = formatQuotaCredits(diagnostics.baseline_credits);
-  yunwuQuotaInferredCredit.textContent = formatQuotaCredits(diagnostics.last_inferred_credit_credits);
-  yunwuQuotaCache.textContent = formatQuotaLabel(diagnostics.cache_state);
-  yunwuQuotaConfidence.textContent = formatQuotaLabel(diagnostics.confidence);
-  yunwuQuotaObserved.textContent = typeof diagnostics.observed_at_ms === "number"
-    ? formatDate(diagnostics.observed_at_ms)
-    : "—";
-  yunwuQuotaCycleStarted.textContent = typeof diagnostics.cycle_started_at_ms === "number"
-    ? formatDate(diagnostics.cycle_started_at_ms)
-    : "—";
-
-  const refillAmount = formatQuotaCredits(diagnostics.latest_refill_amount_credits);
-  const refillTime = typeof diagnostics.latest_refill_completed_at_ms === "number"
-    ? formatDate(diagnostics.latest_refill_completed_at_ms)
-    : "—";
-  yunwuQuotaLatestRefill.textContent = refillAmount === "—" && refillTime === "—"
-    ? "—"
-    : `${refillAmount} · ${refillTime}`;
-  if (typeof diagnostics.latest_refill_id === "string" && diagnostics.latest_refill_id) {
-    yunwuQuotaLatestRefill.title = `Refill ${diagnostics.latest_refill_id}`;
-  }
-
-  const stale = diagnostics.cache_state === "stale";
-  setYunwuQuotaBadge(stale ? "unknown" : "ok", stale ? "Stale cache" : "Available");
-};
-
 const applyDefaultsSnapshot = (snapshot, defaults, options = {}) => {
   if (!Array.isArray(snapshot?.models) || !snapshot.models.length) return null;
   const models = snapshot.models;
@@ -5254,8 +4902,6 @@ const loadDefaults = async (options = {}) => {
   const token = getAdminToken();
   if (!token) {
     setDefaultsBadge("bad", "Missing token");
-    clearYunwuQuotaDiagnostics();
-    setYunwuQuotaBadge("unknown", "Not loaded");
     return;
   }
 
@@ -5264,7 +4910,6 @@ const loadDefaults = async (options = {}) => {
   if (!preserveInputs) defaultsTouched = false;
   defaultsLoaded = false;
   setDefaultsBadge("unknown", "Loading...");
-  setYunwuQuotaBadge("unknown", "Loading...");
   let cacheApplied = false;
   const cachedDefaults = extractCachedDefaults(readStorageJson(STORAGE_KEYS.defaultsSnapshot));
   const cachedModels = extractCachedModels(readStorageJson(STORAGE_KEYS.defaultsModels));
@@ -5310,10 +4955,8 @@ const loadDefaults = async (options = {}) => {
     const defaultsPayload = await defaultsRes.json().catch(() => null);
     if (!defaultsRes.ok) {
       setDefaultsBadge("bad", defaultsPayload?.error?.message ?? "Error");
-      renderYunwuQuotaDiagnostics(null);
       return;
     }
-    renderYunwuQuotaDiagnostics(defaultsPayload?.yunwu_quota);
 
     if (!models.length) {
       setDefaultsBadge("bad", "No models");
@@ -5348,7 +4991,6 @@ const loadDefaults = async (options = {}) => {
     }
   } catch {
     setDefaultsBadge("bad", "Offline");
-    renderYunwuQuotaDiagnostics(null);
   }
 };
 
@@ -5437,8 +5079,6 @@ setCreateBadge("unknown", "Idle");
 setKeysBadge("unknown", "Not loaded");
 setPasskeyUsersBadge("unknown", "Not loaded");
 setDefaultsBadge("unknown", "Idle");
-clearYunwuQuotaDiagnostics();
-setYunwuQuotaBadge("unknown", "Idle");
 setKernelListBadge("unknown", "Not loaded");
 setKernelNewBadge("unknown", "Idle");
 setKernelQueueBadge("unknown", "Not loaded");
@@ -5539,9 +5179,6 @@ tokenInput.addEventListener("input", () => {
   }
   if (currentAdminView === "pubkeys") {
     void ensureKernelPubKeysLoaded();
-  }
-  if (currentAdminView === "providers") {
-    void loadProviders();
   }
 });
 
@@ -5753,11 +5390,6 @@ viewTabUsers.addEventListener("click", () => setAdminView("users", { hashMode: "
 viewTabKernel.addEventListener("click", () => setAdminView("kernel", { hashMode: "push", focusAuth: true }));
 viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys", { hashMode: "push", focusAuth: true }));
 viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashMode: "push", focusAuth: true }));
-viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
-
-globalThis.setInterval(() => {
-  if (currentAdminView === "providers" && document.visibilityState === "visible") void loadProviders();
-}, 30_000);
 
 createKeyBtn.addEventListener("click", () => {
   void createKey();

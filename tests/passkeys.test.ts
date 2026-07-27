@@ -6,7 +6,6 @@ const encodeBase64Url = (value: string): string =>
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 const kvVersions = new Map<string, number>();
 let beforeAtomicCommit: (() => void) | null = null;
-let kvGetDelayMs = 0;
 
 class KvTestStore extends Map<string, unknown> {
   override set(key: string, value: unknown): this {
@@ -16,7 +15,6 @@ class KvTestStore extends Map<string, unknown> {
 
   override clear(): void {
     beforeAtomicCommit = null;
-    kvGetDelayMs = 0;
     kvVersions.clear();
     super.clear();
   }
@@ -27,14 +25,15 @@ const versionstampFor = (rawKey: string): string | null =>
   kvStore.has(rawKey) ? String(kvVersions.get(rawKey) ?? 0).padStart(20, "0") : null;
 
 const kvStub = {
-  get: async (key: Deno.KvKey) => {
-    if (kvGetDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, kvGetDelayMs));
+  get: (key: Deno.KvKey) => {
     const rawKey = keyToString(key);
-    return ({
-      key,
-      value: kvStore.has(rawKey) ? kvStore.get(rawKey) : null,
-      versionstamp: versionstampFor(rawKey),
-    }) as Deno.KvEntryMaybe<unknown>;
+    return Promise.resolve(
+      ({
+        key,
+        value: kvStore.has(rawKey) ? kvStore.get(rawKey) : null,
+        versionstamp: versionstampFor(rawKey),
+      }) as Deno.KvEntryMaybe<unknown>,
+    );
   },
   set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
     kvStore.set(keyToString(key), value);
@@ -116,7 +115,8 @@ const {
   updatePasskeyCredentialSignCount,
 } = await import("../src/passkeys.ts");
 const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
-const { YUNWU_QUOTA_FRESH_MS, YUNWU_QUOTA_STATE_KEY } = await import("../src/yunwu_quota.ts");
+const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api_keys.ts");
+const { sha256Base64Url } = await import("../src/utils.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
   const originalGet = Deno.env.get;
@@ -151,155 +151,6 @@ const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true } = 
   });
   return { token, user };
 };
-
-Deno.test("inference handler omits synthetic quota headers for passkey sessions", async () => {
-  kvStore.clear();
-  const { token } = seedPasskeySession();
-  const now = Date.now();
-  kvStore.set(keyToString(YUNWU_QUOTA_STATE_KEY), {
-    current_balance_quota: 25_000_000,
-    post_refill_baseline_quota: 50_000_000,
-    last_observed_used_quota: 25_000_000,
-    quota_per_credit: 500_000,
-    observed_at_ms: now,
-    cycle_started_at_ms: now - 60_000,
-    confidence: "refill_observed",
-    last_known_debits_quota: 1_000_000,
-    last_inferred_credit_quota: 0,
-    last_credit_at_ms: now - 60_000,
-    latest_refill_id: "refill-2",
-    latest_refill_amount_credits: 50,
-    latest_refill_completed_at_ms: now - 60_000,
-  });
-
-  await withEnv({ YUNWU_SYSTEM_TOKEN: "system-token", YUNWU_USER_ID: "717235" }, async () => {
-    const { default: handler } = await import("../src/handler.ts");
-    for (const path of ["/v1/responses", "/v1/chat/completions"]) {
-      const response = await handler(
-        new Request(`https://ai.ubq.fi${path}`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: "{}",
-        }),
-      );
-      assert.equal(response.status, 503);
-      assert.equal(response.headers.get("x-codex-limit-name"), null);
-      assert.equal(response.headers.get("x-codex-primary-used-percent"), null);
-      assert.equal(response.headers.has("x-codex-primary-window-minutes"), false);
-      assert.equal(response.headers.has("x-codex-primary-reset-at"), false);
-      const exposedHeaders = response.headers.get("access-control-expose-headers") ?? "";
-      assert.match(exposedHeaders, /(?:^|,)x-codex-primary-used-percent(?:,|$)/i);
-      assert.doesNotMatch(exposedHeaders, /(?:^|,)x-yunwu-primary-used-percent(?:,|$)/i);
-      assert.doesNotMatch(exposedHeaders, /(?:^|,)x-openai-subscription-primary-used-percent(?:,|$)/i);
-    }
-  });
-});
-
-Deno.test("passkey inference does not read a retained YunWu snapshot", async () => {
-  kvStore.clear();
-  const { token } = seedPasskeySession();
-  const now = Date.now();
-  kvStore.set(keyToString(YUNWU_QUOTA_STATE_KEY), {
-    current_balance_quota: 25_000_000,
-    post_refill_baseline_quota: 50_000_000,
-    last_observed_used_quota: 25_000_000,
-    quota_per_credit: 500_000,
-    observed_at_ms: now,
-    cycle_started_at_ms: now - 60_000,
-    confidence: "refill_observed",
-    last_known_debits_quota: 1_000_000,
-    last_inferred_credit_quota: 0,
-    last_credit_at_ms: now - 60_000,
-    latest_refill_id: "refill-2",
-    latest_refill_amount_credits: 50,
-    latest_refill_completed_at_ms: now - 60_000,
-  });
-
-  await withEnv({ YUNWU_SYSTEM_TOKEN: "system-token", YUNWU_USER_ID: "717235" }, async () => {
-    const { default: handler } = await import("../src/handler.ts");
-    kvGetDelayMs = 10;
-    const response = await handler(
-      new Request("https://ai.ubq.fi/v1/responses", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: "{}",
-      }),
-    );
-
-    assert.equal(response.status, 503);
-    assert.equal(response.headers.get("x-codex-primary-used-percent"), null);
-  });
-});
-
-Deno.test("passkey inference never waits for a YunWu quota refresh", async () => {
-  kvStore.clear();
-  const { token } = seedPasskeySession();
-  const now = Date.now();
-  kvStore.set(keyToString(YUNWU_QUOTA_STATE_KEY), {
-    current_balance_quota: 25_000_000,
-    post_refill_baseline_quota: 50_000_000,
-    last_observed_used_quota: 25_000_000,
-    quota_per_credit: 500_000,
-    observed_at_ms: now - YUNWU_QUOTA_FRESH_MS,
-    cycle_started_at_ms: now - 60_000,
-    confidence: "refill_observed",
-    last_known_debits_quota: 1_000_000,
-    last_inferred_credit_quota: 0,
-    last_credit_at_ms: now - 60_000,
-    latest_refill_id: "refill-2",
-    latest_refill_amount_credits: 50,
-    latest_refill_completed_at_ms: now - 60_000,
-  });
-
-  const originalFetch = globalThis.fetch;
-  const controller = new AbortController();
-  globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
-    new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener(
-        "abort",
-        () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
-        { once: true },
-      );
-    });
-  try {
-    await withEnv({ YUNWU_SYSTEM_TOKEN: "system-token", YUNWU_USER_ID: "717235" }, async () => {
-      const { default: handler } = await import("../src/handler.ts");
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const response = await Promise.race([
-          handler(
-            new Request("https://ai.ubq.fi/v1/responses", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-              body: "{}",
-              signal: controller.signal,
-            }),
-          ),
-          new Promise<never>((_resolve, reject) => {
-            timeout = setTimeout(() => reject(new Error("handler waited for YunWu quota refresh")), 500);
-          }),
-        ]);
-        assert.equal(response.status, 503);
-        assert.equal(response.headers.get("x-codex-primary-used-percent"), null);
-      } finally {
-        if (timeout !== undefined) clearTimeout(timeout);
-      }
-    });
-  } finally {
-    controller.abort();
-    globalThis.fetch = originalFetch;
-    await Promise.resolve();
-  }
-});
 
 Deno.test("passkey session authenticates as client and admin", async () => {
   kvStore.clear();
@@ -362,6 +213,54 @@ Deno.test("non-admin passkey session authenticates as client but not admin", asy
   assert.equal(body.auth.is_super_admin, false);
   assert.equal(body.auth.method.user.is_admin, false);
   assert.equal(body.auth.method.user.credential_count, 1);
+});
+
+Deno.test("API key window reset releases stale paid fallback reservations", async () => {
+  kvStore.clear();
+  const token = "uos_ai_key_window_reset_test";
+  const hash = await sha256Base64Url(token);
+  const id = "key-window-reset";
+  const now = Date.now();
+  const common = {
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 100,
+    usage_requests: 9,
+    usage_reset_at_ms: now - 1,
+    window_ms: 60_000,
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: 1_000_000,
+    paid_fallback_spent_microcredits: 250_000,
+    paid_fallback_reserved_microcredits: 750_000,
+    paid_fallback_reservation_request_id: "stale-request",
+  };
+  kvStore.set(keyToString(apiKeyIdKey(id)), {
+    id,
+    name: "Window reset key",
+    prefix: "uos_ai_key",
+    hash,
+    created_at_ms: now - 120_000,
+    ...common,
+    paid_fallback_model_ids: ["gpt-5-codex"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_pricing_checked_at_ms: now - 60_000,
+  });
+  kvStore.set(keyToString(apiKeyHashKey(hash)), { id, ...common });
+
+  const result = await authenticateClient(
+    new Request("https://ai.ubq.fi/uos/auth", {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  );
+  assert.equal(result.ok, true);
+
+  for (const key of [apiKeyIdKey(id), apiKeyHashKey(hash)]) {
+    const stored = kvStore.get(keyToString(key)) as Record<string, unknown>;
+    assert.equal(stored.usage_requests, 0);
+    assert.equal(stored.paid_fallback_spent_microcredits, 0);
+    assert.equal(stored.paid_fallback_reserved_microcredits, 0);
+    assert.equal(stored.paid_fallback_reservation_request_id, null);
+  }
 });
 
 Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed runtime", async () => {

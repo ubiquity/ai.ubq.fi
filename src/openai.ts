@@ -5,35 +5,33 @@ import {
   fetchCodexResponses,
   getCodexModelsSnapshotDefaultModel,
   loadCodexModelsSnapshot,
-  loadFullCodexModelsSnapshot,
-  markCodexResponseCompleted,
 } from "./codex.ts";
-import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
-import { deriveCodexAffinityKey } from "./codex_affinity.ts";
-import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
+import {
+  DEFAULT_MODEL_KEY,
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_REASONING_EFFORT_KEY,
+  normalizeReasoningEffort,
+  type ReasoningEffort,
+} from "./defaults.ts";
+import { recordApiKeyRequestLog, recordApiKeyUsage, updateApiKeyRequestLog } from "./analytics.ts";
+import {
+  closeGlobalCodexRateLimitProbe,
+  getGlobalCodexRateLimitDecision,
+  openGlobalCodexRateLimitCircuit,
+} from "./codex_rate_limit.ts";
+import { recordKernelOrgUsage, recordKernelUsage } from "./kernel_usage.ts";
 import { json, openaiError } from "./http.ts";
-import { createInferenceSignal, createStreamFirstEventDeadline } from "./inference_deadline.ts";
-import { getKv } from "./kv.ts";
-import { loadRuntimeConfig } from "./runtime_config.ts";
+import { kvPromise } from "./kv.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, EMBEDDINGS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
 import { readJsonBody } from "./request.ts";
 import {
-  type PreflightedResponsesStream,
-  preflightResponsesStream,
-  proxyResponsesStreamIterator,
-  readResponsesStream,
-  ResponsesStreamError,
-  type ResponsesStreamEvent,
-} from "./responses_stream.ts";
-import {
   type PaidFallbackReservation,
+  reconcileApiKeyPaidFallbacks,
   recordYunwuAmbiguousFailure,
-  recordYunwuPrefetchCancellation,
-  recordYunwuTerminal,
+  recordYunwuUndispatchedCancellation,
   recordYunwuUpstreamResponse,
   reservePaidFallback,
 } from "./paid_fallback.ts";
-import { recordYunwuProviderHealth } from "./provider_health.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type {
   ChatCompletionRequest,
@@ -45,11 +43,17 @@ import type {
 import { fetchYunwuResponses, YunwuError } from "./yunwu.ts";
 
 const getDefaultModel = async (): Promise<string | null> => {
-  const runtime = await loadRuntimeConfig();
-  return runtime?.default_model ?? getCodexModelsSnapshotDefaultModel(runtime?.codex_models ?? null);
+  const kv = await kvPromise;
+  if (kv) {
+    const entry = await kv.get<string>(DEFAULT_MODEL_KEY);
+    const model = typeof entry.value === "string" ? entry.value.trim() : "";
+    if (model) return model;
+  }
+  const snapshot = await loadCodexModelsSnapshot();
+  const snapshotDefault = getCodexModelsSnapshotDefaultModel(snapshot);
+  if (snapshotDefault) return snapshotDefault;
+  return null;
 };
-
-const inferenceSignal = (request: Request): AbortSignal => createInferenceSignal(request.signal);
 
 const defaultModelUnavailableError = (): Response =>
   openaiError(
@@ -59,177 +63,27 @@ const defaultModelUnavailableError = (): Response =>
   );
 
 const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
-  return (await loadRuntimeConfig())?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
+  const kv = await kvPromise;
+  if (!kv) return DEFAULT_REASONING_EFFORT;
+  const entry = await kv.get<string>(DEFAULT_REASONING_EFFORT_KEY);
+  return normalizeReasoningEffort(entry.value) ?? DEFAULT_REASONING_EFFORT;
 };
 
 type UsageContext = Readonly<{
   keyId: string | null;
   kernelRepo: { owner: string; repo: string } | null;
   kernelOrg: { owner: string } | null;
-  paidFallbackEnabled?: boolean;
-  idempotencyPrincipal?: string | null;
   requestId?: string;
   startedAtMs?: number;
-  startedAtMonotonicMs?: number;
-  responseTelemetry?: ResponseTelemetryState;
 }>;
 
 type UpstreamProvider = "chatgpt_codex" | "yunwu";
-export type InferenceFallbackReason = "primary_401" | "primary_429";
-
-export type ResponseTelemetry = Readonly<{
-  provider: string;
-  fallbackReason: InferenceFallbackReason | null;
-  model: string | null;
-  reasoning: string | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  quotaUsedPercent: number | null | undefined;
-  completed: boolean;
-  streamTerminalType: ResponseStreamTerminalType | null;
-  stream: boolean | null;
-  firstCodexDispatchMs: number | null;
-  firstCodexHeadersMs: number | null;
-  firstSseEventMs: number | null;
-  streamTerminalMs: number | null;
-}>;
-
-export type ResponseStreamTerminalType =
-  | "response.completed"
-  | "response.failed"
-  | "response.incomplete"
-  | "error"
-  | "eof"
-  | "cancelled"
-  | "deadline";
-
-type ResponseTelemetryState = {
-  provider: string | null;
-  fallbackReason: InferenceFallbackReason | null;
-  model: string | null;
-  reasoning: string | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  quotaUsedPercent: number | null | undefined;
-  completed: boolean;
-  streamTerminalType: ResponseStreamTerminalType | null;
-  stream: boolean | null;
-  firstCodexDispatchMs: number | null;
-  firstCodexHeadersMs: number | null;
-  firstSseEventMs: number | null;
-  streamTerminalMs: number | null;
-};
-
-const responseTelemetry = new WeakMap<Response, ResponseTelemetryState>();
-
-const createResponseTelemetryState = (): ResponseTelemetryState => ({
-  provider: null,
-  fallbackReason: null,
-  model: null,
-  reasoning: null,
-  inputTokens: null,
-  outputTokens: null,
-  quotaUsedPercent: undefined,
-  completed: false,
-  streamTerminalType: null,
-  stream: null,
-  firstCodexDispatchMs: null,
-  firstCodexHeadersMs: null,
-  firstSseEventMs: null,
-  streamTerminalMs: null,
-});
-
-const withResponseTelemetryContext = (
-  context: UsageContext | undefined,
-  state: ResponseTelemetryState,
-): UsageContext => ({
-  keyId: context?.keyId ?? null,
-  kernelRepo: context?.kernelRepo ?? null,
-  kernelOrg: context?.kernelOrg ?? null,
-  paidFallbackEnabled: context?.paidFallbackEnabled,
-  idempotencyPrincipal: context?.idempotencyPrincipal,
-  requestId: context?.requestId,
-  startedAtMs: context?.startedAtMs,
-  startedAtMonotonicMs: context?.startedAtMonotonicMs,
-  responseTelemetry: state,
-});
-
-const attachResponseTelemetry = (response: Response, state: ResponseTelemetryState): Response => {
-  state.provider ??= response.headers.get("x-uos-upstream") || "gateway";
-  responseTelemetry.set(response, state);
-  return response;
-};
-
-export const getResponseTelemetry = (response: Response): ResponseTelemetry | null => {
-  const state = responseTelemetry.get(response);
-  if (!state) return null;
-  return {
-    provider: state.provider ?? (response.headers.get("x-uos-upstream") || "gateway"),
-    fallbackReason: state.fallbackReason,
-    model: state.model,
-    reasoning: state.reasoning,
-    inputTokens: state.inputTokens,
-    outputTokens: state.outputTokens,
-    quotaUsedPercent: state.quotaUsedPercent,
-    completed: state.completed,
-    streamTerminalType: state.streamTerminalType,
-    stream: state.stream,
-    firstCodexDispatchMs: state.firstCodexDispatchMs,
-    firstCodexHeadersMs: state.firstCodexHeadersMs,
-    firstSseEventMs: state.firstSseEventMs,
-    streamTerminalMs: state.streamTerminalMs,
-  };
-};
-
-type ResponseTelemetryTimingField =
-  | "firstCodexDispatchMs"
-  | "firstCodexHeadersMs"
-  | "firstSseEventMs"
-  | "streamTerminalMs";
-
-// Timings are elapsed from handler ingress using a monotonic clock. They are
-// telemetry only: missing context leaves the corresponding field unavailable.
-const recordResponseTiming = (
-  context: UsageContext | undefined,
-  field: ResponseTelemetryTimingField,
-): void => {
-  const state = context?.responseTelemetry;
-  const startedAtMs = context?.startedAtMonotonicMs;
-  if (!state || state[field] !== null || typeof startedAtMs !== "number" || !Number.isFinite(startedAtMs)) return;
-  state[field] = Math.max(0, Math.round(performance.now() - startedAtMs));
-};
-
-const recordFirstCodexDispatch = (context: UsageContext | undefined): void => {
-  recordResponseTiming(context, "firstCodexDispatchMs");
-};
-
-const recordFirstCodexHeaders = (context: UsageContext | undefined): void => {
-  recordResponseTiming(context, "firstCodexHeadersMs");
-};
-
-const recordFirstSseEvent = (context: UsageContext | undefined): void => {
-  recordResponseTiming(context, "firstSseEventMs");
-};
-
-const recordStreamTerminal = (context: UsageContext | undefined): void => {
-  recordResponseTiming(context, "streamTerminalMs");
-};
-
-const runWithResponseTelemetry = async (
-  context: UsageContext | undefined,
-  run: (context: UsageContext) => Promise<Response>,
-): Promise<Response> => {
-  const state = createResponseTelemetryState();
-  const response = await run(withResponseTelemetryContext(context, state));
-  return attachResponseTelemetry(response, state);
-};
 
 type RoutedResponsesUpstream = Readonly<{
   response: Response;
   provider: UpstreamProvider;
   paidFallback: PaidFallbackReservation | null;
   gatewayResponse: boolean;
-  fallbackReason: InferenceFallbackReason | null;
 }>;
 
 type UsageTokens = Readonly<{
@@ -237,6 +91,35 @@ type UsageTokens = Readonly<{
   outputTokens: number;
   totalTokens: number;
 }>;
+
+type UsageDelta = Readonly<{
+  request_count?: number;
+  stream_request_count?: number;
+  non_stream_request_count?: number;
+  completed_request_count?: number;
+  error_request_count?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  model?: string | null;
+  reasoning?: string | null;
+  route?: string | null;
+  seen_at_ms?: number;
+}>;
+
+const recordUsageDelta = async (context: UsageContext | undefined, delta: UsageDelta): Promise<void> => {
+  if (!context) return;
+  const tasks: Promise<void>[] = [];
+  if (context.keyId) tasks.push(recordApiKeyUsage(context.keyId, delta));
+  if (context.kernelRepo) tasks.push(recordKernelUsage(context.kernelRepo.owner, context.kernelRepo.repo, delta));
+  if (context.kernelOrg) tasks.push(recordKernelOrgUsage(context.kernelOrg.owner, delta));
+  if (!tasks.length) return;
+  if (tasks.length === 1) {
+    await tasks[0];
+    return;
+  }
+  await Promise.all(tasks);
+};
 
 const normalizeTokenCount = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -254,72 +137,71 @@ const extractUsageTokens = (value: unknown): UsageTokens | null => {
   return { inputTokens, outputTokens, totalTokens };
 };
 
-const recordRequestUsage = (
+const recordRequestUsage = async (
   context: UsageContext | undefined,
   details: { model: string; route: string; stream: boolean; reasoning: string | null },
 ): Promise<void> => {
-  if (context?.responseTelemetry) {
-    context.responseTelemetry.model = details.model;
-    context.responseTelemetry.reasoning = details.reasoning;
-    context.responseTelemetry.stream = details.stream;
+  const seenAtMs = context?.startedAtMs ?? Date.now();
+  const tasks: Promise<void>[] = [
+    recordUsageDelta(context, {
+      request_count: 1,
+      stream_request_count: details.stream ? 1 : 0,
+      non_stream_request_count: details.stream ? 0 : 1,
+      model: details.model,
+      reasoning: details.reasoning,
+      route: details.route,
+      seen_at_ms: seenAtMs,
+    }),
+  ];
+  if (context?.keyId && context.requestId) {
+    tasks.push(recordApiKeyRequestLog(context.keyId, {
+      id: context.requestId,
+      route: details.route,
+      path: details.route === "responses" ? "/v1/responses" : "/v1/chat/completions",
+      method: "POST",
+      status_code: 0,
+      stream: details.stream,
+      model: details.model,
+      reasoning: details.reasoning,
+      created_at_ms: seenAtMs,
+      provider: "chatgpt_codex",
+      billing_status: "not_applicable",
+    }));
   }
-  return Promise.resolve();
+  await Promise.all(tasks);
 };
 
-const recordCompletionUsage = (
+const recordCompletionUsage = async (
   context: UsageContext | undefined,
   usage: UsageTokens | null,
 ): Promise<void> => {
-  if (context?.responseTelemetry) {
-    context.responseTelemetry.inputTokens = usage?.inputTokens ?? null;
-    context.responseTelemetry.outputTokens = usage?.outputTokens ?? null;
-    context.responseTelemetry.completed = true;
-  }
-  return Promise.resolve();
-};
-
-const recordErrorUsage = (_context: UsageContext | undefined): Promise<void> => Promise.resolve();
-
-const recordStreamTerminalType = (
-  context: UsageContext | undefined,
-  terminalType: ResponseStreamTerminalType,
-): void => {
-  const telemetry = context?.responseTelemetry;
-  if (!telemetry) return;
-  telemetry.streamTerminalType = terminalType;
-  if (telemetry.firstSseEventMs !== null) recordStreamTerminal(context);
-};
-
-const classifyStreamFailure = (
-  error: unknown,
-  signal: AbortSignal,
-  downstreamSignal: AbortSignal,
-): ResponseStreamTerminalType => {
-  if (downstreamSignal.aborted) return "cancelled";
-  if (signal.aborted) return "deadline";
-  if (error instanceof ResponsesStreamError && error.kind === "inactivity_timeout") return "deadline";
-  if (error instanceof ResponsesStreamError && error.kind === "premature_eof") return "eof";
-  return "error";
-};
-
-const streamPreflightFailureResponse = (
-  terminalType: ResponseStreamTerminalType,
-  provider: UpstreamProvider,
-): Response => {
-  if (terminalType === "deadline") {
-    return openaiError(
-      504,
-      "Upstream stream exceeded the gateway deadline before its first SSE event.",
-      "gateway_timeout",
+  const completedAtMs = Date.now();
+  const tasks: Promise<void>[] = [
+    recordUsageDelta(context, {
+      completed_request_count: 1,
+      input_tokens: usage?.inputTokens,
+      output_tokens: usage?.outputTokens,
+      total_tokens: usage?.totalTokens,
+    }),
+  ];
+  if (context?.keyId && context.requestId && context.startedAtMs !== undefined) {
+    tasks.push(updateApiKeyRequestLog(
+      context.keyId,
+      context.startedAtMs,
+      context.requestId,
       {
-        type: "server_error",
-        headers: { "x-uos-upstream": provider },
+        completed_at_ms: completedAtMs,
+        latency_ms: Math.max(0, completedAtMs - context.startedAtMs),
+        input_tokens: usage?.inputTokens,
+        output_tokens: usage?.outputTokens,
       },
-    );
+    ));
   }
-  return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
-    headers: { "x-uos-upstream": provider },
-  });
+  await Promise.all(tasks);
+};
+
+const recordErrorUsage = async (context: UsageContext | undefined): Promise<void> => {
+  await recordUsageDelta(context, { error_request_count: 1 });
 };
 
 const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
@@ -330,28 +212,13 @@ const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   return `${trimmed.slice(0, maxLen)}...`;
 };
 
-const withUpstreamProviderHeader = (response: Response, provider: string | null | undefined): Response => {
-  if (!provider) return response;
-  const headers = new Headers(response.headers);
-  headers.set("x-uos-upstream", provider);
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-};
-
-const toCodexErrorResponse = (error: unknown, provider?: string | null): Response => {
-  let response: Response;
+const toCodexErrorResponse = (error: unknown): Response => {
   if (error instanceof CodexError) {
-    const options = error.code === "gateway_timeout" ? { type: "server_error" } : undefined;
-    response = openaiError(error.status, error.message, error.code, options);
-  } else {
-    const detail = formatErrorSnippet(error);
-    const message = detail ? `Codex upstream request failed: ${detail}` : "Codex upstream request failed.";
-    response = openaiError(502, message, "codex_upstream_unreachable");
+    return openaiError(error.status, error.message, error.code);
   }
-  return withUpstreamProviderHeader(response, provider);
+  const detail = formatErrorSnippet(error);
+  const message = detail ? `Codex upstream request failed: ${detail}` : "Codex upstream request failed.";
+  return openaiError(502, message, "codex_upstream_unreachable");
 };
 
 type UpstreamErrorDetails = Readonly<{
@@ -418,7 +285,7 @@ const toOpenAiUpstreamErrorResponse = async (
       code = "yunwu_upstream_unavailable";
     }
   }
-  const headers: Record<string, string> = { "x-uos-upstream": provider };
+  const headers: Record<string, string> = { "x-ubq-upstream": provider };
   const retryAfter = upstream.headers.get("Retry-After");
   if (retryAfter) headers["Retry-After"] = retryAfter;
   const options: { type?: string; param?: string | null; headers: HeadersInit } = {
@@ -437,82 +304,56 @@ const cancelResponseBody = async (response: Response): Promise<void> => {
   }
 };
 
-const warnPaidFallbackBookkeepingFailure = (operation: string, error: unknown): void => {
-  console.warn(
-    `[ai.ubq.fi] Paid fallback ${operation} failed; leaving the reservation pending:`,
-    error instanceof Error ? error.message : String(error),
+const paidFallbackBlockedResponse = (
+  reason: "limit_exceeded" | "reconciliation_pending" | "invalid_policy" | "concurrent_update",
+  resetAtMs: number | null,
+): Response => {
+  if (reason === "invalid_policy" || reason === "concurrent_update") {
+    return openaiError(
+      503,
+      reason === "concurrent_update"
+        ? "Paid fallback policy changed concurrently; retry the request."
+        : "Paid fallback policy is unavailable.",
+      "paid_fallback_unavailable",
+      {
+        type: "server_error",
+        headers: { "x-ubq-upstream": "chatgpt_codex" },
+      },
+    );
+  }
+  const nowMs = Date.now();
+  const retryAfterSeconds = resetAtMs && resetAtMs > nowMs ? Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000)) : 60;
+  const message = reason === "reconciliation_pending"
+    ? "A previous paid fallback is still awaiting YunWu billing reconciliation."
+    : `Paid fallback credit limit exhausted${resetAtMs ? `; resets at ${new Date(resetAtMs).toISOString()}` : ""}.`;
+  return openaiError(
+    429,
+    message,
+    reason === "reconciliation_pending" ? "paid_fallback_reconciliation_pending" : "paid_fallback_limit_exceeded",
+    {
+      type: "rate_limit_error",
+      headers: {
+        "Retry-After": String(retryAfterSeconds),
+        "x-ubq-upstream": "chatgpt_codex",
+      },
+    },
   );
 };
 
-const bestEffortPaidFallbackBookkeeping = async (
-  operation: string,
-  run: () => Promise<unknown>,
-): Promise<void> => {
-  try {
-    await run();
-  } catch (error) {
-    warnPaidFallbackBookkeepingFailure(operation, error);
-  }
-};
-
-type YunwuTransportLifecycle = Readonly<{
-  terminal: (eventType: string) => void;
-  ambiguous: () => void;
-  cancelled: () => void;
-}>;
-
-const createYunwuTransportLifecycle = (
-  reservation: PaidFallbackReservation | null,
-): YunwuTransportLifecycle => {
-  let recorded = false;
-  const schedule = (
-    operation: string,
-    run: (reservation: PaidFallbackReservation) => Promise<void>,
-  ): void => {
-    if (!reservation || recorded) return;
-    recorded = true;
-    void bestEffortPaidFallbackBookkeeping(operation, () => run(reservation));
-  };
-  return {
-    terminal: (eventType) => {
-      const terminalState = eventType === "response.completed"
-        ? "completed"
-        : eventType === "response.failed" || eventType === "error"
-        ? "failed"
-        : eventType === "response.incomplete"
-        ? "incomplete"
-        : null;
-      if (!terminalState) return;
-      schedule(
-        "terminal reconciliation",
-        async (activeReservation) => {
-          await Promise.all([
-            recordYunwuTerminal(activeReservation, terminalState),
-            recordYunwuProviderHealth(
-              terminalState === "completed" ? "success" : "upstream_error",
-              terminalState === "completed" ? 200 : null,
-            ),
-          ]);
-        },
-      );
+const cachedCodexRateLimitResponse = (retryAtMs: number): Response => {
+  const retryAfterSeconds = Math.max(1, Math.ceil((retryAtMs - Date.now()) / 1000));
+  return openaiError(
+    429,
+    "The shared Codex subscription is rate limited. Retry after the current cooldown.",
+    "rate_limit_exceeded",
+    {
+      type: "rate_limit_error",
+      headers: {
+        "Retry-After": String(retryAfterSeconds),
+        "x-ubq-upstream": "chatgpt_codex",
+      },
     },
-    ambiguous: () => {
-      schedule(
-        "ambiguous failure recording",
-        async (activeReservation) => {
-          await Promise.all([
-            recordYunwuAmbiguousFailure(activeReservation),
-            recordYunwuProviderHealth("upstream_error", null),
-          ]);
-        },
-      );
-    },
-    cancelled: () =>
-      schedule(
-        "dispatched cancellation recording",
-        (activeReservation) => recordYunwuTerminal(activeReservation, "cancelled"),
-      ),
-  };
+  );
 };
 
 const fetchResponsesWithPaidFallback = async (
@@ -525,50 +366,42 @@ const fetchResponsesWithPaidFallback = async (
     usageContext?: UsageContext;
     clientVersion?: string | null;
     signal?: AbortSignal;
-    affinityKey?: string | null;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
-  const telemetry = options.usageContext?.responseTelemetry;
-  if (telemetry) telemetry.provider = "chatgpt_codex";
-  let primary: Response;
-  try {
+  const circuitDecision = await getGlobalCodexRateLimitDecision();
+  let primary: Response | null = null;
+  let cachedRetryAtMs: number | null = null;
+  if (circuitDecision.kind === "cached") {
+    cachedRetryAtMs = circuitDecision.retryAtMs;
+  } else {
     primary = await fetchCodexResponses(body, {
       clientVersion: options.clientVersion,
       signal: options.signal,
-      affinityKey: options.affinityKey,
-      // Keep terminal telemetry bounded: only the first real Codex transport
-      // attempt contributes dispatch/header timings, even when routing retries.
-      timing: {
-        onDispatch: () => recordFirstCodexDispatch(options.usageContext),
-        onHeaders: () => recordFirstCodexHeaders(options.usageContext),
-      },
     });
-  } catch (error) {
-    if (!(error instanceof CodexError) || error.status !== 401) throw error;
-    primary = openaiError(error.status, error.message, error.code);
+    if (primary.status === 429) {
+      cachedRetryAtMs = await openGlobalCodexRateLimitCircuit(primary.headers.get("Retry-After"));
+    } else if (circuitDecision.kind === "probe") {
+      await closeGlobalCodexRateLimitProbe(circuitDecision.probeId);
+    }
   }
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  const fallbackReason: InferenceFallbackReason | null = primary.status === 401
-    ? "primary_401"
-    : primary.status === 429
-    ? "primary_429"
-    : null;
-  if (telemetry) telemetry.fallbackReason = fallbackReason;
-  if (
-    !fallbackReason ||
-    options.usageContext?.paidFallbackEnabled === false ||
-    !keyId ||
-    !requestId ||
-    createdAtMs === undefined
-  ) {
+  const isCachedRateLimit = primary === null;
+  if ((primary?.status !== 429 && !isCachedRateLimit) || !keyId || !requestId || createdAtMs === undefined) {
+    if (isCachedRateLimit) {
+      return {
+        response: cachedCodexRateLimitResponse(cachedRetryAtMs ?? Date.now() + 60_000),
+        provider: "chatgpt_codex",
+        paidFallback: null,
+        gatewayResponse: true,
+      };
+    }
     return {
-      response: primary,
+      response: primary!,
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: false,
-      fallbackReason,
     };
   }
   if (options.signal?.aborted) {
@@ -587,150 +420,73 @@ const fetchResponsesWithPaidFallback = async (
     path: options.route === "responses" ? "/v1/responses" : "/v1/chat/completions",
     stream: options.stream,
     reasoning: options.reasoning,
-    reason: fallbackReason,
+    reason: isCachedRateLimit ? "primary_rate_limit_cached" : "primary_429",
   } as const;
-  let decision: Awaited<ReturnType<typeof reservePaidFallback>>;
-  try {
+  let decision = await reservePaidFallback(reservationInput);
+  if (decision.kind === "blocked" && decision.reason === "reconciliation_pending") {
+    await reconcileApiKeyPaidFallbacks(keyId);
     decision = await reservePaidFallback(reservationInput);
-  } catch (error) {
-    warnPaidFallbackBookkeepingFailure("admission", error);
-    return {
-      response: primary,
-      provider: "chatgpt_codex",
-      paidFallback: null,
-      gatewayResponse: false,
-      fallbackReason: reservationInput.reason,
-    };
   }
+
   if (decision.kind === "skip") {
+    if (isCachedRateLimit) {
+      return {
+        response: cachedCodexRateLimitResponse(cachedRetryAtMs ?? Date.now() + 60_000),
+        provider: "chatgpt_codex",
+        paidFallback: null,
+        gatewayResponse: true,
+      };
+    }
     return {
-      response: primary,
+      response: primary!,
       provider: "chatgpt_codex",
       paidFallback: null,
       gatewayResponse: false,
-      fallbackReason: reservationInput.reason,
     };
   }
   if (decision.kind === "blocked") {
+    if (primary) await cancelResponseBody(primary);
     return {
-      response: primary,
+      response: isCachedRateLimit
+        ? cachedCodexRateLimitResponse(cachedRetryAtMs ?? Date.now() + 60_000)
+        : paidFallbackBlockedResponse(decision.reason, decision.reset_at_ms),
       provider: "chatgpt_codex",
       paidFallback: null,
-      gatewayResponse: false,
-      fallbackReason: reservationInput.reason,
+      gatewayResponse: true,
     };
   }
 
+  if (primary) await cancelResponseBody(primary);
   if (options.signal?.aborted) {
-    await cancelResponseBody(primary);
-    await bestEffortPaidFallbackBookkeeping(
-      "prefetch cancellation recording",
-      () => recordYunwuPrefetchCancellation(decision.reservation),
-    );
+    await recordYunwuUndispatchedCancellation(decision.reservation);
     throw options.signal.reason instanceof Error
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
-  await cancelResponseBody(primary);
-  if (options.signal?.aborted) {
-    await bestEffortPaidFallbackBookkeeping(
-      "prefetch cancellation recording",
-      () => recordYunwuPrefetchCancellation(decision.reservation),
-    );
-    throw options.signal.reason instanceof Error
-      ? options.signal.reason
-      : new DOMException("The request was aborted.", "AbortError");
-  }
-  if (telemetry) {
-    telemetry.provider = "yunwu";
-    telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
-  }
-  let result: Awaited<ReturnType<typeof fetchYunwuResponses>>;
   try {
-    result = await fetchYunwuResponses(body, { signal: options.signal });
-    if (result.response.status === 401 || result.response.status === 403) {
-      await recordYunwuProviderHealth("auth_invalid", result.response.status);
-    } else if (result.response.status === 429) {
-      await recordYunwuProviderHealth("quota_exhausted", result.response.status);
-    } else if (result.response.status >= 500) {
-      await recordYunwuProviderHealth("upstream_error", result.response.status);
-    } else if (!result.response.ok) {
-      await recordYunwuProviderHealth("reachable", result.response.status);
-    }
+    const result = await fetchYunwuResponses(body, { signal: options.signal });
+    await recordYunwuUpstreamResponse(decision.reservation, result.response, result.request_id);
+    return {
+      response: result.response,
+      provider: "yunwu",
+      paidFallback: decision.reservation,
+      gatewayResponse: false,
+    };
   } catch (error) {
-    const yunwuStatus = error instanceof YunwuError ? error.status : null;
-    await recordYunwuProviderHealth(
-      yunwuStatus === 401 || yunwuStatus === 403
-        ? "auth_invalid"
-        : yunwuStatus === 429
-        ? "quota_exhausted"
-        : "upstream_error",
-      yunwuStatus,
-    );
-    await bestEffortPaidFallbackBookkeeping(
-      "ambiguous failure recording",
-      () => recordYunwuAmbiguousFailure(decision.reservation),
-    );
-    const abortReason = options.signal?.reason;
-    if (
-      (options.signal?.aborted && abortReason instanceof Error && abortReason.name === "TimeoutError") ||
-      (error instanceof Error && error.name === "TimeoutError")
-    ) {
-      return {
-        response: openaiError(
-          504,
-          "YunWu upstream exceeded the gateway deadline before response headers were received.",
-          "gateway_timeout",
-          {
-            type: "server_error",
-            headers: { "x-uos-upstream": "yunwu" },
-          },
-        ),
-        provider: "yunwu",
-        paidFallback: decision.reservation,
-        gatewayResponse: true,
-        fallbackReason: reservationInput.reason,
-      };
-    }
+    await recordYunwuAmbiguousFailure(decision.reservation);
     if (error instanceof YunwuError) {
       return {
         response: openaiError(error.status, error.message, error.code, {
           type: "server_error",
-          headers: { "x-uos-upstream": "yunwu" },
+          headers: { "x-ubq-upstream": "yunwu" },
         }),
         provider: "yunwu",
         paidFallback: decision.reservation,
         gatewayResponse: true,
-        fallbackReason: reservationInput.reason,
       };
     }
-    return {
-      response: openaiError(
-        502,
-        "YunWu upstream request failed before response headers were received.",
-        "upstream_error",
-        {
-          type: "server_error",
-          headers: { "x-uos-upstream": "yunwu" },
-        },
-      ),
-      provider: "yunwu",
-      paidFallback: decision.reservation,
-      gatewayResponse: true,
-      fallbackReason: reservationInput.reason,
-    };
+    throw error;
   }
-  await bestEffortPaidFallbackBookkeeping(
-    "upstream response recording",
-    () => recordYunwuUpstreamResponse(decision.reservation, result.response, result.request_id),
-  );
-  return {
-    response: result.response,
-    provider: "yunwu",
-    paidFallback: decision.reservation,
-    gatewayResponse: false,
-    fallbackReason: reservationInput.reason,
-  };
 };
 
 type CodexModelReasoning = Readonly<{
@@ -1020,46 +776,16 @@ const parseReasoningParam = (
 
 const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
 const RESPONSES_ALLOWED_KEYS = new Set(RESPONSES_REQUEST_KEYS);
-const CODEX_RESPONSES_EXTENSION_KEYS = new Set(["client_metadata"]);
 const EMBEDDINGS_ALLOWED_KEYS = new Set(EMBEDDINGS_REQUEST_KEYS);
 
-const findUnknownKey = (
-  record: Record<string, unknown>,
-  allowed: ReadonlySet<string>,
-  extensions?: ReadonlySet<string>,
-): string | null => {
+const findUnknownKey = (record: Record<string, unknown>, allowed: ReadonlySet<string>): string | null => {
   for (const key of Object.keys(record)) {
-    if (!allowed.has(key) && !extensions?.has(key)) return key;
+    if (!allowed.has(key)) return key;
   }
   return null;
 };
 
 type EmbeddingsEncodingFormat = "float" | "base64";
-type VoyageEmbeddingsInputType = "query" | "document";
-type VoyageEmbeddingsDimension = 256 | 512 | 1024 | 2048;
-type VoyageEmbeddingsOutputDtype = "float";
-
-type ResolvedEmbeddingsProfile = Readonly<{
-  upstream: "voyage";
-  upstream_model: "voyage-4-large";
-  input_type: VoyageEmbeddingsInputType;
-  dimensions: VoyageEmbeddingsDimension;
-  output_dtype: VoyageEmbeddingsOutputDtype;
-  encoding_format: EmbeddingsEncodingFormat;
-  truncation: boolean;
-  cache_profile_key: string;
-}>;
-
-type ParsedEmbeddingsRequest = Readonly<{
-  model: string;
-  inputs: string[];
-  total_chars: number;
-  profile: ResolvedEmbeddingsProfile;
-}>;
-
-type EmbeddingsParseResult =
-  | Readonly<{ ok: true; value: ParsedEmbeddingsRequest }>
-  | Readonly<{ ok: false; response: Response }>;
 
 type VoyageRateLimitState = Readonly<{
   window_start_ms: number;
@@ -1079,66 +805,14 @@ const EMBEDDINGS_CACHE_EVICT_MAX_BATCH = 8192;
 const EMBEDDINGS_CACHE_QUOTA_MAX_RETRIES = 4;
 const EMBEDDINGS_JOB_TTL_MS = 24 * 60 * 60_000;
 const EMBEDDINGS_JOB_LOCK_MS = 30_000;
-const EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES = new Set([429, 500, 502, 503, 504]);
-const EMBEDDINGS_IDEMPOTENCY_LEASE_MS = 60_000;
-const EMBEDDINGS_IDEMPOTENCY_RESPONSE_CHUNK_CHARS = 48_000;
-// 128 inputs x 2,048 finite JSON numbers fit comfortably below this cap.
-const EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS = 256;
-const EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS = 7 * 24 * 60 * 60_000;
-// Response chunks are published before their ledger record. Keep them for one
-// extra day so every published ledger expires before the chunks it references;
-// unpublished/orphaned generations are reclaimed by the same TTL.
-const EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS = EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS + 24 * 60 * 60_000;
-const EMBEDDINGS_IDEMPOTENCY_MAX_KEY_CHARS = 255;
 
 const VOYAGE_EMBEDDINGS_URL = "https://api.voyageai.com/v1/embeddings";
-const VOYAGE_EMBEDDINGS_MODEL = "voyage-4-large";
-const VOYAGE_DEFAULT_DIMENSIONS: VoyageEmbeddingsDimension = 1024;
-const VOYAGE_OUTPUT_DTYPE: VoyageEmbeddingsOutputDtype = "float";
-const VOYAGE_SUPPORTED_DIMENSIONS = new Set<number>([256, 512, 1024, 2048]);
-const UOS_EMBEDDINGS_ALLOWED_KEYS = new Set([
-  "dimensions",
-  "encoding_format",
-  "input",
-  "input_type",
-  "model",
-  "truncation",
-]);
+const VOYAGE_INPUT_TYPE = "document";
 // Voyage free-tier throttles are tiny; we enforce conservative defaults to avoid 429s.
 const VOYAGE_RATE_LIMIT_RPM = 3;
 const VOYAGE_RATE_LIMIT_TPM = 10_000;
 const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
 const VOYAGE_API_KEY_KV_KEY: Deno.KvKey = ["uos_ai", "voyage_api_key"];
-
-type EmbeddingsIdempotencyState = "reserved" | "dispatched" | "succeeded" | "indeterminate";
-
-type EmbeddingsIdempotencyRecord = Readonly<{
-  v: 1;
-  fingerprint: string;
-  state: EmbeddingsIdempotencyState;
-  owner_request_id: string | null;
-  created_at_ms: number;
-  updated_at_ms: number;
-  lease_until_ms: number | null;
-  response_status: number | null;
-  response_content_type: string | null;
-  response_generation: string | null;
-  response_chunk_count: number | null;
-  response_sha256: string | null;
-}>;
-
-type EmbeddingsIdempotencyLease = Readonly<{
-  kv: Deno.Kv;
-  key: Deno.KvKey;
-  responseKeyPrefix: Deno.KvKey;
-  fingerprint: string;
-  ownerRequestId: string;
-}>;
-
-type EmbeddingsIdempotencyAcquireResult =
-  | Readonly<{ kind: "acquired"; lease: EmbeddingsIdempotencyLease }>
-  | Readonly<{ kind: "replay"; response: Response }>
-  | Readonly<{ kind: "error"; response: Response }>;
 
 type EmbeddingsJobStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -1148,14 +822,9 @@ type EmbeddingsJobRecord = Readonly<{
   created_at_ms: number;
   updated_at_ms: number;
   model: string;
-  cache_profile_key: string;
+  cache_model_key: string;
   upstream: "voyage";
-  upstream_model: "voyage-4-large";
-  input_type: VoyageEmbeddingsInputType;
-  dimensions: VoyageEmbeddingsDimension;
-  output_dtype: VoyageEmbeddingsOutputDtype;
-  encoding_format: EmbeddingsEncodingFormat;
-  truncation: boolean;
+  upstream_model: string;
   input_hashes: string[];
   input_count: number;
   total_chars: number;
@@ -1172,529 +841,32 @@ type EmbeddingsJobInputRecord = Readonly<{
   created_at_ms: number;
 }>;
 
-type EmbeddingsJobLookupRecord = Readonly<{
-  cache_profile_key: string;
-}>;
-
-const embeddingsJobKey = (tokenHash: string, cacheProfileKey: string, id: string): Deno.KvKey => [
+const embeddingsJobKey = (tokenHash: string, id: string): Deno.KvKey => ["embeddings", "jobs", "v1", tokenHash, id];
+const embeddingsJobInputKey = (tokenHash: string, jobId: string, hash: string): Deno.KvKey => [
   "embeddings",
   "jobs",
-  "v2",
-  tokenHash,
-  cacheProfileKey,
-  id,
-];
-const embeddingsJobLookupKey = (tokenHash: string, id: string): Deno.KvKey => [
-  "embeddings",
-  "jobs",
-  "v2",
-  "lookup",
-  tokenHash,
-  id,
-];
-const embeddingsJobInputKey = (
-  tokenHash: string,
-  cacheProfileKey: string,
-  jobId: string,
-  hash: string,
-): Deno.KvKey => [
-  "embeddings",
-  "jobs",
-  "v2",
+  "v1",
   "input",
   tokenHash,
-  cacheProfileKey,
   jobId,
   hash,
 ];
 
+const embeddingsCacheIndexPrefix = (
+  cacheModelKey: string,
+): Deno.KvKey => ["embeddings", "v1", "cache_index", cacheModelKey];
 const embeddingsCacheIndexKey = (
-  cacheProfileKey: string,
+  cacheModelKey: string,
   createdAtMs: number,
   hash: string,
-): Deno.KvKey => ["embeddings", "v2", "cache_index", cacheProfileKey, createdAtMs, hash];
-const embeddingsCacheGlobalIndexPrefix: Deno.KvKey = ["embeddings", "v2", "cache_index_global"];
-const embeddingsCacheGlobalIndexKey = (
-  createdAtMs: number,
-  cacheProfileKey: string,
-  hash: string,
-): Deno.KvKey => [...embeddingsCacheGlobalIndexPrefix, createdAtMs, cacheProfileKey, hash];
-const embeddingsCacheIndexByHashKey = (cacheProfileKey: string, hash: string): Deno.KvKey => [
+): Deno.KvKey => ["embeddings", "v1", "cache_index", cacheModelKey, createdAtMs, hash];
+const embeddingsCacheIndexByHashKey = (cacheModelKey: string, hash: string): Deno.KvKey => [
   "embeddings",
-  "v2",
+  "v1",
   "cache_index_by_hash",
-  cacheProfileKey,
+  cacheModelKey,
   hash,
 ];
-const embeddingsCacheKey = (cacheProfileKey: string, hash: string): Deno.KvKey => [
-  "embeddings",
-  "v2",
-  "cache",
-  cacheProfileKey,
-  hash,
-];
-
-const embeddingsIdempotencyKey = (principalHash: string, idempotencyKeyHash: string): Deno.KvKey => [
-  "embeddings",
-  "idempotency",
-  "v1",
-  principalHash,
-  idempotencyKeyHash,
-];
-
-const embeddingsIdempotencyResponseKeyPrefix = (
-  principalHash: string,
-  idempotencyKeyHash: string,
-): Deno.KvKey => [
-  "embeddings",
-  "idempotency",
-  "v1",
-  "response",
-  principalHash,
-  idempotencyKeyHash,
-];
-
-const isEmbeddingsIdempotencyState = (value: unknown): value is EmbeddingsIdempotencyState =>
-  value === "reserved" || value === "dispatched" || value === "succeeded" || value === "indeterminate";
-
-const normalizeEmbeddingsIdempotencyRecord = (value: unknown): EmbeddingsIdempotencyRecord | null => {
-  if (!isRecord(value) || value.v !== 1 || typeof value.fingerprint !== "string") return null;
-  if (!isEmbeddingsIdempotencyState(value.state)) return null;
-  if (value.owner_request_id !== null && typeof value.owner_request_id !== "string") return null;
-  if (
-    typeof value.created_at_ms !== "number" || !Number.isFinite(value.created_at_ms) ||
-    typeof value.updated_at_ms !== "number" || !Number.isFinite(value.updated_at_ms)
-  ) {
-    return null;
-  }
-  if (
-    value.lease_until_ms !== null &&
-    (typeof value.lease_until_ms !== "number" || !Number.isFinite(value.lease_until_ms))
-  ) {
-    return null;
-  }
-  if (
-    value.response_status !== null &&
-    (typeof value.response_status !== "number" || !Number.isInteger(value.response_status))
-  ) {
-    return null;
-  }
-  if (value.response_content_type !== null && typeof value.response_content_type !== "string") return null;
-  if (value.response_generation !== null && typeof value.response_generation !== "string") return null;
-  if (
-    value.response_chunk_count !== null &&
-    (
-      typeof value.response_chunk_count !== "number" ||
-      !Number.isInteger(value.response_chunk_count) ||
-      value.response_chunk_count < 1 ||
-      value.response_chunk_count > EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS
-    )
-  ) {
-    return null;
-  }
-  if (value.response_sha256 !== null && typeof value.response_sha256 !== "string") return null;
-
-  return {
-    v: 1,
-    fingerprint: value.fingerprint,
-    state: value.state,
-    owner_request_id: value.owner_request_id,
-    created_at_ms: Math.trunc(value.created_at_ms),
-    updated_at_ms: Math.trunc(value.updated_at_ms),
-    lease_until_ms: value.lease_until_ms === null ? null : Math.trunc(value.lease_until_ms),
-    response_status: value.response_status === null ? null : Math.trunc(value.response_status),
-    response_content_type: value.response_content_type,
-    response_generation: value.response_generation,
-    response_chunk_count: value.response_chunk_count === null ? null : Math.trunc(value.response_chunk_count),
-    response_sha256: value.response_sha256,
-  };
-};
-
-const embeddingsIdempotencyError = (
-  status: 409 | 503,
-  message: string,
-  code:
-    | "embedding_idempotency_conflict"
-    | "embedding_idempotency_in_progress"
-    | "embedding_idempotency_indeterminate"
-    | "embedding_idempotency_unavailable",
-  retryAfterSeconds?: number,
-): Response =>
-  openaiError(status, message, code, {
-    type: status === 503 ? "server_error" : "idempotency_error",
-    param: null,
-    ...(retryAfterSeconds === undefined ? {} : { headers: { "Retry-After": String(retryAfterSeconds) } }),
-  });
-
-const embeddingsIdempotencyConflictResponse = (): Response =>
-  embeddingsIdempotencyError(
-    409,
-    "Idempotency-Key was already used with a different embeddings request.",
-    "embedding_idempotency_conflict",
-  );
-
-const embeddingsIdempotencyInProgressResponse = (): Response =>
-  embeddingsIdempotencyError(
-    409,
-    "The embeddings request for this Idempotency-Key is still in progress.",
-    "embedding_idempotency_in_progress",
-    1,
-  );
-
-const embeddingsIdempotencyIndeterminateResponse = (): Response =>
-  embeddingsIdempotencyError(
-    409,
-    "The embeddings request outcome is indeterminate and will not be dispatched again.",
-    "embedding_idempotency_indeterminate",
-  );
-
-const embeddingsIdempotencyUnavailableResponse = (): Response =>
-  embeddingsIdempotencyError(
-    503,
-    "Idempotent embeddings requests require durable KV storage.",
-    "embedding_idempotency_unavailable",
-  );
-
-const hasAsciiControlCharacter = (value: string): boolean => {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x1f || code === 0x7f) return true;
-  }
-  return false;
-};
-
-const buildEmbeddingsIdempotencyFingerprint = async (
-  profile: ResolvedEmbeddingsProfile,
-  orderedInputHashes: string[],
-): Promise<string> =>
-  await sha256Hex(
-    JSON.stringify([
-      "uos-embeddings-idempotency-v1",
-      profile.upstream,
-      profile.upstream_model,
-      profile.input_type,
-      profile.dimensions,
-      profile.output_dtype,
-      profile.encoding_format,
-      profile.truncation,
-      orderedInputHashes,
-    ]),
-  );
-
-const loadEmbeddingsIdempotencyResponse = async (
-  lease: Omit<EmbeddingsIdempotencyLease, "ownerRequestId">,
-  record: EmbeddingsIdempotencyRecord,
-): Promise<Response | null> => {
-  if (
-    record.state !== "succeeded" ||
-    record.response_status !== 200 ||
-    !record.response_content_type ||
-    !record.response_generation ||
-    record.response_chunk_count === null ||
-    !record.response_sha256
-  ) {
-    return null;
-  }
-
-  const chunks = await Promise.all(
-    Array.from(
-      { length: record.response_chunk_count },
-      (_, index) =>
-        lease.kv.get<string>([
-          ...lease.responseKeyPrefix,
-          record.response_generation!,
-          index,
-        ]),
-    ),
-  );
-  if (chunks.some((entry) => typeof entry.value !== "string")) return null;
-  const body = chunks.map((entry) => entry.value as string).join("");
-  if (await sha256Hex(body) !== record.response_sha256) return null;
-  return new Response(body, {
-    status: record.response_status,
-    headers: {
-      "Content-Type": record.response_content_type,
-      "x-uos-idempotency-replayed": "true",
-    },
-  });
-};
-
-const markEmbeddingsIdempotencyIndeterminate = async (
-  lease: EmbeddingsIdempotencyLease,
-): Promise<void> => {
-  try {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
-      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
-      if (!record || record.fingerprint !== lease.fingerprint) return;
-      if (record.state === "indeterminate" || record.state === "succeeded") return;
-      const now = Date.now();
-      const next: EmbeddingsIdempotencyRecord = {
-        ...record,
-        state: "indeterminate",
-        owner_request_id: null,
-        updated_at_ms: now,
-        lease_until_ms: null,
-        response_status: null,
-        response_content_type: null,
-        response_generation: null,
-        response_chunk_count: null,
-        response_sha256: null,
-      };
-      const commit = await lease.kv.atomic()
-        .check(entry)
-        .set(lease.key, next, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
-        .commit();
-      if (commit.ok) return;
-    }
-  } catch (error) {
-    console.error("[ai.ubq.fi] embeddings idempotency indeterminate-state write failed:", error);
-  }
-};
-
-const acquireEmbeddingsIdempotencyLease = async (params: {
-  kv: Deno.Kv;
-  principal: string;
-  idempotencyKey: string;
-  fingerprint: string;
-  requestId: string;
-}): Promise<EmbeddingsIdempotencyAcquireResult> => {
-  const [principalHash, idempotencyKeyHash] = await Promise.all([
-    sha256Hex(`uos-embeddings-principal-v1:${params.principal}`),
-    sha256Hex(`uos-embeddings-key-v1:${params.idempotencyKey}`),
-  ]);
-  const key = embeddingsIdempotencyKey(principalHash, idempotencyKeyHash);
-  const responseKeyPrefix = embeddingsIdempotencyResponseKeyPrefix(principalHash, idempotencyKeyHash);
-  const lease: EmbeddingsIdempotencyLease = {
-    kv: params.kv,
-    key,
-    responseKeyPrefix,
-    fingerprint: params.fingerprint,
-    ownerRequestId: params.requestId,
-  };
-
-  try {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const entry = await params.kv.get<EmbeddingsIdempotencyRecord>(key);
-      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
-      const now = Date.now();
-
-      if (entry.versionstamp === null) {
-        const reserved: EmbeddingsIdempotencyRecord = {
-          v: 1,
-          fingerprint: params.fingerprint,
-          state: "reserved",
-          owner_request_id: params.requestId,
-          created_at_ms: now,
-          updated_at_ms: now,
-          lease_until_ms: now + EMBEDDINGS_IDEMPOTENCY_LEASE_MS,
-          response_status: null,
-          response_content_type: null,
-          response_generation: null,
-          response_chunk_count: null,
-          response_sha256: null,
-        };
-        const commit = await params.kv.atomic()
-          .check(entry)
-          .set(key, reserved, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
-          .commit();
-        if (commit.ok) return { kind: "acquired", lease };
-        continue;
-      }
-
-      if (!record) return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
-      if (record.fingerprint !== params.fingerprint) {
-        return { kind: "error", response: embeddingsIdempotencyConflictResponse() };
-      }
-
-      if (record.state === "succeeded") {
-        const replay = await loadEmbeddingsIdempotencyResponse(lease, record);
-        if (replay) return { kind: "replay", response: replay };
-        const indeterminate: EmbeddingsIdempotencyRecord = {
-          ...record,
-          state: "indeterminate",
-          owner_request_id: null,
-          updated_at_ms: now,
-          lease_until_ms: null,
-          response_status: null,
-          response_content_type: null,
-          response_generation: null,
-          response_chunk_count: null,
-          response_sha256: null,
-        };
-        const commit = await params.kv.atomic()
-          .check(entry)
-          .set(key, indeterminate, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
-          .commit();
-        if (commit.ok) return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
-        continue;
-      }
-
-      if (record.state === "indeterminate") {
-        return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
-      }
-
-      if (record.lease_until_ms !== null && record.lease_until_ms > now) {
-        return { kind: "error", response: embeddingsIdempotencyInProgressResponse() };
-      }
-
-      if (record.state === "dispatched") {
-        const indeterminate: EmbeddingsIdempotencyRecord = {
-          ...record,
-          state: "indeterminate",
-          owner_request_id: null,
-          updated_at_ms: now,
-          lease_until_ms: null,
-          response_status: null,
-          response_content_type: null,
-          response_generation: null,
-          response_chunk_count: null,
-          response_sha256: null,
-        };
-        const commit = await params.kv.atomic()
-          .check(entry)
-          .set(key, indeterminate, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
-          .commit();
-        if (commit.ok) return { kind: "error", response: embeddingsIdempotencyIndeterminateResponse() };
-        continue;
-      }
-
-      const reserved: EmbeddingsIdempotencyRecord = {
-        ...record,
-        state: "reserved",
-        owner_request_id: params.requestId,
-        updated_at_ms: now,
-        lease_until_ms: now + EMBEDDINGS_IDEMPOTENCY_LEASE_MS,
-        response_status: null,
-        response_content_type: null,
-        response_generation: null,
-        response_chunk_count: null,
-        response_sha256: null,
-      };
-      const commit = await params.kv.atomic()
-        .check(entry)
-        .set(key, reserved, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
-        .commit();
-      if (commit.ok) return { kind: "acquired", lease };
-    }
-  } catch (error) {
-    console.error("[ai.ubq.fi] embeddings idempotency reservation failed:", error);
-  }
-
-  return { kind: "error", response: embeddingsIdempotencyUnavailableResponse() };
-};
-
-const markEmbeddingsIdempotencyDispatched = async (
-  lease: EmbeddingsIdempotencyLease,
-): Promise<boolean> => {
-  try {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
-      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
-      if (
-        !record ||
-        record.fingerprint !== lease.fingerprint ||
-        record.state !== "reserved" ||
-        record.owner_request_id !== lease.ownerRequestId
-      ) {
-        return false;
-      }
-      const now = Date.now();
-      const dispatched: EmbeddingsIdempotencyRecord = {
-        ...record,
-        state: "dispatched",
-        updated_at_ms: now,
-        lease_until_ms: now + EMBEDDINGS_IDEMPOTENCY_LEASE_MS,
-      };
-      const commit = await lease.kv.atomic()
-        .check(entry)
-        .set(lease.key, dispatched, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
-        .commit();
-      if (commit.ok) return true;
-    }
-  } catch (error) {
-    console.error("[ai.ubq.fi] embeddings idempotency dispatch-state write failed:", error);
-  }
-  return false;
-};
-
-const releaseEmbeddingsIdempotencyReservation = async (
-  lease: EmbeddingsIdempotencyLease,
-  allowDispatched: boolean,
-): Promise<boolean> => {
-  try {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
-      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
-      if (!record || record.fingerprint !== lease.fingerprint) return false;
-      if (record.owner_request_id !== lease.ownerRequestId) return false;
-      if (record.state !== "reserved" && !(allowDispatched && record.state === "dispatched")) return false;
-      const commit = await lease.kv.atomic().check(entry).delete(lease.key).commit();
-      if (commit.ok) return true;
-    }
-  } catch (error) {
-    console.error("[ai.ubq.fi] embeddings idempotency reservation release failed:", error);
-  }
-  return false;
-};
-
-const storeEmbeddingsIdempotencySuccess = async (
-  lease: EmbeddingsIdempotencyLease,
-  response: Response,
-): Promise<boolean> => {
-  try {
-    const body = await response.clone().text();
-    const chunks: string[] = [];
-    for (let offset = 0; offset < body.length; offset += EMBEDDINGS_IDEMPOTENCY_RESPONSE_CHUNK_CHARS) {
-      chunks.push(body.slice(offset, offset + EMBEDDINGS_IDEMPOTENCY_RESPONSE_CHUNK_CHARS));
-    }
-    if (!chunks.length) chunks.push("");
-    if (chunks.length > EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS) return false;
-    const responseGeneration = lease.ownerRequestId;
-    for (let index = 0; index < chunks.length; index += 1) {
-      await lease.kv.set(
-        [...lease.responseKeyPrefix, responseGeneration, index],
-        chunks[index]!,
-        { expireIn: EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS },
-      );
-    }
-    const bodyHash = await sha256Hex(body);
-
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const entry = await lease.kv.get<EmbeddingsIdempotencyRecord>(lease.key);
-      const record = normalizeEmbeddingsIdempotencyRecord(entry.value);
-      if (
-        !record ||
-        record.fingerprint !== lease.fingerprint ||
-        (record.state !== "reserved" && record.state !== "dispatched") ||
-        record.owner_request_id !== lease.ownerRequestId
-      ) {
-        return false;
-      }
-      const now = Date.now();
-      const succeeded: EmbeddingsIdempotencyRecord = {
-        ...record,
-        state: "succeeded",
-        owner_request_id: null,
-        updated_at_ms: now,
-        lease_until_ms: null,
-        response_status: response.status,
-        response_content_type: response.headers.get("Content-Type") ?? "application/json",
-        response_generation: responseGeneration,
-        response_chunk_count: chunks.length,
-        response_sha256: bodyHash,
-      };
-      const commit = await lease.kv.atomic()
-        .check(entry)
-        .set(lease.key, succeeded, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS })
-        .commit();
-      if (commit.ok) return true;
-    }
-  } catch (error) {
-    console.error("[ai.ubq.fi] embeddings idempotency response write failed:", error);
-  }
-  return false;
-};
 
 const normalizeEmbeddingsCacheTimestampMs = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -1725,13 +897,13 @@ const isEmbeddingsCacheQuotaError = (error: unknown): boolean => {
 
 const writeEmbeddingsCacheEntry = async (
   kv: Deno.Kv,
-  cacheProfileKey: string,
+  cacheModelKey: string,
   hash: string,
   embedding: number[],
   createdAtMs: number,
 ): Promise<{ isNew: boolean }> => {
-  const byHashKey = embeddingsCacheIndexByHashKey(cacheProfileKey, hash);
-  const cacheKey = embeddingsCacheKey(cacheProfileKey, hash);
+  const byHashKey = embeddingsCacheIndexByHashKey(cacheModelKey, hash);
+  const cacheKey: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hash];
 
   // Concurrency-safe: if multiple requests try to cache the same hash, only one
   // will win the "create index" CAS; the others will reuse the winner's index.
@@ -1739,24 +911,22 @@ const writeEmbeddingsCacheEntry = async (
     const entry = await kv.get<number>(byHashKey);
     const existingCreatedAtMs = normalizeEmbeddingsCacheTimestampMs(entry.value);
     if (existingCreatedAtMs !== null) {
-      const indexKey = embeddingsCacheIndexKey(cacheProfileKey, existingCreatedAtMs, hash);
+      const indexKey = embeddingsCacheIndexKey(cacheModelKey, existingCreatedAtMs, hash);
       const updated = await kv.atomic()
         .check(entry)
         .set(cacheKey, { embedding, created_at: new Date(existingCreatedAtMs).toISOString() })
         .set(indexKey, 1)
-        .set(embeddingsCacheGlobalIndexKey(existingCreatedAtMs, cacheProfileKey, hash), 1)
         .commit();
       if (updated.ok) return { isNew: false };
       continue;
     }
 
     const createdAtIso = new Date(createdAtMs).toISOString();
-    const indexKey = embeddingsCacheIndexKey(cacheProfileKey, createdAtMs, hash);
+    const indexKey = embeddingsCacheIndexKey(cacheModelKey, createdAtMs, hash);
     const created = await kv.atomic()
       .check(entry)
       .set(cacheKey, { embedding, created_at: createdAtIso })
       .set(indexKey, 1)
-      .set(embeddingsCacheGlobalIndexKey(createdAtMs, cacheProfileKey, hash), 1)
       .set(byHashKey, createdAtMs)
       .commit();
     if (created.ok) return { isNew: true };
@@ -1768,7 +938,7 @@ const writeEmbeddingsCacheEntry = async (
 
 const writeEmbeddingsCacheEntryBestEffort = async (
   kv: Deno.Kv,
-  cacheProfileKey: string,
+  cacheModelKey: string,
   hash: string,
   embedding: number[],
   createdAtMs: number,
@@ -1779,20 +949,18 @@ const writeEmbeddingsCacheEntryBestEffort = async (
   for (let attempt = 0; attempt <= EMBEDDINGS_CACHE_QUOTA_MAX_RETRIES; attempt += 1) {
     if (Date.now() >= deadlineMs) return { isNew: false };
     try {
-      return await writeEmbeddingsCacheEntry(kv, cacheProfileKey, hash, embedding, createdAtMs);
+      return await writeEmbeddingsCacheEntry(kv, cacheModelKey, hash, embedding, createdAtMs);
     } catch (error) {
       if (!isEmbeddingsCacheQuotaError(error)) {
         console.warn("[ai.ubq.fi] embeddings_cache write failed:", error);
         return { isNew: false };
       }
 
-      // KV rejected the write (likely storage quota). Evict the oldest entries
-      // across every embedding profile so a newly introduced profile cannot be
-      // starved by cache entries owned by another profile.
+      // KV rejected the write (likely storage quota). Evict oldest entries and retry.
       try {
-        const evicted = await evictOldestEmbeddingsCacheEntries(kv, evictBatch);
+        const evicted = await evictOldestEmbeddingsCacheEntries(kv, cacheModelKey, evictBatch);
         console.warn(
-          `[ai.ubq.fi] embeddings_cache quota eviction requesting_profile=${cacheProfileKey} scope=global evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} batch=${evictBatch}`,
+          `[ai.ubq.fi] embeddings_cache quota eviction model=${cacheModelKey} evicted=${evicted.evicted_embeddings} stale_index_deleted=${evicted.deleted_stale_index_keys} batch=${evictBatch}`,
         );
         if (evicted.evicted_embeddings <= 0 && evicted.deleted_stale_index_keys <= 0) return { isNew: false };
       } catch (evictError) {
@@ -1808,50 +976,35 @@ const writeEmbeddingsCacheEntryBestEffort = async (
 
 const evictOldestEmbeddingsCacheEntries = async (
   kv: Deno.Kv,
+  cacheModelKey: string,
   count: number,
 ): Promise<EmbeddingsCacheEvictResult> => {
-  const keys: Array<{
-    globalIndexKey: Deno.KvKey;
-    cacheProfileKey: string;
-    createdAtMs: number;
-    hash: string;
-  }> = [];
-  for await (const entry of kv.list({ prefix: embeddingsCacheGlobalIndexPrefix }, { limit: count })) {
+  const prefix = embeddingsCacheIndexPrefix(cacheModelKey);
+  const keys: Array<{ indexKey: Deno.KvKey; createdAtMs: number; hash: string }> = [];
+  for await (const entry of kv.list({ prefix }, { limit: count })) {
     const key = entry.key;
     const hash = key.at(-1);
-    const cacheProfileKey = key.at(-2);
-    const createdAtMs = key.at(-3);
+    const createdAtMs = key.at(-2);
     if (typeof hash !== "string" || !hash) continue;
-    if (typeof cacheProfileKey !== "string" || !cacheProfileKey) continue;
     if (typeof createdAtMs !== "number" || !Number.isFinite(createdAtMs)) continue;
-    keys.push({
-      globalIndexKey: key,
-      cacheProfileKey,
-      createdAtMs: Math.trunc(createdAtMs),
-      hash,
-    });
+    keys.push({ indexKey: key, createdAtMs: Math.trunc(createdAtMs), hash });
   }
   if (!keys.length) return { evicted_embeddings: 0, deleted_stale_index_keys: 0 };
 
-  const byHashKeys = keys.map((item) => embeddingsCacheIndexByHashKey(item.cacheProfileKey, item.hash));
+  const byHashKeys = keys.map((item) => embeddingsCacheIndexByHashKey(cacheModelKey, item.hash));
   const byHashEntries = await Promise.all(byHashKeys.map((key) => kv.get<number>(key)));
 
   let evictedEmbeddings = 0;
   let deletedStaleIndexKeys = 0;
   for (let i = 0; i < keys.length; i += 1) {
-    const { globalIndexKey, cacheProfileKey, createdAtMs, hash } = keys[i]!;
+    const { indexKey, createdAtMs, hash } = keys[i]!;
     const pointerEntry = byHashEntries[i]!;
     const pointer = normalizeEmbeddingsCacheTimestampMs(pointerEntry.value);
-    const cacheKey = embeddingsCacheKey(cacheProfileKey, hash);
-    const profileIndexKey = embeddingsCacheIndexKey(cacheProfileKey, createdAtMs, hash);
+    const cacheKey: Deno.KvKey = ["embeddings", "v1", cacheModelKey, hash];
 
     if (pointer !== null && pointer !== createdAtMs) {
-      // Stale duplicate index keys for this hash; delete only the indexes.
-      const deleted = await kv.atomic()
-        .check(pointerEntry)
-        .delete(globalIndexKey)
-        .delete(profileIndexKey)
-        .commit();
+      // Stale duplicate index key for this hash; delete the index entry only.
+      const deleted = await kv.atomic().check(pointerEntry).delete(indexKey).commit();
       if (deleted.ok) deletedStaleIndexKeys += 1;
       continue;
     }
@@ -1865,19 +1018,14 @@ const evictOldestEmbeddingsCacheEntries = async (
       const createdAtIso = isRecord(value) && typeof value.created_at === "string" ? value.created_at : null;
       const expectedIso = new Date(createdAtMs).toISOString();
       if (createdAtIso !== expectedIso) {
-        const deleted = await kv.atomic()
-          .check(pointerEntry)
-          .delete(globalIndexKey)
-          .delete(profileIndexKey)
-          .commit();
+        const deleted = await kv.atomic().check(pointerEntry).delete(indexKey).commit();
         if (deleted.ok) deletedStaleIndexKeys += 1;
         continue;
       }
 
       const commit = await kv.atomic()
         .check(pointerEntry)
-        .delete(globalIndexKey)
-        .delete(profileIndexKey)
+        .delete(indexKey)
         .delete(cacheKey)
         .commit();
       if (commit.ok) evictedEmbeddings += 1;
@@ -1887,10 +1035,9 @@ const evictOldestEmbeddingsCacheEntries = async (
     // Canonical pointer match: evict embedding + index + pointer as an atomic unit.
     const commit = await kv.atomic()
       .check(pointerEntry)
-      .delete(globalIndexKey)
-      .delete(profileIndexKey)
+      .delete(indexKey)
       .delete(cacheKey)
-      .delete(embeddingsCacheIndexByHashKey(cacheProfileKey, hash))
+      .delete(embeddingsCacheIndexByHashKey(cacheModelKey, hash))
       .commit();
     if (commit.ok) evictedEmbeddings += 1;
   }
@@ -2034,270 +1181,29 @@ const applyVoyageRateLimit = async (
   }
 };
 
+const resolveEmbeddingsModel = (raw: string): { upstream: "voyage"; model: string } | null => {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "text-embedding-3-small" || normalized === "text-embedding-3-large") {
+    // OpenAI-compatible model names; backed by Voyage (dimensionality may differ from OpenAI).
+    return { upstream: "voyage", model: "voyage-4-large" };
+  }
+  if (normalized.startsWith("voyage-")) {
+    return { upstream: "voyage", model: normalized };
+  }
+  return null;
+};
+
 const parseEmbeddingsEncodingFormat = (
   value: unknown,
 ): { ok: true; value: EmbeddingsEncodingFormat } | { ok: false; message: string } => {
   if (value === undefined) return { ok: true, value: "float" };
   if (typeof value !== "string") return { ok: false, message: "encoding_format must be a string" };
-  if (value === "float" || value === "base64") return { ok: true, value };
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "float" || normalized === "base64") return { ok: true, value: normalized };
   return { ok: false, message: 'encoding_format must be one of: "float", "base64"' };
 };
-
-const parseEmbeddingsDimensions = (
-  value: unknown,
-): { ok: true; value: VoyageEmbeddingsDimension } | { ok: false; message: string } => {
-  if (value === undefined) return { ok: true, value: VOYAGE_DEFAULT_DIMENSIONS };
-  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
-    return { ok: false, message: "dimensions must be an integer" };
-  }
-  if (!VOYAGE_SUPPORTED_DIMENSIONS.has(value)) {
-    return { ok: false, message: "dimensions must be one of: 256, 512, 1024, 2048" };
-  }
-  return { ok: true, value: value as VoyageEmbeddingsDimension };
-};
-
-const buildEmbeddingsCacheProfileKey = (
-  inputType: VoyageEmbeddingsInputType,
-  dimensions: VoyageEmbeddingsDimension,
-  encodingFormat: EmbeddingsEncodingFormat,
-  truncation: boolean,
-): string =>
-  JSON.stringify([
-    "voyage-profile-v2",
-    VOYAGE_EMBEDDINGS_MODEL,
-    inputType,
-    dimensions,
-    VOYAGE_OUTPUT_DTYPE,
-    encodingFormat,
-    truncation,
-  ]);
-
-const buildResolvedEmbeddingsProfile = (
-  inputType: VoyageEmbeddingsInputType,
-  dimensions: VoyageEmbeddingsDimension,
-  encodingFormat: EmbeddingsEncodingFormat,
-  truncation: boolean,
-): ResolvedEmbeddingsProfile => ({
-  upstream: "voyage",
-  upstream_model: VOYAGE_EMBEDDINGS_MODEL,
-  input_type: inputType,
-  dimensions,
-  output_dtype: VOYAGE_OUTPUT_DTYPE,
-  encoding_format: encodingFormat,
-  truncation,
-  cache_profile_key: buildEmbeddingsCacheProfileKey(inputType, dimensions, encodingFormat, truncation),
-});
-
-const resolveOpenAiEmbeddingsModel = (raw: string): "voyage-4-large" | null => {
-  const normalized = raw.trim().toLowerCase();
-  if (
-    normalized === VOYAGE_EMBEDDINGS_MODEL ||
-    normalized === "text-embedding-3-small" ||
-    normalized === "text-embedding-3-large"
-  ) {
-    return VOYAGE_EMBEDDINGS_MODEL;
-  }
-  return null;
-};
-
-const parseEmbeddingsRequest = (
-  rawBody: Record<string, unknown>,
-  contract: "openai" | "uos",
-): EmbeddingsParseResult => {
-  const allowedKeys = contract === "openai" ? EMBEDDINGS_ALLOWED_KEYS : UOS_EMBEDDINGS_ALLOWED_KEYS;
-  const unknownKey = findUnknownKey(rawBody, allowedKeys);
-  if (unknownKey) {
-    return {
-      ok: false,
-      response: openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error"),
-    };
-  }
-
-  const modelRaw = getString(rawBody.model);
-  if (!modelRaw || !modelRaw.trim()) {
-    return {
-      ok: false,
-      response: openaiError(400, "model is required and must be a non-empty string", "invalid_request_error", {
-        param: "model",
-      }),
-    };
-  }
-  const model = contract === "openai" ? modelRaw.trim() : modelRaw;
-  if (
-    contract === "uos"
-      ? model !== VOYAGE_EMBEDDINGS_MODEL
-      : resolveOpenAiEmbeddingsModel(model) !== VOYAGE_EMBEDDINGS_MODEL
-  ) {
-    return {
-      ok: false,
-      response: openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" }),
-    };
-  }
-
-  const dimensions = parseEmbeddingsDimensions(rawBody.dimensions);
-  if (!dimensions.ok) {
-    return {
-      ok: false,
-      response: openaiError(400, dimensions.message, "invalid_request_error", { param: "dimensions" }),
-    };
-  }
-
-  const encodingFormat = parseEmbeddingsEncodingFormat(rawBody.encoding_format);
-  if (!encodingFormat.ok) {
-    return {
-      ok: false,
-      response: openaiError(400, encodingFormat.message, "invalid_request_error", { param: "encoding_format" }),
-    };
-  }
-  if (contract === "uos" && encodingFormat.value !== "float") {
-    return {
-      ok: false,
-      response: openaiError(
-        400,
-        'encoding_format must be "float" for UOS embeddings',
-        "invalid_request_error",
-        { param: "encoding_format" },
-      ),
-    };
-  }
-
-  let inputType: VoyageEmbeddingsInputType = "document";
-  let truncation = true;
-  if (contract === "uos") {
-    if (rawBody.input_type !== "query" && rawBody.input_type !== "document") {
-      return {
-        ok: false,
-        response: openaiError(
-          400,
-          'input_type is required and must be one of: "query", "document"',
-          "invalid_request_error",
-          { param: "input_type" },
-        ),
-      };
-    }
-    inputType = rawBody.input_type;
-    if (rawBody.truncation !== undefined && typeof rawBody.truncation !== "boolean") {
-      return {
-        ok: false,
-        response: openaiError(400, "truncation must be a boolean", "invalid_request_error", {
-          param: "truncation",
-        }),
-      };
-    }
-    truncation = rawBody.truncation === undefined ? true : rawBody.truncation;
-  } else if (Object.prototype.hasOwnProperty.call(rawBody, "user")) {
-    const user = rawBody.user;
-    if (user !== undefined && user !== null && typeof user !== "string") {
-      return {
-        ok: false,
-        response: openaiError(400, "user must be a string", "invalid_request_error", { param: "user" }),
-      };
-    }
-  }
-
-  const inputRaw = rawBody.input;
-  let inputs: string[] = [];
-  if (typeof inputRaw === "string") {
-    inputs = [inputRaw];
-  } else if (Array.isArray(inputRaw)) {
-    for (const item of inputRaw) {
-      if (typeof item !== "string") {
-        return {
-          ok: false,
-          response: openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
-            param: "input",
-          }),
-        };
-      }
-      inputs.push(item);
-    }
-  } else {
-    return {
-      ok: false,
-      response: openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
-        param: "input",
-      }),
-    };
-  }
-
-  if (inputs.length === 0) {
-    return {
-      ok: false,
-      response: openaiError(
-        400,
-        "input must be a non-empty string or a non-empty array",
-        "invalid_request_error",
-        { param: "input" },
-      ),
-    };
-  }
-  if (inputs.length > EMBEDDINGS_MAX_INPUTS_PER_REQUEST) {
-    return {
-      ok: false,
-      response: openaiError(
-        400,
-        `Too many inputs: ${inputs.length} (max ${EMBEDDINGS_MAX_INPUTS_PER_REQUEST})`,
-        "invalid_request_error",
-        { param: "input" },
-      ),
-    };
-  }
-
-  let totalChars = 0;
-  for (const text of inputs) {
-    const len = text.length;
-    if (len > EMBEDDINGS_MAX_CHARS_PER_INPUT) {
-      return {
-        ok: false,
-        response: openaiError(
-          400,
-          `Input too large: ${len} chars (max ${EMBEDDINGS_MAX_CHARS_PER_INPUT})`,
-          "invalid_request_error",
-          { param: "input" },
-        ),
-      };
-    }
-    totalChars += len;
-    if (totalChars > EMBEDDINGS_MAX_TOTAL_CHARS) {
-      return {
-        ok: false,
-        response: openaiError(
-          400,
-          `Request too large: ${totalChars} chars total (max ${EMBEDDINGS_MAX_TOTAL_CHARS})`,
-          "invalid_request_error",
-          { param: "input" },
-        ),
-      };
-    }
-    const tokenEstimate = estimateTokens(text);
-    if (tokenEstimate > VOYAGE_RATE_LIMIT_TPM) {
-      return {
-        ok: false,
-        response: openaiError(
-          400,
-          `Input too large for embeddings provider: ~${tokenEstimate} tokens (max ${VOYAGE_RATE_LIMIT_TPM}).`,
-          "invalid_request_error",
-          { param: "input" },
-        ),
-      };
-    }
-  }
-
-  return {
-    ok: true,
-    value: {
-      model,
-      inputs,
-      total_chars: totalChars,
-      profile: buildResolvedEmbeddingsProfile(inputType, dimensions.value, encodingFormat.value, truncation),
-    },
-  };
-};
-
-const isValidEmbeddingVector = (value: unknown, dimensions: VoyageEmbeddingsDimension): value is number[] =>
-  Array.isArray(value) &&
-  value.length === dimensions &&
-  value.every((item) => typeof item === "number" && Number.isFinite(item));
 
 const floatEmbeddingToBase64 = (embedding: number[]): string => {
   const buffer = new ArrayBuffer(embedding.length * 4);
@@ -2351,7 +1257,7 @@ const normalizeEmbeddingsJobInputRecord = (value: unknown): EmbeddingsJobInputRe
 };
 
 const importEmbeddingsJobKey = async (tokenSeed: string): Promise<CryptoKey> => {
-  const material = new TextEncoder().encode(`uos_embeddings_job_v2:${tokenSeed}`);
+  const material = new TextEncoder().encode(`uos_embeddings_job_v1:${tokenSeed}`);
   const digest = await crypto.subtle.digest("SHA-256", material);
   return await crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 };
@@ -2412,12 +1318,8 @@ const readVoyageApiKey = async (kv: Deno.Kv | null): Promise<string | null> => {
 
 const fetchVoyageEmbeddings = async (params: {
   apiKey: string;
-  model: "voyage-4-large";
+  model: string;
   inputs: string[];
-  inputType: VoyageEmbeddingsInputType;
-  dimensions: VoyageEmbeddingsDimension;
-  outputDtype: VoyageEmbeddingsOutputDtype;
-  truncation: boolean;
   deadlineMs: number;
 }): Promise<{ vectors: number[][]; totalTokens: number | null }> => {
   const controller = new AbortController();
@@ -2434,10 +1336,7 @@ const fetchVoyageEmbeddings = async (params: {
       body: JSON.stringify({
         model: params.model,
         input: params.inputs.length === 1 ? params.inputs[0] : params.inputs,
-        input_type: params.inputType,
-        output_dimension: params.dimensions,
-        output_dtype: params.outputDtype,
-        truncation: params.truncation,
+        input_type: VOYAGE_INPUT_TYPE,
       }),
       signal: controller.signal,
     });
@@ -2670,17 +1569,70 @@ const normalizeResponseInputItem = (value: unknown): ResponseMessageItem | null 
   return toResponseMessageItem(value);
 };
 
-const recordResponsesTerminal = (
-  event: ResponsesStreamEvent,
-  usageContext?: UsageContext,
-): void => {
-  if (event.terminal) recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
-  if (event.type !== "response.completed") {
-    void recordErrorUsage(usageContext);
-    return;
+const parseSseEventPayload = (part: string): unknown | null => {
+  if (!part.trim()) return null;
+  const lines = part.split("\n");
+  const dataLines = lines.filter((line) => line.startsWith("data:"));
+  const data = dataLines.map((line) => line.slice(5).trim()).join("\n");
+  if (!data) return null;
+  try {
+    return JSON.parse(data);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[ai.ubq.fi] SSE parse error:", message);
+    return null;
   }
-  const usage = isRecord(event.value.response) ? extractUsageTokens(event.value.response.usage) : null;
-  void recordCompletionUsage(usageContext, usage);
+};
+
+const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const normalized = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const parts = normalized.split("\n\n");
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        const eventPayload = parseSseEventPayload(part);
+        if (eventPayload !== null) yield eventPayload;
+      }
+    }
+
+    buffer += decoder.decode();
+    const finalPayload = parseSseEventPayload(buffer);
+    if (finalPayload !== null) yield finalPayload;
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  }
+};
+
+const collectResponsesStreamUsage = async (
+  stream: ReadableStream<Uint8Array>,
+  usageContext?: UsageContext,
+  paidFallback?: PaidFallbackReservation | null,
+): Promise<void> => {
+  if (!usageContext?.keyId && !usageContext?.kernelRepo && !usageContext?.kernelOrg) return;
+  try {
+    for await (const ev of parseSseEvents(stream)) {
+      if (!isRecord(ev)) continue;
+      if (getString(ev.type) === "response.completed" && isRecord(ev.response)) {
+        const usageTokens = extractUsageTokens(ev.response.usage);
+        await recordCompletionUsage(usageContext, usageTokens);
+        if (paidFallback) await reconcileApiKeyPaidFallbacks(paidFallback.key_id);
+        return;
+      }
+    }
+  } catch (error) {
+    console.warn("[ai.ubq.fi] Failed to parse responses usage stream:", error);
+  }
 };
 
 const responseHasOutputText = (output: unknown): boolean => {
@@ -2727,37 +1679,27 @@ const withAccumulatedResponseItems = (
 };
 
 const streamChatCompletions = (
-  source: PreflightedResponsesStream,
+  upstream: Response,
   model: string,
   usageContext: UsageContext | undefined,
   provider: UpstreamProvider,
-  lifecycle: YunwuTransportLifecycle,
-  signal: AbortSignal,
-  downstreamSignal: AbortSignal,
-  onResponseCompleted?: () => void,
+  paidFallback: PaidFallbackReservation | null,
 ): Response => {
+  if (!upstream.body) {
+    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
+  }
+
   const encoder = new TextEncoder();
-  const iterator = source.iterator;
-  let pending: ResponsesStreamEvent | undefined = source.first;
-  let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
-  let created = Math.floor(Date.now() / 1000);
-  let sentRole = false;
-  let closed = false;
   const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      if (closed) return;
+    async start(controller) {
+      let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
+      let created = Math.floor(Date.now() / 1000);
+      let sentRole = false;
+
       try {
-        while (!closed) {
-          const next = pending ? { done: false as const, value: pending } : await iterator.next();
-          pending = undefined;
-          if (next.done) {
-            throw new ResponsesStreamError("Upstream Responses stream ended before a terminal event.", {
-              kind: "premature_eof",
-            });
-          }
-          const event = next.value;
-          const ev = event.value;
-          const type = event.type;
+        for await (const ev of parseSseEvents(upstream.body!)) {
+          if (!isRecord(ev)) continue;
+          const type = getString(ev.type);
           if (type === "response.created" && isRecord(ev.response)) {
             const upstreamId = getString(ev.response.id);
             const createdAt = typeof ev.response.created_at === "number" ? ev.response.created_at : null;
@@ -2783,15 +1725,13 @@ const streamChatCompletions = (
             };
             sentRole = true;
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-            return;
+            continue;
           }
 
           if (type === "response.completed") {
-            onResponseCompleted?.();
-            lifecycle.terminal(type);
-            recordStreamTerminalType(usageContext, "response.completed");
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-            void recordCompletionUsage(usageContext, usageTokens);
+            await recordCompletionUsage(usageContext, usageTokens);
+            if (paidFallback) await reconcileApiKeyPaidFallbacks(paidFallback.key_id);
             const chunk: Record<string, unknown> = {
               id,
               object: "chat.completion.chunk",
@@ -2807,57 +1747,16 @@ const streamChatCompletions = (
             };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-            closed = true;
             controller.close();
-            void iterator.return("Responses terminal event translated").catch(() => {});
-            return;
-          }
-          if (event.terminal) {
-            lifecycle.terminal(type);
-            recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
-            void recordErrorUsage(usageContext);
-            const errorValue = {
-              error: {
-                message: `Upstream terminated with ${type}.`,
-                type: "server_error",
-                code: "upstream_stream_error",
-              },
-            };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorValue)}\n\n`));
-            closed = true;
-            controller.close();
-            void iterator.return("Responses terminal error translated").catch(() => {});
             return;
           }
         }
-      } catch (error) {
-        if (closed) return;
-        const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
-        recordStreamTerminalType(usageContext, terminalType);
-        if (terminalType === "cancelled") lifecycle.cancelled();
-        else lifecycle.ambiguous();
-        void recordErrorUsage(usageContext);
-        const errorValue = {
-          error: {
-            message: "The upstream stream ended unexpectedly.",
-            type: "server_error",
-            code: "upstream_stream_error",
-          },
-        };
-        if (!downstreamSignal.aborted) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorValue)}\n\n`));
-        }
-        closed = true;
+
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
+      } catch (error) {
+        controller.error(error);
       }
-    },
-    cancel(reason) {
-      if (closed) return;
-      closed = true;
-      recordStreamTerminalType(usageContext, "cancelled");
-      lifecycle.cancelled();
-      void recordErrorUsage(usageContext);
-      void iterator.return(reason).catch(() => {});
     },
   });
 
@@ -2866,85 +1765,52 @@ const streamChatCompletions = (
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      "x-uos-upstream": provider,
+      "x-ubq-upstream": provider,
     },
   });
 };
 
 const completeChatCompletions = async (
-  source: PreflightedResponsesStream,
+  upstream: Response,
   model: string,
-  usageContext: UsageContext | undefined,
-  provider: UpstreamProvider,
-  lifecycle: YunwuTransportLifecycle,
-  signal: AbortSignal,
-  downstreamSignal: AbortSignal,
-  onResponseCompleted?: () => void,
+  usageContext?: UsageContext,
+  provider: UpstreamProvider = "chatgpt_codex",
+  paidFallback: PaidFallbackReservation | null = null,
 ): Promise<Response> => {
+  if (!upstream.body) return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
+
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
   let content = "";
   let usage: Record<string, unknown> | null = null;
 
-  let completed = false;
-  try {
-    let pending: ResponsesStreamEvent | undefined = source.first;
-    for (;;) {
-      const next = pending ? { done: false as const, value: pending } : await source.iterator.next();
-      pending = undefined;
-      if (next.done) break;
-      const event = next.value;
-      const ev = event.value;
-      const type = event.type;
-      if (event.terminal) {
-        lifecycle.terminal(type);
-        recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
-      }
-      if (type === "response.created" && isRecord(ev.response)) {
-        const upstreamId = getString(ev.response.id);
-        const createdAt = typeof ev.response.created_at === "number" ? ev.response.created_at : null;
-        if (upstreamId) id = upstreamId;
-        if (createdAt) created = createdAt;
-        continue;
-      }
-      if (type === "response.output_text.delta") {
-        content += getString(ev.delta) ?? "";
-        continue;
-      }
-      if (type === "response.completed" && isRecord(ev.response)) {
-        onResponseCompleted?.();
-        const usageTokens = extractUsageTokens(ev.response.usage);
-        if (usageTokens) {
-          usage = {
-            prompt_tokens: usageTokens.inputTokens,
-            completion_tokens: usageTokens.outputTokens,
-            total_tokens: usageTokens.totalTokens,
-          };
-        }
-        await recordCompletionUsage(usageContext, usageTokens);
-        completed = true;
-        break;
-      }
-      if (event.terminal) break;
+  for await (const ev of parseSseEvents(upstream.body)) {
+    if (!isRecord(ev)) continue;
+    const type = getString(ev.type);
+    if (type === "response.created" && isRecord(ev.response)) {
+      const upstreamId = getString(ev.response.id);
+      const createdAt = typeof ev.response.created_at === "number" ? ev.response.created_at : null;
+      if (upstreamId) id = upstreamId;
+      if (createdAt) created = createdAt;
+      continue;
     }
-  } catch (error) {
-    const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType === "cancelled") lifecycle.cancelled();
-    else lifecycle.ambiguous();
-    completed = false;
-  } finally {
-    // This path consumes the generator manually (rather than through
-    // `for await`), so explicitly close it after a terminal event or error.
-    // Otherwise the parser can remain suspended at its final `yield` while
-    // retaining the upstream reader lock.
-    await source.iterator.return("Chat Completions response consumed").catch(() => {});
-  }
-  if (!completed) {
-    await recordErrorUsage(usageContext);
-    return openaiError(502, "Upstream stream ended without response.completed.", "upstream_stream_error", {
-      headers: { "x-uos-upstream": provider },
-    });
+    if (type === "response.output_text.delta") {
+      content += getString(ev.delta) ?? "";
+      continue;
+    }
+    if (type === "response.completed" && isRecord(ev.response)) {
+      const usageTokens = extractUsageTokens(ev.response.usage);
+      if (usageTokens) {
+        usage = {
+          prompt_tokens: usageTokens.inputTokens,
+          completion_tokens: usageTokens.outputTokens,
+          total_tokens: usageTokens.totalTokens,
+        };
+      }
+      await recordCompletionUsage(usageContext, usageTokens);
+      if (paidFallback) await reconcileApiKeyPaidFallbacks(paidFallback.key_id);
+      break;
+    }
   }
 
   const body: Record<string, unknown> = {
@@ -2961,14 +1827,10 @@ const completeChatCompletions = async (
     ],
   };
   if (usage) body.usage = usage;
-  return json(200, body, { "x-uos-upstream": provider });
+  return json(200, body, { "x-ubq-upstream": provider });
 };
 
-export const handleModels = async (req?: Request): Promise<Response> => {
-  if (req) {
-    const clientVersion = getCatalogClientVersion(req);
-    if (clientVersion !== null) return await handleCodexCatalogModels(req, clientVersion);
-  }
+export const handleModels = async (): Promise<Response> => {
   const snapshot = await loadCodexModelsSnapshot();
   const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
     ? normalizeModelList(snapshot)
@@ -2977,12 +1839,12 @@ export const handleModels = async (req?: Request): Promise<Response> => {
   return json(
     200,
     normalized ?? { object: "list", data: [] },
-    { "x-uos-upstream": snapshot?.source || "stored_codex_models" },
+    { "x-ubq-upstream": snapshot?.source || "stored_codex_models" },
   );
 };
 
 export const handleModelCapabilities = async (): Promise<Response> => {
-  const snapshot = await loadFullCodexModelsSnapshot();
+  const snapshot = await loadCodexModelsSnapshot();
   const data = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
     ? snapshot.models.map(normalizeModelCapabilitiesEntry).filter(Boolean) as Record<string, unknown>[]
     : [];
@@ -2997,26 +1859,11 @@ export const handleModelCapabilities = async (): Promise<Response> => {
       client_version: snapshot?.client_version ?? null,
       updated_at_ms: snapshot?.updated_at_ms ?? null,
     },
-    { "x-uos-upstream": snapshot?.source || "stored_codex_models" },
+    { "x-ubq-upstream": snapshot?.source || "stored_codex_models" },
   );
 };
 
-const withVoyageUpstreamHeader = (response: Response): Response => {
-  const headers = new Headers(response.headers);
-  headers.set("x-uos-upstream", "voyage");
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-};
-
-const handleEmbeddingsRequest = async (
-  req: Request,
-  contract: "openai" | "uos",
-  usageContext?: UsageContext,
-  options: Readonly<{ kv?: Deno.Kv | null }> = {},
-): Promise<Response> => {
+export const handleEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const requestId = crypto.randomUUID();
   const startedAtMs = Date.now();
 
@@ -3025,78 +1872,138 @@ const handleEmbeddingsRequest = async (
     return openaiError(400, "Invalid JSON body", "invalid_request_error");
   }
 
-  const parsed = parseEmbeddingsRequest(rawBody, contract);
-  if (!parsed.ok) return parsed.response;
-  const { model, inputs, profile } = parsed.value;
-
-  const kv = Object.prototype.hasOwnProperty.call(options, "kv") ? options.kv ?? null : await getKv();
-  const hashes = await Promise.all(inputs.map((text) => sha256Hex(text)));
-  let idempotencyLease: EmbeddingsIdempotencyLease | null = null;
-  let idempotencyDispatched = false;
-  let idempotencyHasConfirmedSuccess = false;
-  const idempotencyKey = contract === "uos" ? req.headers.get("Idempotency-Key") : null;
-  if (idempotencyKey !== null) {
-    if (
-      !idempotencyKey ||
-      idempotencyKey.length > EMBEDDINGS_IDEMPOTENCY_MAX_KEY_CHARS ||
-      hasAsciiControlCharacter(idempotencyKey)
-    ) {
-      return openaiError(
-        400,
-        `Idempotency-Key must contain 1-${EMBEDDINGS_IDEMPOTENCY_MAX_KEY_CHARS} non-control characters.`,
-        "invalid_request_error",
-        { param: null },
-      );
-    }
-    const principal = usageContext?.idempotencyPrincipal?.trim() ?? "";
-    if (!kv || !principal) return embeddingsIdempotencyUnavailableResponse();
-    const fingerprint = await buildEmbeddingsIdempotencyFingerprint(profile, hashes);
-    const acquired = await acquireEmbeddingsIdempotencyLease({
-      kv,
-      principal,
-      idempotencyKey,
-      fingerprint,
-      requestId,
-    });
-    if (acquired.kind === "replay") return acquired.response;
-    if (acquired.kind === "error") return acquired.response;
-    idempotencyLease = acquired.lease;
+  const unknownKey = findUnknownKey(rawBody, EMBEDDINGS_ALLOWED_KEYS);
+  if (unknownKey) {
+    return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
 
-  const releaseBeforeDispatch = async (response: Response): Promise<Response> => {
-    if (!idempotencyLease) return response;
-    const released = await releaseEmbeddingsIdempotencyReservation(idempotencyLease, false);
-    return released ? response : embeddingsIdempotencyUnavailableResponse();
-  };
-  const releaseAfterExplicitUpstreamFailure = async (response: Response): Promise<Response> => {
-    if (!idempotencyLease) return response;
-    if (idempotencyHasConfirmedSuccess) return await failIndeterminate();
-    const released = await releaseEmbeddingsIdempotencyReservation(idempotencyLease, true);
-    if (released) return response;
-    await markEmbeddingsIdempotencyIndeterminate(idempotencyLease);
-    return embeddingsIdempotencyIndeterminateResponse();
-  };
-  const failIndeterminate = async (): Promise<Response> => {
-    if (idempotencyLease) await markEmbeddingsIdempotencyIndeterminate(idempotencyLease);
-    return embeddingsIdempotencyIndeterminateResponse();
-  };
+  const modelRaw = getString(rawBody.model);
+  if (!modelRaw || !modelRaw.trim()) {
+    return openaiError(400, "model is required and must be a non-empty string", "invalid_request_error", {
+      param: "model",
+    });
+  }
+  const model = modelRaw.trim();
+
+  const encodingFormat = parseEmbeddingsEncodingFormat(rawBody.encoding_format);
+  if (!encodingFormat.ok) {
+    return openaiError(400, encodingFormat.message, "invalid_request_error", { param: "encoding_format" });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawBody, "dimensions")) {
+    const rawDimensions = rawBody.dimensions;
+    if (typeof rawDimensions !== "number" || !Number.isFinite(rawDimensions)) {
+      return openaiError(400, "dimensions must be a number", "invalid_request_error", { param: "dimensions" });
+    }
+    const dims = Math.trunc(rawDimensions);
+    if (dims <= 0) {
+      return openaiError(400, "dimensions must be a positive integer", "invalid_request_error", {
+        param: "dimensions",
+      });
+    }
+    // Voyage does not guarantee OpenAI-compatible dimension control.
+    return openaiError(400, "dimensions is not supported by this gateway", "invalid_request_error", {
+      param: "dimensions",
+    });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawBody, "user")) {
+    const user = rawBody.user;
+    if (user !== undefined && user !== null && typeof user !== "string") {
+      return openaiError(400, "user must be a string", "invalid_request_error", { param: "user" });
+    }
+  }
+
+  const inputRaw = rawBody.input;
+  let inputs: string[] = [];
+  if (typeof inputRaw === "string") {
+    inputs = [inputRaw];
+  } else if (Array.isArray(inputRaw)) {
+    for (const item of inputRaw) {
+      if (typeof item !== "string") {
+        return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
+          param: "input",
+        });
+      }
+      inputs.push(item);
+    }
+  } else {
+    return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
+      param: "input",
+    });
+  }
+
+  if (inputs.length === 0) {
+    return openaiError(400, "input must be a non-empty string or a non-empty array", "invalid_request_error", {
+      param: "input",
+    });
+  }
+
+  if (inputs.length > EMBEDDINGS_MAX_INPUTS_PER_REQUEST) {
+    return openaiError(
+      400,
+      `Too many inputs: ${inputs.length} (max ${EMBEDDINGS_MAX_INPUTS_PER_REQUEST})`,
+      "invalid_request_error",
+      { param: "input" },
+    );
+  }
+
+  let totalChars = 0;
+  for (const text of inputs) {
+    const len = text.length;
+    if (len > EMBEDDINGS_MAX_CHARS_PER_INPUT) {
+      return openaiError(
+        400,
+        `Input too large: ${len} chars (max ${EMBEDDINGS_MAX_CHARS_PER_INPUT})`,
+        "invalid_request_error",
+        { param: "input" },
+      );
+    }
+    totalChars += len;
+    if (totalChars > EMBEDDINGS_MAX_TOTAL_CHARS) {
+      return openaiError(
+        400,
+        `Request too large: ${totalChars} chars total (max ${EMBEDDINGS_MAX_TOTAL_CHARS})`,
+        "invalid_request_error",
+        { param: "input" },
+      );
+    }
+  }
+
+  const resolved = resolveEmbeddingsModel(model);
+  if (!resolved) {
+    return openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" });
+  }
+
+  for (const text of inputs) {
+    const tokenEstimate = estimateTokens(text);
+    if (tokenEstimate > VOYAGE_RATE_LIMIT_TPM) {
+      return openaiError(
+        400,
+        `Input too large for embeddings provider: ~${tokenEstimate} tokens (max ${VOYAGE_RATE_LIMIT_TPM}).`,
+        "invalid_request_error",
+        { param: "input" },
+      );
+    }
+  }
 
   await recordRequestUsage(usageContext, { model, route: "embeddings", stream: false, reasoning: null });
 
   const deadlineMs = startedAtMs + EMBEDDINGS_TIMEOUT_MS;
+  const kv = await kvPromise;
   const apiKey = await readVoyageApiKey(kv);
   if (!apiKey) {
     await recordErrorUsage(usageContext);
-    return await releaseBeforeDispatch(
-      openaiError(
-        503,
-        "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
-        "server_error",
-        { type: "server_error", param: null },
-      ),
+    return openaiError(
+      503,
+      "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
+      "server_error",
+      { type: "server_error", param: null },
     );
   }
-  const shouldCache = Boolean(kv);
+  const shouldCache = encodingFormat.value === "float" && !Object.prototype.hasOwnProperty.call(rawBody, "dimensions");
+
+  const hashes = await Promise.all(inputs.map((text) => sha256Hex(text)));
 
   // Dedupe within a request (hash collisions are astronomically unlikely).
   const buckets = new Map<string, { text: string; indices: number[] }>();
@@ -3110,8 +2017,8 @@ const handleEmbeddingsRequest = async (
     }
   }
 
-  const cacheProfileKey = profile.cache_profile_key;
-  const cacheKeyFor = (hash: string): Deno.KvKey => embeddingsCacheKey(cacheProfileKey, hash);
+  const cacheModelKey = model.toLowerCase();
+  const cacheKeyFor = (hash: string): Deno.KvKey => ["embeddings", "v1", cacheModelKey, hash];
   const vectorsByIndex: Array<number[] | null> = Array.from({ length: inputs.length }, () => null);
 
   let voyageTotalTokens = 0;
@@ -3125,8 +2032,8 @@ const handleEmbeddingsRequest = async (
       const item = unique[i]!;
       const entry = entries[i]!;
       const cached = entry.value?.embedding;
-      if (isValidEmbeddingVector(cached, profile.dimensions)) {
-        for (const idx of item.indices) vectorsByIndex[idx] = cached;
+      if (Array.isArray(cached) && cached.every((v) => typeof v === "number" && Number.isFinite(v))) {
+        for (const idx of item.indices) vectorsByIndex[idx] = cached as number[];
       } else {
         missing.push(item);
       }
@@ -3136,6 +2043,12 @@ const handleEmbeddingsRequest = async (
       missing.push({ hash, text: bucket.text, indices: bucket.indices });
     }
   }
+
+  console.info(
+    `[ai.ubq.fi] embeddings request_id=${requestId} model=${model} upstream=${resolved.upstream} inputs=${inputs.length} unique=${buckets.size} chars=${totalChars} cache=${
+      shouldCache && Boolean(kv)
+    }`,
+  );
 
   if (missing.length > 0) {
     const chunks = chunkByTokenBudget(
@@ -3149,10 +2062,7 @@ const handleEmbeddingsRequest = async (
       const now = Date.now();
       if (now >= deadlineMs) {
         await recordErrorUsage(usageContext);
-        if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
-        return await releaseBeforeDispatch(
-          openaiError(502, "Embeddings request timed out.", "timeout", { type: "server_error", param: null }),
-        );
+        return openaiError(502, "Embeddings request timed out.", "timeout", { type: "server_error", param: null });
       }
 
       const chunkItems = missing.slice(offset, offset + chunk.length);
@@ -3164,7 +2074,6 @@ const handleEmbeddingsRequest = async (
         const reserved = await applyVoyageRateLimit(kv, tokenEstimate, deadlineMs);
         if (!reserved.ok) {
           await recordErrorUsage(usageContext);
-          if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
           const retryAfterSeconds = Math.max(1, Math.ceil(reserved.wait_ms / 1000));
           const body = {
             error: {
@@ -3174,36 +2083,19 @@ const handleEmbeddingsRequest = async (
               param: null,
             },
           };
-          return await releaseBeforeDispatch(json(429, body, { "Retry-After": String(retryAfterSeconds) }));
+          return json(429, body, { "Retry-After": String(retryAfterSeconds) });
         }
       }
 
+      const retryable = new Set([429, 500, 502, 503, 504]);
       let attempt = 0;
       let backoffMs = 250;
       let vectors: number[][] | null = null;
 
       for (;;) {
-        if (idempotencyLease && !idempotencyDispatched) {
-          const markedDispatched = await markEmbeddingsIdempotencyDispatched(idempotencyLease);
-          if (!markedDispatched) {
-            await recordErrorUsage(usageContext);
-            return embeddingsIdempotencyUnavailableResponse();
-          }
-          idempotencyDispatched = true;
-        }
         try {
-          const upstream = await fetchVoyageEmbeddings({
-            apiKey,
-            model: profile.upstream_model,
-            inputs: texts,
-            inputType: profile.input_type,
-            dimensions: profile.dimensions,
-            outputDtype: profile.output_dtype,
-            truncation: profile.truncation,
-            deadlineMs,
-          });
+          const upstream = await fetchVoyageEmbeddings({ apiKey, model: resolved.model, inputs: texts, deadlineMs });
           vectors = upstream.vectors;
-          if (idempotencyLease) idempotencyHasConfirmedSuccess = true;
           if (typeof upstream.totalTokens === "number") {
             sawVoyageTokenUsage = true;
             voyageTotalTokens += upstream.totalTokens;
@@ -3217,39 +2109,14 @@ const handleEmbeddingsRequest = async (
             ? `Embeddings upstream request failed: ${snippet}`
             : "Embeddings upstream request failed.";
 
-          if (!status || !EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
+          if (!status || !retryable.has(status) || attempt >= 2) {
             console.error(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
             await recordErrorUsage(usageContext);
-            if (!status) return await failIndeterminate();
-            return await releaseAfterExplicitUpstreamFailure(
-              openaiError(502, message, "upstream_error", { type: "server_error", param: null }),
-            );
-          }
-
-          const waitMs = Math.max(0, retryAfterMs ?? backoffMs);
-          if (attempt >= 2) {
-            console.error(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
-            await recordErrorUsage(usageContext);
-            if (status === 429) {
-              const retryAfterSeconds = Math.max(1, Math.ceil(waitMs / 1000));
-              const body = {
-                error: {
-                  message,
-                  type: "rate_limit_error",
-                  code: "rate_limit_exceeded",
-                  param: null,
-                },
-              };
-              return await releaseAfterExplicitUpstreamFailure(
-                json(429, body, { "Retry-After": String(retryAfterSeconds) }),
-              );
-            }
-            return await releaseAfterExplicitUpstreamFailure(
-              openaiError(502, message, "upstream_error", { type: "server_error", param: null }),
-            );
+            return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
           }
 
           const now = Date.now();
+          const waitMs = Math.max(0, retryAfterMs ?? backoffMs);
           if (now + waitMs >= deadlineMs) {
             if (status === 429) {
               await recordErrorUsage(usageContext);
@@ -3262,14 +2129,10 @@ const handleEmbeddingsRequest = async (
                   param: null,
                 },
               };
-              return await releaseAfterExplicitUpstreamFailure(
-                json(429, body, { "Retry-After": String(retryAfterSeconds) }),
-              );
+              return json(429, body, { "Retry-After": String(retryAfterSeconds) });
             }
             await recordErrorUsage(usageContext);
-            return await releaseAfterExplicitUpstreamFailure(
-              openaiError(502, message, "upstream_error", { type: "server_error", param: null }),
-            );
+            return openaiError(502, message, "upstream_error", { type: "server_error", param: null });
           }
 
           await sleep(waitMs);
@@ -3280,24 +2143,10 @@ const handleEmbeddingsRequest = async (
 
       if (!vectors || vectors.length !== chunkItems.length) {
         await recordErrorUsage(usageContext);
-        if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
         return openaiError(502, "Embeddings upstream returned a size mismatch.", "upstream_error", {
           type: "server_error",
           param: null,
         });
-      }
-
-      const wrongLengthIndex = vectors.findIndex((vector) => vector.length !== profile.dimensions);
-      if (wrongLengthIndex >= 0) {
-        await recordErrorUsage(usageContext);
-        const actualLength = vectors[wrongLengthIndex]?.length ?? 0;
-        if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
-        return openaiError(
-          502,
-          `Embeddings upstream returned vector length ${actualLength}; expected ${profile.dimensions}.`,
-          "upstream_dimension_mismatch",
-          { type: "server_error", param: null },
-        );
       }
 
       for (let i = 0; i < chunkItems.length; i += 1) {
@@ -3307,7 +2156,7 @@ const handleEmbeddingsRequest = async (
         if (shouldCache && kv) {
           await writeEmbeddingsCacheEntryBestEffort(
             kv,
-            cacheProfileKey,
+            cacheModelKey,
             item.hash,
             vec,
             Date.now(),
@@ -3323,7 +2172,6 @@ const handleEmbeddingsRequest = async (
     const vec = vectorsByIndex[i];
     if (!vec) {
       await recordErrorUsage(usageContext);
-      if (idempotencyLease && idempotencyDispatched) return await failIndeterminate();
       return openaiError(502, "Embeddings gateway failed to construct a complete response.", "server_error", {
         type: "server_error",
         param: null,
@@ -3332,14 +2180,21 @@ const handleEmbeddingsRequest = async (
     data.push({
       object: "embedding",
       index: i,
-      embedding: profile.encoding_format === "base64" ? floatEmbeddingToBase64(vec) : vec,
+      embedding: encodingFormat.value === "base64" ? floatEmbeddingToBase64(vec) : vec,
     });
   }
+
+  const elapsedMs = Date.now() - startedAtMs;
+  console.info(
+    `[ai.ubq.fi] embeddings request_id=${requestId} status=200 upstream=${resolved.upstream} ms=${elapsedMs}`,
+  );
 
   const usageTokens: UsageTokens | null = sawVoyageTokenUsage
     ? { inputTokens: voyageTotalTokens, outputTokens: 0, totalTokens: voyageTotalTokens }
     : null;
-  const response = json(200, {
+  await recordCompletionUsage(usageContext, usageTokens);
+
+  return json(200, {
     object: "list",
     data,
     model,
@@ -3347,33 +2202,8 @@ const handleEmbeddingsRequest = async (
       prompt_tokens: usageTokens?.inputTokens ?? 0,
       total_tokens: usageTokens?.totalTokens ?? 0,
     },
-  });
-  if (idempotencyLease) {
-    const stored = await storeEmbeddingsIdempotencySuccess(idempotencyLease, response);
-    if (!stored) {
-      if (idempotencyDispatched) return await failIndeterminate();
-      return await releaseBeforeDispatch(embeddingsIdempotencyUnavailableResponse());
-    }
-  }
-  await recordCompletionUsage(usageContext, usageTokens);
-  return response;
+  }, { "x-ubq-upstream": resolved.upstream });
 };
-
-export const handleEmbeddings = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
-  await runWithResponseTelemetry(
-    usageContext,
-    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "openai", context)),
-  );
-
-export const handleUosEmbeddings = async (
-  req: Request,
-  usageContext?: UsageContext,
-  options: Readonly<{ kv?: Deno.Kv | null }> = {},
-): Promise<Response> =>
-  await runWithResponseTelemetry(
-    usageContext,
-    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, "uos", context, options)),
-  );
 
 const buildEmbeddingsJobBody = (
   job: EmbeddingsJobRecord,
@@ -3385,13 +2215,6 @@ const buildEmbeddingsJobBody = (
   created_at_ms: job.created_at_ms,
   updated_at_ms: job.updated_at_ms,
   model: job.model,
-  upstream: job.upstream,
-  upstream_model: job.upstream_model,
-  input_type: job.input_type,
-  dimensions: job.dimensions,
-  output_dtype: job.output_dtype,
-  encoding_format: job.encoding_format,
-  truncation: job.truncation,
   input_count: job.input_count,
   total_chars: job.total_chars,
   retry_after_seconds: job.retry_after_seconds,
@@ -3401,19 +2224,18 @@ const buildEmbeddingsJobBody = (
 
 const loadEmbeddingsVectorsFromCache = async (
   kv: Deno.Kv,
-  cacheProfileKey: string,
+  cacheModelKey: string,
   hashesByIndex: string[],
-  dimensions: VoyageEmbeddingsDimension,
 ): Promise<Array<number[] | null>> => {
   const uniqueHashes = Array.from(new Set(hashesByIndex));
-  const cacheKeyFor = (hash: string): Deno.KvKey => embeddingsCacheKey(cacheProfileKey, hash);
+  const cacheKeyFor = (hash: string): Deno.KvKey => ["embeddings", "v1", cacheModelKey, hash];
   const entries = await Promise.all(uniqueHashes.map((hash) => kv.get<{ embedding?: unknown }>(cacheKeyFor(hash))));
   const vectorsByHash = new Map<string, number[]>();
   for (let i = 0; i < uniqueHashes.length; i += 1) {
     const hash = uniqueHashes[i]!;
     const cached = entries[i]?.value?.embedding;
-    if (isValidEmbeddingVector(cached, dimensions)) {
-      vectorsByHash.set(hash, cached);
+    if (Array.isArray(cached) && cached.every((v) => typeof v === "number" && Number.isFinite(v))) {
+      vectorsByHash.set(hash, cached as number[]);
     }
   }
   return hashesByIndex.map((hash) => vectorsByHash.get(hash) ?? null);
@@ -3423,13 +2245,12 @@ const buildOpenAiEmbeddingsResult = (
   model: string,
   vectorsByIndex: Array<number[] | null>,
   usageTotalTokens: number,
-  encodingFormat: EmbeddingsEncodingFormat,
 ): Record<string, unknown> => ({
   object: "list",
   data: vectorsByIndex.map((vec, index) => ({
     object: "embedding",
     index,
-    embedding: vec && encodingFormat === "base64" ? floatEmbeddingToBase64(vec) : vec ?? [],
+    embedding: vec ?? [],
   })),
   model,
   usage: { prompt_tokens: usageTotalTokens, total_tokens: usageTotalTokens },
@@ -3450,30 +2271,19 @@ const reserveVoyageBudgetForJob = async (
 
 const updateEmbeddingsJobRecord = async (
   kv: Deno.Kv,
-  jobKey: Deno.KvKey,
-  lookupKey: Deno.KvKey,
+  key: Deno.KvKey,
   job: EmbeddingsJobRecord,
 ): Promise<void> => {
-  await kv.atomic()
-    .set(jobKey, job, { expireIn: EMBEDDINGS_JOB_TTL_MS })
-    .set(
-      lookupKey,
-      { cache_profile_key: job.cache_profile_key } satisfies EmbeddingsJobLookupRecord,
-      { expireIn: EMBEDDINGS_JOB_TTL_MS },
-    )
-    .commit();
+  await kv.set(key, job, { expireIn: EMBEDDINGS_JOB_TTL_MS });
 };
 
 const deleteEmbeddingsJobInputs = async (
   kv: Deno.Kv,
   tokenHash: string,
-  cacheProfileKey: string,
   jobId: string,
   uniqueHashes: string[],
 ): Promise<void> => {
-  await Promise.all(
-    uniqueHashes.map((hash) => kv.delete(embeddingsJobInputKey(tokenHash, cacheProfileKey, jobId, hash))),
-  );
+  await Promise.all(uniqueHashes.map((hash) => kv.delete(embeddingsJobInputKey(tokenHash, jobId, hash))));
 };
 
 const runEmbeddingsJobAttempt = async (params: {
@@ -3483,7 +2293,6 @@ const runEmbeddingsJobAttempt = async (params: {
   tokenSeed: string;
   tokenHash: string;
   jobKey: Deno.KvKey;
-  jobLookupKey: Deno.KvKey;
   jobEntry: Deno.KvEntryMaybe<EmbeddingsJobRecord>;
   job: EmbeddingsJobRecord;
   deadlineMs: number;
@@ -3493,10 +2302,7 @@ const runEmbeddingsJobAttempt = async (params: {
   if (params.job.locked_until_ms && params.job.locked_until_ms > now) {
     const retryAfterSeconds = Math.max(1, Math.ceil((params.job.locked_until_ms - now) / 1000));
     const body = buildEmbeddingsJobBody(params.job, null);
-    return json(202, body, {
-      "Retry-After": String(retryAfterSeconds),
-      "x-uos-upstream": params.job.upstream,
-    });
+    return json(202, body, { "Retry-After": String(retryAfterSeconds) });
   }
 
   const lockedUntilMs = now + EMBEDDINGS_JOB_LOCK_MS;
@@ -3511,21 +2317,16 @@ const runEmbeddingsJobAttempt = async (params: {
   const lockCommit = await params.kv.atomic()
     .check(params.jobEntry)
     .set(params.jobKey, locked, { expireIn: EMBEDDINGS_JOB_TTL_MS })
-    .set(
-      params.jobLookupKey,
-      { cache_profile_key: locked.cache_profile_key } satisfies EmbeddingsJobLookupRecord,
-      { expireIn: EMBEDDINGS_JOB_TTL_MS },
-    )
     .commit();
   if (!lockCommit.ok) {
     const body = buildEmbeddingsJobBody(params.job, null);
-    return json(202, body, { "Retry-After": "1", "x-uos-upstream": params.job.upstream });
+    return json(202, body, { "Retry-After": "1" });
   }
 
-  const cacheProfileKey = locked.cache_profile_key;
+  const cacheModelKey = locked.cache_model_key;
   const hashesByIndex = locked.input_hashes;
   const uniqueHashes = Array.from(new Set(hashesByIndex));
-  const cacheKeyFor = (hash: string): Deno.KvKey => embeddingsCacheKey(cacheProfileKey, hash);
+  const cacheKeyFor = (hash: string): Deno.KvKey => ["embeddings", "v1", cacheModelKey, hash];
 
   let currentJob: EmbeddingsJobRecord = locked;
   let queueRetryAfterMs: number | null = null;
@@ -3538,7 +2339,7 @@ const runEmbeddingsJobAttempt = async (params: {
     for (let i = 0; i < uniqueHashes.length; i += 1) {
       const hash = uniqueHashes[i]!;
       const cached = entries[i]?.value?.embedding;
-      if (isValidEmbeddingVector(cached, locked.dimensions)) continue;
+      if (Array.isArray(cached) && cached.every((v) => typeof v === "number" && Number.isFinite(v))) continue;
       missing.push(hash);
     }
     return missing;
@@ -3554,16 +2355,10 @@ const runEmbeddingsJobAttempt = async (params: {
       error: { message, type: "server_error", code },
     };
     currentJob = failed;
-    await updateEmbeddingsJobRecord(params.kv, params.jobKey, params.jobLookupKey, failed);
-    await deleteEmbeddingsJobInputs(
-      params.kv,
-      params.tokenHash,
-      failed.cache_profile_key,
-      failed.id,
-      uniqueHashes,
-    );
+    await updateEmbeddingsJobRecord(params.kv, params.jobKey, failed);
+    await deleteEmbeddingsJobInputs(params.kv, params.tokenHash, failed.id, uniqueHashes);
     await recordErrorUsage(params.usageContext);
-    return json(200, buildEmbeddingsJobBody(failed, null), { "x-uos-upstream": failed.upstream });
+    return json(200, buildEmbeddingsJobBody(failed, null), { "x-ubq-upstream": failed.upstream });
   };
 
   const queueJob = async (waitMs: number): Promise<Response> => {
@@ -3577,18 +2372,13 @@ const runEmbeddingsJobAttempt = async (params: {
       error: null,
     };
     currentJob = queued;
-    await updateEmbeddingsJobRecord(params.kv, params.jobKey, params.jobLookupKey, queued);
+    await updateEmbeddingsJobRecord(params.kv, params.jobKey, queued);
     const body = buildEmbeddingsJobBody(queued, null);
-    return json(202, body, { "Retry-After": String(retryAfterSeconds), "x-uos-upstream": queued.upstream });
+    return json(202, body, { "Retry-After": String(retryAfterSeconds), "x-ubq-upstream": queued.upstream });
   };
 
   const succeedJob = async (): Promise<Response> => {
-    const vectorsByIndex = await loadEmbeddingsVectorsFromCache(
-      params.kv,
-      cacheProfileKey,
-      hashesByIndex,
-      currentJob.dimensions,
-    );
+    const vectorsByIndex = await loadEmbeddingsVectorsFromCache(params.kv, cacheModelKey, hashesByIndex);
     if (vectorsByIndex.some((vec) => !vec)) {
       return await failJob("Embeddings job completed but cache entries were missing.", "embeddings_job_cache_miss");
     }
@@ -3601,136 +2391,117 @@ const runEmbeddingsJobAttempt = async (params: {
       error: null,
     };
     currentJob = succeeded;
-    await updateEmbeddingsJobRecord(params.kv, params.jobKey, params.jobLookupKey, succeeded);
-    await deleteEmbeddingsJobInputs(
-      params.kv,
-      params.tokenHash,
-      succeeded.cache_profile_key,
-      succeeded.id,
-      uniqueHashes,
-    );
-    const result = buildOpenAiEmbeddingsResult(
-      succeeded.model,
-      vectorsByIndex,
-      succeeded.usage_total_tokens,
-      succeeded.encoding_format,
-    );
+    await updateEmbeddingsJobRecord(params.kv, params.jobKey, succeeded);
+    await deleteEmbeddingsJobInputs(params.kv, params.tokenHash, succeeded.id, uniqueHashes);
+    const result = buildOpenAiEmbeddingsResult(succeeded.model, vectorsByIndex, succeeded.usage_total_tokens);
     const usageTokens: UsageTokens | null = succeeded.usage_total_tokens > 0
       ? { inputTokens: succeeded.usage_total_tokens, outputTokens: 0, totalTokens: succeeded.usage_total_tokens }
       : null;
     await recordCompletionUsage(params.usageContext, usageTokens);
-    return json(200, buildEmbeddingsJobBody(succeeded, result), { "x-uos-upstream": succeeded.upstream });
+    return json(200, buildEmbeddingsJobBody(succeeded, result), { "x-ubq-upstream": succeeded.upstream });
   };
 
-  const missingBefore = await computeMissing();
-  if (missingBefore.length === 0) return await succeedJob();
+  try {
+    const missingBefore = await computeMissing();
+    if (missingBefore.length === 0) return await succeedJob();
 
-  const inputEntries = await Promise.all(
-    missingBefore.map((hash) =>
-      params.kv.get<EmbeddingsJobInputRecord>(
-        embeddingsJobInputKey(params.tokenHash, locked.cache_profile_key, locked.id, hash),
-      )
-    ),
-  );
-  const items: Array<{ hash: string; text: string }> = [];
-  for (let i = 0; i < missingBefore.length; i += 1) {
-    const hash = missingBefore[i]!;
-    const entry = inputEntries[i]!;
-    const normalized = normalizeEmbeddingsJobInputRecord(entry.value);
-    if (!normalized) {
-      return await failJob("Embeddings job input expired or was unavailable.", "embeddings_job_input_missing");
-    }
-    const text = await decryptEmbeddingsJobInput(params.tokenSeed, normalized);
-    if (text === null) {
-      return await failJob("Embeddings job input could not be decrypted.", "embeddings_job_input_decrypt_failed");
-    }
-    items.push({ hash, text });
-  }
-
-  const chunks = chunkByTokenBudget(items, EMBEDDINGS_MAX_INPUTS_PER_REQUEST, VOYAGE_RATE_LIMIT_TPM);
-  for (const chunk of chunks) {
-    if (Date.now() >= params.deadlineMs) {
-      queueRetryAfterMs = 1000;
-      break;
+    const inputEntries = await Promise.all(
+      missingBefore.map((hash) =>
+        params.kv.get<EmbeddingsJobInputRecord>(embeddingsJobInputKey(params.tokenHash, locked.id, hash))
+      ),
+    );
+    const items: Array<{ hash: string; text: string }> = [];
+    for (let i = 0; i < missingBefore.length; i += 1) {
+      const hash = missingBefore[i]!;
+      const entry = inputEntries[i]!;
+      const normalized = normalizeEmbeddingsJobInputRecord(entry.value);
+      if (!normalized) {
+        return await failJob("Embeddings job input expired or was unavailable.", "embeddings_job_input_missing");
+      }
+      const text = await decryptEmbeddingsJobInput(params.tokenSeed, normalized);
+      if (text === null) {
+        return await failJob("Embeddings job input could not be decrypted.", "embeddings_job_input_decrypt_failed");
+      }
+      items.push({ hash, text });
     }
 
-    const texts = chunk.map((item) => item.text);
-    const tokenEstimate = estimateTokenCount(texts);
-
-    const reserved = await reserveVoyageBudgetForJob(params.kv, tokenEstimate);
-    if (!reserved.ok) {
-      queueRetryAfterMs = reserved.wait_ms > 0 ? reserved.wait_ms : 1000;
-      break;
-    }
-
-    let vectors: number[][] | null = null;
-    let totalTokens: number | null = null;
-    try {
-      const upstream = await fetchVoyageEmbeddings({
-        apiKey: params.apiKey,
-        model: currentJob.upstream_model,
-        inputs: texts,
-        inputType: currentJob.input_type,
-        dimensions: currentJob.dimensions,
-        outputDtype: currentJob.output_dtype,
-        truncation: currentJob.truncation,
-        deadlineMs: params.deadlineMs,
-      });
-      vectors = upstream.vectors;
-      totalTokens = upstream.totalTokens;
-    } catch (error) {
-      const status = (error as { status?: number }).status;
-      const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
-      if (status && EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
-        queueRetryAfterMs = retryAfterMs ?? (status === 429 ? 60_000 : 1_000);
+    const chunks = chunkByTokenBudget(items, EMBEDDINGS_MAX_INPUTS_PER_REQUEST, VOYAGE_RATE_LIMIT_TPM);
+    for (const chunk of chunks) {
+      if (Date.now() >= params.deadlineMs) {
+        queueRetryAfterMs = 1000;
         break;
       }
-      const snippet = formatErrorSnippet(error);
-      const message = snippet
-        ? `Embeddings upstream request failed: ${snippet}`
-        : "Embeddings upstream request failed.";
-      return await failJob(message, "embeddings_job_upstream_error");
+
+      const texts = chunk.map((item) => item.text);
+      const tokenEstimate = estimateTokenCount(texts);
+
+      const reserved = await reserveVoyageBudgetForJob(params.kv, tokenEstimate);
+      if (!reserved.ok) {
+        queueRetryAfterMs = reserved.wait_ms > 0 ? reserved.wait_ms : 1000;
+        break;
+      }
+
+      let vectors: number[][] | null = null;
+      let totalTokens: number | null = null;
+      try {
+        const upstream = await fetchVoyageEmbeddings({
+          apiKey: params.apiKey,
+          model: currentJob.upstream_model,
+          inputs: texts,
+          deadlineMs: params.deadlineMs,
+        });
+        vectors = upstream.vectors;
+        totalTokens = upstream.totalTokens;
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
+        if (status === 429) {
+          queueRetryAfterMs = retryAfterMs ?? 60_000;
+          break;
+        }
+        const snippet = formatErrorSnippet(error);
+        const message = snippet
+          ? `Embeddings upstream request failed: ${snippet}`
+          : "Embeddings upstream request failed.";
+        return await failJob(message, "embeddings_job_upstream_error");
+      }
+
+      if (!vectors || vectors.length !== chunk.length) {
+        return await failJob("Embeddings upstream returned a size mismatch.", "embeddings_job_upstream_mismatch");
+      }
+
+      if (typeof totalTokens === "number") {
+        currentJob = { ...currentJob, usage_total_tokens: currentJob.usage_total_tokens + totalTokens };
+      }
+
+      for (let i = 0; i < chunk.length; i += 1) {
+        const item = chunk[i]!;
+        const vec = vectors[i]!;
+        await writeEmbeddingsCacheEntryBestEffort(
+          params.kv,
+          currentJob.cache_model_key,
+          item.hash,
+          vec,
+          Date.now(),
+          params.deadlineMs,
+        );
+      }
     }
 
-    if (!vectors || vectors.length !== chunk.length) {
-      return await failJob("Embeddings upstream returned a size mismatch.", "embeddings_job_upstream_mismatch");
-    }
+    const missingAfter = await computeMissing();
+    if (missingAfter.length === 0) return await succeedJob();
 
-    const wrongLengthIndex = vectors.findIndex((vector) => vector.length !== currentJob.dimensions);
-    if (wrongLengthIndex >= 0) {
-      const actualLength = vectors[wrongLengthIndex]?.length ?? 0;
-      return await failJob(
-        `Embeddings upstream returned vector length ${actualLength}; expected ${currentJob.dimensions}.`,
-        "embeddings_job_upstream_dimension_mismatch",
-      );
-    }
-
-    if (typeof totalTokens === "number") {
-      currentJob = { ...currentJob, usage_total_tokens: currentJob.usage_total_tokens + totalTokens };
-    }
-
-    for (let i = 0; i < chunk.length; i += 1) {
-      const item = chunk[i]!;
-      const vec = vectors[i]!;
-      await writeEmbeddingsCacheEntryBestEffort(
-        params.kv,
-        currentJob.cache_profile_key,
-        item.hash,
-        vec,
-        Date.now(),
-        params.deadlineMs,
-      );
-    }
+    const waitMs = queueRetryAfterMs ?? 60_000;
+    return await queueJob(waitMs);
+  } finally {
+    const elapsedMs = Date.now() - (params.deadlineMs - EMBEDDINGS_TIMEOUT_MS);
+    console.info(
+      `[ai.ubq.fi] embeddings_job request_id=${params.reqId} job_id=${params.job.id} status=${currentJob.status} ms=${elapsedMs}`,
+    );
   }
-
-  const missingAfter = await computeMissing();
-  if (missingAfter.length === 0) return await succeedJob();
-
-  const waitMs = queueRetryAfterMs ?? 60_000;
-  return await queueJob(waitMs);
 };
 
-const handleEmbeddingsJobCreateInternal = async (
+export const handleEmbeddingsJobCreate = async (
   req: Request,
   authToken: string | null,
   usageContext?: UsageContext,
@@ -3744,16 +2515,135 @@ const handleEmbeddingsJobCreateInternal = async (
     return openaiError(400, "Invalid JSON body", "invalid_request_error");
   }
 
-  const parsed = parseEmbeddingsRequest(rawBody, "uos");
-  if (!parsed.ok) {
+  const unknownKey = findUnknownKey(rawBody, EMBEDDINGS_ALLOWED_KEYS);
+  if (unknownKey) {
     await recordErrorUsage(usageContext);
-    return parsed.response;
+    return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
-  const { model, inputs, total_chars: totalChars, profile } = parsed.value;
+
+  const modelRaw = getString(rawBody.model);
+  if (!modelRaw || !modelRaw.trim()) {
+    await recordErrorUsage(usageContext);
+    return openaiError(400, "model is required and must be a non-empty string", "invalid_request_error", {
+      param: "model",
+    });
+  }
+  const model = modelRaw.trim();
+
+  const encodingFormat = parseEmbeddingsEncodingFormat(rawBody.encoding_format);
+  if (!encodingFormat.ok) {
+    await recordErrorUsage(usageContext);
+    return openaiError(400, encodingFormat.message, "invalid_request_error", { param: "encoding_format" });
+  }
+  if (encodingFormat.value !== "float") {
+    await recordErrorUsage(usageContext);
+    return openaiError(
+      400,
+      'Embeddings jobs only support encoding_format="float"',
+      "invalid_request_error",
+      { param: "encoding_format" },
+    );
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawBody, "dimensions")) {
+    await recordErrorUsage(usageContext);
+    return openaiError(400, "dimensions is not supported by this gateway", "invalid_request_error", {
+      param: "dimensions",
+    });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawBody, "user")) {
+    const user = rawBody.user;
+    if (user !== undefined && user !== null && typeof user !== "string") {
+      await recordErrorUsage(usageContext);
+      return openaiError(400, "user must be a string", "invalid_request_error", { param: "user" });
+    }
+  }
+
+  const inputRaw = rawBody.input;
+  let inputs: string[] = [];
+  if (typeof inputRaw === "string") {
+    inputs = [inputRaw];
+  } else if (Array.isArray(inputRaw)) {
+    for (const item of inputRaw) {
+      if (typeof item !== "string") {
+        await recordErrorUsage(usageContext);
+        return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
+          param: "input",
+        });
+      }
+      inputs.push(item);
+    }
+  } else {
+    await recordErrorUsage(usageContext);
+    return openaiError(400, "input must be a string or an array of strings", "invalid_request_error", {
+      param: "input",
+    });
+  }
+
+  if (inputs.length === 0) {
+    await recordErrorUsage(usageContext);
+    return openaiError(400, "input must be a non-empty string or a non-empty array", "invalid_request_error", {
+      param: "input",
+    });
+  }
+
+  if (inputs.length > EMBEDDINGS_MAX_INPUTS_PER_REQUEST) {
+    await recordErrorUsage(usageContext);
+    return openaiError(
+      400,
+      `Too many inputs: ${inputs.length} (max ${EMBEDDINGS_MAX_INPUTS_PER_REQUEST})`,
+      "invalid_request_error",
+      { param: "input" },
+    );
+  }
+
+  let totalChars = 0;
+  for (const text of inputs) {
+    const len = text.length;
+    if (len > EMBEDDINGS_MAX_CHARS_PER_INPUT) {
+      await recordErrorUsage(usageContext);
+      return openaiError(
+        400,
+        `Input too large: ${len} chars (max ${EMBEDDINGS_MAX_CHARS_PER_INPUT})`,
+        "invalid_request_error",
+        { param: "input" },
+      );
+    }
+    totalChars += len;
+    if (totalChars > EMBEDDINGS_MAX_TOTAL_CHARS) {
+      await recordErrorUsage(usageContext);
+      return openaiError(
+        400,
+        `Request too large: ${totalChars} chars total (max ${EMBEDDINGS_MAX_TOTAL_CHARS})`,
+        "invalid_request_error",
+        { param: "input" },
+      );
+    }
+  }
+
+  const resolved = resolveEmbeddingsModel(model);
+  if (!resolved) {
+    await recordErrorUsage(usageContext);
+    return openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" });
+  }
+
+  for (const text of inputs) {
+    const tokenEstimate = estimateTokens(text);
+    if (tokenEstimate > VOYAGE_RATE_LIMIT_TPM) {
+      await recordErrorUsage(usageContext);
+      return openaiError(
+        400,
+        `Input too large for embeddings provider: ~${tokenEstimate} tokens (max ${VOYAGE_RATE_LIMIT_TPM}).`,
+        "invalid_request_error",
+        { param: "input" },
+      );
+    }
+  }
 
   await recordRequestUsage(usageContext, { model, route: "embeddings.jobs.create", stream: false, reasoning: null });
 
-  const kv = await getKv();
+  const kv = await kvPromise;
   if (!kv) {
     await recordErrorUsage(usageContext);
     return openaiError(503, "Embeddings jobs require Deno KV", "server_error", { type: "server_error", param: null });
@@ -3779,15 +2669,12 @@ const handleEmbeddingsJobCreateInternal = async (
   const tokenSeed = resolveEmbeddingsJobTokenSeed(jobId, authToken, usageContext);
   const tokenHash = await sha256Hex(tokenSeed);
   const now = Date.now();
+  const cacheModelKey = model.toLowerCase();
 
   // Store encrypted inputs (no raw text) so queued jobs can be processed later without the client resending inputs.
   const inputWrites = uniqueHashes.map(async (hash) => {
     const record = await encryptEmbeddingsJobInput(tokenSeed, uniqueTextsByHash.get(hash)!);
-    await kv.set(
-      embeddingsJobInputKey(tokenHash, profile.cache_profile_key, jobId, hash),
-      record,
-      { expireIn: EMBEDDINGS_JOB_TTL_MS },
-    );
+    await kv.set(embeddingsJobInputKey(tokenHash, jobId, hash), record, { expireIn: EMBEDDINGS_JOB_TTL_MS });
   });
   await Promise.all(inputWrites);
 
@@ -3797,14 +2684,9 @@ const handleEmbeddingsJobCreateInternal = async (
     created_at_ms: now,
     updated_at_ms: now,
     model,
-    cache_profile_key: profile.cache_profile_key,
-    upstream: profile.upstream,
-    upstream_model: profile.upstream_model,
-    input_type: profile.input_type,
-    dimensions: profile.dimensions,
-    output_dtype: profile.output_dtype,
-    encoding_format: profile.encoding_format,
-    truncation: profile.truncation,
+    cache_model_key: cacheModelKey,
+    upstream: resolved.upstream,
+    upstream_model: resolved.model,
     input_hashes: hashesByIndex,
     input_count: inputs.length,
     total_chars: totalChars,
@@ -3813,23 +2695,8 @@ const handleEmbeddingsJobCreateInternal = async (
     locked_until_ms: null,
     error: null,
   };
-  const jobKey = embeddingsJobKey(tokenHash, profile.cache_profile_key, jobId);
-  const jobLookupKey = embeddingsJobLookupKey(tokenHash, jobId);
-  const persisted = await kv.atomic()
-    .set(jobKey, job, { expireIn: EMBEDDINGS_JOB_TTL_MS })
-    .set(
-      jobLookupKey,
-      { cache_profile_key: profile.cache_profile_key } satisfies EmbeddingsJobLookupRecord,
-      { expireIn: EMBEDDINGS_JOB_TTL_MS },
-    )
-    .commit();
-  if (!persisted.ok) {
-    await recordErrorUsage(usageContext);
-    return openaiError(502, "Embeddings job could not be persisted.", "server_error", {
-      type: "server_error",
-      param: null,
-    });
-  }
+  const jobKey = embeddingsJobKey(tokenHash, jobId);
+  await kv.set(jobKey, job, { expireIn: EMBEDDINGS_JOB_TTL_MS });
 
   const deadlineMs = startedAtMs + EMBEDDINGS_TIMEOUT_MS;
   const entry = await kv.get<EmbeddingsJobRecord>(jobKey);
@@ -3849,7 +2716,6 @@ const handleEmbeddingsJobCreateInternal = async (
     tokenSeed,
     tokenHash,
     jobKey,
-    jobLookupKey,
     jobEntry: entry,
     job: value,
     deadlineMs,
@@ -3857,17 +2723,7 @@ const handleEmbeddingsJobCreateInternal = async (
   });
 };
 
-export const handleEmbeddingsJobCreate = async (
-  req: Request,
-  authToken: string | null,
-  usageContext?: UsageContext,
-): Promise<Response> =>
-  await runWithResponseTelemetry(
-    usageContext,
-    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsJobCreateInternal(req, authToken, context)),
-  );
-
-const handleEmbeddingsJobGetInternal = async (
+export const handleEmbeddingsJobGet = async (
   _req: Request,
   authToken: string | null,
   jobId: string,
@@ -3876,7 +2732,7 @@ const handleEmbeddingsJobGetInternal = async (
   const requestId = crypto.randomUUID();
   const startedAtMs = Date.now();
 
-  const kv = await getKv();
+  const kv = await kvPromise;
   if (!kv) {
     await recordErrorUsage(usageContext);
     return openaiError(503, "Embeddings jobs require Deno KV", "server_error", { type: "server_error", param: null });
@@ -3884,23 +2740,27 @@ const handleEmbeddingsJobGetInternal = async (
 
   const preferredSeed = resolveEmbeddingsJobTokenSeed(jobId, authToken, usageContext);
   const preferredHash = await sha256Hex(preferredSeed);
-  const tokenSeed = preferredSeed;
-  const tokenHash = preferredHash;
-  const jobLookupKey = embeddingsJobLookupKey(preferredHash, jobId);
-  const lookupEntry = await kv.get<EmbeddingsJobLookupRecord>(jobLookupKey);
-  const cacheProfileKey = isRecord(lookupEntry.value) ? getString(lookupEntry.value.cache_profile_key) : null;
-  if (!cacheProfileKey) {
-    await recordErrorUsage(usageContext);
-    return openaiError(404, "Embeddings job not found", "not_found", {
-      type: "invalid_request_error",
-      param: null,
-    });
+  let tokenSeed = preferredSeed;
+  let tokenHash = preferredHash;
+  let jobKey = embeddingsJobKey(preferredHash, jobId);
+  let entry = await kv.get<EmbeddingsJobRecord>(jobKey);
+
+  // Backwards compatibility: older versions keyed jobs to the raw bearer token.
+  if (!entry.value && authToken && preferredSeed !== authToken) {
+    const legacySeed = authToken;
+    const legacyHash = await sha256Hex(legacySeed);
+    const legacyKey = embeddingsJobKey(legacyHash, jobId);
+    const legacyEntry = await kv.get<EmbeddingsJobRecord>(legacyKey);
+    if (legacyEntry.value) {
+      tokenSeed = legacySeed;
+      tokenHash = legacyHash;
+      jobKey = legacyKey;
+      entry = legacyEntry;
+    }
   }
-  const jobKey = embeddingsJobKey(preferredHash, cacheProfileKey, jobId);
-  const entry = await kv.get<EmbeddingsJobRecord>(jobKey);
 
   const job = entry.value;
-  if (!job || job.cache_profile_key !== cacheProfileKey) {
+  if (!job) {
     await recordErrorUsage(usageContext);
     return openaiError(404, "Embeddings job not found", "not_found", { type: "invalid_request_error", param: null });
   }
@@ -3913,15 +2773,10 @@ const handleEmbeddingsJobGetInternal = async (
   });
 
   if (job.status === "succeeded") {
-    const vectorsByIndex = await loadEmbeddingsVectorsFromCache(
-      kv,
-      job.cache_profile_key,
-      job.input_hashes,
-      job.dimensions,
-    );
+    const vectorsByIndex = await loadEmbeddingsVectorsFromCache(kv, job.cache_model_key, job.input_hashes);
     const result = vectorsByIndex.some((vec) => !vec)
       ? null
-      : buildOpenAiEmbeddingsResult(job.model, vectorsByIndex, job.usage_total_tokens, job.encoding_format);
+      : buildOpenAiEmbeddingsResult(job.model, vectorsByIndex, job.usage_total_tokens);
     if (!result) {
       // Cache misses are unexpected (cache TTL is longer than job TTL), but if it happens
       // there's nothing the client can do besides resubmitting the job.
@@ -3937,14 +2792,14 @@ const handleEmbeddingsJobGetInternal = async (
           code: "embeddings_job_result_missing",
         },
       };
-      await updateEmbeddingsJobRecord(kv, jobKey, jobLookupKey, failed);
-      return json(200, buildEmbeddingsJobBody(failed, null), { "x-uos-upstream": failed.upstream });
+      await updateEmbeddingsJobRecord(kv, jobKey, failed);
+      return json(200, buildEmbeddingsJobBody(failed, null), { "x-ubq-upstream": failed.upstream });
     }
-    return json(200, buildEmbeddingsJobBody(job, result), { "x-uos-upstream": job.upstream });
+    return json(200, buildEmbeddingsJobBody(job, result), { "x-ubq-upstream": job.upstream });
   }
 
   if (job.status === "failed") {
-    return json(200, buildEmbeddingsJobBody(job, null), { "x-uos-upstream": job.upstream });
+    return json(200, buildEmbeddingsJobBody(job, null), { "x-ubq-upstream": job.upstream });
   }
 
   const apiKey = await readVoyageApiKey(kv);
@@ -3966,28 +2821,18 @@ const handleEmbeddingsJobGetInternal = async (
     tokenSeed,
     tokenHash,
     jobKey,
-    jobLookupKey,
     jobEntry: entry,
     job,
     deadlineMs,
     usageContext,
   });
 
+  const elapsedMs = Date.now() - startedAtMs;
+  console.info(`[ai.ubq.fi] embeddings_job_get request_id=${requestId} job_id=${jobId} ms=${elapsedMs}`);
   return response;
 };
 
-export const handleEmbeddingsJobGet = async (
-  req: Request,
-  authToken: string | null,
-  jobId: string,
-  usageContext?: UsageContext,
-): Promise<Response> =>
-  await runWithResponseTelemetry(
-    usageContext,
-    async (context) => withVoyageUpstreamHeader(await handleEmbeddingsJobGetInternal(req, authToken, jobId, context)),
-  );
-
-const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
+export const handleChatCompletions = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;
   if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
@@ -4023,7 +2868,6 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     modelRaw = defaultModel;
   }
   const model = normalizeModelForCodex(modelRaw);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.model = modelRaw;
   const modelMetadata = await getCodexModelMetadata(model);
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
@@ -4088,19 +2932,12 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
 
   const stream = Boolean(body.stream);
   const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.reasoning = reasoningLabel;
   await recordRequestUsage(usageContext, {
     model: modelRaw,
     route: "chat.completions",
     stream,
     reasoning: reasoningLabel,
   });
-  // One timer covers both provider dispatch/headers and the first SSE event.
-  // It is cleared immediately after preflight so active streams get their own
-  // renewable inactivity deadline rather than an 85-second absolute cutoff.
-  const streamFirstEventDeadline = stream ? createStreamFirstEventDeadline(req.signal) : null;
-  const requestInferenceSignal = streamFirstEventDeadline?.signal ?? inferenceSignal(req);
-  const clearStreamFirstEventDeadline = (): void => streamFirstEventDeadline?.clear();
 
   let routed: RoutedResponsesUpstream;
   try {
@@ -4111,96 +2948,42 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       reasoning: reasoningLabel,
       usageContext,
       clientVersion: modelMetadata.snapshot?.client_version,
-      signal: requestInferenceSignal,
+      signal: req.signal,
     });
   } catch (error) {
-    clearStreamFirstEventDeadline();
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
-    return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
+    return toCodexErrorResponse(error);
   }
   const upstream = routed.response;
-  const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
-  const confirmCodexProbe = (): void => {
-    if (routed.provider === "chatgpt_codex") void markCodexResponseCompleted(upstream);
-  };
 
   if (routed.gatewayResponse) {
-    clearStreamFirstEventDeadline();
-    recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
     return upstream;
   }
   if (!upstream.ok) {
-    clearStreamFirstEventDeadline();
-    lifecycle.terminal("response.failed");
-    recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
-    const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
-    return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    if (routed.paidFallback) await reconcileApiKeyPaidFallbacks(routed.paidFallback.key_id);
+    return await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
   }
 
   if (!upstream.body) {
-    clearStreamFirstEventDeadline();
-    lifecycle.ambiguous();
-    recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
   }
 
-  let preflight: PreflightedResponsesStream;
-  try {
-    preflight = await preflightResponsesStream(upstream.body, requestInferenceSignal);
-    clearStreamFirstEventDeadline();
-  } catch (error) {
-    clearStreamFirstEventDeadline();
-    const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType === "cancelled") lifecycle.cancelled();
-    else lifecycle.ambiguous();
-    await recordErrorUsage(usageContext);
-    return streamPreflightFailureResponse(terminalType, routed.provider);
-  }
-  recordFirstSseEvent(usageContext);
-  if (preflight.first.terminal) recordStreamTerminal(usageContext);
   const response = stream
-    ? streamChatCompletions(
-      preflight,
-      model,
-      usageContext,
-      routed.provider,
-      lifecycle,
-      requestInferenceSignal,
-      req.signal,
-      confirmCodexProbe,
-    )
-    : await completeChatCompletions(
-      preflight,
-      model,
-      usageContext,
-      routed.provider,
-      lifecycle,
-      requestInferenceSignal,
-      req.signal,
-      confirmCodexProbe,
-    );
+    ? streamChatCompletions(upstream, model, usageContext, routed.provider, routed.paidFallback)
+    : await completeChatCompletions(upstream, model, usageContext, routed.provider, routed.paidFallback);
   return withUosWarning(response, warnings);
 };
 
-export const handleChatCompletions = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
-  await runWithResponseTelemetry(
-    usageContext,
-    (context) => handleChatCompletionsInternal(req, context),
-  );
-
-const handleResponsesInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
+export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const rawBody = (await readJsonBody(req)) as ResponsesRequest | null;
   if (!rawBody || !isRecord(rawBody)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
   const rawRecord = rawBody as Record<string, unknown>;
-  const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS, CODEX_RESPONSES_EXTENSION_KEYS);
+  const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS);
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
   }
@@ -4219,10 +3002,6 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       );
     }
   }
-  // `client_metadata` is a gateway compatibility extension and is removed
-  // from the upstream payload. Derive its hash before that removal; raw IDs
-  // remain request-local and are never persisted or logged.
-  const affinityKey = await deriveCodexAffinityKey(rawBody);
   const warnings = buildIgnoredWarnings(
     rawRecord,
     new Set([
@@ -4257,7 +3036,6 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     modelRaw = defaultModel;
   }
   const model = normalizeModelForCodex(modelRaw);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.model = modelRaw;
   const modelMetadata = await getCodexModelMetadata(model);
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
@@ -4343,7 +3121,6 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const modelReasoning = modelMetadata.reasoning;
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.reasoning = reasoningLabel;
 
   let reasoningValue = normalizeReasoningParamForCodex(reasoning.value, modelReasoning);
   if (reasoningValue === undefined && reasoning.value === undefined) {
@@ -4372,9 +3149,6 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     stream: clientWantsStream,
     reasoning: reasoningLabel,
   });
-  const streamFirstEventDeadline = clientWantsStream ? createStreamFirstEventDeadline(req.signal) : null;
-  const requestInferenceSignal = streamFirstEventDeadline?.signal ?? inferenceSignal(req);
-  const clearStreamFirstEventDeadline = (): void => streamFirstEventDeadline?.clear();
 
   let routed: RoutedResponsesUpstream;
   try {
@@ -4385,90 +3159,43 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       reasoning: reasoningLabel,
       usageContext,
       clientVersion: modelMetadata.snapshot?.client_version,
-      signal: requestInferenceSignal,
-      affinityKey,
+      signal: req.signal,
     });
   } catch (error) {
-    clearStreamFirstEventDeadline();
     console.error("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
-    return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
+    return toCodexErrorResponse(error);
   }
   const upstream = routed.response;
-  const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
-  const confirmCodexProbe = (): void => {
-    if (routed.provider === "chatgpt_codex") void markCodexResponseCompleted(upstream);
-  };
 
   if (routed.gatewayResponse) {
-    clearStreamFirstEventDeadline();
-    recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
     return upstream;
   }
   if (!upstream.ok) {
-    clearStreamFirstEventDeadline();
-    lifecycle.terminal("response.failed");
-    recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
-    const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
-    return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    if (routed.paidFallback) await reconcileApiKeyPaidFallbacks(routed.paidFallback.key_id);
+    return await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
   }
 
   if (clientWantsStream) {
     if (!upstream.body) {
-      clearStreamFirstEventDeadline();
-      lifecycle.ambiguous();
-      recordStreamTerminalType(usageContext, "error");
       await recordErrorUsage(usageContext);
-      return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
-        headers: { "x-uos-upstream": routed.provider },
-      });
+      return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
     }
-    let preflight: PreflightedResponsesStream;
-    try {
-      preflight = await preflightResponsesStream(upstream.body, requestInferenceSignal);
-      clearStreamFirstEventDeadline();
-    } catch (error) {
-      clearStreamFirstEventDeadline();
-      const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
-      recordStreamTerminalType(usageContext, terminalType);
-      if (terminalType === "cancelled") lifecycle.cancelled();
-      else lifecycle.ambiguous();
-      await recordErrorUsage(usageContext);
-      return streamPreflightFailureResponse(terminalType, routed.provider);
-    }
-    recordFirstSseEvent(usageContext);
-    if (preflight.first.terminal) recordStreamTerminal(usageContext);
     const headers = new Headers(upstream.headers);
-    // The gateway always emits the Responses wire format as SSE. Some
-    // compatible upstreams omit (or mislabel) this header; preserve the
-    // stream contract so handler-level terminal logging and clients consume
-    // it as an event stream.
-    headers.set("Content-Type", "text/event-stream");
-    headers.set("x-uos-upstream", routed.provider);
-    const responseBody = proxyResponsesStreamIterator(preflight.iterator, {
-      signal: requestInferenceSignal,
-      downstreamSignal: req.signal,
-      onEvent: (event) => {
-        if (event.type === "response.completed") confirmCodexProbe();
-        lifecycle.terminal(event.type);
-        recordResponsesTerminal(event, usageContext);
-      },
-      onFailure: (error) => {
-        const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
-        recordStreamTerminalType(usageContext, terminalType);
-        if (terminalType === "cancelled") lifecycle.cancelled();
-        else lifecycle.ambiguous();
-        void recordErrorUsage(usageContext);
-      },
-      onCancel: () => {
-        recordStreamTerminalType(usageContext, "cancelled");
-        lifecycle.cancelled();
-        void recordErrorUsage(usageContext);
-      },
-    }, preflight.first);
-    const response = new Response(responseBody, {
+    headers.set("x-ubq-upstream", routed.provider);
+    if (usageContext?.keyId || usageContext?.kernelRepo || usageContext?.kernelOrg) {
+      const [clientStream, analyticsStream] = upstream.body.tee();
+      void collectResponsesStreamUsage(analyticsStream, usageContext, routed.paidFallback);
+      const response = new Response(clientStream, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers,
+      });
+      return withUosWarning(response, warnings);
+    }
+    const response = new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers,
@@ -4477,71 +3204,38 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
 
   if (!upstream.body) {
-    lifecycle.ambiguous();
-    recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body");
   }
 
   let finalResponse: Record<string, unknown> | null = null;
-  let finalEventType: string | null = null;
   let outputText = "";
   const outputItems: Record<string, unknown>[] = [];
-  try {
-    for await (const event of readResponsesStream(upstream.body, requestInferenceSignal)) {
-      recordFirstSseEvent(usageContext);
-      const ev = event.value;
-      if (event.terminal) {
-        if (event.type === "response.completed") confirmCodexProbe();
-        lifecycle.terminal(event.type);
-        recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
-      }
-      if (event.type === "response.output_text.delta") {
-        outputText += getString(ev.delta) ?? "";
-        continue;
-      }
-      if (event.type === "response.output_item.done" && isRecord(ev.item)) {
-        outputItems.push(ev.item);
-        continue;
-      }
-      if (
-        (event.type === "response.completed" || event.type === "response.failed" ||
-          event.type === "response.incomplete") &&
-        isRecord(ev.response)
-      ) {
-        finalResponse = ev.response;
-        finalEventType = event.type;
-        break;
-      }
+  for await (const ev of parseSseEvents(upstream.body)) {
+    if (!isRecord(ev)) continue;
+    const type = getString(ev.type);
+    if (type === "response.output_text.delta") {
+      outputText += getString(ev.delta) ?? "";
+      continue;
     }
-  } catch (error) {
-    const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType === "cancelled") lifecycle.cancelled();
-    else lifecycle.ambiguous();
-    finalResponse = null;
+    if (type === "response.output_item.done" && isRecord(ev.item)) {
+      outputItems.push(ev.item);
+      continue;
+    }
+    if (type === "response.completed" && isRecord(ev.response)) {
+      finalResponse = ev.response;
+      break;
+    }
   }
   if (!finalResponse) {
-    lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error");
   }
   finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
   finalResponse = withAccumulatedResponseText(finalResponse, outputText);
   const usageTokens = extractUsageTokens(finalResponse.usage);
-  if (finalEventType === "response.failed" || finalEventType === "response.incomplete") {
-    await recordErrorUsage(usageContext);
-  } else await recordCompletionUsage(usageContext, usageTokens);
-  const response = json(200, finalResponse, { "x-uos-upstream": routed.provider });
+  await recordCompletionUsage(usageContext, usageTokens);
+  if (routed.paidFallback) await reconcileApiKeyPaidFallbacks(routed.paidFallback.key_id);
+  const response = json(200, finalResponse, { "x-ubq-upstream": routed.provider });
   return withUosWarning(response, warnings);
 };
-
-export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
-  await runWithResponseTelemetry(
-    usageContext,
-    (context) => handleResponsesInternal(req, context),
-  );
