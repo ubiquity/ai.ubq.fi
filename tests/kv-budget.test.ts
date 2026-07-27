@@ -977,6 +977,16 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       downstream_drain_ms: null,
       model: MODEL,
       reasoning: "medium",
+      input_tokens: 1,
+      cached_input_tokens: null,
+      cache_write_input_tokens: null,
+      output_tokens: 1,
+      total_tokens: 2,
+      usage_observed: true,
+      usage_telemetry_status: "reported",
+      prompt_cache_key_present: false,
+      prompt_cache_mode: "unspecified",
+      explicit_breakpoint_count: 0,
       key_id: "telemetry",
       fallback_reason: null,
       stream_terminal_type: "response.completed",
@@ -1070,8 +1080,10 @@ Deno.test("streaming inference emits one terminal log only after the response bo
     assert.equal(terminal.reasoning, "medium");
     assert.equal(terminal.stream_terminal_type, "response.completed");
     assertOrderedTerminalTimings(terminal, true);
-    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "input_tokens"), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "output_tokens"), false);
+    assert.equal(terminal.input_tokens, 3);
+    assert.equal(terminal.output_tokens, 4);
+    assert.equal(terminal.total_tokens, 7);
+    assert.equal(terminal.usage_telemetry_status, "reported");
     assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
   } finally {
     console.info = originalInfo;
@@ -1654,8 +1666,10 @@ Deno.test("KV budget: malformed tokens are rejected without KV and policy expiry
     assert.equal(terminal.provider, "gateway");
     assert.equal(terminal.key_id, null);
     assert.equal(terminal.request_id, malformedResponse.headers.get("x-uos-request-id"));
-    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "input_tokens"), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "output_tokens"), false);
+    assert.equal(terminal.input_tokens, null);
+    assert.equal(terminal.output_tokens, null);
+    assert.equal(terminal.total_tokens, null);
+    assert.equal(terminal.usage_telemetry_status, "missing");
   } finally {
     console.info = originalInfo;
   }

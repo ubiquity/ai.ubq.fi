@@ -288,14 +288,17 @@ export type ResponsesRequest = Readonly<{
   stream?: unknown;
 }>;
 
+export type PromptCacheBreakpoint = Readonly<{ mode: "explicit" }>;
+
 export type MessageContentItem = Readonly<
-  | { type: "input_text"; text: string }
+  | { type: "input_text"; text: string; prompt_cache_breakpoint?: PromptCacheBreakpoint }
   | { type: "output_text"; text: string }
   | {
     type: "input_image";
     image_url?: string;
     file_id?: string;
     detail?: "auto" | "low" | "high" | "original" | null;
+    prompt_cache_breakpoint?: PromptCacheBreakpoint;
   }
   | {
     type: "input_file";
@@ -303,6 +306,7 @@ export type MessageContentItem = Readonly<
     file_data?: string;
     file_url?: string;
     filename?: string | null;
+    prompt_cache_breakpoint?: PromptCacheBreakpoint;
   }
 >;
 
