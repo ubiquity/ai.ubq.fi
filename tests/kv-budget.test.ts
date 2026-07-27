@@ -10,6 +10,9 @@ if (typeof Deno.KvU64 !== "function") {
 const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
 const textEncoder = new TextEncoder();
 
+const kvFingerprint = (value: unknown): string =>
+  JSON.stringify(value, (_key, item) => typeof item === "bigint" ? `${item}n` : item);
+
 const encodeBase64Url = (bytes: Uint8Array): string => {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -27,15 +30,46 @@ const toPublicKeyPem = (spki: Uint8Array): string => {
 
 class CountingKv {
   readonly values = new Map<string, unknown>();
+  private readonly versions = new Map<string, { fingerprint: string; revision: number }>();
+  private nextRevision = 1;
   reads = 0;
   readUnits = 0;
   writes = 0;
   sums = 0;
   sumCommitAttempts = 0;
   failNextSumCommits = 0;
+  failNextCommits = 0;
+  failApiKeyV3Reads = false;
   sumCommitDelayMs = 0;
   retries = 0;
+  listCalls = 0;
   readonly readKeys: Deno.KvKey[] = [];
+
+  private versionstamp(key: Deno.KvKey): string | null {
+    const encoded = encodeKey(key);
+    if (!this.values.has(encoded)) return null;
+    const fingerprint = kvFingerprint(this.values.get(encoded));
+    const existing = this.versions.get(encoded);
+    if (!existing || existing.fingerprint !== fingerprint) {
+      const revision = this.nextRevision++;
+      this.versions.set(encoded, { fingerprint, revision });
+      return String(revision).padStart(20, "0");
+    }
+    return String(existing.revision).padStart(20, "0");
+  }
+
+  private write(key: Deno.KvKey, value: unknown): void {
+    const encoded = encodeKey(key);
+    this.values.set(encoded, value);
+    this.versions.set(encoded, { fingerprint: kvFingerprint(value), revision: this.nextRevision++ });
+  }
+
+  private remove(key: Deno.KvKey): void {
+    const encoded = encodeKey(key);
+    this.values.delete(encoded);
+    this.versions.delete(encoded);
+    this.nextRevision += 1;
+  }
 
   resetCounts(): void {
     this.reads = 0;
@@ -44,12 +78,19 @@ class CountingKv {
     this.sums = 0;
     this.sumCommitAttempts = 0;
     this.failNextSumCommits = 0;
+    this.failNextCommits = 0;
     this.sumCommitDelayMs = 0;
     this.retries = 0;
+    this.listCalls = 0;
     this.readKeys.length = 0;
   }
 
   get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+    if (
+      this.failApiKeyV3Reads && key[0] === "uos_ai" && key[1] === "api_key_usage" && key[2] === "v3"
+    ) {
+      return Promise.reject(new Error("injected API-key V3 ledger read failure"));
+    }
     this.reads += 1;
     this.readKeys.push(key);
     const value = this.values.get(encodeKey(key)) as T | undefined;
@@ -61,23 +102,24 @@ class CountingKv {
     return Promise.resolve({
       key,
       value: value ?? null,
-      versionstamp: value === undefined ? null : "00000000000000000001",
+      versionstamp: this.versionstamp(key),
     } as Deno.KvEntryMaybe<T>);
   }
 
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
-    this.values.set(encodeKey(key), value);
+    this.write(key, value);
     this.writes += 1;
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
   }
 
   delete(key: Deno.KvKey): Promise<void> {
-    this.values.delete(encodeKey(key));
+    this.remove(key);
     this.writes += 1;
     return Promise.resolve();
   }
 
   list<T>(selector: Deno.KvListSelector): Deno.KvListIterator<T> {
+    this.listCalls += 1;
     const prefix = "prefix" in selector ? selector.prefix : [];
     const entries = [...this.values].filter(([encoded]) => {
       const key = JSON.parse(encoded) as Deno.KvKey;
@@ -92,13 +134,17 @@ class CountingKv {
   }
 
   atomic(): Deno.AtomicOperation {
+    const checks: Deno.KvEntryMaybe<unknown>[] = [];
     const mutations: Array<
       | { kind: "set"; key: Deno.KvKey; value: unknown }
       | { kind: "delete"; key: Deno.KvKey }
       | { kind: "sum"; key: Deno.KvKey; value: bigint }
     > = [];
     const operation = {
-      check: () => operation,
+      check: (entry: Deno.KvEntryMaybe<unknown>) => {
+        checks.push(entry);
+        return operation;
+      },
       set: (key: Deno.KvKey, value: unknown) => {
         mutations.push({ kind: "set", key, value });
         return operation;
@@ -112,6 +158,15 @@ class CountingKv {
         return operation;
       },
       commit: async () => {
+        if (this.failNextCommits > 0) {
+          this.failNextCommits -= 1;
+          return { ok: false, versionstamp: null };
+        }
+        for (const entry of checks) {
+          if (this.versionstamp(entry.key) !== entry.versionstamp) {
+            return { ok: false, versionstamp: null };
+          }
+        }
         const hasSum = mutations.some((mutation) => mutation.kind === "sum");
         if (hasSum) {
           this.sumCommitAttempts += 1;
@@ -125,11 +180,11 @@ class CountingKv {
         }
         for (const mutation of mutations) {
           const encoded = encodeKey(mutation.key);
-          if (mutation.kind === "delete") this.values.delete(encoded);
-          else if (mutation.kind === "set") this.values.set(encoded, mutation.value);
+          if (mutation.kind === "delete") this.remove(mutation.key);
+          else if (mutation.kind === "set") this.write(mutation.key, mutation.value);
           else {
             const current = this.values.get(encoded) as Deno.KvU64 | undefined;
-            this.values.set(encoded, new Deno.KvU64((current?.value ?? 0n) + mutation.value));
+            this.write(mutation.key, new Deno.KvU64((current?.value ?? 0n) + mutation.value));
             this.sums += 1;
           }
           this.writes += 1;
@@ -147,12 +202,18 @@ const kv = new CountingKv();
 const { default: handler } = await import("../src/handler.ts");
 const { handleResponses } = await import("../src/openai.ts");
 const {
+  API_KEY_USAGE_V3_REQUEST_PREFIX,
+  ApiKeyQuotaDispatchError,
   apiKeyPolicyFromHashRecord,
-  apiKeyUsageV2Key,
+  apiKeyUsageV3RequestKey,
+  apiKeyUsageV3WindowKey,
   authenticateApiKeyToken,
+  makeApiKeyUsageWindowV3,
+  reserveApiKeyUsageV3,
   invalidateApiKeyPolicy,
   resetApiKeyPolicyCacheForTest,
 } = await import("../src/api_key_policy.ts");
+const { kernelOrgWindowKey } = await import("../src/kernel_quota_v2.ts");
 const {
   loadRuntimeConfig,
   RUNTIME_CONFIG_CACHE_TTL_MS,
@@ -204,6 +265,7 @@ const seedKey = async (token: string, id: string, limit: number) => {
     usage_requests: 0,
     usage_reset_at_ms: now + 60_000,
     window_ms: 60_000,
+    usage_quota_version: 3 as const,
     paid_fallback_enabled: false,
     paid_fallback_limit_microcredits: 0,
     paid_fallback_spent_microcredits: 0,
@@ -224,6 +286,7 @@ const seedPaidFallbackKey = async (token: string, id: string) => {
     usage_requests: 0,
     usage_reset_at_ms: resetAtMs,
     window_ms: 60_000,
+    usage_quota_version: 3 as const,
     paid_fallback_enabled: true,
     paid_fallback_limit_microcredits: 1_000_000,
     paid_fallback_spent_microcredits: 0,
@@ -243,6 +306,7 @@ const seedPaidFallbackKey = async (token: string, id: string) => {
     paid_fallback_max_exposure_microcredits: { [MODEL]: 250_000 },
     paid_fallback_pricing_checked_at_ms: Date.now(),
   });
+  return { hash, record: { id, ...policy } };
 };
 
 const request = (token: string): Request =>
@@ -293,6 +357,33 @@ const sse = (): Response =>
     { status: 200, headers: { "Content-Type": "text/event-stream" } },
   );
 
+const usageWindow = (
+  policy: NonNullable<ReturnType<typeof apiKeyPolicyFromHashRecord>>,
+): { committed_requests: number; reserved_requests: number; window_reset_at_ms: number } => {
+  const value = kv.values.get(encodeKey(apiKeyUsageV3WindowKey(policy)));
+  assert.ok(value, "V3 aggregate must exist");
+  const window = value as { committed_requests: number; reserved_requests: number; window_reset_at_ms: number };
+  return {
+    committed_requests: window.committed_requests,
+    reserved_requests: window.reserved_requests,
+    window_reset_at_ms: window.window_reset_at_ms,
+  };
+};
+
+const prepareApiKeyInference = async (tokenDigit: string, keyId: string, limit: number) => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
+  const token = `u_${tokenDigit.repeat(64)}`;
+  const { hash, record } = await seedKey(token, keyId, limit);
+  const policy = apiKeyPolicyFromHashRecord(hash, record, Date.now());
+  assert.ok(policy);
+  return { token, hash, record, policy };
+};
+
 const requiredTerminalTiming = (terminal: Record<string, unknown>, field: string): number => {
   const value = terminal[field];
   if (typeof value !== "number") assert.fail(`${field} must be a number`);
@@ -323,164 +414,232 @@ const assertOrderedTerminalTimings = (
   assert.ok(ordered[3]! + downstreamDrain <= ordered[4]!);
 };
 
-Deno.test("KV budget: warm unlimited inference performs zero KV operations", async () => {
-  kv.values.clear();
-  resetApiKeyPolicyCacheForTest();
-  resetRuntimeConfigCacheForTest();
-  resetCodexAuthCacheForTest();
-  kv.values.set(encodeKey(["uos_ai", "runtime_config", "v2"]), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
-  const token = `u_${"1".repeat(64)}`;
-  await seedKey(token, "unlimited", -1);
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(sse());
-  try {
-    kv.resetCounts();
-    assert.equal((await handler(request(token))).status, 200);
-    assert.ok(kv.reads <= 4, `cold inference used ${kv.reads} reads`);
-    assert.ok(kv.readUnits <= 4, `cold inference used ${kv.readUnits} 4KiB read units`);
-
-    kv.resetCounts();
-    assert.equal((await handler(request(token))).status, 200);
-    assert.deepEqual({ reads: kv.reads, writes: kv.writes }, { reads: 0, writes: 0 });
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-Deno.test("KV budget: warm bounded inference reads once and atomically sums once", async () => {
-  const token = `u_${"2".repeat(64)}`;
-  const { hash, record } = await seedKey(token, "bounded", 100);
-  resetApiKeyPolicyCacheForTest();
-  const policy = apiKeyPolicyFromHashRecord(hash, record, now);
-  assert.ok(policy);
-  kv.values.set(encodeKey(apiKeyUsageV2Key(policy)), new Deno.KvU64(0n));
+Deno.test("V3 dispatch ledger commits unlimited API-key requests exactly once", async () => {
+  const { token, policy } = await prepareApiKeyInference("1", "unlimited", -1);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () => Promise.resolve(sse());
   try {
     assert.equal((await handler(request(token))).status, 200);
-    kv.resetCounts();
     assert.equal((await handler(request(token))).status, 200);
-    assert.deepEqual({ reads: kv.reads, writes: kv.writes, sums: kv.sums, retries: kv.retries }, {
-      reads: 1,
-      writes: 1,
-      sums: 1,
-      retries: 0,
+    assert.deepEqual(usageWindow(policy), {
+      committed_requests: 2,
+      reserved_requests: 0,
+      window_reset_at_ms: policy.usage_reset_at_ms,
     });
-
-    kv.resetCounts();
-    await Promise.all(Array.from({ length: 20 }, () => handler(request(token))));
-    assert.equal(kv.retries, 0);
-    assert.equal(kv.sums, 20);
-    assert.equal((kv.values.get(encodeKey(apiKeyUsageV2Key(policy))) as Deno.KvU64).value, 22n);
+    assert.equal(
+      [...kv.values.keys()].some((key) => key.includes('"api_key_usage","v2"')),
+      false,
+      "runtime inference must not write V2 counters",
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("completed nonstream inference survives one failed quota increment attempt", async () => {
-  kv.values.clear();
-  resetApiKeyPolicyCacheForTest();
-  resetRuntimeConfigCacheForTest();
-  resetCodexAuthCacheForTest();
-  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
-  const token = `u_${"a".repeat(64)}`;
-  const { hash, record } = await seedKey(token, "failed-nonstream-accounting", 100);
-  const policy = apiKeyPolicyFromHashRecord(hash, record, now);
-  assert.ok(policy);
-  const usageKey = apiKeyUsageV2Key(policy);
-  kv.values.set(encodeKey(usageKey), new Deno.KvU64(0n));
+Deno.test("V3 unlimited concurrent reservations avoid local CAS exhaustion and lease scans", async () => {
+  const { policy } = await prepareApiKeyInference("9", "unlimited-concurrent", -1);
+  const concurrency = 100;
+  kv.resetCounts();
 
+  const admissions = await Promise.all(
+    Array.from(
+      { length: concurrency },
+      (_, index) =>
+        reserveApiKeyUsageV3(policy, `unlimited-concurrent-${index}`, "responses", {
+          kv: kv as unknown as Deno.Kv,
+        }),
+    ),
+  );
+  const reservations = admissions.map((admission) => {
+    if (!admission.ok) throw new Error(`unexpected quota admission status ${admission.response.status}`);
+    return admission.reservation;
+  });
+  assert.equal(reservations.length, concurrency);
+
+  await Promise.all(reservations.map((reservation) => reservation.beforeProviderDispatch("yunwu")));
+
+  assert.deepEqual(usageWindow(policy), {
+    committed_requests: concurrency,
+    reserved_requests: 0,
+    window_reset_at_ms: policy.usage_reset_at_ms,
+  });
+  assert.equal(kv.listCalls, 0, "unlimited admission must not eagerly scan reservation leases");
+});
+
+Deno.test("V3 reservations release validation failures before any provider dispatch", async () => {
+  const { token, policy } = await prepareApiKeyInference("2", "release-before-dispatch", 1);
   const originalFetch = globalThis.fetch;
-  const originalWarn = console.warn;
-  const warnings: unknown[][] = [];
-  globalThis.fetch = () => Promise.resolve(sse());
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args);
-    throw new Error("injected logger failure");
+  let fetchCalls = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    return Promise.resolve(sse());
   };
   try {
-    kv.resetCounts();
-    kv.failNextSumCommits = 1;
-    const response = await handler(request(token));
-    assert.equal(response.status, 200);
-    const payload = await response.json() as { model?: string };
-    assert.equal(payload.model, MODEL);
-    assert.equal(kv.sumCommitAttempts, 1, "quota accounting retried after its terminal failure");
-    assert.equal(kv.sums, 0);
-    assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 0n);
-
-    const accountingWarnings = warnings.filter((entry) => entry[0] === "[ai.ubq.fi] quota_accounting_failed");
-    assert.equal(accountingWarnings.length, 1);
-    assert.deepEqual(JSON.parse(String(accountingWarnings[0]?.[1])), {
-      route: "responses",
-      key_id: "failed-nonstream-accounting",
-      request_id: response.headers.get("x-uos-request-id"),
-      errors: ["api_key: injected API-key usage sum failure"],
+    const invalid = new Request("https://ai.ubq.fi/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ input: 42 }),
     });
+    assert.equal((await handler(invalid)).status, 400);
+    assert.equal(fetchCalls, 0);
+    assert.deepEqual(usageWindow(policy), {
+      committed_requests: 0,
+      reserved_requests: 0,
+      window_reset_at_ms: policy.usage_reset_at_ms,
+    });
+    const released = [...kv.values.entries()].find(([key]) =>
+      key.includes(JSON.stringify(API_KEY_USAGE_V3_REQUEST_PREFIX).slice(1, -1))
+    )?.[1] as { state?: string; release_reason?: string } | undefined;
+    assert.equal(released?.state, "released");
+    assert.equal(released?.release_reason, "route_completed_without_provider_dispatch");
+
+    assert.equal((await handler(request(token))).status, 200);
+    assert.equal(fetchCalls, 1);
+    assert.equal(usageWindow(policy).committed_requests, 1);
+    assert.equal(usageWindow(policy).reserved_requests, 0);
   } finally {
-    console.warn = originalWarn;
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("KV budget: concurrent bounded successes keep every increment and gate the next request", async () => {
-  kv.values.clear();
-  resetApiKeyPolicyCacheForTest();
-  resetRuntimeConfigCacheForTest();
-  resetCodexAuthCacheForTest();
-  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
-  const token = `u_${"b".repeat(64)}`;
-  const { hash, record } = await seedKey(token, "concurrent-bounded", 1);
-  const policy = apiKeyPolicyFromHashRecord(hash, record, now);
-  assert.ok(policy);
-  const usageKey = apiKeyUsageV2Key(policy);
-  kv.values.set(encodeKey(usageKey), new Deno.KvU64(0n));
+Deno.test("V3 dispatch is idempotent across retries and remains consumed after provider failure", async () => {
+  const { policy } = await prepareApiKeyInference("a", "dispatch-once", 2);
+  const admission = await reserveApiKeyUsageV3(policy, "request-dispatch-once", "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
+  assert.equal(admission.ok, true);
+  if (!admission.ok) return;
 
+  await admission.reservation.beforeProviderDispatch("chatgpt_codex");
+  await admission.reservation.beforeProviderDispatch("yunwu");
+  await admission.reservation.release("provider_http_failure");
+
+  assert.deepEqual(usageWindow(policy), {
+    committed_requests: 1,
+    reserved_requests: 0,
+    window_reset_at_ms: policy.usage_reset_at_ms,
+  });
+  const requestRecord = kv.values.get(
+    encodeKey(apiKeyUsageV3RequestKey(policy, "request-dispatch-once")),
+  ) as { state?: string; provider?: string; dispatched_at_ms?: number | null } | undefined;
+  assert.equal(requestRecord?.state, "dispatched");
+  assert.equal(requestRecord?.provider, "chatgpt_codex");
+  assert.equal(typeof requestRecord?.dispatched_at_ms, "number");
+});
+
+Deno.test("V3 limit-one concurrent admission dispatches once and rejects seven requests", async () => {
+  const { token, policy } = await prepareApiKeyInference("b", "concurrent-bounded", 1);
   const concurrency = 8;
   let fetchCalls = 0;
   let releaseUpstreams: () => void = () => {};
-  let resolveAllDispatched: () => void = () => {};
   const upstreamGate = new Promise<void>((resolve) => {
     releaseUpstreams = resolve;
   });
-  const allDispatched = new Promise<void>((resolve) => {
-    resolveAllDispatched = resolve;
+  let resolveFirstDispatch: () => void = () => {};
+  const firstDispatch = new Promise<void>((resolve) => {
+    resolveFirstDispatch = resolve;
   });
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => {
     fetchCalls += 1;
-    if (fetchCalls === concurrency) resolveAllDispatched();
+    resolveFirstDispatch();
     await upstreamGate;
     return sse();
   };
   try {
-    kv.resetCounts();
     const pending = Array.from({ length: concurrency }, () => handler(request(token)));
-    await allDispatched;
-    assert.equal(kv.sums, 0, "usage was reserved before a successful completion");
+    await firstDispatch;
     releaseUpstreams();
 
     const responses = await Promise.all(pending);
-    assert.deepEqual(responses.map((response) => response.status), Array(concurrency).fill(200));
-    assert.equal(kv.sumCommitAttempts, concurrency);
-    assert.equal(kv.sums, concurrency);
-    assert.equal(kv.retries, 0);
-    assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, BigInt(concurrency));
-
-    const rejected = await handler(request(token));
-    assert.equal(rejected.status, 429);
-    assert.equal(fetchCalls, concurrency, "an over-limit request reached the upstream");
-    assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, BigInt(concurrency));
+    assert.equal(responses.filter((response) => response.status === 200).length, 1);
+    assert.equal(responses.filter((response) => response.status === 429).length, 7);
+    assert.equal(fetchCalls, 1, "over-limit reservations must not reach a provider");
+    assert.deepEqual(usageWindow(policy), {
+      committed_requests: 1,
+      reserved_requests: 0,
+      window_reset_at_ms: policy.usage_reset_at_ms,
+    });
   } finally {
     releaseUpstreams();
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("streaming limits increment once only after response.completed", async () => {
+Deno.test("V3 admission reclaims expired reservations and preserves dispatch identity", async () => {
+  const { policy } = await prepareApiKeyInference("c", "expired-lease", 1);
+  const expiredRequestId = "expired-request";
+  const nowMs = Date.now();
+  kv.values.set(
+    encodeKey(apiKeyUsageV3WindowKey(policy)),
+    { ...makeApiKeyUsageWindowV3(policy, nowMs), reserved_requests: 1 },
+  );
+  kv.values.set(encodeKey(apiKeyUsageV3RequestKey(policy, expiredRequestId)), {
+    v: 3,
+    key_id: policy.key_id,
+    request_id: expiredRequestId,
+    route: "responses",
+    state: "reserved",
+    reserved_at_ms: nowMs - 10_000,
+    lease_expires_at_ms: nowMs - 1,
+    provider: null,
+    dispatched_at_ms: null,
+    released_at_ms: null,
+    release_reason: null,
+  });
+
+  const admission = await reserveApiKeyUsageV3(policy, "replacement-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+    nowMs,
+  });
+  assert.equal(admission.ok, true);
+  if (!admission.ok) return;
+  const expired = kv.values.get(
+    encodeKey(apiKeyUsageV3RequestKey(policy, expiredRequestId)),
+  ) as { state?: string; release_reason?: string } | undefined;
+  assert.equal(expired?.state, "released");
+  assert.equal(expired?.release_reason, "lease_expired");
+  assert.equal(usageWindow(policy).reserved_requests, 1);
+
+  await admission.reservation.release();
+  assert.equal(usageWindow(policy).reserved_requests, 0);
+  assert.equal(usageWindow(policy).committed_requests, 0);
+});
+
+Deno.test("V3 dispatch CAS failure prevents a provider fetch and exhausted quota does not block models", async () => {
+  const { token, policy } = await prepareApiKeyInference("d", "dispatch-cas", 1);
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    return Promise.resolve(sse());
+  };
+  try {
+    // Reservation retries five conflicts, then fails closed before openai.ts
+    // can call the configured provider transport.
+    kv.failNextCommits = 5;
+    const unavailable = await handler(request(token));
+    assert.equal(unavailable.status, 503);
+    assert.equal(fetchCalls, 0);
+
+    kv.failNextCommits = 0;
+    kv.values.set(
+      encodeKey(apiKeyUsageV3WindowKey(policy)),
+      { ...makeApiKeyUsageWindowV3(policy), committed_requests: 1 },
+    );
+    const models = await handler(
+      new Request("https://ai.ubq.fi/v1/models", {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    );
+    assert.equal(models.status, 200);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("streaming V3 quota is committed at dispatch, including premature and cancelled streams", async () => {
   const originalFetch = globalThis.fetch;
   const encoder = new TextEncoder();
   const prepare = async (tokenDigit: string, keyId: string) => {
@@ -492,17 +651,14 @@ Deno.test("streaming limits increment once only after response.completed", async
     kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
     const token = `u_${tokenDigit.repeat(64)}`;
     const { hash, record } = await seedKey(token, keyId, 100);
-    const policy = apiKeyPolicyFromHashRecord(hash, record, now);
+    const policy = apiKeyPolicyFromHashRecord(hash, record, Date.now());
     assert.ok(policy);
-    const usageKey = apiKeyUsageV2Key(policy);
-    kv.values.set(encodeKey(usageKey), new Deno.KvU64(0n));
-    kv.resetCounts();
-    return { token, usageKey };
+    return { token, policy };
   };
 
   try {
     for (const [route, tokenDigit] of [["responses", "a"], ["chat", "b"]] as const) {
-      const { token, usageKey } = await prepare(tokenDigit, `stream-completed-${route}`);
+      const { token, policy } = await prepare(tokenDigit, `stream-completed-${route}`);
       const upstream = { controller: null as ReadableStreamDefaultController<Uint8Array> | null };
       globalThis.fetch = () =>
         Promise.resolve(
@@ -521,12 +677,12 @@ Deno.test("streaming limits increment once only after response.completed", async
 
       const response = await handler(streamingRequest(token, route));
       assert.equal(response.status, 200);
-      assert.equal(kv.sums, 0, `${route} counted before response.completed`);
+      assert.equal(usageWindow(policy).committed_requests, 1, `${route} did not commit at provider dispatch`);
       const reader = response.body!.getReader();
       if (route === "responses") {
         const created = await reader.read();
         assert.equal(created.done, false);
-        assert.equal(kv.sums, 0, "Responses counted after only response.created");
+        assert.equal(usageWindow(policy).committed_requests, 1, "Responses committed more than once");
       }
 
       const completedChunk = reader.read();
@@ -534,16 +690,15 @@ Deno.test("streaming limits increment once only after response.completed", async
       upstream.controller!.enqueue(encoder.encode(completedSseEvent(5, 6)));
       upstream.controller!.close();
       assert.equal((await completedChunk).done, false);
-      assert.equal(kv.sums, 1, `${route} did not count before exposing its completion chunk`);
       while (!(await reader.read()).done) {
         // Drain any trailing [DONE] or duplicate upstream completion chunks.
       }
-      assert.equal(kv.sums, 1, `${route} counted one response more than once`);
-      assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 1n);
+      assert.equal(usageWindow(policy).committed_requests, 1, `${route} counted one response more than once`);
+      assert.equal(usageWindow(policy).reserved_requests, 0);
     }
 
     for (const [route, tokenDigit] of [["responses", "c"], ["chat", "d"]] as const) {
-      const { token, usageKey } = await prepare(tokenDigit, `stream-truncated-${route}`);
+      const { token, policy } = await prepare(tokenDigit, `stream-truncated-${route}`);
       globalThis.fetch = () =>
         Promise.resolve(
           new Response(
@@ -554,12 +709,12 @@ Deno.test("streaming limits increment once only after response.completed", async
       const response = await handler(streamingRequest(token, route));
       assert.equal(response.status, 200);
       await response.text();
-      assert.equal(kv.sums, 0, `${route} counted a truncated stream`);
-      assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 0n);
+      assert.equal(usageWindow(policy).committed_requests, 1, `${route} did not count a dispatched truncated stream`);
+      assert.equal(usageWindow(policy).reserved_requests, 0);
     }
 
     for (const [route, tokenDigit] of [["responses", "e"], ["chat", "f"]] as const) {
-      const { token, usageKey } = await prepare(tokenDigit, `stream-cancelled-${route}`);
+      const { token, policy } = await prepare(tokenDigit, `stream-cancelled-${route}`);
       const upstream = { controller: null as ReadableStreamDefaultController<Uint8Array> | null };
       globalThis.fetch = () =>
         Promise.resolve(
@@ -589,28 +744,16 @@ Deno.test("streaming limits increment once only after response.completed", async
       } catch {
         // Cancellation may already have closed the upstream source.
       }
-      assert.equal(kv.sums, 0, `${route} counted a cancelled stream`);
-      assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 0n);
+      assert.equal(usageWindow(policy).committed_requests, 1, `${route} did not count a dispatched cancelled stream`);
+      assert.equal(usageWindow(policy).reserved_requests, 0);
     }
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("streaming completion increments API-key and kernel limits together exactly once", async () => {
-  kv.values.clear();
-  resetApiKeyPolicyCacheForTest();
-  resetRuntimeConfigCacheForTest();
-  resetCodexAuthCacheForTest();
-  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
-
-  const token = `u_${"0".repeat(64)}`;
-  const { hash, record } = await seedKey(token, "stream-kernel-and-key", 100);
-  const policy = apiKeyPolicyFromHashRecord(hash, record, now);
-  assert.ok(policy);
-  const usageKey = apiKeyUsageV2Key(policy);
-  kv.values.set(encodeKey(usageKey), new Deno.KvU64(0n));
+Deno.test("provider dispatch commits API-key V3 while kernel completion writes only the split window", async () => {
+  const { token, policy } = await prepareApiKeyInference("0", "stream-kernel-and-key", 100);
 
   const keyPair = await crypto.subtle.generateKey(
     {
@@ -671,9 +814,9 @@ Deno.test("streaming completion increments API-key and kernel limits together ex
     headers.set("X-Ubiquity-Kernel-Token", kernelToken);
     const response = await handler(new Request(baseRequest, { headers }));
     assert.equal(response.status, 200);
-    const kernelOrgLimitKey = ["ubq_ai", "kernel_auth", "org_limits", "lifecycle-org"] as const;
-    assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 0n);
-    assert.equal(kv.values.has(encodeKey(kernelOrgLimitKey)), false);
+    const orgWindowKey = kernelOrgWindowKey("lifecycle-org");
+    assert.equal(usageWindow(policy).committed_requests, 1);
+    assert.equal(kv.values.has(encodeKey(orgWindowKey)), false);
 
     const body = response.text();
     upstream.controller!.enqueue(textEncoder.encode(completedSseEvent(2, 3)));
@@ -681,47 +824,9 @@ Deno.test("streaming completion increments API-key and kernel limits together ex
     upstream.controller!.close();
     await body;
 
-    assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 1n);
-    const kernelLimit = kv.values.get(encodeKey(kernelOrgLimitKey)) as { usage_requests?: number } | undefined;
-    assert.equal(kernelLimit?.usage_requests, 1);
-
-    const originalWarn = console.warn;
-    const warnings: unknown[][] = [];
-    console.warn = (...args: unknown[]) => warnings.push(args);
-    try {
-      kv.resetCounts();
-      kv.failNextSumCommits = 1;
-      const failedAccountingRequest = streamingRequest(token, "responses");
-      const failedAccountingHeaders = new Headers(failedAccountingRequest.headers);
-      failedAccountingHeaders.set("X-Ubiquity-Kernel-Token", await makeKernelToken());
-      const failedAccountingResponse = await handler(
-        new Request(failedAccountingRequest, {
-          headers: failedAccountingHeaders,
-        }),
-      );
-      assert.equal(failedAccountingResponse.status, 200);
-      const failedAccountingBody = failedAccountingResponse.text();
-      upstream.controller!.enqueue(textEncoder.encode(completedSseEvent(6, 7)));
-      upstream.controller!.close();
-      assert.match(await failedAccountingBody, /response\.completed/);
-
-      assert.equal(kv.sumCommitAttempts, 1, "API-key accounting retried after failing once");
-      assert.equal((kv.values.get(encodeKey(usageKey)) as Deno.KvU64).value, 1n);
-      const updatedKernelLimit = kv.values.get(encodeKey(kernelOrgLimitKey)) as
-        | { usage_requests?: number }
-        | undefined;
-      assert.equal(updatedKernelLimit?.usage_requests, 2, "API-key failure skipped independent kernel accounting");
-      const accountingWarnings = warnings.filter((entry) => entry[0] === "[ai.ubq.fi] quota_accounting_failed");
-      assert.equal(accountingWarnings.length, 1);
-      assert.deepEqual(JSON.parse(String(accountingWarnings[0]?.[1])), {
-        route: "responses",
-        key_id: "stream-kernel-and-key",
-        request_id: failedAccountingResponse.headers.get("x-uos-request-id"),
-        errors: ["api_key: injected API-key usage sum failure"],
-      });
-    } finally {
-      console.warn = originalWarn;
-    }
+    assert.equal(usageWindow(policy).committed_requests, 1);
+    const kernelWindow = kv.values.get(encodeKey(orgWindowKey)) as { usage_requests?: number } | undefined;
+    assert.equal(kernelWindow?.usage_requests, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -910,7 +1015,7 @@ Deno.test("streaming inference emits one terminal log only after the response bo
   }
 });
 
-Deno.test("streaming drain timing excludes post-terminal accounting", async () => {
+Deno.test("streaming drain timing remains separate from V3 dispatch accounting", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -928,7 +1033,6 @@ Deno.test("streaming drain timing excludes post-terminal accounting", async () =
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const logs: unknown[][] = [];
-  kv.sumCommitDelayMs = 60;
   globalThis.fetch = () =>
     Promise.resolve(
       new Response(
@@ -964,11 +1068,10 @@ Deno.test("streaming drain timing excludes post-terminal accounting", async () =
     const postTerminalMs = requiredTerminalTiming(terminal, "latency_ms") -
       requiredTerminalTiming(terminal, "stream_terminal_ms");
     const downstreamDrainMs = requiredTerminalTiming(terminal, "downstream_drain_ms");
-    assert.ok(postTerminalMs - downstreamDrainMs >= 30, "accounting must not inflate downstream drain time");
+    assert.ok(postTerminalMs >= downstreamDrainMs, "downstream drain must be part of terminal latency");
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
-    kv.sumCommitDelayMs = 0;
   }
 });
 
@@ -1003,7 +1106,7 @@ Deno.test("Chat streaming terminal telemetry reports ordered timings once", asyn
   }
 });
 
-Deno.test("first bounded paid fallback response exposes settled spend without counting its reservation", async () => {
+Deno.test("first bounded paid fallback response exposes settled spend and consumes one V3 dispatch", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -1012,7 +1115,9 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool(2));
   const token = `u_${"8".repeat(64)}`;
   const keyId = "first-fallback-quota";
-  await seedPaidFallbackKey(token, keyId);
+  const { hash, record } = await seedPaidFallbackKey(token, keyId);
+  const policy = apiKeyPolicyFromHashRecord(hash, record, Date.now());
+  assert.ok(policy);
 
   const originalFetch = globalThis.fetch;
   const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
@@ -1050,13 +1155,81 @@ Deno.test("first bounded paid fallback response exposes settled spend without co
     assert.equal(response.headers.get("x-codex-primary-used-percent"), "0");
     assert.equal(calls, 4);
     assert.deepEqual(primaryAccountIds, ["acct-1", "acct-2", "acct-1"]);
-    // V3 admission reads the immutable request, window, and deletion guard
-    // together before its atomic reservation; that adds one read over the
-    // legacy single-slot path while avoiding shared reservation contention.
-    // An ordinary 429 does not persist routing state. After both accounts are
-    // tried, one bounded retry returns 429 before the paid provider is selected.
-    assert.ok(kv.reads <= 11, `fallback response unexpectedly reread KV (${kv.reads} reads)`);
+    // Three Codex 429s plus Yunwu still belong to one routed inference. The
+    // V3 request is committed before the first transport and not incremented
+    // again by retries or fallback.
+    assert.equal(usageWindow(policy).committed_requests, 1);
+    assert.equal(usageWindow(policy).reserved_requests, 0);
     await response.body?.cancel();
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
+    else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
+  }
+});
+
+Deno.test("paid fallback releases its dispatch intent when Yunwu quota admission fails before fetch", async () => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
+  const token = `u_${"7".repeat(64)}`;
+  const keyId = "fallback-pre-dispatch-quota-failure";
+  await seedPaidFallbackKey(token, keyId);
+
+  const originalFetch = globalThis.fetch;
+  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
+  let yunwuCalls = 0;
+  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  globalThis.fetch = (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === "https://yunwu.ai/v1/responses") {
+      yunwuCalls += 1;
+      return Promise.reject(new Error("Yunwu transport must not start"));
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  };
+  try {
+    const response = await handleResponses(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: MODEL, input: "ping" }),
+      }),
+      {
+        keyId,
+        kernelRepo: null,
+        kernelOrg: null,
+        requestId: "fallback-pre-dispatch-quota-failure-request",
+        startedAtMs: Date.now(),
+        beforeProviderDispatch: (provider) =>
+          provider === "yunwu"
+            ? Promise.reject(new ApiKeyQuotaDispatchError("API key quota reservation is unavailable"))
+            : Promise.resolve(),
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.equal(yunwuCalls, 0);
+    const stored = [...kv.values.entries()].find(([key]) => key.includes(`"paid_fallback","v3","request","${keyId}"`))
+      ?.[1] as {
+        dispatch_state?: string;
+        terminal_state?: string;
+        billing_state?: string;
+      } | undefined;
+    assert.equal(stored?.dispatch_state, "not_dispatched");
+    assert.equal(stored?.terminal_state, "cancelled");
+    assert.equal(stored?.billing_state, "not_billed");
+    const window = [...kv.values.entries()].find(([key]) => key.includes(`"paid_fallback","v3","window","${keyId}"`))
+      ?.[1] as { reserved_microcredits?: number; pending_count?: number } | undefined;
+    assert.equal(window?.reserved_microcredits, 0);
+    assert.equal(window?.pending_count, 0);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
@@ -1264,22 +1437,66 @@ Deno.test("paid fallback cancellation telemetry records a cancelled YunWu lifecy
   }
 });
 
-Deno.test("KV budget: changing only a bounded limit preserves the active v2 counter", async () => {
+Deno.test("V3 limit-only changes preserve the active aggregate identity and committed usage", async () => {
   const token = `u_${"4".repeat(64)}`;
   const { hash, record } = await seedKey(token, "limit-change", 100);
   const original = apiKeyPolicyFromHashRecord(hash, record, now);
   const lowered = apiKeyPolicyFromHashRecord(hash, { ...record, usage_limit_requests: 10 }, now);
   assert.ok(original && lowered);
-  assert.deepEqual(apiKeyUsageV2Key(lowered), apiKeyUsageV2Key(original));
-  kv.values.set(encodeKey(apiKeyUsageV2Key(original)), new Deno.KvU64(12n));
+  assert.deepEqual(apiKeyUsageV3WindowKey(lowered), apiKeyUsageV3WindowKey(original));
+  kv.values.set(
+    encodeKey(apiKeyUsageV3WindowKey(original)),
+    { ...makeApiKeyUsageWindowV3(original), committed_requests: 12 },
+  );
   kv.values.set(encodeKey(["ubq_ai", "api_keys", "hash", hash]), { ...record, usage_limit_requests: 10 });
   resetApiKeyPolicyCacheForTest();
   const decision = await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now });
-  assert.equal(decision.ok, false);
-  if (!decision.ok) assert.equal(decision.response.status, 429);
+  assert.equal(decision.ok, true, "authentication must not perform inference quota admission");
+  assert.equal(usageWindow(lowered).committed_requests, 12);
 });
 
-Deno.test("KV budget: automatic window advancement keeps the active counter identity", async () => {
+Deno.test("/uos/auth projects committed V3 usage while models stay quota-ledger independent", async () => {
+  const { token, hash, record, policy } = await prepareApiKeyInference("5", "auth-projection", 10);
+  kv.values.set(
+    encodeKey(apiKeyUsageV3WindowKey(policy)),
+    { ...makeApiKeyUsageWindowV3(policy), committed_requests: 7, reserved_requests: 1 },
+  );
+  kv.values.set(encodeKey(["ubq_ai", "api_keys", "id", policy.key_id]), {
+    ...record,
+    id: policy.key_id,
+    name: "Auth projection",
+    prefix: token.slice(0, 12),
+    hash,
+    created_at_ms: Date.now(),
+    paid_fallback_model_ids: [],
+    paid_fallback_quota_per_credit: 0,
+    paid_fallback_pricing_checked_at_ms: null,
+  });
+
+  const auth = await handler(
+    new Request("https://ai.ubq.fi/uos/auth", { headers: { Authorization: `Bearer ${token}` } }),
+  );
+  assert.equal(auth.status, 200);
+  const authBody = await auth.json() as { auth?: { method?: { key?: { usage_requests?: number } } } };
+  assert.equal(authBody.auth?.method?.key?.usage_requests, 7);
+
+  kv.failApiKeyV3Reads = true;
+  try {
+    const models = await handler(
+      new Request("https://ai.ubq.fi/v1/models", { headers: { Authorization: `Bearer ${token}` } }),
+    );
+    assert.equal(models.status, 200, "non-inference routes must not read the V3 quota aggregate");
+
+    const unavailableProjection = await handler(
+      new Request("https://ai.ubq.fi/uos/auth", { headers: { Authorization: `Bearer ${token}` } }),
+    );
+    assert.equal(unavailableProjection.status, 503, "/uos/auth must fail rather than report stale usage");
+  } finally {
+    kv.failApiKeyV3Reads = false;
+  }
+});
+
+Deno.test("V3 automatic window advancement changes aggregate identity only when the effective window changes", async () => {
   const token = `u_${"6".repeat(64)}`;
   const { hash, record } = await seedKey(token, "window-advance", 100);
   const expired = { ...record, usage_reset_at_ms: now - 1 };
@@ -1296,8 +1513,8 @@ Deno.test("KV budget: automatic window advancement keeps the active counter iden
     now,
   );
   assert.ok(afterAdvance && explicitlyReset);
-  assert.deepEqual(apiKeyUsageV2Key(afterAdvance), apiKeyUsageV2Key(beforeAdvance));
-  assert.notDeepEqual(apiKeyUsageV2Key(explicitlyReset), apiKeyUsageV2Key(beforeAdvance));
+  assert.deepEqual(apiKeyUsageV3WindowKey(afterAdvance), apiKeyUsageV3WindowKey(beforeAdvance));
+  assert.notDeepEqual(apiKeyUsageV3WindowKey(explicitlyReset), apiKeyUsageV3WindowKey(beforeAdvance));
 });
 
 Deno.test("KV budget: runtime configuration revalidates after the bounded isolate TTL", async () => {

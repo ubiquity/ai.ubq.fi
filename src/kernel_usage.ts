@@ -87,10 +87,11 @@ const normalizeUsageLimitRequests = (value: unknown, fallback: number): number =
 export const kernelUsageKey = (owner: string, repo: string) => [...KERNEL_AUTH_USAGE_PREFIX, owner, repo] as const;
 export const kernelUsageDailyKey = (owner: string, repo: string) =>
   [...KERNEL_AUTH_USAGE_DAILY_PREFIX, owner, repo] as const;
-export const kernelLimitKey = (owner: string, repo: string) => [...KERNEL_AUTH_LIMIT_PREFIX, owner, repo] as const;
+export const legacyKernelLimitKey = (owner: string, repo: string) =>
+  [...KERNEL_AUTH_LIMIT_PREFIX, owner, repo] as const;
 export const kernelOrgUsageKey = (owner: string) => [...KERNEL_AUTH_ORG_USAGE_PREFIX, owner] as const;
 export const kernelOrgUsageDailyKey = (owner: string) => [...KERNEL_AUTH_ORG_USAGE_DAILY_PREFIX, owner] as const;
-export const kernelOrgLimitKey = (owner: string) => [...KERNEL_AUTH_ORG_LIMIT_PREFIX, owner] as const;
+export const legacyKernelOrgLimitKey = (owner: string) => [...KERNEL_AUTH_ORG_LIMIT_PREFIX, owner] as const;
 
 type KernelUsageDelta = Readonly<{
   request_count?: number;
@@ -597,21 +598,21 @@ const normalizeLimitRecord = (
   };
 };
 
-export type KernelAuthLimitSnapshot = Readonly<{
+export type LegacyKernelAuthLimitSnapshot = Readonly<{
   record: KernelAuthLimitRecord;
   source: "default" | "kv";
 }>;
 
-export const getKernelUsageLimitSnapshot = async (
+export const legacyGetKernelUsageLimitSnapshot = async (
   owner: string,
   repo: string,
-): Promise<KernelAuthLimitSnapshot | null> => {
+): Promise<LegacyKernelAuthLimitSnapshot | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
-    const entry = await kv.get<KernelAuthLimitRecord>(kernelLimitKey(owner, repo));
+    const entry = await kv.get<KernelAuthLimitRecord>(legacyKernelLimitKey(owner, repo));
     const source = entry.value ? "kv" : "default";
     const record = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
     return { record, source };
@@ -621,7 +622,7 @@ export const getKernelUsageLimitSnapshot = async (
   }
 };
 
-export const listKernelUsageLimits = async (): Promise<KernelAuthLimitRecord[] | null> => {
+export const legacyListKernelUsageLimits = async (): Promise<KernelAuthLimitRecord[] | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
@@ -680,7 +681,7 @@ export const listKernelUsageRecords = async (
   }
 };
 
-export const setKernelUsageLimit = async (
+export const legacySetKernelUsageLimit = async (
   owner: string,
   repo: string,
   usageLimitRequests: number,
@@ -690,7 +691,7 @@ export const setKernelUsageLimit = async (
     const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
-    const key = kernelLimitKey(owner, repo);
+    const key = legacyKernelLimitKey(owner, repo);
     const nowMs = Date.now();
     const entry = await kv.get<KernelAuthLimitRecord>(key);
     const current = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
@@ -721,11 +722,11 @@ export const setKernelUsageLimit = async (
   }
 };
 
-export const deleteKernelUsageLimit = async (owner: string, repo: string): Promise<boolean | null> => {
+export const legacyDeleteKernelUsageLimit = async (owner: string, repo: string): Promise<boolean | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
-    const key = kernelLimitKey(owner, repo);
+    const key = legacyKernelLimitKey(owner, repo);
     const entry = await kv.get<KernelAuthLimitRecord>(key);
     if (!entry.value) return false;
     const commit = await kv.atomic().check(entry).delete(key).commit();
@@ -736,7 +737,7 @@ export const deleteKernelUsageLimit = async (owner: string, repo: string): Promi
   }
 };
 
-export const checkKernelUsageLimit = async (
+export const legacyCheckKernelUsageLimit = async (
   owner: string,
   repo: string,
 ): Promise<{ ok: true } | { ok: false; response: Response }> => {
@@ -744,7 +745,7 @@ export const checkKernelUsageLimit = async (
     const kv = await getKv();
     if (!kv) return { ok: true };
     const defaults = await loadKernelDefaultPolicy(kv);
-    const key = kernelLimitKey(owner, repo);
+    const key = legacyKernelLimitKey(owner, repo);
     const nowMs = Date.now();
 
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
@@ -813,12 +814,12 @@ export const checkKernelUsageLimit = async (
   }
 };
 
-export const incrementKernelUsageLimit = async (owner: string, repo: string): Promise<void> => {
+export const legacyIncrementKernelUsageLimit = async (owner: string, repo: string): Promise<void> => {
   try {
     const kv = await getKv();
     if (!kv) return;
     const defaults = await loadKernelDefaultPolicy(kv);
-    const key = kernelLimitKey(owner, repo);
+    const key = legacyKernelLimitKey(owner, repo);
     const nowMs = Date.now();
 
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
@@ -883,18 +884,20 @@ const normalizeOrgLimitRecord = (
   };
 };
 
-export type KernelOrgLimitSnapshot = Readonly<{
+export type LegacyKernelOrgLimitSnapshot = Readonly<{
   record: KernelOrgLimitRecord;
   source: "default" | "kv";
 }>;
 
-export const getKernelOrgUsageLimitSnapshot = async (owner: string): Promise<KernelOrgLimitSnapshot | null> => {
+export const legacyGetKernelOrgUsageLimitSnapshot = async (
+  owner: string,
+): Promise<LegacyKernelOrgLimitSnapshot | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
     const nowMs = Date.now();
-    const entry = await kv.get<KernelOrgLimitRecord>(kernelOrgLimitKey(owner));
+    const entry = await kv.get<KernelOrgLimitRecord>(legacyKernelOrgLimitKey(owner));
     const source = entry.value ? "kv" : "default";
     const record = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
     return { record, source };
@@ -904,7 +907,7 @@ export const getKernelOrgUsageLimitSnapshot = async (owner: string): Promise<Ker
   }
 };
 
-export const listKernelOrgUsageLimits = async (): Promise<KernelOrgLimitRecord[] | null> => {
+export const legacyListKernelOrgUsageLimits = async (): Promise<KernelOrgLimitRecord[] | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
@@ -953,7 +956,7 @@ export const listKernelOrgUsageRecords = async (
   }
 };
 
-export const setKernelOrgUsageLimit = async (
+export const legacySetKernelOrgUsageLimit = async (
   owner: string,
   usageLimitRequests: number,
   options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {},
@@ -962,7 +965,7 @@ export const setKernelOrgUsageLimit = async (
     const kv = await getKv();
     if (!kv) return null;
     const defaults = await loadKernelDefaultPolicy(kv);
-    const key = kernelOrgLimitKey(owner);
+    const key = legacyKernelOrgLimitKey(owner);
     const nowMs = Date.now();
     const entry = await kv.get<KernelOrgLimitRecord>(key);
     const current = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
@@ -993,11 +996,11 @@ export const setKernelOrgUsageLimit = async (
   }
 };
 
-export const deleteKernelOrgUsageLimit = async (owner: string): Promise<boolean | null> => {
+export const legacyDeleteKernelOrgUsageLimit = async (owner: string): Promise<boolean | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
-    const key = kernelOrgLimitKey(owner);
+    const key = legacyKernelOrgLimitKey(owner);
     const entry = await kv.get<KernelOrgLimitRecord>(key);
     if (!entry.value) return false;
     const commit = await kv.atomic().check(entry).delete(key).commit();
@@ -1008,14 +1011,14 @@ export const deleteKernelOrgUsageLimit = async (owner: string): Promise<boolean 
   }
 };
 
-export const checkKernelOrgUsageLimit = async (
+export const legacyCheckKernelOrgUsageLimit = async (
   owner: string,
 ): Promise<{ ok: true } | { ok: false; response: Response }> => {
   try {
     const kv = await getKv();
     if (!kv) return { ok: true };
     const defaults = await loadKernelDefaultPolicy(kv);
-    const key = kernelOrgLimitKey(owner);
+    const key = legacyKernelOrgLimitKey(owner);
     const nowMs = Date.now();
 
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
@@ -1084,12 +1087,12 @@ export const checkKernelOrgUsageLimit = async (
   }
 };
 
-export const incrementKernelOrgUsageLimit = async (owner: string): Promise<void> => {
+export const legacyIncrementKernelOrgUsageLimit = async (owner: string): Promise<void> => {
   try {
     const kv = await getKv();
     if (!kv) return;
     const defaults = await loadKernelDefaultPolicy(kv);
-    const key = kernelOrgLimitKey(owner);
+    const key = legacyKernelOrgLimitKey(owner);
     const nowMs = Date.now();
 
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
@@ -1114,3 +1117,37 @@ export const incrementKernelOrgUsageLimit = async (owner: string): Promise<void>
     console.warn("[ai.ubq.fi] Failed to increment kernel org usage:", error);
   }
 };
+
+// V1 combined limit rows remain above only as migration input. Runtime callers
+// import the V2 split policy/window implementation below.
+export {
+  checkKernelOrgUsageLimit,
+  checkKernelUsageLimit,
+  deleteKernelOrgUsageLimit,
+  deleteKernelUsageLimit,
+  getKernelOrgUsageLimitSnapshot,
+  getKernelUsageLimitSnapshot,
+  incrementKernelOrgUsageLimit,
+  incrementKernelUsageLimit,
+  KERNEL_ORG_POLICY_V2_PREFIX,
+  KERNEL_ORG_WINDOW_V2_PREFIX,
+  KERNEL_QUOTA_V2_PREFIX,
+  KERNEL_REPO_POLICY_V2_PREFIX,
+  KERNEL_REPO_WINDOW_V2_PREFIX,
+  kernelLimitKey,
+  kernelOrgLimitKey,
+  kernelOrgPolicyKey,
+  kernelOrgWindowKey,
+  kernelRepoPolicyKey,
+  kernelRepoWindowKey,
+  listKernelOrgUsageLimits,
+  listKernelUsageLimits,
+  setKernelOrgUsageLimit,
+  setKernelUsageLimit,
+} from "./kernel_quota_v2.ts";
+export type {
+  KernelAuthLimitSnapshot,
+  KernelOrgLimitSnapshot,
+  KernelQuotaPolicyV2,
+  KernelQuotaWindowV2,
+} from "./kernel_quota_v2.ts";

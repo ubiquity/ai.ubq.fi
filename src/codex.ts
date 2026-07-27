@@ -12,6 +12,7 @@ import {
 } from "./codex_account_routing.ts";
 import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
 import { getKv } from "./kv.ts";
+import { ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { recordCodexProviderHealth } from "./provider_health.ts";
 import { buildRuntimeConfig, cacheRuntimeConfig, loadRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord, sha256Hex } from "./utils.ts";
@@ -895,6 +896,8 @@ const fetchCodexResponseWithAuth = async (
   serializedBody: string,
   baseHeaders: Headers,
   signal?: AbortSignal,
+  beforeDispatch?: () => Promise<void>,
+  onDispatch?: () => void,
 ): Promise<Response> => {
   const headers = new Headers(baseHeaders);
   headers.set("Authorization", `Bearer ${auth.access_token}`);
@@ -905,6 +908,11 @@ const fetchCodexResponseWithAuth = async (
     85_000,
   );
   try {
+    // This is intentionally immediately adjacent to the actual provider
+    // transport: request-quota reservations commit on dispatch, not on
+    // validation, routing, or a later retry outcome.
+    if (beforeDispatch) await beforeDispatch();
+    onDispatch?.();
     return await fetch(url, {
       method: "POST",
       headers,
@@ -913,6 +921,7 @@ const fetchCodexResponseWithAuth = async (
       signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal,
     });
   } catch (error) {
+    if (error instanceof ApiKeyQuotaDispatchError) throw error;
     const timedOut = deadline.signal.aborted ||
       (signal?.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError");
     if (timedOut) {
@@ -1053,6 +1062,7 @@ export const fetchCodexResponses = async (
     requestId?: string | null;
     timing?: CodexResponseTimingHooks;
     retrySleep?: (milliseconds: number) => Promise<void>;
+    beforeDispatch?: () => Promise<void>;
   }> = {},
 ): Promise<Response> => {
   if (codexProbeTransitionsInFlight.size) {
@@ -1113,7 +1123,6 @@ export const fetchCodexResponses = async (
     phase: CodexAttemptPhase,
   ): Promise<Response> => {
     attemptNumber += 1;
-    reportCodexResponseTiming(options.timing?.onDispatch);
     try {
       const response = await fetchCodexResponseWithAuth(
         auth,
@@ -1121,6 +1130,8 @@ export const fetchCodexResponses = async (
         serializedBody,
         baseHeaders,
         options.signal,
+        options.beforeDispatch,
+        () => reportCodexResponseTiming(options.timing?.onDispatch),
       );
       reportCodexResponseTiming(options.timing?.onHeaders);
       void recordCodexResponseHealth(auth.account_id, response);

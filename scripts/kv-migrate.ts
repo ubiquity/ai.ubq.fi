@@ -255,6 +255,7 @@ const importCommand = async (flags: Args, options: ImportOptions): Promise<void>
       null,
       2,
     ));
+    if (result.errors > 0) Deno.exit(1);
   } finally {
     kv?.close();
   }
@@ -329,6 +330,11 @@ const parseJsonOrText = (text: string): unknown => {
   }
 };
 
+const importSummaryHasErrors = (value: unknown): boolean =>
+  typeof value === "object" && value !== null &&
+  typeof (value as { errors?: unknown }).errors === "number" &&
+  (value as { errors: number }).errors > 0;
+
 const importHttpCommand = async (flags: Args): Promise<void> => {
   const input = getFlagString(flags, "in", DEFAULT_EXPORT_PATH);
   const baseUrl = getRequiredFlagString(flags, "base-url").replace(/\/+$/, "");
@@ -356,18 +362,19 @@ const importHttpCommand = async (flags: Args): Promise<void> => {
     body,
   });
   const text = await response.text();
+  const parsed = parseJsonOrText(text);
   console.log(JSON.stringify(
     {
       input,
       url: url.toString(),
       status: response.status,
       dry_run: dryRun,
-      response: parseJsonOrText(text),
+      response: parsed,
     },
     null,
     2,
   ));
-  if (!response.ok) Deno.exit(1);
+  if (!response.ok || importSummaryHasErrors(parsed)) Deno.exit(1);
 };
 
 const validateHttpCommand = async (flags: Args): Promise<void> => {

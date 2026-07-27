@@ -122,8 +122,15 @@ const {
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
   handleAdminDefaults,
+  handleAdminKernelUsageDelete,
+  handleAdminKernelUsageSet,
   handleAdminKvMigrationImport,
 } = await import("../src/admin.ts");
+const {
+  getKernelUsageLimitSnapshot,
+  kernelRepoPolicyKey,
+  kernelRepoWindowKey,
+} = await import("../src/kernel_quota_v2.ts");
 const { listApiKeyRequestLogs, recordApiKeyRequestLog } = await import("../src/analytics.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const { buildRuntimeConfig, cacheRuntimeConfig, resetRuntimeConfigCacheForTest } = await import(
@@ -158,7 +165,7 @@ const makeRequest = (body: unknown): Request =>
     body: JSON.stringify(body),
   });
 
-Deno.test("API key list ignores legacy usage unless v2 usage is requested", async () => {
+Deno.test("API key list reports committed V3 usage and ignores legacy counters", async () => {
   kvStore.clear();
   const id = "v2-usage-list";
   const windowMs = 60_000;
@@ -166,7 +173,7 @@ Deno.test("API key list ignores legacy usage unless v2 usage is requested", asyn
   const usageResetAtMs = windowStartMs + windowMs;
   kvStore.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
     id,
-    name: "V2 usage list",
+    name: "V3 usage list",
     prefix: "u_1234567890",
     hash: "hash-v2-usage-list",
     created_at_ms: windowStartMs,
@@ -176,6 +183,7 @@ Deno.test("API key list ignores legacy usage unless v2 usage is requested", asyn
     usage_requests: 17,
     usage_reset_at_ms: usageResetAtMs,
     window_ms: windowMs,
+    usage_quota_version: 3,
     paid_fallback_enabled: false,
     paid_fallback_limit_microcredits: 0,
     paid_fallback_spent_microcredits: 0,
@@ -188,6 +196,19 @@ Deno.test("API key list ignores legacy usage unless v2 usage is requested", asyn
   kvStore.set(
     keyToString(["uos_ai", "api_key_usage", "v2", id, String(windowMs), windowStartMs]),
     { value: 3n } as Deno.KvU64,
+  );
+  kvStore.set(
+    keyToString(["uos_ai", "api_key_usage", "v3", "window", id, `v3:${windowMs}`, windowStartMs]),
+    {
+      v: 3,
+      key_id: id,
+      policy_version: `v3:${windowMs}`,
+      window_start_ms: windowStartMs,
+      window_reset_at_ms: usageResetAtMs,
+      committed_requests: 4,
+      reserved_requests: 1,
+      updated_at_ms: windowStartMs,
+    },
   );
 
   const withoutUsage = await handleAdminApiKeysList(
@@ -204,8 +225,8 @@ Deno.test("API key list ignores legacy usage unless v2 usage is requested", asyn
   const withPayload = await withUsage.json() as {
     data?: Array<{ usage_requests?: number; usage?: { request_count?: number } }>;
   };
-  assert.equal(withPayload.data?.[0]?.usage_requests, 3);
-  assert.equal(withPayload.data?.[0]?.usage?.request_count, 3);
+  assert.equal(withPayload.data?.[0]?.usage_requests, 4);
+  assert.equal(withPayload.data?.[0]?.usage?.request_count, 4);
 });
 
 Deno.test("API key list projects current paid fallback totals from V3 only", async () => {
@@ -260,6 +281,111 @@ Deno.test("API key list projects current paid fallback totals from V3 only", asy
   assert.equal(payload.data?.[0]?.paid_fallback_spent_credits, 0.028992);
   assert.equal(payload.data?.[0]?.paid_fallback_reserved_credits, 0.125);
   assert.equal(payload.data?.[0]?.paid_fallback_pending_count, 1);
+});
+
+Deno.test("API key limit edits retain V3 usage while resets create a fresh aggregate and reject live leases", async () => {
+  kvStore.clear();
+  const token = `u_${"d".repeat(64)}`;
+  const createdResponse = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "V3 reset", token, usage_limit_requests: 8, window_ms: 60_000 }),
+    }),
+  );
+  assert.equal(createdResponse.status, 200);
+  const created = await createdResponse.json() as { id: string };
+  const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", created.id])) as {
+    hash: string;
+    window_ms: number;
+    usage_reset_at_ms: number;
+  };
+  const oldStart = stored.usage_reset_at_ms - stored.window_ms;
+  const oldWindowKey = [
+    "uos_ai",
+    "api_key_usage",
+    "v3",
+    "window",
+    created.id,
+    `v3:${stored.window_ms}`,
+    oldStart,
+  ] as const;
+  const oldWindow = kvStore.get(keyToString(oldWindowKey)) as Record<string, unknown>;
+  kvStore.set(keyToString(oldWindowKey), { ...oldWindow, committed_requests: 2 });
+
+  const limitOnly = await handleAdminApiKeysUpdate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: created.id, usage_limit_requests: 5 }),
+    }),
+  );
+  assert.equal(limitOnly.status, 200);
+  const limitPayload = await limitOnly.json() as { usage_requests?: number };
+  assert.equal(limitPayload.usage_requests, 2);
+  assert.equal((kvStore.get(keyToString(oldWindowKey)) as { committed_requests?: number }).committed_requests, 2);
+
+  const reset = await handleAdminApiKeysUpdate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: created.id, reset_usage: true }),
+    }),
+  );
+  assert.equal(reset.status, 200);
+  const resetPayload = await reset.json() as { usage_requests?: number; usage_reset_at_ms?: number };
+  assert.equal(resetPayload.usage_requests, 0);
+  assert.notEqual(resetPayload.usage_reset_at_ms, stored.usage_reset_at_ms);
+
+  const resetRecord = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", created.id])) as {
+    window_ms: number;
+    usage_reset_at_ms: number;
+  };
+  const resetStart = resetRecord.usage_reset_at_ms - resetRecord.window_ms;
+  const resetWindowKey = [
+    "uos_ai",
+    "api_key_usage",
+    "v3",
+    "window",
+    created.id,
+    `v3:${resetRecord.window_ms}`,
+    resetStart,
+  ] as const;
+  const resetWindow = kvStore.get(keyToString(resetWindowKey)) as Record<string, unknown>;
+  kvStore.set(keyToString(resetWindowKey), { ...resetWindow, reserved_requests: 1 });
+  kvStore.set(
+    keyToString([
+      "uos_ai",
+      "api_key_usage",
+      "v3",
+      "request",
+      created.id,
+      `v3:${resetRecord.window_ms}`,
+      resetStart,
+      "live-reset-lease",
+    ]),
+    {
+      v: 3,
+      key_id: created.id,
+      request_id: "live-reset-lease",
+      route: "responses",
+      state: "reserved",
+      reserved_at_ms: Date.now(),
+      lease_expires_at_ms: Date.now() + 60_000,
+      provider: null,
+      dispatched_at_ms: null,
+      released_at_ms: null,
+      release_reason: null,
+    },
+  );
+  const blocked = await handleAdminApiKeysUpdate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: created.id, reset_usage: true }),
+    }),
+  );
+  assert.equal(blocked.status, 409);
 });
 
 Deno.test("admin Codex model GET returns the full catalog rather than the compact runtime record", async () => {
@@ -388,6 +514,101 @@ Deno.test("admin defaults permits kernel-only updates without runtime configurat
     );
     assert.equal(guardedResponse.status, 503);
   }
+});
+
+Deno.test("admin defaults rejects late invalid fields without partial writes", async () => {
+  kvStore.clear();
+  seedCodexSnapshot({
+    source: "codex_cli",
+    updated_at_ms: 123,
+    models: [{
+      slug: "gpt-5.5",
+      display_name: "GPT-5.5",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: ["none", "medium"],
+    }],
+  });
+  const before = JSON.stringify([...kvStore.entries()]);
+
+  const response = await handleAdminDefaults(
+    new Request("https://ai.ubq.fi/admin/defaults", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-5.5", kernel_policy_window_ms: 0 }),
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(JSON.stringify([...kvStore.entries()]), before);
+});
+
+Deno.test("admin kernel quota policies preserve usage until an explicit reset and return to default source", async () => {
+  kvStore.clear();
+  const owner = "kernel-owner";
+  const repo = "kernel-repo";
+  const policyKey = kernelRepoPolicyKey(owner, repo);
+  const windowKey = kernelRepoWindowKey(owner, repo);
+  kvStore.set(keyToString(["default", "kernel_policy_limit_requests"]), 9);
+  kvStore.set(keyToString(["default", "kernel_policy_window_ms"]), 60_000);
+
+  const set = await handleAdminKernelUsageSet(
+    new Request("https://ai.ubq.fi/admin/kernel-usage", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owner, repo, usage_limit_requests: 5, window_ms: 60_000 }),
+    }),
+  );
+  assert.equal(set.status, 200);
+  const initialWindow = kvStore.get(keyToString(windowKey)) as Record<string, unknown>;
+  kvStore.set(keyToString(windowKey), { ...initialWindow, usage_requests: 4 });
+
+  const limitOnly = await handleAdminKernelUsageSet(
+    new Request("https://ai.ubq.fi/admin/kernel-usage", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owner, repo, usage_limit_requests: 3, reset_usage: false }),
+    }),
+  );
+  assert.equal(limitOnly.status, 200);
+  assert.equal((kvStore.get(keyToString(policyKey)) as { usage_limit_requests?: number }).usage_limit_requests, 3);
+  assert.equal((kvStore.get(keyToString(windowKey)) as { usage_requests?: number }).usage_requests, 4);
+
+  const invalidReset = await handleAdminKernelUsageSet(
+    new Request("https://ai.ubq.fi/admin/kernel-usage", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owner, repo, usage_limit_requests: 3, reset_usage: "false" }),
+    }),
+  );
+  assert.equal(invalidReset.status, 400);
+  assert.equal((kvStore.get(keyToString(windowKey)) as { usage_requests?: number }).usage_requests, 4);
+
+  const reset = await handleAdminKernelUsageSet(
+    new Request("https://ai.ubq.fi/admin/kernel-usage", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owner, repo, usage_limit_requests: 3, reset_usage: true }),
+    }),
+  );
+  assert.equal(reset.status, 200);
+  assert.equal((kvStore.get(keyToString(windowKey)) as { usage_requests?: number }).usage_requests, 0);
+
+  const preservedWindow = kvStore.get(keyToString(windowKey)) as Record<string, unknown>;
+  kvStore.set(keyToString(windowKey), { ...preservedWindow, usage_requests: 2 });
+  const deleted = await handleAdminKernelUsageDelete(
+    new Request("https://ai.ubq.fi/admin/kernel-usage", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owner, repo }),
+    }),
+  );
+  assert.equal(deleted.status, 200);
+  assert.equal(kvStore.has(keyToString(policyKey)), false);
+  assert.equal((kvStore.get(keyToString(windowKey)) as { usage_requests?: number }).usage_requests, 2);
+  const snapshot = await getKernelUsageLimitSnapshot(owner, repo);
+  assert.equal(snapshot?.source, "default");
+  assert.equal(snapshot?.record.usage_requests, 2);
+  assert.equal(snapshot?.record.usage_limit_requests, 9);
 });
 
 const yunwuMetadataResponse = (url: string): Response => {
@@ -784,6 +1005,22 @@ Deno.test("admin KV migration import stays dry-run unless write is explicit", as
   assert.equal(payload.dry_run, true);
   assert.equal(payload.imported, 1);
   assert.equal(kvStore.has(keyToString(["default", "model"])), false);
+});
+
+Deno.test("admin KV migration import reports partial writes with HTTP 422", async () => {
+  kvStore.clear();
+  const response = await handleAdminKvMigrationImport(
+    new Request("https://ai.ubq.fi/admin/kv-migration/import?profile=prod&write=1&overwrite=true", {
+      method: "POST",
+      body: `${stringEntryLine(["default", "model"], "gpt-5.5")}\n{not-json}`,
+    }),
+  );
+
+  assert.equal(response.status, 422);
+  const payload = await response.json() as { imported?: number; errors?: number };
+  assert.equal(payload.imported, 1);
+  assert.equal(payload.errors, 1);
+  assert.equal(kvStore.get(keyToString(["default", "model"])), "gpt-5.5");
 });
 
 Deno.test("admin defaults accepts none when the model supports none", async () => {

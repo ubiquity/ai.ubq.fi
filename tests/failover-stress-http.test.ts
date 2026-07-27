@@ -74,6 +74,7 @@ Deno.test({
         usage_requests: 0,
         usage_reset_at_ms: windowResetAtMs,
         window_ms: windowMs,
+        usage_quota_version: 3,
         paid_fallback_enabled: true,
         paid_fallback_limit_microcredits: PAID_FALLBACK_NO_LIMIT,
         paid_fallback_spent_microcredits: 0,

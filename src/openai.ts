@@ -9,6 +9,7 @@ import {
   releaseCodexResponseProbe,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
+import { ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { json, openaiError } from "./http.ts";
@@ -30,6 +31,7 @@ import {
   recordYunwuAmbiguousFailure,
   recordYunwuPrefetchCancellation,
   recordYunwuTerminal,
+  recordYunwuUndispatchedCancellation,
   recordYunwuUpstreamResponse,
   reservePaidFallback,
 } from "./paid_fallback.ts";
@@ -72,6 +74,8 @@ type UsageContext = Readonly<{
   startedAtMs?: number;
   startedAtMonotonicMs?: number;
   responseTelemetry?: ResponseTelemetryState;
+  /** Commits an admitted API-key reservation exactly once before transport. */
+  beforeProviderDispatch?: (provider: "chatgpt_codex" | "yunwu" | "voyage") => Promise<void>;
 }>;
 
 type UpstreamProvider = "chatgpt_codex" | "yunwu";
@@ -151,6 +155,7 @@ const withResponseTelemetryContext = (
   requestId: context?.requestId,
   startedAtMs: context?.startedAtMs,
   startedAtMonotonicMs: context?.startedAtMonotonicMs,
+  beforeProviderDispatch: context?.beforeProviderDispatch,
   responseTelemetry: state,
 });
 
@@ -343,7 +348,9 @@ const withUpstreamProviderHeader = (response: Response, provider: string | null 
 
 const toCodexErrorResponse = (error: unknown, provider?: string | null): Response => {
   let response: Response;
-  if (error instanceof CodexError) {
+  if (error instanceof ApiKeyQuotaDispatchError) {
+    response = openaiError(error.status, error.message, error.code, { type: "server_error" });
+  } else if (error instanceof CodexError) {
     const options = error.code === "gateway_timeout" ? { type: "server_error" } : undefined;
     response = openaiError(error.status, error.message, error.code, options);
   } else {
@@ -555,6 +562,7 @@ const fetchResponsesWithPaidFallback = async (
         onDispatch: () => recordFirstCodexDispatch(options.usageContext),
         onHeaders: () => recordFirstCodexHeaders(options.usageContext),
       },
+      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(),
     });
   } catch (error) {
     if (!(error instanceof CodexError) || error.status !== 401) throw error;
@@ -663,7 +671,10 @@ const fetchResponsesWithPaidFallback = async (
   logYunwuSelected(requestId, fallbackReason);
   let result: Awaited<ReturnType<typeof fetchYunwuResponses>>;
   try {
-    result = await fetchYunwuResponses(body, { signal: options.signal });
+    result = await fetchYunwuResponses(body, {
+      signal: options.signal,
+      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("yunwu") ?? Promise.resolve(),
+    });
     if (result.response.status === 401 || result.response.status === 403) {
       await recordYunwuProviderHealth("auth_invalid", result.response.status);
     } else if (result.response.status === 429) {
@@ -674,6 +685,16 @@ const fetchResponsesWithPaidFallback = async (
       await recordYunwuProviderHealth("reachable", result.response.status);
     }
   } catch (error) {
+    if (error instanceof ApiKeyQuotaDispatchError) {
+      // Paid fallback writes a durable dispatch intent before Yunwu transport.
+      // If the API-key quota CAS rejects that transport, it is still known not
+      // to have started and must be released rather than reconciled as billed.
+      await bestEffortPaidFallbackBookkeeping(
+        "pre-dispatch quota cancellation recording",
+        () => recordYunwuUndispatchedCancellation(decision.reservation),
+      );
+      throw error;
+    }
     const yunwuStatus = error instanceof YunwuError ? error.status : null;
     await recordYunwuProviderHealth(
       yunwuStatus === 401 || yunwuStatus === 403
@@ -2472,12 +2493,14 @@ const fetchVoyageEmbeddings = async (params: {
   outputDtype: VoyageEmbeddingsOutputDtype;
   truncation: boolean;
   deadlineMs: number;
+  beforeProviderDispatch?: UsageContext["beforeProviderDispatch"];
 }): Promise<{ vectors: number[][]; totalTokens: number | null }> => {
   const controller = new AbortController();
   const now = Date.now();
   const timeoutMs = Math.max(1, Math.min(EMBEDDINGS_TIMEOUT_MS, params.deadlineMs - now));
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    if (params.beforeProviderDispatch) await params.beforeProviderDispatch("voyage");
     const resp = await fetch(VOYAGE_EMBEDDINGS_URL, {
       method: "POST",
       headers: {
@@ -2539,9 +2562,8 @@ const fetchVoyageEmbeddings = async (params: {
   }
 };
 
-const extractMessageContentItems = (role: ResponseMessageItem["role"], content: unknown): MessageContentItem[] => {
-  const isAssistant = role === "assistant";
-  const textItemType: MessageContentItem["type"] = isAssistant ? "output_text" : "input_text";
+const apiKeyQuotaDispatchErrorResponse = (error: ApiKeyQuotaDispatchError): Response =>
+  openaiError(error.status, error.message, error.code, { type: "server_error", param: null });
 
 type NormalizationResult<T> =
   | Readonly<{ ok: true; value: T }>
@@ -3898,6 +3920,7 @@ const handleEmbeddingsRequest = async (
             outputDtype: profile.output_dtype,
             truncation: profile.truncation,
             deadlineMs,
+            beforeProviderDispatch: usageContext?.beforeProviderDispatch,
           });
           vectors = upstream.vectors;
           if (idempotencyLease) idempotencyHasConfirmedSuccess = true;
@@ -3907,6 +3930,18 @@ const handleEmbeddingsRequest = async (
           }
           break;
         } catch (error) {
+          if (error instanceof ApiKeyQuotaDispatchError) {
+            await recordErrorUsage(usageContext);
+            if (idempotencyLease) {
+              const released = await releaseEmbeddingsIdempotencyReservation(
+                idempotencyLease,
+                idempotencyDispatched,
+              );
+              if (!released) return embeddingsIdempotencyUnavailableResponse();
+              idempotencyDispatched = false;
+            }
+            return apiKeyQuotaDispatchErrorResponse(error);
+          }
           const status = (error as { status?: number }).status;
           const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
           const snippet = formatErrorSnippet(error);
@@ -4366,10 +4401,15 @@ const runEmbeddingsJobAttempt = async (params: {
         outputDtype: currentJob.output_dtype,
         truncation: currentJob.truncation,
         deadlineMs: params.deadlineMs,
+        beforeProviderDispatch: params.usageContext?.beforeProviderDispatch,
       });
       vectors = upstream.vectors;
       totalTokens = upstream.totalTokens;
     } catch (error) {
+      if (error instanceof ApiKeyQuotaDispatchError) {
+        await recordErrorUsage(params.usageContext);
+        return apiKeyQuotaDispatchErrorResponse(error);
+      }
       const status = (error as { status?: number }).status;
       const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
       if (status && EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {

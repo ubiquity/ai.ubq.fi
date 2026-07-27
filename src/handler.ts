@@ -28,11 +28,16 @@ import {
   authenticateClient,
   getKernelAttestationContext,
   handleV1Auth,
-  incrementApiKeyUsage,
   requireAdminAuth,
   requireSuperAdminAuth,
 } from "./auth.ts";
-import { type ApiKeyPolicy, apiKeyQuotaUsedPercent } from "./api_key_policy.ts";
+import {
+  type ApiKeyPolicy,
+  ApiKeyQuotaDispatchError,
+  apiKeyQuotaUsedPercent,
+  type ApiKeyUsageReservation,
+  reserveApiKeyUsageV3,
+} from "./api_key_policy.ts";
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
@@ -44,7 +49,6 @@ import {
 import {
   getResponseTelemetry,
   handleChatCompletions,
-  handleEmbeddings,
   handleEmbeddingsJobCreate,
   handleEmbeddingsJobGet,
   handleModelCapabilities,
@@ -274,7 +278,7 @@ const withTerminalRequestLog = (
 };
 
 const terminalRouteForRequest = (method: string, path: string): string | null => {
-  if (method === "POST" && (path === "/uos/embeddings" || path === "/v1/embeddings")) return "embeddings";
+  if (method === "POST" && path === "/uos/embeddings") return "embeddings";
   if (method === "POST" && path === "/uos/embedding-jobs") return "embeddings.jobs.create";
   if (method === "GET" && path.startsWith("/uos/embedding-jobs/")) return "embeddings.jobs.get";
   if (method === "POST" && path === "/v1/chat/completions") return "chat.completions";
@@ -551,8 +555,25 @@ export default async function handler(req: Request): Promise<Response> {
       : response;
   }
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
-  const usagePolicy = authResult.method.kind === "kv_api_key" ? authResult.method.policy : null;
+  let usagePolicy = authResult.method.kind === "kv_api_key" ? authResult.method.policy : null;
   const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
+  let usageReservation: ApiKeyUsageReservation | null = null;
+  if (usagePolicy && terminalRoute) {
+    const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute);
+    if (!admission.ok) {
+      const response = withCors(withRequestId(admission.response, requestId));
+      return await withTerminalRequestLog(response, {
+        route: terminalRoute,
+        startedAtMonotonicMs: requestStartedAtMonotonicMs,
+        keyId: usageKeyId,
+        requestId,
+      });
+    }
+    usageReservation = admission.reservation;
+    // Admission re-reads the strict hash policy, so downstream quota headers
+    // and paid fallback use the policy that actually reserved this request.
+    usagePolicy = admission.reservation.policy;
+  }
   const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
   let kernelRepo = authResult.method.kind === "github_token"
     ? { owner: authResult.method.owner, repo: authResult.method.repo }
@@ -573,6 +594,7 @@ export default async function handler(req: Request): Promise<Response> {
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,
+    beforeProviderDispatch: usageReservation?.beforeProviderDispatch,
   };
   if (terminalRoute) {
     console.info(
@@ -619,29 +641,9 @@ export default async function handler(req: Request): Promise<Response> {
       onCompleted,
     });
   };
-  const incrementInferenceUsage = async (): Promise<void> => {
-    const operations: Array<Readonly<{ name: string; result: Promise<void> }>> = [];
-    if (usagePolicy) {
-      operations.push({ name: "api_key", result: incrementApiKeyUsage(usagePolicy) });
-    }
-    operations.push({ name: "kernel", result: incrementKernelLimitUsage() });
-    const results = await Promise.allSettled(operations.map((operation) => operation.result));
-    const failures = results.flatMap((result, index) =>
-      result.status === "rejected"
-        ? [
-          new Error(
-            `${operations[index]!.name}: ${
-              result.reason instanceof Error ? result.reason.message : String(result.reason)
-            }`,
-          ),
-        ]
-        : []
-    );
-    if (failures.length) throw new AggregateError(failures, "Inference quota accounting failed");
-  };
-  const bestEffortInferenceUsage = async (): Promise<void> => {
+  const bestEffortKernelInferenceUsage = async (): Promise<void> => {
     try {
-      await incrementInferenceUsage();
+      await incrementKernelLimitUsage();
     } catch (error) {
       warnQuotaAccountingFailure(
         { route: terminalRoute ?? "inference", keyId: usageKeyId, requestId },
@@ -649,23 +651,48 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
   };
+  const executeInference = async (run: () => Promise<Response>): Promise<Response> => {
+    let response: Response | null = null;
+    let runError: unknown = null;
+    try {
+      response = await run();
+    } catch (error) {
+      runError = error;
+    }
+    try {
+      // A provider dispatch settles this as committed; every validation,
+      // cache, idempotency, queue, and synthetic-routing path is released.
+      await usageReservation?.release();
+    } catch (error) {
+      const quotaError = error instanceof ApiKeyQuotaDispatchError
+        ? error
+        : new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
+      return openaiError(quotaError.status, quotaError.message, quotaError.code, { type: "server_error" });
+    }
+    if (runError instanceof ApiKeyQuotaDispatchError) {
+      return openaiError(runError.status, runError.message, runError.code, { type: "server_error" });
+    }
+    if (runError) throw runError;
+    if (!response) throw new Error("Inference handler completed without a response");
+    return response;
+  };
 
   if (req.method === "GET" && path === "/v1/models") {
     return withCors(await handleModels(req));
   }
 
   if (req.method === "POST" && path === "/uos/embeddings") {
-    const response = await handleUosEmbeddings(req, usageContext);
+    const response = await executeInference(() => handleUosEmbeddings(req, usageContext));
     if (response.ok && response.headers.get("x-uos-idempotency-replayed") !== "true") {
-      await bestEffortInferenceUsage();
+      await bestEffortKernelInferenceUsage();
     }
     return await finishTerminalResponse(response, "embeddings");
   }
 
   if (req.method === "POST" && path === "/uos/embedding-jobs") {
-    const response = await handleEmbeddingsJobCreate(req, authResult.token, usageContext);
+    const response = await executeInference(() => handleEmbeddingsJobCreate(req, authResult.token, usageContext));
     if (response.ok) {
-      await bestEffortInferenceUsage();
+      await bestEffortKernelInferenceUsage();
     }
     return await finishTerminalResponse(response, "embeddings.jobs.create");
   }
@@ -675,26 +702,18 @@ export default async function handler(req: Request): Promise<Response> {
     if (!jobId) {
       return await finishTerminalResponse(openaiError(404, "Not found", "not_found"), "embeddings.jobs.get");
     }
-    const response = await handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext);
+    const response = await executeInference(() => handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext));
     return await finishTerminalResponse(response, "embeddings.jobs.get");
   }
 
-  if (req.method === "POST" && path === "/v1/embeddings") {
-    const response = await handleEmbeddings(req, usageContext);
-    if (response.ok) {
-      await bestEffortInferenceUsage();
-    }
-    return await finishTerminalResponse(response, "embeddings");
-  }
-
   if (req.method === "POST" && path === "/v1/chat/completions") {
-    const response = await handleChatCompletions(req, usageContext);
-    return await finishTerminalResponse(response, "chat.completions", true, incrementInferenceUsage);
+    const response = await executeInference(() => handleChatCompletions(req, usageContext));
+    return await finishTerminalResponse(response, "chat.completions", true, incrementKernelLimitUsage);
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
-    const response = await handleResponses(req, usageContext);
-    return await finishTerminalResponse(response, "responses", true, incrementInferenceUsage);
+    const response = await executeInference(() => handleResponses(req, usageContext));
+    return await finishTerminalResponse(response, "responses", true, incrementKernelLimitUsage);
   }
 
   return withCors(openaiError(404, "Not found", "not_found"));

@@ -1,16 +1,43 @@
 import { type KvEntryJSON, toKey, toValue } from "@deno/kv-utils/json";
-import { API_KEY_HASH_PREFIX, API_KEY_ID_PREFIX } from "./api_keys.ts";
+import { API_KEY_HASH_PREFIX, API_KEY_ID_PREFIX, apiKeyHashKey, apiKeyIdKey } from "./api_keys.ts";
 import {
-  API_KEY_USAGE_V2_PREFIX,
+  API_KEY_USAGE_V3_REQUEST_PREFIX,
+  API_KEY_USAGE_V3_WINDOW_PREFIX,
   type ApiKeyPolicy,
   apiKeyPolicyFromHashRecord,
   apiKeyUsageV2Key,
+  apiKeyUsageV3RetentionMs,
+  apiKeyUsageV3WindowKey,
+  makeApiKeyUsageWindowV3,
+  normalizeApiKeyUsageRequestV3,
+  normalizeApiKeyUsageWindowV3,
 } from "./api_key_policy.ts";
+import {
+  KERNEL_ORG_POLICY_V2_PREFIX,
+  KERNEL_ORG_WINDOW_V2_PREFIX,
+  KERNEL_REPO_POLICY_V2_PREFIX,
+  KERNEL_REPO_WINDOW_V2_PREFIX,
+  kernelOrgPolicyKey,
+  kernelOrgWindowKey,
+  type KernelQuotaPolicyV2,
+  type KernelQuotaWindowV2,
+  kernelRepoPolicyKey,
+  kernelRepoWindowKey,
+  normalizeKernelQuotaPolicyV2,
+  normalizeKernelQuotaWindowV2,
+} from "./kernel_quota_v2.ts";
+import {
+  DEFAULT_KERNEL_POLICY_LIMIT_KEY,
+  DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS,
+  DEFAULT_KERNEL_POLICY_WINDOW_KEY,
+  DEFAULT_KERNEL_POLICY_WINDOW_MS,
+} from "./defaults.ts";
 import { buildRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import type {
   ApiKeyHashRecord,
   ApiKeyRecord,
   ApiKeyRequestLogRecord,
+  ApiKeyUsageWindowV3,
   PaidFallbackRequestV3,
   PaidFallbackWindowV3,
 } from "./types.ts";
@@ -58,6 +85,8 @@ export type KvMigrationValidationResult = {
     api_key_bounded_counters_v2: number;
     api_key_bounded_counter_baselines_v2: number;
     api_key_bounded_counter_reconciled_baselines_v2: number;
+    api_key_usage_v3_windows: number;
+    api_key_usage_v3_requests: number;
     paid_fallback_ledger: number;
     paid_fallback_v3_windows: number;
     paid_fallback_v3_requests: number;
@@ -66,6 +95,10 @@ export type KvMigrationValidationResult = {
     paid_fallback_v3_deletion_guards: number;
     kernel_repo_limits: number;
     kernel_org_limits: number;
+    kernel_v2_repo_policies: number;
+    kernel_v2_org_policies: number;
+    kernel_v2_repo_windows: number;
+    kernel_v2_org_windows: number;
     passkey_users: number;
     passkey_credentials: number;
     agent_messages: number;
@@ -94,6 +127,8 @@ const DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "api_keys_usage_daily", prefix: ["ubq_ai", "api_keys", "usage_daily"] },
   { group: "api_keys_request_log", prefix: ["ubq_ai", "api_keys", "request_log"] },
   { group: "api_key_usage_v2", prefix: ["uos_ai", "api_key_usage", "v2"] },
+  { group: "api_key_usage_v3_windows", prefix: ["uos_ai", "api_key_usage", "v3", "window"] },
+  { group: "api_key_usage_v3_requests", prefix: ["uos_ai", "api_key_usage", "v3", "request"] },
   { group: "paid_fallback_ledger", prefix: ["uos_ai", "paid_fallback", "ledger"] },
   { group: "paid_fallback_v3_windows", prefix: ["uos_ai", "paid_fallback", "v3", "window"] },
   { group: "paid_fallback_v3_requests", prefix: ["uos_ai", "paid_fallback", "v3", "request"] },
@@ -109,10 +144,16 @@ const DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "runtime_config_v2", prefix: ["uos_ai", "runtime_config", "v2"] },
   { group: "kernel_usage", prefix: ["ubq_ai", "kernel_auth", "usage"] },
   { group: "kernel_usage_daily", prefix: ["ubq_ai", "kernel_auth", "usage_daily"] },
-  { group: "kernel_limits", prefix: ["ubq_ai", "kernel_auth", "limits"] },
+  { group: "kernel_quota_v2_repo_policy", prefix: ["uos_ai", "kernel_quota", "v2", "repo_policy"] },
+  { group: "kernel_quota_v2_org_policy", prefix: ["uos_ai", "kernel_quota", "v2", "org_policy"] },
+  { group: "kernel_quota_v2_repo_window", prefix: ["uos_ai", "kernel_quota", "v2", "repo_window"] },
+  { group: "kernel_quota_v2_org_window", prefix: ["uos_ai", "kernel_quota", "v2", "org_window"] },
+  // Kept importable until the two-phase incident migration has replayed old
+  // isolate increments into the split V2 window records.
+  { group: "kernel_limits_legacy", prefix: ["ubq_ai", "kernel_auth", "limits"] },
   { group: "kernel_org_usage", prefix: ["ubq_ai", "kernel_auth", "org_usage"] },
   { group: "kernel_org_usage_daily", prefix: ["ubq_ai", "kernel_auth", "org_usage_daily"] },
-  { group: "kernel_org_limits", prefix: ["ubq_ai", "kernel_auth", "org_limits"] },
+  { group: "kernel_org_limits_legacy", prefix: ["ubq_ai", "kernel_auth", "org_limits"] },
   { group: "defaults", prefix: ["default"] },
   { group: "kernel_pubkeys", prefix: ["uos_ai", "kernel_pubkeys"] },
   { group: "voyage_api_key", prefix: ["uos_ai", "voyage_api_key"] },
@@ -392,6 +433,7 @@ const apiKeyHashPolicyMatches = (record: ApiKeyRecord, hashRecord: ApiKeyHashRec
   record.usage_requests === hashRecord.usage_requests &&
   record.usage_reset_at_ms === hashRecord.usage_reset_at_ms &&
   record.window_ms === hashRecord.window_ms &&
+  record.usage_quota_version === hashRecord.usage_quota_version &&
   record.paid_fallback_enabled === hashRecord.paid_fallback_enabled &&
   record.paid_fallback_limit_microcredits === hashRecord.paid_fallback_limit_microcredits &&
   record.paid_fallback_spent_microcredits === hashRecord.paid_fallback_spent_microcredits &&
@@ -695,57 +737,59 @@ const migrateBoundedCounterHandoff = async (
 ): Promise<BoundedCounterHandoffResult> => {
   const counterKey = apiKeyUsageV2Key(policy);
   const baselineKey = apiKeyUsageV2MigrationBaselineKey(policy);
+  const windowKey = apiKeyUsageV3WindowKey(policy);
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const baselineEntry = await kv.get<ApiKeyUsageV2MigrationBaseline>(baselineKey, { consistency: "strong" });
+    const [baselineEntry, counterEntry, windowEntry] = await Promise.all([
+      kv.get<ApiKeyUsageV2MigrationBaseline>(baselineKey, { consistency: "strong" }),
+      kv.get<Deno.KvU64>(counterKey, { consistency: "strong" }),
+      kv.get<ApiKeyUsageWindowV3>(windowKey, { consistency: "strong" }),
+    ]);
+    if (counterEntry.value !== null && typeof counterEntry.value.value !== "bigint") {
+      throw new Error(`Legacy V2 API-key counter is invalid: ${policy.key_id}`);
+    }
+    const observedV2Usage = counterEntry.value === null ? legacyUsageRequests : Number(counterEntry.value.value);
+    if (!isSafeUsageCount(observedV2Usage)) {
+      throw new Error(`Legacy V2 API-key counter is out of range: ${policy.key_id}`);
+    }
+    const existingWindow = normalizeApiKeyUsageWindowV3(windowEntry.value);
+    if (
+      existingWindow &&
+      (existingWindow.key_id !== policy.key_id || existingWindow.policy_version !== policy.policy_version ||
+        existingWindow.window_start_ms !== policy.window_start_ms ||
+        existingWindow.window_reset_at_ms !== policy.usage_reset_at_ms)
+    ) {
+      throw new Error(`V3 API-key window identity is invalid: ${policy.key_id}`);
+    }
     if (baselineEntry.value === null) {
-      const counterEntry = await kv.get<Deno.KvU64>(counterKey, { consistency: "strong" });
-      if (handoffAlreadyInitialized) {
-        if (counterEntry.value !== null && typeof counterEntry.value.value !== "bigint") {
-          throw new Error(`Bounded counter handoff counter is invalid: ${policy.key_id}`);
-        }
-        const baseline: ApiKeyUsageV2MigrationBaseline = {
-          version: 1,
-          key_id: policy.key_id,
-          policy_version: policy.policy_version,
-          window_start_ms: policy.window_start_ms,
-          last_legacy_usage_requests: legacyUsageRequests,
-          seeded_at_ms: nowMs,
-          reconciled_at_ms: nowMs,
-          reconciliation_runs: 1,
-        };
-        const committed = await kv.atomic()
-          .check(baselineEntry)
-          .sum(counterKey, BigInt(legacyUsageRequests))
-          .set(baselineKey, baseline)
-          .commit();
-        if (committed.ok) {
-          return {
-            baseline_created: true,
-            baseline_reconciled: true,
-            legacy_usage_delta_applied: legacyUsageRequests,
-          };
-        }
-        continue;
-      }
       const baseline: ApiKeyUsageV2MigrationBaseline = {
         version: 1,
         key_id: policy.key_id,
         policy_version: policy.policy_version,
         window_start_ms: policy.window_start_ms,
-        last_legacy_usage_requests: legacyUsageRequests,
+        last_legacy_usage_requests: observedV2Usage,
         seeded_at_ms: nowMs,
-        reconciled_at_ms: null,
-        reconciliation_runs: 0,
+        reconciled_at_ms: handoffAlreadyInitialized ? nowMs : null,
+        reconciliation_runs: handoffAlreadyInitialized ? 1 : 0,
+      };
+      const seededWindow: ApiKeyUsageWindowV3 = {
+        ...(existingWindow ?? makeApiKeyUsageWindowV3(policy, nowMs)),
+        committed_requests: Math.max(existingWindow?.committed_requests ?? 0, observedV2Usage),
+        updated_at_ms: nowMs,
       };
       const committed = await kv.atomic()
         .check(baselineEntry)
         .check(counterEntry)
-        .set(counterKey, new Deno.KvU64(BigInt(legacyUsageRequests)))
+        .check(windowEntry)
         .set(baselineKey, baseline)
+        .set(windowKey, seededWindow, { expireIn: apiKeyUsageV3RetentionMs(seededWindow.window_reset_at_ms, nowMs) })
         .commit();
       if (committed.ok) {
-        return { baseline_created: true, baseline_reconciled: false, legacy_usage_delta_applied: 0 };
+        return {
+          baseline_created: true,
+          baseline_reconciled: handoffAlreadyInitialized,
+          legacy_usage_delta_applied: observedV2Usage,
+        };
       }
       continue;
     }
@@ -757,11 +801,8 @@ const migrateBoundedCounterHandoff = async (
     ) {
       throw new Error(`Bounded counter handoff baseline is invalid: ${policy.key_id}`);
     }
-    const counterEntry = await kv.get<Deno.KvU64>(counterKey, { consistency: "strong" });
-    if (!counterEntry.value || typeof counterEntry.value.value !== "bigint") {
-      throw new Error(`Bounded counter handoff counter is missing or invalid: ${policy.key_id}`);
-    }
-    const nextLegacyUsage = Math.max(baseline.last_legacy_usage_requests, legacyUsageRequests);
+    if (!existingWindow) throw new Error(`V3 API-key window is missing: ${policy.key_id}`);
+    const nextLegacyUsage = Math.max(baseline.last_legacy_usage_requests, observedV2Usage);
     const legacyDelta = nextLegacyUsage - baseline.last_legacy_usage_requests;
     const updatedBaseline: ApiKeyUsageV2MigrationBaseline = {
       ...baseline,
@@ -769,8 +810,17 @@ const migrateBoundedCounterHandoff = async (
       reconciled_at_ms: handoffAlreadyInitialized ? nowMs : null,
       reconciliation_runs: handoffAlreadyInitialized ? baseline.reconciliation_runs + 1 : 0,
     };
-    let atomic = kv.atomic().check(baselineEntry).set(baselineKey, updatedBaseline);
-    if (legacyDelta > 0) atomic = atomic.sum(counterKey, BigInt(legacyDelta));
+    const updatedWindow: ApiKeyUsageWindowV3 = {
+      ...existingWindow,
+      committed_requests: existingWindow.committed_requests + legacyDelta,
+      updated_at_ms: nowMs,
+    };
+    const atomic = kv.atomic()
+      .check(baselineEntry)
+      .check(counterEntry)
+      .check(windowEntry)
+      .set(baselineKey, updatedBaseline)
+      .set(windowKey, updatedWindow, { expireIn: apiKeyUsageV3RetentionMs(updatedWindow.window_reset_at_ms, nowMs) });
     const committed = await atomic.commit();
     if (committed.ok) {
       return {
@@ -783,15 +833,6 @@ const migrateBoundedCounterHandoff = async (
   throw new Error(`Bounded counter handoff changed concurrently: ${policy.key_id}`);
 };
 
-const deleteStaleKeys = async (kv: Deno.Kv, prefix: Deno.KvKey, currentKey?: Deno.KvKey): Promise<void> => {
-  const current = currentKey ? JSON.stringify(currentKey) : null;
-  const stale: Deno.KvKey[] = [];
-  for await (const entry of kv.list({ prefix })) {
-    if (current === null || JSON.stringify(entry.key) !== current) stale.push(entry.key);
-  }
-  for (const key of stale) await kv.delete(key);
-};
-
 const countReconciledBoundedCounterBaselines = async (kv: Deno.Kv): Promise<number> => {
   let count = 0;
   for await (const entry of kv.list<unknown>({ prefix: API_KEY_USAGE_V2_MIGRATION_BASELINE_PREFIX })) {
@@ -799,6 +840,257 @@ const countReconciledBoundedCounterBaselines = async (kv: Deno.Kv): Promise<numb
     if (baseline && baseline.reconciled_at_ms !== null) count += 1;
   }
   return count;
+};
+
+type LegacyKernelLimitRecord = Readonly<{
+  usage_limit_requests: number;
+  usage_requests: number;
+  usage_reset_at_ms: number;
+  window_ms: number;
+  expires_at_ms: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}>;
+
+const legacyKernelNumber = (value: unknown, fallback: number): number => {
+  if (typeof value === "string") value = Number(value);
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.trunc(value);
+};
+
+const normalizeLegacyKernelLimit = (
+  value: unknown,
+  defaults: { limit: number; windowMs: number },
+  nowMs: number,
+): LegacyKernelLimitRecord | null => {
+  if (!isRecord(value)) return null;
+  const limit = legacyKernelNumber(value.usage_limit_requests, defaults.limit);
+  const usage = Math.max(0, legacyKernelNumber(value.usage_requests, 0));
+  const windowMs = legacyKernelNumber(value.window_ms, defaults.windowMs);
+  const resetAtMs = legacyKernelNumber(value.usage_reset_at_ms, nowMs + Math.max(1, windowMs));
+  const expiresAtMs = legacyKernelNumber(value.expires_at_ms, -1);
+  if (
+    !(limit === -1 || limit >= 0) || windowMs <= 0 || resetAtMs <= 0 ||
+    !(expiresAtMs === -1 || expiresAtMs >= 0)
+  ) return null;
+  return {
+    usage_limit_requests: limit,
+    usage_requests: usage,
+    usage_reset_at_ms: resetAtMs,
+    window_ms: windowMs,
+    expires_at_ms: expiresAtMs,
+    created_at_ms: Math.max(0, legacyKernelNumber(value.created_at_ms, nowMs)),
+    updated_at_ms: Math.max(0, legacyKernelNumber(value.updated_at_ms, nowMs)),
+  };
+};
+
+const migrationKernelDefaults = async (kv: Deno.Kv): Promise<{ limit: number; windowMs: number }> => {
+  const [limitEntry, windowEntry] = await Promise.all([
+    kv.get(DEFAULT_KERNEL_POLICY_LIMIT_KEY, { consistency: "strong" }),
+    kv.get(DEFAULT_KERNEL_POLICY_WINDOW_KEY, { consistency: "strong" }),
+  ]);
+  const limit = legacyKernelNumber(limitEntry.value, DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS);
+  const windowMs = legacyKernelNumber(windowEntry.value, DEFAULT_KERNEL_POLICY_WINDOW_MS);
+  return {
+    limit: limit === -1 || limit >= 0 ? limit : DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS,
+    windowMs: windowMs > 0 ? windowMs : DEFAULT_KERNEL_POLICY_WINDOW_MS,
+  };
+};
+
+const migrateLegacyKernelScope = async (
+  kv: Deno.Kv,
+  scope: "repo" | "org",
+  defaults: { limit: number; windowMs: number },
+  nowMs: number,
+): Promise<number> => {
+  const legacyPrefix = scope === "repo"
+    ? ["ubq_ai", "kernel_auth", "limits"] as const
+    : ["ubq_ai", "kernel_auth", "org_limits"] as const;
+  let migrated = 0;
+  for await (const legacyEntry of kv.list<unknown>({ prefix: legacyPrefix })) {
+    const ownerPart = legacyEntry.key[legacyPrefix.length];
+    const repoPart = legacyEntry.key[legacyPrefix.length + 1];
+    if (
+      typeof ownerPart !== "string" || !ownerPart || (scope === "repo" && (typeof repoPart !== "string" || !repoPart))
+    ) {
+      throw new Error(`legacy kernel quota key is malformed: ${JSON.stringify(legacyEntry.key)}`);
+    }
+    const owner = ownerPart;
+    const repo = scope === "repo" ? repoPart as string : undefined;
+    const legacy = normalizeLegacyKernelLimit(legacyEntry.value, defaults, nowMs);
+    if (!legacy) throw new Error(`legacy kernel quota value is malformed: ${JSON.stringify(legacyEntry.key)}`);
+    const defaultBacked = legacy.expires_at_ms === -1 &&
+      legacy.usage_limit_requests === defaults.limit && legacy.window_ms === defaults.windowMs;
+    const policyKey = scope === "repo" ? kernelRepoPolicyKey(owner, repo!) : kernelOrgPolicyKey(owner);
+    const windowKey = scope === "repo" ? kernelRepoWindowKey(owner, repo!) : kernelOrgWindowKey(owner);
+    const [policyEntry, windowEntry] = await Promise.all([
+      kv.get<KernelQuotaPolicyV2>(policyKey, { consistency: "strong" }),
+      kv.get<KernelQuotaWindowV2>(windowKey, { consistency: "strong" }),
+    ]);
+    const effectiveWindowMs = defaultBacked ? defaults.windowMs : legacy.window_ms;
+    const currentWindow = normalizeKernelQuotaWindowV2(windowEntry.value, scope, owner, repo);
+    const sameWindow = currentWindow?.applied_window_ms === effectiveWindowMs &&
+      currentWindow.usage_reset_at_ms === legacy.usage_reset_at_ms;
+    const window: KernelQuotaWindowV2 = sameWindow
+      ? {
+        ...currentWindow,
+        usage_requests: Math.max(currentWindow.usage_requests, legacy.usage_requests),
+        updated_at_ms: nowMs,
+      }
+      : {
+        v: 2,
+        scope,
+        owner,
+        ...(scope === "repo" ? { repo } : {}),
+        usage_requests: legacy.usage_reset_at_ms <= nowMs ? 0 : legacy.usage_requests,
+        usage_reset_at_ms: legacy.usage_reset_at_ms <= nowMs ? nowMs + effectiveWindowMs : legacy.usage_reset_at_ms,
+        applied_window_ms: effectiveWindowMs,
+        created_at_ms: legacy.created_at_ms,
+        updated_at_ms: nowMs,
+      };
+    const policy: KernelQuotaPolicyV2 = {
+      v: 2,
+      scope,
+      owner,
+      ...(scope === "repo" ? { repo } : {}),
+      usage_limit_requests: legacy.usage_limit_requests,
+      window_ms: legacy.window_ms,
+      expires_at_ms: legacy.expires_at_ms,
+      created_at_ms: legacy.created_at_ms,
+      updated_at_ms: nowMs,
+    };
+    let atomic = kv.atomic()
+      .check(legacyEntry)
+      .check(policyEntry)
+      .check(windowEntry)
+      .set(windowKey, window)
+      .delete(legacyEntry.key);
+    atomic = defaultBacked ? atomic.delete(policyKey) : atomic.set(policyKey, policy);
+    const committed = await atomic.commit();
+    if (!committed.ok) throw new Error(`legacy kernel quota changed concurrently: ${owner}/${repo ?? ""}`);
+    migrated += 1;
+  }
+  return migrated;
+};
+
+const migrateKernelQuotaV2 = async (kv: Deno.Kv, nowMs: number): Promise<{ repo: number; org: number }> => {
+  const defaults = await migrationKernelDefaults(kv);
+  return {
+    repo: await migrateLegacyKernelScope(kv, "repo", defaults, nowMs),
+    org: await migrateLegacyKernelScope(kv, "org", defaults, nowMs),
+  };
+};
+
+type ApiKeyUsageV3Inventory = Readonly<{
+  windows: number;
+  requests: number;
+  errors: string[];
+}>;
+
+const apiKeyUsageV3WindowReference = (keyId: string, policyVersion: string, windowStartMs: number): string =>
+  JSON.stringify([keyId, policyVersion, windowStartMs]);
+
+const inspectApiKeyUsageV3 = async (
+  kv: Deno.Kv,
+  knownKeyIds: ReadonlySet<string>,
+): Promise<ApiKeyUsageV3Inventory> => {
+  const errors: string[] = [];
+  const windows = new Map<string, ApiKeyUsageWindowV3>();
+  const reservedByWindow = new Map<string, number>();
+  const requestWindows = new Set<string>();
+  let windowCount = 0;
+  let requestCount = 0;
+  for await (const entry of kv.list<unknown>({ prefix: API_KEY_USAGE_V3_WINDOW_PREFIX })) {
+    windowCount += 1;
+    const [keyId, policyVersion, windowStartMs] = entry.key.slice(API_KEY_USAGE_V3_WINDOW_PREFIX.length);
+    const window = normalizeApiKeyUsageWindowV3(entry.value);
+    if (
+      entry.key.length !== API_KEY_USAGE_V3_WINDOW_PREFIX.length + 3 || !isApiKeyId(keyId) ||
+      typeof policyVersion !== "string" || !policyVersion || !isSafeUsageCount(windowStartMs) || !window ||
+      window.key_id !== keyId || window.policy_version !== policyVersion || window.window_start_ms !== windowStartMs
+    ) {
+      errors.push(`API key usage V3 window is malformed: ${JSON.stringify(entry.key)}`);
+      continue;
+    }
+    if (!knownKeyIds.has(keyId)) errors.push(`API key usage V3 window is orphaned: ${keyId}`);
+    windows.set(apiKeyUsageV3WindowReference(keyId, policyVersion, windowStartMs), window);
+  }
+  for await (const entry of kv.list<unknown>({ prefix: API_KEY_USAGE_V3_REQUEST_PREFIX })) {
+    requestCount += 1;
+    const [keyId, policyVersion, windowStartMs, requestId] = entry.key.slice(API_KEY_USAGE_V3_REQUEST_PREFIX.length);
+    const request = normalizeApiKeyUsageRequestV3(entry.value);
+    if (
+      entry.key.length !== API_KEY_USAGE_V3_REQUEST_PREFIX.length + 4 || !isApiKeyId(keyId) ||
+      typeof policyVersion !== "string" || !policyVersion || !isSafeUsageCount(windowStartMs) ||
+      !isApiKeyId(requestId) || !request || request.key_id !== keyId || request.request_id !== requestId
+    ) {
+      errors.push(`API key usage V3 request is malformed: ${JSON.stringify(entry.key)}`);
+      continue;
+    }
+    if (!knownKeyIds.has(keyId)) errors.push(`API key usage V3 request is orphaned: ${keyId}/${requestId}`);
+    const reference = apiKeyUsageV3WindowReference(keyId, policyVersion, windowStartMs);
+    requestWindows.add(reference);
+    if (request.state === "reserved") {
+      reservedByWindow.set(reference, (reservedByWindow.get(reference) ?? 0) + 1);
+    }
+    if (request.state === "dispatched" && (request.provider === null || request.dispatched_at_ms === null)) {
+      errors.push(`API key usage V3 dispatched request is incomplete: ${keyId}/${requestId}`);
+    }
+    if (request.state === "released" && request.released_at_ms === null) {
+      errors.push(`API key usage V3 released request is incomplete: ${keyId}/${requestId}`);
+    }
+  }
+  for (const [reference, window] of windows) {
+    const reserved = reservedByWindow.get(reference) ?? 0;
+    if (window.reserved_requests !== reserved) {
+      errors.push(`API key usage V3 reserved aggregate is inconsistent: ${reference}`);
+    }
+  }
+  for (const reference of requestWindows) {
+    if (!windows.has(reference)) errors.push(`API key usage V3 request has no window: ${reference}`);
+  }
+  return { windows: windowCount, requests: requestCount, errors };
+};
+
+type KernelQuotaV2Inventory = Readonly<{
+  repoPolicies: number;
+  orgPolicies: number;
+  repoWindows: number;
+  orgWindows: number;
+  errors: string[];
+}>;
+
+const inspectKernelQuotaV2 = async (kv: Deno.Kv): Promise<KernelQuotaV2Inventory> => {
+  const errors: string[] = [];
+  const inspect = async (
+    prefix: Deno.KvKey,
+    scope: "repo" | "org",
+    kind: "policy" | "window",
+  ): Promise<number> => {
+    let count = 0;
+    for await (const entry of kv.list<unknown>({ prefix })) {
+      count += 1;
+      const owner = entry.key[prefix.length];
+      const repo = entry.key[prefix.length + 1];
+      const validKey = typeof owner === "string" && owner &&
+        (scope === "org"
+          ? entry.key.length === prefix.length + 1
+          : typeof repo === "string" && repo && entry.key.length === prefix.length + 2);
+      const validValue = validKey &&
+        (kind === "policy"
+          ? normalizeKernelQuotaPolicyV2(entry.value, scope, owner, scope === "repo" ? repo as string : undefined)
+          : normalizeKernelQuotaWindowV2(entry.value, scope, owner, scope === "repo" ? repo as string : undefined));
+      if (!validValue) errors.push(`kernel quota V2 ${kind} is malformed: ${JSON.stringify(entry.key)}`);
+    }
+    return count;
+  };
+  const [repoPolicies, orgPolicies, repoWindows, orgWindows] = await Promise.all([
+    inspect(KERNEL_REPO_POLICY_V2_PREFIX, "repo", "policy"),
+    inspect(KERNEL_ORG_POLICY_V2_PREFIX, "org", "policy"),
+    inspect(KERNEL_REPO_WINDOW_V2_PREFIX, "repo", "window"),
+    inspect(KERNEL_ORG_WINDOW_V2_PREFIX, "org", "window"),
+  ]);
+  return { repoPolicies, orgPolicies, repoWindows, orgWindows, errors };
 };
 
 const inspectStrictApiKeyPairs = async (
@@ -1368,17 +1660,22 @@ export type KvReadIncidentV2MigrationResult = Readonly<{
   bounded_baselines_created: number;
   bounded_baselines_reconciled: number;
   legacy_usage_delta_applied: number;
+  kernel_repo_records: number;
+  kernel_org_records: number;
   paid_fallback_records: number;
   runtime_config_written: boolean;
 }>;
 
 export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncidentV2MigrationResult> => {
   const migrationNowMs = Date.now();
-  const previousMigration = await kv.get<{ counter_handoff_version?: unknown }>(
+  const previousMigration = await kv.get<{
+    counter_handoff_version?: unknown;
+    api_key_quota_v3_handoff_version?: unknown;
+  }>(
     KV_READ_INCIDENT_V2_MIGRATION_KEY,
     { consistency: "strong" },
   );
-  const handoffAlreadyInitialized = previousMigration.value?.counter_handoff_version === 1;
+  const handoffAlreadyInitialized = previousMigration.value?.api_key_quota_v3_handoff_version === 1;
   const codexModels = await kv.get<Record<string, unknown>>(["ubq_ai", "codex_models"]);
   if (!codexModels.value) throw new Error("Codex model snapshot is missing");
   const defaultModel = await kv.get<string>(["default", "model"]);
@@ -1403,31 +1700,42 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
   let boundedBaselinesReconciled = 0;
   let legacyUsageDeltaApplied = 0;
   for (const { record, hashRecord } of apiKeyInventory.pairs) {
-    const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, migrationPolicyNow(record, migrationNowMs));
+    const upgradedRecord: ApiKeyRecord = { ...record, usage_quota_version: 3 };
+    const upgradedHash: ApiKeyHashRecord = { ...hashRecord, usage_quota_version: 3 };
+    const [idEntry, hashEntry] = await Promise.all([
+      kv.get<ApiKeyRecord>(apiKeyIdKey(record.id), { consistency: "strong" }),
+      kv.get<ApiKeyHashRecord>(apiKeyHashKey(record.hash), { consistency: "strong" }),
+    ]);
+    if (!idEntry.value || !hashEntry.value) throw new Error(`API key changed during quota V3 migration: ${record.id}`);
+    if (idEntry.value.usage_quota_version !== 3 || hashEntry.value.usage_quota_version !== 3) {
+      const upgraded = await kv.atomic()
+        .check(idEntry)
+        .check(hashEntry)
+        .set(apiKeyIdKey(record.id), upgradedRecord)
+        .set(apiKeyHashKey(record.hash), upgradedHash)
+        .commit();
+      if (!upgraded.ok) throw new Error(`API key changed during quota V3 migration: ${record.id}`);
+    }
+    const policy = apiKeyPolicyFromHashRecord(
+      record.hash,
+      upgradedHash,
+      migrationPolicyNow(upgradedRecord, migrationNowMs),
+    );
     if (!policy) throw new Error(`API key ${record.id} policy could not be normalized`);
     apiKeys += 1;
+    const handoff = await migrateBoundedCounterHandoff(
+      kv,
+      policy,
+      currentLegacyUsage(upgradedRecord, migrationNowMs),
+      migrationNowMs,
+      handoffAlreadyInitialized,
+    );
     if (policy.usage_limit_requests !== -1) {
-      const counterKey = apiKeyUsageV2Key(policy);
-      const baselineKey = apiKeyUsageV2MigrationBaselineKey(policy);
-      const handoff = await migrateBoundedCounterHandoff(
-        kv,
-        policy,
-        currentLegacyUsage(record, migrationNowMs),
-        migrationNowMs,
-        handoffAlreadyInitialized,
-      );
       if (handoff.baseline_created) boundedBaselinesCreated += 1;
       if (handoff.baseline_reconciled) boundedBaselinesReconciled += 1;
-      legacyUsageDeltaApplied += handoff.legacy_usage_delta_applied;
-      if (!handoffAlreadyInitialized) {
-        await deleteStaleKeys(kv, [...API_KEY_USAGE_V2_PREFIX, record.id], counterKey);
-        await deleteStaleKeys(kv, [...API_KEY_USAGE_V2_MIGRATION_BASELINE_PREFIX, record.id], baselineKey);
-      }
       boundedCounters += 1;
-    } else if (!handoffAlreadyInitialized) {
-      await deleteStaleKeys(kv, [...API_KEY_USAGE_V2_PREFIX, record.id]);
-      await deleteStaleKeys(kv, [...API_KEY_USAGE_V2_MIGRATION_BASELINE_PREFIX, record.id]);
     }
+    legacyUsageDeltaApplied += handoff.legacy_usage_delta_applied;
   }
 
   const handoffPhase = boundedCounters === 0
@@ -1451,13 +1759,22 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
     }
     paidFallbackRecords += 1;
   }
-  await projectLegacyPaidFallbackV3(kv, apiKeyInventory.pairs, migrationNowMs);
+  const kernelMigration = await migrateKernelQuotaV2(kv, migrationNowMs);
+  await projectLegacyPaidFallbackV3(
+    kv,
+    apiKeyInventory.pairs.map(({ record, hashRecord }) => ({
+      record: { ...record, usage_quota_version: 3 },
+      hashRecord: { ...hashRecord, usage_quota_version: 3 },
+    })),
+    migrationNowMs,
+  );
 
   await kv.atomic()
     .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)
     .set(KV_READ_INCIDENT_V2_MIGRATION_KEY, {
       version: 2,
       counter_handoff_version: 1,
+      api_key_quota_v3_handoff_version: 1,
       completed_at_ms: Date.now(),
       api_keys: apiKeys,
       bounded_counters: boundedCounters,
@@ -1465,6 +1782,8 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
       bounded_baselines_created: boundedBaselinesCreated,
       bounded_baselines_reconciled: boundedBaselinesReconciled,
       legacy_usage_delta_applied: legacyUsageDeltaApplied,
+      kernel_repo_records: kernelMigration.repo,
+      kernel_org_records: kernelMigration.org,
       paid_fallback_records: paidFallbackRecords,
     })
     .commit();
@@ -1475,6 +1794,8 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
     bounded_baselines_created: boundedBaselinesCreated,
     bounded_baselines_reconciled: boundedBaselinesReconciled,
     legacy_usage_delta_applied: legacyUsageDeltaApplied,
+    kernel_repo_records: kernelMigration.repo,
+    kernel_org_records: kernelMigration.org,
     paid_fallback_records: paidFallbackRecords,
     runtime_config_written: true,
   };
@@ -1491,6 +1812,12 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
     paidFallbackLedger,
     kernelLimits,
     kernelOrgLimits,
+    apiKeyUsageV3Windows,
+    apiKeyUsageV3Requests,
+    kernelV2RepoPolicies,
+    kernelV2OrgPolicies,
+    kernelV2RepoWindows,
+    kernelV2OrgWindows,
     passkeyUsers,
     passkeyCredentials,
     agentMessages,
@@ -1506,6 +1833,12 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
     listKvMigrationCount(kv, ["uos_ai", "paid_fallback", "ledger"]),
     listKvMigrationCount(kv, ["ubq_ai", "kernel_auth", "limits"]),
     listKvMigrationCount(kv, ["ubq_ai", "kernel_auth", "org_limits"]),
+    listKvMigrationCount(kv, API_KEY_USAGE_V3_WINDOW_PREFIX),
+    listKvMigrationCount(kv, API_KEY_USAGE_V3_REQUEST_PREFIX),
+    listKvMigrationCount(kv, KERNEL_REPO_POLICY_V2_PREFIX),
+    listKvMigrationCount(kv, KERNEL_ORG_POLICY_V2_PREFIX),
+    listKvMigrationCount(kv, KERNEL_REPO_WINDOW_V2_PREFIX),
+    listKvMigrationCount(kv, KERNEL_ORG_WINDOW_V2_PREFIX),
     listKvMigrationCount(kv, ["uos_ai", "auth", "users"]),
     listKvMigrationCount(kv, ["uos_ai", "auth", "credentials"]),
     listKvMigrationCount(kv, ["agent_messages"]),
@@ -1520,6 +1853,18 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
 
   const apiKeyInventory = await inspectStrictApiKeyPairs(kv);
   errors.push(...apiKeyInventory.errors);
+  const apiKeyUsageV3 = await inspectApiKeyUsageV3(
+    kv,
+    new Set(apiKeyInventory.pairs.map(({ record }) => record.id)),
+  );
+  errors.push(...apiKeyUsageV3.errors);
+  const kernelQuotaV2 = await inspectKernelQuotaV2(kv);
+  errors.push(...kernelQuotaV2.errors);
+  if (kernelLimits > 0 || kernelOrgLimits > 0) {
+    errors.push(
+      `legacy combined kernel quota records remain: repo=${kernelLimits} org=${kernelOrgLimits}`,
+    );
+  }
   const paidFallbackV3 = await inspectPaidFallbackV3(
     kv,
     new Set(apiKeyInventory.pairs.map(({ record }) => record.id)),
@@ -1527,26 +1872,6 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
   errors.push(...paidFallbackV3.errors);
   const validationNowMs = Date.now();
   for (const { record, hashRecord } of apiKeyInventory.pairs) {
-    const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, migrationPolicyNow(record, validationNowMs));
-    if (!policy) {
-      errors.push(`api key policy could not be normalized: ${record.id}`);
-      continue;
-    }
-    if (record.usage_limit_requests !== -1) {
-      const counter = await kv.get<Deno.KvU64>(apiKeyUsageV2Key(policy));
-      if (!counter.value || typeof counter.value.value !== "bigint") {
-        errors.push(`bounded counter is missing or invalid: ${record.id}`);
-      }
-      const baseline = normalizeApiKeyUsageV2MigrationBaseline(
-        (await kv.get<ApiKeyUsageV2MigrationBaseline>(apiKeyUsageV2MigrationBaselineKey(policy))).value,
-      );
-      if (
-        !baseline || baseline.key_id !== policy.key_id || baseline.policy_version !== policy.policy_version ||
-        baseline.window_start_ms !== policy.window_start_ms
-      ) {
-        errors.push(`bounded counter migration baseline is missing, stale, or invalid: ${record.id}`);
-      }
-    }
     if (record.paid_fallback_reservation_request_id) {
       let reservationFound = false;
       for await (
@@ -1561,6 +1886,35 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
         }
       }
       if (!reservationFound) errors.push(`paid fallback reservation has no pending ledger record: ${record.id}`);
+    }
+    if (record.usage_quota_version !== 3 || hashRecord.usage_quota_version !== 3) {
+      errors.push(`api key quota ledger version is not V3: ${record.id}`);
+      continue;
+    }
+    const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, migrationPolicyNow(record, validationNowMs));
+    if (!policy) {
+      errors.push(`api key policy could not be normalized: ${record.id}`);
+      continue;
+    }
+    if (record.usage_limit_requests !== -1) {
+      const v3Window = normalizeApiKeyUsageWindowV3(
+        (await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy))).value,
+      );
+      if (
+        !v3Window || v3Window.key_id !== policy.key_id || v3Window.policy_version !== policy.policy_version ||
+        v3Window.window_start_ms !== policy.window_start_ms || v3Window.window_reset_at_ms !== policy.usage_reset_at_ms
+      ) {
+        errors.push(`bounded V3 aggregate is missing or invalid: ${record.id}`);
+      }
+      const baseline = normalizeApiKeyUsageV2MigrationBaseline(
+        (await kv.get<ApiKeyUsageV2MigrationBaseline>(apiKeyUsageV2MigrationBaselineKey(policy))).value,
+      );
+      if (
+        !baseline || baseline.key_id !== policy.key_id || baseline.policy_version !== policy.policy_version ||
+        baseline.window_start_ms !== policy.window_start_ms
+      ) {
+        errors.push(`bounded counter migration baseline is missing, stale, or invalid: ${record.id}`);
+      }
     }
   }
   const codexModels = await kv.get<Record<string, unknown>>(["ubq_ai", "codex_models"]);
@@ -1600,6 +1954,8 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
       api_key_bounded_counters_v2: boundedCounters,
       api_key_bounded_counter_baselines_v2: boundedCounterBaselines,
       api_key_bounded_counter_reconciled_baselines_v2: reconciledBoundedCounterBaselines,
+      api_key_usage_v3_windows: apiKeyUsageV3Windows,
+      api_key_usage_v3_requests: apiKeyUsageV3Requests,
       paid_fallback_ledger: paidFallbackLedger,
       paid_fallback_v3_windows: paidFallbackV3.windows,
       paid_fallback_v3_requests: paidFallbackV3.requests,
@@ -1608,6 +1964,10 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
       paid_fallback_v3_deletion_guards: paidFallbackV3.deletionGuards,
       kernel_repo_limits: kernelLimits,
       kernel_org_limits: kernelOrgLimits,
+      kernel_v2_repo_policies: kernelV2RepoPolicies,
+      kernel_v2_org_policies: kernelV2OrgPolicies,
+      kernel_v2_repo_windows: kernelV2RepoWindows,
+      kernel_v2_org_windows: kernelV2OrgWindows,
       passkey_users: passkeyUsers,
       passkey_credentials: passkeyCredentials,
       agent_messages: agentMessages,
