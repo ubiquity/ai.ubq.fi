@@ -84,6 +84,7 @@ type UpstreamProvider = "chatgpt_codex" | "yunwu";
 export type InferenceFallbackReason = "primary_401" | "primary_403" | "primary_429";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
+export type AffinityOutcome = "none" | "preferred" | "failover" | "shadow_only";
 
 export type ResponseTelemetry = Readonly<{
   provider: string;
@@ -101,6 +102,7 @@ export type ResponseTelemetry = Readonly<{
   promptCacheMode: PromptCacheMode;
   explicitBreakpointCount: number;
   accountSlot: number | null;
+  affinityOutcome: AffinityOutcome;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
@@ -136,6 +138,7 @@ type ResponseTelemetryState = {
   promptCacheMode: PromptCacheMode;
   explicitBreakpointCount: number;
   accountSlot: number | null;
+  affinityOutcome: AffinityOutcome;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
@@ -164,6 +167,7 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   promptCacheMode: "unspecified",
   explicitBreakpointCount: 0,
   accountSlot: null,
+  affinityOutcome: "none",
   quotaUsedPercent: undefined,
   completed: false,
   streamTerminalType: null,
@@ -215,6 +219,7 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     promptCacheMode: state.promptCacheMode,
     explicitBreakpointCount: state.explicitBreakpointCount,
     accountSlot: state.accountSlot,
+    affinityOutcome: state.affinityOutcome,
     quotaUsedPercent: state.quotaUsedPercent,
     completed: state.completed,
     streamTerminalType: state.streamTerminalType,
@@ -333,6 +338,11 @@ const extractUsageTokens = (value: unknown): UsageTokens | null => {
   );
 
   const coreMissing = inputTokens.value === null || outputTokens.value === null || totalTokens.value === null;
+  // OpenAI documents cached_tokens for every response, including an explicit
+  // zero below the cacheability threshold. cache_write_tokens remains
+  // model-dependent, so its absence does not downgrade otherwise complete
+  // cache-read telemetry.
+  const cacheReadMissing = cachedInputTokens.value === null;
   const inconsistentTotals = !coreMissing && inputTokens.value + outputTokens.value !== totalTokens.value;
   const cachedTokensExceedInput = inputTokens.value !== null &&
     cachedInputTokens.value !== null && cachedInputTokens.value > inputTokens.value;
@@ -346,7 +356,7 @@ const extractUsageTokens = (value: unknown): UsageTokens | null => {
     cacheWriteInputTokens: cacheWriteInputTokens.value,
     outputTokens: outputTokens.value,
     totalTokens: totalTokens.value,
-    status: invalid ? "invalid" : coreMissing ? "partial" : "reported",
+    status: invalid ? "invalid" : coreMissing || cacheReadMissing ? "partial" : "reported",
   };
 };
 
@@ -3231,6 +3241,20 @@ const normalizeChatToolOutput = (
     }
     if (typeof part.text !== "string") {
       return invalidNormalizedField(`${partParam}.text`, `${partParam}.text must be a string`);
+    }
+    const breakpoint = normalizePromptCacheBreakpoint(
+      part.prompt_cache_breakpoint,
+      `${partParam}.prompt_cache_breakpoint`,
+    );
+    if (!breakpoint.ok) return breakpoint;
+    if (breakpoint.value !== undefined) {
+      // The Chat tool-result block becomes a Responses function_call_output.
+      // That representation has no cache-breakpoint field, so accepting this
+      // marker would silently change the client's cache contract.
+      return invalidNormalizedField(
+        `${partParam}.prompt_cache_breakpoint`,
+        "prompt_cache_breakpoint is not supported for tool output content in this gateway",
+      );
     }
     output.push({ type: "input_text", text: part.text });
   }
