@@ -9,8 +9,20 @@ const stringEntryLine = (key: Deno.KvKey, value: string): string =>
     versionstamp: "00000000000000000000",
   });
 
-const kvStore = new Map<string, unknown>();
-let failNextAtomicCommit = false;
+let resetRuntimeCache = (): void => {};
+let atomicCommitsToFail = 0;
+let atomicCommitsBeforeFailure: number | null = null;
+let resetAuthCache = (): void => {};
+class TestKvStore extends Map<string, unknown> {
+  override clear(): void {
+    super.clear();
+    atomicCommitsToFail = 0;
+    atomicCommitsBeforeFailure = null;
+    resetRuntimeCache();
+    resetAuthCache();
+  }
+}
+const kvStore = new TestKvStore();
 
 const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   if (left === right) return 0;
@@ -33,6 +45,8 @@ const compareKvKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
 
 const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
   prefix.every((part, index) => key[index] === part);
+const kvStoreHasPrefix = (prefix: Deno.KvKey): boolean =>
+  [...kvStore.keys()].some((encodedKey) => matchesPrefix(JSON.parse(encodedKey) as Deno.KvKey, prefix));
 
 const kvStub = {
   get: (key: Deno.KvKey) =>
@@ -72,8 +86,15 @@ const kvStub = {
         return chain;
       },
       commit: () => {
-        if (failNextAtomicCommit) {
-          failNextAtomicCommit = false;
+        if (atomicCommitsBeforeFailure !== null) {
+          if (atomicCommitsBeforeFailure === 0) {
+            atomicCommitsBeforeFailure = null;
+            return Promise.resolve({ ok: false } as const);
+          }
+          atomicCommitsBeforeFailure -= 1;
+        }
+        if (atomicCommitsToFail > 0) {
+          atomicCommitsToFail -= 1;
           return Promise.resolve({ ok: false } as const);
         }
         for (const op of ops) {
@@ -93,14 +114,30 @@ const kvStub = {
 const {
   handleAdminApiKeysCreate,
   handleAdminApiKeysDelete,
-  handleAdminApiKeysRequests,
+  handleAdminApiKeysList,
+  handleAdminApiKeysPaidFallbacks,
+  handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
   handleAdminCodexAuth,
+  handleAdminCodexModelsGet,
+  handleAdminCodexModelsSet,
   handleAdminDefaults,
   handleAdminKvMigrationImport,
 } = await import("../src/admin.ts");
 const { listApiKeyRequestLogs, recordApiKeyRequestLog } = await import("../src/analytics.ts");
-const { handleHealthProviders } = await import("../src/health.ts");
+const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const { buildRuntimeConfig, cacheRuntimeConfig, resetRuntimeConfigCacheForTest } = await import(
+  "../src/runtime_config.ts"
+);
+resetRuntimeCache = resetRuntimeConfigCacheForTest;
+resetAuthCache = resetCodexAuthCacheForTest;
+
+const seedCodexSnapshot = (snapshot: Parameters<typeof buildRuntimeConfig>[0]): void => {
+  kvStore.set(keyToString(["ubq_ai", "codex_models"]), snapshot);
+  const runtime = buildRuntimeConfig(snapshot);
+  kvStore.set(keyToString(["uos_ai", "runtime_config", "v2"]), runtime);
+  cacheRuntimeConfig(runtime);
+};
 
 const authPayload = {
   tokens: {
@@ -110,12 +147,248 @@ const authPayload = {
   },
 };
 
+const DISABLED_FALLBACK_TOKEN = `u_${"a".repeat(64)}`;
+const ENABLED_FALLBACK_TOKEN = `u_${"b".repeat(64)}`;
+const FAILED_FALLBACK_TOKEN = `u_${"c".repeat(64)}`;
+
 const makeRequest = (body: unknown): Request =>
   new Request("https://ai.ubq.fi/admin/codex/auth", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+Deno.test("API key list ignores legacy usage unless v2 usage is requested", async () => {
+  kvStore.clear();
+  const id = "v2-usage-list";
+  const windowMs = 60_000;
+  const windowStartMs = Date.now();
+  const usageResetAtMs = windowStartMs + windowMs;
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    id,
+    name: "V2 usage list",
+    prefix: "u_1234567890",
+    hash: "hash-v2-usage-list",
+    created_at_ms: windowStartMs,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 10,
+    usage_requests: 17,
+    usage_reset_at_ms: usageResetAtMs,
+    window_ms: windowMs,
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: 0,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+    paid_fallback_model_ids: [],
+    paid_fallback_quota_per_credit: 0,
+    paid_fallback_pricing_checked_at_ms: null,
+  });
+  kvStore.set(
+    keyToString(["uos_ai", "api_key_usage", "v2", id, String(windowMs), windowStartMs]),
+    { value: 3n } as Deno.KvU64,
+  );
+
+  const withoutUsage = await handleAdminApiKeysList(
+    new Request("https://ai.ubq.fi/admin/api-keys"),
+  );
+  assert.equal(withoutUsage.status, 200);
+  const withoutPayload = await withoutUsage.json() as { data?: Array<Record<string, unknown>> };
+  assert.equal(Object.prototype.hasOwnProperty.call(withoutPayload.data?.[0] ?? {}, "usage_requests"), false);
+
+  const withUsage = await handleAdminApiKeysList(
+    new Request("https://ai.ubq.fi/admin/api-keys?include_usage=1"),
+  );
+  assert.equal(withUsage.status, 200);
+  const withPayload = await withUsage.json() as {
+    data?: Array<{ usage_requests?: number; usage?: { request_count?: number } }>;
+  };
+  assert.equal(withPayload.data?.[0]?.usage_requests, 3);
+  assert.equal(withPayload.data?.[0]?.usage?.request_count, 3);
+});
+
+Deno.test("API key list projects current paid fallback totals from V3 only", async () => {
+  kvStore.clear();
+  const id = "paid-fallback-v3-projection";
+  const now = Date.now();
+  const resetAtMs = now + 60_000;
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "id", id]), {
+    id,
+    name: "V3 projection",
+    prefix: "u_1234567890",
+    hash: "hash-paid-fallback-v3-projection",
+    created_at_ms: now - 1_000,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: -1,
+    usage_requests: 0,
+    usage_reset_at_ms: resetAtMs,
+    window_ms: 60_000,
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: 2_000_000,
+    paid_fallback_spent_microcredits: 1_000_000,
+    paid_fallback_reserved_microcredits: 500_000,
+    paid_fallback_reservation_request_id: "legacy-stale-reservation",
+    paid_fallback_model_ids: ["gpt-5.6-sol"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_pricing_checked_at_ms: now,
+  });
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "window", id, resetAtMs]), {
+    v: 3,
+    key_id: id,
+    policy_version: "60000",
+    window_reset_at_ms: resetAtMs,
+    limit_microcredits: 2_000_000,
+    settled_microcredits: 28_992,
+    reserved_microcredits: 125_000,
+    pending_count: 1,
+    updated_at_ms: now,
+  });
+
+  const response = await handleAdminApiKeysList(new Request("https://ai.ubq.fi/admin/api-keys"));
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    data?: Array<{
+      paid_fallback_limit_credits?: number;
+      paid_fallback_spent_credits?: number;
+      paid_fallback_reserved_credits?: number;
+      paid_fallback_pending_count?: number;
+    }>;
+  };
+  assert.equal(payload.data?.[0]?.paid_fallback_limit_credits, 2);
+  assert.equal(payload.data?.[0]?.paid_fallback_spent_credits, 0.028992);
+  assert.equal(payload.data?.[0]?.paid_fallback_reserved_credits, 0.125);
+  assert.equal(payload.data?.[0]?.paid_fallback_pending_count, 1);
+});
+
+Deno.test("admin Codex model GET returns the full catalog rather than the compact runtime record", async () => {
+  kvStore.clear();
+  seedCodexSnapshot({
+    models: [{
+      slug: "gpt-admin-full-catalog",
+      display_name: "GPT Admin Full Catalog",
+      description: "full catalog description",
+      context_window: 272_000,
+      supported_reasoning_levels: ["none", "high"],
+    }],
+    source: "chatgpt_codex",
+    client_version: "0.201.0",
+    updated_at_ms: Date.now(),
+  });
+
+  const response = await handleAdminCodexModelsGet();
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    data?: { models?: Array<{ description?: string; context_window?: number }> };
+  };
+  assert.equal(payload.data?.models?.[0]?.description, "full catalog description");
+  assert.equal(payload.data?.models?.[0]?.context_window, 272_000);
+});
+
+Deno.test("admin Codex model update rejects a catalog whose compact runtime record exceeds 4 KiB", async () => {
+  kvStore.clear();
+  const response = await handleAdminCodexModelsSet(
+    makeRequest({
+      source: "chatgpt_codex",
+      client_version: "0.201.0",
+      models: Array.from({ length: 200 }, (_, index) => ({
+        slug: `gpt-admin-runtime-${String(index).padStart(3, "0")}`,
+        supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh", "ultra"],
+      })),
+    }),
+  );
+
+  assert.equal(response.status, 413);
+  const payload = await response.json() as { error?: { code?: string; message?: string } };
+  assert.equal(payload.error?.code, "runtime_config_invalid");
+  assert.match(payload.error?.message ?? "", /runtime config is too large/);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
+  assert.equal(kvStore.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
+});
+
+Deno.test("admin defaults includes serializable YunWu quota diagnostics without credentials", async () => {
+  kvStore.clear();
+  const response = await handleAdminDefaults(
+    new Request("https://ai.ubq.fi/admin/defaults"),
+    {
+      getYunwuQuotaDiagnostics: () =>
+        Promise.resolve({
+          configured: true,
+          available: true,
+          cache_state: "fresh",
+          confidence: "refill_observed",
+          balance_credits: 75,
+          baseline_credits: 100,
+          remaining_percent: 75,
+          used_percent: 25,
+          observed_at_ms: 2_000_000,
+          cycle_started_at_ms: 1_000_000,
+          last_known_debits_credits: 1,
+          last_inferred_credit_credits: 50,
+          last_credit_at_ms: 1_500_000,
+          latest_refill_id: "refill-2",
+          latest_refill_amount_credits: 50,
+          latest_refill_completed_at_ms: 1_400_000,
+        }),
+    },
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as Record<string, unknown> & {
+    yunwu_quota?: Record<string, unknown>;
+  };
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
+  assert.equal(payload.yunwu_quota?.remaining_percent, 75);
+  assert.equal(payload.yunwu_quota?.latest_refill_id, "refill-2");
+  assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "system_token"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "user_id"), false);
+});
+
+Deno.test("admin defaults permits kernel-only updates without runtime configuration", async () => {
+  kvStore.clear();
+
+  const response = await handleAdminDefaults(
+    new Request("https://ai.ubq.fi/admin/defaults", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kernel_policy_limit_requests: 17,
+        kernel_policy_window_ms: 60_000,
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    defaults?: {
+      model?: string;
+      reasoning_effort?: string;
+      kernel_policy_limit_requests?: number;
+      kernel_policy_window_ms?: number;
+    };
+  };
+  assert.deepEqual(payload.defaults, {
+    model: "",
+    reasoning_effort: "medium",
+    kernel_policy_limit_requests: 17,
+    kernel_policy_window_ms: 60_000,
+  });
+  assert.equal(kvStore.get(keyToString(["default", "kernel_policy_limit_requests"])), 17);
+  assert.equal(kvStore.get(keyToString(["default", "kernel_policy_window_ms"])), 60_000);
+  assert.equal(kvStore.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
+
+  for (const body of [{ model: "gpt-5.5" }, { reasoning_effort: "none" }]) {
+    const guardedResponse = await handleAdminDefaults(
+      new Request("https://ai.ubq.fi/admin/defaults", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+    assert.equal(guardedResponse.status, 503);
+  }
+});
 
 const yunwuMetadataResponse = (url: string): Response => {
   if (url === "https://yunwu.ai/api/ratio_config") {
@@ -238,6 +511,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
     assert.equal(stored?.models?.[0]?.supported_in_api, false);
     assert.equal(stored?.models?.[0]?.default_reasoning_level, "high");
     assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, [
+      "none",
       "low",
       "medium",
       "high",
@@ -272,9 +546,169 @@ Deno.test("admin codex auth stores live model catalog without caller model snaps
   }
 });
 
-Deno.test("admin codex auth stores auth and model snapshot atomically", async () => {
+Deno.test("admin Codex auth accepts authenticated 429 and preserves the last known-good catalog", async () => {
   kvStore.clear();
-  failNextAtomicCommit = true;
+  const snapshot = {
+    source: "chatgpt_codex" as const,
+    client_version: "0.200.0",
+    updated_at_ms: 123,
+    models: [{ slug: "gpt-5.6", display_name: "GPT-5.6" }],
+  };
+  seedCodexSnapshot(snapshot);
+  kvStore.set(keyToString(["ubq_ai", "codex_catalog_auth_generation"]), "existing-generation");
+  kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
+    accounts: [{
+      access_token: "limited-access",
+      refresh_token: "limited-refresh",
+      account_id: "limited-account",
+      updated_at_ms: 100,
+    }],
+    updated_at_ms: 100,
+  });
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response('{"statusCode":429,"description":"Too Many Requests"}', {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+  try {
+    const response = await handleAdminCodexAuth(makeRequest({ auth: authPayload }));
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      account_count?: number;
+      upstream_status?: number;
+      catalog_seeded?: boolean;
+      normalized_snapshot_updated?: boolean;
+    };
+    assert.equal(payload.account_count, 2);
+    assert.equal(payload.upstream_status, 429);
+    assert.equal(payload.catalog_seeded, false);
+    assert.equal(payload.normalized_snapshot_updated, false);
+    assert.deepEqual(kvStore.get(keyToString(["ubq_ai", "codex_models"])), snapshot);
+    assert.equal(
+      kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"])),
+      "existing-generation",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("admin Codex auth adds, rotates, and caps the two-account pool", async () => {
+  kvStore.clear();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  const upload = (accountId: string, accessToken: string) =>
+    handleAdminCodexAuth(
+      makeRequest({
+        auth: {
+          tokens: {
+            access_token: accessToken,
+            refresh_token: `refresh-${accountId}`,
+            account_id: accountId,
+          },
+        },
+      }),
+    );
+
+  try {
+    assert.equal((await upload("account-one", "access-one")).status, 200);
+    const second = await upload("account-two", "access-two");
+    assert.equal(second.status, 200);
+    const secondPayload = await second.json() as { account_count?: number; account_ids?: string[] };
+    assert.equal(secondPayload.account_count, 2);
+    assert.deepEqual(secondPayload.account_ids, ["account-one", "account-two"]);
+
+    assert.equal((await upload("account-one", "access-one-rotated")).status, 200);
+    const poolAfterRotation = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as {
+      accounts?: Array<{ account_id?: string; access_token?: string }>;
+    };
+    assert.deepEqual(poolAfterRotation.accounts?.map((account) => account.account_id), [
+      "account-one",
+      "account-two",
+    ]);
+    assert.equal(poolAfterRotation.accounts?.[0]?.access_token, "access-one-rotated");
+    assert.equal(poolAfterRotation.accounts?.[1]?.access_token, "access-two");
+
+    const third = await upload("account-three", "access-three");
+    assert.equal(third.status, 409);
+    const thirdPayload = await third.json() as { error?: { code?: string } };
+    assert.equal(thirdPayload.error?.code, "codex_auth_pool_full");
+    const poolAfterThird = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as {
+      accounts?: Array<{ account_id?: string }>;
+    };
+    assert.deepEqual(poolAfterThird.accounts?.map((account) => account.account_id), ["account-one", "account-two"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("admin codex auth rotation replaces a prior account snapshot even at an older version", async () => {
+  kvStore.clear();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const version = new URL(url).searchParams.get("client_version") ?? "missing";
+    return Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: `gpt-${version}`, rich_field: { preserved: true } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: `"${version}"` },
+      }),
+    );
+  };
+
+  try {
+    const newer = await handleAdminCodexAuth(makeRequest({
+      auth: authPayload,
+      models: { client_version: "0.201.0" },
+    }));
+    assert.equal(newer.status, 200);
+    const firstGeneration = kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"]));
+    assert.equal(typeof firstGeneration, "string");
+
+    const older = await handleAdminCodexAuth(makeRequest({
+      auth: authPayload,
+      models: { client_version: "0.200.0" },
+    }));
+    assert.equal(older.status, 200);
+    const olderPayload = await older.json() as { normalized_snapshot_updated?: boolean; ok?: boolean };
+    assert.equal(olderPayload.normalized_snapshot_updated, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(olderPayload, "ok"), false);
+
+    const secondGeneration = kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"]));
+    assert.equal(typeof secondGeneration, "string");
+    assert.notEqual(secondGeneration, firstGeneration);
+    const snapshot = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as {
+      client_version?: string;
+      models?: Array<{ slug?: string }>;
+    };
+    assert.equal(snapshot.client_version, "0.200.0");
+    assert.equal(snapshot.models?.[0]?.slug, "gpt-0.200.0");
+
+    const seededMetadata = kvStore.get(keyToString(["ubq_ai", "codex_catalog", "0.200.0"])) as {
+      auth_generation?: string;
+      etag?: string;
+    };
+    assert.equal(seededMetadata.auth_generation, secondGeneration);
+    assert.equal(seededMetadata.etag, '"0.200.0"');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("admin codex auth retries transient snapshot contention", async () => {
+  kvStore.clear();
+  atomicCommitsToFail = 1;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () =>
     Promise.resolve(
@@ -297,12 +731,41 @@ Deno.test("admin codex auth stores auth and model snapshot atomically", async ()
       }),
     );
 
+    assert.equal(response.status, 200);
+    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), true);
+    assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    atomicCommitsToFail = 0;
+  }
+});
+
+Deno.test("admin codex auth fails atomically after snapshot contention retries are exhausted", async () => {
+  kvStore.clear();
+  atomicCommitsToFail = 3;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+  try {
+    const response = await handleAdminCodexAuth(
+      makeRequest({
+        auth: authPayload,
+        models: { client_version: "0.126.0" },
+      }),
+    );
+
     assert.equal(response.status, 500);
     assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
     assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
   } finally {
     globalThis.fetch = originalFetch;
-    failNextAtomicCommit = false;
+    atomicCommitsToFail = 0;
   }
 });
 
@@ -325,7 +788,7 @@ Deno.test("admin KV migration import stays dry-run unless write is explicit", as
 
 Deno.test("admin defaults accepts none when the model supports none", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+  seedCodexSnapshot({
     source: "codex_cli",
     updated_at_ms: 123,
     models: [{
@@ -350,12 +813,16 @@ Deno.test("admin defaults accepts none when the model supports none", async () =
   assert.equal(response.status, 200);
   const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
   assert.equal(payload.defaults?.reasoning_effort, "none");
-  assert.equal(kvStore.get(keyToString(["default", "reasoning_effort"])), "none");
+  assert.equal(
+    (kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string })
+      .default_reasoning_effort,
+    "none",
+  );
 });
 
 Deno.test("admin defaults accepts a tier advertised by the Codex CLI catalog", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+  seedCodexSnapshot({
     source: "codex_cli",
     updated_at_ms: 123,
     models: [{
@@ -380,12 +847,16 @@ Deno.test("admin defaults accepts a tier advertised by the Codex CLI catalog", a
   assert.equal(response.status, 200);
   const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
   assert.equal(payload.defaults?.reasoning_effort, "ultra");
-  assert.equal(kvStore.get(keyToString(["default", "reasoning_effort"])), "ultra");
+  assert.equal(
+    (kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string })
+      .default_reasoning_effort,
+    "ultra",
+  );
 });
 
 Deno.test("admin defaults does not reject an unlisted reasoning tier", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+  seedCodexSnapshot({
     source: "codex_cli",
     updated_at_ms: 123,
     models: [{
@@ -410,12 +881,16 @@ Deno.test("admin defaults does not reject an unlisted reasoning tier", async () 
   assert.equal(response.status, 200);
   const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
   assert.equal(payload.defaults?.reasoning_effort, "future-tier");
-  assert.equal(kvStore.get(keyToString(["default", "reasoning_effort"])), "future-tier");
+  assert.equal(
+    (kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string })
+      .default_reasoning_effort,
+    "future-tier",
+  );
 });
 
 Deno.test("admin defaults rejects null reasoning effort", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+  seedCodexSnapshot({
     source: "codex_cli",
     updated_at_ms: 123,
     models: [{
@@ -445,11 +920,11 @@ Deno.test("admin defaults rejects null reasoning effort", async () => {
 
 Deno.test("paid fallback pricing initializes only when a key becomes enabled", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+  seedCodexSnapshot({
     source: "chatgpt_codex",
     updated_at_ms: Date.now(),
     models: [
-      { slug: "gpt-5.6-sol" },
+      { slug: "gpt-5.6-sol", context_window: 272_000 },
       { slug: "codex-only-model" },
     ],
   });
@@ -471,7 +946,7 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Overflow disabled",
-          token: "u_test_disabled_initialization_123456789",
+          token: DISABLED_FALLBACK_TOKEN,
           paid_fallback_enabled: false,
           paid_fallback_limit_credits: 2,
         }),
@@ -561,12 +1036,49 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
   }
 });
 
+Deno.test("API key creation rejects custom tokens outside the v2 routable shape", async () => {
+  kvStore.clear();
+  const response = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Legacy custom token",
+        token: "legacy_custom_token_that_was_previously_accepted",
+      }),
+    }),
+  );
+  assert.equal(response.status, 400);
+  const payload = await response.json() as { error?: { message?: string } };
+  assert.match(payload.error?.message ?? "", /u_ prefix followed by 64 lowercase hexadecimal/);
+  assert.equal([...kvStore.keys()].some((key) => key.includes('"api_keys"')), false);
+});
+
+Deno.test("API key creation generates a v2 token when token is null", async () => {
+  kvStore.clear();
+  const response = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Generated token",
+        token: null,
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { token?: string; prefix?: string };
+  assert.match(payload.token ?? "", /^u_[0-9a-f]{64}$/);
+  assert.equal(payload.prefix, payload.token?.slice(0, 12));
+});
+
 Deno.test("enabled key creation initializes once and failed enable leaves the key disabled", async () => {
   kvStore.clear();
-  kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
+  seedCodexSnapshot({
     source: "chatgpt_codex",
     updated_at_ms: Date.now(),
-    models: [{ slug: "gpt-5.6-sol" }],
+    models: [{ slug: "gpt-5.6-sol", context_window: 272_000 }],
   });
 
   const originalFetch = globalThis.fetch;
@@ -586,7 +1098,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Overflow enabled",
-          token: "u_test_enabled_initialization_1234567890",
+          token: ENABLED_FALLBACK_TOKEN,
           paid_fallback_enabled: true,
           paid_fallback_limit_credits: 1,
         }),
@@ -605,7 +1117,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Duplicate overflow key",
-          token: "u_test_enabled_initialization_1234567890",
+          token: ENABLED_FALLBACK_TOKEN,
           paid_fallback_enabled: true,
           paid_fallback_limit_credits: 1,
         }),
@@ -620,7 +1132,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Enable failure",
-          token: "u_test_failed_initialization_123456789",
+          token: FAILED_FALLBACK_TOKEN,
           paid_fallback_enabled: false,
           paid_fallback_limit_credits: 1,
         }),
@@ -656,7 +1168,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
   }
 });
 
-Deno.test("API key request logs are retained newest-first and exposed to admins", async () => {
+Deno.test("admin paid fallback history exposes V3 request lifecycle and billing fields", async () => {
   kvStore.clear();
   const keyId = "4ba83596-d68e-447a-9281-0f1c92e8a87e";
   kvStore.set(keyToString(["ubq_ai", "api_keys", "id", keyId]), {
@@ -683,6 +1195,7 @@ Deno.test("API key request logs are retained newest-first and exposed to admins"
     model: "gpt-5.6-luna",
     reasoning: "high",
     created_at_ms: 2_000,
+    provider: "voyage",
   });
 
   const newest = await listApiKeyRequestLogs(keyId, { limit: 1 });
@@ -690,8 +1203,42 @@ Deno.test("API key request logs are retained newest-first and exposed to admins"
   assert.equal(newest[0].created_at_ms, 2_000);
   assert.equal(newest[0].method, "POST");
 
-  const response = await handleAdminApiKeysRequests(
-    new Request(`https://ai.ubq.fi/admin/api-keys/${keyId}/requests?limit=20`),
+  const settledRequest = {
+    v: 3,
+    key_id: keyId,
+    request_id: "request-v3-settled",
+    policy_version: "60000",
+    route: "responses",
+    path: "/v1/responses",
+    model: "gpt-5.6-sol",
+    stream: true,
+    reasoning: "max",
+    window_reset_at_ms: 61_000,
+    reserved_microcredits: 125_000,
+    quota_per_credit: 500_000,
+    provider_request_id: "provider-v3-settled",
+    provider_quota: 14.496,
+    input_tokens: 31,
+    output_tokens: 17,
+    dispatch_state: "dispatched",
+    terminal_state: "completed",
+    spend_microcredits: 28_992,
+    billing_state: "settled",
+    reconciliation_attempts: 2,
+    last_reconciliation_at_ms: 2_500,
+    dispatched_at_ms: 1_100,
+    terminal_at_ms: 2_000,
+    settled_at_ms: 2_500,
+    created_at_ms: 1_000,
+    updated_at_ms: 2_500,
+  } as const;
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, settledRequest.request_id]),
+    settledRequest,
+  );
+
+  const response = await handleAdminApiKeysPaidFallbacks(
+    new Request(`https://ai.ubq.fi/admin/api-keys/${keyId}/paid-fallbacks?limit=20`),
     keyId,
   );
   assert.equal(response.status, 200);
@@ -699,27 +1246,133 @@ Deno.test("API key request logs are retained newest-first and exposed to admins"
   const payload = await response.json() as {
     ok?: boolean;
     object?: string;
-    data?: Array<{ created_at_ms?: number; model?: string | null; reasoning?: string | null }>;
+    data?: Array<{
+      created_at_ms?: number;
+      request_id?: string;
+      model?: string | null;
+      reasoning?: string | null;
+      provider?: string;
+      reserved_microcredits?: number;
+      dispatch_state?: string;
+      terminal_state?: string;
+      billing_state?: string;
+      provider_request_id?: string | null;
+      provider_quota?: number | null;
+      input_tokens?: number | null;
+      output_tokens?: number | null;
+      reconciliation_attempts?: number;
+      last_reconciliation_at_ms?: number | null;
+      spend_microcredits?: number | null;
+      dispatched_at_ms?: number | null;
+      terminal_at_ms?: number | null;
+      settled_at_ms?: number | null;
+    }>;
   };
   assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
   assert.equal(payload.object, "list");
-  assert.deepEqual(payload.data?.map((entry) => entry.created_at_ms), [2_000, 1_000]);
-  assert.equal(payload.data?.[1]?.model, "gpt-5.6-sol");
-  assert.equal(payload.data?.[1]?.reasoning, "max");
+  assert.equal(payload.data?.length, 1);
+  assert.equal(payload.data?.[0]?.request_id, settledRequest.request_id);
+  assert.equal(payload.data?.[0]?.model, "gpt-5.6-sol");
+  assert.equal(payload.data?.[0]?.reasoning, "max");
+  assert.equal(payload.data?.[0]?.provider, "yunwu");
+  assert.equal(payload.data?.[0]?.reserved_microcredits, 125_000);
+  assert.equal(payload.data?.[0]?.dispatch_state, "dispatched");
+  assert.equal(payload.data?.[0]?.terminal_state, "completed");
+  assert.equal(payload.data?.[0]?.billing_state, "settled");
+  assert.equal(payload.data?.[0]?.provider_request_id, "provider-v3-settled");
+  assert.equal(payload.data?.[0]?.provider_quota, 14.496);
+  assert.equal(payload.data?.[0]?.input_tokens, 31);
+  assert.equal(payload.data?.[0]?.output_tokens, 17);
+  assert.equal(payload.data?.[0]?.reconciliation_attempts, 2);
+  assert.equal(payload.data?.[0]?.last_reconciliation_at_ms, 2_500);
+  assert.equal(payload.data?.[0]?.spend_microcredits, 28_992);
+  assert.equal(payload.data?.[0]?.dispatched_at_ms, 1_100);
+  assert.equal(payload.data?.[0]?.terminal_at_ms, 2_000);
+  assert.equal(payload.data?.[0]?.settled_at_ms, 2_500);
+});
+
+Deno.test("authenticated UOS embeddings do not write ordinary request history", async () => {
+  kvStore.clear();
+  kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage-test-key");
+  const token = `u_${"a".repeat(64)}`;
+  const createdResponse = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Voyage analytics route",
+        token,
+        usage_limit_requests: -1,
+        paid_fallback_enabled: false,
+      }),
+    }),
+  );
+  assert.equal(createdResponse.status, 200);
+  const created = await createdResponse.json() as { id?: unknown };
+  assert.equal(typeof created.id, "string");
+  const keyId = created.id as string;
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    assert.equal(url, "https://api.voyageai.com/v1/embeddings");
+    const body = JSON.parse(typeof init?.body === "string" ? init.body : "null") as Record<string, unknown>;
+    assert.equal(body.model, "voyage-4-large");
+    assert.equal(body.input_type, "document");
+    assert.equal(body.output_dimension, 1024);
+    assert.equal(body.output_dtype, "float");
+    assert.equal(body.truncation, false);
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          data: [{ embedding: Array.from({ length: 1024 }, (_, index) => index / 1024) }],
+          usage: { total_tokens: 3 },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  };
+
+  try {
+    const { default: handler } = await import("../src/handler.ts");
+    const response = await handler(
+      new Request("https://ai.ubq.fi/uos/embeddings", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "voyage-4-large",
+          input: "analytics provider proof",
+          input_type: "document",
+          dimensions: 1024,
+          truncation: false,
+          encoding_format: "float",
+        }),
+      }),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "voyage");
+
+    assert.deepEqual(await listApiKeyRequestLogs(keyId, { limit: 10 }), []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("API key request log endpoint validates key existence and limit", async () => {
   kvStore.clear();
-  const missing = await handleAdminApiKeysRequests(
-    new Request("https://ai.ubq.fi/admin/api-keys/missing/requests?limit=20"),
+  const missing = await handleAdminApiKeysPaidFallbacks(
+    new Request("https://ai.ubq.fi/admin/api-keys/missing/paid-fallbacks?limit=20"),
     "missing",
   );
   assert.equal(missing.status, 404);
 
   const keyId = "existing";
   kvStore.set(keyToString(["ubq_ai", "api_keys", "id", keyId]), { id: keyId });
-  const invalidLimit = await handleAdminApiKeysRequests(
-    new Request(`https://ai.ubq.fi/admin/api-keys/${keyId}/requests?limit=not-a-number`),
+  const invalidLimit = await handleAdminApiKeysPaidFallbacks(
+    new Request(`https://ai.ubq.fi/admin/api-keys/${keyId}/paid-fallbacks?limit=not-a-number`),
     keyId,
   );
   assert.equal(invalidLimit.status, 400);
@@ -728,6 +1381,7 @@ Deno.test("API key request log endpoint validates key existence and limit", asyn
 Deno.test("deleting a revoked API key removes its mirrored policy and analytics", async () => {
   kvStore.clear();
   const keyId = "key-delete-cleanup";
+  const neighboringKeyId = `${keyId}-neighbor`;
   const hash = "hash-delete-cleanup";
   const commonPolicy = {
     paid_fallback_enabled: false,
@@ -766,53 +1420,190 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   kvStore.set(keyToString(["ubq_ai", "api_keys", "usage", keyId]), { key_id: keyId });
   kvStore.set(keyToString(["ubq_ai", "api_keys", "usage_daily", keyId]), { key_id: keyId, days: [] });
   kvStore.set(
-    keyToString(["ubq_ai", "api_keys", "request_log", keyId, Date.now(), "request-delete"]),
+    keyToString(["uos_ai", "paid_fallback", "ledger", keyId, Date.now(), "request-delete"]),
     { id: "request-delete", key_id: keyId },
   );
+  kvStore.set(
+    keyToString(["ubq_ai", "api_keys", "request_log", keyId, Date.now(), "legacy-request-delete"]),
+    { id: "legacy-request-delete", key_id: keyId },
+  );
+  kvStore.set(
+    keyToString(["uos_ai", "api_key_usage", "v2", keyId, "policy", Date.now()]),
+    { value: 1n } as Deno.KvU64,
+  );
+  const v3WindowResetAtMs = Date.now() + 60_000;
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-settled"]),
+    {
+      v: 3,
+      key_id: keyId,
+      request_id: "request-v3-settled",
+      billing_state: "settled",
+    },
+  );
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-not-billed"]),
+    {
+      v: 3,
+      key_id: keyId,
+      request_id: "request-v3-not-billed",
+      billing_state: "not_billed",
+    },
+  );
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, v3WindowResetAtMs]),
+    {
+      v: 3,
+      key_id: keyId,
+      window_reset_at_ms: v3WindowResetAtMs,
+      settled_microcredits: 28_992,
+      reserved_microcredits: 0,
+      pending_count: 0,
+    },
+  );
+  kvStore.set(
+    keyToString(["uos_ai", "paid_fallback", "v3", "reconciliation_lease", keyId]),
+    { token: "stale-delete-lease", expires_at_ms: Date.now() + 60_000 },
+  );
 
-  const response = await handleAdminApiKeysDelete(
-    new Request("https://ai.ubq.fi/admin/api-keys", {
-      method: "DELETE",
+  const neighboringPaidFallbackKey = [
+    "uos_ai",
+    "paid_fallback",
+    "ledger",
+    neighboringKeyId,
+    Date.now(),
+    "request-neighbor",
+  ] as const;
+  const neighboringLegacyLogKey = [
+    "ubq_ai",
+    "api_keys",
+    "request_log",
+    neighboringKeyId,
+    Date.now(),
+    "legacy-request-neighbor",
+  ] as const;
+  const neighboringCounterKey = [
+    "uos_ai",
+    "api_key_usage",
+    "v2",
+    neighboringKeyId,
+    "policy",
+    Date.now(),
+  ] as const;
+  const neighboringV3RequestKey = [
+    "uos_ai",
+    "paid_fallback",
+    "v3",
+    "request",
+    neighboringKeyId,
+    "request-v3-neighbor",
+  ] as const;
+  kvStore.set(keyToString(neighboringPaidFallbackKey), { id: "request-neighbor", key_id: neighboringKeyId });
+  kvStore.set(keyToString(neighboringLegacyLogKey), { id: "legacy-request-neighbor", key_id: neighboringKeyId });
+  kvStore.set(keyToString(neighboringCounterKey), { value: 1n } as Deno.KvU64);
+  kvStore.set(keyToString(neighboringV3RequestKey), {
+    v: 3,
+    key_id: neighboringKeyId,
+    request_id: "request-v3-neighbor",
+    billing_state: "settled",
+  });
+
+  const deleteRequest = () =>
+    handleAdminApiKeysDelete(
+      new Request("https://ai.ubq.fi/admin/api-keys", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: keyId }),
+      }),
+    );
+
+  const unresolvedRequestKey = [
+    "uos_ai",
+    "paid_fallback",
+    "v3",
+    "request",
+    keyId,
+    "request-v3-unresolved",
+  ] as const;
+  const unresolvedPendingKey = [
+    "uos_ai",
+    "paid_fallback",
+    "v3",
+    "pending",
+    keyId,
+    "request-v3-unresolved",
+  ] as const;
+  kvStore.set(keyToString(unresolvedRequestKey), {
+    v: 3,
+    key_id: keyId,
+    request_id: "request-v3-unresolved",
+    billing_state: "unresolved",
+  });
+  kvStore.set(keyToString(unresolvedPendingKey), {
+    created_at_ms: Date.now() - 86_400_000,
+    next_reconciliation_at_ms: Date.now() + 60_000,
+  });
+
+  atomicCommitsToFail = 1;
+  const guardConflict = await deleteRequest();
+  assert.equal(guardConflict.status, 409);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), false);
+  assert.equal(kvStore.has(keyToString(unresolvedRequestKey)), true);
+
+  const blocked = await deleteRequest();
+  assert.equal(blocked.status, 409);
+  const blockedPayload = await blocked.json() as {
+    error?: { code?: string; message?: string };
+  };
+  assert.equal(blockedPayload.error?.code, "paid_fallback_billing_outstanding");
+  assert.match(blockedPayload.error?.message ?? "", /unresolved=1/);
+  assert.match(blockedPayload.error?.message ?? "", /markers=1/);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), true);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), true);
+  kvStore.delete(keyToString(unresolvedRequestKey));
+  kvStore.delete(keyToString(unresolvedPendingKey));
+
+  // The V3 deletion guard and terminal-state cleanup commit first. Fail the
+  // following API-key CAS to prove the retained guard makes deletion retryable.
+  atomicCommitsBeforeFailure = 1;
+  const conflicted = await deleteRequest();
+  assert.equal(conflicted.status, 409);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), true);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "hash", hash])), true);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "ledger", keyId]), true);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "request", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "window", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), true);
+  assert.equal(kvStoreHasPrefix(["ubq_ai", "api_keys", "request_log", keyId]), true);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "api_key_usage", "v2", keyId]), true);
+  const unrevoke = await handleAdminApiKeysUnrevoke(
+    new Request("https://ai.ubq.fi/admin/api-keys/unrevoke", {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: keyId }),
     }),
   );
+  assert.equal(unrevoke.status, 409);
+  const unrevokePayload = await unrevoke.json() as { error?: { code?: string } };
+  assert.equal(unrevokePayload.error?.code, "paid_fallback_deletion_in_progress");
+
+  const response = await deleteRequest();
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { id: keyId });
-  for (const encodedKey of kvStore.keys()) {
-    assert.equal(encodedKey.includes(keyId), false);
-    assert.equal(encodedKey.includes(hash), false);
-  }
-});
-
-Deno.test("health providers summary is diagnostics with upstream auth state", async () => {
-  kvStore.clear();
-  kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  });
-
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
-    Promise.resolve(
-      new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-
-  try {
-    const response = await handleHealthProviders();
-    assert.equal(response.status, 200);
-    const payload = await response.json() as {
-      upstream?: string;
-      auth?: { source?: string; access_token_expired?: boolean | null; refresh_recommended?: boolean | null };
-    };
-    assert.equal(payload.upstream, "chatgpt_codex");
-    assert.equal(payload.auth?.source, "kv");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), false);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "hash", hash])), false);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "usage", keyId])), false);
+  assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "usage_daily", keyId])), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "ledger", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "request", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "window", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "pending", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "reconciliation_lease", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), true);
+  assert.equal(kvStoreHasPrefix(["ubq_ai", "api_keys", "request_log", keyId]), false);
+  assert.equal(kvStoreHasPrefix(["uos_ai", "api_key_usage", "v2", keyId]), false);
+  assert.equal(kvStore.has(keyToString(neighboringPaidFallbackKey)), true);
+  assert.equal(kvStore.has(keyToString(neighboringV3RequestKey)), true);
+  assert.equal(kvStore.has(keyToString(neighboringLegacyLogKey)), true);
+  assert.equal(kvStore.has(keyToString(neighboringCounterKey)), true);
 });

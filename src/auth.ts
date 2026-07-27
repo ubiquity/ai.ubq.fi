@@ -1,14 +1,11 @@
 import { config } from "./config.ts";
+import { apiKeyIdKey, coerceApiKeyExpiresAtMs } from "./api_keys.ts";
 import {
-  API_KEY_NO_EXPIRATION_MS,
-  API_KEY_NO_USAGE_LIMIT,
-  apiKeyHashKey,
-  apiKeyIdKey,
-  calculateNextResetMs,
-  coerceApiKeyExpiresAtMs,
-  normalizeApiKeyWindowMs,
-  shouldResetUsage,
-} from "./api_keys.ts";
+  type ApiKeyPolicy,
+  authenticateApiKeyToken,
+  incrementApiKeyUsageV2,
+  looksLikeUosApiKey,
+} from "./api_key_policy.ts";
 import { json, openaiError } from "./http.ts";
 import { getBearerToken } from "./http.ts";
 import {
@@ -18,11 +15,10 @@ import {
   getKernelUsageLimitSnapshot,
 } from "./kernel_usage.ts";
 import { recordKernelPolicyQueue } from "./kernel_policy_queue.ts";
-import { kvPromise } from "./kv.ts";
-import { hasStrictPaidFallbackPolicy, paidFallbackHashFields } from "./paid_fallback.ts";
+import { getKv } from "./kv.ts";
 import { getPasskeySession, isPasskeyUserAdmin } from "./passkeys.ts";
 import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
-import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
+import type { ApiKeyRecord } from "./types.ts";
 
 const GITHUB_API_BASE_URL = "https://api.github.com";
 const GITHUB_TOKEN_CACHE_TTL_MS = 5 * 60_000;
@@ -73,7 +69,7 @@ const getKernelPublicKeyPems = async (): Promise<string[]> => {
     }
   }
 
-  const kv = await kvPromise;
+  const kv = await getKv();
   if (kv) {
     const kvEntry = await kv.get<Array<{ pem: string }>>(UOS_KERNEL_PUBKEYS_KEY);
     if (kvEntry.value) {
@@ -513,7 +509,7 @@ type ClientAuthMethod =
   | { kind: "disabled" }
   | { kind: "github_token"; owner: string; repo: string; state_id: string; limit_scope: "org" | "repo" }
   | { kind: "auth_tokens_allowlist" }
-  | { kind: "kv_api_key"; key_id: string }
+  | { kind: "kv_api_key"; key_id: string; policy: ApiKeyPolicy; usage_requests: number }
   | { kind: "admin_allowlist" }
   | { kind: "deno_deploy_token" }
   | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean; credential_count: number };
@@ -615,7 +611,7 @@ const authenticateGitHubToken = async (
   }
 };
 
-const looksLikeUbqAiClientToken = (token: string): boolean => token.trim().startsWith("ubq_ai_");
+const looksLikeUbqAiClientToken = (token: string): boolean => looksLikeUosApiKey(token);
 
 const classifyToken = (token: string): string => {
   const trimmed = token.trim();
@@ -623,7 +619,7 @@ const classifyToken = (token: string): string => {
   if (trimmed.startsWith("ddw_")) return "deno_deploy_like(ddw_)";
   if (looksLikeGitHubToken(trimmed)) return "github_prefix";
   if (trimmed.startsWith("uos_ai_session_")) return "uos_ai_session_prefix";
-  if (trimmed.startsWith("ubq_ai_")) return "ubq_ai_prefix";
+  if (looksLikeUosApiKey(trimmed)) return "uos_api_key";
   if (/^[0-9a-fA-F]{64}$/.test(trimmed)) return "hex64";
   if (trimmed.includes("_")) return "has_underscore";
   return "other";
@@ -672,7 +668,7 @@ const logAuthDecision = (req: Request, entry: AuthLogEntry): void => {
 };
 
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
-  const kv = await kvPromise;
+  const kv = await getKv();
   const localAuthDisabled = !config.isDeploy && config.authTokens.size === 0 && !kv;
   const token = getBearerToken(req);
   const tokenPresent = Boolean(token);
@@ -701,8 +697,12 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
     return { ok: true, token, method: { kind: "auth_tokens_allowlist" } };
   }
 
-  const passkeySession = await getPasskeySession(token);
-  if (passkeySession) {
+  if (token.startsWith("uos_ai_session_")) {
+    const passkeySession = await getPasskeySession(token);
+    if (!passkeySession) {
+      logClientAuth({ ok: false, method: "passkey_session", status: 401, reason: "invalid_api_key" });
+      return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+    }
     logClientAuth({ ok: true, method: "passkey_session" });
     return {
       ok: true,
@@ -732,85 +732,23 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
     return { ok: false, response: githubResult.response };
   }
 
-  if (kv) {
-    const hash = await sha256Base64Url(token);
-    const hashKey = apiKeyHashKey(hash);
-    const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
-    if (hashEntry.value && hashEntry.value.revoked_at_ms == null) {
-      if (!hasStrictPaidFallbackPolicy(hashEntry.value)) {
-        logClientAuth({ ok: false, method: "kv_api_key", status: 503, reason: "paid_fallback_migration_incomplete" });
-        return {
-          ok: false,
-          response: openaiError(503, "API key migration is incomplete", "server_error", { type: "server_error" }),
-        };
-      }
-      const now = Date.now();
-      const expiresAtMs = typeof hashEntry.value.expires_at_ms === "number" &&
-          Number.isFinite(hashEntry.value.expires_at_ms)
-        ? Math.trunc(hashEntry.value.expires_at_ms)
-        : API_KEY_NO_EXPIRATION_MS;
-      if (expiresAtMs !== API_KEY_NO_EXPIRATION_MS && expiresAtMs <= now) {
-        logClientAuth({ ok: false, method: "kv_api_key", status: 401, reason: "expired" });
-        return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
-      }
-
-      const usageLimit = hashEntry.value.usage_limit_requests;
-      const usageRequests = hashEntry.value.usage_requests;
-      const usageResetAtMs = hashEntry.value.usage_reset_at_ms;
-      const windowMs = normalizeApiKeyWindowMs(hashEntry.value.window_ms);
-
-      if (shouldResetUsage(usageResetAtMs, now)) {
-        const idKey = apiKeyIdKey(hashEntry.value.id);
-        const idEntry = await kv.get<ApiKeyRecord>(idKey);
-        if (idEntry.value) {
-          const resolvedWindowMs = normalizeApiKeyWindowMs(idEntry.value.window_ms, windowMs);
-          const newResetAtMs = calculateNextResetMs(now, resolvedWindowMs);
-          const updatedRecord: ApiKeyRecord = {
-            ...idEntry.value,
-            usage_requests: 0,
-            usage_reset_at_ms: newResetAtMs,
-            window_ms: resolvedWindowMs,
-            paid_fallback_spent_microcredits: 0,
-            paid_fallback_reserved_microcredits: 0,
-            paid_fallback_reservation_request_id: null,
-          };
-          const updatedHash: ApiKeyHashRecord = {
-            ...hashEntry.value,
-            usage_requests: 0,
-            usage_reset_at_ms: newResetAtMs,
-            window_ms: resolvedWindowMs,
-            paid_fallback_spent_microcredits: 0,
-            paid_fallback_reserved_microcredits: 0,
-            paid_fallback_reservation_request_id: null,
-          };
-          await kv.atomic()
-            .check(idEntry)
-            .check(hashEntry)
-            .set(idKey, updatedRecord)
-            .set(hashKey, updatedHash)
-            .commit();
-        }
-        logClientAuth({ ok: true, method: "kv_api_key" });
-        return { ok: true, token, method: { kind: "kv_api_key", key_id: hashEntry.value.id } };
-      }
-
-      if (usageLimit !== API_KEY_NO_USAGE_LIMIT && usageRequests >= usageLimit) {
-        logClientAuth({ ok: false, method: "kv_api_key", status: 429, reason: "usage_limit_exceeded" });
-        return {
-          ok: false,
-          response: openaiError(
-            429,
-            `Usage limit exceeded (${usageRequests}/${usageLimit}). Resets at ${
-              new Date(usageResetAtMs).toISOString()
-            }`,
-            "rate_limit_exceeded",
-          ),
-        };
-      }
-
-      logClientAuth({ ok: true, method: "kv_api_key" });
-      return { ok: true, token, method: { kind: "kv_api_key", key_id: hashEntry.value.id } };
+  if (looksLikeUosApiKey(token)) {
+    const result = await authenticateApiKeyToken(token, { kv });
+    if (!result.ok) {
+      logClientAuth({ ok: false, method: "kv_api_key", status: result.response.status, reason: "invalid_or_limited" });
+      return result;
     }
+    logClientAuth({ ok: true, method: "kv_api_key" });
+    return {
+      ok: true,
+      token,
+      method: {
+        kind: "kv_api_key",
+        key_id: result.policy.key_id,
+        policy: result.policy,
+        usage_requests: result.usage_requests,
+      },
+    };
   }
 
   const adminResult = await checkAdminToken(token);
@@ -1039,57 +977,13 @@ export const requireSuperAdminAuth = async (req: Request): Promise<Response | nu
   return openaiError(403, "Super admin token required", "forbidden");
 };
 
-export const incrementApiKeyUsage = async (keyId: string): Promise<void> => {
-  const kv = await kvPromise;
-  if (!kv) return;
-
-  const idKey = apiKeyIdKey(keyId);
-  const idEntry = await kv.get<ApiKeyRecord>(idKey);
-  if (!idEntry.value) return;
-
-  const hash = idEntry.value.hash;
-  const hashKey = apiKeyHashKey(hash);
-  const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
-
-  const updatedRecord: ApiKeyRecord = {
-    ...idEntry.value,
-    usage_requests: idEntry.value.usage_requests + 1,
-    window_ms: normalizeApiKeyWindowMs(idEntry.value.window_ms),
-  };
-  const updatedHash: ApiKeyHashRecord = hashEntry.value
-    ? {
-      ...hashEntry.value,
-      usage_requests: hashEntry.value.usage_requests + 1,
-      window_ms: normalizeApiKeyWindowMs(
-        hashEntry.value.window_ms,
-        normalizeApiKeyWindowMs(idEntry.value.window_ms),
-      ),
-    }
-    : {
-      id: keyId,
-      expires_at_ms: idEntry.value.expires_at_ms,
-      revoked_at_ms: idEntry.value.revoked_at_ms,
-      usage_limit_requests: idEntry.value.usage_limit_requests,
-      usage_requests: idEntry.value.usage_requests + 1,
-      usage_reset_at_ms: idEntry.value.usage_reset_at_ms,
-      window_ms: normalizeApiKeyWindowMs(idEntry.value.window_ms),
-      ...paidFallbackHashFields(idEntry.value),
-    };
-
-  const atomic = kv.atomic()
-    .check(idEntry)
-    .set(idKey, updatedRecord)
-    .set(hashKey, updatedHash);
-  if (hashEntry.versionstamp) atomic.check(hashEntry);
-
-  await atomic.commit();
-};
+export const incrementApiKeyUsage = incrementApiKeyUsageV2;
 
 export const handleV1Auth = async (req: Request): Promise<Response> => {
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return authResult.response;
 
-  const kv = await kvPromise;
+  const kv = await getKv();
   const mode = config.isDeploy && config.authTokens.size === 0 && !kv
     ? "misconfigured"
     : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)
@@ -1136,10 +1030,10 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
           created_at_ms: entry.value.created_at_ms,
           expires_at_ms: coerceApiKeyExpiresAtMs(entry.value),
           revoked_at_ms: entry.value.revoked_at_ms,
-          usage_limit_requests: entry.value.usage_limit_requests,
-          usage_requests: entry.value.usage_requests,
-          usage_reset_at_ms: entry.value.usage_reset_at_ms,
-          window_ms: normalizeApiKeyWindowMs(entry.value.window_ms),
+          usage_limit_requests: authResult.method.policy.usage_limit_requests,
+          usage_requests: authResult.method.usage_requests,
+          usage_reset_at_ms: authResult.method.policy.usage_reset_at_ms,
+          window_ms: authResult.method.policy.window_ms,
         };
       }
     }
