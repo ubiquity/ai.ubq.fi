@@ -71,11 +71,3 @@ export const RESPONSES_REQUEST_KEYS = [
   "truncation",
   "user",
 ] as const;
-
-export const EMBEDDINGS_REQUEST_KEYS = [
-  "dimensions",
-  "encoding_format",
-  "input",
-  "model",
-  "user",
-] as const;

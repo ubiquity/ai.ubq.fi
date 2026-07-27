@@ -259,7 +259,19 @@ export type ResponsesRequest = Readonly<{
 export type MessageContentItem = Readonly<
   | { type: "input_text"; text: string }
   | { type: "output_text"; text: string }
-  | { type: "input_image"; image_url: string; detail?: string }
+  | {
+    type: "input_image";
+    image_url?: string;
+    file_id?: string;
+    detail?: "auto" | "low" | "high" | "original" | null;
+  }
+  | {
+    type: "input_file";
+    file_id?: string;
+    file_data?: string;
+    file_url?: string;
+    filename?: string | null;
+  }
 >;
 
 export type ResponseMessageItem = Readonly<{

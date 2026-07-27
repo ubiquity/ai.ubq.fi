@@ -241,7 +241,7 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleEmbeddings, handleEmbeddingsJobCreate, handleEmbeddingsJobGet, handleUosEmbeddings } = await import(
+const { handleEmbeddingsJobCreate, handleEmbeddingsJobGet, handleUosEmbeddings } = await import(
   "../src/openai.ts"
 );
 const { getKv } = await import("../src/kv.ts");
@@ -401,11 +401,11 @@ Deno.test("embeddings: normalizes string input", async () => {
       return voyageOkResponse(count);
     },
     () =>
-      handleEmbeddings(
-        new Request("https://ai.ubq.fi/v1/embeddings", {
+      handleUosEmbeddings(
+        new Request("https://ai.ubq.fi/uos/embeddings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "text-embedding-3-small", input: "hello" }),
+          body: JSON.stringify({ model: "text-embedding-3-small", input: "hello", user: null }),
         }),
       ),
   );
@@ -622,6 +622,60 @@ Deno.test("uos embeddings idempotency: keyed requests fail before Voyage when du
   assert.equal(response.status, 503);
   assert.equal(await responseErrorCode(response), "embedding_idempotency_unavailable");
   assert.equal(upstreamCalls, 0);
+});
+
+Deno.test("embeddings: quota dispatch failures prevent Voyage and release the idempotency lease", async () => {
+  const { ApiKeyQuotaDispatchError } = await import("../src/api_key_policy.ts");
+  const idempotencyKey = `embedding-quota-dispatch-${crypto.randomUUID()}`;
+  const input = `quota-dispatch-${crypto.randomUUID()}`;
+  const principal = "account-quota-dispatch";
+  const usageContext = uosIdempotencyUsageContext(principal);
+  const quotaFailureContext = {
+    ...usageContext,
+    beforeProviderDispatch: () => Promise.reject(new ApiKeyQuotaDispatchError("simulated dispatch CAS failure")),
+  };
+  let upstreamCalls = 0;
+
+  await withFetchMock(
+    () => {
+      upstreamCalls += 1;
+      return voyageOkResponse(1);
+    },
+    async () => {
+      resetVoyageRateLimit();
+      const failed = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        quotaFailureContext,
+      );
+      assert.equal(failed.status, 503);
+      assert.equal(await responseErrorCode(failed), "api_key_quota_reservation_unavailable");
+      assert.equal(upstreamCalls, 0);
+
+      const retried = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, input),
+        usageContext,
+      );
+      assert.equal(retried.status, 200);
+      assert.equal(upstreamCalls, 1);
+
+      const jobFailed = await handleEmbeddingsJobCreate(
+        new Request("https://ai.ubq.fi/uos/embedding-jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "voyage-4-large",
+            input: `quota-job-${crypto.randomUUID()}`,
+            input_type: "document",
+          }),
+        }),
+        `quota-job-${crypto.randomUUID()}`,
+        quotaFailureContext,
+      );
+      assert.equal(jobFailed.status, 503);
+      assert.equal(await responseErrorCode(jobFailed), "api_key_quota_reservation_unavailable");
+      assert.equal(upstreamCalls, 1);
+    },
+  );
 });
 
 Deno.test("uos embeddings idempotency: an outcome-unknown dispatch is durable and never sent again", async () => {
@@ -922,7 +976,7 @@ Deno.test("uos embeddings idempotency: a malformed stored value is not mistaken 
   }
 });
 
-Deno.test("v1 embeddings: accepts every supported standard dimension and preserves requested model", async () => {
+Deno.test("uos embeddings: accepts every supported standard dimension and preserves requested model", async () => {
   const dimensions: TestDimension[] = [256, 512, 1024, 2048];
 
   await withFetchMock(
@@ -940,8 +994,8 @@ Deno.test("v1 embeddings: accepts every supported standard dimension and preserv
       for (const dimension of dimensions) {
         resetVoyageRateLimit();
         const requestedModel = dimension === 2048 ? "voyage-4-large" : "text-embedding-3-large";
-        const response = await handleEmbeddings(
-          new Request("https://ai.ubq.fi/v1/embeddings", {
+        const response = await handleUosEmbeddings(
+          new Request("https://ai.ubq.fi/uos/embeddings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -963,39 +1017,30 @@ Deno.test("v1 embeddings: accepts every supported standard dimension and preserv
   );
 });
 
-Deno.test("embedding contracts: reject cross-contract and unsupported options", async () => {
+Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
   const requests: Array<() => Promise<Response>> = [
     () =>
-      handleEmbeddings(
-        new Request("https://ai.ubq.fi/v1/embeddings", {
+      handleUosEmbeddings(
+        new Request("https://ai.ubq.fi/uos/embeddings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "text-embedding-3-small",
+            model: "voyage-3-large",
             input: "x",
-            input_type: "query",
           }),
         }),
       ),
     () =>
-      handleEmbeddings(
-        new Request("https://ai.ubq.fi/v1/embeddings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "voyage-3-large", input: "x" }),
-        }),
-      ),
-    () =>
-      handleEmbeddings(
-        new Request("https://ai.ubq.fi/v1/embeddings", {
+      handleUosEmbeddings(
+        new Request("https://ai.ubq.fi/uos/embeddings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "text-embedding-3-small", input: "x", dimensions: 768 }),
         }),
       ),
     () =>
-      handleEmbeddings(
-        new Request("https://ai.ubq.fi/v1/embeddings", {
+      handleUosEmbeddings(
+        new Request("https://ai.ubq.fi/uos/embeddings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "text-embedding-3-small", input: "x", dimensions: 256.5 }),
@@ -1006,7 +1051,15 @@ Deno.test("embedding contracts: reject cross-contract and unsupported options", 
         new Request("https://ai.ubq.fi/uos/embeddings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "voyage-4-large", input: "x" }),
+          body: JSON.stringify({ model: "text-embedding-3-small", input: "x", input_type: "index" }),
+        }),
+      ),
+    () =>
+      handleUosEmbeddings(
+        new Request("https://ai.ubq.fi/uos/embeddings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "voyage-4-large", input: "x", encoding_format: "binary" }),
         }),
       ),
     () =>
@@ -1017,7 +1070,7 @@ Deno.test("embedding contracts: reject cross-contract and unsupported options", 
           body: JSON.stringify({
             model: "text-embedding-3-small",
             input: "x",
-            input_type: "document",
+            truncation: "false",
           }),
         }),
       ),
@@ -1029,8 +1082,7 @@ Deno.test("embedding contracts: reject cross-contract and unsupported options", 
           body: JSON.stringify({
             model: "voyage-4-large",
             input: "x",
-            input_type: "document",
-            encoding_format: "base64",
+            user: 42,
           }),
         }),
       ),
@@ -1041,10 +1093,16 @@ Deno.test("embedding contracts: reject cross-contract and unsupported options", 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model: "voyage-4-large",
-            input: "x",
-            input_type: "document",
-            user: "not-allowed",
+            input: [1],
           }),
+        }),
+      ),
+    () =>
+      handleUosEmbeddings(
+        new Request("https://ai.ubq.fi/uos/embeddings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "voyage-4-large", input: "x", unsupported: true }),
         }),
       ),
   ];
@@ -1054,6 +1112,39 @@ Deno.test("embedding contracts: reject cross-contract and unsupported options", 
     assert.equal(response.status, 400);
     assert.equal(response.headers.get("x-uos-upstream"), "voyage");
   }
+});
+
+Deno.test("embedding jobs retain their strict Voyage float profile", async () => {
+  const requests = [
+    { model: "text-embedding-3-small", input: "x", input_type: "document" },
+    { model: "voyage-4-large", input: "x" },
+    { model: "voyage-4-large", input: "x", input_type: "document", encoding_format: "base64" },
+    { model: "voyage-4-large", input: "x", input_type: "document", user: "not-supported" },
+  ];
+  let upstreamCalls = 0;
+
+  await withFetchMock(
+    () => {
+      upstreamCalls += 1;
+      return voyageOkResponse(1);
+    },
+    async () => {
+      for (const body of requests) {
+        const response = await handleEmbeddingsJobCreate(
+          new Request("https://ai.ubq.fi/uos/embedding-jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+          `jobs-strict-${crypto.randomUUID()}`,
+        );
+        assert.equal(response.status, 400);
+        assert.equal(response.headers.get("x-uos-upstream"), "voyage");
+      }
+    },
+  );
+
+  assert.equal(upstreamCalls, 0);
 });
 
 Deno.test("embeddings: serves cache hits without calling upstream", async () => {
@@ -1071,8 +1162,8 @@ Deno.test("embeddings: serves cache hits without calling upstream", async () => 
         throw new Error("Embeddings should not hit upstream when cache is populated");
       },
       () =>
-        handleEmbeddings(
-          new Request("https://ai.ubq.fi/v1/embeddings", {
+        handleUosEmbeddings(
+          new Request("https://ai.ubq.fi/uos/embeddings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model, input }),
@@ -1167,8 +1258,8 @@ Deno.test("embeddings cache: separates query, document, dimensions, encoding, an
     {
       key: embeddingsCacheKey(hash, "document", 256, "base64", true),
       run: () =>
-        handleEmbeddings(
-          new Request("https://ai.ubq.fi/v1/embeddings", {
+        handleUosEmbeddings(
+          new Request("https://ai.ubq.fi/uos/embeddings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1233,8 +1324,8 @@ Deno.test("embeddings cache: ignores a cached vector with the wrong resolved dim
         return voyageOkResponse(1, body.output_dimension as TestDimension);
       },
       () =>
-        handleEmbeddings(
-          new Request("https://ai.ubq.fi/v1/embeddings", {
+        handleUosEmbeddings(
+          new Request("https://ai.ubq.fi/uos/embeddings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1279,8 +1370,8 @@ Deno.test("embeddings: writes cache entries on upstream misses", async () => {
         return voyageOkResponse(count);
       },
       () =>
-        handleEmbeddings(
-          new Request("https://ai.ubq.fi/v1/embeddings", {
+        handleUosEmbeddings(
+          new Request("https://ai.ubq.fi/uos/embeddings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model, input }),
@@ -1326,8 +1417,8 @@ Deno.test("embeddings cache: retries cache write when atomic commit fails", asyn
         return voyageOkResponse(count);
       },
       () =>
-        handleEmbeddings(
-          new Request("https://ai.ubq.fi/v1/embeddings", {
+        handleUosEmbeddings(
+          new Request("https://ai.ubq.fi/uos/embeddings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model, input }),
@@ -1430,8 +1521,8 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
         return voyageOkResponse(count);
       },
       () =>
-        handleEmbeddings(
-          new Request("https://ai.ubq.fi/v1/embeddings", {
+        handleUosEmbeddings(
+          new Request("https://ai.ubq.fi/uos/embeddings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model, input: inputB }),
@@ -1576,8 +1667,8 @@ Deno.test("embeddings: returns one data item per array input", async () => {
       return voyageOkResponse(count);
     },
     () =>
-      handleEmbeddings(
-        new Request("https://ai.ubq.fi/v1/embeddings", {
+      handleUosEmbeddings(
+        new Request("https://ai.ubq.fi/uos/embeddings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "text-embedding-3-small", input: ["a", "b"] }),
@@ -1594,8 +1685,8 @@ Deno.test("embeddings: returns one data item per array input", async () => {
 });
 
 Deno.test("embeddings: rejects non-string array inputs", async () => {
-  const response = await handleEmbeddings(
-    new Request("https://ai.ubq.fi/v1/embeddings", {
+  const response = await handleUosEmbeddings(
+    new Request("https://ai.ubq.fi/uos/embeddings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "text-embedding-3-small", input: ["a", 2] }),
@@ -1608,8 +1699,8 @@ Deno.test("embeddings: rejects non-string array inputs", async () => {
 
 Deno.test("embeddings: rejects too many inputs", async () => {
   const inputs = Array.from({ length: 129 }, (_, i) => `x${i}`);
-  const response = await handleEmbeddings(
-    new Request("https://ai.ubq.fi/v1/embeddings", {
+  const response = await handleUosEmbeddings(
+    new Request("https://ai.ubq.fi/uos/embeddings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "text-embedding-3-small", input: inputs }),
@@ -1620,8 +1711,8 @@ Deno.test("embeddings: rejects too many inputs", async () => {
 
 Deno.test("embeddings: rejects too-large inputs", async () => {
   const tooLarge = "a".repeat(20_001);
-  const response = await handleEmbeddings(
-    new Request("https://ai.ubq.fi/v1/embeddings", {
+  const response = await handleUosEmbeddings(
+    new Request("https://ai.ubq.fi/uos/embeddings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "text-embedding-3-small", input: tooLarge }),
@@ -1651,8 +1742,8 @@ Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings",
       );
     },
     () =>
-      handleEmbeddings(
-        new Request("https://ai.ubq.fi/v1/embeddings", {
+      handleUosEmbeddings(
+        new Request("https://ai.ubq.fi/uos/embeddings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1660,6 +1751,7 @@ Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings",
             input: "hello",
             dimensions: 256,
             encoding_format: "base64",
+            user: "migration-client",
           }),
         }),
       ),
@@ -1678,9 +1770,9 @@ Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings",
   assert.ok(Math.abs(view.getFloat32(4, true) + 0.5) < 1e-5);
 });
 
-Deno.test("v1 embeddings: rejects fractional dimensions", async () => {
-  const response = await handleEmbeddings(
-    new Request("https://ai.ubq.fi/v1/embeddings", {
+Deno.test("uos embeddings: rejects fractional dimensions", async () => {
+  const response = await handleUosEmbeddings(
+    new Request("https://ai.ubq.fi/uos/embeddings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1824,8 +1916,8 @@ Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () 
         throw new Error("Embeddings should be rate limited before upstream fetch");
       },
       () =>
-        handleEmbeddings(
-          new Request("https://ai.ubq.fi/v1/embeddings", {
+        handleUosEmbeddings(
+          new Request("https://ai.ubq.fi/uos/embeddings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model: "text-embedding-3-small", input: "rate-limit-test" }),
@@ -2437,6 +2529,70 @@ Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 gu
 
   assert.equal(response.status, 401);
   assert.notEqual(response.status, 404);
+});
+
+Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without Voyage dispatch", async () => {
+  const { handleAdminApiKeysCreate } = await import("../src/admin.ts");
+  const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "a")}`;
+  const created = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "legacy embeddings route check",
+        token,
+        usage_limit_requests: 1,
+        paid_fallback_enabled: false,
+      }),
+    }),
+  );
+  assert.equal(created.status, 200);
+  const createdPayload = await created.json() as { id?: unknown };
+  assert.equal(typeof createdPayload.id, "string");
+  const keyId = createdPayload.id as string;
+  const quotaWindowPrefix: Deno.KvKey = ["uos_ai", "api_key_usage", "v3", "window", keyId];
+  const quotaWindow = (): { committed_requests?: unknown; reserved_requests?: unknown } | null => {
+    for (const [rawKey, value] of kvStore.entries()) {
+      const key = JSON.parse(rawKey) as Deno.KvKey;
+      if (keyHasPrefix(key, quotaWindowPrefix)) {
+        return value as { committed_requests?: unknown; reserved_requests?: unknown };
+      }
+    }
+    return null;
+  };
+  const quotaBefore = quotaWindow();
+  assert.ok(quotaBefore);
+  assert.equal(quotaBefore.committed_requests, 0);
+  assert.equal(quotaBefore.reserved_requests, 0);
+
+  const { default: handler } = await import("../src/handler.ts");
+  let voyageCalls = 0;
+  const response = await withFetchMock(
+    () => {
+      voyageCalls += 1;
+      return voyageOkResponse(1);
+    },
+    () =>
+      handler(
+        new Request("https://ai.ubq.fi/v1/embeddings", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ model: "text-embedding-3-small", input: "must-not-dispatch" }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get("x-uos-upstream"), null);
+  assert.equal(await responseErrorCode(response), "not_found");
+  assert.equal(voyageCalls, 0);
+  const quotaAfter = quotaWindow();
+  assert.ok(quotaAfter);
+  assert.equal(quotaAfter.committed_requests, 0);
+  assert.equal(quotaAfter.reserved_requests, 0);
 });
 
 Deno.test("handler: idempotency principals survive allowlist token rotation and preserve account scopes", async () => {

@@ -1,9 +1,5 @@
 import { parse } from "@std/yaml";
-import {
-  CHAT_COMPLETIONS_REQUEST_KEYS,
-  EMBEDDINGS_REQUEST_KEYS,
-  RESPONSES_REQUEST_KEYS,
-} from "../src/openai_schema.ts";
+import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "../src/openai_schema.ts";
 
 const DEFAULT_SPEC_URL = "https://app.stainless.com/api/spec/documented/openai/openapi.documented.yml";
 
@@ -99,7 +95,6 @@ const schemas = spec.components.schemas;
 const failures = [
   ...checkSurface("chat.completions.create", "CreateChatCompletionRequest", CHAT_COMPLETIONS_REQUEST_KEYS, schemas),
   ...checkSurface("responses.create", "CreateResponse", RESPONSES_REQUEST_KEYS, schemas),
-  ...checkSurface("embeddings.create", "CreateEmbeddingRequest", EMBEDDINGS_REQUEST_KEYS, schemas),
 ];
 
 if (failures.length) {
