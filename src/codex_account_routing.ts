@@ -460,6 +460,9 @@ export const markCodexQuotaBlocked = async (
   await updateRoutingState((state) => {
     const current = slotFor(state, account);
     if (current.credential_version !== account.credentialVersion) return null;
+    // An ordinary request can predate a foreign half-open claim. It must not
+    // replace that lease or admit a parallel probe.
+    if (account.probeGeneration === null && current.probe_lease !== null) return null;
     if (
       account.probeGeneration !== null &&
       (current.generation !== account.probeGeneration || current.probe_lease?.token !== account.probeToken)

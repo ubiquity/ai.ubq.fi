@@ -1010,7 +1010,20 @@ const waitForCodexRetry = async (
   signal: AbortSignal | undefined,
   sleep: (milliseconds: number) => Promise<void>,
 ): Promise<void> => {
-  if (signal?.aborted) throw signal.reason ?? new DOMException("The request was aborted.", "AbortError");
+  const abortReason = (): unknown => {
+    const reason = signal?.reason ?? new DOMException("The request was aborted.", "AbortError");
+    if (reason instanceof Error && reason.name === "TimeoutError") {
+      return new CodexError(
+        "Codex upstream exceeded the gateway deadline while waiting to retry.",
+        "gateway_timeout",
+        504,
+        reason,
+      );
+    }
+    return reason;
+  };
+
+  if (signal?.aborted) throw abortReason();
   if (milliseconds <= 0) return;
   if (!signal) {
     await sleep(milliseconds);
@@ -1018,12 +1031,14 @@ const waitForCodexRetry = async (
   }
   let onAbort = (): void => {};
   try {
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(abortReason());
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
     await Promise.race([
       sleep(milliseconds),
-      new Promise<never>((_, reject) => {
-        onAbort = () => reject(signal.reason ?? new DOMException("The request was aborted.", "AbortError"));
-        signal.addEventListener("abort", onAbort, { once: true });
-      }),
+      aborted,
     ]);
   } finally {
     signal.removeEventListener("abort", onAbort);
@@ -1224,7 +1239,7 @@ export const fetchCodexResponses = async (
         if (refreshedSlots.has(routing.slot)) {
           await markCodexCredentialInvalid(routing);
         } else {
-          await cancelResponseBody(response);
+          cancelResponseBody(response);
           try {
             ({ auth, routing } = await refreshAfter401(routing, auth, "401"));
             response = await fetchAttempt(accountEntry, auth, routing, "post_refresh");
@@ -1246,11 +1261,11 @@ export const fetchCodexResponses = async (
       }
       if (response.ok && routing.probeGeneration !== null) codexProbeByResponse.set(response, routing);
       if (response.status === 401 || response.status === 403 || response.status === 429) {
-        if (lastResponse) await cancelResponseBody(lastResponse);
+        if (lastResponse) cancelResponseBody(lastResponse);
         lastResponse = response;
         continue;
       }
-      if (lastResponse) await cancelResponseBody(lastResponse);
+      if (lastResponse) cancelResponseBody(lastResponse);
       return response;
     } catch (error) {
       lastError = error;
@@ -1264,7 +1279,7 @@ export const fetchCodexResponses = async (
       }
       await releaseCodexRoutingProbe(routing);
       // Fetch failures, aborts, and deadlines are account-independent.
-      if (lastResponse) await cancelResponseBody(lastResponse);
+      if (lastResponse) cancelResponseBody(lastResponse);
       throw error;
     }
   }
@@ -1329,7 +1344,7 @@ export const fetchCodexResponses = async (
       slot: retryCandidate.routing.slot + 1,
       delay_ms: retryDelayMs,
     });
-    if (lastResponse) await cancelResponseBody(lastResponse);
+    if (lastResponse) cancelResponseBody(lastResponse);
     let response: Response;
     try {
       response = await fetchAttempt(
@@ -1346,7 +1361,7 @@ export const fetchCodexResponses = async (
       if (refreshedSlots.has(retryRouting.slot)) {
         await markCodexCredentialInvalid(retryRouting);
       } else {
-        await cancelResponseBody(response);
+        cancelResponseBody(response);
         try {
           ({ auth: retryAuth, routing: retryRouting } = await refreshAfter401(retryRouting, retryAuth, "401"));
           response = await fetchAttempt(
@@ -1413,7 +1428,7 @@ export const fetchCodexModels = async (
         res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch, options.signal);
         await recordCodexResponseHealth(auth.account_id, res);
         if (res.status === 401) {
-          await cancelResponseBody(res);
+          cancelResponseBody(res);
           auth = await awaitWithoutCancellingSharedWork(
             refreshAuthCoordinated(await getCurrentAccountEntry(auth.account_id, true)),
             options.signal,
@@ -1427,7 +1442,7 @@ export const fetchCodexModels = async (
         throw error;
       }
       if (hasFallbackAccount && (res.status === 401 || res.status === 429)) {
-        await cancelResponseBody(res);
+        cancelResponseBody(res);
         lastResponse = res;
         continue;
       }

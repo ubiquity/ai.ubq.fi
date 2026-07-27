@@ -1070,42 +1070,211 @@ Deno.test("openai: responses applies catalog reasoning wire metadata", async () 
   assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
 });
 
-Deno.test("openai: Codex HTTP errors are returned unchanged", async () => {
-  const upstreamBody = JSON.stringify({
-    detail: "The 'gpt-5-chat-latest' model is not supported when using Codex with a ChatGPT account.",
-    opaque: { keep: true },
-  });
-  const response = await withFetchMock(
-    () =>
-      new Response(
-        upstreamBody,
-        {
-          status: 400,
-          statusText: "Codex Invalid Request",
-          headers: {
-            "Content-Type": "application/problem+json",
-            "X-Codex-Diagnostic": "preserved",
-          },
+Deno.test("openai: Codex HTTP errors use OpenAI envelopes without changing routing", async (t) => {
+  const cases = [
+    {
+      name: "chat completions parses a provider-root detail",
+      route: "chat.completions",
+      status: 400,
+      statusText: "Codex Invalid Request",
+      body: JSON.stringify({
+        detail: "The requested model is not supported with a ChatGPT account.",
+        opaque: { drop: true },
+      }),
+      retryAfter: "7",
+      expectedError: {
+        message: "The requested model is not supported with a ChatGPT account.",
+        type: "invalid_request_error",
+        code: "upstream_error",
+      },
+    },
+    {
+      name: "responses preserves an existing error envelope",
+      route: "responses",
+      status: 503,
+      statusText: "Codex Unavailable",
+      body: JSON.stringify({
+        error: {
+          message: "Codex is temporarily unavailable.",
+          type: "server_error",
+          code: "provider_unavailable",
+          param: "model",
         },
-      ),
-    () =>
-      handleChatCompletions(
-        new Request("https://ai.ubq.fi/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: [{ role: "user", content: "ping" }],
-          }),
-        }),
-      ),
-  );
+        opaque: { drop: true },
+      }),
+      retryAfter: null,
+      expectedError: {
+        message: "Codex is temporarily unavailable.",
+        type: "server_error",
+        code: "provider_unavailable",
+        param: "model",
+      },
+    },
+    {
+      name: "responses converts plain text",
+      route: "responses",
+      status: 422,
+      statusText: "Codex Rejected",
+      body: "Codex rejected the request body.",
+      retryAfter: null,
+      expectedError: {
+        message: "Codex rejected the request body.",
+        type: "invalid_request_error",
+        code: "upstream_error",
+      },
+    },
+  ] as const;
 
-  assert.equal(response.status, 400);
-  assert.equal(response.statusText, "Codex Invalid Request");
-  assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
-  assert.equal(response.headers.get("Content-Type"), "application/problem+json");
-  assert.equal(response.headers.get("X-Codex-Diagnostic"), "preserved");
-  assert.equal(await response.text(), upstreamBody);
+  for (const testCase of cases) {
+    await t.step(testCase.name, async () => {
+      let codexCalls = 0;
+      const response = await withFetchMock(
+        () => {
+          codexCalls += 1;
+          const headers = new Headers({
+            "Content-Type": "application/problem+json",
+            "X-Codex-Diagnostic": "drop-me",
+          });
+          if (testCase.retryAfter) headers.set("Retry-After", testCase.retryAfter);
+          return new Response(testCase.body, {
+            status: testCase.status,
+            statusText: testCase.statusText,
+            headers,
+          });
+        },
+        () =>
+          testCase.route === "chat.completions"
+            ? handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  messages: [{ role: "user", content: "ping" }],
+                }),
+              }),
+            )
+            : handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+              }),
+            ),
+      );
+
+      assert.equal(response.status, testCase.status);
+      assert.equal(response.statusText, "");
+      assert.equal(response.headers.get("Content-Type"), "application/json");
+      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+      assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
+      assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
+      assert.deepEqual(await response.json(), { error: testCase.expectedError });
+      assert.equal(codexCalls, 1);
+    });
+  }
+});
+
+Deno.test("openai: error normalization bounds oversized and stalled upstream bodies", async (t) => {
+  const expectedError = {
+    error: {
+      message: "Upstream returned an oversized or incomplete error response.",
+      type: "invalid_request_error",
+      code: "upstream_error",
+    },
+  };
+
+  await t.step("oversized bodies are cancelled without exposing partial content", async () => {
+    let cancellations = 0;
+    const oversized = new Uint8Array(65 * 1024);
+    oversized.fill("x".charCodeAt(0));
+    const startedAt = performance.now();
+    const response = await withFetchMock(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(oversized);
+            },
+            cancel() {
+              cancellations += 1;
+            },
+          }),
+          {
+            status: 422,
+            headers: {
+              "Content-Type": "application/problem+json",
+              "X-Codex-Diagnostic": "drop-me",
+            },
+          },
+        ),
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+          }),
+        ),
+    );
+
+    assert.ok(performance.now() - startedAt < 500, "oversized body must be rejected before the reader deadline");
+    assert.equal(response.status, 422);
+    assert.equal(response.headers.get("Content-Type"), "application/json");
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
+    assert.deepEqual(await response.json(), expectedError);
+    assert.equal(cancellations, 1);
+  });
+
+  setStreamFirstEventDeadlineMsForTest(10);
+  try {
+    for (const route of ["responses", "chat.completions"] as const) {
+      await t.step(`${route} keeps the request deadline while reading an error body`, async () => {
+        let cancellations = 0;
+        const startedAt = performance.now();
+        const response = await withFetchMock(
+          () =>
+            new Response(
+              new ReadableStream<Uint8Array>({
+                pull: () => new Promise<void>(() => {}),
+                cancel() {
+                  cancellations += 1;
+                },
+              }),
+              { status: 400, headers: { "Content-Type": "application/problem+json" } },
+            ),
+          () =>
+            route === "responses"
+              ? handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+                }),
+              )
+              : handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    messages: [{ role: "user", content: "ping" }],
+                    stream: true,
+                  }),
+                }),
+              ),
+        );
+
+        assert.ok(performance.now() - startedAt < 500, route);
+        assert.equal(response.status, 400);
+        assert.deepEqual(await response.json(), expectedError);
+        assert.equal(cancellations, 1);
+      });
+    }
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+  }
 });
 
 Deno.test("openai: a failed half-open 2xx stream releases its routing lease", async () => {
@@ -1365,7 +1534,13 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         );
         assert.equal(response.status, 429, testCase.id);
         assert.equal(calls, 2);
-        assert.deepEqual(await response.json(), { error: { message: "Primary limited" } });
+        assert.deepEqual(await response.json(), {
+          error: {
+            message: "Primary limited",
+            type: "invalid_request_error",
+            code: "upstream_error",
+          },
+        });
       }
     });
 
@@ -2388,69 +2563,139 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       assert.equal(upstreamCancelCount, 1);
     });
 
-    await t.step("a YunWu HTTP error is returned unchanged after exactly one attempt", async () => {
-      const keyId = "fallback-yunwu-error";
-      const requestId = "request-fallback-yunwu-error";
-      const upstreamBody = '{"error":{"message":"YunWu busy","code":"provider_rate_limit"},"opaque":{"keep":true}}';
-      seedPaidFallbackKey(keyId);
-      let yunwuCalls = 0;
-      const response = await withFetchMock(
-        (url) => {
-          if (url === "https://yunwu.ai/v1/responses") {
-            yunwuCalls += 1;
-            return new Response(upstreamBody, {
-              status: 429,
-              statusText: "YunWu Rate Limited",
-              headers: {
-                "Content-Type": "application/problem+json",
-                "Retry-After": "17",
-                "X-Oneapi-Request-Id": "yunwu-error-request",
-                "X-Yunwu-Diagnostic": "preserved",
-              },
-            });
-          }
-          if (url === "https://yunwu.ai/api/log/token") {
-            return new Response(JSON.stringify({ success: true, data: [] }), {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            });
-          }
-          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-            status: 429,
-            headers: { "Content-Type": "application/json" },
-          });
-        },
-        () =>
-          handleResponses(
-            new Request("https://ai.ubq.fi/v1/responses", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
-            }),
-            {
-              keyId,
-              kernelRepo: null,
-              kernelOrg: null,
-              requestId,
-              startedAtMs: Date.now(),
+    await t.step("YunWu HTTP errors use OpenAI envelopes without changing routing", async (t) => {
+      const cases = [
+        {
+          name: "responses preserves an existing error envelope and 429",
+          route: "responses",
+          status: 429,
+          statusText: "YunWu Rate Limited",
+          body: JSON.stringify({
+            error: {
+              message: "YunWu is rate limited.",
+              type: "rate_limit_error",
+              code: "provider_rate_limit",
+              param: null,
             },
-          ),
-      );
-      assert.equal(response.status, 429);
-      assert.equal(response.statusText, "YunWu Rate Limited");
-      assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
-      assert.equal(response.headers.get("Content-Type"), "application/problem+json");
-      assert.equal(response.headers.get("Retry-After"), "17");
-      assert.equal(response.headers.get("X-Oneapi-Request-Id"), "yunwu-error-request");
-      assert.equal(response.headers.get("X-Yunwu-Diagnostic"), "preserved");
-      assert.equal(yunwuCalls, 1);
-      assert.equal(await response.text(), upstreamBody);
-      const request = kvStore.get(
-        keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, requestId]),
-      ) as { billing_state?: string; terminal_state?: string };
-      assert.equal(request.billing_state, "pending");
-      const failed = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
-      assert.equal(failed.terminal_state, "failed");
+            opaque: { drop: true },
+          }),
+          retryAfter: "17",
+          expectedError: {
+            message: "YunWu is rate limited.",
+            type: "rate_limit_error",
+            code: "provider_rate_limit",
+            param: null,
+          },
+        },
+        {
+          name: "chat completions parses a provider-root message and preserves 502",
+          route: "chat.completions",
+          status: 502,
+          statusText: "YunWu Bad Gateway",
+          body: JSON.stringify({
+            message: "YunWu could not reach its model backend.",
+            type: "server_error",
+            code: "provider_unavailable",
+            opaque: { drop: true },
+          }),
+          retryAfter: null,
+          expectedError: {
+            message: "YunWu could not reach its model backend.",
+            type: "server_error",
+            code: "provider_unavailable",
+          },
+        },
+        {
+          name: "chat completions converts plain text and preserves 401",
+          route: "chat.completions",
+          status: 401,
+          statusText: "YunWu Unauthorized",
+          body: "YunWu rejected the configured credential.",
+          retryAfter: null,
+          expectedError: {
+            message: "YunWu rejected the configured credential.",
+            type: "invalid_request_error",
+            code: "upstream_error",
+          },
+        },
+      ] as const;
+
+      for (const [index, testCase] of cases.entries()) {
+        await t.step(testCase.name, async () => {
+          const keyId = `fallback-yunwu-normalized-${index}`;
+          const requestId = `request-fallback-yunwu-normalized-${index}`;
+          seedPaidFallbackKey(keyId);
+          let codexCalls = 0;
+          let yunwuCalls = 0;
+          const response = await withFetchMock(
+            (url) => {
+              if (url === "https://yunwu.ai/v1/responses") {
+                yunwuCalls += 1;
+                const headers = new Headers({
+                  "Content-Type": "application/problem+json",
+                  "X-Yunwu-Diagnostic": "drop-me",
+                });
+                if (testCase.retryAfter) headers.set("Retry-After", testCase.retryAfter);
+                return new Response(testCase.body, {
+                  status: testCase.status,
+                  statusText: testCase.statusText,
+                  headers,
+                });
+              }
+              codexCalls += 1;
+              return new Response(JSON.stringify({ error: { message: "Primary forbidden" } }), {
+                status: 403,
+                headers: { "Content-Type": "application/json" },
+              });
+            },
+            () =>
+              testCase.route === "chat.completions"
+                ? handleChatCompletions(
+                  new Request("https://ai.ubq.fi/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: DEFAULT_TEST_MODEL,
+                      messages: [{ role: "user", content: "ping" }],
+                    }),
+                  }),
+                  {
+                    keyId,
+                    kernelRepo: null,
+                    kernelOrg: null,
+                    requestId,
+                    startedAtMs: Date.now(),
+                  },
+                )
+                : handleResponses(
+                  new Request("https://ai.ubq.fi/v1/responses", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+                  }),
+                  {
+                    keyId,
+                    kernelRepo: null,
+                    kernelOrg: null,
+                    requestId,
+                    startedAtMs: Date.now(),
+                  },
+                ),
+          );
+
+          assert.equal(response.status, testCase.status);
+          assert.equal(response.statusText, "");
+          assert.equal(response.headers.get("Content-Type"), "application/json");
+          assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+          assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
+          assert.equal(response.headers.get("X-Yunwu-Diagnostic"), null);
+          assert.deepEqual(await response.json(), { error: testCase.expectedError });
+          assert.equal(codexCalls, 1);
+          assert.equal(yunwuCalls, 1);
+          const failed = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
+          assert.equal(failed.terminal_state, "failed");
+        });
+      }
     });
 
     await t.step("a ledger write failure after YunWu accepts preserves the usable response", async () => {

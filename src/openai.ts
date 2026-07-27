@@ -353,10 +353,144 @@ const toCodexErrorResponse = (error: unknown, provider?: string | null): Respons
   return withUpstreamProviderHeader(response, provider);
 };
 
-const toOpenAiUpstreamErrorResponse = (
+type UpstreamErrorDetails = Readonly<{
+  message: string;
+  type?: string;
+  code?: string;
+  param?: string | null;
+}>;
+
+const MAX_UPSTREAM_ERROR_BODY_BYTES = 64 * 1024;
+
+const readUpstreamErrorBody = async (
+  upstream: Response,
+  signal: AbortSignal,
+): Promise<Readonly<{ text: string; complete: boolean }>> => {
+  const reader = upstream.body?.getReader();
+  if (!reader) return { text: "", complete: true };
+
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let complete = false;
+  let cancellationStarted = false;
+  const releaseReader = (): void => {
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader may already be released after an upstream failure.
+    }
+  };
+  const cancelReader = (): void => {
+    if (cancellationStarted) return;
+    cancellationStarted = true;
+    try {
+      const cancellation = reader.cancel("Upstream error body captured");
+      void cancellation.catch(() => {}).finally(releaseReader);
+    } catch {
+      releaseReader();
+    }
+  };
+
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(1_000)]);
+  try {
+    for (;;) {
+      let onAbort = (): void => {};
+      const aborted = new Promise<never>((_, reject) => {
+        onAbort = () => reject(deadline.reason ?? new DOMException("Upstream error body read aborted.", "AbortError"));
+        deadline.addEventListener("abort", onAbort, { once: true });
+        if (deadline.aborted) onAbort();
+      });
+      const next = await Promise.race([reader.read(), aborted]).finally(() => {
+        deadline.removeEventListener("abort", onAbort);
+      });
+      if (next.done) {
+        complete = true;
+        break;
+      }
+      const remaining = MAX_UPSTREAM_ERROR_BODY_BYTES - length;
+      if (remaining <= 0) break;
+      const part = next.value.slice(0, remaining);
+      chunks.push(part);
+      length += part.byteLength;
+      if (next.value.byteLength > part.byteLength) break;
+    }
+  } catch {
+    // A missing, stalled, or failed body is normalized below without exposing
+    // a partial provider payload.
+  } finally {
+    if (complete) releaseReader();
+    else cancelReader();
+  }
+
+  if (!complete) return { text: "", complete: false };
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { text: new TextDecoder().decode(bytes), complete: true };
+};
+
+const getJsonString = (value: unknown, key: string): string | null => {
+  if (!isRecord(value)) return null;
+  const stringValue = getString(value[key]);
+  return stringValue?.trim() || null;
+};
+
+const parseUpstreamErrorDetails = (text: string, statusText: string): UpstreamErrorDetails => {
+  const trimmed = text.trim();
+  if (trimmed) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (isRecord(parsed)) {
+        const error = isRecord(parsed.error) ? parsed.error : null;
+        const message = getJsonString(error, "message") ?? getJsonString(parsed, "detail") ??
+          getJsonString(parsed, "message");
+        if (message) {
+          const details: UpstreamErrorDetails = {
+            message,
+            type: getJsonString(error, "type") ?? getJsonString(parsed, "type") ?? undefined,
+            code: getJsonString(error, "code") ?? getJsonString(parsed, "code") ?? undefined,
+          };
+          return error && Object.prototype.hasOwnProperty.call(error, "param")
+            ? { ...details, param: getString(error.param) ?? null }
+            : details;
+        }
+      }
+    } catch {
+      // Non-JSON bodies are normalized as plain text below.
+    }
+  }
+
+  const snippet = trimmed ? formatErrorSnippet(trimmed) : "";
+  return { message: snippet || statusText || "Upstream request failed." };
+};
+
+const upstreamStatusToErrorType = (status: number, upstreamType?: string): string => {
+  if (upstreamType) return upstreamType;
+  return status >= 500 ? "server_error" : "invalid_request_error";
+};
+
+const toOpenAiUpstreamErrorResponse = async (
   upstream: Response,
   provider: UpstreamProvider = "chatgpt_codex",
-): Response => withUpstreamProviderHeader(upstream, provider);
+  signal: AbortSignal,
+): Promise<Response> => {
+  const captured = await readUpstreamErrorBody(upstream, signal);
+  const details = captured.complete
+    ? parseUpstreamErrorDetails(captured.text, upstream.statusText)
+    : { message: "Upstream returned an oversized or incomplete error response." };
+  const headers: Record<string, string> = { "x-uos-upstream": provider };
+  const retryAfter = upstream.headers.get("Retry-After");
+  if (retryAfter) headers["Retry-After"] = retryAfter;
+  const options: { type?: string; param?: string | null; headers: HeadersInit } = {
+    type: upstreamStatusToErrorType(upstream.status, details.type),
+    headers,
+  };
+  if (Object.prototype.hasOwnProperty.call(details, "param")) options.param = details.param ?? null;
+  return openaiError(upstream.status, details.message, details.code ?? "upstream_error", options);
+};
 
 const cancelResponseBody = (response: Response): void => {
   try {
@@ -511,7 +645,7 @@ const fetchResponsesWithPaidFallback = async (
     };
   }
   if (options.signal?.aborted) {
-    if (primary) await cancelResponseBody(primary);
+    if (primary) cancelResponseBody(primary);
     throw options.signal.reason instanceof Error
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
@@ -561,7 +695,7 @@ const fetchResponsesWithPaidFallback = async (
   }
 
   if (options.signal?.aborted) {
-    await cancelResponseBody(primary);
+    cancelResponseBody(primary);
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
       () => recordYunwuPrefetchCancellation(decision.reservation),
@@ -570,7 +704,7 @@ const fetchResponsesWithPaidFallback = async (
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
-  await cancelResponseBody(primary);
+  cancelResponseBody(primary);
   if (options.signal?.aborted) {
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
@@ -2871,7 +3005,6 @@ const completeChatCompletions = async (
       if (event.terminal) break;
     }
   } catch (error) {
-    onResponseTerminal?.();
     const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType === "cancelled") lifecycle.cancelled();
@@ -4077,12 +4210,15 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     return upstream;
   }
   if (!upstream.ok) {
-    clearStreamFirstEventDeadline();
     lifecycle.terminal("response.failed");
     recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
-    const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
-    return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    try {
+      const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider, requestInferenceSignal);
+      return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    } finally {
+      clearStreamFirstEventDeadline();
+    }
   }
 
   if (!upstream.body) {
@@ -4349,12 +4485,15 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     return upstream;
   }
   if (!upstream.ok) {
-    clearStreamFirstEventDeadline();
     lifecycle.terminal("response.failed");
     recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
-    const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider);
-    return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    try {
+      const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider, requestInferenceSignal);
+      return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
+    } finally {
+      clearStreamFirstEventDeadline();
+    }
   }
 
   if (clientWantsStream) {

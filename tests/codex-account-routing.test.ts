@@ -450,6 +450,75 @@ Deno.test("ordinary 429 clears only the current fenced probe from an expired cir
   }
 });
 
+Deno.test("a stale ordinary usage-limit 429 cannot overwrite a foreign half-open lease", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const staleSelection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(staleSelection.kind, "eligible");
+    if (staleSelection.kind !== "eligible") return;
+    const staleAccount = staleSelection.accounts[0]!;
+    assert.equal(staleAccount.probeGeneration, null);
+
+    resetCodexAccountRoutingForTest();
+    const blockingSelection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(blockingSelection.kind, "eligible");
+    if (blockingSelection.kind !== "eligible") return;
+    await markCodexQuotaBlocked(
+      blockingSelection.accounts[0]!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "1" },
+      }),
+      now,
+    );
+
+    const probeAt = now + 1_001;
+    resetCodexAccountRoutingForTest();
+    const probeSelection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, probeAt);
+    assert.equal(probeSelection.kind, "eligible");
+    if (probeSelection.kind !== "eligible") return;
+    const currentProbe = await claimCodexRoutingProbe(singlePool, probeSelection.accounts[0]!, probeAt);
+    assert.ok(currentProbe);
+    const beforeStale429 = parseCodexAccountRoutingState(
+      kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)),
+    );
+    assert.equal(beforeStale429?.slots[0]?.probe_lease?.token, currentProbe.probeToken);
+
+    resetCodexAccountRoutingForTest();
+    const stale429At = probeAt + 1;
+    await markCodexQuotaBlocked(
+      staleAccount,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "1" },
+      }),
+      stale429At,
+    );
+    const afterStale429 = parseCodexAccountRoutingState(
+      kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)),
+    );
+    assert.deepEqual(afterStale429?.slots[0], beforeStale429?.slots[0]);
+
+    resetCodexAccountRoutingForTest();
+    const secondSelection = await selectCodexRoutingAccounts(
+      singlePool,
+      singlePool.accounts,
+      stale429At + 1_001,
+    );
+    const secondProbe = secondSelection.kind === "eligible"
+      ? await claimCodexRoutingProbe(singlePool, secondSelection.accounts[0]!, stale429At + 1_001)
+      : null;
+    assert.equal(secondProbe, null);
+    assert.equal(secondSelection.kind, "quota_blocked");
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("expired circuits grant one fenced probe and reject stale completion", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
