@@ -22,6 +22,11 @@ const MAX_KV_RETRIES = 5;
 
 export type ApiKeyUsageProvider = "chatgpt_codex" | "yunwu" | "voyage";
 
+export type ApiKeyProviderDispatch = Readonly<{
+  markTransportStarted: () => void;
+  cancelBeforeTransport: () => Promise<void>;
+}>;
+
 export type ApiKeyPolicy = Readonly<{
   token_hash: string;
   key_id: string;
@@ -46,7 +51,7 @@ export type ApiKeyUsageReservation = Readonly<{
   policy: ApiKeyPolicy;
   request_id: string;
   route: string;
-  beforeProviderDispatch: (provider: ApiKeyUsageProvider) => Promise<void>;
+  beforeProviderDispatch: (provider: ApiKeyUsageProvider) => Promise<ApiKeyProviderDispatch | void>;
   release: (reason?: string) => Promise<void>;
 }>;
 
@@ -55,12 +60,26 @@ export type ApiKeyUsageReservationDecision =
   | Readonly<{ ok: false; response: Response }>;
 
 export class ApiKeyQuotaDispatchError extends Error {
-  readonly status = 503;
-  readonly code = "api_key_quota_reservation_unavailable";
+  readonly status: number;
+  readonly code: string;
+  readonly errorType: string;
+  readonly retryAfter: string | null;
 
-  constructor(message = "API key quota reservation is no longer available") {
+  constructor(
+    message = "API key quota reservation is no longer available",
+    options: Readonly<{
+      status?: number;
+      code?: string;
+      errorType?: string;
+      retryAfter?: string | null;
+    }> = {},
+  ) {
     super(message);
     this.name = "ApiKeyQuotaDispatchError";
+    this.status = options.status ?? 503;
+    this.code = options.code ?? "api_key_quota_reservation_unavailable";
+    this.errorType = options.errorType ?? "server_error";
+    this.retryAfter = options.retryAfter ?? null;
   }
 }
 
@@ -204,16 +223,20 @@ const expiredPolicyResponse = (): ApiKeyUsageReservationDecision => ({
   response: openaiError(401, "Unauthorized", "invalid_api_key"),
 });
 
-const quotaExceededResponse = (window: ApiKeyUsageWindowV3, policy: ApiKeyPolicy): ApiKeyUsageReservationDecision => ({
-  ok: false,
-  response: openaiError(
-    429,
-    `Usage limit exceeded (${window.committed_requests}/${policy.usage_limit_requests}). Resets at ${
-      new Date(window.window_reset_at_ms).toISOString()
-    }`,
-    "rate_limit_exceeded",
-  ),
-});
+const quotaExceededResponse = (window: ApiKeyUsageWindowV3, policy: ApiKeyPolicy): ApiKeyUsageReservationDecision => {
+  const retryAfterSeconds = Math.max(1, Math.ceil(Math.max(0, window.window_reset_at_ms - Date.now()) / 1000));
+  return {
+    ok: false,
+    response: openaiError(
+      429,
+      `Usage limit exceeded (${window.committed_requests}/${policy.usage_limit_requests}). Resets at ${
+        new Date(window.window_reset_at_ms).toISOString()
+      }`,
+      "rate_limit_exceeded",
+      { type: "rate_limit_error", headers: { "Retry-After": String(retryAfterSeconds) } },
+    ),
+  };
+};
 
 const livePolicyFromEntry = (
   tokenHash: string,
@@ -318,6 +341,96 @@ const releaseReservedRequest = async (
   return committed.ok ? "released" : "conflict";
 };
 
+const releaseDispatchedRequest = async (
+  kv: Deno.Kv,
+  policy: ApiKeyPolicy,
+  requestId: string,
+  route: string,
+  provider: ApiKeyUsageProvider,
+  nowMs: number,
+): Promise<"released" | "settled" | "missing" | "invalid" | "conflict"> => {
+  const requestKey = apiKeyUsageV3RequestKey(policy, requestId);
+  const windowKey = apiKeyUsageV3WindowKey(policy);
+  const [requestEntry, windowEntry] = await Promise.all([
+    kv.get<ApiKeyUsageRequestV3>(requestKey, { consistency: "strong" }),
+    kv.get<ApiKeyUsageWindowV3>(windowKey, { consistency: "strong" }),
+  ]);
+  const request = normalizeApiKeyUsageRequestV3(requestEntry.value);
+  if (!request) return requestEntry.value === null ? "missing" : "invalid";
+  if (request.key_id !== policy.key_id || request.request_id !== requestId || request.route !== route) return "invalid";
+  if (request.state !== "dispatched") return "settled";
+  if (request.provider !== provider) return "invalid";
+  const window = matchingWindow(windowEntry.value, policy);
+  if (!window || window.committed_requests < 1) return "invalid";
+  const released: ApiKeyUsageRequestV3 = {
+    ...request,
+    state: "released",
+    provider: null,
+    dispatched_at_ms: null,
+    released_at_ms: nowMs,
+    release_reason: "transport_cancelled_before_fetch",
+  };
+  const updatedWindow: ApiKeyUsageWindowV3 = {
+    ...window,
+    committed_requests: window.committed_requests - 1,
+    updated_at_ms: nowMs,
+  };
+  const committed = await kv.atomic()
+    .check(requestEntry)
+    .check(windowEntry)
+    .set(requestKey, released, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
+    .set(windowKey, updatedWindow, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
+    .commit();
+  return committed.ok ? "released" : "conflict";
+};
+
+const providerDispatchContext = (
+  kv: Deno.Kv,
+  policy: ApiKeyPolicy,
+  requestId: string,
+  route: string,
+  provider: ApiKeyUsageProvider,
+): ApiKeyProviderDispatch => {
+  let transportStarted = false;
+  let cancellation: Promise<void> | null = null;
+  return {
+    markTransportStarted: () => {
+      transportStarted = true;
+    },
+    cancelBeforeTransport: async () => {
+      if (transportStarted) return;
+      if (!cancellation) {
+        cancellation = (async () => {
+          try {
+            await withApiKeyUsageWindowLock(policy, async () => {
+              for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
+                const outcome = await releaseDispatchedRequest(
+                  kv,
+                  policy,
+                  requestId,
+                  route,
+                  provider,
+                  Date.now(),
+                );
+                if (outcome === "released" || outcome === "settled" || outcome === "missing") return;
+                if (outcome === "invalid") {
+                  throw new ApiKeyQuotaDispatchError("API key quota reservation is malformed");
+                }
+              }
+              throw new ApiKeyQuotaDispatchError("API key quota reservation changed concurrently");
+            });
+          } catch (error) {
+            if (error instanceof ApiKeyQuotaDispatchError) throw error;
+            console.warn("[ai.ubq.fi] Failed to compensate API key quota dispatch:", error);
+            throw new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
+          }
+        })();
+      }
+      await cancellation;
+    },
+  };
+};
+
 /**
  * Expired leases are released before admission. This is intentionally a
  * separate, retryable pass: Deno KV cannot list a dynamic set of request keys
@@ -374,7 +487,8 @@ const reservationContext = (
   policy,
   request_id: requestId,
   route,
-  beforeProviderDispatch: async (provider: ApiKeyUsageProvider): Promise<void> => {
+  beforeProviderDispatch: async (provider: ApiKeyUsageProvider): Promise<ApiKeyProviderDispatch | void> => {
+    let dispatchedHere = false;
     try {
       await withApiKeyUsageWindowLock(policy, async () => {
         const requestKey = apiKeyUsageV3RequestKey(policy, requestId);
@@ -412,7 +526,10 @@ const reservationContext = (
             .set(requestKey, dispatched, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
             .set(windowKey, committedWindow, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
             .commit();
-          if (committed.ok) return;
+          if (committed.ok) {
+            dispatchedHere = true;
+            return;
+          }
         }
         throw new ApiKeyQuotaDispatchError("API key quota reservation changed concurrently");
       });
@@ -421,6 +538,7 @@ const reservationContext = (
       console.warn("[ai.ubq.fi] Failed to commit API key quota dispatch:", error);
       throw new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
     }
+    return dispatchedHere ? providerDispatchContext(kv, policy, requestId, route, provider) : undefined;
   },
   release: async (reason = "route_completed_without_provider_dispatch"): Promise<void> => {
     try {
@@ -440,6 +558,59 @@ const reservationContext = (
   },
 });
 
+const quotaDispatchErrorFromResponse = async (response: Response): Promise<ApiKeyQuotaDispatchError> => {
+  const payload = await response.clone().json().catch(() => null) as unknown;
+  const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+  const message = error && typeof error.message === "string"
+    ? error.message
+    : "API key quota reservation is no longer available";
+  return new ApiKeyQuotaDispatchError(message, {
+    status: response.status,
+    code: error && typeof error.code === "string"
+      ? error.code
+      : response.status === 429
+      ? "rate_limit_exceeded"
+      : "api_key_quota_reservation_unavailable",
+    errorType: error && typeof error.type === "string"
+      ? error.type
+      : response.status === 429
+      ? "rate_limit_error"
+      : "server_error",
+    retryAfter: response.headers.get("Retry-After"),
+  });
+};
+
+const deferredReservationContext = (
+  kv: Deno.Kv,
+  policy: ApiKeyPolicy,
+  requestId: string,
+  route: string,
+): ApiKeyUsageReservation => {
+  let active: ApiKeyUsageReservation | null = null;
+  let admission: Promise<ApiKeyUsageReservation> | null = null;
+  const requireAdmission = async (): Promise<ApiKeyUsageReservation> => {
+    if (active) return active;
+    if (!admission) {
+      admission = (async () => {
+        const decision = await reserveApiKeyUsageV3(policy, requestId, route, { kv });
+        if (!decision.ok) throw await quotaDispatchErrorFromResponse(decision.response);
+        active = decision.reservation;
+        return active;
+      })();
+    }
+    return await admission;
+  };
+  return {
+    policy,
+    request_id: requestId,
+    route,
+    beforeProviderDispatch: async (provider) => (await requireAdmission()).beforeProviderDispatch(provider),
+    release: async (reason) => {
+      if (active) await active.release(reason);
+    },
+  };
+};
+
 /**
  * Auth only proves that a key is valid. Route admission is a separate V3
  * reservation so non-inference endpoints never consume or block on quota.
@@ -448,7 +619,7 @@ export const reserveApiKeyUsageV3 = async (
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; deferWhenFull?: boolean }> = {},
 ): Promise<ApiKeyUsageReservationDecision> => {
   try {
     const kv = options.kv === undefined ? await getKv() : options.kv;
@@ -497,7 +668,12 @@ export const reserveApiKeyUsageV3 = async (
           livePolicy.usage_limit_requests !== API_KEY_NO_USAGE_LIMIT &&
           window.committed_requests + window.reserved_requests >= livePolicy.usage_limit_requests
         ) {
-          if (reclaimedExpiredReservations) return quotaExceededResponse(window, livePolicy);
+          if (reclaimedExpiredReservations) {
+            if (options.deferWhenFull) {
+              return { ok: true, reservation: deferredReservationContext(kv, livePolicy, requestId, route) };
+            }
+            return quotaExceededResponse(window, livePolicy);
+          }
           try {
             // Unlimited policies never need this list. Bounded policies scan
             // only after the aggregate appears full, so an expired lease is

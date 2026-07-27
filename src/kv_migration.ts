@@ -728,6 +728,11 @@ const currentLegacyUsage = (record: ApiKeyRecord, nowMs: number): number =>
 const migrationPolicyNow = (record: ApiKeyRecord, nowMs: number): number =>
   record.revoked_at_ms === null ? nowMs : Math.max(0, record.usage_reset_at_ms - 1);
 
+// The first V3 aggregate for a revoked historical window must remain available
+// long enough for the post-migration validation pass.
+const migrationV3RetentionMs = (windowResetAtMs: number, nowMs: number): number =>
+  apiKeyUsageV3RetentionMs(windowResetAtMs, Math.min(nowMs, windowResetAtMs));
+
 const migrateBoundedCounterHandoff = async (
   kv: Deno.Kv,
   policy: ApiKeyPolicy,
@@ -782,7 +787,7 @@ const migrateBoundedCounterHandoff = async (
         .check(counterEntry)
         .check(windowEntry)
         .set(baselineKey, baseline)
-        .set(windowKey, seededWindow, { expireIn: apiKeyUsageV3RetentionMs(seededWindow.window_reset_at_ms, nowMs) })
+        .set(windowKey, seededWindow, { expireIn: migrationV3RetentionMs(seededWindow.window_reset_at_ms, nowMs) })
         .commit();
       if (committed.ok) {
         return {
@@ -820,7 +825,7 @@ const migrateBoundedCounterHandoff = async (
       .check(counterEntry)
       .check(windowEntry)
       .set(baselineKey, updatedBaseline)
-      .set(windowKey, updatedWindow, { expireIn: apiKeyUsageV3RetentionMs(updatedWindow.window_reset_at_ms, nowMs) });
+      .set(windowKey, updatedWindow, { expireIn: migrationV3RetentionMs(updatedWindow.window_reset_at_ms, nowMs) });
     const committed = await atomic.commit();
     if (committed.ok) {
       return {
@@ -927,6 +932,17 @@ const migrateLegacyKernelScope = async (
       kv.get<KernelQuotaPolicyV2>(policyKey, { consistency: "strong" }),
       kv.get<KernelQuotaWindowV2>(windowKey, { consistency: "strong" }),
     ]);
+    if (normalizeKernelQuotaPolicyV2(policyEntry.value, scope, owner, repo)) {
+      const committed = await kv.atomic()
+        .check(legacyEntry)
+        .check(policyEntry)
+        .check(windowEntry)
+        .delete(legacyEntry.key)
+        .commit();
+      if (!committed.ok) throw new Error(`legacy kernel quota changed concurrently: ${owner}/${repo ?? ""}`);
+      migrated += 1;
+      continue;
+    }
     const effectiveWindowMs = defaultBacked ? defaults.windowMs : legacy.window_ms;
     const currentWindow = normalizeKernelQuotaWindowV2(windowEntry.value, scope, owner, repo);
     const sameWindow = currentWindow?.applied_window_ms === effectiveWindowMs &&
@@ -1699,14 +1715,18 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
   let boundedBaselinesCreated = 0;
   let boundedBaselinesReconciled = 0;
   let legacyUsageDeltaApplied = 0;
-  for (const { record, hashRecord } of apiKeyInventory.pairs) {
-    const upgradedRecord: ApiKeyRecord = { ...record, usage_quota_version: 3 };
-    const upgradedHash: ApiKeyHashRecord = { ...hashRecord, usage_quota_version: 3 };
+  const upgradedApiKeyPairs: Array<{ record: ApiKeyRecord; hashRecord: ApiKeyHashRecord }> = [];
+  for (const { record } of apiKeyInventory.pairs) {
     const [idEntry, hashEntry] = await Promise.all([
       kv.get<ApiKeyRecord>(apiKeyIdKey(record.id), { consistency: "strong" }),
       kv.get<ApiKeyHashRecord>(apiKeyHashKey(record.hash), { consistency: "strong" }),
     ]);
     if (!idEntry.value || !hashEntry.value) throw new Error(`API key changed during quota V3 migration: ${record.id}`);
+    if (idEntry.value.hash !== record.hash || !apiKeyHashPolicyMatches(idEntry.value, hashEntry.value)) {
+      throw new Error(`API key changed during quota V3 migration: ${record.id}`);
+    }
+    const upgradedRecord: ApiKeyRecord = { ...idEntry.value, usage_quota_version: 3 };
+    const upgradedHash: ApiKeyHashRecord = { ...hashEntry.value, usage_quota_version: 3 };
     if (idEntry.value.usage_quota_version !== 3 || hashEntry.value.usage_quota_version !== 3) {
       const upgraded = await kv.atomic()
         .check(idEntry)
@@ -1717,7 +1737,7 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
       if (!upgraded.ok) throw new Error(`API key changed during quota V3 migration: ${record.id}`);
     }
     const policy = apiKeyPolicyFromHashRecord(
-      record.hash,
+      upgradedRecord.hash,
       upgradedHash,
       migrationPolicyNow(upgradedRecord, migrationNowMs),
     );
@@ -1736,6 +1756,7 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
       boundedCounters += 1;
     }
     legacyUsageDeltaApplied += handoff.legacy_usage_delta_applied;
+    upgradedApiKeyPairs.push({ record: upgradedRecord, hashRecord: upgradedHash });
   }
 
   const handoffPhase = boundedCounters === 0
@@ -1762,10 +1783,7 @@ export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncide
   const kernelMigration = await migrateKernelQuotaV2(kv, migrationNowMs);
   await projectLegacyPaidFallbackV3(
     kv,
-    apiKeyInventory.pairs.map(({ record, hashRecord }) => ({
-      record: { ...record, usage_quota_version: 3 },
-      hashRecord: { ...hashRecord, usage_quota_version: 3 },
-    })),
+    upgradedApiKeyPairs,
     migrationNowMs,
   );
 

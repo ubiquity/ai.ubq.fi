@@ -12,7 +12,7 @@ import {
 } from "./codex_account_routing.ts";
 import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
 import { getKv } from "./kv.ts";
-import { ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
+import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { recordCodexProviderHealth } from "./provider_health.ts";
 import { buildRuntimeConfig, cacheRuntimeConfig, loadRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord, sha256Hex } from "./utils.ts";
@@ -882,7 +882,7 @@ const fetchCodexResponseWithAuth = async (
   serializedBody: string,
   baseHeaders: Headers,
   signal?: AbortSignal,
-  beforeDispatch?: () => Promise<void>,
+  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>,
   onDispatch?: () => void,
 ): Promise<Response> => {
   const headers = new Headers(baseHeaders);
@@ -893,18 +893,24 @@ const fetchCodexResponseWithAuth = async (
     () => deadline.abort(new DOMException("Codex response headers timed out.", "TimeoutError")),
     85_000,
   );
+  const transportSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
   try {
     // This is intentionally immediately adjacent to the actual provider
     // transport: request-quota reservations commit on dispatch, not on
     // validation, routing, or a later retry outcome.
-    if (beforeDispatch) await beforeDispatch();
+    const dispatch = beforeDispatch ? await beforeDispatch() : undefined;
+    if (dispatch && transportSignal.aborted) {
+      await dispatch?.cancelBeforeTransport();
+      throw transportSignal.reason ?? new DOMException("The request was aborted.", "AbortError");
+    }
+    dispatch?.markTransportStarted();
     onDispatch?.();
     return await fetch(url, {
       method: "POST",
       headers,
       body: serializedBody,
       redirect: "manual",
-      signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal,
+      signal: transportSignal,
     });
   } catch (error) {
     if (error instanceof ApiKeyQuotaDispatchError) throw error;
@@ -1048,7 +1054,7 @@ export const fetchCodexResponses = async (
     requestId?: string | null;
     timing?: CodexResponseTimingHooks;
     retrySleep?: (milliseconds: number) => Promise<void>;
-    beforeDispatch?: () => Promise<void>;
+    beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
   }> = {},
 ): Promise<Response> => {
   if (codexProbeTransitionsInFlight.size) {

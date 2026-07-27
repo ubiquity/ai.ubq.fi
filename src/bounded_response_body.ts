@@ -86,7 +86,7 @@ export const readBoundedResponseBody = async (
     ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])
     : AbortSignal.timeout(timeoutMs);
   try {
-    while (length < maxBytes) {
+    for (;;) {
       const next = await abortableRead(reader, deadline);
       if (next.done) {
         complete = true;

@@ -624,7 +624,7 @@ Deno.test("uos embeddings idempotency: keyed requests fail before Voyage when du
   assert.equal(upstreamCalls, 0);
 });
 
-Deno.test("embeddings: quota dispatch failures prevent Voyage and release the idempotency lease", async () => {
+Deno.test("embeddings: quota dispatch failures release idempotency and promptly requeue jobs", async () => {
   const { ApiKeyQuotaDispatchError } = await import("../src/api_key_policy.ts");
   const idempotencyKey = `embedding-quota-dispatch-${crypto.randomUUID()}`;
   const input = `quota-dispatch-${crypto.randomUUID()}`;
@@ -658,7 +658,8 @@ Deno.test("embeddings: quota dispatch failures prevent Voyage and release the id
       assert.equal(retried.status, 200);
       assert.equal(upstreamCalls, 1);
 
-      const jobFailed = await handleEmbeddingsJobCreate(
+      const jobToken = `quota-job-${crypto.randomUUID()}`;
+      const jobQueued = await handleEmbeddingsJobCreate(
         new Request("https://ai.ubq.fi/uos/embedding-jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -668,12 +669,27 @@ Deno.test("embeddings: quota dispatch failures prevent Voyage and release the id
             input_type: "document",
           }),
         }),
-        `quota-job-${crypto.randomUUID()}`,
+        jobToken,
         quotaFailureContext,
       );
-      assert.equal(jobFailed.status, 503);
-      assert.equal(await responseErrorCode(jobFailed), "api_key_quota_reservation_unavailable");
+      assert.equal(jobQueued.status, 202);
+      assert.equal(jobQueued.headers.get("Retry-After"), "1");
+      const queuedJob = await jobQueued.json() as { id?: unknown; status?: unknown };
+      assert.equal(queuedJob.status, "queued");
+      assert.equal(typeof queuedJob.id, "string");
       assert.equal(upstreamCalls, 1);
+
+      resetVoyageRateLimit();
+      const completedJob = await handleEmbeddingsJobGet(
+        new Request(`https://ai.ubq.fi/uos/embedding-jobs/${queuedJob.id}`),
+        jobToken,
+        queuedJob.id as string,
+        usageContext,
+      );
+      assert.equal(completedJob.status, 200);
+      const completedPayload = await completedJob.json() as { status?: unknown };
+      assert.equal(completedPayload.status, "succeeded");
+      assert.equal(upstreamCalls, 2);
     },
   );
 });
@@ -2554,6 +2570,128 @@ Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 gu
 
   assert.equal(response.status, 401);
   assert.notEqual(response.status, 404);
+});
+
+Deno.test("handler: an exhausted key still serves local embeddings paths but blocks a dispatch", async () => {
+  const { handleAdminApiKeysCreate } = await import("../src/admin.ts");
+  const { default: handler } = await import("../src/handler.ts");
+  const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "a")}`;
+  const created = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "exhausted embeddings local paths",
+        token,
+        usage_limit_requests: 1,
+        paid_fallback_enabled: false,
+      }),
+    }),
+  );
+  assert.equal(created.status, 200);
+  const createdPayload = await created.json() as { id?: unknown };
+  assert.equal(typeof createdPayload.id, "string");
+  const keyId = createdPayload.id as string;
+  const idempotencyKey = `exhausted-replay-${crypto.randomUUID()}`;
+  const idempotencyInput = `exhausted-idempotency-${crypto.randomUUID()}`;
+  const jobInput = `exhausted-job-${crypto.randomUUID()}`;
+  let jobId = "";
+
+  resetVoyageRateLimit();
+  await withFetchMock(
+    () => voyageOkResponse(1),
+    async () => {
+      const seededReplay = await handleUosEmbeddings(
+        uosIdempotentRequest(idempotencyKey, idempotencyInput),
+        uosIdempotencyUsageContext(`api-key:${keyId}`),
+      );
+      assert.equal(seededReplay.status, 200);
+      const seededJob = await handleEmbeddingsJobCreate(
+        new Request("https://ai.ubq.fi/uos/embedding-jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "voyage-4-large", input: jobInput, input_type: "document" }),
+        }),
+        token,
+        { keyId, kernelRepo: null, kernelOrg: null },
+      );
+      assert.equal(seededJob.status, 200);
+      const seededJobPayload = await seededJob.json() as { id?: unknown; status?: unknown };
+      assert.equal(seededJobPayload.status, "succeeded");
+      assert.equal(typeof seededJobPayload.id, "string");
+      jobId = seededJobPayload.id as string;
+    },
+  );
+
+  const cacheInput = `exhausted-cache-${crypto.randomUUID()}`;
+  const cacheHash = await sha256Hex(cacheInput);
+  kvStore.set(
+    keyToString(embeddingsCacheKey(cacheHash)),
+    { embedding: testVector(1024, 7.7), created_at: new Date().toISOString() },
+  );
+  const quotaWindowPrefix: Deno.KvKey = ["uos_ai", "api_key_usage", "v3", "window", keyId];
+  const quotaEntry = [...kvStore.entries()].find(([rawKey]) =>
+    keyHasPrefix(JSON.parse(rawKey) as Deno.KvKey, quotaWindowPrefix)
+  );
+  assert.ok(quotaEntry);
+  const [rawQuotaKey, rawQuotaWindow] = quotaEntry;
+  const quotaKv = await getKv();
+  assert.ok(quotaKv);
+  await quotaKv.set(
+    JSON.parse(rawQuotaKey) as Deno.KvKey,
+    {
+      ...(rawQuotaWindow as Record<string, unknown>),
+      committed_requests: 1,
+      reserved_requests: 0,
+      updated_at_ms: Date.now(),
+    },
+  );
+
+  const embeddingsRequest = (input: string, replayKey?: string): Request =>
+    new Request("https://ai.ubq.fi/uos/embeddings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...(replayKey ? { "Idempotency-Key": replayKey } : {}),
+      },
+      body: JSON.stringify({ model: "voyage-4-large", input, truncation: replayKey ? false : true }),
+    });
+
+  let voyageCalls = 0;
+  resetVoyageRateLimit();
+  try {
+    await withFetchMock(
+      () => {
+        voyageCalls += 1;
+        return voyageOkResponse(1);
+      },
+      async () => {
+        const replay = await handler(embeddingsRequest(idempotencyInput, idempotencyKey));
+        assert.equal(replay.status, 200);
+        assert.equal(replay.headers.get("x-uos-idempotency-replayed"), "true");
+
+        const cached = await handler(embeddingsRequest(cacheInput));
+        assert.equal(cached.status, 200);
+
+        const terminalJob = await handler(
+          new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        );
+        assert.equal(terminalJob.status, 200);
+        assert.equal((await terminalJob.json() as { status?: unknown }).status, "succeeded");
+
+        const blocked = await handler(embeddingsRequest(`exhausted-miss-${crypto.randomUUID()}`));
+        assert.equal(blocked.status, 429);
+        assert.ok(blocked.headers.get("Retry-After"));
+        assert.equal((await blocked.json() as { error?: { type?: unknown } }).error?.type, "rate_limit_error");
+      },
+    );
+    assert.equal(voyageCalls, 0);
+  } finally {
+    resetVoyageRateLimit();
+  }
 });
 
 Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without Voyage dispatch", async () => {

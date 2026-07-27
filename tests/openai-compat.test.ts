@@ -3242,6 +3242,11 @@ Deno.test("openai: responses accept non-message input items", async () => {
                 role: "user",
                 content: [{ type: "input_text", text: "ping" }],
               },
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Prior answer", annotations: [] }],
+              },
               { type: "reasoning", summary: "thinking..." },
               { type: "function_call", name: "test", call_id: "call_1", arguments: "{}" },
               { type: "function_call_output", call_id: "call_1", output: "ok" },
@@ -3264,6 +3269,8 @@ Deno.test("openai: responses accept non-message input items", async () => {
   assert.ok(types.includes("reasoning"));
   assert.ok(types.includes("function_call"));
   assert.ok(types.includes("function_call_output"));
+  const assistant = (input as Array<Record<string, unknown>>).find((item) => item.role === "assistant");
+  assert.deepEqual(assistant?.content, [{ type: "output_text", text: "Prior answer" }]);
 });
 
 Deno.test("openai: buffered responses preserve function calls emitted as output items", async () => {
@@ -3434,6 +3441,36 @@ Deno.test("openai: Chat tool conversations retain tool-call order and opaque arg
   });
 });
 
+Deno.test("openai: Chat assistant refusal content replays as output text", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{ role: "assistant", content: [{ type: "refusal", refusal: "Cannot help." }] }],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  const requestBody = recordedBody as Record<string, unknown>;
+  assert.deepEqual(requestBody.input, [{
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "Cannot help." }],
+  }]);
+});
+
 Deno.test("openai: malformed Chat tool calls are rejected before provider dispatch", async () => {
   let upstreamCalls = 0;
   const response = await withFetchMock(
@@ -3513,16 +3550,12 @@ Deno.test("openai: Chat function calls translate consistently in buffered and st
   const chunks = [
     `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_calls", created_at: 1 } })}\n\n`,
     `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Before tools. " })}\n\n`,
-    `data: ${
-      JSON.stringify({ type: "response.output_item.added", output_index: 9, item: { ...callOne, arguments: "" } })
-    }\n\n`,
+    `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 9, item: callOne })}\n\n`,
+    `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 9, item: callOne })}\n\n`,
     `data: ${
       JSON.stringify({ type: "response.output_item.added", output_index: 4, item: { ...callTwo, arguments: "" } })
     }\n\n`,
     `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "fc_2", delta: '{"b":' })}\n\n`,
-    `data: ${
-      JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "fc_1", delta: '{"a":1}' })
-    }\n\n`,
     `data: ${
       JSON.stringify({ type: "response.function_call_arguments.done", item_id: "fc_2", arguments: '{"b":2}' })
     }\n\n`,
@@ -3593,9 +3626,8 @@ Deno.test("openai: Chat function calls translate consistently in buffered and st
         return payload.choices?.flatMap((choice) => choice.delta?.tool_calls ?? []) ?? [];
       })
       .map((call) => call.function?.arguments);
-    // The terminal output items reconcile the streamed deltas instead of
-    // replaying either call's full argument string.
-    assert.deepEqual(toolArgumentDeltas, ["", "", '{"b":', '{"a":1}', "2}"]);
+    // A duplicate added event does not replay its complete argument string.
+    assert.deepEqual(toolArgumentDeltas, ['{"a":1}', "", '{"b":', "2}"]);
   });
 });
 
@@ -4056,9 +4088,28 @@ Deno.test("openai: strict request fields reject malformed values without dispatc
       param: "messages[0].tool_calls",
     },
     {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "tool", tool_call_id: "call", content: [{ type: "input_text", text: "result" }] }],
+      },
+      param: "messages[0].content[0].type",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "tool", tool_call_id: "call", content: [{ type: "output_text", text: "result" }] }],
+      },
+      param: "messages[0].content[0].type",
+    },
+    {
       route: "responses",
       body: { input: [{ type: "message", role: "tool", content: "result" }] },
       param: "input[0].role",
+    },
+    {
+      route: "responses",
+      body: { input: [{ type: "message", role: "user", content: [{ type: "output_text", text: "result" }] }] },
+      param: "input[0].content[0].type",
     },
     {
       route: "chat.completions",

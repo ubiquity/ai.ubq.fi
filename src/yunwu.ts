@@ -1,5 +1,5 @@
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
-import { ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
+import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 
 export const YUNWU_BASE_URL = "https://yunwu.ai";
 
@@ -66,7 +66,7 @@ export type YunwuAuthenticatedFetchOptions = Readonly<{
   apiKey?: string | null;
   fetcher?: YunwuFetch;
   signal?: AbortSignal;
-  beforeDispatch?: () => Promise<void>;
+  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
 }>;
 
 export type YunwuTokenLogFetchOptions =
@@ -423,10 +423,12 @@ export const fetchYunwuResponses = async (
     // a normal fetch and let an immediately aborted caller race past a custom
     // transport's abort listener. When a quota hook exists it remains the
     // final awaited operation before transport.
-    if (options.beforeDispatch) await options.beforeDispatch();
+    const dispatch = options.beforeDispatch ? await options.beforeDispatch() : undefined;
     if (signal.aborted) {
+      await dispatch?.cancelBeforeTransport();
       throw signal.reason ?? new DOMException("The request was aborted.", "AbortError");
     }
+    dispatch?.markTransportStarted();
     response = await (options.fetcher ?? fetch)(YUNWU_RESPONSES_URL, {
       method: "POST",
       headers,

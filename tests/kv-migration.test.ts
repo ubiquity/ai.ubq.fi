@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
 import { appendBooleanParam } from "../scripts/kv-migrate.ts";
+import { API_KEY_USAGE_V3_RETENTION_MS } from "../src/api_key_policy.ts";
 import {
   classifyKvMigrationKey,
   importKvMigrationLines,
@@ -36,7 +37,12 @@ const entryLine = (key: Deno.KvKey, value: unknown): string =>
     versionstamp: "00000000000000000000",
   });
 
-const makeKvStub = (store: Map<string, unknown>): Deno.Kv =>
+type KvSetOptions = Readonly<{ expireIn?: number }>;
+
+const makeKvStub = (
+  store: Map<string, unknown>,
+  options: Readonly<{ onAtomicSet?: (key: Deno.KvKey, options?: KvSetOptions) => void }> = {},
+): Deno.Kv =>
   ({
     get: (key: Deno.KvKey) =>
       Promise.resolve(({ key, value: store.get(keyToString(key)) ?? null }) as Deno.KvEntryMaybe<unknown>),
@@ -49,12 +55,12 @@ const makeKvStub = (store: Map<string, unknown>): Deno.Kv =>
       return Promise.resolve();
     },
     atomic: () => {
-      const writes: Array<{ key: Deno.KvKey; value: unknown }> = [];
+      const writes: Array<{ key: Deno.KvKey; value: unknown; options?: KvSetOptions }> = [];
       const sums: Array<{ key: Deno.KvKey; value: bigint }> = [];
       const operation = {
         check: (_entry: Deno.KvEntryMaybe<unknown>) => operation,
-        set: (key: Deno.KvKey, value: unknown) => {
-          writes.push({ key, value });
+        set: (key: Deno.KvKey, value: unknown, setOptions?: KvSetOptions) => {
+          writes.push({ key, value, options: setOptions });
           return operation;
         },
         sum: (key: Deno.KvKey, value: bigint) => {
@@ -62,7 +68,10 @@ const makeKvStub = (store: Map<string, unknown>): Deno.Kv =>
           return operation;
         },
         commit: () => {
-          for (const write of writes) store.set(keyToString(write.key), write.value);
+          for (const write of writes) {
+            store.set(keyToString(write.key), write.value);
+            options.onAtomicSet?.(write.key, write.options);
+          }
           for (const sum of sums) {
             const existing = store.get(keyToString(sum.key)) as Deno.KvU64 | undefined;
             store.set(keyToString(sum.key), new Deno.KvU64((existing?.value ?? 0n) + sum.value));
@@ -973,12 +982,12 @@ Deno.test("KV incident migration starts a fresh counter after an expired legacy 
   );
 });
 
-Deno.test("KV incident validation keeps revoked keys pinned to their stored window", async () => {
+Deno.test("KV incident validation retains historical revoked V3 windows", async () => {
   const store = new Map<string, unknown>();
   const now = Date.now();
   const id = "revoked-bounded-key";
   const hash = "c".repeat(43);
-  const resetAtMs = now - 1;
+  const resetAtMs = now - API_KEY_USAGE_V3_RETENTION_MS - 60_000;
   const shared = {
     id,
     expires_at_ms: -1,
@@ -1012,7 +1021,15 @@ Deno.test("KV incident validation keeps revoked keys pinned to their stored wind
   });
   store.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), shared);
 
-  await migrateKvReadIncidentV2(makeKvStub(store));
+  let v3WindowExpireIn: number | undefined;
+  await migrateKvReadIncidentV2(makeKvStub(store, {
+    onAtomicSet: (key, options) => {
+      if (key.slice(0, 4).join(":") === "uos_ai:api_key_usage:v3:window") {
+        v3WindowExpireIn = options?.expireIn;
+      }
+    },
+  }));
+  assert.equal(v3WindowExpireIn, API_KEY_USAGE_V3_RETENTION_MS);
   const validation = await validateKvMigrationTarget(makeKvStub(store));
   assert.deepEqual(validation.errors, []);
 });

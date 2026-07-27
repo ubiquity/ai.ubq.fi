@@ -559,7 +559,7 @@ export default async function handler(req: Request): Promise<Response> {
   const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
   let usageReservation: ApiKeyUsageReservation | null = null;
   if (usagePolicy && terminalRoute) {
-    const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute);
+    const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute, { deferWhenFull: true });
     if (!admission.ok) {
       const response = withCors(withRequestId(admission.response, requestId));
       return await withTerminalRequestLog(response, {
@@ -664,13 +664,25 @@ export default async function handler(req: Request): Promise<Response> {
       // cache, idempotency, queue, and synthetic-routing path is released.
       await usageReservation?.release();
     } catch (error) {
+      if (runError) {
+        warnQuotaAccountingFailure(
+          { route: terminalRoute ?? "inference", keyId: usageKeyId, requestId },
+          runError,
+        );
+      }
       const quotaError = error instanceof ApiKeyQuotaDispatchError
         ? error
         : new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
-      return openaiError(quotaError.status, quotaError.message, quotaError.code, { type: "server_error" });
+      return openaiError(quotaError.status, quotaError.message, quotaError.code, {
+        type: quotaError.errorType,
+        ...(quotaError.retryAfter ? { headers: { "Retry-After": quotaError.retryAfter } } : {}),
+      });
     }
     if (runError instanceof ApiKeyQuotaDispatchError) {
-      return openaiError(runError.status, runError.message, runError.code, { type: "server_error" });
+      return openaiError(runError.status, runError.message, runError.code, {
+        type: runError.errorType,
+        ...(runError.retryAfter ? { headers: { "Retry-After": runError.retryAfter } } : {}),
+      });
     }
     if (runError) throw runError;
     if (!response) throw new Error("Inference handler completed without a response");

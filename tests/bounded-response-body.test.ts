@@ -20,6 +20,26 @@ Deno.test("bounded response body reads fragmented complete bodies", async () => 
   assert.equal(decoder.decode(result.bytes), "fragmented");
 });
 
+Deno.test("bounded response body recognizes EOF exactly at the byte limit", async () => {
+  let cancellations = 0;
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(BOUNDED_RESPONSE_BODY_MAX_BYTES));
+        controller.close();
+      },
+      cancel() {
+        cancellations += 1;
+      },
+    }),
+  );
+
+  const result = await readBoundedResponseBody(response);
+  assert.equal(result.complete, true);
+  assert.equal(result.bytes.byteLength, BOUNDED_RESPONSE_BODY_MAX_BYTES);
+  assert.equal(cancellations, 0);
+});
+
 Deno.test("bounded response body truncates and cancels oversized bodies", async () => {
   let cancellations = 0;
   const response = new Response(

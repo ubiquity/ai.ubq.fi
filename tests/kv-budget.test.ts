@@ -41,6 +41,8 @@ class CountingKv {
   failNextCommits = 0;
   failApiKeyV3Reads = false;
   sumCommitDelayMs = 0;
+  apiKeyV3DispatchCommitGate: Promise<void> | null = null;
+  onApiKeyV3DispatchCommit: (() => void) | null = null;
   retries = 0;
   listCalls = 0;
   readonly readKeys: Deno.KvKey[] = [];
@@ -80,6 +82,8 @@ class CountingKv {
     this.failNextSumCommits = 0;
     this.failNextCommits = 0;
     this.sumCommitDelayMs = 0;
+    this.apiKeyV3DispatchCommitGate = null;
+    this.onApiKeyV3DispatchCommit = null;
     this.retries = 0;
     this.listCalls = 0;
     this.readKeys.length = 0;
@@ -177,6 +181,19 @@ class CountingKv {
         }
         if (hasSum && this.sumCommitDelayMs > 0) {
           await new Promise<void>((resolve) => setTimeout(resolve, this.sumCommitDelayMs));
+        }
+        const apiKeyV3Dispatch = mutations.some((mutation) =>
+          mutation.kind === "set" &&
+          mutation.key[0] === "uos_ai" &&
+          mutation.key[1] === "api_key_usage" &&
+          mutation.key[2] === "v3" &&
+          typeof mutation.value === "object" &&
+          mutation.value !== null &&
+          (mutation.value as { state?: unknown }).state === "dispatched"
+        );
+        if (apiKeyV3Dispatch) {
+          this.onApiKeyV3DispatchCommit?.();
+          if (this.apiKeyV3DispatchCommitGate) await this.apiKeyV3DispatchCommitGate;
         }
         for (const mutation of mutations) {
           const encoded = encodeKey(mutation.key);
@@ -525,6 +542,53 @@ Deno.test("V3 dispatch is idempotent across retries and remains consumed after p
   assert.equal(requestRecord?.state, "dispatched");
   assert.equal(requestRecord?.provider, "chatgpt_codex");
   assert.equal(typeof requestRecord?.dispatched_at_ms, "number");
+});
+
+Deno.test("V3 cancellation during the Codex dispatch commit releases quota before fetch", async () => {
+  const { token, policy } = await prepareApiKeyInference("e", "dispatch-cancelled", 1);
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  let releaseDispatchCommit = () => {};
+  const dispatchCommitGate = new Promise<void>((resolve) => {
+    releaseDispatchCommit = resolve;
+  });
+  let dispatchCommitStarted = () => {};
+  const dispatchCommitStartedPromise = new Promise<void>((resolve) => {
+    dispatchCommitStarted = resolve;
+  });
+  kv.apiKeyV3DispatchCommitGate = dispatchCommitGate;
+  kv.onApiKeyV3DispatchCommit = dispatchCommitStarted;
+  const controller = new AbortController();
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    return Promise.resolve(sse());
+  };
+  try {
+    const pending = handler(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ input: "cancel before transport" }),
+        signal: controller.signal,
+      }),
+    );
+    await dispatchCommitStartedPromise;
+    controller.abort(new DOMException("cancelled", "AbortError"));
+    releaseDispatchCommit();
+    await pending;
+
+    assert.equal(fetchCalls, 0);
+    assert.deepEqual(usageWindow(policy), {
+      committed_requests: 0,
+      reserved_requests: 0,
+      window_reset_at_ms: policy.usage_reset_at_ms,
+    });
+  } finally {
+    releaseDispatchCommit();
+    kv.apiKeyV3DispatchCommitGate = null;
+    kv.onApiKeyV3DispatchCommit = null;
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("V3 limit-one concurrent admission dispatches once and rejects seven requests", async () => {

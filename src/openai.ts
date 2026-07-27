@@ -9,7 +9,7 @@ import {
   releaseCodexResponseProbe,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
-import { ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
+import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { json, openaiError } from "./http.ts";
@@ -75,7 +75,7 @@ type UsageContext = Readonly<{
   startedAtMonotonicMs?: number;
   responseTelemetry?: ResponseTelemetryState;
   /** Commits an admitted API-key reservation exactly once before transport. */
-  beforeProviderDispatch?: (provider: "chatgpt_codex" | "yunwu" | "voyage") => Promise<void>;
+  beforeProviderDispatch?: (provider: "chatgpt_codex" | "yunwu" | "voyage") => Promise<ApiKeyProviderDispatch | void>;
 }>;
 
 type UpstreamProvider = "chatgpt_codex" | "yunwu";
@@ -349,7 +349,10 @@ const withUpstreamProviderHeader = (response: Response, provider: string | null 
 const toCodexErrorResponse = (error: unknown, provider?: string | null): Response => {
   let response: Response;
   if (error instanceof ApiKeyQuotaDispatchError) {
-    response = openaiError(error.status, error.message, error.code, { type: "server_error" });
+    response = openaiError(error.status, error.message, error.code, {
+      type: error.errorType,
+      ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {}),
+    });
   } else if (error instanceof CodexError) {
     const options = error.code === "gateway_timeout" ? { type: "server_error" } : undefined;
     response = openaiError(error.status, error.message, error.code, options);
@@ -2486,7 +2489,12 @@ const fetchVoyageEmbeddings = async (params: {
   const timeoutMs = Math.max(1, Math.min(EMBEDDINGS_TIMEOUT_MS, params.deadlineMs - now));
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    if (params.beforeProviderDispatch) await params.beforeProviderDispatch("voyage");
+    const dispatch = params.beforeProviderDispatch ? await params.beforeProviderDispatch("voyage") : undefined;
+    if (controller.signal.aborted) {
+      await dispatch?.cancelBeforeTransport();
+      throw controller.signal.reason ?? new DOMException("The request was aborted.", "AbortError");
+    }
+    dispatch?.markTransportStarted();
     const resp = await fetch(VOYAGE_EMBEDDINGS_URL, {
       method: "POST",
       headers: {
@@ -2549,7 +2557,11 @@ const fetchVoyageEmbeddings = async (params: {
 };
 
 const apiKeyQuotaDispatchErrorResponse = (error: ApiKeyQuotaDispatchError): Response =>
-  openaiError(error.status, error.message, error.code, { type: "server_error", param: null });
+  openaiError(error.status, error.message, error.code, {
+    type: error.errorType,
+    param: null,
+    ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {}),
+  });
 
 type NormalizationResult<T> =
   | Readonly<{ ok: true; value: T }>
@@ -2598,11 +2610,24 @@ const normalizeChatContentItems = (
       return invalidNormalizedField(partParam, `${partParam} must be an object`);
     }
     const partType = getString(part.type);
-    if (partType === "text" || partType === "input_text" || partType === "output_text") {
+    if (partType === "text") {
       if (typeof part.text !== "string") {
         return invalidNormalizedField(`${partParam}.text`, `${partParam}.text must be a string`);
       }
       items.push({ type: textItemType, text: part.text });
+      continue;
+    }
+    if (partType === "refusal") {
+      if (!isAssistant) {
+        return invalidNormalizedField(`${partParam}.type`, `${partParam}.type is only valid for assistant messages`);
+      }
+      if (content.length !== 1) {
+        return invalidNormalizedField(`${partParam}.type`, "assistant refusal content must be the only part");
+      }
+      if (typeof part.refusal !== "string") {
+        return invalidNormalizedField(`${partParam}.refusal`, `${partParam}.refusal must be a string`);
+      }
+      items.push({ type: "output_text", text: part.refusal });
       continue;
     }
     if (partType === "image_url" || partType === "input_image") {
@@ -2722,6 +2747,7 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
 const normalizeResponseContentItem = (
   value: unknown,
   param: string,
+  role: ResponseMessageItem["role"],
 ): NormalizationResult<MessageContentItem> => {
   if (!isRecord(value) || Array.isArray(value)) {
     return invalidNormalizedField(param, `${param} must be an object`);
@@ -2729,13 +2755,22 @@ const normalizeResponseContentItem = (
   const partType = getString(value.type);
   if (!partType) return invalidNormalizedField(`${param}.type`, `${param}.type must be a string`);
 
-  if (partType === "input_text") {
-    const unknown = findUnknownContentField(value, ["type", "text"]);
+  if (partType === "input_text" || partType === "output_text") {
+    if (partType === "output_text" && role !== "assistant") {
+      return invalidNormalizedField(`${param}.type`, `${param}.type is only valid for assistant messages`);
+    }
+    const unknown = findUnknownContentField(
+      value,
+      partType === "output_text" ? ["type", "text", "annotations"] : ["type", "text"],
+    );
     if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
     if (typeof value.text !== "string") {
       return invalidNormalizedField(`${param}.text`, `${param}.text must be a string`);
     }
-    return { ok: true, value: { type: "input_text", text: value.text } };
+    if (partType === "output_text" && value.annotations !== undefined && !Array.isArray(value.annotations)) {
+      return invalidNormalizedField(`${param}.annotations`, `${param}.annotations must be an array`);
+    }
+    return { ok: true, value: { type: partType, text: value.text } };
   }
 
   if (partType === "input_image") {
@@ -2813,14 +2848,21 @@ const normalizeResponseMessageItem = (
   if (!role) return invalidNormalizedField(`${param}.role`, `${param}.role is invalid`);
   const content = value.content;
   if (typeof content === "string") {
-    return { ok: true, value: { type: "message", role, content: [{ type: "input_text", text: content }] } };
+    return {
+      ok: true,
+      value: {
+        type: "message",
+        role,
+        content: [{ type: role === "assistant" ? "output_text" : "input_text", text: content }],
+      },
+    };
   }
   if (!Array.isArray(content)) {
     return invalidNormalizedField(`${param}.content`, `${param}.content must be a string or an array`);
   }
   const items: MessageContentItem[] = [];
   for (const [index, part] of content.entries()) {
-    const normalized = normalizeResponseContentItem(part, `${param}.content[${index}]`);
+    const normalized = normalizeResponseContentItem(part, `${param}.content[${index}]`, role);
     if (!normalized.ok) return normalized;
     items.push(normalized.value);
   }
@@ -2887,7 +2929,7 @@ const normalizeChatToolOutput = (
       return invalidNormalizedField(partParam, `${partParam} must be an object`);
     }
     const type = getString(part.type);
-    if (type !== "text" && type !== "input_text" && type !== "output_text") {
+    if (type !== "text") {
       return invalidNormalizedField(`${partParam}.type`, `${partParam}.type must be a text content part`);
     }
     if (typeof part.text !== "string") {
@@ -3156,9 +3198,19 @@ class ChatFunctionCallAccumulator {
     return suffix;
   }
 
-  add(event: Record<string, unknown>, item: unknown): ChatFunctionCall | null {
+  add(
+    event: Record<string, unknown>,
+    item: unknown,
+  ): Readonly<{ call: ChatFunctionCall; includeIdentity: boolean; suffix: string }> | null {
     if (!isRecord(item) || Array.isArray(item) || getString(item.type) !== "function_call") return null;
-    return this.#create(event, item);
+    const existing = this.#byKey.get(this.#key(event, item) ?? "");
+    const priorArguments = existing?.arguments;
+    const call = this.#create(event, item);
+    return {
+      call,
+      includeIdentity: !existing,
+      suffix: priorArguments === undefined ? call.arguments : call.arguments.slice(priorArguments.length),
+    };
   }
 
   delta(event: Record<string, unknown>): Readonly<{ call: ChatFunctionCall; delta: string }> {
@@ -3379,9 +3431,9 @@ const streamChatCompletions = (
           }
 
           if (type === "response.output_item.added") {
-            const call = functionCalls.add(ev, ev.item);
-            if (call) {
-              emitToolCall(call, true, call.arguments);
+            const added = functionCalls.add(ev, ev.item);
+            if (added && (added.includeIdentity || added.suffix)) {
+              emitToolCall(added.call, added.includeIdentity, added.suffix);
               return;
             }
             continue;
@@ -4393,8 +4445,7 @@ const runEmbeddingsJobAttempt = async (params: {
       totalTokens = upstream.totalTokens;
     } catch (error) {
       if (error instanceof ApiKeyQuotaDispatchError) {
-        await recordErrorUsage(params.usageContext);
-        return apiKeyQuotaDispatchErrorResponse(error);
+        return await queueJob(1_000);
       }
       const status = (error as { status?: number }).status;
       const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
@@ -5033,7 +5084,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       if (
         contentType === "input_text" || contentType === "input_image" || contentType === "input_file"
       ) {
-        const contentItem = normalizeResponseContentItem(msg, param);
+        const contentItem = normalizeResponseContentItem(msg, param, "user");
         if (!contentItem.ok) {
           return openaiError(400, contentItem.message, "invalid_request_error", { param: contentItem.param });
         }
