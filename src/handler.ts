@@ -172,6 +172,7 @@ const logTerminalRequest = (
       prompt_cache_mode: telemetry?.promptCacheMode ?? "unspecified",
       explicit_breakpoint_count: telemetry?.explicitBreakpointCount ?? 0,
       account_slot: telemetry?.accountSlot ?? null,
+      affinity_outcome: telemetry?.affinityOutcome ?? "none",
       key_id: input.keyId,
       fallback_reason: telemetry?.fallbackReason ?? null,
       stream: telemetry?.stream ?? null,

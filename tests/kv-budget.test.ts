@@ -984,11 +984,12 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       output_tokens: 1,
       total_tokens: 2,
       usage_observed: true,
-      usage_telemetry_status: "reported",
+      usage_telemetry_status: "partial",
       prompt_cache_key_present: true,
       prompt_cache_mode: "unspecified",
       explicit_breakpoint_count: 0,
       account_slot: 1,
+      affinity_outcome: "none",
       key_id: "telemetry",
       fallback_reason: null,
       stream: false,
@@ -1087,7 +1088,7 @@ Deno.test("streaming inference emits one terminal log only after the response bo
     assert.equal(terminal.input_tokens, 3);
     assert.equal(terminal.output_tokens, 4);
     assert.equal(terminal.total_tokens, 7);
-    assert.equal(terminal.usage_telemetry_status, "reported");
+    assert.equal(terminal.usage_telemetry_status, "partial");
     assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
   } finally {
     console.info = originalInfo;

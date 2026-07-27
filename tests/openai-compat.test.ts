@@ -4090,6 +4090,7 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       promptCacheMode: "unspecified",
       explicitBreakpointCount: 0,
       accountSlot: 1,
+      affinityOutcome: "none",
       quotaUsedPercent: undefined,
       completed: true,
       streamTerminalType: "response.completed",
@@ -4197,6 +4198,33 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       assert.equal((await partial.json() as { usage?: unknown }).usage, undefined);
       assert.equal(getResponseTelemetry(partial)?.cachedInputTokens, 10);
       assert.equal(getResponseTelemetry(partial)?.usageTelemetryStatus, "partial");
+
+      const absentCachedTokens = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  output: [],
+                  usage: { input_tokens: 11, output_tokens: 0, total_tokens: 11 },
+                },
+              })
+            }\n\n`,
+          ]),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "missing cache detail" }),
+            }),
+          ),
+      );
+      assert.equal(getResponseTelemetry(absentCachedTokens)?.usageObserved, true);
+      assert.equal(getResponseTelemetry(absentCachedTokens)?.cachedInputTokens, null);
+      assert.equal(getResponseTelemetry(absentCachedTokens)?.usageTelemetryStatus, "partial");
 
       const invalid = await withFetchMock(
         () =>
@@ -4409,6 +4437,39 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
       }),
     );
     assert.equal(response.status, 400);
+    const body = await response.json() as { error?: { param?: string } };
+    assert.equal(body.error?.param, "messages[0].content[0].prompt_cache_breakpoint");
+  });
+
+  await t.step("Chat rejects a tool-output breakpoint instead of silently dropping it", async () => {
+    let dispatches = 0;
+    const response = await withFetchMock(
+      () => {
+        dispatches += 1;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              messages: [{
+                role: "tool",
+                tool_call_id: "call_stable_tool_output",
+                content: [{
+                  type: "text",
+                  text: "stable tool result",
+                  prompt_cache_breakpoint: { mode: "explicit" },
+                }],
+              }],
+            }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 400);
+    assert.equal(dispatches, 0);
     const body = await response.json() as { error?: { param?: string } };
     assert.equal(body.error?.param, "messages[0].content[0].prompt_cache_breakpoint");
   });
