@@ -337,6 +337,21 @@ Deno.test("KV migration imports and validates the complete paid fallback V3 stat
   assert.equal(valid.counts.paid_fallback_v3_reconciliation_leases, 1);
   assert.equal(valid.counts.paid_fallback_v3_deletion_guards, 1);
 
+  // Unlimited V3 fallback requests are deliberately windowless. Their
+  // per-request ledger remains durable, while bounded policies use a shared
+  // aggregate window for admission and reconciliation.
+  store.delete(keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, resetAtMs]));
+  store.delete(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, pendingRequestId]));
+  store.delete(keyToString(["uos_ai", "paid_fallback", "v3", "pending", keyId, pendingRequestId]));
+  store.set(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, requestId]), {
+    ...request,
+    policy_version: "v3:60000",
+    reserved_microcredits: 0,
+  });
+  assert.deepEqual((await validateKvMigrationTarget(makeKvStub(store))).errors, []);
+  await migrateKvReadIncidentV2(makeKvStub(store));
+  assert.equal(store.has(keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, resetAtMs])), false);
+
   store.set(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, requestId]), {
     ...request,
     billing_state: "pending",

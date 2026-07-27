@@ -507,6 +507,7 @@ const paidFallbackV3WindowReference = (keyId: string, windowResetAtMs: number): 
 const inspectPaidFallbackV3 = async (
   kv: Deno.Kv,
   knownKeyIds: ReadonlySet<string>,
+  unlimitedKeyIds: ReadonlySet<string>,
 ): Promise<PaidFallbackV3Inventory> => {
   const errors: string[] = [];
   const windows = new Map<string, PaidFallbackWindowV3>();
@@ -618,7 +619,9 @@ const inspectPaidFallbackV3 = async (
       );
     }
     const window = windows.get(paidFallbackV3WindowReference(request.key_id, request.window_reset_at_ms));
+    const isBounded = !unlimitedKeyIds.has(request.key_id);
     if (
+      isBounded &&
       (request.reserved_microcredits > 0 ||
         (request.billing_state === "settled" && (request.spend_microcredits ?? 0) > 0)) &&
       !window
@@ -1886,6 +1889,11 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
   const paidFallbackV3 = await inspectPaidFallbackV3(
     kv,
     new Set(apiKeyInventory.pairs.map(({ record }) => record.id)),
+    new Set(
+      apiKeyInventory.pairs
+        .filter(({ record }) => record.paid_fallback_limit_microcredits === -1)
+        .map(({ record }) => record.id),
+    ),
   );
   errors.push(...paidFallbackV3.errors);
   const validationNowMs = Date.now();
