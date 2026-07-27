@@ -4644,6 +4644,137 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
   });
 });
 
+Deno.test("openai: known-unsupported prompt caching rejects controls and breakpoints before dispatch", async (t) => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const runtimeConfigKey = keyToString(["uos_ai", "runtime_config", "v2"]);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  const previousRuntimeConfig = kvStore.get(runtimeConfigKey);
+  kvStore.set(snapshotKey, {
+    source: "chatgpt_codex",
+    client_version: "0.125.0",
+    updated_at_ms: Date.now(),
+    models: [{
+      slug: DEFAULT_TEST_MODEL,
+      supported_reasoning_levels: ["none", "medium"],
+      prompt_cache: false,
+    }],
+  });
+
+  const cases = [
+    {
+      route: "responses",
+      body: { input: "ping", prompt_cache_options: { mode: "implicit" } },
+      param: "prompt_cache_options",
+    },
+    {
+      route: "responses",
+      body: {
+        input: [{ type: "input_text", text: "stable", prompt_cache_breakpoint: { mode: "explicit" } }],
+      },
+      param: "input[0].prompt_cache_breakpoint",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "user", content: "ping" }],
+        prompt_cache_key: "stable-prefix",
+      },
+      param: "prompt_cache_key",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{ role: "user", content: "ping" }],
+        prompt_cache_retention: "24h",
+      },
+      param: "prompt_cache_retention",
+    },
+    {
+      route: "chat.completions",
+      body: {
+        messages: [{
+          role: "user",
+          content: [{ type: "text", text: "stable", prompt_cache_breakpoint: { mode: "explicit" } }],
+        }],
+      },
+      param: "messages[0].content[0].prompt_cache_breakpoint",
+    },
+  ] as const;
+
+  try {
+    for (const testCase of cases) {
+      await t.step(`${testCase.route}/${testCase.param}`, async () => {
+        let dispatches = 0;
+        const response = await withFetchMock(
+          () => {
+            dispatches += 1;
+            return sseResponse(baseSseChunks());
+          },
+          () =>
+            testCase.route === "chat.completions"
+              ? handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+                }),
+              )
+              : handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+                }),
+              ),
+        );
+        assert.equal(response.status, 400);
+        assert.equal(dispatches, 0);
+        const payload = await response.json() as { error?: { message?: string; type?: string; param?: string } };
+        assert.equal(payload.error?.message, `Prompt caching is not supported for model '${DEFAULT_TEST_MODEL}'.`);
+        assert.equal(payload.error?.type, "invalid_request_error");
+        assert.equal(payload.error?.param, testCase.param);
+      });
+    }
+
+    await t.step("omitted metadata remains unknown and forwards standard controls", async () => {
+      kvStore.set(snapshotKey, {
+        source: "chatgpt_codex",
+        client_version: "0.125.0",
+        updated_at_ms: Date.now(),
+        models: [{ slug: DEFAULT_TEST_MODEL, supported_reasoning_levels: ["none", "medium"] }],
+      });
+
+      let dispatches = 0;
+      const response = await withFetchMock(
+        () => {
+          dispatches += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                input: "ping",
+                prompt_cache_options: { mode: "implicit" },
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(dispatches, 1);
+    });
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+    if (previousRuntimeConfig === undefined) kvStore.delete(runtimeConfigKey);
+    else kvStore.set(runtimeConfigKey, previousRuntimeConfig);
+    resetRuntimeConfigCacheForTest();
+  }
+});
+
 Deno.test("openai: rejects lossy Chat cache breakpoint content before dispatch", async (t) => {
   const cases = [
     {

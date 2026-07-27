@@ -1029,6 +1029,63 @@ const validateCodexModelAvailable = (model: string, metadata: CodexModelMetadata
   );
 };
 
+const promptCacheControlParam = (rawRecord: Record<string, unknown>): string | null => {
+  for (const key of ["prompt_cache_key", "prompt_cache_options", "prompt_cache_retention"] as const) {
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) return key;
+  }
+  return null;
+};
+
+const hasExplicitPromptCacheBreakpoint = (value: unknown): boolean =>
+  isRecord(value) && !Array.isArray(value) && value.mode === "explicit";
+
+const findExplicitPromptCacheBreakpointParam = (
+  rawInput: unknown,
+  inputParam: "input" | "messages",
+): string | null => {
+  if (!Array.isArray(rawInput)) return null;
+  for (const [index, item] of rawInput.entries()) {
+    if (!isRecord(item) || Array.isArray(item)) continue;
+    const itemParam = `${inputParam}[${index}]`;
+    if (inputParam === "input" && hasExplicitPromptCacheBreakpoint(item.prompt_cache_breakpoint)) {
+      return `${itemParam}.prompt_cache_breakpoint`;
+    }
+    if (!Array.isArray(item.content)) continue;
+    for (const [contentIndex, contentItem] of item.content.entries()) {
+      if (!isRecord(contentItem) || Array.isArray(contentItem)) continue;
+      if (hasExplicitPromptCacheBreakpoint(contentItem.prompt_cache_breakpoint)) {
+        return `${itemParam}.content[${contentIndex}].prompt_cache_breakpoint`;
+      }
+    }
+  }
+  return null;
+};
+
+const validateKnownUnsupportedPromptCacheUse = (
+  model: string,
+  metadata: CodexModelMetadata,
+  rawRecord: Record<string, unknown>,
+  input: readonly ResponseInputItem[],
+  inputParam: "input" | "messages",
+): Response | null => {
+  // Only the explicit top-level false state is authoritative. Omitted and
+  // provider-specific metadata remain unknown and must continue upstream.
+  if (metadata.record?.prompt_cache !== false) return null;
+
+  const param = promptCacheControlParam(rawRecord) ??
+    (countExplicitPromptCacheBreakpoints(input) > 0
+      ? findExplicitPromptCacheBreakpointParam(rawRecord[inputParam], inputParam)
+      : null);
+  if (!param) return null;
+
+  return openaiError(
+    400,
+    `Prompt caching is not supported for model '${model}'.`,
+    "invalid_request_error",
+    { param },
+  );
+};
+
 const resolveDefaultReasoningLabel = (
   _modelReasoning: CodexModelReasoning,
   defaultEffort: ReasoningEffort,
@@ -5290,6 +5347,14 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   }
 
   const instructions = preserveDeveloperMessages ? undefined : instructionParts.join("\n\n").trim();
+  const promptCacheAvailabilityError = validateKnownUnsupportedPromptCacheUse(
+    modelRaw,
+    modelMetadata,
+    rawRecord,
+    input,
+    "messages",
+  );
+  if (promptCacheAvailabilityError) return promptCacheAvailabilityError;
   const defaultEffort = await getDefaultReasoningEffort();
   const modelReasoning = modelMetadata.reasoning;
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
@@ -5604,6 +5669,15 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   } else {
     return openaiError(400, "input must be a string or an array", "invalid_request_error");
   }
+
+  const promptCacheAvailabilityError = validateKnownUnsupportedPromptCacheUse(
+    modelRaw,
+    modelMetadata,
+    rawRecord,
+    input,
+    "input",
+  );
+  if (promptCacheAvailabilityError) return promptCacheAvailabilityError;
 
   const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error", { param: "reasoning" });
