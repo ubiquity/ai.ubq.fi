@@ -7,16 +7,15 @@ import type { CodexAuthPoolState, CodexAuthState } from "./types.ts";
  * account ids nor credentials: an auth-pool replacement can therefore never
  * accidentally make a previous account eligible.
  */
-export const CODEX_ACCOUNT_ROUTING_KV_KEY = ["uos_ai", "codex_account_routing", "v1"] as const;
+export const CODEX_ACCOUNT_ROUTING_KV_KEY = ["uos_ai", "codex_account_routing", "v2"] as const;
 export const CODEX_HALF_OPEN_LEASE_MS = 30_000;
-export const CODEX_DEFAULT_429_COOLDOWN_MS = 60_000;
 const MAX_429_BODY_BYTES = 64 * 1024;
 // A warm isolate avoids per-request routing reads, but it must eventually
 // observe circuits opened by another isolate. This bounded revalidation keeps
 // normal traffic off KV while limiting cross-isolate stale routing decisions.
 const ROUTING_CACHE_REVALIDATE_MS = 5_000;
 
-export type CodexQuotaBlockSource = "resets_at" | "header_reset_at" | "header_retry_after" | "cooldown";
+export type CodexQuotaBlockSource = "header_retry_after";
 
 export type CodexRoutingSlot = Readonly<{
   credential_version: string;
@@ -31,7 +30,7 @@ export type CodexRoutingSlot = Readonly<{
 }>;
 
 export type CodexAccountRoutingState = Readonly<{
-  v: 1;
+  v: 2;
   updated_at_ms: number;
   slots: readonly CodexRoutingSlot[];
 }>;
@@ -41,6 +40,7 @@ export type RoutingAccount = Readonly<{
   slot: number;
   credentialVersion: string;
   quotaHeadroom: number | null;
+  probeRequired: boolean;
   probeGeneration: number | null;
   probeToken: string | null;
 }>;
@@ -56,10 +56,7 @@ const isSafeMs = (value: unknown): value is number =>
 const parseSlot = (value: unknown): CodexRoutingSlot | null => {
   if (!isRecord(value) || typeof value.credential_version !== "string") return null;
   const source = value.quota_block_source;
-  if (
-    source !== null && source !== "resets_at" && source !== "header_reset_at" && source !== "header_retry_after" &&
-    source !== "cooldown"
-  ) return null;
+  if (source !== null && source !== "header_retry_after") return null;
   const lease = value.probe_lease;
   const parsedLease = lease === null
     ? null
@@ -95,10 +92,10 @@ const parseSlot = (value: unknown): CodexRoutingSlot | null => {
 };
 
 export const parseCodexAccountRoutingState = (value: unknown): CodexAccountRoutingState | null => {
-  if (!isRecord(value) || value.v !== 1 || !isSafeMs(value.updated_at_ms) || !Array.isArray(value.slots)) return null;
+  if (!isRecord(value) || value.v !== 2 || !isSafeMs(value.updated_at_ms) || !Array.isArray(value.slots)) return null;
   const slots = value.slots.map(parseSlot);
   if (slots.some((slot) => !slot)) return null;
-  return { v: 1, updated_at_ms: value.updated_at_ms, slots: slots as CodexRoutingSlot[] };
+  return { v: 2, updated_at_ms: value.updated_at_ms, slots: slots as CodexRoutingSlot[] };
 };
 
 export const codexCredentialVersion = async (auth: CodexAuthState): Promise<string> =>
@@ -126,7 +123,7 @@ export const normalizeRoutingState = async (
     const prior = raw?.slots[index];
     return prior?.credential_version === version ? prior : neutralSlot(version);
   });
-  return { v: 1, updated_at_ms: now, slots };
+  return { v: 2, updated_at_ms: now, slots };
 };
 
 let cachedState: CodexAccountRoutingState | null = null;
@@ -285,40 +282,43 @@ const quotaHeadroomFor = (slot: CodexRoutingSlot): number | null => {
   return used.length ? Math.max(0, Math.min(...used.map((value) => 100 - value))) : null;
 };
 
-const futureUnixSecondsToMs = (value: unknown, now: number): number | null => {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) return null;
-  const ms = value * 1000;
-  return Number.isSafeInteger(ms) && ms > now ? ms : null;
+const IMF_FIXDATE_PATTERN =
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+
+const futureRetryAfterDeadline = (headers: Headers, now: number): number | null => {
+  const raw = headers.get("retry-after");
+  if (raw === null) return null;
+  const value = raw.trim();
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    const deltaMs = seconds * 1_000;
+    const deadline = now + deltaMs;
+    return Number.isSafeInteger(seconds) && Number.isSafeInteger(deltaMs) &&
+        Number.isSafeInteger(deadline) && deadline > now
+      ? deadline
+      : null;
+  }
+  if (!IMF_FIXDATE_PATTERN.test(value)) return null;
+  const deadline = Date.parse(value);
+  return Number.isSafeInteger(deadline) && deadline > now && new Date(deadline).toUTCString() === value
+    ? deadline
+    : null;
 };
 
-const futureHeaderDeadline = (
-  headers: Headers,
-  now: number,
-): { deadline: number; source: CodexQuotaBlockSource } | null => {
-  for (const name of ["x-codex-primary-reset-at", "x-codex-secondary-reset-at"]) {
-    const seconds = Number(headers.get(name));
-    const deadline = futureUnixSecondsToMs(seconds, now);
-    if (deadline) return { deadline, source: "header_reset_at" };
-  }
-  const retryAfterHeader = headers.get("retry-after");
-  const retryAfter = Number(retryAfterHeader);
-  if (Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter <= 24 * 60 * 60) {
-    return { deadline: now + Math.ceil(retryAfter * 1000), source: "header_retry_after" };
-  }
-  if (retryAfterHeader) {
-    const deadline = Date.parse(retryAfterHeader);
-    if (Number.isSafeInteger(deadline) && deadline > now) {
-      return { deadline, source: "header_retry_after" };
-    }
-  }
-  return null;
-};
+export type Codex429Classification = Readonly<{
+  response: Response;
+  usageLimitReached: boolean;
+  retryAtMs: number | null;
+}>;
 
 /**
  * Read a bounded error body and replace the response so callers retain the
  * OpenAI-compatible upstream payload after routing has classified it.
  */
-export const readCodex429 = async (response: Response): Promise<{ response: Response; resetsAtMs: number | null }> => {
+export const readCodex429 = async (
+  response: Response,
+  now = Date.now(),
+): Promise<Codex429Classification> => {
   const headers = new Headers(response.headers);
   const chunks: Uint8Array[] = [];
   let length = 0;
@@ -391,18 +391,17 @@ export const readCodex429 = async (response: Response): Promise<{ response: Resp
     bytes.set(part, offset);
     offset += part.byteLength;
   }
-  let resetsAtMs: number | null = null;
+  let usageLimitReached = false;
   if (complete) {
     try {
       const body = JSON.parse(new TextDecoder().decode(bytes));
       const error = isRecord(body) && isRecord(body.error) ? body.error : null;
-      if (getString(error?.type) === "usage_limit_reached") {
-        resetsAtMs = futureUnixSecondsToMs(error?.resets_at, Date.now());
-      }
+      usageLimitReached = getString(error?.type) === "usage_limit_reached";
     } catch {
-      // Header fallbacks below cover non-JSON payloads.
+      // A fully parsed OpenAI error is required before routing can persist a block.
     }
   }
+  const retryAtMs = futureRetryAfterDeadline(headers, now);
   if (!complete) {
     headers.set("Content-Type", "application/json");
     return {
@@ -417,12 +416,14 @@ export const readCodex429 = async (response: Response): Promise<{ response: Resp
         }),
         { status: response.status, statusText: response.statusText, headers },
       ),
-      resetsAtMs: null,
+      usageLimitReached: false,
+      retryAtMs,
     };
   }
   return {
     response: new Response(bytes, { status: response.status, statusText: response.statusText, headers }),
-    resetsAtMs,
+    usageLimitReached,
+    retryAtMs,
   };
 };
 
@@ -430,12 +431,32 @@ export const markCodexQuotaBlocked = async (
   account: RoutingAccount,
   response: Response,
   now = Date.now(),
-): Promise<Response> => {
-  const parsed = await readCodex429(response);
-  const fallback = futureHeaderDeadline(parsed.response.headers, now);
-  const candidate = parsed.resetsAtMs
-    ? { deadline: parsed.resetsAtMs, source: "resets_at" as const }
-    : fallback ?? { deadline: now + CODEX_DEFAULT_429_COOLDOWN_MS, source: "cooldown" as const };
+): Promise<Codex429Classification> => {
+  const parsed = await readCodex429(response, now);
+  const retryAtMs = parsed.retryAtMs;
+  if (!parsed.usageLimitReached || retryAtMs === null) {
+    // An expired circuit is represented by a fenced half-open probe. A
+    // non-blocking 429 must release that old circuit, while the generation and
+    // token checks prevent a stale probe from clearing a newer claim.
+    if (account.probeGeneration !== null && account.probeToken) {
+      await updateRoutingState((state) => {
+        const current = slotFor(state, account);
+        if (
+          current.credential_version !== account.credentialVersion ||
+          current.generation !== account.probeGeneration ||
+          current.probe_lease?.generation !== account.probeGeneration ||
+          current.probe_lease?.token !== account.probeToken
+        ) return null;
+        return withSlot(state, account.slot, {
+          ...current,
+          quota_blocked_until_ms: null,
+          quota_block_source: null,
+          probe_lease: null,
+        });
+      });
+    }
+    return parsed;
+  }
   await updateRoutingState((state) => {
     const current = slotFor(state, account);
     if (current.credential_version !== account.credentialVersion) return null;
@@ -443,22 +464,22 @@ export const markCodexQuotaBlocked = async (
       account.probeGeneration !== null &&
       (current.generation !== account.probeGeneration || current.probe_lease?.token !== account.probeToken)
     ) return null;
-    const deadline = Math.max(current.quota_blocked_until_ms ?? 0, candidate.deadline);
+    const deadline = Math.max(current.quota_blocked_until_ms ?? 0, retryAtMs);
     const nextSlot: CodexRoutingSlot = {
       ...current,
       quota_blocked_until_ms: deadline,
-      quota_block_source: deadline === current.quota_blocked_until_ms ? current.quota_block_source : candidate.source,
+      quota_block_source: "header_retry_after",
       primary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-primary-used-percent")) ??
         current.primary_used_percent,
       secondary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-secondary-used-percent")) ??
         current.secondary_used_percent,
-      observed_reset_at_ms: parsed.resetsAtMs ?? current.observed_reset_at_ms,
+      observed_reset_at_ms: retryAtMs,
       generation: current.generation + 1,
       probe_lease: null,
     };
     return withSlot(state, account.slot, nextSlot);
   });
-  return parsed.response;
+  return parsed;
 };
 
 export const markCodexCredentialInvalid = async (account: RoutingAccount): Promise<void> => {
@@ -469,7 +490,13 @@ export const markCodexCredentialInvalid = async (account: RoutingAccount): Promi
       account.probeGeneration !== null &&
       (current.generation !== account.probeGeneration || current.probe_lease?.token !== account.probeToken)
     ) return null;
-    return withSlot(state, account.slot, { ...current, invalid_credential_version: account.credentialVersion });
+    return withSlot(state, account.slot, {
+      ...current,
+      quota_blocked_until_ms: null,
+      quota_block_source: null,
+      invalid_credential_version: account.credentialVersion,
+      probe_lease: null,
+    });
   });
 };
 
@@ -492,6 +519,7 @@ export const reconcileCodexRoutingAccount = async (
     ...account,
     auth,
     credentialVersion,
+    probeRequired: false,
     probeGeneration: null,
     probeToken: null,
   };
@@ -503,12 +531,13 @@ export const reconcileCodexRoutingAccount = async (
   await updateRoutingState((state) => {
     const current = slotFor(state, account);
     if (current.credential_version === credentialVersion) return null;
+    if (current.credential_version !== account.credentialVersion) return null;
     return withSlot(state, account.slot, neutralSlot(credentialVersion));
   });
   return reconciled;
 };
 
-export const markCodexSuccess = async (account: RoutingAccount): Promise<void> => {
+export const releaseCodexRoutingProbe = async (account: RoutingAccount): Promise<void> => {
   if (account.probeGeneration === null || !account.probeToken) return;
   await updateRoutingState((state) => {
     const current = slotFor(state, account);
@@ -527,6 +556,8 @@ export const markCodexSuccess = async (account: RoutingAccount): Promise<void> =
   });
 };
 
+export const markCodexSuccess = releaseCodexRoutingProbe;
+
 const claimExpiredProbe = async (
   state: CodexAccountRoutingState,
   account: RoutingAccount,
@@ -538,6 +569,7 @@ const claimExpiredProbe = async (
     const current = slotFor(base, account);
     if (
       current.credential_version !== account.credentialVersion ||
+      current.invalid_credential_version === account.credentialVersion ||
       !current.quota_blocked_until_ms ||
       current.quota_blocked_until_ms > now ||
       (current.probe_lease?.expires_at_ms ?? 0) > now
@@ -564,6 +596,7 @@ const claimExpiredProbe = async (
         cachedStateLoadedAtMs = Date.now();
         return {
           ...account,
+          probeRequired: false,
           probeGeneration: claimed.lease!.generation,
           probeToken: claimed.lease!.token,
         };
@@ -577,6 +610,7 @@ const claimExpiredProbe = async (
     cachedStateLoadedAtMs = Date.now();
     return {
       ...account,
+      probeRequired: false,
       probeGeneration: claimed.lease!.generation,
       probeToken: claimed.lease!.token,
     };
@@ -589,10 +623,21 @@ const claimExpiredProbe = async (
     cachedStateLoadedAtMs = Date.now();
     return {
       ...account,
+      probeRequired: false,
       probeGeneration: claimed.lease!.generation,
       probeToken: claimed.lease!.token,
     };
   }
+};
+
+export const claimCodexRoutingProbe = async (
+  pool: CodexAuthPoolState,
+  account: RoutingAccount,
+  now = Date.now(),
+): Promise<RoutingAccount | null> => {
+  if (!account.probeRequired) return account;
+  const state = await loadCodexAccountRouting(pool);
+  return await claimExpiredProbe(state, account, now);
 };
 
 export const selectCodexRoutingAccounts = async (
@@ -606,7 +651,6 @@ export const selectCodexRoutingAccounts = async (
     pool.accounts.map((auth, slot) => [auth.account_id, { slot, credentialVersion: versions[slot] }]),
   );
   const available: RoutingAccount[] = [];
-  const expired: RoutingAccount[] = [];
   const skipped: number[] = [];
   let retryAt: number | null = null;
   let hasQuotaBlock = false;
@@ -618,6 +662,7 @@ export const selectCodexRoutingAccounts = async (
       slot: mapped.slot,
       credentialVersion: mapped.credentialVersion,
       quotaHeadroom: null,
+      probeRequired: false,
       probeGeneration: null,
       probeToken: null,
     };
@@ -636,21 +681,22 @@ export const selectCodexRoutingAccounts = async (
       retryAt = retryAt === null ? slot.quota_blocked_until_ms : Math.min(retryAt, slot.quota_blocked_until_ms);
       continue;
     }
-    if (slot.quota_blocked_until_ms) expired.push(routedAccount);
-    else available.push(routedAccount);
-  }
-  // A reset deserves exactly one controlled recovery probe even while another
-  // account is healthy. Concurrent callers that lose the lease continue on
-  // the healthy account below rather than stampeding the recovered slot.
-  for (const candidate of expired) {
-    const claimed = await claimExpiredProbe(state, candidate, now);
-    if (claimed) {
-      // Probe the recovered account first, but preserve any healthy sibling
-      // for this same request if that controlled probe returns 401/429.
-      return { kind: "eligible", accounts: [claimed, ...available], skippedSlots: skipped };
+    if (slot.quota_blocked_until_ms) {
+      if ((slot.probe_lease?.expires_at_ms ?? 0) > now) {
+        skipped.push(routedAccount.slot + 1);
+        hasQuotaBlock = true;
+        retryAt = retryAt === null
+          ? slot.probe_lease!.expires_at_ms
+          : Math.min(retryAt, slot.probe_lease!.expires_at_ms);
+        continue;
+      }
+      // Claim the half-open lease only if request execution actually reaches
+      // this slot. This preserves first/second order without abandoning a
+      // secondary lease when the healthy first account returns directly.
+      available.push({ ...routedAccount, probeRequired: true });
+      continue;
     }
-    skipped.push(candidate.slot + 1);
-    hasQuotaBlock = true;
+    available.push(routedAccount);
   }
   if (available.length) return { kind: "eligible", accounts: available, skippedSlots: skipped };
   if (hasQuotaBlock) return { kind: "quota_blocked", skippedSlots: skipped, retryAtMs: retryAt };

@@ -6,10 +6,9 @@ import {
   getCodexModelsSnapshotDefaultModel,
   loadCodexModelsSnapshot,
   loadFullCodexModelsSnapshot,
-  markCodexResponseCompleted,
+  releaseCodexResponseProbe,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
-import { deriveCodexAffinityKey } from "./codex_affinity.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { json, openaiError } from "./http.ts";
 import { createInferenceSignal, createStreamFirstEventDeadline } from "./inference_deadline.ts";
@@ -75,7 +74,7 @@ type UsageContext = Readonly<{
 }>;
 
 type UpstreamProvider = "chatgpt_codex" | "yunwu";
-export type InferenceFallbackReason = "primary_401" | "primary_429";
+export type InferenceFallbackReason = "primary_401" | "primary_403" | "primary_429";
 
 export type ResponseTelemetry = Readonly<{
   provider: string;
@@ -354,84 +353,15 @@ const toCodexErrorResponse = (error: unknown, provider?: string | null): Respons
   return withUpstreamProviderHeader(response, provider);
 };
 
-type UpstreamErrorDetails = Readonly<{
-  message: string;
-  type?: string;
-  code?: string;
-  param?: string | null;
-}>;
-
-const getJsonString = (value: unknown, key: string): string | null => {
-  if (!isRecord(value)) return null;
-  const stringValue = getString(value[key]);
-  return stringValue?.trim() || null;
-};
-
-const parseUpstreamErrorDetails = (text: string, statusText: string): UpstreamErrorDetails => {
-  const trimmed = text.trim();
-  if (trimmed) {
-    try {
-      const parsed = JSON.parse(trimmed) as unknown;
-      if (isRecord(parsed)) {
-        const error = isRecord(parsed.error) ? parsed.error : null;
-        const message = getJsonString(error, "message") ?? getJsonString(parsed, "detail") ??
-          getJsonString(parsed, "message");
-        if (message) {
-          return {
-            message,
-            type: getJsonString(error, "type") ?? getJsonString(parsed, "type") ?? undefined,
-            code: getJsonString(error, "code") ?? getJsonString(parsed, "code") ?? undefined,
-            param: Object.prototype.hasOwnProperty.call(error ?? {}, "param")
-              ? getString(error?.param) ?? null
-              : undefined,
-          };
-        }
-      }
-    } catch {
-      // Treat non-JSON upstream bodies as plain text below.
-    }
-  }
-
-  const snippet = trimmed ? formatErrorSnippet(trimmed) : "";
-  return { message: snippet || statusText || "Upstream request failed." };
-};
-
-const upstreamStatusToErrorType = (status: number, upstreamType?: string): string => {
-  if (upstreamType) return upstreamType;
-  return status >= 500 ? "server_error" : "invalid_request_error";
-};
-
-const toOpenAiUpstreamErrorResponse = async (
+const toOpenAiUpstreamErrorResponse = (
   upstream: Response,
   provider: UpstreamProvider = "chatgpt_codex",
-): Promise<Response> => {
-  const text = await upstream.text().catch(() => "");
-  const details = parseUpstreamErrorDetails(text, upstream.statusText);
-  let status = upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502;
-  let code = details.code ?? "upstream_error";
-  if (provider === "yunwu") {
-    if (upstream.status === 401 || upstream.status === 403) {
-      status = 502;
-      code = "yunwu_upstream_auth_error";
-    } else if (upstream.status === 429 || upstream.status >= 500) {
-      status = 503;
-      code = "yunwu_upstream_unavailable";
-    }
-  }
-  const headers: Record<string, string> = { "x-uos-upstream": provider };
-  const retryAfter = upstream.headers.get("Retry-After");
-  if (retryAfter) headers["Retry-After"] = retryAfter;
-  const options: { type?: string; param?: string | null; headers: HeadersInit } = {
-    type: upstreamStatusToErrorType(status, details.type),
-    headers,
-  };
-  if (Object.prototype.hasOwnProperty.call(details, "param")) options.param = details.param ?? null;
-  return openaiError(status, details.message, code, options);
-};
+): Response => withUpstreamProviderHeader(upstream, provider);
 
-const cancelResponseBody = async (response: Response): Promise<void> => {
+const cancelResponseBody = (response: Response): void => {
   try {
-    await response.body?.cancel();
+    const cancellation = response.body?.cancel();
+    if (cancellation) void cancellation.catch(() => {});
   } catch {
     // The response may already be closed.
   }
@@ -442,6 +372,14 @@ const warnPaidFallbackBookkeepingFailure = (operation: string, error: unknown): 
     `[ai.ubq.fi] Paid fallback ${operation} failed; leaving the reservation pending:`,
     error instanceof Error ? error.message : String(error),
   );
+};
+
+const logYunwuSelected = (requestId: string, reason: InferenceFallbackReason): void => {
+  try {
+    console.info("[ai.ubq.fi] yunwu_selected", JSON.stringify({ request_id: requestId, reason }));
+  } catch {
+    // Routing telemetry must never alter provider selection.
+  }
 };
 
 const bestEffortPaidFallbackBookkeeping = async (
@@ -525,7 +463,6 @@ const fetchResponsesWithPaidFallback = async (
     usageContext?: UsageContext;
     clientVersion?: string | null;
     signal?: AbortSignal;
-    affinityKey?: string | null;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
   const telemetry = options.usageContext?.responseTelemetry;
@@ -535,7 +472,7 @@ const fetchResponsesWithPaidFallback = async (
     primary = await fetchCodexResponses(body, {
       clientVersion: options.clientVersion,
       signal: options.signal,
-      affinityKey: options.affinityKey,
+      requestId: options.usageContext?.requestId,
       // Keep terminal telemetry bounded: only the first real Codex transport
       // attempt contributes dispatch/header timings, even when routing retries.
       timing: {
@@ -552,6 +489,8 @@ const fetchResponsesWithPaidFallback = async (
   const createdAtMs = options.usageContext?.startedAtMs;
   const fallbackReason: InferenceFallbackReason | null = primary.status === 401
     ? "primary_401"
+    : primary.status === 403
+    ? "primary_403"
     : primary.status === 429
     ? "primary_429"
     : null;
@@ -645,6 +584,7 @@ const fetchResponsesWithPaidFallback = async (
     telemetry.provider = "yunwu";
     telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
   }
+  logYunwuSelected(requestId, fallbackReason);
   let result: Awaited<ReturnType<typeof fetchYunwuResponses>>;
   try {
     result = await fetchYunwuResponses(body, { signal: options.signal });
@@ -2734,7 +2674,7 @@ const streamChatCompletions = (
   lifecycle: YunwuTransportLifecycle,
   signal: AbortSignal,
   downstreamSignal: AbortSignal,
-  onResponseCompleted?: () => void,
+  onResponseTerminal?: () => void,
 ): Response => {
   const encoder = new TextEncoder();
   const iterator = source.iterator;
@@ -2787,7 +2727,7 @@ const streamChatCompletions = (
           }
 
           if (type === "response.completed") {
-            onResponseCompleted?.();
+            onResponseTerminal?.();
             lifecycle.terminal(type);
             recordStreamTerminalType(usageContext, "response.completed");
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
@@ -2813,6 +2753,7 @@ const streamChatCompletions = (
             return;
           }
           if (event.terminal) {
+            onResponseTerminal?.();
             lifecycle.terminal(type);
             recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
             void recordErrorUsage(usageContext);
@@ -2832,6 +2773,7 @@ const streamChatCompletions = (
         }
       } catch (error) {
         if (closed) return;
+        onResponseTerminal?.();
         const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
         recordStreamTerminalType(usageContext, terminalType);
         if (terminalType === "cancelled") lifecycle.cancelled();
@@ -2854,6 +2796,7 @@ const streamChatCompletions = (
     cancel(reason) {
       if (closed) return;
       closed = true;
+      onResponseTerminal?.();
       recordStreamTerminalType(usageContext, "cancelled");
       lifecycle.cancelled();
       void recordErrorUsage(usageContext);
@@ -2879,7 +2822,7 @@ const completeChatCompletions = async (
   lifecycle: YunwuTransportLifecycle,
   signal: AbortSignal,
   downstreamSignal: AbortSignal,
-  onResponseCompleted?: () => void,
+  onResponseTerminal?: () => void,
 ): Promise<Response> => {
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
@@ -2897,6 +2840,7 @@ const completeChatCompletions = async (
       const ev = event.value;
       const type = event.type;
       if (event.terminal) {
+        onResponseTerminal?.();
         lifecycle.terminal(type);
         recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
       }
@@ -2912,7 +2856,6 @@ const completeChatCompletions = async (
         continue;
       }
       if (type === "response.completed" && isRecord(ev.response)) {
-        onResponseCompleted?.();
         const usageTokens = extractUsageTokens(ev.response.usage);
         if (usageTokens) {
           usage = {
@@ -2928,12 +2871,14 @@ const completeChatCompletions = async (
       if (event.terminal) break;
     }
   } catch (error) {
+    onResponseTerminal?.();
     const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType === "cancelled") lifecycle.cancelled();
     else lifecycle.ambiguous();
     completed = false;
   } finally {
+    onResponseTerminal?.();
     // This path consumes the generator manually (rather than through
     // `for await`), so explicitly close it after a terminal event or error.
     // Otherwise the parser can remain suspended at its final `yield` while
@@ -4121,8 +4066,8 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   }
   const upstream = routed.response;
   const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
-  const confirmCodexProbe = (): void => {
-    if (routed.provider === "chatgpt_codex") void markCodexResponseCompleted(upstream);
+  const resolveCodexProbe = (): void => {
+    if (routed.provider === "chatgpt_codex") void releaseCodexResponseProbe(upstream).catch(() => {});
   };
 
   if (routed.gatewayResponse) {
@@ -4142,6 +4087,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
 
   if (!upstream.body) {
     clearStreamFirstEventDeadline();
+    resolveCodexProbe();
     lifecycle.ambiguous();
     recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
@@ -4156,6 +4102,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     clearStreamFirstEventDeadline();
   } catch (error) {
     clearStreamFirstEventDeadline();
+    resolveCodexProbe();
     const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType === "cancelled") lifecycle.cancelled();
@@ -4174,7 +4121,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       lifecycle,
       requestInferenceSignal,
       req.signal,
-      confirmCodexProbe,
+      resolveCodexProbe,
     )
     : await completeChatCompletions(
       preflight,
@@ -4184,7 +4131,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       lifecycle,
       requestInferenceSignal,
       req.signal,
-      confirmCodexProbe,
+      resolveCodexProbe,
     );
   return withUosWarning(response, warnings);
 };
@@ -4219,10 +4166,6 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       );
     }
   }
-  // `client_metadata` is a gateway compatibility extension and is removed
-  // from the upstream payload. Derive its hash before that removal; raw IDs
-  // remain request-local and are never persisted or logged.
-  const affinityKey = await deriveCodexAffinityKey(rawBody);
   const warnings = buildIgnoredWarnings(
     rawRecord,
     new Set([
@@ -4386,7 +4329,6 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       usageContext,
       clientVersion: modelMetadata.snapshot?.client_version,
       signal: requestInferenceSignal,
-      affinityKey,
     });
   } catch (error) {
     clearStreamFirstEventDeadline();
@@ -4396,8 +4338,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
   const upstream = routed.response;
   const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
-  const confirmCodexProbe = (): void => {
-    if (routed.provider === "chatgpt_codex") void markCodexResponseCompleted(upstream);
+  const resolveCodexProbe = (): void => {
+    if (routed.provider === "chatgpt_codex") void releaseCodexResponseProbe(upstream).catch(() => {});
   };
 
   if (routed.gatewayResponse) {
@@ -4418,6 +4360,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   if (clientWantsStream) {
     if (!upstream.body) {
       clearStreamFirstEventDeadline();
+      resolveCodexProbe();
       lifecycle.ambiguous();
       recordStreamTerminalType(usageContext, "error");
       await recordErrorUsage(usageContext);
@@ -4431,6 +4374,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       clearStreamFirstEventDeadline();
     } catch (error) {
       clearStreamFirstEventDeadline();
+      resolveCodexProbe();
       const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
       recordStreamTerminalType(usageContext, terminalType);
       if (terminalType === "cancelled") lifecycle.cancelled();
@@ -4451,11 +4395,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       signal: requestInferenceSignal,
       downstreamSignal: req.signal,
       onEvent: (event) => {
-        if (event.type === "response.completed") confirmCodexProbe();
+        if (event.terminal) resolveCodexProbe();
         lifecycle.terminal(event.type);
         recordResponsesTerminal(event, usageContext);
       },
       onFailure: (error) => {
+        resolveCodexProbe();
         const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
         recordStreamTerminalType(usageContext, terminalType);
         if (terminalType === "cancelled") lifecycle.cancelled();
@@ -4463,6 +4408,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         void recordErrorUsage(usageContext);
       },
       onCancel: () => {
+        resolveCodexProbe();
         recordStreamTerminalType(usageContext, "cancelled");
         lifecycle.cancelled();
         void recordErrorUsage(usageContext);
@@ -4477,6 +4423,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
 
   if (!upstream.body) {
+    resolveCodexProbe();
     lifecycle.ambiguous();
     recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
@@ -4494,7 +4441,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       recordFirstSseEvent(usageContext);
       const ev = event.value;
       if (event.terminal) {
-        if (event.type === "response.completed") confirmCodexProbe();
+        resolveCodexProbe();
         lifecycle.terminal(event.type);
         recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
       }
@@ -4517,6 +4464,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       }
     }
   } catch (error) {
+    resolveCodexProbe();
     const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType === "cancelled") lifecycle.cancelled();
@@ -4524,6 +4472,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     finalResponse = null;
   }
   if (!finalResponse) {
+    resolveCodexProbe();
     lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
     return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
