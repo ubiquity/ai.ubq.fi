@@ -1005,6 +1005,84 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
   assert.ok(model.supported_endpoints?.includes("/v1/responses"));
 });
 
+Deno.test("openai: prompt-cache capability records are UOS-only and keep providers separate", async () => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const runtimeConfigKey = keyToString(["uos_ai", "runtime_config", "v2"]);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  const previousRuntimeConfig = kvStore.get(runtimeConfigKey);
+  const promptCache = {
+    version: 1,
+    providers: [
+      {
+        id: "codex_chatgpt",
+        controls: {
+          key: true,
+          explicit_breakpoints: true,
+          source: "catalog",
+          verified_at_ms: 2_000,
+        },
+        scope: {
+          account_slots: "shared",
+          token_refresh: "preserved",
+          conversation_id: "independent",
+          reproducible_cycles: 3,
+          source: "live_probe",
+          verified_at_ms: 2_001,
+        },
+      },
+      {
+        id: "yunwu",
+        controls: {
+          key: false,
+          source: "inferred",
+          verified_at_ms: 2_002,
+        },
+      },
+    ],
+  };
+  kvStore.set(snapshotKey, {
+    source: "chatgpt_codex",
+    client_version: "0.125.0",
+    updated_at_ms: Date.now(),
+    models: [{
+      slug: DEFAULT_TEST_MODEL,
+      supported_reasoning_levels: ["none", "medium"],
+      prompt_cache: promptCache,
+    }],
+  });
+
+  try {
+    const { capabilitiesResponse, modelsResponse } = await withFetchMock(
+      () => {
+        throw new Error("model metadata reads should not fetch upstream");
+      },
+      async () => ({
+        capabilitiesResponse: await handleModelCapabilities(),
+        modelsResponse: await handleModels(),
+      }),
+    );
+    assert.equal(capabilitiesResponse.status, 200);
+    const capabilities = await capabilitiesResponse.json() as {
+      data?: Array<{ id?: string; prompt_cache?: unknown }>;
+    };
+    assert.deepEqual(
+      capabilities.data?.find((model) => model.id === DEFAULT_TEST_MODEL)?.prompt_cache,
+      promptCache,
+    );
+
+    const models = await modelsResponse.json() as { data?: Array<Record<string, unknown> & { id?: string }> };
+    const model = models.data?.find((entry) => entry.id === DEFAULT_TEST_MODEL);
+    assert.ok(model);
+    assert.equal(Object.prototype.hasOwnProperty.call(model, "prompt_cache"), false);
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+    if (previousRuntimeConfig === undefined) kvStore.delete(runtimeConfigKey);
+    else kvStore.set(runtimeConfigKey, previousRuntimeConfig);
+    resetRuntimeConfigCacheForTest();
+  }
+});
+
 Deno.test("openai: models returns an empty list when no snapshot is stored", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);

@@ -1,5 +1,9 @@
-import type { CodexModelsSnapshot } from "./codex_models.ts";
-import { getCodexModelsSnapshotDefaultModel } from "./codex_models.ts";
+import {
+  type CodexModelsSnapshot,
+  compactPromptCacheCapabilities,
+  getCodexModelsSnapshotDefaultModel,
+  type RuntimePromptCacheCapabilities,
+} from "./codex_models.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { getKv } from "./kv.ts";
 import { getString, isRecord } from "./utils.ts";
@@ -13,6 +17,7 @@ export type RuntimeCodexModel = Readonly<{
   default_reasoning_level?: ReasoningEffort;
   supported_reasoning_levels: ReasoningEffort[];
   reasoning_effort_wire_map?: Readonly<Record<string, ReasoningEffort>>;
+  prompt_cache?: RuntimePromptCacheCapabilities;
 }>;
 
 export type RuntimeCodexModelsSnapshot = Readonly<{
@@ -90,11 +95,13 @@ export const compactRuntimeCodexModels = (snapshot: CodexModelsSnapshot): Runtim
       supportedReasoningLevels.push(defaultReasoningLevel);
     }
     const wireMap = compactReasoningWireMap(value, supportedReasoningLevels);
+    const promptCache = compactPromptCacheCapabilities(value.prompt_cache);
     models.push({
       slug,
       ...(defaultReasoningLevel ? { default_reasoning_level: defaultReasoningLevel } : {}),
       supported_reasoning_levels: supportedReasoningLevels,
       ...(wireMap ? { reasoning_effort_wire_map: wireMap } : {}),
+      ...(promptCache !== null ? { prompt_cache: promptCache } : {}),
     });
     seen.add(slug);
   }

@@ -1,0 +1,155 @@
+import assert from "node:assert/strict";
+import {
+  mergeCodexModelPromptCacheCapabilities,
+  normalizeCodexModelsPayload,
+  normalizePromptCacheCapabilities,
+} from "../src/codex_models.ts";
+
+const promptCacheEvidence = {
+  version: 1,
+  providers: [
+    {
+      id: "codex_chatgpt",
+      controls: {
+        key: true,
+        implicit: true,
+        explicit_breakpoints: true,
+        modes: ["implicit", "explicit"],
+        ttls: ["5m", "1h"],
+        legacy_retentions: ["24h"],
+        breakpoint_block_types: {
+          responses: ["input_text", "input_image", "input_file"],
+          chat_completions: ["text", "image_url", "file", "refusal"],
+        },
+        expected_usage_fields: ["cached_tokens", "cache_write_tokens"],
+        source: "catalog",
+        verified_at_ms: 1_000,
+      },
+    },
+    {
+      id: "yunwu",
+      controls: {
+        key: false,
+        source: "inferred",
+        verified_at_ms: 1_001,
+      },
+      scope: {
+        account_slots: "unknown",
+        token_refresh: "unknown",
+        conversation_id: "independent",
+        effective_model: "gpt-cache-fixture",
+        reproducible_cycles: 3,
+        source: "live_probe",
+        verified_at_ms: 1_002,
+      },
+    },
+  ],
+};
+
+Deno.test("Codex model normalization retains only versioned prompt-cache metadata", () => {
+  const snapshot = normalizeCodexModelsPayload({
+    source: "catalog-fixture",
+    updated_at_ms: 1_100,
+    models: [
+      { slug: "gpt-cache-fixture", prompt_cache: promptCacheEvidence },
+      { slug: "gpt-cache-unsupported", prompt_cache: false },
+      {
+        slug: "gpt-cache-invalid",
+        prompt_cache: {
+          version: 1,
+          providers: [{
+            id: "codex_chatgpt",
+            controls: { source: "catalog", verified_at_ms: 1_003, modes: ["keyed"] },
+          }],
+        },
+      },
+    ],
+  });
+
+  assert.ok(snapshot);
+  assert.deepEqual(snapshot.models[0]?.prompt_cache, promptCacheEvidence);
+  assert.equal(snapshot.models[1]?.prompt_cache, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(snapshot.models[2]!, "prompt_cache"), false);
+});
+
+Deno.test("prompt-cache metadata rejects unknown shape and duplicate provider identities", () => {
+  assert.equal(normalizePromptCacheCapabilities({ version: 2, providers: [] }), null);
+  assert.equal(normalizePromptCacheCapabilities({ version: 1, providers: [] }), null);
+  assert.equal(
+    normalizePromptCacheCapabilities({
+      version: 1,
+      providers: [{ id: "codex_chatgpt" }, { id: "codex_chatgpt" }],
+    }),
+    null,
+  );
+  assert.equal(
+    normalizePromptCacheCapabilities({
+      version: 1,
+      providers: [{ id: "codex_chatgpt", unknown: true }],
+    }),
+    null,
+  );
+});
+
+Deno.test("prompt-cache scope requires three reproducible cycles before account-scoped classification", () => {
+  const earlyAccountScoped = {
+    version: 1,
+    providers: [{
+      id: "codex_chatgpt",
+      scope: {
+        account_slots: "account_scoped",
+        token_refresh: "changed",
+        conversation_id: "scoped",
+        reproducible_cycles: 2,
+        source: "live_probe",
+        verified_at_ms: 1_100,
+      },
+    }],
+  };
+  assert.equal(normalizePromptCacheCapabilities(earlyAccountScoped), null);
+
+  const earlyUnknown = {
+    ...earlyAccountScoped,
+    providers: [{
+      ...earlyAccountScoped.providers[0],
+      scope: { ...earlyAccountScoped.providers[0].scope, account_slots: "unknown" },
+    }],
+  };
+  assert.deepEqual(normalizePromptCacheCapabilities(earlyUnknown), earlyUnknown);
+});
+
+Deno.test("catalog prompt-cache merges retain same-slug provider evidence without cross-provider collapse", () => {
+  const previous = normalizeCodexModelsPayload({
+    source: "probe",
+    updated_at_ms: 1_200,
+    models: [{ slug: "gpt-cache-fixture", prompt_cache: promptCacheEvidence }],
+  });
+  const next = normalizeCodexModelsPayload({
+    source: "catalog",
+    updated_at_ms: 1_300,
+    models: [{
+      slug: "gpt-cache-fixture",
+      prompt_cache: {
+        version: 1,
+        providers: [{
+          id: "codex_chatgpt",
+          controls: { implicit: false, source: "catalog", verified_at_ms: 1_300 },
+        }],
+      },
+    }],
+  });
+  assert.ok(previous);
+  assert.ok(next);
+
+  const merged = mergeCodexModelPromptCacheCapabilities(next, previous);
+  assert.deepEqual(merged.models[0]?.prompt_cache, {
+    version: 1,
+    providers: [
+      {
+        id: "codex_chatgpt",
+        controls: { implicit: false, source: "catalog", verified_at_ms: 1_300 },
+      },
+      promptCacheEvidence.providers[1],
+    ],
+  });
+});

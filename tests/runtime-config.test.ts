@@ -66,6 +66,53 @@ Deno.test("runtime config rejects an extreme model inventory instead of crossing
   );
 });
 
+Deno.test("runtime config keeps prompt-cache controls compact and excludes probe scope evidence", () => {
+  const promptCache = {
+    version: 1,
+    providers: [{
+      id: "codex_chatgpt",
+      controls: {
+        key: true,
+        modes: ["implicit", "explicit"],
+        source: "catalog",
+        verified_at_ms: 1_000_000,
+      },
+      scope: {
+        account_slots: "shared",
+        token_refresh: "preserved",
+        conversation_id: "independent",
+        effective_model: "gpt-cache-runtime-".repeat(500),
+        reproducible_cycles: 3,
+        source: "live_probe",
+        verified_at_ms: 1_000_001,
+      },
+    }],
+  };
+  const runtime = buildRuntimeConfig({
+    models: [{ slug: "gpt-cache-runtime", prompt_cache: promptCache }],
+    source: "chatgpt_codex",
+    updated_at_ms: 1_000_000,
+  }, { nowMs: 1_000_002 });
+
+  assert.deepEqual(runtime.codex_models.models[0]?.prompt_cache, {
+    version: 1,
+    providers: [{
+      id: "codex_chatgpt",
+      controls: promptCache.providers[0].controls,
+    }],
+  });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      (runtime.codex_models.models[0]?.prompt_cache as { providers?: Array<Record<string, unknown>> })?.providers
+        ?.[0] ?? {},
+      "scope",
+    ),
+    false,
+  );
+  assert.ok(jsonBytes(runtime) <= RUNTIME_CONFIG_MAX_BYTES);
+  assert.deepEqual(normalizeRuntimeConfig(runtime), runtime);
+});
+
 Deno.test("full Codex model loader preserves catalog fields outside the inference runtime record", async () => {
   const fullSnapshot: CodexModelsSnapshot = {
     models: [{
