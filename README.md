@@ -180,7 +180,7 @@ curl -sS https://ai.ubq.fi/uos/embeddings \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{
-    "model":"text-embedding-3-small",
+    "model":"voyage-4-large",
     "input":["hello","world"],
     "input_type":"document",
     "dimensions":1024,
@@ -195,8 +195,7 @@ Voyage's text API does not. The response remains the familiar OpenAI-style `{obj
 
 Request fields:
 
-- `model` (required): `voyage-4-large`, `text-embedding-3-small`, or `text-embedding-3-large`; every alias routes to
-  Voyage `voyage-4-large` and the response preserves the requested model string.
+- `model` (required): `voyage-4-large`.
 - `input` (required): one string or an array of strings. Token arrays are rejected.
 - `input_type` (optional): `query` or `document`; defaults to `document`. Send it explicitly for retrieval workloads.
 - `dimensions` (optional): `256`, `512`, `1024` (default), or `2048`.
@@ -211,16 +210,17 @@ rate limited (by Voyage or the gateway's own KV throttling), it returns `429` wi
 
 ### Migration from the removed embeddings route
 
-`POST /v1/embeddings` has been removed. For existing text clients, the migration is only a URL change:
+`POST /v1/embeddings` has been removed. Existing text clients must change both the URL and model:
 
 ```text
-old (removed): POST https://ai.ubq.fi/v1/embeddings
-new:           POST https://ai.ubq.fi/uos/embeddings
+old (removed): POST https://ai.ubq.fi/v1/embeddings  model: text-embedding-3-small|text-embedding-3-large
+new:           POST https://ai.ubq.fi/uos/embeddings model: voyage-4-large
 ```
 
 The former text defaults are preserved: `input_type` defaults to `document`, dimensions default to `1024`,
-`encoding_format` defaults to `float`, and truncation defaults to `true`. The three model aliases above and the response
-shape are stable. Set `input_type` explicitly before migrating if query/document intent matters.
+`encoding_format` defaults to `float`, and truncation defaults to `true`. OpenAI embedding model names are not accepted
+or mapped to Voyage; the response shape remains stable. Set `input_type` explicitly before migrating if query/document
+intent matters.
 
 Embeddings jobs (async, gateway-specific):
 

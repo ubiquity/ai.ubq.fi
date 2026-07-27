@@ -2144,18 +2144,6 @@ const buildResolvedEmbeddingsProfile = (
   cache_profile_key: buildEmbeddingsCacheProfileKey(inputType, dimensions, encodingFormat, truncation),
 });
 
-const resolveUosEmbeddingsModel = (raw: string): "voyage-4-large" | null => {
-  const normalized = raw.trim().toLowerCase();
-  if (
-    normalized === VOYAGE_EMBEDDINGS_MODEL ||
-    normalized === "text-embedding-3-small" ||
-    normalized === "text-embedding-3-large"
-  ) {
-    return VOYAGE_EMBEDDINGS_MODEL;
-  }
-  return null;
-};
-
 const parseEmbeddingsRequest = (
   rawBody: Record<string, unknown>,
   contract: "uos_sync" | "uos_job",
@@ -2179,10 +2167,8 @@ const parseEmbeddingsRequest = (
       }),
     };
   }
-  const model = isJob ? modelRaw : modelRaw.trim();
-  if (
-    isJob ? model !== VOYAGE_EMBEDDINGS_MODEL : resolveUosEmbeddingsModel(model) !== VOYAGE_EMBEDDINGS_MODEL
-  ) {
+  const model = modelRaw;
+  if (model !== VOYAGE_EMBEDDINGS_MODEL) {
     return {
       ok: false,
       response: openaiError(400, `Unsupported embedding model: ${model}`, "model_not_found", { param: "model" }),

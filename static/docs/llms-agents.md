@@ -97,7 +97,7 @@ Request UOS text embeddings:
 curl -sS https://ai.ubq.fi/uos/embeddings \
   -H "Authorization: Bearer $UOS_AI_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"model":"text-embedding-3-small","input":["hello","world"],"input_type":"document"}'
+  --data '{"model":"voyage-4-large","input":["hello","world"],"input_type":"document"}'
 ```
 
 ## Endpoints
@@ -323,7 +323,7 @@ the OpenAI-style `{object:"list", data, model, usage}` shape.
 
 Request:
 
-- `model` (string, required): accepts `text-embedding-3-small`, `text-embedding-3-large`, or `voyage-4-large`.
+- `model` (string, required): `voyage-4-large`.
 - `input` (string or string[], required). Token arrays are rejected.
 - `input_type` (optional): `query` or `document`; defaults to `document`. Send it explicitly for retrieval workloads.
 - `dimensions` (optional): `256`, `512`, `1024` (default), or `2048`.
@@ -332,8 +332,8 @@ Request:
 - `user` (optional string or `null`): accepted and ignored.
 - `Idempotency-Key` (optional header): enables durable UOS replay.
 
-All model aliases route to Voyage `voyage-4-large`; the response preserves the requested model. The gateway returns one
-`data[]` entry per input string.
+The gateway sends `voyage-4-large` to Voyage and returns one `data[]` entry per input string. OpenAI embedding model
+names are not accepted or mapped to Voyage.
 
 Notes:
 
@@ -343,15 +343,16 @@ Notes:
 
 ### Migration from the removed embeddings route
 
-`POST /v1/embeddings` has been removed. Text clients only need to change the URL:
+`POST /v1/embeddings` has been removed. Text clients must change both the URL and model:
 
 ```text
-old (removed): POST https://ai.ubq.fi/v1/embeddings
-new:           POST https://ai.ubq.fi/uos/embeddings
+old (removed): POST https://ai.ubq.fi/v1/embeddings  model: text-embedding-3-small|text-embedding-3-large
+new:           POST https://ai.ubq.fi/uos/embeddings model: voyage-4-large
 ```
 
-The former text defaults remain (`document`, `1024`, `float`, and `truncation=true`), as do the three model aliases and
-the response shape. Send `input_type` explicitly before migrating when query/document intent matters.
+The former text defaults remain (`document`, `1024`, `float`, and `truncation=true`), and the response shape remains
+stable. OpenAI embedding model names are not accepted or mapped to Voyage. Send `input_type` explicitly before migrating
+when query/document intent matters.
 
 ## Embedding Jobs (Async)
 
