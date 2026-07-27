@@ -998,7 +998,6 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       explicit_breakpoint_count: 0,
       account_slot: 1,
       affinity_outcome: "none",
-      key_id: "telemetry",
       fallback_reason: null,
       stream: false,
       stream_terminal_type: "response.completed",
@@ -1007,11 +1006,15 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       router_revision: null,
     });
     assert.doesNotMatch(String(terminal[1]), new RegExp(promptCacheKey));
+    assert.doesNotMatch(String(terminal[1]), /"key_id"/);
+    assert.doesNotMatch(String(terminal[1]), /"telemetry"/);
     assertOrderedTerminalTimings(terminalPayload, false);
     assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 1);
     const accepted = logs.find((entry) => entry[0] === "[ai.ubq.fi] request_accepted");
     assert.ok(accepted);
-    assert.equal(JSON.parse(String(accepted[1])).request_id, requestId);
+    const acceptedPayload = JSON.parse(String(accepted[1])) as Record<string, unknown>;
+    assert.equal(acceptedPayload.request_id, requestId);
+    assert.equal(Object.prototype.hasOwnProperty.call(acceptedPayload, "key_id"), false);
 
     globalThis.fetch = () =>
       Promise.resolve(sse({
@@ -1724,7 +1727,7 @@ Deno.test("KV budget: malformed tokens are rejected without KV and policy expiry
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
     assert.equal(terminal.status, 401);
     assert.equal(terminal.provider, "gateway");
-    assert.equal(terminal.key_id, null);
+    assert.equal(Object.prototype.hasOwnProperty.call(terminal, "key_id"), false);
     assert.equal(terminal.request_id, malformedResponse.headers.get("x-uos-request-id"));
     assert.equal(terminal.input_tokens, null);
     assert.equal(terminal.output_tokens, null);
