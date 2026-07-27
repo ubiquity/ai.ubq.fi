@@ -4105,7 +4105,7 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       prompt_tokens: 2006,
       completion_tokens: 300,
       total_tokens: 2306,
-      prompt_tokens_details: { cached_tokens: 1920 },
+      prompt_tokens_details: { cached_tokens: 1920, cache_write_tokens: 0 },
     });
     assert.deepEqual(getResponseTelemetry(response), {
       provider: "chatgpt_codex",
@@ -4154,7 +4154,7 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
     const usageChunk = text.split("\n\n").find((chunk) => chunk.includes('"choices":[]'));
     assert.ok(usageChunk);
     assert.match(usageChunk, /"cached_tokens":1920/);
-    assert.doesNotMatch(usageChunk, /"cache_write_tokens"/);
+    assert.match(usageChunk, /"cache_write_tokens":0/);
     assert.ok(text.indexOf(usageChunk) < text.indexOf("data: [DONE]"));
   });
 

@@ -352,9 +352,9 @@ const toChatUsage = (usage: UsageTokens | null): Record<string, unknown> | null 
     return null;
   }
   const promptTokenDetails: Record<string, number> = {};
-  // Chat Completions only documents cached_tokens here. Keep write accounting
-  // in gateway telemetry instead of extending the public OpenAI wire shape.
+  // Prompt Caching documents both fields on Chat Completions usage details.
   if (usage.cachedInputTokens !== null) promptTokenDetails.cached_tokens = usage.cachedInputTokens;
+  if (usage.cacheWriteInputTokens !== null) promptTokenDetails.cache_write_tokens = usage.cacheWriteInputTokens;
   return {
     prompt_tokens: usage.inputTokens,
     completion_tokens: usage.outputTokens,
