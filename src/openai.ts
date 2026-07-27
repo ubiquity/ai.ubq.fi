@@ -10,6 +10,7 @@ import {
   releaseCodexResponseProbe,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
+import { normalizePromptCacheCapabilities } from "./codex_models.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
@@ -3005,6 +3006,7 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
   const id = modelIdFromSnapshotRecord(value);
   if (!id) return null;
   const reasoning = getCodexModelReasoning(value);
+  const promptCache = normalizePromptCacheCapabilities(value.prompt_cache);
   return {
     id,
     object: "uos.model_capabilities",
@@ -3018,6 +3020,7 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
     context_window_tokens: normalizeTokenCount(value.context_window),
     max_context_window_tokens: normalizeTokenCount(value.max_context_window),
     auto_compact_token_limit_tokens: normalizeTokenCount(value.auto_compact_token_limit),
+    ...(promptCache !== null ? { prompt_cache: promptCache } : {}),
   };
 };
 

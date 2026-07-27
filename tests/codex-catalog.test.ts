@@ -695,3 +695,76 @@ Deno.test("codex catalog: normalized snapshot retry preserves a concurrent admin
     globalThis.fetch = originalFetch;
   }
 });
+
+Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-cache probe evidence", async () => {
+  seedBaseState("0.200.0");
+  const promptCache = {
+    version: 1,
+    providers: [{
+      id: "codex_chatgpt",
+      scope: {
+        account_slots: "unknown",
+        token_refresh: "preserved",
+        conversation_id: "independent",
+        reproducible_cycles: 3,
+        source: "live_probe",
+        verified_at_ms: 2_000,
+      },
+    }],
+  };
+  const existingSnapshot = {
+    source: "chatgpt_codex",
+    client_version: "0.200.0",
+    updated_at_ms: Date.now(),
+    models: [{ slug: "gpt-cache-probe", prompt_cache: promptCache }],
+  };
+  kvStore.set(keyToString(SNAPSHOT_KEY), { value: existingSnapshot, versionstamp: nextVersion() });
+  kvStore.set(keyToString(RUNTIME_CONFIG_V2_KEY), {
+    value: {
+      version: 2,
+      default_model: "gpt-cache-probe",
+      default_reasoning_effort: "medium",
+      codex_models: existingSnapshot,
+      updated_at_ms: Date.now(),
+    },
+    versionstamp: nextVersion(),
+  });
+  resetRuntimeConfigCacheForTest();
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(
+        catalogBody("0.201.0", {
+          models: [{ slug: "gpt-cache-probe", supported_reasoning_levels: ["medium"] }],
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+  beforeAtomicCommit = (ops) => {
+    if (!ops.some((op) => keyToString(op.key) === keyToString(SNAPSHOT_KEY))) return;
+    beforeAtomicCommit = null;
+    kvStore.set(keyToString(SNAPSHOT_KEY), {
+      value: { ...existingSnapshot, updated_at_ms: Date.now() + 1 },
+      versionstamp: nextVersion(),
+    });
+  };
+
+  try {
+    assert.equal((await handleCodexCatalogModels(request("0.201.0"), "0.201.0")).status, 200);
+    const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as {
+      client_version?: string;
+      models?: Array<{ slug?: string; prompt_cache?: unknown }>;
+    };
+    const runtime = kvStore.get(keyToString(RUNTIME_CONFIG_V2_KEY))?.value as {
+      codex_models?: { models?: Array<{ slug?: string; prompt_cache?: unknown }> };
+    };
+    assert.equal(snapshot.client_version, "0.201.0");
+    assert.deepEqual(snapshot.models?.[0]?.prompt_cache, promptCache);
+    assert.equal(runtime.codex_models?.models?.[0]?.prompt_cache, undefined);
+  } finally {
+    beforeAtomicCommit = null;
+    globalThis.fetch = originalFetch;
+  }
+});

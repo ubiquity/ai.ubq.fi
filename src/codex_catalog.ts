@@ -1,5 +1,10 @@
 import { CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, fetchCodexModels, preserveCodexDefaultModel } from "./codex.ts";
-import { compareCodexClientVersions, normalizeCodexModelsPayload, parseCodexClientVersion } from "./codex_models.ts";
+import {
+  compareCodexClientVersions,
+  mergeCodexModelPromptCacheCapabilities,
+  normalizeCodexModelsPayload,
+  parseCodexClientVersion,
+} from "./codex_models.ts";
 import { openaiError } from "./http.ts";
 import { getKv } from "./kv.ts";
 import {
@@ -398,9 +403,10 @@ const maybeUpdateNormalizedSnapshot = async (
       const comparison = compareCodexClientVersions(version, currentVersion);
       if (comparison === null || comparison < 0) return;
     }
+    const nextWithPromptCacheEvidence = mergeCodexModelPromptCacheCapabilities(next, current.value);
     const currentRuntime = normalizeRuntimeConfig(runtimeEntry.value);
-    const nextRuntime = buildRuntimeConfig(next, {
-      defaultModel: preserveCodexDefaultModel(next, currentRuntime?.default_model),
+    const nextRuntime = buildRuntimeConfig(nextWithPromptCacheEvidence, {
+      defaultModel: preserveCodexDefaultModel(nextWithPromptCacheEvidence, currentRuntime?.default_model),
       defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
       nowMs: updatedAtMs,
     });
@@ -408,7 +414,7 @@ const maybeUpdateNormalizedSnapshot = async (
       .check(generation)
       .check(current)
       .check(runtimeEntry)
-      .set(CODEX_MODELS_KV_KEY, next)
+      .set(CODEX_MODELS_KV_KEY, nextWithPromptCacheEvidence)
       .set(RUNTIME_CONFIG_V2_KEY, nextRuntime)
       .commit();
     if (commit.ok) {
