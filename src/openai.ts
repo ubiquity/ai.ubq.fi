@@ -10,6 +10,7 @@ import {
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
+import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { json, openaiError } from "./http.ts";
 import { createInferenceSignal, createStreamFirstEventDeadline } from "./inference_deadline.ts";
 import { getKv } from "./kv.ts";
@@ -360,76 +361,16 @@ type UpstreamErrorDetails = Readonly<{
   param?: string | null;
 }>;
 
-const MAX_UPSTREAM_ERROR_BODY_BYTES = 64 * 1024;
-
 const readUpstreamErrorBody = async (
   upstream: Response,
   signal: AbortSignal,
 ): Promise<Readonly<{ text: string; complete: boolean }>> => {
-  const reader = upstream.body?.getReader();
-  if (!reader) return { text: "", complete: true };
-
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  let complete = false;
-  let cancellationStarted = false;
-  const releaseReader = (): void => {
-    try {
-      reader.releaseLock();
-    } catch {
-      // The reader may already be released after an upstream failure.
-    }
-  };
-  const cancelReader = (): void => {
-    if (cancellationStarted) return;
-    cancellationStarted = true;
-    try {
-      const cancellation = reader.cancel("Upstream error body captured");
-      void cancellation.catch(() => {}).finally(releaseReader);
-    } catch {
-      releaseReader();
-    }
-  };
-
-  const deadline = AbortSignal.any([signal, AbortSignal.timeout(1_000)]);
-  try {
-    for (;;) {
-      let onAbort = (): void => {};
-      const aborted = new Promise<never>((_, reject) => {
-        onAbort = () => reject(deadline.reason ?? new DOMException("Upstream error body read aborted.", "AbortError"));
-        deadline.addEventListener("abort", onAbort, { once: true });
-        if (deadline.aborted) onAbort();
-      });
-      const next = await Promise.race([reader.read(), aborted]).finally(() => {
-        deadline.removeEventListener("abort", onAbort);
-      });
-      if (next.done) {
-        complete = true;
-        break;
-      }
-      const remaining = MAX_UPSTREAM_ERROR_BODY_BYTES - length;
-      if (remaining <= 0) break;
-      const part = next.value.slice(0, remaining);
-      chunks.push(part);
-      length += part.byteLength;
-      if (next.value.byteLength > part.byteLength) break;
-    }
-  } catch {
-    // A missing, stalled, or failed body is normalized below without exposing
-    // a partial provider payload.
-  } finally {
-    if (complete) releaseReader();
-    else cancelReader();
-  }
-
-  if (!complete) return { text: "", complete: false };
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { text: new TextDecoder().decode(bytes), complete: true };
+  const { bytes, complete } = await readBoundedResponseBody(upstream, {
+    signal,
+    cancellationReason: "Upstream error body captured",
+  });
+  // Error normalization must never surface a partial provider payload.
+  return complete ? { text: new TextDecoder().decode(bytes), complete: true } : { text: "", complete: false };
 };
 
 const getJsonString = (value: unknown, key: string): string | null => {
@@ -469,12 +410,13 @@ const parseUpstreamErrorDetails = (text: string, statusText: string): UpstreamEr
 
 const upstreamStatusToErrorType = (status: number, upstreamType?: string): string => {
   if (upstreamType) return upstreamType;
-  return status >= 500 ? "server_error" : "invalid_request_error";
+  if (status >= 500) return "server_error";
+  return status === 429 ? "rate_limit_error" : "invalid_request_error";
 };
 
 const toOpenAiUpstreamErrorResponse = async (
   upstream: Response,
-  provider: UpstreamProvider = "chatgpt_codex",
+  provider: UpstreamProvider,
   signal: AbortSignal,
 ): Promise<Response> => {
   const captured = await readUpstreamErrorBody(upstream, signal);

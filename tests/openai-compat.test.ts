@@ -1227,7 +1227,7 @@ Deno.test("openai: error normalization bounds oversized and stalled upstream bod
     assert.equal(cancellations, 1);
   });
 
-  setStreamFirstEventDeadlineMsForTest(10);
+  setStreamFirstEventDeadlineMsForTest(100);
   try {
     for (const route of ["responses", "chat.completions"] as const) {
       await t.step(`${route} keeps the request deadline while reading an error body`, async () => {
@@ -1537,7 +1537,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         assert.deepEqual(await response.json(), {
           error: {
             message: "Primary limited",
-            type: "invalid_request_error",
+            type: "rate_limit_error",
             code: "upstream_error",
           },
         });
@@ -2615,6 +2615,19 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           expectedError: {
             message: "YunWu rejected the configured credential.",
             type: "invalid_request_error",
+            code: "upstream_error",
+          },
+        },
+        {
+          name: "responses classifies an untyped upstream 429 as rate limited",
+          route: "responses",
+          status: 429,
+          statusText: "YunWu Rate Limited",
+          body: JSON.stringify({ detail: "YunWu has no capacity." }),
+          retryAfter: "3",
+          expectedError: {
+            message: "YunWu has no capacity.",
+            type: "rate_limit_error",
             code: "upstream_error",
           },
         },
