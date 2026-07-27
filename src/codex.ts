@@ -372,23 +372,9 @@ const loadAuthPoolEntry = async (generationAtStart: number): Promise<CodexAuthPo
   const entry = await kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" });
   const storedPool = parseCodexAuthPool(entry.value);
   if (storedPool) {
-    if (!config.isDeploy) {
-      try {
-        const localSeed = getConfiguredCodexAuthSeed();
-        if (localSeed) {
-          if (authCacheGeneration !== generationAtStart && cachedAuthPool) {
-            return { kv: null, entry: null, pool: cachedAuthPool };
-          }
-          const withLocalSeed = upsertCodexAuthAccount(storedPool, localSeed);
-          if (withLocalSeed) {
-            await kv.set(CODEX_AUTH_POOL_KV_KEY, withLocalSeed);
-            return loadedAuthPoolEntry(withLocalSeed, generationAtStart, kv, null);
-          }
-        }
-      } catch {
-        // Keep working from persisted KV credentials when local seed loading fails.
-      }
-    }
+    // A valid persisted pool is the authority. Local/disk seeds may bootstrap
+    // an absent row or run without KV, but must never overwrite or append to
+    // credentials an admin has already uploaded.
     return loadedAuthPoolEntry(storedPool, generationAtStart, kv, entry);
   }
 

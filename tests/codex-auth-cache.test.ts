@@ -1032,3 +1032,47 @@ Deno.test("Codex auth cache revalidates rotations across warm isolates without p
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
   }
 });
+
+Deno.test("a valid persisted Codex pool is not overlaid by a local configured seed", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const originalSeed = config.codexAuthJsonB64;
+  const authorizations: string[] = [];
+  const persisted = auth("persisted");
+  const localSeed = { ...auth("local-stale"), account_id: persisted.account_id };
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean; codexAuthJsonB64: string }).isDeploy = false;
+  (config as { isDeploy: boolean; codexAuthJsonB64: string }).codexAuthJsonB64 = btoa(
+    JSON.stringify({
+      tokens: {
+        access_token: localSeed.access_token,
+        refresh_token: localSeed.refresh_token,
+        account_id: localSeed.account_id,
+      },
+    }),
+  );
+  kv.auth = pool(persisted);
+  kv.extra.clear();
+  const versionBefore = kv.authVersion;
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    authorizations.push(request.headers.get("authorization") ?? "");
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "persisted-authority" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(authorizations, [`Bearer ${persisted.access_token}`]);
+    assert.deepEqual(kv.auth, pool(persisted));
+    assert.equal(kv.authVersion, versionBefore, "loading a persisted pool must not write a local seed into KV");
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean; codexAuthJsonB64: string }).isDeploy = originalDeployFlag;
+    (config as { isDeploy: boolean; codexAuthJsonB64: string }).codexAuthJsonB64 = originalSeed;
+  }
+});

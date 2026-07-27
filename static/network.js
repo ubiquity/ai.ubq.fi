@@ -84,6 +84,7 @@ const ensureTraceLayer = (side) => {
 };
 
 const renderNetworkTrace = (originKey) => {
+  if (typeof document === "undefined") return;
   const upLayer = ensureTraceLayer("left");
   const downLayer = ensureTraceLayer("right");
   if (!upLayer || !downLayer) return;
@@ -119,13 +120,20 @@ const installNetworkTrace = () => {
     const originKey = resolveOriginKey(args[0]);
     renderNetworkTrace(originKey);
     const responsePromise = nativeFetch(...args);
-    responsePromise.finally(() => {
-      recordDuration(originKey, startMs);
-    });
+    // `finally()` creates a second promise that rejects along with a failed
+    // fetch. The caller may handle the original request rejection, while that
+    // unobserved continuation still becomes an unhandled rejection. Handle
+    // both outcomes here instead and keep the trace bookkeeping best-effort.
+    void responsePromise
+      .then(
+        () => recordDuration(originKey, startMs),
+        () => recordDuration(originKey, startMs),
+      )
+      .catch(() => {});
     return responsePromise;
   };
 };
 
 installNetworkTrace();
 
-export { renderNetworkTrace };
+export { installNetworkTrace, renderNetworkTrace };
