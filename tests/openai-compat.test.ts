@@ -4039,6 +4039,380 @@ Deno.test("openai: native Responses preserve files, explicit nulls, and prompt-c
   });
 });
 
+Deno.test("openai: cache token usage reaches Chat clients and internal telemetry", async (t) => {
+  const usage = {
+    input_tokens: 2006,
+    input_tokens_details: { cached_tokens: 1920, cache_write_tokens: 0 },
+    output_tokens: 300,
+    total_tokens: 2306,
+  };
+  const completed = () =>
+    sseResponse([
+      `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_cache", created_at: 1 } })}\n\n`,
+      `data: ${
+        JSON.stringify({ type: "response.completed", response: { model: DEFAULT_TEST_MODEL, output: [], usage } })
+      }\n\n`,
+    ]);
+
+  await t.step("buffered Chat maps standard usage details", async () => {
+    const response = await withFetchMock(
+      () => completed(),
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, messages: [{ role: "user", content: "ping" }] }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json() as { usage?: Record<string, unknown> };
+    assert.deepEqual(body.usage, {
+      prompt_tokens: 2006,
+      completion_tokens: 300,
+      total_tokens: 2306,
+      prompt_tokens_details: { cached_tokens: 1920 },
+    });
+    assert.deepEqual(getResponseTelemetry(response), {
+      provider: "chatgpt_codex",
+      fallbackReason: null,
+      model: DEFAULT_TEST_MODEL,
+      reasoning: "low",
+      inputTokens: 2006,
+      cachedInputTokens: 1920,
+      cacheWriteInputTokens: 0,
+      outputTokens: 300,
+      totalTokens: 2306,
+      usageObserved: true,
+      usageTelemetryStatus: "reported",
+      promptCacheKeyPresent: false,
+      promptCacheMode: "unspecified",
+      explicitBreakpointCount: 0,
+      quotaUsedPercent: undefined,
+      completed: true,
+      streamTerminalType: "response.completed",
+      stream: false,
+      firstCodexDispatchMs: null,
+      firstCodexHeadersMs: null,
+      firstSseEventMs: null,
+      streamTerminalMs: null,
+    });
+  });
+
+  await t.step("streamed Chat emits the standard final usage chunk only when requested", async () => {
+    const response = await withFetchMock(
+      () => completed(),
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              stream: true,
+              stream_options: { include_usage: true },
+              messages: [{ role: "user", content: "ping" }],
+            }),
+          }),
+        ),
+    );
+    const text = await response.text();
+    const usageChunk = text.split("\n\n").find((chunk) => chunk.includes('"choices":[]'));
+    assert.ok(usageChunk);
+    assert.match(usageChunk, /"cached_tokens":1920/);
+    assert.doesNotMatch(usageChunk, /"cache_write_tokens"/);
+    assert.ok(text.indexOf(usageChunk) < text.indexOf("data: [DONE]"));
+  });
+
+  await t.step(
+    "failed, partial, and invalid provider usage remains observable without fabricating public values",
+    async () => {
+      const failed = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.failed",
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  status: "failed",
+                  usage: {
+                    input_tokens: 100,
+                    input_tokens_details: { cached_tokens: 80, cache_write_tokens: 0 },
+                    output_tokens: 0,
+                    total_tokens: 100,
+                  },
+                },
+              })
+            }\n\n`,
+          ]),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "fail" }),
+            }),
+          ),
+      );
+      assert.equal(failed.status, 200);
+      assert.deepEqual(getResponseTelemetry(failed), {
+        ...getResponseTelemetry(failed),
+        completed: false,
+        inputTokens: 100,
+        cachedInputTokens: 80,
+        cacheWriteInputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 100,
+        usageObserved: true,
+        usageTelemetryStatus: "reported",
+        streamTerminalType: "response.failed",
+      });
+
+      const partial = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  output: [],
+                  usage: { input_tokens: 11, input_tokens_details: { cached_tokens: 10 } },
+                },
+              })
+            }\n\n`,
+          ]),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, messages: [{ role: "user", content: "partial" }] }),
+            }),
+          ),
+      );
+      assert.equal((await partial.json() as { usage?: unknown }).usage, undefined);
+      assert.equal(getResponseTelemetry(partial)?.cachedInputTokens, 10);
+      assert.equal(getResponseTelemetry(partial)?.usageTelemetryStatus, "partial");
+
+      const invalid = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  output: [],
+                  usage: {
+                    input_tokens: 10,
+                    input_tokens_details: { cached_tokens: 11 },
+                    output_tokens: 0,
+                    total_tokens: 10,
+                  },
+                },
+              })
+            }\n\n`,
+          ]),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "invalid" }),
+            }),
+          ),
+      );
+      assert.equal(getResponseTelemetry(invalid)?.cachedInputTokens, 11);
+      assert.equal(getResponseTelemetry(invalid)?.usageTelemetryStatus, "invalid");
+
+      const overlappingCacheAccounting = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  output: [],
+                  usage: {
+                    input_tokens: 100,
+                    input_tokens_details: { cached_tokens: 80, cache_write_tokens: 80 },
+                    output_tokens: 0,
+                    total_tokens: 100,
+                  },
+                },
+              })
+            }\n\n`,
+          ]),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "overlapping cache accounting" }),
+            }),
+          ),
+      );
+      assert.equal(getResponseTelemetry(overlappingCacheAccounting)?.cachedInputTokens, 80);
+      assert.equal(getResponseTelemetry(overlappingCacheAccounting)?.cacheWriteInputTokens, 80);
+      assert.equal(getResponseTelemetry(overlappingCacheAccounting)?.usageTelemetryStatus, "reported");
+
+      const malformedUsage = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: { model: DEFAULT_TEST_MODEL, output: [], usage: null },
+              })
+            }\n\n`,
+          ]),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "malformed usage" }),
+            }),
+          ),
+      );
+      assert.equal(getResponseTelemetry(malformedUsage)?.usageObserved, true);
+      assert.equal(getResponseTelemetry(malformedUsage)?.usageTelemetryStatus, "invalid");
+    },
+  );
+});
+
+Deno.test("openai: preserves standard explicit cache breakpoints without aliases", async (t) => {
+  await t.step("Responses preserves each supported input content block", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              prompt_cache_options: { mode: "explicit" },
+              input: [{
+                type: "message",
+                role: "user",
+                content: [
+                  { type: "input_text", text: "stable", prompt_cache_breakpoint: { mode: "explicit" } },
+                  {
+                    type: "input_image",
+                    image_url: "https://example.test/stable.png",
+                    prompt_cache_breakpoint: { mode: "explicit" },
+                  },
+                  {
+                    type: "input_file",
+                    file_id: "file_stable",
+                    prompt_cache_breakpoint: { mode: "explicit" },
+                  },
+                ],
+              }],
+            }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as unknown as Record<string, unknown>;
+    const content = ((recorded.input as Array<Record<string, unknown>>)[0]?.content ?? []) as Array<
+      Record<string, unknown>
+    >;
+    assert.deepEqual(
+      content.map((item) => item.prompt_cache_breakpoint),
+      [{ mode: "explicit" }, { mode: "explicit" }, { mode: "explicit" }],
+    );
+  });
+
+  await t.step(
+    "Chat preserves text/image and moves breakpoint-bearing instructions into ordered developer input",
+    async () => {
+      let recordedBody: Record<string, unknown> | null = null;
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                prompt_cache_key: "stable-support-prefix",
+                prompt_cache_options: { mode: "explicit" },
+                messages: [
+                  {
+                    role: "system",
+                    content: [{ type: "text", text: "stable system", prompt_cache_breakpoint: { mode: "explicit" } }],
+                  },
+                  { role: "developer", content: [{ type: "text", text: "second stable instruction" }] },
+                  {
+                    role: "user",
+                    content: [
+                      { type: "text", text: "question", prompt_cache_breakpoint: { mode: "explicit" } },
+                      {
+                        type: "image_url",
+                        image_url: { url: "https://example.test/question.png" },
+                        prompt_cache_breakpoint: { mode: "explicit" },
+                      },
+                    ],
+                  },
+                ],
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 200);
+      assert.ok(recordedBody);
+      const recorded = recordedBody as unknown as Record<string, unknown>;
+      assert.equal("instructions" in recorded, false);
+      const input = recorded.input as Array<Record<string, unknown>>;
+      assert.deepEqual(input.map((item) => item.role), ["developer", "developer", "user"]);
+      const first = input[0]?.content as Array<Record<string, unknown>>;
+      const last = input[2]?.content as Array<Record<string, unknown>>;
+      assert.deepEqual(first[0]?.prompt_cache_breakpoint, { mode: "explicit" });
+      assert.deepEqual(last.map((item) => item.prompt_cache_breakpoint), [{ mode: "explicit" }, { mode: "explicit" }]);
+      assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 3);
+      assert.equal(getResponseTelemetry(response)?.promptCacheKeyPresent, true);
+      assert.equal(getResponseTelemetry(response)?.promptCacheMode, "explicit");
+    },
+  );
+
+  await t.step("Chat rejects a breakpoint on assistant output content", async () => {
+    const response = await handleChatCompletions(
+      new Request("https://ai.ubq.fi/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: DEFAULT_TEST_MODEL,
+          messages: [
+            {
+              role: "assistant",
+              content: [{ type: "text", text: "prior reply", prompt_cache_breakpoint: { mode: "explicit" } }],
+            },
+            { role: "user", content: "continue" },
+          ],
+        }),
+      }),
+    );
+    assert.equal(response.status, 400);
+    const body = await response.json() as { error?: { param?: string } };
+    assert.equal(body.error?.param, "messages[0].content[0].prompt_cache_breakpoint");
+  });
+});
+
 Deno.test("openai: Responses preserves an explicit empty instructions string", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(

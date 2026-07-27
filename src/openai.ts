@@ -40,6 +40,7 @@ import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type {
   ChatCompletionRequest,
   MessageContentItem,
+  PromptCacheBreakpoint,
   ResponseInputItem,
   ResponseMessageItem,
   ResponsesRequest,
@@ -80,6 +81,8 @@ type UsageContext = Readonly<{
 
 type UpstreamProvider = "chatgpt_codex" | "yunwu";
 export type InferenceFallbackReason = "primary_401" | "primary_403" | "primary_429";
+export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
+export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 
 export type ResponseTelemetry = Readonly<{
   provider: string;
@@ -87,7 +90,15 @@ export type ResponseTelemetry = Readonly<{
   model: string | null;
   reasoning: string | null;
   inputTokens: number | null;
+  cachedInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
   outputTokens: number | null;
+  totalTokens: number | null;
+  usageObserved: boolean;
+  usageTelemetryStatus: UsageTelemetryStatus;
+  promptCacheKeyPresent: boolean;
+  promptCacheMode: PromptCacheMode;
+  explicitBreakpointCount: number;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
@@ -113,7 +124,15 @@ type ResponseTelemetryState = {
   model: string | null;
   reasoning: string | null;
   inputTokens: number | null;
+  cachedInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
   outputTokens: number | null;
+  totalTokens: number | null;
+  usageObserved: boolean;
+  usageTelemetryStatus: UsageTelemetryStatus;
+  promptCacheKeyPresent: boolean;
+  promptCacheMode: PromptCacheMode;
+  explicitBreakpointCount: number;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
@@ -132,7 +151,15 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   model: null,
   reasoning: null,
   inputTokens: null,
+  cachedInputTokens: null,
+  cacheWriteInputTokens: null,
   outputTokens: null,
+  totalTokens: null,
+  usageObserved: false,
+  usageTelemetryStatus: "missing",
+  promptCacheKeyPresent: false,
+  promptCacheMode: "unspecified",
+  explicitBreakpointCount: 0,
   quotaUsedPercent: undefined,
   completed: false,
   streamTerminalType: null,
@@ -174,7 +201,15 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     model: state.model,
     reasoning: state.reasoning,
     inputTokens: state.inputTokens,
+    cachedInputTokens: state.cachedInputTokens,
+    cacheWriteInputTokens: state.cacheWriteInputTokens,
     outputTokens: state.outputTokens,
+    totalTokens: state.totalTokens,
+    usageObserved: state.usageObserved,
+    usageTelemetryStatus: state.usageTelemetryStatus,
+    promptCacheKeyPresent: state.promptCacheKeyPresent,
+    promptCacheMode: state.promptCacheMode,
+    explicitBreakpointCount: state.explicitBreakpointCount,
     quotaUsedPercent: state.quotaUsedPercent,
     completed: state.completed,
     streamTerminalType: state.streamTerminalType,
@@ -238,9 +273,12 @@ type RoutedResponsesUpstream = Readonly<{
 }>;
 
 type UsageTokens = Readonly<{
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  status: UsageTelemetryStatus;
 }>;
 
 const normalizeTokenCount = (value: unknown): number | null => {
@@ -250,23 +288,125 @@ const normalizeTokenCount = (value: unknown): number | null => {
   return count;
 };
 
-const extractUsageTokens = (value: unknown): UsageTokens | null => {
-  if (!isRecord(value)) return null;
-  const inputTokens = normalizeTokenCount(value.input_tokens);
-  const outputTokens = normalizeTokenCount(value.output_tokens);
-  const totalTokens = normalizeTokenCount(value.total_tokens);
-  if (inputTokens === null || outputTokens === null || totalTokens === null) return null;
-  return { inputTokens, outputTokens, totalTokens };
+type ParsedUsageToken = Readonly<{ value: number | null; invalid: boolean }>;
+
+const parseUsageToken = (value: unknown, present: boolean): ParsedUsageToken => {
+  if (!present) return { value: null, invalid: false };
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    return { value: null, invalid: true };
+  }
+  return { value, invalid: false };
 };
+
+const extractUsageTokens = (value: unknown): UsageTokens | null => {
+  if (value === undefined) return null;
+  if (!isRecord(value) || Array.isArray(value)) {
+    return {
+      inputTokens: null,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      status: "invalid",
+    };
+  }
+  const has = (key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
+  const inputTokens = parseUsageToken(value.input_tokens, has("input_tokens"));
+  const outputTokens = parseUsageToken(value.output_tokens, has("output_tokens"));
+  const totalTokens = parseUsageToken(value.total_tokens, has("total_tokens"));
+  const detailsPresent = has("input_tokens_details");
+  const details = detailsPresent && isRecord(value.input_tokens_details) && !Array.isArray(value.input_tokens_details)
+    ? value.input_tokens_details
+    : null;
+  const cachedInputTokens = parseUsageToken(
+    details?.cached_tokens,
+    details !== null && Object.prototype.hasOwnProperty.call(details, "cached_tokens"),
+  );
+  const cacheWriteInputTokens = parseUsageToken(
+    details?.cache_write_tokens,
+    details !== null && Object.prototype.hasOwnProperty.call(details, "cache_write_tokens"),
+  );
+
+  const coreMissing = inputTokens.value === null || outputTokens.value === null || totalTokens.value === null;
+  const inconsistentTotals = !coreMissing && inputTokens.value + outputTokens.value !== totalTokens.value;
+  const cachedTokensExceedInput = inputTokens.value !== null &&
+    cachedInputTokens.value !== null && cachedInputTokens.value > inputTokens.value;
+  const invalid = inputTokens.invalid || outputTokens.invalid || totalTokens.invalid ||
+    (detailsPresent && details === null) || cachedInputTokens.invalid || cacheWriteInputTokens.invalid ||
+    inconsistentTotals || cachedTokensExceedInput;
+
+  return {
+    inputTokens: inputTokens.value,
+    cachedInputTokens: cachedInputTokens.value,
+    cacheWriteInputTokens: cacheWriteInputTokens.value,
+    outputTokens: outputTokens.value,
+    totalTokens: totalTokens.value,
+    status: invalid ? "invalid" : coreMissing ? "partial" : "reported",
+  };
+};
+
+const toChatUsage = (usage: UsageTokens | null): Record<string, unknown> | null => {
+  if (
+    usage === null || usage.inputTokens === null || usage.outputTokens === null || usage.totalTokens === null
+  ) {
+    return null;
+  }
+  const promptTokenDetails: Record<string, number> = {};
+  // Chat Completions only documents cached_tokens here. Keep write accounting
+  // in gateway telemetry instead of extending the public OpenAI wire shape.
+  if (usage.cachedInputTokens !== null) promptTokenDetails.cached_tokens = usage.cachedInputTokens;
+  return {
+    prompt_tokens: usage.inputTokens,
+    completion_tokens: usage.outputTokens,
+    total_tokens: usage.totalTokens,
+    ...(Object.keys(promptTokenDetails).length ? { prompt_tokens_details: promptTokenDetails } : {}),
+  };
+};
+
+const promptCacheModeFor = (rawRecord: Record<string, unknown>): PromptCacheMode => {
+  const options = isRecord(rawRecord.prompt_cache_options) && !Array.isArray(rawRecord.prompt_cache_options)
+    ? rawRecord.prompt_cache_options
+    : null;
+  if (options?.mode === "explicit") return "explicit";
+  if (options?.mode === "implicit") return "implicit";
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "prompt_cache_retention")) return "legacy_retention";
+  return "unspecified";
+};
+
+const countExplicitPromptCacheBreakpoints = (input: readonly ResponseInputItem[]): number => {
+  let count = 0;
+  for (const item of input) {
+    if (!isRecord(item) || !Array.isArray(item.content)) continue;
+    for (const contentItem of item.content) {
+      if (!isRecord(contentItem) || !isRecord(contentItem.prompt_cache_breakpoint)) continue;
+      if (contentItem.prompt_cache_breakpoint.mode === "explicit") count += 1;
+    }
+  }
+  return count;
+};
+
+const promptCacheKeyPresent = (rawRecord: Record<string, unknown>): boolean =>
+  typeof rawRecord.prompt_cache_key === "string" && rawRecord.prompt_cache_key.trim().length > 0;
 
 const recordRequestUsage = (
   context: UsageContext | undefined,
-  details: { model: string; route: string; stream: boolean; reasoning: string | null },
+  details: {
+    model: string;
+    route: string;
+    stream: boolean;
+    reasoning: string | null;
+    promptCacheKeyPresent?: boolean;
+    promptCacheMode?: PromptCacheMode;
+    explicitBreakpointCount?: number;
+  },
 ): Promise<void> => {
   if (context?.responseTelemetry) {
     context.responseTelemetry.model = details.model;
     context.responseTelemetry.reasoning = details.reasoning;
     context.responseTelemetry.stream = details.stream;
+    context.responseTelemetry.promptCacheKeyPresent = details.promptCacheKeyPresent ?? false;
+    context.responseTelemetry.promptCacheMode = details.promptCacheMode ?? "unspecified";
+    context.responseTelemetry.explicitBreakpointCount = details.explicitBreakpointCount ?? 0;
   }
   return Promise.resolve();
 };
@@ -275,12 +415,25 @@ const recordCompletionUsage = (
   context: UsageContext | undefined,
   usage: UsageTokens | null,
 ): Promise<void> => {
-  if (context?.responseTelemetry) {
-    context.responseTelemetry.inputTokens = usage?.inputTokens ?? null;
-    context.responseTelemetry.outputTokens = usage?.outputTokens ?? null;
-    context.responseTelemetry.completed = true;
-  }
+  recordTerminalUsage(context, usage, true);
   return Promise.resolve();
+};
+
+const recordTerminalUsage = (
+  context: UsageContext | undefined,
+  usage: UsageTokens | null,
+  completed: boolean,
+): void => {
+  const telemetry = context?.responseTelemetry;
+  if (!telemetry) return;
+  telemetry.inputTokens = usage?.inputTokens ?? null;
+  telemetry.cachedInputTokens = usage?.cachedInputTokens ?? null;
+  telemetry.cacheWriteInputTokens = usage?.cacheWriteInputTokens ?? null;
+  telemetry.outputTokens = usage?.outputTokens ?? null;
+  telemetry.totalTokens = usage?.totalTokens ?? null;
+  telemetry.usageObserved = usage !== null;
+  telemetry.usageTelemetryStatus = usage?.status ?? "missing";
+  telemetry.completed = completed;
 };
 
 const recordErrorUsage = (_context: UsageContext | undefined): Promise<void> => Promise.resolve();
@@ -1065,6 +1218,19 @@ const parseStreamField = (
   if (value === undefined || value === false) return { ok: true, value: false };
   if (value === true) return { ok: true, value: true };
   return { ok: false, message: "stream must be a boolean" };
+};
+
+const parseChatStreamOptions = (
+  value: unknown,
+): { ok: true; includeUsage: boolean } | { ok: false; message: string } => {
+  if (value === undefined) return { ok: true, includeUsage: false };
+  if (!isRecord(value) || Array.isArray(value)) {
+    return { ok: false, message: "stream_options must be an object" };
+  }
+  if (value.include_usage !== undefined && typeof value.include_usage !== "boolean") {
+    return { ok: false, message: "stream_options.include_usage must be a boolean" };
+  }
+  return { ok: true, includeUsage: value.include_usage === true };
 };
 
 const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
@@ -2592,6 +2758,28 @@ const findUnknownContentField = (value: Record<string, unknown>, allowed: readon
   return Object.keys(value).find((key) => !allowedFields.has(key)) ?? null;
 };
 
+const normalizePromptCacheBreakpoint = (
+  value: unknown,
+  param: string,
+): NormalizationResult<PromptCacheBreakpoint | undefined> => {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (!isRecord(value) || Array.isArray(value)) {
+    return invalidNormalizedField(param, `${param} must be an object`);
+  }
+  const unknown = findUnknownContentField(value, ["mode"]);
+  if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown cache breakpoint field: ${unknown}`);
+  if (value.mode !== "explicit") {
+    return invalidNormalizedField(`${param}.mode`, `${param}.mode must be explicit`);
+  }
+  return { ok: true, value: { mode: "explicit" } };
+};
+
+const withPromptCacheBreakpoint = <T extends object>(
+  item: T,
+  breakpoint: PromptCacheBreakpoint | undefined,
+): T & { prompt_cache_breakpoint?: PromptCacheBreakpoint } =>
+  breakpoint === undefined ? item : { ...item, prompt_cache_breakpoint: breakpoint };
+
 const normalizeChatContentItems = (
   role: ResponseMessageItem["role"],
   content: unknown,
@@ -2614,7 +2802,22 @@ const normalizeChatContentItems = (
       if (typeof part.text !== "string") {
         return invalidNormalizedField(`${partParam}.text`, `${partParam}.text must be a string`);
       }
-      items.push({ type: textItemType, text: part.text });
+      if (isAssistant && part.prompt_cache_breakpoint !== undefined) {
+        return invalidNormalizedField(
+          `${partParam}.prompt_cache_breakpoint`,
+          "prompt_cache_breakpoint is not supported for assistant output content in this gateway",
+        );
+      }
+      const breakpoint = normalizePromptCacheBreakpoint(
+        part.prompt_cache_breakpoint,
+        `${partParam}.prompt_cache_breakpoint`,
+      );
+      if (!breakpoint.ok) return breakpoint;
+      if (textItemType === "input_text") {
+        items.push(withPromptCacheBreakpoint({ type: "input_text", text: part.text }, breakpoint.value));
+      } else {
+        items.push({ type: "output_text", text: part.text });
+      }
       continue;
     }
     if (partType === "refusal") {
@@ -2626,6 +2829,12 @@ const normalizeChatContentItems = (
       }
       if (typeof part.refusal !== "string") {
         return invalidNormalizedField(`${partParam}.refusal`, `${partParam}.refusal must be a string`);
+      }
+      if (part.prompt_cache_breakpoint !== undefined) {
+        return invalidNormalizedField(
+          `${partParam}.prompt_cache_breakpoint`,
+          "prompt_cache_breakpoint is not supported for refusal content in this gateway",
+        );
       }
       items.push({ type: "output_text", text: part.refusal });
       continue;
@@ -2649,11 +2858,15 @@ const normalizeChatContentItems = (
       }
       const detail = parseImageDetail(rawDetail, `${partParam}.detail`);
       if (!detail.ok) return detail;
-      items.push(
-        detail.value === undefined
-          ? { type: "input_image", image_url: imageUrl.trim() }
-          : { type: "input_image", image_url: imageUrl.trim(), detail: detail.value },
+      const breakpoint = normalizePromptCacheBreakpoint(
+        part.prompt_cache_breakpoint,
+        `${partParam}.prompt_cache_breakpoint`,
       );
+      if (!breakpoint.ok) return breakpoint;
+      const item: Extract<MessageContentItem, { type: "input_image" }> = detail.value === undefined
+        ? { type: "input_image", image_url: imageUrl.trim() }
+        : { type: "input_image", image_url: imageUrl.trim(), detail: detail.value };
+      items.push(withPromptCacheBreakpoint(item, breakpoint.value));
       continue;
     }
     return invalidNormalizedField(`${partParam}.type`, `${partParam}.type is not supported`);
@@ -2761,7 +2974,7 @@ const normalizeResponseContentItem = (
     }
     const unknown = findUnknownContentField(
       value,
-      partType === "output_text" ? ["type", "text", "annotations"] : ["type", "text"],
+      partType === "output_text" ? ["type", "text", "annotations"] : ["type", "text", "prompt_cache_breakpoint"],
     );
     if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
     if (typeof value.text !== "string") {
@@ -2770,11 +2983,26 @@ const normalizeResponseContentItem = (
     if (partType === "output_text" && value.annotations !== undefined && !Array.isArray(value.annotations)) {
       return invalidNormalizedField(`${param}.annotations`, `${param}.annotations must be an array`);
     }
-    return { ok: true, value: { type: partType, text: value.text } };
+    if (partType === "output_text") return { ok: true, value: { type: partType, text: value.text } };
+    const breakpoint = normalizePromptCacheBreakpoint(
+      value.prompt_cache_breakpoint,
+      `${param}.prompt_cache_breakpoint`,
+    );
+    if (!breakpoint.ok) return breakpoint;
+    return {
+      ok: true,
+      value: withPromptCacheBreakpoint({ type: "input_text", text: value.text }, breakpoint.value),
+    };
   }
 
   if (partType === "input_image") {
-    const unknown = findUnknownContentField(value, ["type", "image_url", "file_id", "detail"]);
+    const unknown = findUnknownContentField(value, [
+      "type",
+      "image_url",
+      "file_id",
+      "detail",
+      "prompt_cache_breakpoint",
+    ]);
     if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
     const imageUrl = getString(value.image_url)?.trim() ?? "";
     const fileId = getString(value.file_id)?.trim() ?? "";
@@ -2789,18 +3017,30 @@ const normalizeResponseContentItem = (
     }
     const detail = parseImageDetail(value.detail, `${param}.detail`);
     if (!detail.ok) return detail;
-    const item = detail.value === undefined
+    const breakpoint = normalizePromptCacheBreakpoint(
+      value.prompt_cache_breakpoint,
+      `${param}.prompt_cache_breakpoint`,
+    );
+    if (!breakpoint.ok) return breakpoint;
+    const item: Extract<MessageContentItem, { type: "input_image" }> = detail.value === undefined
       ? imageUrl
         ? { type: "input_image" as const, image_url: imageUrl }
         : { type: "input_image" as const, file_id: fileId }
       : imageUrl
       ? { type: "input_image" as const, image_url: imageUrl, detail: detail.value }
       : { type: "input_image" as const, file_id: fileId, detail: detail.value };
-    return { ok: true, value: item };
+    return { ok: true, value: withPromptCacheBreakpoint(item, breakpoint.value) };
   }
 
   if (partType === "input_file") {
-    const unknown = findUnknownContentField(value, ["type", "file_id", "file_data", "file_url", "filename"]);
+    const unknown = findUnknownContentField(value, [
+      "type",
+      "file_id",
+      "file_data",
+      "file_url",
+      "filename",
+      "prompt_cache_breakpoint",
+    ]);
     if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
     const fields = ["file_id", "file_data", "file_url"] as const;
     const present = fields.filter((field) => typeof value[field] === "string" && value[field].trim());
@@ -2815,6 +3055,11 @@ const normalizeResponseContentItem = (
     if (value.filename !== undefined && value.filename !== null && typeof value.filename !== "string") {
       return invalidNormalizedField(`${param}.filename`, `${param}.filename must be a string or null`);
     }
+    const breakpoint = normalizePromptCacheBreakpoint(
+      value.prompt_cache_breakpoint,
+      `${param}.prompt_cache_breakpoint`,
+    );
+    if (!breakpoint.ok) return breakpoint;
     const item: {
       type: "input_file";
       file_id?: string;
@@ -2827,7 +3072,7 @@ const normalizeResponseContentItem = (
       if (fieldValue) item[field] = fieldValue;
     }
     if (Object.prototype.hasOwnProperty.call(value, "filename")) item.filename = value.filename as string | null;
-    return { ok: true, value: item };
+    return { ok: true, value: withPromptCacheBreakpoint(item, breakpoint.value) };
   }
 
   return invalidNormalizedField(`${param}.type`, `${param}.type is not supported`);
@@ -2943,7 +3188,9 @@ const normalizeChatToolOutput = (
 const normalizeChatMessage = (
   value: unknown,
   index: number,
-): NormalizationResult<Readonly<{ instruction: string | null; input: ResponseInputItem[] }>> => {
+): NormalizationResult<
+  Readonly<{ instruction: string | null; instructionContent: MessageContentItem[] | null; input: ResponseInputItem[] }>
+> => {
   const param = `messages[${index}]`;
   if (!isRecord(value) || Array.isArray(value)) return invalidNormalizedField(param, `${param} must be an object`);
   const roleRaw = getString(value.role);
@@ -2963,7 +3210,11 @@ const normalizeChatMessage = (
     if (!output.ok) return output;
     return {
       ok: true,
-      value: { instruction: null, input: [{ type: "function_call_output", call_id: callId, output: output.value }] },
+      value: {
+        instruction: null,
+        instructionContent: null,
+        input: [{ type: "function_call_output", call_id: callId, output: output.value }],
+      },
     };
   }
 
@@ -2996,7 +3247,7 @@ const normalizeChatMessage = (
     if (!input.length) {
       return invalidNormalizedField(`${param}.content`, "assistant messages require content or tool_calls");
     }
-    return { ok: true, value: { instruction: null, input } };
+    return { ok: true, value: { instruction: null, instructionContent: null, input } };
   }
 
   const content = normalizeChatContentItems(role, value.content, `${param}.content`);
@@ -3006,26 +3257,30 @@ const normalizeChatMessage = (
     if (Object.prototype.hasOwnProperty.call(value, "tool_calls")) {
       return invalidNormalizedField(`${param}.tool_calls`, "tool_calls are only valid for assistant messages");
     }
-    return { ok: true, value: { instruction: messageContentToText(content.value), input: [] } };
+    return {
+      ok: true,
+      value: { instruction: messageContentToText(content.value), instructionContent: content.value, input: [] },
+    };
   }
 
   if (Object.prototype.hasOwnProperty.call(value, "tool_calls")) {
     return invalidNormalizedField(`${param}.tool_calls`, "tool_calls are only valid for assistant messages");
   }
-  return { ok: true, value: { instruction: null, input: [{ type: "message", role, content: content.value }] } };
+  return {
+    ok: true,
+    value: { instruction: null, instructionContent: null, input: [{ type: "message", role, content: content.value }] },
+  };
 };
 
 const recordResponsesTerminal = (
   event: ResponsesStreamEvent,
   usageContext?: UsageContext,
 ): void => {
-  if (event.terminal) recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
-  if (event.type !== "response.completed") {
-    void recordErrorUsage(usageContext);
-    return;
-  }
+  if (!event.terminal) return;
+  recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
   const usage = isRecord(event.value.response) ? extractUsageTokens(event.value.response.usage) : null;
-  void recordCompletionUsage(usageContext, usage);
+  if (event.type === "response.completed") void recordCompletionUsage(usageContext, usage);
+  else recordTerminalUsage(usageContext, usage, false);
 };
 
 const responseHasOutputText = (output: unknown): boolean => {
@@ -3310,6 +3565,7 @@ const chatToolCallDelta = (
 const streamChatCompletions = (
   source: PreflightedResponsesStream,
   model: string,
+  includeUsage: boolean,
   usageContext: UsageContext | undefined,
   provider: UpstreamProvider,
   lifecycle: YunwuTransportLifecycle,
@@ -3519,6 +3775,16 @@ const streamChatCompletions = (
               ],
             };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            const usage = toChatUsage(usageTokens);
+            if (includeUsage && usage !== null) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${
+                    JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [], usage })
+                  }\n\n`,
+                ),
+              );
+            }
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             closed = true;
             controller.close();
@@ -3529,7 +3795,8 @@ const streamChatCompletions = (
             onResponseTerminal?.();
             lifecycle.terminal(type);
             recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
-            void recordErrorUsage(usageContext);
+            const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
+            recordTerminalUsage(usageContext, usageTokens, false);
             const errorValue = {
               error: {
                 message: `Upstream terminated with ${type}.`,
@@ -3617,6 +3884,10 @@ const completeChatCompletions = async (
         onResponseTerminal?.();
         lifecycle.terminal(type);
         recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
+        if (type !== "response.completed") {
+          const terminalUsage = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
+          recordTerminalUsage(usageContext, terminalUsage, false);
+        }
       }
       if (type === "response.created" && isRecord(ev.response)) {
         const upstreamId = getString(ev.response.id);
@@ -3660,13 +3931,7 @@ const completeChatCompletions = async (
         functionCalls.reconcileOutput(ev, ev.response.output);
         functionCalls.assertFinalized();
         const usageTokens = extractUsageTokens(ev.response.usage);
-        if (usageTokens) {
-          usage = {
-            prompt_tokens: usageTokens.inputTokens,
-            completion_tokens: usageTokens.outputTokens,
-            total_tokens: usageTokens.totalTokens,
-          };
-        }
+        usage = toChatUsage(usageTokens);
         await recordCompletionUsage(usageContext, usageTokens);
         completed = true;
         break;
@@ -4107,7 +4372,14 @@ const handleEmbeddingsRequest = async (
   }
 
   const usageTokens: UsageTokens | null = sawVoyageTokenUsage
-    ? { inputTokens: voyageTotalTokens, outputTokens: 0, totalTokens: voyageTotalTokens }
+    ? {
+      inputTokens: voyageTotalTokens,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null,
+      outputTokens: 0,
+      totalTokens: voyageTotalTokens,
+      status: "reported",
+    }
     : null;
   const response = json(200, {
     object: "list",
@@ -4380,7 +4652,14 @@ const runEmbeddingsJobAttempt = async (params: {
       succeeded.encoding_format,
     );
     const usageTokens: UsageTokens | null = succeeded.usage_total_tokens > 0
-      ? { inputTokens: succeeded.usage_total_tokens, outputTokens: 0, totalTokens: succeeded.usage_total_tokens }
+      ? {
+        inputTokens: succeeded.usage_total_tokens,
+        cachedInputTokens: null,
+        cacheWriteInputTokens: null,
+        outputTokens: 0,
+        totalTokens: succeeded.usage_total_tokens,
+        status: "reported",
+      }
       : null;
     await recordCompletionUsage(params.usageContext, usageTokens);
     return json(200, buildEmbeddingsJobBody(succeeded, result), { "x-uos-upstream": succeeded.upstream });
@@ -4777,6 +5056,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       "prompt_cache_key",
       "prompt_cache_options",
       "prompt_cache_retention",
+      "stream_options",
     ]),
   );
 
@@ -4810,16 +5090,39 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   if (!parsedStream.ok) {
     return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
   }
+  const streamOptions = parseChatStreamOptions(rawRecord.stream_options);
+  if (!streamOptions.ok) {
+    return openaiError(400, streamOptions.message, "invalid_request_error", { param: "stream_options" });
+  }
 
-  const input: ResponseInputItem[] = [];
-  const instructionParts: string[] = [];
+  const normalizedMessages: Array<
+    Readonly<{
+      instruction: string | null;
+      instructionContent: MessageContentItem[] | null;
+      input: ResponseInputItem[];
+    }>
+  > = [];
   for (const [index, msg] of messagesRaw.entries()) {
     const converted = normalizeChatMessage(msg, index);
     if (!converted.ok) {
       return openaiError(400, converted.message, "invalid_request_error", { param: converted.param });
     }
-    if (converted.value.instruction?.trim()) instructionParts.push(converted.value.instruction.trim());
-    input.push(...converted.value.input);
+    normalizedMessages.push(converted.value);
+  }
+  const preserveDeveloperMessages = normalizedMessages.some((message) =>
+    message.instructionContent?.some((item) =>
+      item.type !== "output_text" && item.prompt_cache_breakpoint?.mode === "explicit"
+    ) === true
+  );
+  const input: ResponseInputItem[] = [];
+  const instructionParts: string[] = [];
+  for (const message of normalizedMessages) {
+    if (preserveDeveloperMessages && message.instructionContent !== null) {
+      input.push({ type: "message", role: "developer", content: message.instructionContent });
+    } else if (message.instruction?.trim()) {
+      instructionParts.push(message.instruction.trim());
+    }
+    input.push(...message.input);
   }
 
   if (input.length === 0) {
@@ -4831,7 +5134,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     });
   }
 
-  const instructions = instructionParts.join("\n\n").trim();
+  const instructions = preserveDeveloperMessages ? undefined : instructionParts.join("\n\n").trim();
   const defaultEffort = await getDefaultReasoningEffort();
   const modelReasoning = modelMetadata.reasoning;
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
@@ -4864,6 +5167,9 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     route: "chat.completions",
     stream,
     reasoning: reasoningLabel,
+    promptCacheKeyPresent: promptCacheKeyPresent(rawRecord),
+    promptCacheMode: promptCacheModeFor(rawRecord),
+    explicitBreakpointCount: countExplicitPromptCacheBreakpoints(input),
   });
   // One timer covers both provider dispatch/headers and the first SSE event.
   // It is cleared immediately after preflight so active streams get their own
@@ -4944,6 +5250,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     ? streamChatCompletions(
       preflight,
       model,
+      streamOptions.includeUsage,
       usageContext,
       routed.provider,
       lifecycle,
@@ -5174,6 +5481,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     route: "responses",
     stream: clientWantsStream,
     reasoning: reasoningLabel,
+    promptCacheKeyPresent: promptCacheKeyPresent(rawRecord),
+    promptCacheMode: promptCacheModeFor(rawRecord),
+    explicitBreakpointCount: countExplicitPromptCacheBreakpoints(input),
   });
   const streamFirstEventDeadline = clientWantsStream ? createStreamFirstEventDeadline(req.signal) : null;
   const requestInferenceSignal = streamFirstEventDeadline?.signal ?? inferenceSignal(req);
@@ -5346,7 +5656,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   finalResponse = withAccumulatedResponseText(finalResponse, outputText);
   const usageTokens = extractUsageTokens(finalResponse.usage);
   if (finalEventType === "response.failed" || finalEventType === "response.incomplete") {
-    await recordErrorUsage(usageContext);
+    recordTerminalUsage(usageContext, usageTokens, false);
   } else await recordCompletionUsage(usageContext, usageTokens);
   const response = json(200, finalResponse, { "x-uos-upstream": routed.provider });
   return withUosWarning(response, warnings);
