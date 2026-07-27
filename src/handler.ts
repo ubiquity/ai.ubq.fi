@@ -133,7 +133,6 @@ const logTerminalRequest = (
     telemetryResponse?: Response;
     startedAtMonotonicMs: number;
     downstreamDrainedAtMonotonicMs?: number;
-    keyId: string | null;
     requestId: string;
   }>,
 ): void => {
@@ -173,7 +172,6 @@ const logTerminalRequest = (
       explicit_breakpoint_count: telemetry?.explicitBreakpointCount ?? 0,
       account_slot: telemetry?.accountSlot ?? null,
       affinity_outcome: telemetry?.affinityOutcome ?? "none",
-      key_id: input.keyId,
       fallback_reason: telemetry?.fallbackReason ?? null,
       stream: telemetry?.stream ?? null,
       stream_terminal_type: telemetry?.streamTerminalType ?? null,
@@ -185,7 +183,7 @@ const logTerminalRequest = (
 };
 
 const warnQuotaAccountingFailure = (
-  input: Readonly<{ route: string; keyId: string | null; requestId: string }>,
+  input: Readonly<{ route: string; requestId: string }>,
   error: unknown,
 ): void => {
   const errors = error instanceof AggregateError ? error.errors : [error];
@@ -195,7 +193,6 @@ const warnQuotaAccountingFailure = (
       JSON.stringify({
         request_id: input.requestId,
         route: input.route,
-        key_id: input.keyId,
         errors: errors.map((item) => item instanceof Error ? item.message : String(item)),
       }),
     );
@@ -211,7 +208,6 @@ const withTerminalRequestLog = (
     route: string;
     telemetryResponse?: Response;
     startedAtMonotonicMs: number;
-    keyId: string | null;
     requestId: string;
     onCompleted?: () => Promise<void>;
   }>,
@@ -562,7 +558,6 @@ export default async function handler(req: Request): Promise<Response> {
       ? await withTerminalRequestLog(response, {
         route: terminalRoute,
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
-        keyId: null,
         requestId,
       })
       : response;
@@ -578,7 +573,6 @@ export default async function handler(req: Request): Promise<Response> {
       return await withTerminalRequestLog(response, {
         route: terminalRoute,
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
-        keyId: usageKeyId,
         requestId,
       });
     }
@@ -615,7 +609,6 @@ export default async function handler(req: Request): Promise<Response> {
       JSON.stringify({
         request_id: requestId,
         route: terminalRoute,
-        key_id: usageKeyId,
         git_sha: runtimeGitSha(),
         deno_revision: runtimeDeploymentId(),
       }),
@@ -649,7 +642,6 @@ export default async function handler(req: Request): Promise<Response> {
       route,
       telemetryResponse: response,
       startedAtMonotonicMs: requestStartedAtMonotonicMs,
-      keyId: usageKeyId,
       requestId,
       onCompleted,
     });
@@ -659,7 +651,7 @@ export default async function handler(req: Request): Promise<Response> {
       await incrementKernelLimitUsage();
     } catch (error) {
       warnQuotaAccountingFailure(
-        { route: terminalRoute ?? "inference", keyId: usageKeyId, requestId },
+        { route: terminalRoute ?? "inference", requestId },
         error,
       );
     }
@@ -679,7 +671,7 @@ export default async function handler(req: Request): Promise<Response> {
     } catch (error) {
       if (runError) {
         warnQuotaAccountingFailure(
-          { route: terminalRoute ?? "inference", keyId: usageKeyId, requestId },
+          { route: terminalRoute ?? "inference", requestId },
           runError,
         );
       }

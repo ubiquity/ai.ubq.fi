@@ -1578,7 +1578,6 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
     paidFallbackDeletion = await deletePaidFallbackStateV3(id, kv);
   } catch (error) {
     console.error("[ai.ubq.fi] Failed to clean V3 paid fallback state before API key deletion:", {
-      key_id: id,
       error,
     });
     return openaiError(500, "Failed to prepare paid fallback state for API key deletion", "server_error");
