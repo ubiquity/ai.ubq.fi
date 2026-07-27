@@ -363,12 +363,14 @@ const completedSseEvent = (inputTokens = 1, outputTokens = 1): string =>
     })
   }\n\n`;
 
-const sse = (): Response =>
+const sse = (
+  usage: Record<string, unknown> = { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+): Response =>
   new Response(
     `data: ${
       JSON.stringify({
         type: "response.completed",
-        response: { model: MODEL, output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+        response: { model: MODEL, output: [], usage },
       })
     }\n\n`,
     { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -944,7 +946,13 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   const originalBuildId = Deno.env.get("DENO_DEPLOY_BUILD_ID");
   const originalDeploymentId = Deno.env.get("DENO_DEPLOYMENT_ID");
   const logs: unknown[][] = [];
-  globalThis.fetch = () => Promise.resolve(sse());
+  globalThis.fetch = () =>
+    Promise.resolve(sse({
+      input_tokens: 1,
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 1 },
+      output_tokens: 1,
+      total_tokens: 2,
+    }));
   console.info = (...args: unknown[]) => logs.push(args);
   Deno.env.delete("GIT_REVISION");
   Deno.env.delete("GITHUB_SHA");
@@ -979,12 +987,12 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       model: MODEL,
       reasoning: "medium",
       input_tokens: 1,
-      cached_input_tokens: null,
-      cache_write_input_tokens: null,
+      cached_input_tokens: 0,
+      cache_write_input_tokens: 1,
       output_tokens: 1,
       total_tokens: 2,
       usage_observed: true,
-      usage_telemetry_status: "partial",
+      usage_telemetry_status: "reported",
       prompt_cache_key_present: true,
       prompt_cache_mode: "unspecified",
       explicit_breakpoint_count: 0,
@@ -1004,6 +1012,28 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
     const accepted = logs.find((entry) => entry[0] === "[ai.ubq.fi] request_accepted");
     assert.ok(accepted);
     assert.equal(JSON.parse(String(accepted[1])).request_id, requestId);
+
+    globalThis.fetch = () =>
+      Promise.resolve(sse({
+        input_tokens: 1,
+        input_tokens_details: { cached_tokens: 2, cache_write_tokens: 0 },
+        output_tokens: 0,
+        total_tokens: 1,
+      }));
+    const invalid = await handler(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ input: "invalid cache telemetry" }),
+      }),
+    );
+    assert.equal(invalid.status, 200);
+    const terminalEvents = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(terminalEvents.length, 2);
+    const invalidTerminal = JSON.parse(String(terminalEvents[1]?.[1])) as Record<string, unknown>;
+    assert.equal(invalidTerminal.cached_input_tokens, 2);
+    assert.equal(invalidTerminal.cache_write_input_tokens, 0);
+    assert.equal(invalidTerminal.usage_telemetry_status, "invalid");
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
