@@ -145,8 +145,8 @@ refresh failure serves the last valid version-specific copy; the route returns `
 
 Use `/v1/models` as the source of truth instead of assuming OpenAI public API aliases are supported. The gateway is
 backed by Codex with a ChatGPT account, so some OpenAI API model aliases may not be available through this gateway.
-Hidden Codex catalog entries such as internal review models are filtered when the normalized snapshot is refreshed and
-are not exposed by the unversioned OpenAI model list.
+Hidden Codex catalog entries are filtered when the normalized snapshot is refreshed unless upstream marks them
+`supported_in_api: true`; API-supported review models are therefore exposed by the unversioned OpenAI model list.
 
 Use `GET /uos/models/capabilities` for gateway-specific model metadata such as `supported_reasoning_levels`,
 `default_reasoning_effort`, `context_window_tokens`, `max_context_window_tokens`, `auto_compact_token_limit_tokens`,
