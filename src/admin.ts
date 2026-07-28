@@ -15,7 +15,7 @@ import {
   validateCodexAuthJson,
 } from "./codex.ts";
 import { recheckCodexRoutingSlot } from "./codex_account_routing.ts";
-import { normalizeCodexModelsPayload } from "./codex_models.ts";
+import { mergeCodexModelPromptCacheCapabilities, normalizeCodexModelsPayload } from "./codex_models.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY, storeCodexCatalog } from "./codex_catalog.ts";
 import {
   DEFAULT_KERNEL_POLICY_LIMIT_KEY,
@@ -100,6 +100,13 @@ import {
 } from "./kv_migration.ts";
 import { getKv } from "./kv.ts";
 import {
+  assertPromptCacheScopeExperimentTelemetryBaseline,
+  PromptCacheScopeExperimentBusyError,
+  PromptCacheScopeExperimentFailedError,
+  PromptCacheScopeExperimentUnavailableError,
+  runPromptCacheScopeExperiment,
+} from "./prompt_cache_scope_experiment.ts";
+import {
   buildRuntimeConfig,
   cacheRuntimeConfig,
   loadRuntimeConfig,
@@ -141,6 +148,40 @@ export const handleAdminCodexRecheck = async (slot: number): Promise<Response> =
   const accepted = await recheckCodexRoutingSlot(slot);
   if (!accepted) return openaiError(404, "Codex account slot is not configured", "not_found");
   return new Response(null, { status: 204 });
+};
+
+/**
+ * The three-cycle scope probe owns every input. In particular, callers cannot
+ * select a model, account, prompt-cache key, or conversation partition.
+ */
+export const handleAdminCodexCacheScopeExperiment = async (req: Request): Promise<Response> => {
+  if ((await req.text()).trim()) {
+    return openaiError(400, "Prompt-cache scope experiment does not accept request fields", "invalid_request_error");
+  }
+  try {
+    const telemetryBaseline = await assertPromptCacheScopeExperimentTelemetryBaseline();
+    const result = await runPromptCacheScopeExperiment(telemetryBaseline);
+    return json(result.status === "in_progress" ? 202 : 200, result);
+  } catch (error) {
+    if (error instanceof PromptCacheScopeExperimentBusyError) {
+      return openaiError(409, error.message, "prompt_cache_scope_experiment_busy");
+    }
+    if (error instanceof PromptCacheScopeExperimentUnavailableError) {
+      return openaiError(503, error.message, "prompt_cache_scope_experiment_unavailable", { type: "server_error" });
+    }
+    if (error instanceof PromptCacheScopeExperimentFailedError) {
+      return openaiError(503, error.message, "prompt_cache_scope_experiment_failed", { type: "server_error" });
+    }
+    // The experiment reads provider streams and OAuth responses; an unknown
+    // thrown value might contain upstream/request material, so never log it.
+    console.error("[ai.ubq.fi] Prompt-cache scope experiment could not run.");
+    return openaiError(
+      503,
+      "Prompt-cache scope experiment could not run.",
+      "prompt_cache_scope_experiment_failed",
+      { type: "server_error" },
+    );
+  }
 };
 
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
@@ -213,26 +254,16 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
     }
 
     authGeneration = crypto.randomUUID();
-    const currentRuntime = await loadRuntimeConfig(kv);
-    try {
-      runtimeConfig = buildRuntimeConfig(snapshot, {
-        defaultModel: preserveCodexDefaultModel(snapshot, currentRuntime?.default_model),
-        defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
-      });
-    } catch (error) {
-      const response = runtimeConfigErrorResponse(error);
-      if (response) return response;
-      throw error;
-    }
   }
 
   let stored = false;
   let storedPool: CodexAuthPoolState | null = null;
   let storedSnapshot: CodexModelsSnapshot | null = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const [existingPoolEntry, existingSnapshot] = await Promise.all([
+    const [existingPoolEntry, existingSnapshot, existingRuntimeEntry] = await Promise.all([
       kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY),
       kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY),
+      kv.get(RUNTIME_CONFIG_V2_KEY),
     ]);
     const existingPool = parseCodexAuthPool(existingPoolEntry.value);
     const nextPool = upsertCodexAuthAccount(existingPool, validatedAuth);
@@ -243,7 +274,9 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
         "codex_auth_pool_full",
       );
     }
-    const nextSnapshot = snapshot ?? existingSnapshot.value;
+    const nextSnapshot = snapshot
+      ? mergeCodexModelPromptCacheCapabilities(snapshot, existingSnapshot.value)
+      : existingSnapshot.value;
     if (!nextSnapshot) {
       return openaiError(
         409,
@@ -251,20 +284,36 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
         "codex_catalog_required",
       );
     }
+    let nextRuntime: ReturnType<typeof buildRuntimeConfig> | null = null;
+    if (snapshot && authGeneration) {
+      const currentRuntime = normalizeRuntimeConfig(existingRuntimeEntry.value);
+      try {
+        nextRuntime = buildRuntimeConfig(nextSnapshot, {
+          defaultModel: preserveCodexDefaultModel(nextSnapshot, currentRuntime?.default_model),
+          defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
+        });
+      } catch (error) {
+        const response = runtimeConfigErrorResponse(error);
+        if (response) return response;
+        throw error;
+      }
+    }
     let atomic = kv.atomic()
       .check(existingPoolEntry)
       .check(existingSnapshot)
       .set(CODEX_AUTH_POOL_KV_KEY, nextPool);
-    if (snapshot && runtimeConfig && authGeneration) {
+    if (snapshot && nextRuntime && authGeneration) {
       atomic = atomic
+        .check(existingRuntimeEntry)
         .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration)
-        .set(CODEX_MODELS_KV_KEY, snapshot)
-        .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig);
+        .set(CODEX_MODELS_KV_KEY, nextSnapshot)
+        .set(RUNTIME_CONFIG_V2_KEY, nextRuntime);
     }
     if ((await atomic.commit()).ok) {
       stored = true;
       storedPool = nextPool;
       storedSnapshot = nextSnapshot;
+      runtimeConfig = nextRuntime;
       break;
     }
   }

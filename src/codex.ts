@@ -10,11 +10,21 @@ import {
   type RoutingAccount,
   selectCodexRoutingAccounts,
 } from "./codex_account_routing.ts";
-import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
+import {
+  type CodexModelsSnapshot,
+  mergeCodexModelPromptCacheCapabilities,
+  parseCodexClientVersion,
+} from "./codex_models.ts";
 import { getKv } from "./kv.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { recordCodexProviderHealth } from "./provider_health.ts";
-import { buildRuntimeConfig, cacheRuntimeConfig, loadRuntimeConfig, RUNTIME_CONFIG_V2_KEY } from "./runtime_config.ts";
+import {
+  buildRuntimeConfig,
+  cacheRuntimeConfig,
+  loadRuntimeConfig,
+  normalizeRuntimeConfig,
+  RUNTIME_CONFIG_V2_KEY,
+} from "./runtime_config.ts";
 import { decodeBase64ToString, getString, isRecord, sha256Hex } from "./utils.ts";
 import type { CodexAuthPoolState, CodexAuthState, ResponseInputItem } from "./types.ts";
 
@@ -410,6 +420,266 @@ const getAuthPoolEntry = async (forceKv = false): Promise<CodexAuthPoolEntry> =>
     authPoolEntryInFlight = null;
   });
   return await authPoolEntryInFlight;
+};
+
+/**
+ * Private control-plane state for the fixed prompt-cache experiment. Account
+ * identities stay inside this transport module and are never persisted by the
+ * experiment coordinator or returned from its admin endpoint.
+ */
+export type CodexCacheScopeExperimentSession = Readonly<{
+  expectedAccountIds: readonly [string, string];
+  authPoolVersionstamp: string;
+}>;
+
+export class CodexCacheScopeExperimentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CodexCacheScopeExperimentError";
+  }
+}
+
+type CodexCacheScopeExperimentRefreshResult =
+  | Readonly<{
+    status: "refreshed";
+    tokenChanged: boolean;
+    session: CodexCacheScopeExperimentSession;
+  }>
+  | Readonly<{ status: "auth_pool_drift" }>;
+
+const getStrongAuthPoolEntryForCacheScopeExperiment = async (): Promise<
+  CodexAuthPoolEntry & { kv: Deno.Kv; entry: Deno.KvEntry<CodexAuthPoolState> }
+> => {
+  const kv = await getKv();
+  if (!kv) {
+    throw new CodexCacheScopeExperimentError("Prompt-cache scope experiments require Deno KV-backed Codex auth.");
+  }
+  const entry = await kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" });
+  const pool = parseCodexAuthPool(entry.value);
+  if (!pool || !entry.versionstamp) {
+    throw new CodexCacheScopeExperimentError("Codex auth pool is unavailable for the prompt-cache scope experiment.");
+  }
+  cacheCodexAuthPool(pool);
+  return { kv, entry: entry as Deno.KvEntry<CodexAuthPoolState>, pool };
+};
+
+const cacheScopeExperimentAccount = (
+  session: CodexCacheScopeExperimentSession,
+  poolEntry: CodexAuthPoolEntry & { entry: Deno.KvEntry<CodexAuthPoolState> },
+  slot: number,
+): CodexAuthState => {
+  if (!Number.isInteger(slot) || slot < 1 || slot > CODEX_AUTH_POOL_MAX_ACCOUNTS) {
+    throw new CodexCacheScopeExperimentError("Prompt-cache scope experiment slot is invalid.");
+  }
+  if (poolEntry.entry.versionstamp !== session.authPoolVersionstamp) {
+    throw new CodexCacheScopeExperimentError("Codex auth pool changed during the prompt-cache scope experiment.");
+  }
+  const auth = poolEntry.pool.accounts[slot - 1];
+  const expectedAccountId = session.expectedAccountIds[slot - 1];
+  if (!auth || auth.account_id !== expectedAccountId) {
+    throw new CodexCacheScopeExperimentError("Codex auth pool changed during the prompt-cache scope experiment.");
+  }
+  return auth;
+};
+
+export const beginCodexCacheScopeExperiment = async (): Promise<CodexCacheScopeExperimentSession> => {
+  const poolEntry = await getStrongAuthPoolEntryForCacheScopeExperiment();
+  const first = poolEntry.pool.accounts[0];
+  const second = poolEntry.pool.accounts[1];
+  if (poolEntry.pool.accounts.length !== 2 || !first || !second) {
+    throw new CodexCacheScopeExperimentError(
+      "Prompt-cache scope experiments require exactly two configured Codex slots.",
+    );
+  }
+  return {
+    expectedAccountIds: [first.account_id, second.account_id],
+    authPoolVersionstamp: poolEntry.entry.versionstamp,
+  };
+};
+
+/**
+ * Refresh one pinned slot exactly once. The returned session carries the new
+ * pool versionstamp; callers must use it for every following dispatch.
+ */
+export const refreshCodexCacheScopeExperimentSlot = async (
+  session: CodexCacheScopeExperimentSession,
+  slot: number,
+  signal?: AbortSignal,
+): Promise<CodexCacheScopeExperimentRefreshResult> => {
+  const current = await getStrongAuthPoolEntryForCacheScopeExperiment();
+  const auth = cacheScopeExperimentAccount(session, current, slot);
+  const selected = await selectCodexRoutingAccounts(current.pool, [auth]);
+  if (selected.kind !== "eligible" || selected.accounts.length !== 1 || selected.accounts[0]?.slot !== slot - 1) {
+    throw new CodexCacheScopeExperimentError(
+      "The requested Codex slot is not eligible for OAuth refresh during the prompt-cache scope experiment.",
+    );
+  }
+  let refreshed: CodexAuthState;
+  try {
+    // Unlike normal inference refreshes, this is a controlled experiment
+    // transition. It must not adopt a same-account rotation from another
+    // request, because that would falsely make the experiment's refresh row
+    // appear to prove a cache scope. Persistence below is fenced to the exact
+    // pool version we just validated.
+    refreshed = await awaitWithoutCancellingSharedWork(refreshAuthStateless(auth), signal);
+  } catch (error) {
+    const afterFailure = await getStrongAuthPoolEntryForCacheScopeExperiment().catch(() => null);
+    if (afterFailure && afterFailure.entry.versionstamp !== current.entry.versionstamp) {
+      return { status: "auth_pool_drift" };
+    }
+    throw error;
+  }
+  if (refreshed.account_id !== auth.account_id) {
+    throw new CodexCacheScopeExperimentError(
+      "Codex OAuth refresh changed account identity during the prompt-cache scope experiment.",
+    );
+  }
+
+  const accounts = [...current.pool.accounts];
+  accounts[slot - 1] = refreshed;
+  const nextPool: CodexAuthPoolState = { accounts, updated_at_ms: Date.now() };
+  const persisted = await current.kv.atomic()
+    .check(current.entry)
+    .set(CODEX_AUTH_POOL_KV_KEY, nextPool)
+    .commit();
+  if (!persisted.ok) return { status: "auth_pool_drift" };
+
+  await reconcileCodexRoutingAccount(selected.accounts[0]!, refreshed);
+  const after = await getStrongAuthPoolEntryForCacheScopeExperiment();
+  const persistedAuth = after.pool.accounts[slot - 1];
+  if (
+    after.entry.versionstamp !== persisted.versionstamp ||
+    !persistedAuth || persistedAuth.account_id !== refreshed.account_id ||
+    !sameCodexCredentials(persistedAuth, refreshed) ||
+    after.pool.accounts[0]?.account_id !== session.expectedAccountIds[0] ||
+    after.pool.accounts[1]?.account_id !== session.expectedAccountIds[1]
+  ) {
+    return { status: "auth_pool_drift" };
+  }
+  return {
+    status: "refreshed",
+    tokenChanged: persistedAuth.access_token !== auth.access_token ||
+      persistedAuth.refresh_token !== auth.refresh_token,
+    session: { ...session, authPoolVersionstamp: after.entry.versionstamp },
+  };
+};
+
+/**
+ * Slot-pinned internal transport for the cache-scope experiment. It never
+ * tries a sibling account or retries inference. Conversation IDs are internal
+ * upstream headers, never public request fields or durable evidence.
+ */
+export const fetchCodexResponsesForCacheScopeExperiment = async (
+  body: unknown,
+  options: Readonly<{
+    session: CodexCacheScopeExperimentSession;
+    slot: number;
+    conversationId: string;
+    clientVersion?: string | null;
+    signal?: AbortSignal;
+  }>,
+): Promise<Response> => {
+  const conversationId = options.conversationId.trim();
+  if (!conversationId) {
+    throw new CodexCacheScopeExperimentError("Prompt-cache scope experiment conversation id is invalid.");
+  }
+  if (codexProbeTransitionsInFlight.size) await Promise.allSettled([...codexProbeTransitionsInFlight]);
+
+  const current = await getStrongAuthPoolEntryForCacheScopeExperiment();
+  const auth = cacheScopeExperimentAccount(options.session, current, options.slot);
+  const selected = await selectCodexRoutingAccounts(current.pool, [auth]);
+  if (selected.kind !== "eligible" || selected.accounts.length !== 1) {
+    throw new CodexCacheScopeExperimentError(
+      "The requested Codex slot is not eligible for the prompt-cache scope experiment.",
+    );
+  }
+  let routing = selected.accounts[0]!;
+  if (routing.slot !== options.slot - 1 || routing.auth.account_id !== auth.account_id) {
+    throw new CodexCacheScopeExperimentError(
+      "Prompt-cache scope experiment routing did not preserve the requested slot.",
+    );
+  }
+  if (routing.probeRequired) {
+    const claimed = await claimCodexRoutingProbe(current.pool, routing);
+    if (!claimed) {
+      throw new CodexCacheScopeExperimentError(
+        "The requested Codex slot could not be claimed for the prompt-cache scope experiment.",
+      );
+    }
+    routing = claimed;
+  }
+
+  let response: Response | null = null;
+  const headers = new Headers({
+    originator: CODEX_ORIGINATOR,
+    "user-agent": codexUserAgent(options.clientVersion),
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    conversation_id: conversationId,
+  });
+  try {
+    const beforeDispatch = await getStrongAuthPoolEntryForCacheScopeExperiment();
+    const persistedBeforeDispatch = cacheScopeExperimentAccount(options.session, beforeDispatch, options.slot);
+    if (!sameCodexCredentials(persistedBeforeDispatch, routing.auth)) {
+      throw new CodexCacheScopeExperimentError(
+        "Codex credentials changed before dispatch during the prompt-cache scope experiment.",
+      );
+    }
+
+    try {
+      response = await fetchCodexResponseWithAuth(
+        routing.auth,
+        `${config.codexBaseUrl}/responses`,
+        JSON.stringify(body),
+        headers,
+        options.signal,
+      );
+    } catch (error) {
+      void recordCodexThrownHealth(routing.auth.account_id, error);
+      logCodexRouting("codex_attempt", {
+        request_id: null,
+        attempt: 1,
+        slot: routing.slot + 1,
+        phase: "initial",
+        status: error instanceof CodexError ? error.status : null,
+        status_class: codexErrorClass(error),
+      });
+      throw error;
+    }
+    codexSlotByResponse.set(response, options.slot);
+    void recordCodexResponseHealth(routing.auth.account_id, response);
+    logCodexRouting("codex_attempt", {
+      request_id: null,
+      attempt: 1,
+      slot: routing.slot + 1,
+      phase: "initial",
+      status: response.status,
+      status_class: codexStatusClass(response.status),
+    });
+
+    if (response.status === 429) {
+      response = (await markCodexQuotaBlocked(routing, response)).response;
+      codexSlotByResponse.set(response, options.slot);
+    }
+    if (!response.ok) {
+      await releaseCodexRoutingProbe(routing);
+    } else if (routing.probeGeneration !== null) {
+      codexProbeByResponse.set(response, routing);
+    }
+
+    const afterDispatch = await getStrongAuthPoolEntryForCacheScopeExperiment();
+    const persistedAfterDispatch = cacheScopeExperimentAccount(options.session, afterDispatch, options.slot);
+    if (!sameCodexCredentials(persistedAfterDispatch, routing.auth)) {
+      throw new CodexCacheScopeExperimentError(
+        "Codex credentials changed after dispatch during the prompt-cache scope experiment.",
+      );
+    }
+  } catch (error) {
+    if (response) cancelResponseBody(response);
+    await releaseCodexRoutingProbe(routing);
+    throw error;
+  }
+  return response!;
 };
 
 const getCurrentAccountEntry = async (
@@ -1505,18 +1775,28 @@ export const loadFullCodexModelsSnapshot = async (
 export const storeCodexModelsSnapshot = async (snapshot: CodexModelsSnapshot): Promise<boolean> => {
   const kv = await getKv();
   if (!kv) return false;
-  const current = await loadRuntimeConfig(kv);
-  const runtimeConfig = buildRuntimeConfig(snapshot, {
-    defaultModel: preserveCodexDefaultModel(snapshot, current?.default_model),
-    defaultReasoningEffort: current?.default_reasoning_effort,
-  });
-  const commit = await kv.atomic()
-    .set(CODEX_MODELS_KV_KEY, snapshot)
-    .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)
-    .commit();
-  if (!commit.ok) return false;
-  cacheRuntimeConfig(runtimeConfig);
-  return true;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const [currentEntry, runtimeEntry] = await Promise.all([
+      kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY, { consistency: "strong" }),
+      kv.get(RUNTIME_CONFIG_V2_KEY, { consistency: "strong" }),
+    ]);
+    const currentRuntime = normalizeRuntimeConfig(runtimeEntry.value);
+    const nextSnapshot = mergeCodexModelPromptCacheCapabilities(snapshot, currentEntry.value);
+    const runtimeConfig = buildRuntimeConfig(nextSnapshot, {
+      defaultModel: preserveCodexDefaultModel(nextSnapshot, currentRuntime?.default_model),
+      defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
+    });
+    const commit = await kv.atomic()
+      .check(currentEntry)
+      .check(runtimeEntry)
+      .set(CODEX_MODELS_KV_KEY, nextSnapshot)
+      .set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)
+      .commit();
+    if (!commit.ok) continue;
+    cacheRuntimeConfig(runtimeConfig);
+    return true;
+  }
+  return false;
 };
 
 export const buildCodexRequest = (

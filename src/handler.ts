@@ -7,6 +7,7 @@ import {
   handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
   handleAdminCodexAuth,
+  handleAdminCodexCacheScopeExperiment,
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
   handleAdminCodexPromptsPurge,
@@ -57,6 +58,7 @@ import {
   handleUosEmbeddings,
   type ResponseTelemetry,
 } from "./openai.ts";
+import { recordPromptCacheTelemetry } from "./prompt_cache_telemetry_gate.ts";
 import {
   handlePasskeyLoginFinish,
   handlePasskeyLoginStart,
@@ -126,7 +128,7 @@ const decorateInferenceQuota = (
   return withCodexQuotaHeaders(response, usedPercent === null ? null : { used_percent: usedPercent });
 };
 
-const logTerminalRequest = (
+const logTerminalRequest = async (
   input: Readonly<{
     route: string;
     response: Response;
@@ -135,7 +137,7 @@ const logTerminalRequest = (
     downstreamDrainedAtMonotonicMs?: number;
     requestId: string;
   }>,
-): void => {
+): Promise<void> => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
   const latencyMs = Math.max(0, Math.round(performance.now() - input.startedAtMonotonicMs));
   const downstreamDrainMs = telemetry?.stream === true && telemetry.firstSseEventMs !== null &&
@@ -145,41 +147,48 @@ const logTerminalRequest = (
       Math.round(input.downstreamDrainedAtMonotonicMs - input.startedAtMonotonicMs) - telemetry.streamTerminalMs,
     )
     : null;
-  console.info(
-    "[ai.ubq.fi] request_terminal",
-    JSON.stringify({
-      request_id: input.requestId,
-      route: input.route,
-      status: input.response.status,
-      provider: telemetry?.provider ?? input.response.headers.get("x-uos-upstream") ?? "gateway",
-      latency_ms: latencyMs,
-      first_codex_dispatch_ms: telemetry?.firstCodexDispatchMs ?? null,
-      first_codex_headers_ms: telemetry?.firstCodexHeadersMs ?? null,
-      first_sse_event_ms: telemetry?.firstSseEventMs ?? null,
-      stream_terminal_ms: telemetry?.streamTerminalMs ?? null,
-      downstream_drain_ms: downstreamDrainMs,
-      model: telemetry?.model ?? null,
-      reasoning: telemetry?.reasoning ?? null,
-      input_tokens: telemetry?.inputTokens ?? null,
-      cached_input_tokens: telemetry?.cachedInputTokens ?? null,
-      cache_write_input_tokens: telemetry?.cacheWriteInputTokens ?? null,
-      output_tokens: telemetry?.outputTokens ?? null,
-      total_tokens: telemetry?.totalTokens ?? null,
-      usage_observed: telemetry?.usageObserved ?? false,
-      usage_telemetry_status: telemetry?.usageTelemetryStatus ?? "missing",
-      prompt_cache_key_present: telemetry?.promptCacheKeyPresent ?? false,
-      prompt_cache_mode: telemetry?.promptCacheMode ?? "unspecified",
-      explicit_breakpoint_count: telemetry?.explicitBreakpointCount ?? 0,
-      account_slot: telemetry?.accountSlot ?? null,
-      affinity_outcome: telemetry?.affinityOutcome ?? "none",
-      fallback_reason: telemetry?.fallbackReason ?? null,
-      stream: telemetry?.stream ?? null,
-      stream_terminal_type: telemetry?.streamTerminalType ?? null,
-      git_sha: runtimeGitSha(),
-      deno_revision: runtimeDeploymentId(),
-      router_revision: input.response.headers.get("x-uos-router-revision"),
-    }),
-  );
+  const terminal = {
+    request_id: input.requestId,
+    route: input.route,
+    status: input.response.status,
+    provider: telemetry?.provider ?? input.response.headers.get("x-uos-upstream") ?? "gateway",
+    latency_ms: latencyMs,
+    first_codex_dispatch_ms: telemetry?.firstCodexDispatchMs ?? null,
+    first_codex_headers_ms: telemetry?.firstCodexHeadersMs ?? null,
+    first_sse_event_ms: telemetry?.firstSseEventMs ?? null,
+    stream_terminal_ms: telemetry?.streamTerminalMs ?? null,
+    downstream_drain_ms: downstreamDrainMs,
+    model: telemetry?.model ?? null,
+    reasoning: telemetry?.reasoning ?? null,
+    input_tokens: telemetry?.inputTokens ?? null,
+    cached_input_tokens: telemetry?.cachedInputTokens ?? null,
+    cache_write_input_tokens: telemetry?.cacheWriteInputTokens ?? null,
+    output_tokens: telemetry?.outputTokens ?? null,
+    total_tokens: telemetry?.totalTokens ?? null,
+    usage_observed: telemetry?.usageObserved ?? false,
+    usage_telemetry_status: telemetry?.usageTelemetryStatus ?? "missing",
+    prompt_cache_key_present: telemetry?.promptCacheKeyPresent ?? false,
+    prompt_cache_mode: telemetry?.promptCacheMode ?? "unspecified",
+    explicit_breakpoint_count: telemetry?.explicitBreakpointCount ?? 0,
+    account_slot: telemetry?.accountSlot ?? null,
+    affinity_outcome: telemetry?.affinityOutcome ?? "none",
+    fallback_reason: telemetry?.fallbackReason ?? null,
+    stream: telemetry?.stream ?? null,
+    stream_terminal_type: telemetry?.streamTerminalType ?? null,
+    git_sha: runtimeGitSha(),
+    deno_revision: runtimeDeploymentId(),
+    router_revision: input.response.headers.get("x-uos-router-revision"),
+  };
+  console.info("[ai.ubq.fi] request_terminal", JSON.stringify(terminal));
+  await recordPromptCacheTelemetry({
+    provider: terminal.provider,
+    model: terminal.model,
+    route: terminal.route,
+    status: terminal.status,
+    completed: telemetry?.completed ?? false,
+    usageTelemetryStatus: terminal.usage_telemetry_status,
+    cacheWriteTokensPresent: terminal.cache_write_input_tokens !== null,
+  });
 };
 
 const warnQuotaAccountingFailure = (
@@ -212,12 +221,15 @@ const withTerminalRequestLog = (
     onCompleted?: () => Promise<void>;
   }>,
 ): Promise<Response> => {
-  let logged = false;
+  let terminalLog: Promise<void> | null = null;
   let completionFinalization: Promise<void> | null = null;
-  const log = (downstreamDrainedAtMonotonicMs?: number): void => {
-    if (logged) return;
-    logged = true;
-    logTerminalRequest({ ...input, response, downstreamDrainedAtMonotonicMs });
+  const log = (downstreamDrainedAtMonotonicMs?: number): Promise<void> => {
+    if (terminalLog) return terminalLog;
+    terminalLog = logTerminalRequest({ ...input, response, downstreamDrainedAtMonotonicMs }).catch(() => {
+      // Terminal logging and its durable baseline counters are best effort;
+      // neither may replace a response that is already ready for the client.
+    });
+    return terminalLog;
   };
   const finalizeCompletion = (): Promise<void> => {
     const onCompleted = input.onCompleted;
@@ -239,7 +251,7 @@ const withTerminalRequestLog = (
         await finalizeCompletion();
         return response;
       } finally {
-        log();
+        await log();
       }
     })();
   }
@@ -257,7 +269,7 @@ const withTerminalRequestLog = (
           // before closing the downstream body so callers observe durable
           // counters without holding back the terminal frame itself.
           await finalizeCompletion();
-          log(downstreamDrainedAtMonotonicMs);
+          await log(downstreamDrainedAtMonotonicMs);
           controller.close();
           return;
         }
@@ -267,14 +279,14 @@ const withTerminalRequestLog = (
         void finalizeCompletion();
         controller.enqueue(value);
       } catch (error) {
-        log();
+        await log();
         controller.error(error);
       }
     },
-    cancel(reason) {
+    async cancel(reason) {
       void reader.cancel(reason).catch(() => {});
       void finalizeCompletion();
-      log();
+      await log();
     },
   });
   return Promise.resolve(
@@ -380,6 +392,12 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminCodexAuth(req));
+  }
+
+  if (req.method === "POST" && path === "/admin/providers/codex/cache-scope-experiment") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminCodexCacheScopeExperiment(req));
   }
 
   const codexRecheckMatch = path.match(/^\/admin\/providers\/codex\/(\d+)\/recheck$/);

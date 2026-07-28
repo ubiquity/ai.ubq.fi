@@ -12,17 +12,23 @@ const TERMINAL_MARKER = "[ai.ubq.fi] request_terminal";
 let nextRequestId = 0;
 
 const terminalLine = (overrides: Record<string, unknown> = {}): string =>
-  `INFO ${TERMINAL_MARKER} ${
+  `${TERMINAL_MARKER} ${
     JSON.stringify({
       request_id: `req-input-only-${nextRequestId++}`,
       route: "responses",
       status: 200,
       provider: "chatgpt_codex",
       model: "gpt-cache-fixture",
+      input_tokens: 100,
       cached_input_tokens: 0,
       cache_write_input_tokens: 0,
       usage_observed: true,
       usage_telemetry_status: "reported",
+      prompt_cache_key_present: false,
+      prompt_cache_mode: "unspecified",
+      account_slot: null,
+      affinity_outcome: "none",
+      stream: false,
       stream_terminal_type: "response.completed",
       git_sha: "0123456789abcdef",
       deno_revision: "deploy-a",
@@ -56,6 +62,22 @@ Deno.test("Stage 0 cache telemetry analyzer groups completed inference and prese
   assert.equal(report.completed_inference, 4);
   assert.deepEqual(report.completed_status_totals, { "200": 3, "201": 1 });
   assert.deepEqual(report.usage_telemetry_status_totals, { partial: 1, reported: 3 });
+  assert.deepEqual(report.valid_reported_cache_metrics, {
+    reported_events: 3,
+    cache_read: {
+      aggregate_input_tokens: 300,
+      aggregate_cached_input_tokens: 87,
+      ratio: 0.29,
+    },
+    // Read/write values may overlap. This is a same-event counter-sum ratio,
+    // not a reconstructed uncached bucket.
+    cache_write_payback: {
+      observed_events: 2,
+      aggregate_cached_input_tokens: 80,
+      aggregate_cache_write_input_tokens: 80,
+      ratio: 1,
+    },
+  });
   assert.deepEqual(report.observed_completed_cache_read_input_tokens, {
     sum_tokens: 87,
     observed_events: 3,
@@ -75,12 +97,223 @@ Deno.test("Stage 0 cache telemetry analyzer groups completed inference and prese
   assert.doesNotMatch(JSON.stringify(report), /"input_tokens":/);
   assert.equal(report.cohorts.length, 2);
   assert.equal(report.cohorts[0]?.completed_inference, 3);
+  assert.deepEqual(report.cohorts[0]?.valid_reported_cache_metrics.cache_read, {
+    aggregate_input_tokens: 200,
+    aggregate_cached_input_tokens: 80,
+    ratio: 0.4,
+  });
+  assert.equal(report.cohorts[0]?.model, "model_1");
+  assert.equal(report.cohorts[1]?.model, "model_2");
   assert.equal(report.cohorts[1]?.route, "chat.completions");
   assert.equal(report.cohorts[1]?.completed_inference, 1);
   assert.equal(report.cohorts[0]?.completed_1k_gate.passed, false);
   assert.equal(report.cohorts[0]?.reported_coverage_99_5_gate.passed, false);
   assert.equal(report.cohorts[1]?.reported_coverage_99_5_gate.passed, true);
   assert.equal(report.gates.reported_coverage_99_5.all_observed_cohorts_passed, false);
+});
+
+Deno.test("Stage 0 cache telemetry analyzer keeps invalid completed usage out of reported coverage", () => {
+  const report = analyzeStage0CacheTelemetryLines([
+    terminalLine({
+      input_tokens: null,
+      cached_input_tokens: null,
+      cache_write_input_tokens: null,
+      usage_observed: true,
+      usage_telemetry_status: "invalid",
+    }),
+  ]);
+
+  assert.equal(report.completed_inference, 1);
+  assert.deepEqual(report.usage_telemetry_status_totals, { invalid: 1 });
+  assert.deepEqual(report.reported_over_completed, { reported: 0, completed: 1, ratio: 0 });
+  assert.equal(report.valid_reported_cache_metrics.reported_events, 0);
+  assert.deepEqual(report.inference_terminal_outcomes.outcome_totals, {
+    completed: 1,
+    failed: 0,
+    incomplete: 0,
+    cancelled: 0,
+  });
+});
+
+Deno.test("Stage 0 cache telemetry analyzer reports bounded failed and incomplete terminal outcomes", () => {
+  const rawCacheKey = "cache-key-secret-must-not-appear";
+  const completed = terminalLine({
+    model: "gpt-completed-secret",
+    input_tokens: 100,
+    cached_input_tokens: 50,
+    cache_write_input_tokens: 0,
+    prompt_cache_key: rawCacheKey,
+    prompt_cache_key_present: true,
+    prompt_cache_mode: "explicit",
+    account_slot: 1,
+    affinity_outcome: "preferred",
+  });
+  const invalidCompleted = terminalLine({
+    model: "gpt-invalid-secret",
+    input_tokens: null,
+    cached_input_tokens: null,
+    cache_write_input_tokens: null,
+    usage_observed: true,
+    usage_telemetry_status: "invalid",
+    prompt_cache_key_present: false,
+    prompt_cache_mode: "implicit",
+    account_slot: 3,
+    affinity_outcome: "none",
+  });
+  const failedWithUsage = terminalLine({
+    status: 502,
+    model: "gpt-failed-secret",
+    input_tokens: 80,
+    cached_input_tokens: 32,
+    cache_write_input_tokens: 8,
+    stream: true,
+    stream_terminal_type: "response.failed",
+    prompt_cache_key: rawCacheKey,
+    prompt_cache_key_present: true,
+    prompt_cache_mode: "explicit",
+    account_slot: 2,
+    affinity_outcome: "failover",
+  });
+  const failedWithoutUsage = terminalLine({
+    status: 504,
+    model: "gpt-failed-secret",
+    input_tokens: null,
+    cached_input_tokens: null,
+    cache_write_input_tokens: null,
+    usage_observed: false,
+    usage_telemetry_status: "missing",
+    stream: true,
+    stream_terminal_type: "response.failed",
+    prompt_cache_key_present: false,
+    prompt_cache_mode: "unspecified",
+    account_slot: null,
+    affinity_outcome: "none",
+  });
+  const incompleteWithUsage = terminalLine({
+    route: "chat.completions",
+    status: 200,
+    provider: "yunwu",
+    model: "gpt-incomplete-secret",
+    input_tokens: 60,
+    cached_input_tokens: 12,
+    cache_write_input_tokens: null,
+    stream: true,
+    stream_terminal_type: "response.incomplete",
+    prompt_cache_key_present: false,
+    prompt_cache_mode: "legacy_retention",
+    account_slot: 3,
+    affinity_outcome: "shadow_only",
+  });
+
+  const report = analyzeStage0CacheTelemetryLines([
+    completed,
+    invalidCompleted,
+    failedWithUsage,
+    failedWithoutUsage,
+    incompleteWithUsage,
+  ]);
+  const completedOnlyReport = analyzeStage0CacheTelemetryLines([completed, invalidCompleted]);
+  const outcomes = report.inference_terminal_outcomes;
+
+  // Failed and incomplete terminals are available for diagnosis but do not
+  // participate in the completed-only evidence gates.
+  assert.equal(report.completed_inference, 2);
+  assert.deepEqual(report.gates, completedOnlyReport.gates);
+  assert.deepEqual(report.cohorts, completedOnlyReport.cohorts);
+  assert.deepEqual(report.usage_telemetry_status_totals, { invalid: 1, reported: 1 });
+  assert.deepEqual(report.reported_over_completed, { reported: 1, completed: 2, ratio: 0.5 });
+
+  assert.equal(outcomes.terminal_events, 5);
+  assert.equal(outcomes.terminal_without_usage, 1);
+  assert.deepEqual(outcomes.outcome_totals, { completed: 2, failed: 2, incomplete: 1, cancelled: 0 });
+  assert.deepEqual(outcomes.usage_telemetry_status_totals, { invalid: 1, missing: 1, reported: 3 });
+  assert.deepEqual(outcomes.prompt_cache_key_presence, { present: 2, absent: 3 });
+  assert.deepEqual(outcomes.prompt_cache_mode_totals, {
+    implicit: 1,
+    explicit: 2,
+    legacy_retention: 1,
+    unspecified: 1,
+  });
+  assert.deepEqual(outcomes.account_slot_summary, {
+    assigned_terminal_events: 4,
+    unassigned_terminal_events: 1,
+    distinct_assigned_slots: 3,
+  });
+  assert.deepEqual(outcomes.affinity_outcome_totals, {
+    none: 2,
+    preferred: 1,
+    failover: 1,
+    shadow_only: 1,
+  });
+
+  const failedCohort = outcomes.cohorts.find((cohort) =>
+    cohort.outcome === "failed" && cohort.usage_telemetry_status_totals.missing === 1
+  );
+  assert.ok(failedCohort);
+  assert.equal(failedCohort.stream, true);
+  assert.equal(failedCohort.terminal_events, 2);
+  assert.equal(failedCohort.terminal_without_usage, 1);
+  assert.deepEqual(failedCohort.valid_reported_cache_metrics.cache_read, {
+    aggregate_input_tokens: 80,
+    aggregate_cached_input_tokens: 32,
+    ratio: 0.4,
+  });
+  assert.deepEqual(failedCohort.observed_cache_read_input_tokens, {
+    sum_tokens: 32,
+    observed_events: 1,
+    null_events: 1,
+    zero_events: 0,
+    positive_events: 1,
+  });
+
+  const incompleteCohort = outcomes.cohorts.find((cohort) => cohort.outcome === "incomplete");
+  assert.ok(incompleteCohort);
+  assert.equal(incompleteCohort.route, "chat.completions");
+  assert.equal(incompleteCohort.stream, true);
+  assert.equal(incompleteCohort.observed_cache_read_input_tokens.sum_tokens, 12);
+
+  const serialized = JSON.stringify(report);
+  assert.doesNotMatch(serialized, new RegExp(rawCacheKey));
+  assert.doesNotMatch(serialized, /gpt-(?:completed|invalid|failed|incomplete)-secret/);
+  assert.doesNotMatch(serialized, /"account_slot":/);
+});
+
+Deno.test("Stage 0 cache telemetry analyzer retains every known inference terminal type outside eligibility", () => {
+  const missingUsage = {
+    input_tokens: null,
+    cached_input_tokens: null,
+    cache_write_input_tokens: null,
+    usage_observed: false,
+    usage_telemetry_status: "missing",
+    stream: true,
+  };
+  const report = analyzeStage0CacheTelemetryLines([
+    terminalLine({ ...missingUsage, status: 502, stream_terminal_type: "error" }),
+    terminalLine({ ...missingUsage, status: 200, stream_terminal_type: "eof" }),
+    terminalLine({ ...missingUsage, status: 504, stream_terminal_type: "deadline" }),
+    terminalLine({ ...missingUsage, status: 499, model: null, stream_terminal_type: "cancelled" }),
+  ]);
+  const outcomes = report.inference_terminal_outcomes;
+
+  assert.equal(report.completed_inference, 0);
+  assert.equal(report.gates.aggregate_completed_10k.observed_completed, 0);
+  assert.deepEqual(outcomes.outcome_totals, {
+    completed: 0,
+    failed: 3,
+    incomplete: 0,
+    cancelled: 1,
+  });
+  assert.equal(outcomes.terminal_without_usage, 4);
+  assert.deepEqual(
+    outcomes.cohorts.map((cohort) => [cohort.outcome, cohort.stream_terminal_type]).sort(),
+    [
+      ["cancelled", "cancelled"],
+      ["failed", "deadline"],
+      ["failed", "eof"],
+      ["failed", "error"],
+    ],
+  );
+  assert.equal(outcomes.cohorts.find((cohort) => cohort.outcome === "cancelled")?.model, "model_unknown");
 });
 
 Deno.test("Stage 0 cache telemetry analyzer applies aggregate, observed-cohort, and coverage thresholds", () => {
@@ -120,7 +353,8 @@ Deno.test("Stage 0 cache telemetry analyzer applies aggregate, observed-cohort, 
   assert.equal(coverageReport.gates.reported_coverage_99_5.observed_all_completed_passed, true);
   assert.equal(coverageReport.gates.reported_coverage_99_5.all_observed_cohorts_passed, false);
   assert.equal(
-    coverageReport.cohorts.find((cohort) => cohort.model === "gpt-no-telemetry")?.reported_coverage_99_5_gate.passed,
+    coverageReport.cohorts.find((cohort) => cohort.usage_telemetry_status_totals.partial === 1)
+      ?.reported_coverage_99_5_gate.passed,
     false,
   );
 
@@ -154,6 +388,38 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
     /missing release identity/,
   );
   assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ git_sha: secret })]),
+    (error: unknown) => {
+      assert.ok(error instanceof Stage0CacheTelemetryGateError);
+      assert.match(error.message, /invalid git_sha field/);
+      assert.doesNotMatch(error.message, new RegExp(secret));
+      return true;
+    },
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ request_id: `${secret}\u0001` })]),
+    (error: unknown) => {
+      assert.ok(error instanceof Stage0CacheTelemetryGateError);
+      assert.match(error.message, /invalid request_id field/);
+      assert.doesNotMatch(error.message, new RegExp(secret));
+      return true;
+    },
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ request_id: "x".repeat(129) })]),
+    /invalid request_id field/,
+  );
+  const releasePayload = "release-secret-must-not-appear";
+  const redactedReleaseReport = analyzeStage0CacheTelemetryLines([
+    terminalLine({ deno_revision: releasePayload, router_revision: releasePayload }),
+  ]);
+  assert.deepEqual(redactedReleaseReport.release, {
+    git_sha: "0123456789abcdef",
+    deno_revision: "validated",
+    router_revision: "validated",
+  });
+  assert.doesNotMatch(JSON.stringify(redactedReleaseReport), new RegExp(releasePayload));
+  assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ provider: null })]),
     /invalid provider field/,
   );
@@ -170,8 +436,24 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
     /unsupported stream_terminal_type field/,
   );
   assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ status: 500 })]),
+    /completed inference event has a non-2xx status field/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ provider: "provider-secret" })]),
+    /inference terminal event has an unsupported provider field/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ model: "x".repeat(129) })]),
+    /inference terminal event has an invalid model field/,
+  );
+  assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ usage_observed: false })]),
     /inconsistent usage_observed/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ input_tokens: null })]),
+    /reported inference terminal event is missing cache-read usage fields/,
   );
   assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ cached_input_tokens: "0" })]),
@@ -182,8 +464,36 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
     /invalid cache_write_input_tokens field/,
   );
   assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ prompt_cache_key_present: "yes" })]),
+    /invalid prompt_cache_key_present field/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ prompt_cache_mode: "unknown" })]),
+    /invalid prompt_cache_mode field/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ account_slot: -1 })]),
+    /invalid account_slot field/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ affinity_outcome: "sticky" })]),
+    /invalid affinity_outcome field/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ stream: "true" })]),
+    /invalid stream field/,
+  );
+  assert.throws(
     () => analyzeStage0CacheTelemetryLines([JSON.stringify({ message: terminalLine() })]),
     /must use raw log text or a string body envelope/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([`untrusted prefix ${terminalLine()}`]),
+    /must begin with the canonical terminal marker/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([JSON.stringify({ body: `untrusted prefix ${terminalLine()}` })]),
+    /must begin with the canonical terminal marker/,
   );
 
   const duplicateRequestId = `req-${secret}`;
@@ -211,6 +521,11 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
     }),
   ]);
   assert.doesNotMatch(JSON.stringify(report), new RegExp(secret));
+
+  const modelSecret = "secret-token-abc";
+  const modelReport = analyzeStage0CacheTelemetryLines([terminalLine({ model: modelSecret })]);
+  assert.equal(modelReport.cohorts[0]?.model, "model_1");
+  assert.doesNotMatch(JSON.stringify(modelReport), new RegExp(modelSecret));
 });
 
 Deno.test("Stage 0 cache telemetry analyzer accepts strict JSON body log envelopes without exposing envelope data", () => {
@@ -225,6 +540,13 @@ Deno.test("Stage 0 cache telemetry analyzer accepts strict JSON body log envelop
 
   assert.equal(report.completed_inference, 1);
   assert.doesNotMatch(JSON.stringify(report), new RegExp(secret));
+
+  const infoReport = analyzeStage0CacheTelemetryLines([`INFO ${terminalLine({ request_id: "req-info" })}`]);
+  assert.equal(infoReport.completed_inference, 1);
+  const infoEnvelopeReport = analyzeStage0CacheTelemetryLines([
+    JSON.stringify({ body: `INFO ${terminalLine({ request_id: "req-info-envelope" })}` }),
+  ]);
+  assert.equal(infoEnvelopeReport.completed_inference, 1);
 });
 
 Deno.test("Stage 0 cache telemetry analyzer rejects an empty input stream", () => {

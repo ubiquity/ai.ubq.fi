@@ -89,10 +89,16 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { getResponseTelemetry, handleChatCompletions, handleModelCapabilities, handleModels, handleResponses } =
-  await import(
-    "../src/openai.ts"
-  );
+const {
+  extractUsageTokens,
+  getResponseTelemetry,
+  handleChatCompletions,
+  handleModelCapabilities,
+  handleModels,
+  handleResponses,
+} = await import(
+  "../src/openai.ts"
+);
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
@@ -1022,6 +1028,7 @@ Deno.test("openai: prompt-cache capability records are UOS-only and keep provide
           verified_at_ms: 2_000,
         },
         scope: {
+          probe_profile: "responses_explicit_input_text_keyed_30m",
           account_slots: "shared",
           token_refresh: "preserved",
           conversation_id: "independent",
@@ -1652,6 +1659,59 @@ Deno.test("openai: Codex pre-header gateway deadlines use server_error on both s
     }
   } finally {
     setStreamFirstEventDeadlineMsForTest(null);
+  }
+});
+
+Deno.test("openai: upstream fetch logs redact provider error payloads", async () => {
+  const secret = "prompt-or-credential-must-not-reach-server-logs";
+  const logs: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => logs.push(args);
+
+  try {
+    for (const route of ["responses", "chat"] as const) {
+      await withFetchMock(
+        () => {
+          const error = new TypeError(`provider echoed ${secret}`);
+          (error as { cause?: unknown }).cause = { body: secret, message: secret };
+          throw error;
+        },
+        async () => {
+          const response = route === "responses"
+            ? await handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+              }),
+            )
+            : await handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, messages: [{ role: "user", content: "ping" }] }),
+              }),
+            );
+          assert.equal(response.status, 502, route);
+          const payload = await response.json() as { error?: { code?: unknown } };
+          assert.equal(payload.error?.code, "codex_upstream_unreachable", route);
+        },
+      );
+    }
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(logs.length, 2);
+  for (const args of logs) {
+    assert.equal(args.length, 2);
+    assert.equal(args[0], "[ai.ubq.fi] Upstream fetch failed:");
+    assert.deepEqual(args[1], {
+      error_class: "CodexError",
+      status: 502,
+      code: "codex_upstream_unreachable",
+    });
+    assert.equal(JSON.stringify(args).includes(secret), false);
   }
 });
 
@@ -4150,6 +4210,78 @@ Deno.test("openai: native Responses preserve files, explicit nulls, and prompt-c
   });
 });
 
+Deno.test("openai: cache usage parser retains observed values and marks malformed fields invalid", () => {
+  assert.deepEqual(
+    extractUsageTokens({
+      input_tokens: 10,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens: 2,
+      total_tokens: 12,
+    }),
+    {
+      inputTokens: 10,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: null,
+      outputTokens: 2,
+      totalTokens: 12,
+      status: "reported",
+    },
+  );
+
+  for (const nestedCacheValue of [-1, Number.POSITIVE_INFINITY]) {
+    assert.deepEqual(
+      extractUsageTokens({
+        input_tokens: 10,
+        input_tokens_details: { cached_tokens: nestedCacheValue, cache_write_tokens: 0 },
+        output_tokens: 2,
+        total_tokens: 12,
+      }),
+      {
+        inputTokens: 10,
+        cachedInputTokens: null,
+        cacheWriteInputTokens: 0,
+        outputTokens: 2,
+        totalTokens: 12,
+        status: "invalid",
+      },
+    );
+  }
+
+  assert.deepEqual(
+    extractUsageTokens({
+      input_tokens: 10,
+      input_tokens_details: { cached_tokens: 11, cache_write_tokens: 0 },
+      output_tokens: 2,
+      total_tokens: 12,
+    }),
+    {
+      inputTokens: 10,
+      cachedInputTokens: 11,
+      cacheWriteInputTokens: 0,
+      outputTokens: 2,
+      totalTokens: 12,
+      status: "invalid",
+    },
+  );
+
+  assert.deepEqual(
+    extractUsageTokens({
+      input_tokens: 10,
+      input_tokens_details: { cached_tokens: 8, cache_write_tokens: 3 },
+      output_tokens: 2,
+      total_tokens: Number.NaN,
+    }),
+    {
+      inputTokens: 10,
+      cachedInputTokens: 8,
+      cacheWriteInputTokens: 3,
+      outputTokens: 2,
+      totalTokens: null,
+      status: "invalid",
+    },
+  );
+});
+
 Deno.test("openai: cache token usage reaches Chat clients and internal telemetry", async (t) => {
   const usage = {
     input_tokens: 2006,
@@ -4258,6 +4390,49 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
     assert.ok(text.indexOf(usageChunk) < text.indexOf("data: [DONE]"));
   });
 
+  await t.step("streamed Chat records cache telemetry without a requested public usage chunk", async () => {
+    const response = await withFetchMock(
+      () => completed(),
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              stream: true,
+              messages: [{ role: "user", content: "ping" }],
+            }),
+          }),
+        ),
+    );
+    const text = await response.text();
+    assert.doesNotMatch(text, /"choices":\[\]/);
+    assert.equal(getResponseTelemetry(response)?.cachedInputTokens, 1920);
+    assert.equal(getResponseTelemetry(response)?.cacheWriteInputTokens, 0);
+    assert.equal(getResponseTelemetry(response)?.usageTelemetryStatus, "reported");
+  });
+
+  await t.step("streamed Responses preserves cache usage bytes while recording the same telemetry", async () => {
+    const response = await withFetchMock(
+      () => completed(),
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, stream: true, input: "ping" }),
+          }),
+        ),
+    );
+    const text = await response.text();
+    assert.match(text, /"cached_tokens":1920/);
+    assert.match(text, /"cache_write_tokens":0/);
+    assert.equal(getResponseTelemetry(response)?.cachedInputTokens, 1920);
+    assert.equal(getResponseTelemetry(response)?.cacheWriteInputTokens, 0);
+    assert.equal(getResponseTelemetry(response)?.usageTelemetryStatus, "reported");
+  });
+
   await t.step(
     "failed, partial, and invalid provider usage remains observable without fabricating public values",
     async () => {
@@ -4357,7 +4532,30 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       assert.equal(getResponseTelemetry(absentCachedTokens)?.cachedInputTokens, null);
       assert.equal(getResponseTelemetry(absentCachedTokens)?.usageTelemetryStatus, "partial");
 
-      const invalid = await withFetchMock(
+      const absentUsage = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: { model: DEFAULT_TEST_MODEL, output: [] },
+              })
+            }\n\n`,
+          ]),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "absent usage" }),
+            }),
+          ),
+      );
+      assert.equal(getResponseTelemetry(absentUsage)?.usageObserved, false);
+      assert.equal(getResponseTelemetry(absentUsage)?.usageTelemetryStatus, "missing");
+      assert.equal("usage" in (await absentUsage.json() as Record<string, unknown>), false);
+
+      const cacheReadAboveInput = await withFetchMock(
         () =>
           sseResponse([
             `data: ${
@@ -4381,12 +4579,12 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
             new Request("https://ai.ubq.fi/v1/responses", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "invalid" }),
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "cache read above input" }),
             }),
           ),
       );
-      assert.equal(getResponseTelemetry(invalid)?.cachedInputTokens, 11);
-      assert.equal(getResponseTelemetry(invalid)?.usageTelemetryStatus, "invalid");
+      assert.equal(getResponseTelemetry(cacheReadAboveInput)?.cachedInputTokens, 11);
+      assert.equal(getResponseTelemetry(cacheReadAboveInput)?.usageTelemetryStatus, "invalid");
 
       const overlappingCacheAccounting = await withFetchMock(
         () =>
@@ -4419,6 +4617,76 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       assert.equal(getResponseTelemetry(overlappingCacheAccounting)?.cachedInputTokens, 80);
       assert.equal(getResponseTelemetry(overlappingCacheAccounting)?.cacheWriteInputTokens, 80);
       assert.equal(getResponseTelemetry(overlappingCacheAccounting)?.usageTelemetryStatus, "reported");
+
+      const inconsistentUsage = {
+        input_tokens: 10,
+        input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+        output_tokens: 1,
+        total_tokens: 12,
+      };
+      const inconsistentTotals = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: { model: DEFAULT_TEST_MODEL, output: [], usage: inconsistentUsage },
+              })
+            }\n\n`,
+          ]),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "inconsistent totals" }),
+            }),
+          ),
+      );
+      assert.equal(getResponseTelemetry(inconsistentTotals)?.usageTelemetryStatus, "invalid");
+      assert.deepEqual((await inconsistentTotals.json() as { usage?: unknown }).usage, inconsistentUsage);
+
+      const incomplete = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.incomplete",
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  status: "incomplete",
+                  usage: {
+                    input_tokens: 100,
+                    input_tokens_details: { cached_tokens: 80, cache_write_tokens: 0 },
+                    output_tokens: 0,
+                    total_tokens: 100,
+                  },
+                },
+              })
+            }\n\n`,
+          ]),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "incomplete" }),
+            }),
+          ),
+      );
+      assert.equal(incomplete.status, 200);
+      assert.deepEqual(getResponseTelemetry(incomplete), {
+        ...getResponseTelemetry(incomplete),
+        completed: false,
+        inputTokens: 100,
+        cachedInputTokens: 80,
+        cacheWriteInputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 100,
+        usageObserved: true,
+        usageTelemetryStatus: "reported",
+        streamTerminalType: "response.incomplete",
+      });
 
       const malformedUsage = await withFetchMock(
         () =>
@@ -4474,6 +4742,7 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
                   {
                     type: "input_file",
                     file_id: "file_stable",
+                    detail: "high",
                     prompt_cache_breakpoint: { mode: "explicit" },
                   },
                 ],
@@ -4492,6 +4761,69 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
       content.map((item) => item.prompt_cache_breakpoint),
       [{ mode: "explicit" }, { mode: "explicit" }, { mode: "explicit" }],
     );
+    assert.deepEqual(content[2], {
+      type: "input_file",
+      file_id: "file_stable",
+      detail: "high",
+      prompt_cache_breakpoint: { mode: "explicit" },
+    });
+  });
+
+  await t.step("Responses preserves function-call output content breakpoints and file detail", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              prompt_cache_options: { mode: "explicit" },
+              input: [{
+                type: "function_call_output",
+                call_id: "call_cache_result",
+                output: [
+                  { type: "input_text", text: "stable tool result", prompt_cache_breakpoint: { mode: "explicit" } },
+                  {
+                    type: "input_image",
+                    image_url: "https://example.test/tool-result.png",
+                    prompt_cache_breakpoint: { mode: "explicit" },
+                  },
+                  {
+                    type: "input_file",
+                    file_id: "file_tool_result",
+                    detail: "low",
+                    prompt_cache_breakpoint: { mode: "explicit" },
+                  },
+                ],
+              }],
+            }),
+          }),
+        ),
+    );
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const input = (recordedBody as unknown as Record<string, unknown>).input as Array<Record<string, unknown>>;
+    assert.deepEqual(input[0]?.output, [
+      { type: "input_text", text: "stable tool result", prompt_cache_breakpoint: { mode: "explicit" } },
+      {
+        type: "input_image",
+        image_url: "https://example.test/tool-result.png",
+        prompt_cache_breakpoint: { mode: "explicit" },
+      },
+      {
+        type: "input_file",
+        file_id: "file_tool_result",
+        detail: "low",
+        prompt_cache_breakpoint: { mode: "explicit" },
+      },
+    ]);
+    assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 3);
   });
 
   await t.step(
@@ -4572,11 +4904,13 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
     assert.equal(body.error?.param, "messages[0].content[0].prompt_cache_breakpoint");
   });
 
-  await t.step("Chat rejects a tool-output breakpoint instead of silently dropping it", async () => {
+  await t.step("Chat preserves a tool-output breakpoint through function_call_output", async () => {
     let dispatches = 0;
+    let recordedBody: Record<string, unknown> | null = null;
     const response = await withFetchMock(
-      () => {
+      (_url, bodyText) => {
         dispatches += 1;
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
         return sseResponse(baseSseChunks());
       },
       () =>
@@ -4599,10 +4933,14 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
           }),
         ),
     );
-    assert.equal(response.status, 400);
-    assert.equal(dispatches, 0);
-    const body = await response.json() as { error?: { param?: string } };
-    assert.equal(body.error?.param, "messages[0].content[0].prompt_cache_breakpoint");
+    assert.equal(response.status, 200);
+    assert.equal(dispatches, 1);
+    assert.ok(recordedBody);
+    const input = (recordedBody as unknown as Record<string, unknown>).input as Array<Record<string, unknown>>;
+    assert.deepEqual(input[0]?.output, [
+      { type: "input_text", text: "stable tool result", prompt_cache_breakpoint: { mode: "explicit" } },
+    ]);
+    assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 1);
   });
 
   await t.step("Chat maps native file parts and preserves an interleaved developer prefix", async () => {
@@ -4677,6 +5015,45 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
   });
 });
 
+Deno.test("openai: identical cacheable Chat requests render byte-identical upstream bodies", async () => {
+  const bodies: string[] = [];
+  const requestBody = {
+    model: DEFAULT_TEST_MODEL,
+    prompt_cache_key: "stable-cache-prefix",
+    prompt_cache_options: { mode: "explicit", ttl: "30m" },
+    messages: [
+      {
+        role: "system",
+        content: [{ type: "text", text: "Stable instructions", prompt_cache_breakpoint: { mode: "explicit" } }],
+      },
+      { role: "user", content: [{ type: "text", text: "Variable question" }] },
+    ],
+  };
+
+  await withFetchMock(
+    (_url, bodyText) => {
+      assert.ok(bodyText);
+      bodies.push(bodyText);
+      return sseResponse(baseSseChunks());
+    },
+    async () => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody),
+          }),
+        );
+        assert.equal(response.status, 200);
+      }
+    },
+  );
+
+  assert.deepEqual(bodies, [bodies[0], bodies[0]]);
+  assert.doesNotMatch(bodies[0]!, /"(?:account_id|conversation_id|request_id|timestamp)"/);
+});
+
 Deno.test("openai: known-unsupported prompt caching rejects controls and breakpoints before dispatch", async (t) => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const runtimeConfigKey = keyToString(["uos_ai", "runtime_config", "v2"]);
@@ -4731,6 +5108,21 @@ Deno.test("openai: known-unsupported prompt caching rejects controls and breakpo
         }],
       },
       param: "messages[0].content[0].prompt_cache_breakpoint",
+    },
+    {
+      route: "responses",
+      body: {
+        input: [{
+          type: "function_call_output",
+          call_id: "call_cache_result",
+          output: [{
+            type: "input_text",
+            text: "stable tool result",
+            prompt_cache_breakpoint: { mode: "explicit" },
+          }],
+        }],
+      },
+      param: "input[0].output[0].prompt_cache_breakpoint",
     },
   ] as const;
 
@@ -4792,6 +5184,289 @@ Deno.test("openai: known-unsupported prompt caching rejects controls and breakpo
                 model: DEFAULT_TEST_MODEL,
                 input: "ping",
                 prompt_cache_options: { mode: "implicit" },
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(dispatches, 1);
+    });
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+    if (previousRuntimeConfig === undefined) kvStore.delete(runtimeConfigKey);
+    else kvStore.set(runtimeConfigKey, previousRuntimeConfig);
+    resetRuntimeConfigCacheForTest();
+  }
+});
+
+Deno.test("openai: active provider cache capabilities reject only known unsupported controls", async (t) => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const runtimeConfigKey = keyToString(["uos_ai", "runtime_config", "v2"]);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  const previousRuntimeConfig = kvStore.get(runtimeConfigKey);
+  const controls = (fields: Record<string, unknown>) => ({
+    ...fields,
+    source: "catalog",
+    verified_at_ms: 1_000,
+  });
+  const setPromptCacheCapabilities = (promptCache: unknown) => {
+    kvStore.set(snapshotKey, {
+      source: "chatgpt_codex",
+      client_version: "0.125.0",
+      updated_at_ms: Date.now(),
+      models: [{
+        slug: DEFAULT_TEST_MODEL,
+        supported_reasoning_levels: ["none", "medium"],
+        prompt_cache: promptCache,
+      }],
+    });
+  };
+  const cases = [
+    {
+      route: "responses",
+      controls: controls({ key: false }),
+      body: { input: "ping", prompt_cache_key: "stable-prefix" },
+      param: "prompt_cache_key",
+    },
+    {
+      route: "chat.completions",
+      controls: controls({ key: false }),
+      body: { messages: [{ role: "user", content: "ping" }], prompt_cache_key: "stable-prefix" },
+      param: "prompt_cache_key",
+    },
+    {
+      route: "responses",
+      controls: controls({ implicit: false }),
+      body: { input: "ping", prompt_cache_options: { ttl: "30m" } },
+      param: "prompt_cache_options",
+    },
+    {
+      route: "chat.completions",
+      controls: controls({ modes: ["explicit"] }),
+      body: {
+        messages: [{ role: "user", content: "ping" }],
+        prompt_cache_options: { mode: "implicit" },
+      },
+      param: "prompt_cache_options.mode",
+    },
+    {
+      route: "responses",
+      controls: controls({ explicit_breakpoints: false }),
+      body: {
+        input: [{ type: "input_text", text: "stable", prompt_cache_breakpoint: { mode: "explicit" } }],
+        prompt_cache_options: { mode: "explicit" },
+      },
+      param: "input[0].prompt_cache_breakpoint",
+    },
+    {
+      route: "chat.completions",
+      controls: controls({ modes: ["implicit"] }),
+      body: {
+        messages: [{
+          role: "user",
+          content: [{ type: "text", text: "stable", prompt_cache_breakpoint: { mode: "explicit" } }],
+        }],
+        prompt_cache_options: { mode: "explicit" },
+      },
+      param: "messages[0].content[0].prompt_cache_breakpoint",
+    },
+    {
+      route: "responses",
+      controls: controls({ explicit_breakpoints: false }),
+      body: { input: "ping", prompt_cache_options: { mode: "explicit" } },
+      param: "prompt_cache_options.mode",
+    },
+    {
+      route: "responses",
+      controls: controls({ legacy_retentions: ["in_memory"] }),
+      body: { input: "ping", prompt_cache_retention: "24h" },
+      param: "prompt_cache_retention",
+    },
+    {
+      route: "chat.completions",
+      controls: controls({ legacy_retentions: ["in_memory"] }),
+      body: { messages: [{ role: "user", content: "ping" }], prompt_cache_retention: "24h" },
+      param: "prompt_cache_retention",
+    },
+    {
+      route: "responses",
+      controls: controls({ breakpoint_block_types: { responses: ["input_text"] } }),
+      body: {
+        input: [{
+          type: "input_image",
+          image_url: "https://example.test/stable.png",
+          prompt_cache_breakpoint: { mode: "explicit" },
+        }],
+      },
+      param: "input[0].prompt_cache_breakpoint",
+    },
+    {
+      route: "responses",
+      controls: controls({ breakpoint_block_types: { responses: ["input_text"] } }),
+      body: {
+        input: [{
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "stable", prompt_cache_breakpoint: { mode: "explicit" } },
+            {
+              type: "input_image",
+              image_url: "https://example.test/later-unsupported.png",
+              prompt_cache_breakpoint: { mode: "explicit" },
+            },
+          ],
+        }],
+      },
+      param: "input[0].content[1].prompt_cache_breakpoint",
+    },
+    {
+      route: "chat.completions",
+      controls: controls({ breakpoint_block_types: { chat_completions: ["text"] } }),
+      body: {
+        messages: [{
+          role: "user",
+          content: [{
+            type: "image_url",
+            image_url: { url: "https://example.test/stable.png" },
+            prompt_cache_breakpoint: { mode: "explicit" },
+          }],
+        }],
+      },
+      param: "messages[0].content[0].prompt_cache_breakpoint",
+    },
+  ] as const;
+
+  try {
+    for (const testCase of cases) {
+      await t.step(`${testCase.route}/${testCase.param}`, async () => {
+        setPromptCacheCapabilities({
+          version: 1,
+          providers: [{ id: "codex_chatgpt", controls: testCase.controls }],
+        });
+
+        let dispatches = 0;
+        const response = await withFetchMock(
+          () => {
+            dispatches += 1;
+            return sseResponse(baseSseChunks());
+          },
+          () =>
+            testCase.route === "chat.completions"
+              ? handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+                }),
+              )
+              : handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, ...testCase.body }),
+                }),
+              ),
+        );
+        assert.equal(response.status, 400);
+        assert.equal(dispatches, 0);
+        const payload = await response.json() as { error?: { message?: string; type?: string; param?: string } };
+        assert.equal(
+          payload.error?.message,
+          `Prompt cache control '${testCase.param}' is not supported for model '${DEFAULT_TEST_MODEL}'.`,
+        );
+        assert.equal(payload.error?.type, "invalid_request_error");
+        assert.equal(payload.error?.param, testCase.param);
+      });
+    }
+
+    await t.step(
+      "unsupported catalog TTL metadata remains unknown instead of rejecting the public 30m value",
+      async () => {
+        setPromptCacheCapabilities({
+          version: 1,
+          providers: [{ id: "codex_chatgpt", controls: controls({ ttls: ["5m"] }) }],
+        });
+
+        let dispatches = 0;
+        const response = await withFetchMock(
+          () => {
+            dispatches += 1;
+            return sseResponse(baseSseChunks());
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  input: "ping",
+                  prompt_cache_options: { ttl: "30m" },
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 200);
+        assert.equal(dispatches, 1);
+      },
+    );
+
+    await t.step("omitted active-provider fields and other providers remain unknown", async () => {
+      setPromptCacheCapabilities({
+        version: 1,
+        providers: [
+          { id: "codex_chatgpt", controls: controls({}) },
+          { id: "yunwu", controls: controls({ key: false, explicit_breakpoints: false }) },
+        ],
+      });
+
+      let dispatches = 0;
+      const response = await withFetchMock(
+        () => {
+          dispatches += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                prompt_cache_key: "stable-prefix",
+                prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                input: [{ type: "input_text", text: "stable", prompt_cache_breakpoint: { mode: "explicit" } }],
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(dispatches, 1);
+    });
+
+    await t.step("malformed capability metadata remains unknown", async () => {
+      setPromptCacheCapabilities({ version: 1, providers: [] });
+
+      let dispatches = 0;
+      const response = await withFetchMock(
+        () => {
+          dispatches += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                prompt_cache_key: "stable-prefix",
+                prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                messages: [{
+                  role: "user",
+                  content: [{ type: "text", text: "stable", prompt_cache_breakpoint: { mode: "explicit" } }],
+                }],
               }),
             }),
           ),

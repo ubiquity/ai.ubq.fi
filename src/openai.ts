@@ -10,7 +10,11 @@ import {
   releaseCodexResponseProbe,
 } from "./codex.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
-import { normalizePromptCacheCapabilities } from "./codex_models.ts";
+import {
+  CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
+  normalizePromptCacheCapabilities,
+  type PromptCacheControls,
+} from "./codex_models.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
@@ -283,7 +287,7 @@ type RoutedResponsesUpstream = Readonly<{
   fallbackReason: InferenceFallbackReason | null;
 }>;
 
-type UsageTokens = Readonly<{
+export type UsageTokens = Readonly<{
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -309,7 +313,12 @@ const parseUsageToken = (value: unknown, present: boolean): ParsedUsageToken => 
   return { value, invalid: false };
 };
 
-const extractUsageTokens = (value: unknown): UsageTokens | null => {
+/**
+ * Normalizes terminal Responses usage for gateway telemetry. The fixed
+ * cache-scope experiment reuses this parser so it cannot invent a divergent
+ * interpretation of cache-read or cache-write fields.
+ */
+export const extractUsageTokens = (value: unknown): UsageTokens | null => {
   if (value === undefined) return null;
   if (!isRecord(value) || Array.isArray(value)) {
     return {
@@ -344,12 +353,15 @@ const extractUsageTokens = (value: unknown): UsageTokens | null => {
   // model-dependent, so its absence does not downgrade otherwise complete
   // cache-read telemetry.
   const cacheReadMissing = cachedInputTokens.value === null;
+  // cache_write_tokens is an independent dimension: an input can be both
+  // newly cached and partly served from cache. cached_tokens, however, is a
+  // subset of the request input and may never exceed input_tokens.
+  const cachedTokensExceedInput = inputTokens.value !== null && cachedInputTokens.value !== null &&
+    cachedInputTokens.value > inputTokens.value;
   const inconsistentTotals = !coreMissing && inputTokens.value + outputTokens.value !== totalTokens.value;
-  const cachedTokensExceedInput = inputTokens.value !== null &&
-    cachedInputTokens.value !== null && cachedInputTokens.value > inputTokens.value;
   const invalid = inputTokens.invalid || outputTokens.invalid || totalTokens.invalid ||
     (detailsPresent && details === null) || cachedInputTokens.invalid || cacheWriteInputTokens.invalid ||
-    inconsistentTotals || cachedTokensExceedInput;
+    cachedTokensExceedInput || inconsistentTotals;
 
   return {
     inputTokens: inputTokens.value,
@@ -393,12 +405,17 @@ const promptCacheModeFor = (rawRecord: Record<string, unknown>): PromptCacheMode
 
 const countExplicitPromptCacheBreakpoints = (input: readonly ResponseInputItem[]): number => {
   let count = 0;
-  for (const item of input) {
-    if (!isRecord(item) || !Array.isArray(item.content)) continue;
-    for (const contentItem of item.content) {
+  const countContent = (content: unknown): void => {
+    if (!Array.isArray(content)) return;
+    for (const contentItem of content) {
       if (!isRecord(contentItem) || !isRecord(contentItem.prompt_cache_breakpoint)) continue;
       if (contentItem.prompt_cache_breakpoint.mode === "explicit") count += 1;
     }
+  };
+  for (const item of input) {
+    if (!isRecord(item)) continue;
+    countContent(item.content);
+    if (item.type === "function_call_output") countContent(item.output);
   }
   return count;
 };
@@ -504,6 +521,81 @@ const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   if (!trimmed) return "";
   if (trimmed.length <= maxLen) return trimmed;
   return `${trimmed.slice(0, maxLen)}...`;
+};
+
+type RedactedUpstreamErrorDiagnostic = Readonly<{
+  error_class:
+    | "ApiKeyQuotaDispatchError"
+    | "CodexError"
+    | "YunwuError"
+    | "DOMException"
+    | "TypeError"
+    | "Error"
+    | "unknown";
+  status: number | null;
+  code: string | null;
+}>;
+
+// Only codes owned by this gateway's typed errors may reach server logs. In
+// particular, never log arbitrary error messages, causes, stacks, or provider
+// response bodies: an upstream error may echo request content or credentials.
+const REDACTED_UPSTREAM_DIAGNOSTIC_CODES = new Set<string>([
+  "api_key_quota_reservation_unavailable",
+  "codex_auth_missing",
+  "codex_auth_invalid",
+  "codex_auth_refresh_failed",
+  "codex_auth_refresh_unreachable",
+  "codex_upstream_unreachable",
+  "gateway_timeout",
+  "invalid_api_key",
+  "rate_limit_exceeded",
+  "server_error",
+  "yunwu_api_key_missing",
+  "yunwu_pricing_unavailable",
+  "yunwu_pricing_invalid",
+  "yunwu_status_unavailable",
+  "yunwu_status_invalid",
+  "yunwu_request_invalid",
+  "yunwu_upstream_unreachable",
+  "yunwu_logs_unavailable",
+  "yunwu_logs_invalid",
+]);
+
+const redactedDiagnosticStatus = (value: unknown): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 100 && value <= 599 ? value : null;
+
+const redactedUpstreamErrorDiagnostic = (error: unknown): RedactedUpstreamErrorDiagnostic => {
+  let errorClass: RedactedUpstreamErrorDiagnostic["error_class"] = "unknown";
+  let status: number | null = null;
+  let code: string | null = null;
+
+  if (error instanceof ApiKeyQuotaDispatchError) {
+    errorClass = "ApiKeyQuotaDispatchError";
+    status = redactedDiagnosticStatus(error.status);
+    code = REDACTED_UPSTREAM_DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
+  } else if (error instanceof CodexError) {
+    errorClass = "CodexError";
+    status = redactedDiagnosticStatus(error.status);
+    code = REDACTED_UPSTREAM_DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
+  } else if (error instanceof YunwuError) {
+    errorClass = "YunwuError";
+    status = redactedDiagnosticStatus(error.status);
+    code = REDACTED_UPSTREAM_DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
+  } else if (error instanceof DOMException) {
+    errorClass = "DOMException";
+  } else if (error instanceof TypeError) {
+    errorClass = "TypeError";
+  } else if (error instanceof Error) {
+    errorClass = "Error";
+    // Voyage attaches a numeric HTTP status to its locally-created Error.
+    status = redactedDiagnosticStatus((error as { status?: unknown }).status);
+  }
+
+  return { error_class: errorClass, status, code };
+};
+
+const logRedactedUpstreamError = (label: string, error: unknown): void => {
+  console.error(label, redactedUpstreamErrorDiagnostic(error));
 };
 
 const withUpstreamProviderHeader = (response: Response, provider: string | null | undefined): Response => {
@@ -1039,27 +1131,82 @@ const promptCacheControlParam = (rawRecord: Record<string, unknown>): string | n
 const hasExplicitPromptCacheBreakpoint = (value: unknown): boolean =>
   isRecord(value) && !Array.isArray(value) && value.mode === "explicit";
 
-const findExplicitPromptCacheBreakpointParam = (
+type ExplicitPromptCacheBreakpoint = Readonly<{
+  param: string;
+  blockType: string | null;
+}>;
+
+const findExplicitPromptCacheBreakpoints = (
   rawInput: unknown,
   inputParam: "input" | "messages",
-): string | null => {
-  if (!Array.isArray(rawInput)) return null;
+): ExplicitPromptCacheBreakpoint[] => {
+  if (!Array.isArray(rawInput)) return [];
+
+  const breakpoints: ExplicitPromptCacheBreakpoint[] = [];
+
+  const collect = (value: Record<string, unknown>, param: string): void => {
+    if (hasExplicitPromptCacheBreakpoint(value.prompt_cache_breakpoint)) {
+      breakpoints.push({ param, blockType: getString(value.type) });
+    }
+  };
+
   for (const [index, item] of rawInput.entries()) {
     if (!isRecord(item) || Array.isArray(item)) continue;
     const itemParam = `${inputParam}[${index}]`;
-    if (inputParam === "input" && hasExplicitPromptCacheBreakpoint(item.prompt_cache_breakpoint)) {
-      return `${itemParam}.prompt_cache_breakpoint`;
+    if (inputParam === "input") {
+      collect(item, `${itemParam}.prompt_cache_breakpoint`);
     }
-    if (!Array.isArray(item.content)) continue;
-    for (const [contentIndex, contentItem] of item.content.entries()) {
-      if (!isRecord(contentItem) || Array.isArray(contentItem)) continue;
-      if (hasExplicitPromptCacheBreakpoint(contentItem.prompt_cache_breakpoint)) {
-        return `${itemParam}.content[${contentIndex}].prompt_cache_breakpoint`;
+    if (Array.isArray(item.content)) {
+      for (const [contentIndex, contentItem] of item.content.entries()) {
+        if (!isRecord(contentItem) || Array.isArray(contentItem)) continue;
+        collect(contentItem, `${itemParam}.content[${contentIndex}].prompt_cache_breakpoint`);
       }
     }
+    if (inputParam !== "input" || item.type !== "function_call_output" || !Array.isArray(item.output)) continue;
+    for (const [outputIndex, outputItem] of item.output.entries()) {
+      if (!isRecord(outputItem) || Array.isArray(outputItem)) continue;
+      collect(outputItem, `${itemParam}.output[${outputIndex}].prompt_cache_breakpoint`);
+    }
   }
-  return null;
+  return breakpoints;
 };
+
+const activePromptCacheControls = (metadata: CodexModelMetadata): PromptCacheControls | null => {
+  const capabilities = normalizePromptCacheCapabilities(metadata.record?.prompt_cache);
+  if (capabilities === null || capabilities === false) return null;
+  return capabilities.providers.find((provider) => provider.id === CODEX_CHATGPT_PROMPT_CACHE_PROVIDER)?.controls ??
+    null;
+};
+
+type RequestedPromptCacheMode = Readonly<{
+  value: "implicit" | "explicit";
+  param: "prompt_cache_options" | "prompt_cache_options.mode";
+}>;
+
+const requestedPromptCacheMode = (rawRecord: Record<string, unknown>): RequestedPromptCacheMode | null => {
+  if (!Object.prototype.hasOwnProperty.call(rawRecord, "prompt_cache_options")) return null;
+  const options = rawRecord.prompt_cache_options;
+  if (!isRecord(options) || Array.isArray(options)) return null;
+  if (options.mode === "explicit") return { value: "explicit", param: "prompt_cache_options.mode" };
+  return {
+    value: "implicit",
+    param: options.mode === "implicit" ? "prompt_cache_options.mode" : "prompt_cache_options",
+  };
+};
+
+const requestedPromptCacheTtl = (rawRecord: Record<string, unknown>): string | null => {
+  const options = rawRecord.prompt_cache_options;
+  if (!isRecord(options) || Array.isArray(options)) return null;
+  return getString(options.ttl);
+};
+
+const knownUnsupportedPromptCacheUseError = (model: string, param: string): Response =>
+  openaiError(
+    400,
+    `Prompt cache control '${param}' is not supported for model '${model}'.`,
+    "invalid_request_error",
+    { param },
+  );
 
 const validateKnownUnsupportedPromptCacheUse = (
   model: string,
@@ -1068,22 +1215,70 @@ const validateKnownUnsupportedPromptCacheUse = (
   input: readonly ResponseInputItem[],
   inputParam: "input" | "messages",
 ): Response | null => {
-  // Only the explicit top-level false state is authoritative. Omitted and
-  // provider-specific metadata remain unknown and must continue upstream.
-  if (metadata.record?.prompt_cache !== false) return null;
+  const breakpoints = countExplicitPromptCacheBreakpoints(input) > 0
+    ? findExplicitPromptCacheBreakpoints(rawRecord[inputParam], inputParam)
+    : [];
 
-  const param = promptCacheControlParam(rawRecord) ??
-    (countExplicitPromptCacheBreakpoints(input) > 0
-      ? findExplicitPromptCacheBreakpointParam(rawRecord[inputParam], inputParam)
-      : null);
-  if (!param) return null;
+  if (metadata.record?.prompt_cache === false) {
+    const param = promptCacheControlParam(rawRecord) ?? breakpoints[0]?.param;
+    if (!param) return null;
+    return openaiError(
+      400,
+      `Prompt caching is not supported for model '${model}'.`,
+      "invalid_request_error",
+      { param },
+    );
+  }
 
-  return openaiError(
-    400,
-    `Prompt caching is not supported for model '${model}'.`,
-    "invalid_request_error",
-    { param },
-  );
+  // A missing capability envelope, another provider's record, or an omitted
+  // control field is unknown—not an unsupported upstream feature. Preserve
+  // standard OpenAI controls in each of those cases for forward compatibility.
+  const controls = activePromptCacheControls(metadata);
+  if (!controls) return null;
+
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "prompt_cache_key") && controls.key === false) {
+    return knownUnsupportedPromptCacheUseError(model, "prompt_cache_key");
+  }
+
+  const mode = requestedPromptCacheMode(rawRecord);
+  const modeIsKnownUnsupported = (value: "implicit" | "explicit"): boolean =>
+    controls.modes !== undefined && !controls.modes.includes(value);
+  if (mode?.value === "implicit" && (controls.implicit === false || modeIsKnownUnsupported("implicit"))) {
+    return knownUnsupportedPromptCacheUseError(model, mode.param);
+  }
+
+  const ttl = requestedPromptCacheTtl(rawRecord);
+  if (ttl !== null && controls.ttls !== undefined && !controls.ttls.includes(ttl)) {
+    return knownUnsupportedPromptCacheUseError(model, "prompt_cache_options.ttl");
+  }
+
+  const retention = getString(rawRecord.prompt_cache_retention);
+  if (
+    retention !== null && controls.legacy_retentions !== undefined &&
+    !controls.legacy_retentions.includes(retention)
+  ) {
+    return knownUnsupportedPromptCacheUseError(model, "prompt_cache_retention");
+  }
+
+  for (const breakpoint of breakpoints) {
+    if (controls.explicit_breakpoints === false || modeIsKnownUnsupported("explicit")) {
+      return knownUnsupportedPromptCacheUseError(model, breakpoint.param);
+    }
+    const endpoint = inputParam === "input" ? "responses" : "chat_completions";
+    const supportedBlockTypes = controls.breakpoint_block_types?.[endpoint];
+    if (
+      supportedBlockTypes !== undefined &&
+      (breakpoint.blockType === null || !supportedBlockTypes.includes(breakpoint.blockType))
+    ) {
+      return knownUnsupportedPromptCacheUseError(model, breakpoint.param);
+    }
+  }
+
+  if (mode?.value === "explicit" && (controls.explicit_breakpoints === false || modeIsKnownUnsupported("explicit"))) {
+    return knownUnsupportedPromptCacheUseError(model, mode.param);
+  }
+
+  return null;
 };
 
 const resolveDefaultReasoningLabel = (
@@ -2811,6 +3006,7 @@ type NormalizationResult<T> =
   | Readonly<{ ok: false; message: string; param: string }>;
 
 type InputImageDetail = "auto" | "low" | "high" | "original";
+type InputFileDetail = "auto" | "low" | "high";
 
 const invalidNormalizedField = <T>(param: string, message: string): NormalizationResult<T> => ({
   ok: false,
@@ -2828,6 +3024,15 @@ const parseImageDetail = (
     return { ok: true, value };
   }
   return invalidNormalizedField(param, `${param} must be one of auto, low, high, or original`);
+};
+
+const parseInputFileDetail = (
+  value: unknown,
+  param: string,
+): NormalizationResult<InputFileDetail | undefined> => {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (value === "auto" || value === "low" || value === "high") return { ok: true, value };
+  return invalidNormalizedField(param, `${param} must be one of auto, low, or high`);
 };
 
 const findUnknownContentField = (value: Record<string, unknown>, allowed: readonly string[]): string | null => {
@@ -3219,6 +3424,7 @@ const normalizeResponseContentItem = (
       "file_data",
       "file_url",
       "filename",
+      "detail",
       "prompt_cache_breakpoint",
     ]);
     if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
@@ -3235,6 +3441,8 @@ const normalizeResponseContentItem = (
     if (value.filename !== undefined && value.filename !== null && typeof value.filename !== "string") {
       return invalidNormalizedField(`${param}.filename`, `${param}.filename must be a string or null`);
     }
+    const detail = parseInputFileDetail(value.detail, `${param}.detail`);
+    if (!detail.ok) return detail;
     const breakpoint = normalizePromptCacheBreakpoint(
       value.prompt_cache_breakpoint,
       `${param}.prompt_cache_breakpoint`,
@@ -3246,12 +3454,14 @@ const normalizeResponseContentItem = (
       file_data?: string;
       file_url?: string;
       filename?: string | null;
+      detail?: InputFileDetail;
     } = { type: "input_file" };
     for (const field of fields) {
       const fieldValue = getString(value[field]);
       if (fieldValue) item[field] = fieldValue;
     }
     if (Object.prototype.hasOwnProperty.call(value, "filename")) item.filename = value.filename as string | null;
+    if (detail.value !== undefined) item.detail = detail.value;
     return { ok: true, value: withPromptCacheBreakpoint(item, breakpoint.value) };
   }
 
@@ -3298,6 +3508,28 @@ const normalizeResponseMessageItem = (
     items.push(normalized.value);
   }
   return { ok: true, value: { type: "message", role, content: items } };
+};
+
+/**
+ * Responses permits a function-call result to carry the same input content
+ * blocks as a message. Normalize that known standard shape so cache
+ * breakpoints are neither passed through unchecked nor omitted from telemetry.
+ * Other Codex Responses extension items remain opaque passthrough values.
+ */
+const normalizeFunctionCallOutputItem = (
+  value: Record<string, unknown>,
+  param: string,
+): NormalizationResult<ResponseInputItem> => {
+  if (value.type !== "function_call_output" || !Array.isArray(value.output)) {
+    return { ok: true, value: value as ResponseInputItem };
+  }
+  const output: MessageContentItem[] = [];
+  for (const [index, content] of value.output.entries()) {
+    const normalized = normalizeResponseContentItem(content, `${param}.output[${index}]`, "user");
+    if (!normalized.ok) return normalized;
+    output.push(normalized.value);
+  }
+  return { ok: true, value: { ...value, type: "function_call_output", output } };
 };
 
 const normalizeChatToolCall = (
@@ -3350,10 +3582,10 @@ const normalizeChatToolCall = (
 const normalizeChatToolOutput = (
   value: unknown,
   param: string,
-): NormalizationResult<string | Array<Readonly<{ type: "input_text"; text: string }>>> => {
+): NormalizationResult<string | Array<Extract<MessageContentItem, { type: "input_text" }>>> => {
   if (typeof value === "string") return { ok: true, value };
   if (!Array.isArray(value)) return invalidNormalizedField(param, `${param} must be a string or an array`);
-  const output: Array<Readonly<{ type: "input_text"; text: string }>> = [];
+  const output: Array<Extract<MessageContentItem, { type: "input_text" }>> = [];
   for (const [index, part] of value.entries()) {
     const partParam = `${param}[${index}]`;
     if (!isRecord(part) || Array.isArray(part)) {
@@ -3373,16 +3605,7 @@ const normalizeChatToolOutput = (
       `${partParam}.prompt_cache_breakpoint`,
     );
     if (!breakpoint.ok) return breakpoint;
-    if (breakpoint.value !== undefined) {
-      // The Chat tool-result block becomes a Responses function_call_output.
-      // That representation has no cache-breakpoint field, so accepting this
-      // marker would silently change the client's cache contract.
-      return invalidNormalizedField(
-        `${partParam}.prompt_cache_breakpoint`,
-        "prompt_cache_breakpoint is not supported for tool output content in this gateway",
-      );
-    }
-    output.push({ type: "input_text", text: part.text });
+    output.push(withPromptCacheBreakpoint({ type: "input_text", text: part.text }, breakpoint.value));
   }
   return { ok: true, value: output };
 };
@@ -4461,7 +4684,7 @@ const handleEmbeddingsRequest = async (
             : "Embeddings upstream request failed.";
 
           if (!status || !EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
-            console.error(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
+            logRedactedUpstreamError(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
             await recordErrorUsage(usageContext);
             if (!status) return await failIndeterminate();
             return await releaseAfterExplicitUpstreamFailure(
@@ -4471,7 +4694,7 @@ const handleEmbeddingsRequest = async (
 
           const waitMs = Math.max(0, retryAfterMs ?? backoffMs);
           if (attempt >= 2) {
-            console.error(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
+            logRedactedUpstreamError(`[ai.ubq.fi] embeddings request_id=${requestId} upstream_error:`, error);
             await recordErrorUsage(usageContext);
             if (status === 429) {
               const retryAfterSeconds = Math.max(1, Math.ceil(waitMs / 1000));
@@ -5411,7 +5634,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     });
   } catch (error) {
     clearStreamFirstEventDeadline();
-    console.error("[ai.ubq.fi] Upstream fetch failed:", error);
+    logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
     return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }
@@ -5655,7 +5878,13 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           });
         }
         flushContentBuffer();
-        converted.push(msg as ResponseInputItem);
+        const normalizedFunctionOutput = normalizeFunctionCallOutputItem(msg, param);
+        if (!normalizedFunctionOutput.ok) {
+          return openaiError(400, normalizedFunctionOutput.message, "invalid_request_error", {
+            param: normalizedFunctionOutput.param,
+          });
+        }
+        converted.push(normalizedFunctionOutput.value);
         sawNonContentItem = true;
         continue;
       }
@@ -5747,7 +5976,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     });
   } catch (error) {
     clearStreamFirstEventDeadline();
-    console.error("[ai.ubq.fi] Upstream fetch failed:", error);
+    logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
     await recordErrorUsage(usageContext);
     return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }

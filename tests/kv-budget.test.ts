@@ -1023,20 +1023,20 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
         output_tokens: 0,
         total_tokens: 1,
       }));
-    const invalid = await handler(
+    const invalidCacheRead = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "invalid cache telemetry" }),
       }),
     );
-    assert.equal(invalid.status, 200);
+    assert.equal(invalidCacheRead.status, 200);
     const terminalEvents = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalEvents.length, 2);
-    const invalidTerminal = JSON.parse(String(terminalEvents[1]?.[1])) as Record<string, unknown>;
-    assert.equal(invalidTerminal.cached_input_tokens, 2);
-    assert.equal(invalidTerminal.cache_write_input_tokens, 0);
-    assert.equal(invalidTerminal.usage_telemetry_status, "invalid");
+    const invalidCacheReadTerminal = JSON.parse(String(terminalEvents[1]?.[1])) as Record<string, unknown>;
+    assert.equal(invalidCacheReadTerminal.cached_input_tokens, 2);
+    assert.equal(invalidCacheReadTerminal.cache_write_input_tokens, 0);
+    assert.equal(invalidCacheReadTerminal.usage_telemetry_status, "invalid");
 
     // An omitted cache-details object is distinct from the provider explicitly
     // reporting a zero cache read/write. Keep that distinction in the terminal
