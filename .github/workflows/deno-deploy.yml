@@ -145,12 +145,10 @@ jobs:
       - validate
       - verify-artifact
       - production-approval
-      - deploy
     if: >-
       always() &&
       needs.validate.result == 'success' &&
       needs.verify-artifact.result == 'success' &&
-      needs.deploy.result == 'success' &&
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
         (
@@ -220,10 +218,12 @@ jobs:
       - validate
       - verify-artifact
       - production-approval
+      - configure-secrets
     if: >-
       always() &&
       needs.validate.result == 'success' &&
       needs.verify-artifact.result == 'success' &&
+      needs.configure-secrets.result == 'success' &&
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
         (
@@ -266,14 +266,70 @@ jobs:
         DENO_DEPLOY_TOKEN
     secrets: inherit
 
+  restore-runtime-secrets:
+    needs: deploy
+    if: >-
+      always() &&
+      needs.deploy.result == 'success' &&
+      (
+        (github.ref == 'refs/heads/development') ||
+        (
+          github.ref != 'refs/heads/development' &&
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.deploy_preview == 'true'
+        )
+      )
+    runs-on: ubuntu-latest
+    env:
+      DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+      TARGET_PROJECT: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
+      UOS_AI_TOKEN: ${{ secrets.UBIQUITY_AI_USER_TOKEN }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      YUNWU_API_KEY: ${{ secrets.YUNWU_API_KEY }}
+    steps:
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Restore runtime provider credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "$DENO_DEPLOY_TOKEN" ]
+          [ -n "$UOS_AI_TOKEN" ]
+          [ -n "$CEREBRAS_API_KEY" ]
+          [ -n "$YUNWU_API_KEY" ]
+          deno eval '
+            const entries = [
+              ["UOS_AI_TOKEN", Deno.env.get("UOS_AI_TOKEN")],
+              ["CEREBRAS_API_KEY", Deno.env.get("CEREBRAS_API_KEY")],
+              ["YUNWU_API_KEY", Deno.env.get("YUNWU_API_KEY")],
+            ];
+            Deno.writeTextFileSync(
+              ".uos-runtime-secrets.env",
+              `${entries.map(([name, value]) => `${name}=${JSON.stringify(value)}`).join("\\n")}\\n`,
+              { mode: 0o600 },
+            );
+          '
+          deno deploy env load \
+            --json \
+            --non-interactive \
+            --org ubiquity-dao \
+            --app "$TARGET_PROJECT" \
+            --token "$DENO_DEPLOY_TOKEN" \
+            .uos-runtime-secrets.env |
+            jq '{added, updated, skipped}'
+
   verify-deployment:
     needs:
       - deploy
       - configure-secrets
+      - restore-runtime-secrets
     if: >-
       always() &&
       needs.deploy.result == 'success' &&
       needs.configure-secrets.result == 'success' &&
+      needs.restore-runtime-secrets.result == 'success' &&
       (
         github.ref == 'refs/heads/development' ||
         (
