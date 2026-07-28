@@ -205,6 +205,7 @@ jobs:
             '
 
           deno deploy env load \
+            --replace \
             --json \
             --non-interactive \
             --org ubiquity-dao \
