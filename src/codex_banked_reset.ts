@@ -4,6 +4,7 @@ import {
   providerReceiptIdsSafeToPersistAndLog,
   providerSupportsLiveRedemption,
   providerSupportsResetType,
+  providerTreatsHttp2xxAsFinal,
   type RedeemResetResult,
   type ResetAccountContext,
   type ResetInventory,
@@ -1008,6 +1009,37 @@ const verifyOwned = async (
   return outcome("verified", "verified", context, finalized);
 };
 
+/**
+ * The status-only adapter has no body schema and no verification endpoint.
+ * Its explicit 2xx policy is therefore the terminal observation for this
+ * submission. Lost or non-2xx responses never reach this path.
+ */
+const finalizeHttp2xxOwned = async (
+  kv: Deno.Kv,
+  context: ResetContext,
+  record: CodexResetRedemptionRecord,
+  candidate: CodexBankedResetCandidate,
+  nowMs: number,
+  telemetry: CodexBankedResetTelemetry,
+): Promise<CodexBankedResetOutcome> => {
+  const finalized = await updateOwnedRecord(
+    kv,
+    context,
+    record,
+    (current) => stateWith(current, "verified", nowMs, { verified_at_ms: nowMs, last_error_code: null }),
+  );
+  if (!finalized) return outcome("pending", "http_2xx_finalization_cas_failed", context, record);
+  emit(
+    telemetry,
+    "codex_reset_verified",
+    telemetryFields(context, candidate, { state: "verified", verification_source: "http_2xx" }),
+  );
+  metric(telemetry, "codex_reset_verified_total", 1, telemetryFields(context, candidate, {}));
+  metric(telemetry, "codex_reset_verification_latency_ms", 0, telemetryFields(context, candidate, {}));
+  metric(telemetry, "codex_reset_estimated_spend_total", 1, telemetryFields(context, candidate, {}));
+  return outcome("verified", "http_2xx", context, finalized);
+};
+
 const reconcileOwned = async (
   kv: Deno.Kv,
   context: ResetContext,
@@ -1241,6 +1273,14 @@ const submitClaimed = async (
       durableReceiptId(dependencies.provider, submittedResult.providerReceiptId),
     );
     return unknownOutcome(telemetry, context, candidate, "provider_commit_unknown", unknown ?? renewed.record);
+  }
+  if (submittedResult.kind === "completed" && providerTreatsHttp2xxAsFinal(dependencies.provider)) {
+    emit(
+      telemetry,
+      "codex_reset_submitted",
+      telemetryFields(context, candidate, { state: "submitted", provider_receipt_id: null }),
+    );
+    return await finalizeHttp2xxOwned(kv, context, renewed.record, candidate, nowAfterRedeem, telemetry);
   }
   const receipt = receiptId(submittedResult.providerReceiptId);
   if (!receipt) {

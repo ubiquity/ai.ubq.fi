@@ -1195,6 +1195,99 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
   }
 });
 
+Deno.test("the default status-only banked reset adapter treats every 2xx as final and retries once", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const originalCodexBaseUrl = config.codexBaseUrl;
+  const requests: Array<Readonly<{ url: string; method: string; headers: Headers; body: string }>> = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = true;
+  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl = "https://status-only.test/backend-api/codex";
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    requests.push({
+      url: request.url,
+      method: request.method,
+      headers: new Headers(request.headers),
+      body: request.method === "POST" ? await request.text() : "",
+    });
+    switch (requests.length) {
+      case 1:
+        return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        });
+      case 2:
+        return new Response("this deliberately is not JSON", { status: 200 });
+      case 3:
+        return new Response("this deliberately is not JSON either", { status: 299 });
+      case 4:
+        return new Response(JSON.stringify({ id: "response-after-status-only-reset" }), { status: 200 });
+      default:
+        throw new Error(`unexpected request ${request.method} ${request.url}`);
+    }
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "default-status-only-banked-reset" },
+      {
+        clientVersion: "0.145.0",
+        requestId: "default-status-only-banked-reset",
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-default-status-only",
+          hash: () => Promise.resolve("deterministic"),
+        },
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      requests.map((request) => `${request.method} ${request.url}`),
+      [
+        "POST https://status-only.test/backend-api/codex/responses",
+        "GET https://status-only.test/backend-api/wham/rate-limit-reset-credits",
+        "POST https://status-only.test/backend-api/wham/rate-limit-reset-credits/consume",
+        "POST https://status-only.test/backend-api/codex/responses",
+      ],
+    );
+    assert.equal(
+      requests.filter((request) => request.url.endsWith("/backend-api/codex/responses")).length,
+      2,
+      "the response request is retried exactly once after the reset",
+    );
+
+    for (const request of requests.slice(1, 3)) {
+      assert.equal(request.headers.get("authorization"), `Bearer ${accessToken("one")}`);
+      assert.equal(request.headers.get("chatgpt-account-id"), "account-one");
+      assert.equal(request.headers.get("originator"), "codex_cli_rs");
+      assert.equal(request.headers.get("user-agent"), "codex_cli_rs/0.145.0 (ai.ubq.fi)");
+      assert.equal(request.headers.get("accept"), "application/json");
+    }
+    assert.equal(requests[1].headers.has("content-type"), false);
+    assert.equal(requests[2].headers.get("content-type"), "application/json");
+    assert.equal(
+      requests[2].body,
+      JSON.stringify({ redeem_request_id: "uos_ai_codex_reset_v1_deterministic" }),
+    );
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = originalDeployFlag;
+    (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl = originalCodexBaseUrl;
+  }
+});
+
 Deno.test("simultaneous gateway requests share one durable banked-reset submission", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;

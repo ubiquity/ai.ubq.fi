@@ -16,8 +16,9 @@ POST /backend-api/wham/rate-limit-reset-credits/consume
 
 It never parses a response body. Under the explicit rollout policy, any inventory `2xx` means one available
 `banked_reset`, and any consume `2xx` is terminal enough to repair routing and issue the one inference retry. The POST
-body is only `{ "redeem_request_id": "<deterministic key>" }`. A non-2xx or transport failure is durable `unknown` and
-is never resubmitted. The local `status-NNN` marker is not a provider receipt and is never persisted or logged.
+body is only `{ "redeem_request_id": "<deterministic key>" }`. A non-2xx inventory response stops before consume and is
+rejected. A non-2xx or transport failure after a consume attempt is durable `unknown` and is never resubmitted. The
+local `status-NNN` marker is not a provider receipt and is never persisted or logged.
 
 This is a deliberately status-only policy, not independent proof that the provider restored quota. Do not describe a
 successful `2xx` as independently verified. Unit and integration tests inject `fetch`; they must never reach the real
@@ -126,7 +127,8 @@ provider can use the full reconciliation path when its declared contract has all
 
 The built-in status-only provider is the approved alternative for this rollout: it accepts the caller's deterministic
 key, has the reviewed `banked_reset` type, and explicitly declares that a consume `2xx` is final. It intentionally does
-not claim retention, lookup, or independent verification. Any lost/non-2xx result stays `unknown` and no retry is sent.
+not claim retention, lookup, or independent verification. A failed inventory response is rejected before a consume
+attempt; any lost/non-2xx consume result stays `unknown` and no retry is sent.
 
 New submission also requires the policy controls in the preceding table, a healthy-fallback-free candidate, KV
 availability, and current routing/auth fences. Existing `submitted`/`unknown` recovery needs a conventional provider's
@@ -294,7 +296,7 @@ unknown outcomes, duplicate prevention, verification latency, estimated verified
 `codex_reset_post_retry_total`. The post-retry metric is emitted once for every permitted post-reset inference attempt,
 whether it returns a response or throws; use its status field (or `null` for a non-status exception) with the
 corresponding inference-retry event to distinguish success from failure. Actual provider spend and inventory decrease
-cannot be measured until a contract-backed adapter exists.
+cannot be measured from this status-only policy.
 
 Configure these alert conditions before live mode is ever considered:
 

@@ -26,7 +26,11 @@ import {
   reportCodexBankedResetEvent,
   reportCodexBankedResetMetric,
 } from "./codex_banked_reset.ts";
-import { type CodexUsageResetProvider, unavailableCodexUsageResetProvider } from "./codex_banked_reset_provider.ts";
+import {
+  type CodexUsageResetProvider,
+  createStatusOnlyCodexUsageResetProvider,
+  unavailableCodexUsageResetProvider,
+} from "./codex_banked_reset_provider.ts";
 import { type CodexModelsSnapshot, parseCodexClientVersion } from "./codex_models.ts";
 import { getKv } from "./kv.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
@@ -1003,7 +1007,7 @@ type CodexResponseTimingHooks = Readonly<{
 type CodexAttemptPhase = "initial" | "post_refresh" | "two_second_retry" | "post_retry_refresh" | "post_banked_reset";
 
 type CodexBankedResetOptions = Readonly<{
-  /** Test-only injection seam; normal gateway traffic uses the non-networking provider. */
+  /** Test seam; normal traffic builds an account-bound adapter only for a live reset candidate. */
   config?: CodexBankedResetConfig;
   /** Test seam for proving a live configuration change stops a pending submission. */
   reloadConfig?: () => CodexBankedResetConfig;
@@ -1268,6 +1272,34 @@ export const fetchCodexResponses = async (
     signal: options.signal,
   });
 
+  /**
+   * Bind the reset transport to the same freshly fenced credentials that
+   * identified this candidate. Test providers remain an explicit injection;
+   * the normal path never carries credentials into the durable reset context.
+   * A malformed base URL (or malformed auth material) fails closed before any
+   * reset-credit request is attempted.
+   */
+  const resetDependenciesForCandidate = (
+    candidate: CodexBankedResetCandidate,
+  ): CodexBankedResetDependencies => {
+    if (configuredBankedReset?.provider) return bankedResetDependencies;
+    try {
+      return {
+        ...bankedResetDependencies,
+        provider: createStatusOnlyCodexUsageResetProvider({
+          codexBaseUrl: config.codexBaseUrl,
+          accountId: candidate.auth.account_id,
+          accessToken: candidate.auth.access_token,
+          userAgent: codexUserAgent(options.clientVersion),
+          originator: CODEX_ORIGINATOR,
+          now: bankedResetDependencies.now,
+        }),
+      };
+    } catch {
+      return bankedResetDependencies;
+    }
+  };
+
   const captureBankedResetCandidate = async (
     accountEntry: CodexAuthAccountEntry,
     routing: RoutingAccount,
@@ -1476,7 +1508,7 @@ export const fetchCodexResponses = async (
       if (currentFence === null) continue;
       const reset = await attemptCodexBankedReset(
         resetInput(candidate, currentFence),
-        bankedResetDependencies,
+        resetDependenciesForCandidate(candidate),
       );
       if (reset.kind !== "verified" || !reset.record) {
         if (reset.kind === "skipped" && reset.reason === "account_not_allowlisted") continue;
@@ -1589,7 +1621,7 @@ export const fetchCodexResponses = async (
       if (!candidate) continue;
       const reset = await reconcileCodexBankedReset(
         resetInput(candidate, candidate.routingGeneration),
-        bankedResetDependencies,
+        resetDependenciesForCandidate(candidate),
       );
       if (reset.kind !== "verified" || !reset.record) continue;
       const reconciled = await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
