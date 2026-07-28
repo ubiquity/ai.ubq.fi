@@ -18,13 +18,26 @@ export type ResetAccountContext = Readonly<{
   quotaGeneration: string;
 }>;
 
-/** A provider's observed reset inventory for one account. */
+/** A fully detailed opaque reset credit returned for one account. */
+export type ResetInventoryCredit = Readonly<{
+  /** Opaque upstream identifier. It is hashed before reaching telemetry or KV. */
+  id: string;
+  status: string;
+  resetType: string;
+  /** Null means the provider declares the credit non-expiring. */
+  expiresAtMs: number | null;
+}>;
+
+/**
+ * A provider's observed reset inventory for one account.  An omitted or
+ * capped credit list is deliberately not representable: the caller must be
+ * able to prove that it selected a specific available credit before it can
+ * ever submit a consume request.
+ */
 export type ResetInventory = Readonly<{
   availableCount: number;
   observedAtMs: number;
-  resetType: string;
-  /** Optional opaque upstream selection. Null asks the backend to select. */
-  creditId: string | null;
+  credits: readonly ResetInventoryCredit[];
 }>;
 
 /**
@@ -76,8 +89,8 @@ export type RedeemResetInput =
   & Readonly<{
     /** Never log this raw value; persist or emit only a hash. */
     idempotencyKey: string;
-    /** Optional opaque upstream selection from the immediately-read inventory. */
-    creditId: string | null;
+    /** Exact opaque credit selected from the immediately-read complete inventory. */
+    creditId: string;
   }>;
 
 export type LookupRedeemResetInput =
@@ -157,14 +170,32 @@ const isNonnegativeSafeInteger = (value: unknown): value is number =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const selectedAvailableCreditId = (value: unknown): string | null => {
+const parsedExpiry = (value: unknown): number | null | undefined => {
+  if (value === null) return null;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+};
+
+const parseDetailedCredits = (value: unknown, availableCount: number): readonly ResetInventoryCredit[] | null => {
   if (!Array.isArray(value)) return null;
-  for (const credit of value) {
-    if (!isRecord(credit)) continue;
-    if (credit.reset_type !== "codex_rate_limits" || credit.status !== "available") continue;
-    if (typeof credit.id === "string" && credit.id.trim()) return credit.id;
+  const credits: ResetInventoryCredit[] = [];
+  const ids = new Set<string>();
+  let detailedAvailableCount = 0;
+  for (const item of value) {
+    if (!isRecord(item)) return null;
+    const id = typeof item.id === "string" ? item.id : "";
+    const status = typeof item.status === "string" ? item.status : "";
+    const resetType = typeof item.reset_type === "string" ? item.reset_type : "";
+    const expiresAtMs = parsedExpiry(item.expires_at);
+    if (!id.trim() || !status.trim() || !resetType.trim() || expiresAtMs === undefined || ids.has(id)) return null;
+    ids.add(id);
+    if (status === "available") detailedAvailableCount += 1;
+    credits.push({ id, status, resetType, expiresAtMs });
   }
-  return null;
+  // The upstream may cap the list. A capped or summary-only result is unsafe
+  // for a deterministic account-bound spend, so do not select from it.
+  return detailedAvailableCount === availableCount ? credits : null;
 };
 
 /**
@@ -283,6 +314,12 @@ export const createUpstreamCodexUsageResetProvider = (
       if (!isRecord(payload) || !isNonnegativeSafeInteger(payload.available_count)) {
         throw new CodexUsageResetProviderConfigurationError("Reset-credit inventory response was invalid.");
       }
+      const credits = parseDetailedCredits(payload.credits, payload.available_count);
+      if (!credits) {
+        throw new CodexUsageResetProviderConfigurationError(
+          "Reset-credit inventory did not include a complete detailed available-credit list.",
+        );
+      }
       const observedAtMs = now();
       if (!Number.isSafeInteger(observedAtMs) || observedAtMs < 0) {
         throw new CodexUsageResetProviderConfigurationError("now must return a non-negative safe integer.");
@@ -290,14 +327,13 @@ export const createUpstreamCodexUsageResetProvider = (
       return {
         availableCount: payload.available_count,
         observedAtMs,
-        resetType: "codex_rate_limits",
-        creditId: selectedAvailableCreditId(payload.credits),
+        credits,
       };
     },
     async redeem(input: RedeemResetInput, signal: AbortSignal): Promise<RedeemResetResult> {
       assertBoundAccount(input);
       requireNonBlank(input.idempotencyKey, "idempotencyKey");
-      if (input.creditId !== null) requireNonBlank(input.creditId, "creditId");
+      requireNonBlank(input.creditId, "creditId");
       const response = await request(
         endpoints.consumeUrl,
         {
@@ -305,7 +341,7 @@ export const createUpstreamCodexUsageResetProvider = (
           headers: headers(true),
           body: JSON.stringify({
             redeem_request_id: input.idempotencyKey,
-            ...(input.creditId === null ? {} : { credit_id: input.creditId }),
+            credit_id: input.creditId,
           }),
         },
         signal,

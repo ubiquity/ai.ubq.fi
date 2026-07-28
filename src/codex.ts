@@ -15,12 +15,12 @@ import {
   selectCodexRoutingAccounts,
 } from "./codex_account_routing.ts";
 import {
-  attemptCodexBankedReset,
   type CodexBankedResetConfig,
   type CodexBankedResetDependencies,
   type CodexBankedResetEvent,
   type CodexBankedResetTelemetry,
   type CodexBankedResetTelemetryFields,
+  evaluateCodexBankedResetPool,
   loadCodexBankedResetConfig,
   reconcileCodexBankedReset,
   reportCodexBankedResetEvent,
@@ -1453,6 +1453,10 @@ export const fetchCodexResponses = async (
     newOwnerToken: configuredBankedReset?.newOwnerToken,
     hash: configuredBankedReset?.hash,
     telemetry: configuredBankedReset?.telemetry,
+    // A supplied provider exists only as the hermetic `fetchCodexResponses`
+    // test seam. Real traffic creates its account-bound adapter below and
+    // therefore always enforces a durable shadow decision before live mode.
+    allowLiveWithoutShadowForTest: configuredBankedReset?.provider !== undefined,
   };
   let lastResponse: Response | null = null;
   let lastError: unknown = null;
@@ -1651,6 +1655,65 @@ export const fetchCodexResponses = async (
     }
   };
 
+  /**
+   * A reset can be considered only after a fresh routing pass proves that the
+   * entire current pool is fenced by stable future quota deadlines. This one
+   * evaluator is shared by the normal-failover and already-all-blocked paths;
+   * neither path can silently choose a different account or credit.
+   */
+  const evaluateFullPoolBankedReset = async (): Promise<
+    | Readonly<{ candidate: CodexBankedResetCandidate; reset: Awaited<ReturnType<typeof reconcileCodexBankedReset>> }>
+    | null
+  > => {
+    if (probeUnavailable) return null;
+    let currentPoolEntry: Awaited<ReturnType<typeof getAuthPoolEntry>>;
+    try {
+      currentPoolEntry = await getAuthPoolEntry(true, true);
+    } catch {
+      return null;
+    }
+    const fullPool = await selectCodexRoutingAccounts(currentPoolEntry.pool, currentPoolEntry.pool.accounts);
+    if (
+      fullPool.kind !== "quota_blocked" || fullPool.blockedAccounts.length !== currentPoolEntry.pool.accounts.length
+    ) {
+      return null;
+    }
+    const localCandidates = fullPool.blockedAccounts.map((routing) => ({
+      accountEntry: { ...currentPoolEntry, auth: routing.auth, routing },
+      auth: routing.auth,
+      routing,
+      quotaResetAtMs: routing.quotaResetAtMs,
+      routingGeneration: routing.routingGeneration,
+    } satisfies CodexBankedResetCandidate));
+    if (
+      new Set(localCandidates.map((candidate) => candidate.routing.slot)).size !== currentPoolEntry.pool.accounts.length
+    ) {
+      return null;
+    }
+
+    // Preserve a pre-existing durable transaction before considering a new
+    // shadow/live decision. A pending or rejected legacy transaction blocks a
+    // replacement spend; a verified one is returned for its single retry.
+    for (const candidate of localCandidates) {
+      const reset = await reconcileCodexBankedReset(
+        resetInput(candidate, candidate.routingGeneration),
+        resetDependenciesForCandidate(candidate),
+      );
+      if (reset.kind === "verified") return { candidate, reset };
+      if (reset.reason !== "no_existing_transaction") return null;
+    }
+
+    const poolCandidates = localCandidates.map((candidate) => ({
+      slot: candidate.routing.slot,
+      candidate: resetInput(candidate, candidate.routingGeneration),
+      provider: resetDependenciesForCandidate(candidate).provider,
+    }));
+    const evaluated = await evaluateCodexBankedResetPool(poolCandidates, bankedResetDependencies);
+    if (!evaluated.selected || !evaluated.reset) return null;
+    const candidate = localCandidates.find((item) => item.routing.slot === evaluated.selected!.slot);
+    return candidate ? { candidate, reset: evaluated.reset } : null;
+  };
+
   const fetchAttempt = async (
     accountEntry: CodexAuthAccountEntry,
     auth: CodexAuthState,
@@ -1790,103 +1853,49 @@ export const fetchCodexResponses = async (
     // its recovery probe. Keep the normal quota response instead of spending
     // a reset that was inferred only from a sibling's 429.
     if (probeUnavailable) return normalResponse;
-    // Keep every independently qualifying account until a healthy fallback
-    // proves no reset is needed. The last 429 may be from an unallowlisted
-    // sibling, so a single overwritten candidate could otherwise suppress an
-    // earlier eligible account. A skipped non-allowlisted candidate is safe
-    // to bypass; every other outcome stops selection before another account
-    // can make a new external submission.
-    for (const capturedCandidate of bankedResetCandidates.values()) {
-      const candidate = await refreshBankedResetCandidate(capturedCandidate);
-      if (!candidate) continue;
+    const evaluated = await evaluateFullPoolBankedReset();
+    if (!evaluated || evaluated.reset.kind !== "verified" || !evaluated.reset.record) return normalResponse;
+    const { candidate, reset } = evaluated;
+    const resetRecord = reset.record!;
 
-      // Re-read the routing fence immediately before starting the expensive
-      // transaction. A stale 429 may never clear or redeem against a newer
-      // quota observation.
-      const currentFence = await getCodexQuotaBlockFence(candidate.routing, candidate.quotaResetAtMs);
-      if (currentFence === null) continue;
-      const reset = await attemptCodexBankedReset(
-        resetInput(candidate, currentFence),
-        resetDependenciesForCandidate(candidate),
+    // The transaction can be independently verified yet still be fenced off
+    // by a credential rotation or later 429. In that case preserve the normal
+    // upstream response; a stale worker must not dispatch an inference retry.
+    const reconciled = await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
+      quotaResetAtMs: candidate.quotaResetAtMs,
+      routingGeneration: resetRecord.routing_generation,
+      fences: [authPoolFence(candidate)],
+    });
+    if (!reconciled) return normalResponse;
+    const refreshedCandidate = await refreshBankedResetCandidate(candidate);
+    if (!refreshedCandidate) return normalResponse;
+    const retryCandidate = withResetRecoveryProbe(refreshedCandidate, reconciled);
+
+    logBankedResetEvent("codex_reset_inference_retry", {
+      request_id: options.requestId ?? null,
+      account_id_hash: reset.accountIdHash,
+      quota_generation: reset.quotaGeneration,
+      idempotency_key_hash: reset.idempotencyKeyHash,
+      routing_generation: resetRecord.routing_generation,
+    });
+    let retried: Response;
+    try {
+      retried = await fetchAttempt(
+        retryCandidate.accountEntry,
+        retryCandidate.auth,
+        retryCandidate.routing,
+        "post_banked_reset",
+        () => ensurePostResetRetryAuthCurrent(retryCandidate),
       );
-      if (reset.kind !== "verified" || !reset.record) {
-        if (reset.kind === "skipped" && reset.reason === "account_not_allowlisted") continue;
-        return normalResponse;
-      }
-
-      // The transaction can be independently verified yet still be fenced off
-      // by a credential rotation or later 429. In that case preserve the normal
-      // upstream response; a stale worker must not dispatch an inference retry.
-      const reconciled = await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
-        quotaResetAtMs: candidate.quotaResetAtMs,
-        routingGeneration: reset.record.routing_generation,
-        fences: [authPoolFence(candidate)],
-      });
-      if (!reconciled) return normalResponse;
-      const refreshedCandidate = await refreshBankedResetCandidate(candidate);
-      if (!refreshedCandidate) return normalResponse;
-      const retryCandidate = withResetRecoveryProbe(refreshedCandidate, reconciled);
-
-      logBankedResetEvent("codex_reset_inference_retry", {
-        request_id: options.requestId ?? null,
-        account_id_hash: reset.accountIdHash,
-        quota_generation: reset.quotaGeneration,
-        idempotency_key_hash: reset.idempotencyKeyHash,
-        routing_generation: reset.record.routing_generation,
-      });
-      let retried: Response;
-      try {
-        retried = await fetchAttempt(
-          retryCandidate.accountEntry,
-          retryCandidate.auth,
-          retryCandidate.routing,
-          "post_banked_reset",
-          () => ensurePostResetRetryAuthCurrent(retryCandidate),
-        );
-      } catch (error) {
-        if (error instanceof CodexBankedResetRetryFenceError) return normalResponse;
-        logBankedResetEvent("codex_reset_inference_retry_result", {
-          request_id: options.requestId ?? null,
-          account_id_hash: reset.accountIdHash,
-          quota_generation: reset.quotaGeneration,
-          idempotency_key_hash: reset.idempotencyKeyHash,
-          routing_generation: reset.record.routing_generation,
-          status: error instanceof CodexError ? error.status : null,
-        });
-        reportCodexBankedResetMetric(
-          bankedResetDependencies.telemetry,
-          "codex_reset_post_retry_total",
-          1,
-          {
-            request_id: options.requestId ?? null,
-            account_id_hash: reset.accountIdHash,
-            quota_generation: reset.quotaGeneration,
-            idempotency_key_hash: reset.idempotencyKeyHash,
-            routing_generation: reset.record.routing_generation,
-            status: error instanceof CodexError ? error.status : null,
-          },
-        );
-        throw error;
-      }
-      cancelResponseBody(normalResponse);
-      if (retried.status === 401) await markCodexCredentialInvalid(retryCandidate.routing);
-      if (retried.status === 429) {
-        // This is the one permitted post-reset inference attempt. Preserve a
-        // replayable normal 429 and never feed it back into reset selection.
-        retried = (await markCodexQuotaBlocked(retryCandidate.routing, retried)).response;
-      } else if (!retried.ok) {
-        await releaseCodexRoutingProbe(retryCandidate.routing);
-      }
-      if (retried.ok && retryCandidate.routing.probeGeneration !== null) {
-        codexProbeByResponse.set(retried, retryCandidate.routing);
-      }
+    } catch (error) {
+      if (error instanceof CodexBankedResetRetryFenceError) return normalResponse;
       logBankedResetEvent("codex_reset_inference_retry_result", {
         request_id: options.requestId ?? null,
         account_id_hash: reset.accountIdHash,
         quota_generation: reset.quotaGeneration,
         idempotency_key_hash: reset.idempotencyKeyHash,
-        routing_generation: reset.record.routing_generation,
-        status: retried.status,
+        routing_generation: resetRecord.routing_generation,
+        status: error instanceof CodexError ? error.status : null,
       });
       reportCodexBankedResetMetric(
         bankedResetDependencies.telemetry,
@@ -1897,98 +1906,88 @@ export const fetchCodexResponses = async (
           account_id_hash: reset.accountIdHash,
           quota_generation: reset.quotaGeneration,
           idempotency_key_hash: reset.idempotencyKeyHash,
-          routing_generation: reset.record.routing_generation,
-          status: retried.status,
+          routing_generation: resetRecord.routing_generation,
+          status: error instanceof CodexError ? error.status : null,
         },
       );
-      return retried;
+      throw error;
     }
-    return normalResponse;
+    cancelResponseBody(normalResponse);
+    if (retried.status === 401) await markCodexCredentialInvalid(retryCandidate.routing);
+    if (retried.status === 429) {
+      // This is the one permitted post-reset inference attempt. Preserve a
+      // replayable normal 429 and never feed it back into reset selection.
+      retried = (await markCodexQuotaBlocked(retryCandidate.routing, retried)).response;
+    } else if (!retried.ok) {
+      await releaseCodexRoutingProbe(retryCandidate.routing);
+    }
+    if (retried.ok && retryCandidate.routing.probeGeneration !== null) {
+      codexProbeByResponse.set(retried, retryCandidate.routing);
+    }
+    logBankedResetEvent("codex_reset_inference_retry_result", {
+      request_id: options.requestId ?? null,
+      account_id_hash: reset.accountIdHash,
+      quota_generation: reset.quotaGeneration,
+      idempotency_key_hash: reset.idempotencyKeyHash,
+      routing_generation: resetRecord.routing_generation,
+      status: retried.status,
+    });
+    reportCodexBankedResetMetric(
+      bankedResetDependencies.telemetry,
+      "codex_reset_post_retry_total",
+      1,
+      {
+        request_id: options.requestId ?? null,
+        account_id_hash: reset.accountIdHash,
+        quota_generation: reset.quotaGeneration,
+        idempotency_key_hash: reset.idempotencyKeyHash,
+        routing_generation: resetRecord.routing_generation,
+        status: retried.status,
+      },
+    );
+    return retried;
   };
 
   const recoverBlockedReset = async (): Promise<Response | null> => {
     if (selected.kind !== "quota_blocked") return null;
-    for (const blocked of selected.blockedAccounts) {
-      const capturedCandidate: CodexBankedResetCandidate = {
-        accountEntry: { ...poolEntry, auth: blocked.auth, routing: blocked },
-        auth: blocked.auth,
-        routing: blocked,
-        quotaResetAtMs: blocked.quotaResetAtMs,
-        routingGeneration: blocked.routingGeneration,
-      };
-      const candidate = await refreshBankedResetCandidate(capturedCandidate);
-      if (!candidate) continue;
-      const reset = await reconcileCodexBankedReset(
-        resetInput(candidate, candidate.routingGeneration),
-        resetDependenciesForCandidate(candidate),
+    const evaluated = await evaluateFullPoolBankedReset();
+    if (!evaluated || evaluated.reset.kind !== "verified" || !evaluated.reset.record) return null;
+    const { candidate, reset } = evaluated;
+    const resetRecord = reset.record!;
+    const reconciled = await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
+      quotaResetAtMs: candidate.quotaResetAtMs,
+      routingGeneration: resetRecord.routing_generation,
+      fences: [authPoolFence(candidate)],
+    });
+    if (!reconciled) return null;
+    const refreshedCandidate = await refreshBankedResetCandidate(candidate);
+    if (!refreshedCandidate) return null;
+    const retryCandidate = withResetRecoveryProbe(refreshedCandidate, reconciled);
+    logBankedResetEvent("codex_reset_inference_retry", {
+      request_id: options.requestId ?? null,
+      account_id_hash: reset.accountIdHash,
+      quota_generation: reset.quotaGeneration,
+      idempotency_key_hash: reset.idempotencyKeyHash,
+      routing_generation: resetRecord.routing_generation,
+    });
+    let retried: Response;
+    try {
+      retried = await fetchAttempt(
+        retryCandidate.accountEntry,
+        retryCandidate.auth,
+        retryCandidate.routing,
+        "post_banked_reset",
+        () => ensurePostResetRetryAuthCurrent(retryCandidate),
       );
-      if (reset.kind !== "verified" || !reset.record) continue;
-      const reconciled = await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
-        quotaResetAtMs: candidate.quotaResetAtMs,
-        routingGeneration: reset.record.routing_generation,
-        fences: [authPoolFence(candidate)],
-      });
-      if (!reconciled) continue;
-      const refreshedCandidate = await refreshBankedResetCandidate(candidate);
-      if (!refreshedCandidate) continue;
-      const retryCandidate = withResetRecoveryProbe(refreshedCandidate, reconciled);
-      logBankedResetEvent("codex_reset_inference_retry", {
-        request_id: options.requestId ?? null,
-        account_id_hash: reset.accountIdHash,
-        quota_generation: reset.quotaGeneration,
-        idempotency_key_hash: reset.idempotencyKeyHash,
-        routing_generation: reset.record.routing_generation,
-      });
-      let retried: Response;
-      try {
-        retried = await fetchAttempt(
-          retryCandidate.accountEntry,
-          retryCandidate.auth,
-          retryCandidate.routing,
-          "post_banked_reset",
-          () => ensurePostResetRetryAuthCurrent(retryCandidate),
-        );
-      } catch (error) {
-        if (error instanceof CodexBankedResetRetryFenceError) return null;
-        logBankedResetEvent("codex_reset_inference_retry_result", {
-          request_id: options.requestId ?? null,
-          account_id_hash: reset.accountIdHash,
-          quota_generation: reset.quotaGeneration,
-          idempotency_key_hash: reset.idempotencyKeyHash,
-          routing_generation: reset.record.routing_generation,
-          status: error instanceof CodexError ? error.status : null,
-        });
-        reportCodexBankedResetMetric(
-          bankedResetDependencies.telemetry,
-          "codex_reset_post_retry_total",
-          1,
-          {
-            request_id: options.requestId ?? null,
-            account_id_hash: reset.accountIdHash,
-            quota_generation: reset.quotaGeneration,
-            idempotency_key_hash: reset.idempotencyKeyHash,
-            routing_generation: reset.record.routing_generation,
-            status: error instanceof CodexError ? error.status : null,
-          },
-        );
-        throw error;
-      }
-      if (retried.status === 401) await markCodexCredentialInvalid(retryCandidate.routing);
-      if (retried.status === 429) {
-        retried = (await markCodexQuotaBlocked(retryCandidate.routing, retried)).response;
-      } else if (!retried.ok) {
-        await releaseCodexRoutingProbe(retryCandidate.routing);
-      }
-      if (retried.ok && retryCandidate.routing.probeGeneration !== null) {
-        codexProbeByResponse.set(retried, retryCandidate.routing);
-      }
+    } catch (error) {
+      if (error instanceof CodexBankedResetRetryFenceError) return null;
       logBankedResetEvent("codex_reset_inference_retry_result", {
         request_id: options.requestId ?? null,
         account_id_hash: reset.accountIdHash,
         quota_generation: reset.quotaGeneration,
         idempotency_key_hash: reset.idempotencyKeyHash,
-        routing_generation: reset.record.routing_generation,
-        status: retried.status,
+        routing_generation: resetRecord.routing_generation,
+        status: error instanceof CodexError ? error.status : null,
       });
       reportCodexBankedResetMetric(
         bankedResetDependencies.telemetry,
@@ -1999,13 +1998,43 @@ export const fetchCodexResponses = async (
           account_id_hash: reset.accountIdHash,
           quota_generation: reset.quotaGeneration,
           idempotency_key_hash: reset.idempotencyKeyHash,
-          routing_generation: reset.record.routing_generation,
-          status: retried.status,
+          routing_generation: resetRecord.routing_generation,
+          status: error instanceof CodexError ? error.status : null,
         },
       );
-      return retried;
+      throw error;
     }
-    return null;
+    if (retried.status === 401) await markCodexCredentialInvalid(retryCandidate.routing);
+    if (retried.status === 429) {
+      retried = (await markCodexQuotaBlocked(retryCandidate.routing, retried)).response;
+    } else if (!retried.ok) {
+      await releaseCodexRoutingProbe(retryCandidate.routing);
+    }
+    if (retried.ok && retryCandidate.routing.probeGeneration !== null) {
+      codexProbeByResponse.set(retried, retryCandidate.routing);
+    }
+    logBankedResetEvent("codex_reset_inference_retry_result", {
+      request_id: options.requestId ?? null,
+      account_id_hash: reset.accountIdHash,
+      quota_generation: reset.quotaGeneration,
+      idempotency_key_hash: reset.idempotencyKeyHash,
+      routing_generation: resetRecord.routing_generation,
+      status: retried.status,
+    });
+    reportCodexBankedResetMetric(
+      bankedResetDependencies.telemetry,
+      "codex_reset_post_retry_total",
+      1,
+      {
+        request_id: options.requestId ?? null,
+        account_id_hash: reset.accountIdHash,
+        quota_generation: reset.quotaGeneration,
+        idempotency_key_hash: reset.idempotencyKeyHash,
+        routing_generation: resetRecord.routing_generation,
+        status: retried.status,
+      },
+    );
+    return retried;
   };
 
   if (selected.kind === "quota_blocked") {

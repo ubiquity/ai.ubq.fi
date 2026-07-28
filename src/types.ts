@@ -46,6 +46,30 @@ export type CodexResetGlobalDailyRecord = Readonly<{
   updated_at_ms: number;
 }>;
 
+/**
+ * Redacted, read-only evidence of one complete account-pool exhaustion
+ * episode. It is deliberately separate from the redemption ledger: this
+ * record can attest a shadow decision but can never authorize a provider
+ * consume on its own.
+ */
+export type CodexResetShadowDecisionRecord = Readonly<{
+  v: 1;
+  episode_hash: string;
+  created_at_ms: number;
+  expires_at_ms: number;
+  decision_reason: string;
+  selected_account_id_hash: string | null;
+  selected_credit_id_hash: string | null;
+  selected_credit_expires_at_ms: number | null;
+  fences: readonly Readonly<{
+    slot: number;
+    account_id_hash: string;
+    quota_generation: string;
+    routing_generation: number;
+    quota_reset_at_ms: number;
+  }>[];
+}>;
+
 export type ApiKeyRecord = Readonly<{
   id: string;
   name: string;

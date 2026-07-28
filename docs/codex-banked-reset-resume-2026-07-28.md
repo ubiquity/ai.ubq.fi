@@ -28,15 +28,17 @@ later live-decision evidence.
 
 ## Shipped behavior after production promotion
 
-Defaults are global shadow telemetry: `CODEX_BANKED_RESET_ENABLED=true`, `CODEX_BANKED_RESET_MODE=shadow`, an empty
-allowlist, and a zero global cap. Shadow cannot contact the provider. Live configuration still requires a non-empty
-allowlist and cannot reach the provider because the pinned upstream source lacks documented idempotency retention,
-lookup, and independent verification; see `codex-banked-reset-operations.md` for the reconciliation boundary.
+This note predates the account-bound shadow canary revision. The deployed canary configuration must use `shadow`, the
+exact eventual allowlist, and a global cap of `1`. Shadow now makes account-bound inventory GETs and records a redacted
+decision; it still makes zero consume calls. Live configuration cannot reach a real consume because the pinned upstream
+source lacks documented idempotency retention, lookup, and independent verification; see
+`codex-banked-reset-operations.md` for the reconciliation boundary.
 
 The reset candidate is reached only after normal Codex account failover and the ordinary bounded retry are exhausted,
 and only for a completely parsed `429` whose type is exactly `usage_limit_reached` with a stable absolute `Retry-After`
-date. It may be observed in shadow mode, but cannot send provider inventory or consume calls. The pinned upstream source
-does document that a `2xx` must still be parsed for JSON `code`; that adapter remains offline behind the contract gate.
+date. The full-pool evaluator reads each account's inventory in shadow and chooses an explicit credit, but cannot issue
+a consume call. The pinned upstream source does document that a `2xx` must still be parsed for JSON `code`; that adapter
+remains offline behind the contract gate.
 
 ## Validation evidence before the final fail-closed correction
 
@@ -59,10 +61,10 @@ is rejected and retained only as an audit artifact; no other banked-reset worktr
 ## Next verification after limits naturally exhaust
 
 1. Confirm the served production health response reports the promoted Git SHA and deployment ID.
-2. With the shipped global shadow default, wait for a natural qualifying Codex `429`; do not call the reset endpoint as
-   a smoke test.
-3. Inspect redacted `codex_reset_eligible` and `codex_reset_shadow_candidate` events. There must be no `submit_started`,
-   inventory, or consume request.
+2. With shadow configured with the eventual allowlist and cap one, wait for a natural qualifying Codex `429`; do not
+   call the reset endpoint as a smoke test.
+3. Inspect the redacted shadow-decision endpoint and events. There must be no `submit_started` or consume request;
+   account-bound inventory GETs are expected.
 4. Do not authorize live redemption until the provider supplies the missing retention, lookup, and independent
    verification guarantees; preserve every `submitted` or `unknown` record and never replay a provider call.
 

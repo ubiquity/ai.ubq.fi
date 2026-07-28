@@ -1123,7 +1123,7 @@ const scriptedResetProvider = (
       lookup: { byIdempotencyKey: true, byProviderReceiptId: true },
       verification: { independentlyVerifiable: true },
       receiptIdsSafeToPersistAndLog: true,
-      supportedResetTypes: ["codex_usage_limit"],
+      supportedResetTypes: ["codex_rate_limits"],
     },
     readInventory: () => {
       calls.push("inventory");
@@ -1131,8 +1131,9 @@ const scriptedResetProvider = (
       return Promise.resolve({
         availableCount: 1,
         observedAtMs: fixedStartMs,
-        resetType: "codex_usage_limit",
-        creditId: null,
+        credits: [
+          { id: "fixture-credit", status: "available", resetType: "codex_rate_limits", expiresAtMs: null },
+        ],
       });
     },
     redeem: async (input) => {
@@ -1658,7 +1659,9 @@ Deno.test("an auth-pool slot reorder during a claimed reset fences submission be
     );
     assert.equal(response.status, 429);
     assert.deepEqual(upstreamAccounts, ["account-one", "account-two"]);
-    assert.deepEqual(reset.calls, ["inventory"]);
+    // The full-pool evaluator must inspect both account-bound inventories
+    // before it can rule out a live spend after the routing reorder.
+    assert.deepEqual(reset.calls, ["inventory", "inventory"]);
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
@@ -1810,7 +1813,7 @@ Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption"
   }
 });
 
-Deno.test("a valid exhausted account remains eligible when a later account returns 403", async () => {
+Deno.test("a 403 sibling blocks a full-pool banked reset", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1859,9 +1862,9 @@ Deno.test("a valid exhausted account remains eligible when a later account retur
       },
     );
 
-    assert.equal(response.status, 200);
-    assert.deepEqual(accountIds, ["account-one", "account-two", "account-one"]);
-    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+    assert.equal(response.status, 403);
+    assert.deepEqual(accountIds, ["account-one", "account-two"]);
+    assert.deepEqual(reset.calls, []);
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
@@ -1914,7 +1917,7 @@ Deno.test("an earlier allowlisted exhausted account is redeemed after a later si
     assert.equal(response.status, 200);
     assert.deepEqual(accountIds, ["account-one", "account-two", "account-one"]);
     assert.deepEqual(reset.redeemAccountIds, ["account-one"]);
-    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+    assert.deepEqual(reset.calls, ["inventory", "inventory", "redeem", "verify"]);
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
@@ -1924,7 +1927,7 @@ Deno.test("an earlier allowlisted exhausted account is redeemed after a later si
   }
 });
 
-Deno.test("a 403 during the bounded retry preserves another verified exhaustion candidate", async () => {
+Deno.test("a 403 during the bounded retry blocks a full-pool redemption", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1975,9 +1978,9 @@ Deno.test("a 403 during the bounded retry preserves another verified exhaustion 
       },
     );
 
-    assert.equal(response.status, 200);
-    assert.deepEqual(accountIds, ["account-one", "account-two", "account-one", "account-two"]);
-    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+    assert.equal(response.status, 403);
+    assert.deepEqual(accountIds, ["account-one", "account-two", "account-one"]);
+    assert.deepEqual(reset.calls, []);
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();

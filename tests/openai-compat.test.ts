@@ -406,11 +406,15 @@ const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> =>
       lookup: { byIdempotencyKey: true, byProviderReceiptId: true },
       verification: { independentlyVerifiable: true },
       receiptIdsSafeToPersistAndLog: true,
-      supportedResetTypes: ["codex_usage_limit"],
+      supportedResetTypes: ["codex_rate_limits"],
     },
     readInventory: () => {
       calls.push("inventory");
-      return Promise.resolve({ availableCount: 1, observedAtMs: now, resetType: "codex_usage_limit", creditId: null });
+      return Promise.resolve({
+        availableCount: 1,
+        observedAtMs: now,
+        credits: [{ id: "fixture-credit", status: "available", resetType: "codex_rate_limits", expiresAtMs: null }],
+      });
     },
     redeem: () => {
       calls.push("redeem");
@@ -483,11 +487,15 @@ const createUnknownBankedResetFixture = async (): Promise<readonly string[]> => 
       lookup: { byIdempotencyKey: true, byProviderReceiptId: true },
       verification: { independentlyVerifiable: true },
       receiptIdsSafeToPersistAndLog: true,
-      supportedResetTypes: ["codex_usage_limit"],
+      supportedResetTypes: ["codex_rate_limits"],
     },
     readInventory: () => {
       calls.push("inventory");
-      return Promise.resolve({ availableCount: 1, observedAtMs: now, resetType: "codex_usage_limit", creditId: null });
+      return Promise.resolve({
+        availableCount: 1,
+        observedAtMs: now,
+        credits: [{ id: "fixture-credit", status: "available", resetType: "codex_rate_limits", expiresAtMs: null }],
+      });
     },
     redeem: () => {
       calls.push("redeem");
@@ -875,15 +883,16 @@ Deno.test("openai: public handlers wait for verified banked redemption before on
             lookup: { byIdempotencyKey: true, byProviderReceiptId: true },
             verification: { independentlyVerifiable: true },
             receiptIdsSafeToPersistAndLog: false,
-            supportedResetTypes: ["codex_usage_limit"],
+            supportedResetTypes: ["codex_rate_limits"],
           },
           readInventory: () => {
             providerCalls.push("inventory");
             return Promise.resolve({
               availableCount: 1,
               observedAtMs: Date.now(),
-              resetType: "codex_usage_limit",
-              creditId: null,
+              credits: [
+                { id: "fixture-credit", status: "available", resetType: "codex_rate_limits", expiresAtMs: null },
+              ],
             });
           },
           redeem: () => {

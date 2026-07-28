@@ -99,6 +99,7 @@ import {
   validateKvMigrationTarget,
 } from "./kv_migration.ts";
 import { getKv } from "./kv.ts";
+import { listCodexResetShadowDecisions } from "./codex_banked_reset.ts";
 import {
   assertPromptCacheScopeExperimentTelemetryBaseline,
   PromptCacheScopeExperimentBusyError,
@@ -149,6 +150,24 @@ export const handleAdminCodexRecheck = async (slot: number): Promise<Response> =
   const accepted = await recheckCodexRoutingSlot(slot);
   if (!accepted) return openaiError(404, "Codex account slot is not configured", "not_found");
   return new Response(null, { status: 204 });
+};
+
+/**
+ * Returns only the redacted shadow-decision ledger. It has no mutation or
+ * redemption action, so operators can audit a canary without a manual
+ * approval endpoint or access to raw account/credit identifiers.
+ */
+export const handleAdminCodexBankedResetShadowDecisions = async (): Promise<Response> => {
+  const decisions = await listCodexResetShadowDecisions();
+  if (decisions === null) {
+    return openaiError(
+      503,
+      "Codex banked-reset shadow decisions are unavailable",
+      "codex_banked_reset_shadow_unavailable",
+      { type: "server_error", headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  return json(200, { decisions }, { "Cache-Control": "no-store" });
 };
 
 /**

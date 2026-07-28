@@ -11,7 +11,8 @@ inject their transport; no test or this implementation run has called a real res
 For a configured Codex base, the adapter uses `GET .../rate-limit-reset-credits` and
 `POST .../rate-limit-reset-credits/consume`: `/api/codex/...` for the Codex layout and `/backend-api/wham/...` for the
 ChatGPT layout. It sends Bearer auth, `ChatGPT-Account-ID`, and the Codex user agent. The consume JSON is
-`{ "redeem_request_id": "<durable key>", "credit_id": "<optional opaque id>" }`.
+`{ "redeem_request_id": "<durable key>", "credit_id": "<exact opaque id>" }`. The gateway never asks the provider to
+choose a credit implicitly.
 
 Every returned 2xx is a successful HTTP transport response, but a reset is complete only when its documented JSON `code`
 is `reset` or `already_redeemed`. `nothing_to_reset` and `no_credit` are definitive rejections. A non-2xx, empty,
@@ -37,23 +38,23 @@ ordinary quota failure and is never fed back into reset selection.
 
 ## Configuration and rollback
 
-Settings are read for each gateway request. The shipped default is global `shadow` telemetry: it observes eligible
-exhaustion across the current account pool but never contacts the provider. A live claim requires explicit `live` mode,
-a non-empty account allowlist, a positive global cap, and per-window cap exactly one. Those settings alone do not
-override the provider-contract gate described above.
+Settings are read for each gateway request. The default remains fail-closed until the deployment provides the canary
+allowlist and a global cap of one. Both shadow and live evaluate only a full pool of stable, future quota fences; the
+shadow build makes account-bound inventory GETs, while live also requires explicit `live` mode and the provider-contract
+gate described above.
 
 | Variable                                        | Safe default | Requirement                                                           |
 | ----------------------------------------------- | ------------ | --------------------------------------------------------------------- |
 | `CODEX_BANKED_RESET_ENABLED`                    | `true`       | Set exactly `false` to stop shadow and live candidates immediately.   |
-| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | Observes all current accounts; `live` remains contract-gated.         |
-| `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | Required for live only; exact account IDs or stable hashes only.      |
-| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Must be positive for a live claim; cannot override the provider gate. |
+| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | Shadow GETs inventories; `live` remains contract-gated.               |
+| `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | Stable hashes for every approved current account; no raw IDs.         |
+| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Set to exactly `1` for the canary; cannot override the provider gate. |
 | `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Must be exactly `1`; all other values fail closed.                    |
 
-`shadow` records candidate decisions but makes no provider calls, including inventory reads. `disabled` and a false flag
-prevent new claims and submissions. Existing `submitted` or `unknown` records remain recovery-only: a future reviewed
-provider may lookup and independently verify them with the same key, but it may never inventory-read or submit a
-replacement reset.
+`shadow` performs only account-bound inventory GETs. It writes one redacted, deduplicated decision per full-pool
+exhaustion episode and makes zero consume calls. `disabled` and a false flag prevent new claims and submissions.
+Existing `submitted` or `unknown` records remain recovery-only; do not delete them, routing state, the redemption
+ledger, the shadow decision, or the daily-cap record.
 
 The global cap applies to provider submissions, not just claims. A claim that survives a UTC-day boundary is rejected
 before a provider call; it cannot consume a new day's capacity. A transaction that already crossed the durable
@@ -71,30 +72,31 @@ CODEX_BANKED_RESET_MODE=disabled
 
 ### Phase 1 — shadow observation
 
-Shadow mode is the only approved next step. It exercises the qualifying-429, healthy-fallback, allowlist, routing-fence,
-and redacted-event paths, but it makes **zero** inventory, consume, lookup, or verification calls to the reset provider.
-It cannot spend a banked reset.
+Shadow mode is the only approved next step. After normal failover (and from the already-all-blocked path), it requires
+every remaining Codex account to have a stable future fence and no healthy sibling. It GETs each account's own credit
+inventory, rejects capped, incomplete, malformed, expired, or unselectable details, and deterministically selects the
+earliest-expiring `available` `codex_rate_limits` credit (then pool slot, then opaque ID). It makes **zero** consume
+calls and cannot spend a banked reset.
 
-1. The shipped default observes every current Codex account. No allowlist is needed for shadow because it never reaches
-   the provider. Do not add credentials, auth JSON, or arbitrary identifiers to the allowlist.
-2. To make the global-shadow choice explicit in deployment configuration, set the existing values below. The empty
-   allowlist is intentional in this phase.
+1. Set the exact eventual live allowlist to every currently approved Codex account. Do not add credentials, auth JSON,
+   or arbitrary identifiers to it. The global cap of one—not an artificially narrowed allowlist—bounds the canary.
+2. Deploy the same eventual cap and per-window limit in shadow mode.
 
    ```text
    CODEX_BANKED_RESET_ENABLED=true
    CODEX_BANKED_RESET_MODE=shadow
-   CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST=
-   CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY=0
+   CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST=<comma/newline-separated stable hashes for every approved account>
+   CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY=1
    CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW=1
    ```
 
 3. Deploy the configuration, then verify the served `/health` response reports the intended immutable Git SHA and
    deployment ID before treating shadow as enabled.
 4. Wait for a natural Codex exhaustion. Do not manufacture a 429 and do not call either reset-credit endpoint.
-5. For each candidate, verify the event sequence is limited to `codex_reset_eligible` and
-   `codex_reset_shadow_candidate`, with any `codex_reset_skipped_healthy_fallback` explained by a successful sibling
-   account. There must be no `codex_reset_claimed`, `codex_reset_submit_started`, `codex_reset_submitted`,
-   `codex_reset_verified`, inventory request, consume request, or ledger spend record.
+5. Read `GET /admin/providers/codex/banked-resets/shadow-decisions`. Confirm the redacted account and credit hashes,
+   valid expiry, and every recorded fence generation. Repeated requests for that episode must report an
+   `already_would_spend_once` decision. There must be no `codex_reset_claimed`, `codex_reset_submit_started`,
+   `codex_reset_submitted`, `codex_reset_verified`, consume request, or ledger spend record.
 6. Keep shadow enabled for the agreed observation period (for example, several days) and audit false positives, stable
    deadlines, healthy fallback behavior, and log redaction. Roll back immediately with the two disabled values above if
    the telemetry is wrong.
@@ -111,18 +113,20 @@ reviewed upstream contract that proves all of the following for the exact produc
 4. The documented inventory, consume, account/workspace binding, terminal response codes, and receipt-handling schema.
 
 Only then may a separate reviewed code change advertise `retentionMs > 0`, `lookup.byIdempotencyKey=true`, and
-`verification.independentlyVerifiable=true` for that proven provider. That change needs fresh hermetic contract
-fixtures, full validation, a one-account live allowlist, global cap exactly one, an operator watching the ledger, and a
-new explicit authorization. Configuration alone cannot bypass the current provider-contract gate.
+`verification.independentlyVerifiable=true` for that proven provider. The live deployment changes only the existing mode
+to `live`; it clears no KV. The next request must re-read all fences and inventories and consume one credit only when
+the selected account, opaque credit hash, expiry, and decision fences exactly match the still-unexpired shadow record.
+Any drift makes zero consume calls. Configuration alone cannot bypass the current provider-contract gate.
 
 If that contract is still incomplete after the shadow period, keep `shadow` enabled or revert to `disabled`; do not make
 a status-only or 2xx-only exception.
 
 ## Provider contract and ambiguity
 
-The upstream inventory body is `{ credits, available_count }`; `available_count` is authoritative and the optional
-available `codex_rate_limits` credit ID is sent when present. Omission asks upstream to choose the next eligible credit.
-The response body does not contain a receipt ID, so none is retained.
+The upstream inventory body is `{ credits, available_count }`. The gateway accepts it only when every detailed available
+credit is present with opaque ID, status, reset type, and parsed `expires_at`, and that detailed count equals
+`available_count`. It sends only an explicit available `codex_rate_limits` ID; `expires_at: null` ranks last. The
+response body does not contain a receipt ID, so none is retained.
 
 Upstream documents a caller-supplied `redeem_request_id`, same-key idempotent replay, and `already_redeemed`. It does
 not document a retention period, standalone lookup endpoint, or independent quota-restoration verification. Therefore a
@@ -176,7 +180,8 @@ metrics; do not auto-remediate an external spend.
 Events include `codex_reset_eligible`, `codex_reset_skipped_healthy_fallback`, `codex_reset_claimed`,
 `codex_reset_submit_started`, `codex_reset_submitted`, `codex_reset_unknown`, `codex_reset_rejected`,
 `codex_reset_verified`, `codex_reset_inference_retry`, `codex_reset_inference_retry_result`,
-`codex_reset_duplicate_prevented`, and `codex_reset_shadow_candidate`.
+`codex_reset_duplicate_prevented`, and `codex_reset_shadow_candidate`. The shadow-decision endpoint returns only
+episode/account/credit hashes, expiry, fence generations, and decision reason.
 
 Metrics cover eligible and shadow candidates, submissions, verified and unknown outcomes, duplicate prevention,
 verification latency, estimated spend, and post-reset retry outcome. Raw tokens, auth JSON, provider credentials, and
@@ -188,5 +193,5 @@ recovery, timeouts, crashes, generated state-machine sequences, simultaneous req
 qualifying-429-to-verified-retry delivery through Responses and Chat in buffered and streamed modes.
 
 Do not run a real canary without separate authorization. Before one, shadow mode must observe real qualifying events
-without false positives, exactly one account must be allowlisted with a global limit of one, rollback must be rehearsed
-without a provider call, and an operator must be able to audit the ledger and one retry.
+without false positives, every approved current account must be allowlisted with a global limit of one, rollback must be
+rehearsed without a provider call, and an operator must be able to audit the ledger and one retry.

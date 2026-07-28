@@ -19,7 +19,7 @@ const context = (accountId = "account-one"): ResetAccountContext => ({
 const redeem = (accountId = "account-one"): RedeemResetInput => ({
   ...context(accountId),
   idempotencyKey: "redeem-request-id-123",
-  creditId: null,
+  creditId: "credit-selected",
 });
 
 const signal = (): AbortSignal => new AbortController().signal;
@@ -66,8 +66,13 @@ Deno.test("upstream reset adapter parses inventory and sends the selected credit
       JSON.stringify({
         available_count: 2,
         credits: [
-          { id: "other", reset_type: "other", status: "available" },
-          { id: "credit-available", reset_type: "codex_rate_limits", status: "available" },
+          { id: "other", reset_type: "other", status: "available", expires_at: null },
+          {
+            id: "credit-available",
+            reset_type: "codex_rate_limits",
+            status: "available",
+            expires_at: "2026-12-31T00:00:00Z",
+          },
         ],
       }),
       { status: 200 },
@@ -84,8 +89,10 @@ Deno.test("upstream reset adapter parses inventory and sends the selected credit
   assert.deepEqual(await resetProvider.readInventory(context(), signal()), {
     availableCount: 2,
     observedAtMs: 1_700_000_000_000,
-    resetType: "codex_rate_limits",
-    creditId: "credit-available",
+    credits: [
+      { id: "other", resetType: "other", status: "available", expiresAtMs: null },
+      { id: "credit-available", resetType: "codex_rate_limits", status: "available", expiresAtMs: 1_798_675_200_000 },
+    ],
   });
   assert.deepEqual(await resetProvider.redeem({ ...redeem(), creditId: "credit-available" }, signal()), {
     kind: "completed",
@@ -124,7 +131,7 @@ Deno.test("upstream reset adapter maps documented 2xx codes and preserves the ex
         await resetProvider.redeem({ ...redeem(), idempotencyKey: "  stable-id  " }, signal()),
         expected,
       );
-      assert.equal(body, '{"redeem_request_id":"  stable-id  "}');
+      assert.equal(body, '{"redeem_request_id":"  stable-id  ","credit_id":"credit-selected"}');
     });
   }
 });
@@ -174,4 +181,29 @@ Deno.test("upstream reset adapter rejects malformed inventory and makes no trans
   controller.abort(new Error("cancelled"));
   await assert.rejects(() => resetProvider.redeem(redeem(), controller.signal));
   assert.equal(calls, 0);
+});
+
+Deno.test("upstream reset adapter rejects summary-only, capped, malformed, or duplicate detailed inventories", async (t) => {
+  const completeCredit = {
+    id: "credit-one",
+    reset_type: "codex_rate_limits",
+    status: "available",
+    expires_at: null,
+  };
+  for (
+    const [name, payload] of [
+      ["summary only", { available_count: 1, credits: null }],
+      ["capped details", { available_count: 2, credits: [completeCredit] }],
+      ["malformed expiry", { available_count: 1, credits: [{ ...completeCredit, expires_at: "not-a-date" }] }],
+      ["duplicate opaque ID", { available_count: 2, credits: [completeCredit, { ...completeCredit }] }],
+    ] as const
+  ) {
+    await t.step(name, async () => {
+      const resetProvider = provider(() => Promise.resolve(new Response(JSON.stringify(payload), { status: 200 })));
+      await assert.rejects(
+        () => resetProvider.readInventory(context(), signal()),
+        CodexUsageResetProviderConfigurationError,
+      );
+    });
+  }
 });
