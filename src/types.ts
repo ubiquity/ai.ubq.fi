@@ -38,11 +38,11 @@ export type CodexResetRedemptionRecord = Readonly<{
   last_error_code: string | null;
 }>;
 
-/** A UTC-day budget consumed when a new logical reset transaction is claimed. */
+/** A UTC-day budget consumed at the durable external-submission boundary. */
 export type CodexResetGlobalDailyRecord = Readonly<{
   v: 1;
   day: string;
-  claimed_count: number;
+  submission_count: number;
   updated_at_ms: number;
 }>;
 

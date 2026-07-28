@@ -284,8 +284,8 @@ export const parseCodexResetRedemptionRecord = (value: unknown): CodexResetRedem
 
 const parseGlobalDailyRecord = (value: unknown, day: string): CodexResetGlobalDailyRecord | null => {
   if (!isRecord(value) || value.v !== 1 || value.day !== day || !isSafeMs(value.updated_at_ms)) return null;
-  if (!isSafeNonnegativeInteger(value.claimed_count)) return null;
-  return { v: 1, day, claimed_count: value.claimed_count, updated_at_ms: value.updated_at_ms };
+  if (!isSafeNonnegativeInteger(value.submission_count)) return null;
+  return { v: 1, day, submission_count: value.submission_count, updated_at_ms: value.updated_at_ms };
 };
 
 const utcDay = (nowMs: number): string | null => {
@@ -563,17 +563,14 @@ const claimTransaction = async (
   kv: Deno.Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
-  maxGlobalPerDay: number,
   nowMs: number,
   clock: () => number,
   ownerToken: string,
   allowNewSubmission: boolean,
 ): Promise<ClaimResult> => {
-  const day = utcDay(nowMs);
   const expiresAtMs = leaseUntil(nowMs);
-  if (!day || expiresAtMs === null) return { kind: "failure", code: "invalid_clock" };
+  if (expiresAtMs === null) return { kind: "failure", code: "invalid_clock" };
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
-  const dailyKey = codexResetGlobalDailyKey(day);
 
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     let entry: Deno.KvEntryMaybe<CodexResetRedemptionRecord>;
@@ -594,16 +591,6 @@ const claimTransaction = async (
       const fences = await readCurrentFences(kv, candidate);
       if (fences.kind === "failure") return { kind: "failure", code: fences.code };
       if (fences.kind === "stale") return { kind: "failure", code: "routing_fence_stale" };
-      let dailyEntry: Deno.KvEntryMaybe<CodexResetGlobalDailyRecord>;
-      try {
-        dailyEntry = await kv.get<CodexResetGlobalDailyRecord>(dailyKey, { consistency: "strong" });
-      } catch {
-        return { kind: "failure", code: "kv_unavailable" };
-      }
-      const daily = dailyEntry.value === null ? null : parseGlobalDailyRecord(dailyEntry.value, day);
-      if (dailyEntry.value !== null && !daily) return { kind: "failure", code: "global_limit_record_invalid" };
-      const claimedCount = daily?.claimed_count ?? 0;
-      if (claimedCount >= maxGlobalPerDay) return { kind: "global_limit" };
       const created: CodexResetRedemptionRecord = {
         v: 1,
         account_id_hash: context.account.accountIdHash,
@@ -622,24 +609,17 @@ const claimTransaction = async (
         verified_at_ms: null,
         last_error_code: null,
       };
-      const nextDaily: CodexResetGlobalDailyRecord = {
-        v: 1,
-        day,
-        claimed_count: claimedCount + 1,
-        updated_at_ms: nowMs,
-      };
-      // Fence and daily-cap reads are asynchronous. Re-check immediately
-      // before the atomic write so a window that expired during those reads
-      // cannot reserve daily capacity or create a fresh submission path.
+      // Fence reads are asynchronous. Re-check immediately before the atomic
+      // write so a window that expired during those reads cannot create a
+      // fresh submission path.
       const nowBeforeClaim = readClock(clock);
       if (nowBeforeClaim === null) return { kind: "failure", code: "invalid_clock" };
       if (!quotaWindowIsOpen(candidate, nowBeforeClaim)) {
         return { kind: "failure", code: "quota_window_expired" };
       }
       try {
-        const committed = await withFenceChecks(kv.atomic().check(entry).check(dailyEntry), fences.entries)
+        const committed = await withFenceChecks(kv.atomic().check(entry), fences.entries)
           .set(key, created)
-          .set(dailyKey, nextDaily)
           .commit();
         if (committed.ok) return { kind: "submit", record: created, tookOver: false };
       } catch {
@@ -744,10 +724,14 @@ const prepareSubmission = async (
   candidate: CodexBankedResetCandidate,
   expected: CodexResetRedemptionRecord,
   nowMs: number,
+  clock: () => number,
+  maxGlobalPerDay: number,
 ): Promise<SubmissionPreparation> => {
   const expiresAtMs = leaseUntil(nowMs);
-  if (expiresAtMs === null) return { kind: "failure", code: "invalid_clock" };
+  const day = utcDay(nowMs);
+  if (expiresAtMs === null || !day) return { kind: "failure", code: "invalid_clock" };
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
+  const dailyKey = codexResetGlobalDailyKey(day);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     let entry: Deno.KvEntryMaybe<CodexResetRedemptionRecord>;
     try {
@@ -767,12 +751,38 @@ const prepareSubmission = async (
     const fences = await readCurrentFences(kv, candidate);
     if (fences.kind === "failure") return { kind: "failure", code: fences.code };
     if (fences.kind === "stale") return { kind: "failure", code: "routing_fence_stale" };
+    let dailyEntry: Deno.KvEntryMaybe<CodexResetGlobalDailyRecord>;
+    try {
+      dailyEntry = await kv.get<CodexResetGlobalDailyRecord>(dailyKey, { consistency: "strong" });
+    } catch {
+      return { kind: "failure", code: "kv_unavailable" };
+    }
+    const daily = dailyEntry.value === null ? null : parseGlobalDailyRecord(dailyEntry.value, day);
+    if (dailyEntry.value !== null && !daily) return { kind: "failure", code: "global_limit_record_invalid" };
+    const submissionCount = daily?.submission_count ?? 0;
+    if (submissionCount >= maxGlobalPerDay) return { kind: "failure", code: "global_limit_reached" };
+    // Inventory, fences, and the daily budget are all strong reads. Check
+    // again after them so a naturally recovered quota window cannot cross the
+    // durable submission boundary or consume the daily budget.
+    const nowBeforeCommit = readClock(clock);
+    if (nowBeforeCommit === null) return { kind: "failure", code: "invalid_clock" };
+    if (!quotaWindowIsOpen(candidate, nowBeforeCommit)) return { kind: "failure", code: "quota_window_expired" };
+    if (!claimedDuringCurrentUtcDay(current, nowBeforeCommit)) return { kind: "failure", code: "claim_day_elapsed" };
     const submitted = {
       ...stateWith(current, "submitted", nowMs, { submitted_at_ms: nowMs, last_error_code: null }),
       lease_expires_at_ms: expiresAtMs,
     };
+    const nextDaily: CodexResetGlobalDailyRecord = {
+      v: 1,
+      day,
+      submission_count: submissionCount + 1,
+      updated_at_ms: nowMs,
+    };
     try {
-      const committed = await withFenceChecks(kv.atomic().check(entry), fences.entries).set(key, submitted).commit();
+      const committed = await withFenceChecks(kv.atomic().check(entry).check(dailyEntry), fences.entries)
+        .set(key, submitted)
+        .set(dailyKey, nextDaily)
+        .commit();
       if (committed.ok) return { kind: "submitted", record: submitted };
     } catch {
       return { kind: "failure", code: "kv_unavailable" };
@@ -962,15 +972,23 @@ const liveSubmissionPolicyReason = (
   dependencies: CodexBankedResetDependencies,
   context: ResetContext,
 ): string | null => {
+  return loadLiveSubmissionConfig(dependencies, context).reason;
+};
+
+const loadLiveSubmissionConfig = (
+  dependencies: CodexBankedResetDependencies,
+  context: ResetContext,
+): Readonly<{ config: CodexBankedResetConfig; reason: null }> | Readonly<{ config: null; reason: string }> => {
   let config: CodexBankedResetConfig;
   try {
     config = dependencies.reloadConfig?.() ?? dependencies.config;
   } catch {
-    return "configuration_unavailable";
+    return { config: null, reason: "configuration_unavailable" };
   }
   const reason = policyReason(config, context);
-  if (reason) return reason;
-  return config.mode === "live" ? null : "mode_not_live";
+  return reason || config.mode !== "live"
+    ? { config: null, reason: reason ?? "mode_not_live" }
+    : { config, reason: null };
 };
 
 const verifyOwned = async (
@@ -1193,8 +1211,8 @@ const submitClaimed = async (
   }
   // Re-read the kill switch after inventory and immediately before the fenced
   // side-effect boundary. A disable leaves `claimed` intact and makes no call.
-  const finalPolicy = liveSubmissionPolicyReason(dependencies, context);
-  if (finalPolicy) return outcome("pending", `new_submission_${finalPolicy}`, context, record);
+  const finalConfig = loadLiveSubmissionConfig(dependencies, context);
+  if (finalConfig.config === null) return outcome("pending", `new_submission_${finalConfig.reason}`, context, record);
   if (candidate.signal?.aborted) {
     const rejected = await rejectOwned(kv, context, record, nowAfterInventory, "client_aborted_before_submission");
     return outcome("rejected", "client_aborted_before_submission", context, rejected ?? record);
@@ -1212,8 +1230,18 @@ const submitClaimed = async (
     const rejected = await rejectOwned(kv, context, record, nowBeforePreparation, "quota_window_expired");
     return outcome("rejected", "quota_window_expired", context, rejected ?? record);
   }
-  const prepared = await prepareSubmission(kv, context, candidate, record, nowBeforePreparation);
-  if (prepared.kind === "failure") return outcome("pending", prepared.code, context, record);
+  const prepared = await prepareSubmission(
+    kv,
+    context,
+    candidate,
+    record,
+    nowBeforePreparation,
+    clock,
+    finalConfig.config.maxGlobalPerDay,
+  );
+  if (prepared.kind === "failure") {
+    return outcome(prepared.code === "global_limit_reached" ? "skipped" : "pending", prepared.code, context, record);
+  }
   // `prepareSubmission` itself awaits strong reads and a CAS. Re-read the
   // kill switch after that durable transition. A disable visible at this
   // final pre-renewal check leaves the conservative `submitted` record
@@ -1429,7 +1457,6 @@ const attemptInternal = async (
     kv,
     context,
     candidate,
-    configForClaim?.maxGlobalPerDay ?? dependencies.config.maxGlobalPerDay,
     nowMs,
     clock,
     ownerToken,

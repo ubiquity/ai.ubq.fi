@@ -516,8 +516,8 @@ Deno.test("banked reset live happy path commits exactly once with a stable durab
   assert.equal(durable.value?.idempotency_key_hash, first.idempotencyKeyHash);
 
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  const daily = await kv.get<{ claimed_count: number }>(codexResetGlobalDailyKey(day));
-  assert.equal(daily.value?.claimed_count, 1);
+  const daily = await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day));
+  assert.equal(daily.value?.submission_count, 1);
 
   const duplicate = await attemptCodexBankedReset(
     candidate({ requestId: "same-window-later-request" }),
@@ -765,7 +765,7 @@ Deno.test("an already-expired quota window is never claimed or charged against t
   assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
 });
 
-Deno.test("a quota deadline crossing during claim preparation cannot reserve daily capacity", async () => {
+Deno.test("a quota deadline crossing during submission preparation cannot reserve daily capacity", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -782,11 +782,13 @@ Deno.test("a quota deadline crossing during claim preparation cannot reserve dai
 
   const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, clock));
 
-  assert.equal(result.kind, "skipped");
+  assert.equal(result.kind, "pending");
   assert.equal(result.reason, "quota_window_expired");
-  assert.equal(provider.callCount, 0);
+  assert.equal(result.record?.state, "claimed");
+  assert.equal(provider.inventoryInputs.length, 1);
+  assert.equal(provider.redeemInputs.length, 0);
   assert.equal(provider.commitCount, 0);
-  assert.equal(kv.atomicCommitCount, 0);
+  assert.equal(kv.atomicCommitCount, 1);
   assert.equal((await kv.get(dailyKey)).value, null);
 });
 
@@ -1033,7 +1035,7 @@ Deno.test("an expired claimed record cannot be taken over after its quota deadli
   assert.equal(provider.redeemInputs.length, 0);
   assert.equal(provider.commitCount, 0);
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get<{ claimed_count: number }>(codexResetGlobalDailyKey(day))).value?.claimed_count, 1);
+  assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
 
   inventoryGate.resolve(undefined);
   const originalResult = await original;
@@ -1517,6 +1519,30 @@ Deno.test("global daily cap stops a second account before it reaches the provide
   assert.equal(provider.commitCount, 1);
 });
 
+Deno.test("an inventory failure leaves the global daily submission budget available", async () => {
+  const kv = new MemoryKv();
+  const provider = new FakeCodexUsageResetProvider();
+  const clock = new TestClock();
+  const configured = config({ accountAllowlist: new Set(["test-account-a", "test-account-b"]), maxGlobalPerDay: 1 });
+  const firstCandidate = candidate();
+  const secondCandidate = candidate({ accountId: "test-account-b", requestId: "after-inventory-failure" });
+  await seedFences(kv, firstCandidate);
+  await seedFences(kv, secondCandidate);
+  provider.inventoryFailure = new Error("inventory unavailable");
+
+  const first = await attemptCodexBankedReset(firstCandidate, dependencies(kv, provider, clock, configured));
+  assert.equal(first.kind, "rejected");
+  assert.equal(first.reason, "inventory_unavailable");
+  const day = new Date(clock.nowMs).toISOString().slice(0, 10);
+  assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
+
+  provider.inventoryFailure = null;
+  const second = await attemptCodexBankedReset(secondCandidate, dependencies(kv, provider, clock, configured));
+  assert.equal(second.kind, "verified");
+  assert.equal(provider.redeemInputs.length, 1);
+  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count, 1);
+});
+
 Deno.test("a claim held across UTC midnight cannot bypass the next day's global redemption cap", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
@@ -1557,7 +1583,10 @@ Deno.test("a claim held across UTC midnight cannot bypass the next day's global 
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
   const currentDay = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get<{ claimed_count: number }>(codexResetGlobalDailyKey(currentDay))).value?.claimed_count, 1);
+  assert.equal(
+    (await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(currentDay))).value?.submission_count,
+    1,
+  );
 });
 
 Deno.test("empty or unsupported inventory and provider rejection become durable terminal rejections", async () => {

@@ -1171,15 +1171,16 @@ export const selectCodexRoutingAccounts = async (
       }
       continue;
     }
+    // A verified banked reset releases the quota deadline but retains its
+    // recovery-probe lease. Ordinary routing stays unavailable until that
+    // exact fenced probe succeeds, fails, or expires.
+    if ((slot.probe_lease?.expires_at_ms ?? 0) > now) {
+      skipped.push(mapped.slot + 1);
+      hasQuotaBlock = true;
+      retryAt = retryAt === null ? slot.probe_lease!.expires_at_ms : Math.min(retryAt, slot.probe_lease!.expires_at_ms);
+      continue;
+    }
     if (slot.quota_blocked_until_ms) {
-      if ((slot.probe_lease?.expires_at_ms ?? 0) > now) {
-        skipped.push(routedAccount.slot + 1);
-        hasQuotaBlock = true;
-        retryAt = retryAt === null
-          ? slot.probe_lease!.expires_at_ms
-          : Math.min(retryAt, slot.probe_lease!.expires_at_ms);
-        continue;
-      }
       // Claim the half-open lease only if request execution actually reaches
       // this slot. This preserves first/second order without abandoning a
       // secondary lease when the healthy first account returns directly.

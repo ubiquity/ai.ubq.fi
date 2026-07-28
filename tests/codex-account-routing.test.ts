@@ -948,7 +948,10 @@ Deno.test("a post-reset recovery probe fences delayed 429s and clears ambiguity 
     assert.equal(recoveryProbe.probeGeneration, firstFence + 1);
     assert.ok(recoveryProbe.probeToken);
     const released = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
-    assert.equal(released.kind, "eligible");
+    assert.equal(released.kind, "quota_blocked");
+    if (released.kind === "quota_blocked") {
+      assert.ok(released.retryAtMs !== null && released.retryAtMs > now + 1);
+    }
 
     const revisedResetAtMs = now + 120_000;
     await markCodexQuotaBlocked(
