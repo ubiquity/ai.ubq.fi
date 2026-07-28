@@ -1214,7 +1214,7 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
   }
 });
 
-Deno.test("the default upstream banked reset adapter maps a mocked reset outcome and retries once", async () => {
+Deno.test("the default upstream reset adapter remains unreachable without a reconcilable provider contract", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1242,18 +1242,6 @@ Deno.test("the default upstream banked reset adapter maps a mocked reset outcome
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
         });
-      case 2:
-        return new Response(
-          JSON.stringify({
-            available_count: 1,
-            credits: [{ id: "credit-one", reset_type: "codex_rate_limits", status: "available" }],
-          }),
-          { status: 200 },
-        );
-      case 3:
-        return new Response(JSON.stringify({ code: "reset", windows_reset: 2 }), { status: 299 });
-      case 4:
-        return new Response(JSON.stringify({ id: "response-after-upstream-reset" }), { status: 200 });
       default:
         throw new Error(`unexpected request ${request.method} ${request.url}`);
     }
@@ -1275,31 +1263,12 @@ Deno.test("the default upstream banked reset adapter maps a mocked reset outcome
       },
     );
 
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 429);
     assert.deepEqual(
       requests.map((request) => `${request.method} ${request.url}`),
       [
         "POST https://upstream-reset.test/backend-api/codex/responses",
-        "GET https://upstream-reset.test/backend-api/wham/rate-limit-reset-credits",
-        "POST https://upstream-reset.test/backend-api/wham/rate-limit-reset-credits/consume",
-        "POST https://upstream-reset.test/backend-api/codex/responses",
       ],
-    );
-    assert.equal(
-      requests.filter((request) => request.url.endsWith("/backend-api/codex/responses")).length,
-      2,
-      "the original inference is retried exactly once after a successful reset",
-    );
-    for (const request of requests.slice(1, 3)) {
-      assert.equal(request.headers.get("authorization"), `Bearer ${accessToken("one")}`);
-      assert.equal(request.headers.get("chatgpt-account-id"), "account-one");
-      assert.equal(request.headers.get("user-agent"), "codex_cli_rs/0.145.0 (ai.ubq.fi)");
-    }
-    assert.equal(requests[1].headers.has("content-type"), false);
-    assert.equal(requests[2].headers.get("content-type"), "application/json");
-    assert.equal(
-      requests[2].body,
-      JSON.stringify({ redeem_request_id: "uos_ai_codex_reset_v1_deterministic", credit_id: "credit-one" }),
     );
   } finally {
     resetCodexAuthCacheForTest();

@@ -419,6 +419,11 @@ Deno.test("banked reset disabled, shadow, and invalid limits make zero provider 
       reason: "feature_disabled",
     },
     {
+      name: "allowlist required",
+      configured: config({ accountAllowlist: new Set() }),
+      reason: "account_allowlist_required",
+    },
+    {
       name: "shadow",
       configured: config({ mode: "shadow", maxGlobalPerDay: 0 }),
       reason: "shadow",
@@ -900,37 +905,32 @@ Deno.test("an unapproved provider receipt stays out of the durable record and te
   assert.deepEqual(submittedFields.map((fields) => fields.provider_receipt_id), [null]);
 });
 
-Deno.test("a provider with documented final outcomes completes without lookup or body verification", async () => {
+Deno.test("a provider with only documented final outcomes remains disabled without reconciliation", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider({
     ...provenContract(),
     idempotency: { callerSupplied: true, retentionMs: null },
     lookup: { byIdempotencyKey: false, byProviderReceiptId: false },
     verification: { independentlyVerifiable: false },
-    redeemOutcomeIsFinal: true,
     receiptIdsSafeToPersistAndLog: false,
   });
   const clock = new TestClock();
   const reset = candidate();
-  const events: string[] = [];
   await seedFences(kv, reset);
   provider.redeemResult = { kind: "completed", providerReceiptId: "status-204" };
   provider.verifyResult = false;
 
   const result = await attemptCodexBankedReset(
     reset,
-    dependencies(kv, provider, clock, config(), { event: (event) => events.push(event) }),
+    dependencies(kv, provider, clock, config()),
   );
 
-  assert.equal(result.kind, "verified");
-  assert.equal(result.reason, "redeem_outcome");
-  assert.equal(result.record?.state, "verified");
-  assert.equal(result.record?.provider_receipt_id, null);
-  assert.equal(provider.redeemInputs.length, 1);
+  assert.equal(result.kind, "skipped");
+  assert.equal(result.reason, "provider_contract_unproven");
+  assert.equal(result.record, null);
+  assert.equal(provider.redeemInputs.length, 0);
   assert.equal(provider.verificationInputs.length, 0);
   assert.equal(provider.lookupInputs.length, 0);
-  assert.ok(events.includes("codex_reset_submitted"));
-  assert.ok(events.includes("codex_reset_verified"));
 });
 
 Deno.test("banked-reset telemetry retains only safe correlation fields", async () => {
@@ -2221,7 +2221,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
       maxGlobalPerDay: defaults.maxGlobalPerDay,
       maxPerAccountPerWindow: defaults.maxPerAccountPerWindow,
     },
-    { enabled: true, mode: "live", allowlist: [], maxGlobalPerDay: 1, maxPerAccountPerWindow: 1 },
+    { enabled: false, mode: "disabled", allowlist: [], maxGlobalPerDay: 0, maxPerAccountPerWindow: 1 },
   );
 
   const environment = new Map<string, string>([

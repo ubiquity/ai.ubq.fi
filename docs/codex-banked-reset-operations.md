@@ -2,10 +2,11 @@
 
 ## Status and operating boundary
 
-The pinned `lib/codex` submodule is the provider contract reference. Live mode uses an account-bound adapter after the
-KV fence and healthy-fallback gates pass. It is active by default with a hard global cap of one reset per UTC day across
-the current account pool. Tests inject its transport; no test or this implementation run has called a real reset
-endpoint.
+The pinned `lib/codex` submodule is the provider contract reference. Its source establishes the request and response
+schema plus same-key replay, but does not document idempotency retention, lookup by request ID, or independent proof
+that quota was restored. The gateway therefore ships with live redemption disabled and will not call the account-bound
+adapter, even if live configuration is supplied, until a reviewed provider contract proves those three guarantees. Tests
+inject their transport; no test or this implementation run has called a real reset endpoint.
 
 For a configured Codex base, the adapter uses `GET .../rate-limit-reset-credits` and
 `POST .../rate-limit-reset-credits/consume`: `/api/codex/...` for the Codex layout and `/backend-api/wham/...` for the
@@ -36,17 +37,17 @@ ordinary quota failure and is never fed back into reset selection.
 
 ## Configuration and rollback
 
-Settings are read for each gateway request. No setting is required for normal operation: the shipped default is live,
-unrestricted across the current pool, one global submission per UTC day, and one submission per account/window. Existing
-settings are optional restrictions and immediate kill switches; they do not add any required deployment configuration.
+Settings are read for each gateway request. New claims require every live control: explicit enablement, `live` mode, a
+non-empty account allowlist, a positive global cap, and per-window cap exactly one. Those settings alone do not override
+the provider-contract gate described above.
 
-| Variable                                        | Safe default | Requirement                                                                  |
-| ----------------------------------------------- | ------------ | ---------------------------------------------------------------------------- |
-| `CODEX_BANKED_RESET_ENABLED`                    | `true`       | Set exactly `false` to immediately stop new claims.                          |
-| `CODEX_BANKED_RESET_MODE`                       | `live`       | Set `disabled` or `shadow` to restrict operation.                            |
-| `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | Empty permits the current pool; set exact account IDs or hashes to limit it. |
-| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `1`          | Set a positive integer to override the shipped daily cap.                    |
-| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Must be exactly `1`; all other values fail closed.                           |
+| Variable                                        | Safe default | Requirement                                                            |
+| ----------------------------------------------- | ------------ | ---------------------------------------------------------------------- |
+| `CODEX_BANKED_RESET_ENABLED`                    | `false`      | Must be exactly `true` before shadow or live candidates are evaluated. |
+| `CODEX_BANKED_RESET_MODE`                       | `disabled`   | Use `shadow` to observe candidates; `live` remains contract-gated.     |
+| `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | Required for shadow/live; exact account IDs or stable hashes only.     |
+| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Must be positive for a live claim; cannot override the provider gate.  |
+| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Must be exactly `1`; all other values fail closed.                     |
 
 `shadow` records candidate decisions but makes no provider calls, including inventory reads. `disabled` and a false flag
 prevent new claims and submissions. Existing `submitted` or `unknown` records remain recovery-only: a future reviewed
@@ -72,9 +73,10 @@ available `codex_rate_limits` credit ID is sent when present. Omission asks upst
 The response body does not contain a receipt ID, so none is retained.
 
 Upstream documents a caller-supplied `redeem_request_id`, same-key idempotent replay, and `already_redeemed`. It does
-not document a retention period or standalone lookup endpoint. Consequently, this gateway treats a parsed terminal
-result as final, but keeps response-loss records as `unknown` and never performs an automatic replay. Operators must
-preserve those records and investigate before any manually authorized same-key reconciliation.
+not document a retention period, standalone lookup endpoint, or independent quota-restoration verification. Therefore a
+parsed terminal result is not sufficient for automatic production redemption: response-loss records remain `unknown`,
+and live mode remains structurally disabled. Operators must preserve those records and investigate before any manually
+authorized same-key reconciliation.
 
 ## Durable transaction and routing repair
 

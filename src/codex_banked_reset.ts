@@ -4,7 +4,6 @@ import {
   providerReceiptIdsSafeToPersistAndLog,
   providerSupportsLiveRedemption,
   providerSupportsResetType,
-  providerTreatsRedeemOutcomeAsFinal,
   type RedeemResetResult,
   type ResetAccountContext,
   type ResetInventory,
@@ -73,7 +72,7 @@ const parseMode = (value: string | undefined): CodexBankedResetMode => {
     case "disabled":
       return "disabled";
     default:
-      return "live";
+      return "disabled";
   }
 };
 
@@ -93,13 +92,12 @@ const parseAllowlist = (value: string | undefined): ReadonlySet<string> =>
 export const parseCodexBankedResetConfig = (
   readEnv: (key: string) => string | undefined = getEnv,
 ): CodexBankedResetConfig => ({
-  // Automatic recovery is shipped live with one reset per UTC day. Existing
-  // deployment variables remain optional restrictions and immediate kill
-  // switches; no variable is required for the normal production path.
-  enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), true),
+  // A reset is an external spend. Enablement, live mode, a positive cap, and
+  // a concrete allowlist must all be supplied before a provider is reachable.
+  enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), false),
   mode: parseMode(readEnv("CODEX_BANKED_RESET_MODE")),
   accountAllowlist: parseAllowlist(readEnv("CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST")),
-  maxGlobalPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY"), 1),
+  maxGlobalPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY"), 0),
   maxPerAccountPerWindow: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW"), 1),
 });
 
@@ -341,8 +339,8 @@ const policyReason = (config: CodexBankedResetConfig, context: ResetContext): st
   try {
     if (!config.enabled) return "feature_disabled";
     if (config.mode === "disabled") return "mode_disabled";
+    if (config.accountAllowlist.size === 0) return "account_allowlist_required";
     if (
-      config.accountAllowlist.size > 0 &&
       !config.accountAllowlist.has(context.account.accountId) &&
       !config.accountAllowlist.has(context.account.accountIdHash)
     ) {
@@ -1050,37 +1048,6 @@ const verifyOwned = async (
   return outcome("verified", "verified", context, finalized);
 };
 
-/**
- * The upstream adapter has already parsed a documented terminal redemption
- * result (`reset` or `already_redeemed`). Lost, malformed, and non-2xx
- * responses never reach this path.
- */
-const finalizeDocumentedRedeemOutcome = async (
-  kv: Deno.Kv,
-  context: ResetContext,
-  record: CodexResetRedemptionRecord,
-  candidate: CodexBankedResetCandidate,
-  nowMs: number,
-  telemetry: CodexBankedResetTelemetry,
-): Promise<CodexBankedResetOutcome> => {
-  const finalized = await updateOwnedRecord(
-    kv,
-    context,
-    record,
-    (current) => stateWith(current, "verified", nowMs, { verified_at_ms: nowMs, last_error_code: null }),
-  );
-  if (!finalized) return outcome("pending", "redeem_outcome_finalization_cas_failed", context, record);
-  emit(
-    telemetry,
-    "codex_reset_verified",
-    telemetryFields(context, candidate, { state: "verified", verification_source: "redeem_outcome" }),
-  );
-  metric(telemetry, "codex_reset_verified_total", 1, telemetryFields(context, candidate, {}));
-  metric(telemetry, "codex_reset_verification_latency_ms", 0, telemetryFields(context, candidate, {}));
-  metric(telemetry, "codex_reset_estimated_spend_total", 1, telemetryFields(context, candidate, {}));
-  return outcome("verified", "redeem_outcome", context, finalized);
-};
-
 const reconcileOwned = async (
   kv: Deno.Kv,
   context: ResetContext,
@@ -1339,17 +1306,6 @@ const submitClaimed = async (
       durableReceiptId(dependencies.provider, submittedResult.providerReceiptId),
     );
     return unknownOutcome(telemetry, context, candidate, "provider_commit_unknown", unknown ?? renewed.record);
-  }
-  if (
-    (submittedResult.kind === "completed" || submittedResult.kind === "already_redeemed") &&
-    providerTreatsRedeemOutcomeAsFinal(dependencies.provider)
-  ) {
-    emit(
-      telemetry,
-      "codex_reset_submitted",
-      telemetryFields(context, candidate, { state: "submitted", provider_receipt_id: null }),
-    );
-    return await finalizeDocumentedRedeemOutcome(kv, context, renewed.record, candidate, nowAfterRedeem, telemetry);
   }
   const receipt = receiptId(submittedResult.providerReceiptId);
   if (!receipt) {

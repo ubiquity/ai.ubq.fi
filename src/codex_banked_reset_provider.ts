@@ -61,8 +61,6 @@ export type CodexUsageResetProviderContract = Readonly<{
     /** A distinct observation can prove the quota reset actually took effect. */
     independentlyVerifiable: boolean;
   }>;
-  /** A documented semantic `redeem` result is sufficient to finish the ledger. */
-  redeemOutcomeIsFinal?: boolean;
   /**
    * Whether a receipt identifier is non-secret and may be retained in the
    * durable audit record or emitted in logs. When false, reconciliation uses
@@ -226,7 +224,6 @@ const upstreamProviderContract: CodexUsageResetProviderContract = Object.freeze(
   idempotency: Object.freeze({ callerSupplied: true, retentionMs: null }),
   lookup: Object.freeze({ byIdempotencyKey: false, byProviderReceiptId: false }),
   verification: Object.freeze({ independentlyVerifiable: false }),
-  redeemOutcomeIsFinal: true,
   // The documented response has no provider receipt identifier.
   receiptIdsSafeToPersistAndLog: false,
   supportedResetTypes: Object.freeze(["codex_rate_limits"]) as readonly string[],
@@ -380,20 +377,10 @@ export const providerReceiptIdsSafeToPersistAndLog = (
   }
 };
 
-/** Returns true only for a provider with documented terminal redeem outcomes. */
-export const providerTreatsRedeemOutcomeAsFinal = (
-  provider: Pick<CodexUsageResetProvider, "contract">,
-): boolean => {
-  try {
-    return provider?.contract?.redeemOutcomeIsFinal === true;
-  } catch {
-    return false;
-  }
-};
-
 /**
- * Returns true for a provider with either the conventional reconciliable
- * contract or documented final redeem outcomes.
+ * Returns true only when the provider proves a replay-safe, independently
+ * reconcilable contract. A terminal response body cannot replace a lookup or
+ * independent proof for transport-loss and process-crash cases.
  */
 export const providerSupportsLiveRedemption = (
   provider: Pick<CodexUsageResetProvider, "contract">,
@@ -408,9 +395,8 @@ export const providerSupportsLiveRedemption = (
     }
     const supportsResetType = Array.isArray(contract.supportedResetTypes) &&
       contract.supportedResetTypes.some(hasNonEmptyResetType);
-    if (!supportsResetType || contract.idempotency.callerSupplied !== true) return false;
-    if (contract.redeemOutcomeIsFinal === true) return true;
-    return isPositiveSafeInteger(contract.idempotency.retentionMs) &&
+    return supportsResetType && contract.idempotency.callerSupplied === true &&
+      isPositiveSafeInteger(contract.idempotency.retentionMs) &&
       contract.lookup.byIdempotencyKey === true &&
       contract.verification.independentlyVerifiable === true;
   } catch {
@@ -441,7 +427,6 @@ export const unavailableCodexUsageResetProvider: CodexUsageResetProvider = Objec
     idempotency: Object.freeze({ callerSupplied: false, retentionMs: null }),
     lookup: Object.freeze({ byIdempotencyKey: false, byProviderReceiptId: false }),
     verification: Object.freeze({ independentlyVerifiable: false }),
-    redeemOutcomeIsFinal: false,
     receiptIdsSafeToPersistAndLog: false,
     supportedResetTypes: Object.freeze([]) as readonly string[],
   }),
