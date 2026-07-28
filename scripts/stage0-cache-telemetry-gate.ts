@@ -81,8 +81,8 @@ export type Stage0CohortReport = Readonly<{
   completed_inference: number;
   status_totals: Readonly<Record<string, number>>;
   usage_telemetry_status_totals: Readonly<Record<UsageTelemetryStatus, number>>;
-  cache_read_input_tokens: CacheTokenSummary;
-  cache_write_input_tokens: CacheTokenSummary;
+  observed_completed_cache_read_input_tokens: CacheTokenSummary;
+  observed_completed_cache_write_input_tokens: CacheTokenSummary;
   reported_over_completed: Readonly<{
     reported: number;
     completed: number;
@@ -110,8 +110,8 @@ export type Stage0CacheTelemetryReport = Readonly<{
   completed_inference: number;
   completed_status_totals: Readonly<Record<string, number>>;
   usage_telemetry_status_totals: Readonly<Record<UsageTelemetryStatus, number>>;
-  cache_read_input_tokens: CacheTokenSummary;
-  cache_write_input_tokens: CacheTokenSummary;
+  observed_completed_cache_read_input_tokens: CacheTokenSummary;
+  observed_completed_cache_write_input_tokens: CacheTokenSummary;
   reported_over_completed: Readonly<{
     reported: number;
     completed: number;
@@ -497,8 +497,8 @@ class Stage0CacheTelemetryAccumulator {
           completed_inference: cohort.completed_inference,
           status_totals: toSortedCounts(cohort.status_totals),
           usage_telemetry_status_totals: toSortedCounts(cohort.usage_telemetry_status_totals),
-          cache_read_input_tokens: toCacheTokenSummary(cohort.cache_read_input_tokens),
-          cache_write_input_tokens: toCacheTokenSummary(cohort.cache_write_input_tokens),
+          observed_completed_cache_read_input_tokens: toCacheTokenSummary(cohort.cache_read_input_tokens),
+          observed_completed_cache_write_input_tokens: toCacheTokenSummary(cohort.cache_write_input_tokens),
           reported_over_completed: cohortCoverage,
           completed_1k_gate: {
             minimum_completed: STAGE0_COHORT_MIN_COMPLETED,
@@ -525,8 +525,8 @@ class Stage0CacheTelemetryAccumulator {
       completed_inference: this.#completedInference,
       completed_status_totals: toSortedCounts(this.#completedStatusTotals),
       usage_telemetry_status_totals: toSortedCounts(this.#usageTelemetryStatusTotals),
-      cache_read_input_tokens: toCacheTokenSummary(this.#cacheReadInputTokens),
-      cache_write_input_tokens: toCacheTokenSummary(this.#cacheWriteInputTokens),
+      observed_completed_cache_read_input_tokens: toCacheTokenSummary(this.#cacheReadInputTokens),
+      observed_completed_cache_write_input_tokens: toCacheTokenSummary(this.#cacheWriteInputTokens),
       reported_over_completed: coverage,
       gates: {
         aggregate_completed_10k: {
