@@ -4,6 +4,7 @@
 
 - Canonical worktree: `/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/feat-banked-resets`
 - Branch: `feat/banked-resets`
+- Primary Codex thread: `019fa7ad-7ad3-7c02-bad0-d0f8e881af7e`
 - Superseded activation commit: `0767a64aaf128f4f5324d84b26fd5dc8cc9be4f3`
 - Base integrated before activation: `ebe42945eac994decabef6451e66453400ae5f43` (`origin/development` at rebase time)
 - Pinned provider-source submodule: `lib/codex` at `8e271dc02b23d42827875019924be0f5005642b0`
@@ -21,6 +22,9 @@ routing until its exact probe finishes. To inspect the recorded review again:
 codex exec resume 019fa7f1-a319-7002-9886-d5e295191c3e \
   "Return the completed actionable findings only; do not modify files."
 ```
+
+Use the primary thread ID above to locate this implementation conversation when reviewing the shadow observation or
+later live-decision evidence.
 
 ## Shipped behavior after production promotion
 
@@ -61,6 +65,9 @@ is rejected and retained only as an audit artifact; no other banked-reset worktr
    inventory, or consume request.
 4. Do not authorize live redemption until the provider supplies the missing retention, lookup, and independent
    verification guarantees; preserve every `submitted` or `unknown` record and never replay a provider call.
+
+The exact shadow configuration, event-by-event acceptance criteria, rollback, and live-decision prerequisites are in
+`codex-banked-reset-operations.md` under “Two-phase rollout: shadow first, live only after contract closure.”
 
 At the time this file was written, no real provider reset endpoint had been called by this implementation or its test
 suite. The production workflow must provide immutable deployment attestation before the promotion is considered live.

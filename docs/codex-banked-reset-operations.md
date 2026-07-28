@@ -66,6 +66,57 @@ CODEX_BANKED_RESET_ENABLED=false
 CODEX_BANKED_RESET_MODE=disabled
 ```
 
+## Two-phase rollout: shadow first, live only after contract closure
+
+### Phase 1 — shadow observation
+
+Shadow mode is the only approved next step. It exercises the qualifying-429, healthy-fallback, allowlist, routing-fence,
+and redacted-event paths, but it makes **zero** inventory, consume, lookup, or verification calls to the reset provider.
+It cannot spend a banked reset.
+
+1. Choose exactly one Codex account. Use its exact account ID or the stable account hash already emitted by normal
+   routing telemetry; do not put an access token, refresh token, or auth JSON in the allowlist.
+2. Set the existing deployment configuration to the following values. Replace the placeholder with that one account ID
+   or hash; do not use an empty allowlist or a wildcard.
+
+   ```text
+   CODEX_BANKED_RESET_ENABLED=true
+   CODEX_BANKED_RESET_MODE=shadow
+   CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST=<one-account-id-or-stable-hash>
+   CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY=0
+   CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW=1
+   ```
+
+3. Deploy the configuration, then verify the served `/health` response reports the intended immutable Git SHA and
+   deployment ID before treating shadow as enabled.
+4. Wait for a natural Codex exhaustion. Do not manufacture a 429 and do not call either reset-credit endpoint.
+5. For each candidate, verify the event sequence is limited to `codex_reset_eligible` and
+   `codex_reset_shadow_candidate`, with any `codex_reset_skipped_healthy_fallback` explained by a successful sibling
+   account. There must be no `codex_reset_claimed`, `codex_reset_submit_started`, `codex_reset_submitted`,
+   `codex_reset_verified`, inventory request, consume request, or ledger spend record.
+6. Keep shadow enabled for the agreed observation period (for example, several days) and audit false positives,
+   allowlist matches, stable deadlines, healthy fallback behavior, and log redaction. Roll back immediately with the two
+   disabled values above if the account selection or telemetry is wrong.
+
+### Phase 2 — live redemption decision
+
+Do **not** enable live mode merely because the shadow observation period elapsed. Shadow proves gateway selection and
+observability, not provider reconciliation. Before any live implementation or deployment, an operator must attach a
+reviewed upstream contract that proves all of the following for the exact production endpoint and account scope:
+
+1. Caller-provided `redeem_request_id` idempotency with a documented retention period long enough to cover recovery.
+2. Lookup by that idempotency key after a timeout or lost response.
+3. Independent proof that the targeted quota window was reset, not just a successful HTTP status or response JSON.
+4. The documented inventory, consume, account/workspace binding, terminal response codes, and receipt-handling schema.
+
+Only then may a separate reviewed code change advertise `retentionMs > 0`, `lookup.byIdempotencyKey=true`, and
+`verification.independentlyVerifiable=true` for that proven provider. That change needs fresh hermetic contract
+fixtures, full validation, a one-account live allowlist, global cap exactly one, an operator watching the ledger, and a
+new explicit authorization. Configuration alone cannot bypass the current provider-contract gate.
+
+If that contract is still incomplete after the shadow period, keep `shadow` enabled or revert to `disabled`; do not make
+a status-only or 2xx-only exception.
+
 ## Provider contract and ambiguity
 
 The upstream inventory body is `{ credits, available_count }`; `available_count` is authoritative and the optional
