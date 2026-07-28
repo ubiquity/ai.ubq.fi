@@ -14,6 +14,7 @@ class ExperimentKv {
   readonly values = new Map<string, unknown>();
   private readonly revisions = new Map<string, number>();
   private nextRevision = 1;
+  atomicCalls = 0;
   beforeGet: ((key: Deno.KvKey) => void | Promise<void>) | null = null;
   afterAtomicCommit: ((writes: readonly AtomicWrite[]) => void) | null = null;
 
@@ -21,6 +22,7 @@ class ExperimentKv {
     this.values.clear();
     this.revisions.clear();
     this.nextRevision = 1;
+    this.atomicCalls = 0;
     this.beforeGet = null;
     this.afterAtomicCommit = null;
   }
@@ -66,6 +68,7 @@ class ExperimentKv {
   }
 
   atomic(): Deno.AtomicOperation {
+    this.atomicCalls += 1;
     const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
     const writes: AtomicWrite[] = [];
     const chain = {
@@ -114,13 +117,17 @@ const {
   PromptCacheScopeExperimentBusyError,
   PromptCacheScopeExperimentUnavailableError,
   assertPromptCacheScopeExperimentTelemetryBaseline,
+  readPromptCacheScopeExperimentTelemetryBaseline,
   readPromptCacheScopeExperimentCompletedUsage,
   runPromptCacheScopeExperiment,
 } = await import("../src/prompt_cache_scope_experiment.ts");
 const { promoteCodexPromptCacheScope } = await import("../src/codex_catalog.ts");
 const { resolvePromptCacheTelemetryCounterKeys } = await import("../src/prompt_cache_telemetry_gate.ts");
 const { loadPromptCacheScopeTargetInventory } = await import("../src/prompt_cache_scope_targets.ts");
-const { handleAdminCodexCacheScopeExperiment } = await import("../src/admin.ts");
+const {
+  handleAdminCodexCacheScopeExperiment,
+  handleAdminCodexCacheScopeExperimentTelemetryBaseline,
+} = await import("../src/admin.ts");
 
 const MODEL = "gpt-5.6-cache-scope-fixture";
 const TELEMETRY_RELEASE = "0123456789abcdef0123456789abcdef01234567";
@@ -302,6 +309,68 @@ const sseCompleted = (cachedTokens: number, cacheWriteTokens: number, model = MO
   });
   return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
 };
+
+Deno.test("prompt-cache Stage 0 diagnostic is read-only and redacts the server-selected target", async () => {
+  seed();
+  await seedStage0Baseline(MODEL);
+  const originalFetch = globalThis.fetch;
+  const originalBeforeGet = kv.beforeGet;
+  const readKeys: Deno.KvKey[] = [];
+  let fetchCalls = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    throw new Error("Stage 0 diagnostics must not contact upstream");
+  };
+  kv.beforeGet = (key) => {
+    readKeys.push(key);
+  };
+
+  try {
+    const baseline = await readPromptCacheScopeExperimentTelemetryBaseline({
+      kv: kv as unknown as Deno.Kv,
+      release: TELEMETRY_RELEASE,
+    });
+    assert.equal(baseline.status, "eligible");
+    assert.doesNotMatch(JSON.stringify(baseline), new RegExp(MODEL));
+    assert.ok(readKeys.some((key) => key[0] === "uos_ai" && key[1] === "prompt_cache_telemetry_gate"));
+    assert.equal(kv.atomicCalls, 0);
+    assert.equal(fetchCalls, 0);
+
+    const response = await handleAdminCodexCacheScopeExperimentTelemetryBaseline(() => Promise.resolve(baseline));
+    const body = await response.text();
+    const payload = JSON.parse(body) as Record<string, unknown>;
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(payload.status, "eligible");
+    assert.equal("model_hash" in payload, false);
+    assert.equal("target" in payload, false);
+    assert.doesNotMatch(body, new RegExp(MODEL));
+  } finally {
+    globalThis.fetch = originalFetch;
+    kv.beforeGet = originalBeforeGet;
+    resetCodexAuthCacheForTest();
+    resetRuntimeConfigCacheForTest();
+  }
+});
+
+Deno.test("prompt-cache Stage 0 diagnostic does not expose target-selection failures", async () => {
+  const secret = "target-or-kv-detail-must-not-be-exposed";
+  const logs: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => logs.push(args);
+  try {
+    const response = await handleAdminCodexCacheScopeExperimentTelemetryBaseline(() => {
+      throw new Error(secret);
+    });
+    const body = await response.text();
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.doesNotMatch(body, new RegExp(secret));
+    assert.doesNotMatch(JSON.stringify(logs), new RegExp(secret));
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
 
 Deno.test("a missing or mismatched pinned slot is an inconclusive scope result", async () => {
   const response = sseCompleted(0, 2_560);

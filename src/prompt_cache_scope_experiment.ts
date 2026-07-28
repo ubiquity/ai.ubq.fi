@@ -17,7 +17,11 @@ import {
 } from "./codex_models.ts";
 import { getKv } from "./kv.ts";
 import { extractUsageTokens } from "./openai.ts";
-import { type PromptCacheTelemetryProvider, readPromptCacheTelemetryBaseline } from "./prompt_cache_telemetry_gate.ts";
+import {
+  type PromptCacheTelemetryBaselineResult,
+  type PromptCacheTelemetryProvider,
+  readPromptCacheTelemetryBaseline,
+} from "./prompt_cache_telemetry_gate.ts";
 import {
   loadPromptCacheScopeTargetInventory,
   type PromptCacheScopeTarget,
@@ -944,14 +948,20 @@ const selectCampaignTarget = async (
   );
 };
 
+type ResolvedPromptCacheScopeExperimentTelemetryBaseline = Readonly<{
+  target: PromptCacheScopeTargetBinding;
+  baseline: PromptCacheTelemetryBaselineResult;
+}>;
+
 /**
- * The live matrix is a paid, stateful control-plane action. Keep its Stage 0
- * prerequisite at the public admin boundary so direct unit fixtures can
- * exercise the fenced runner without inventing a deployed release baseline.
+ * Resolves the one server-owned campaign target before reading its immutable
+ * release telemetry. The target binding must remain private: it contains raw
+ * model and account-pool identity material that is only needed to fence a
+ * paid dispatch.
  */
-export const assertPromptCacheScopeExperimentTelemetryBaseline = async (
+const resolvePromptCacheScopeExperimentTelemetryBaseline = async (
   options: PromptCacheScopeExperimentTelemetryBaselineTestOptions = {},
-): Promise<PromptCacheScopeExperimentTelemetryBaseline> => {
+): Promise<ResolvedPromptCacheScopeExperimentTelemetryBaseline> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) {
     throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiments require Deno KV.");
@@ -973,6 +983,28 @@ export const assertPromptCacheScopeExperimentTelemetryBaseline = async (
     { provider: CODEX_CHATGPT_PROMPT_CACHE_TELEMETRY_PROVIDER, model: resolved.value.binding.model },
     { ...options, kv },
   );
+  return { target: resolved.value.binding, baseline };
+};
+
+/**
+ * Read-only Stage 0 diagnostics for the one server-owned campaign target.
+ * The result intentionally excludes its raw target binding; it does not
+ * attest a later paid request, which must repeat the fenced read itself.
+ */
+export const readPromptCacheScopeExperimentTelemetryBaseline = async (
+  options: PromptCacheScopeExperimentTelemetryBaselineTestOptions = {},
+): Promise<PromptCacheTelemetryBaselineResult> =>
+  (await resolvePromptCacheScopeExperimentTelemetryBaseline(options)).baseline;
+
+/**
+ * The live matrix is a paid, stateful control-plane action. Keep its Stage 0
+ * prerequisite at the public admin boundary so direct unit fixtures can
+ * exercise the fenced runner without inventing a deployed release baseline.
+ */
+export const assertPromptCacheScopeExperimentTelemetryBaseline = async (
+  options: PromptCacheScopeExperimentTelemetryBaselineTestOptions = {},
+): Promise<PromptCacheScopeExperimentTelemetryBaseline> => {
+  const { target, baseline } = await resolvePromptCacheScopeExperimentTelemetryBaseline(options);
   // The live matrix uses the Responses transport. Aggregate telemetry or a
   // Chat-only cohort cannot establish that its terminal usage parser is ready
   // for paid Responses samples.
@@ -985,7 +1017,7 @@ export const assertPromptCacheScopeExperimentTelemetryBaseline = async (
       "Prompt-cache scope experiment requires a passing current-release Stage 0 telemetry baseline.",
     );
   }
-  return { target: resolved.value.binding };
+  return { target };
 };
 
 type AcquiredCycle = Readonly<{ state: ExperimentState; cycle_owner: string }>;

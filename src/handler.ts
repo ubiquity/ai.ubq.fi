@@ -8,6 +8,7 @@ import {
   handleAdminApiKeysUpdate,
   handleAdminCodexAuth,
   handleAdminCodexCacheScopeExperiment,
+  handleAdminCodexCacheScopeExperimentTelemetryBaseline,
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
   handleAdminCodexPromptsPurge,
@@ -392,6 +393,12 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminCodexAuth(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/providers/codex/cache-scope-experiment") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminCodexCacheScopeExperimentTelemetryBaseline());
   }
 
   if (req.method === "POST" && path === "/admin/providers/codex/cache-scope-experiment") {

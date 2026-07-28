@@ -104,6 +104,7 @@ import {
   PromptCacheScopeExperimentBusyError,
   PromptCacheScopeExperimentFailedError,
   PromptCacheScopeExperimentUnavailableError,
+  readPromptCacheScopeExperimentTelemetryBaseline,
   runPromptCacheScopeExperiment,
 } from "./prompt_cache_scope_experiment.ts";
 import {
@@ -180,6 +181,32 @@ export const handleAdminCodexCacheScopeExperiment = async (req: Request): Promis
       "Prompt-cache scope experiment could not run.",
       "prompt_cache_scope_experiment_failed",
       { type: "server_error" },
+    );
+  }
+};
+
+/**
+ * This diagnostic has no caller-controlled target selector. It reads the
+ * same server-selected cohort that a future POST would fence again, but does
+ * not expose its model/hash or start any paid scope-probe work.
+ */
+export const handleAdminCodexCacheScopeExperimentTelemetryBaseline = async (
+  readBaseline: () => ReturnType<typeof readPromptCacheScopeExperimentTelemetryBaseline> =
+    readPromptCacheScopeExperimentTelemetryBaseline,
+): Promise<Response> => {
+  try {
+    const baseline = await readBaseline();
+    const { status, reason, release, provider, aggregate, routes } = baseline;
+    return json(200, { status, reason, release, provider, aggregate, routes }, { "Cache-Control": "no-store" });
+  } catch {
+    // Target-selection and KV failures can carry sensitive durable-key
+    // material. This route is diagnostic-only, so return no thrown detail.
+    console.error("[ai.ubq.fi] Prompt-cache Stage 0 telemetry baseline could not be read.");
+    return openaiError(
+      503,
+      "Prompt-cache Stage 0 telemetry baseline could not be read.",
+      "prompt_cache_scope_experiment_unavailable",
+      { type: "server_error", headers: { "Cache-Control": "no-store" } },
     );
   }
 };

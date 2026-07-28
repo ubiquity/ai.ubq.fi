@@ -336,6 +336,21 @@ Deno.test("passkey session authenticates as client and admin", async () => {
   assert.equal(sessionBody.user.credential_count, 1);
 });
 
+Deno.test("admin passkey sessions cannot read the super-admin Stage 0 diagnostic", async () => {
+  kvStore.clear();
+  const { token } = seedPasskeySession();
+  const { default: handler } = await import("../src/handler.ts");
+  const response = await handler(
+    new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  );
+
+  assert.equal(response.status, 403);
+  const body = await response.json() as { error?: { code?: unknown } };
+  assert.equal(body.error?.code, "forbidden");
+});
+
 Deno.test("non-admin passkey session authenticates as client but not admin", async () => {
   kvStore.clear();
   const { token, user } = seedPasskeySession("uos_ai_session_user", { isAdmin: false });

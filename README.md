@@ -495,6 +495,9 @@ deno task ubq-ai admin keys revoke --id "<id>"
 - `POST /admin/codex/auth` (admin only)
 - `GET /admin/codex/models`, `POST /admin/codex/models` (admin only)
 - `POST /admin/codex/prompts/purge` (admin only)
+- `GET /admin/providers/codex/cache-scope-experiment` (super-admin-only, no-store redacted Stage 0 diagnostic; it is not
+  authorization to run the probe)
+- `POST /admin/providers/codex/cache-scope-experiment` (super-admin-only paid scope probe)
 - `GET /admin/defaults`, `POST /admin/defaults` (admin only)
 - `POST /admin/kv-migration/import`, `GET /admin/kv-migration/validate` (super-admin only)
 - `GET /admin/api-keys`, `POST /admin/api-keys`, `PATCH /admin/api-keys`, `DELETE /admin/api-keys` (admin only)

@@ -271,6 +271,7 @@ Deno.test("detailed provider health and recheck routes require admin authenticat
       new Request("https://ai.ubq.fi/health/providers"),
       new Request("https://ai.ubq.fi/health/upstream"),
       new Request("https://ai.ubq.fi/admin/providers/codex/1/recheck", { method: "POST" }),
+      new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "GET" }),
       new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "POST" }),
     ]
   ) {

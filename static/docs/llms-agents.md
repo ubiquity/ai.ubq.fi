@@ -168,6 +168,11 @@ Cache reuse is still prefix-dependent: a request with a changed or non-cacheable
 account B alone does not prove that account B reused account A's exact upstream entry. Do not promise that every active
 conversation retains its cache after an account change until a controlled A-to-B probe has completed.
 
+Super admins can inspect the current immutable-release Stage 0 telemetry at
+`/admin/providers/codex/cache-scope-experiment` with a `GET` request. It is a `no-store`, redacted diagnostic for the
+server-selected campaign target; it never accepts a model selector and it does not authorize or start the paid scope
+probe.
+
 For this Codex upstream, use the plain `prompt_cache_key` for live traffic. During the same production investigation,
 the upstream rejected `prompt_cache_options` as unsupported; do not rely on explicit-mode or TTL controls until the
 upstream accepts them.
