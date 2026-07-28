@@ -7,6 +7,17 @@ export const CEREBRAS_CHAT_COMPLETIONS_URL = "https://api.cerebras.ai/v1/chat/co
 
 const CEREBRAS_API_KEY_ENV = "CEREBRAS_API_KEY";
 const MAX_CEREBRAS_PROVIDER_REQUEST_ID_LENGTH = 256;
+const CEREBRAS_UNSUPPORTED_SCHEMA_FIELDS = new Set([
+  "format",
+  "maxItems",
+  "maxLength",
+  "maxProperties",
+  "minItems",
+  "minLength",
+  "minProperties",
+  "pattern",
+  "uniqueItems",
+]);
 let cerebrasFetchTimeoutMs = BUFFERED_INFERENCE_DEADLINE_MS;
 
 export type CerebrasFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -114,6 +125,118 @@ const requireCerebrasApiKey = (supplied: string | null | undefined): string => {
 };
 
 /**
+ * Cerebras accepts a documented subset of JSON Schema for strict native
+ * tools. Keep the product's complete schema at the gateway boundary, then
+ * project only the provider-bound copy: its server-side validation remains
+ * the authoritative enforcement for omitted bounds.
+ */
+const projectCerebrasSchemaValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(projectCerebrasSchemaValue);
+  if (!isRecord(value) || Array.isArray(value)) return value;
+  const projected: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (CEREBRAS_UNSUPPORTED_SCHEMA_FIELDS.has(key)) continue;
+    if (key === "const") {
+      projected.enum = [projectCerebrasSchemaValue(child)];
+      continue;
+    }
+    projected[key === "oneOf" ? "anyOf" : key] = projectCerebrasSchemaValue(child);
+  }
+  return projected;
+};
+
+const distinctSchemas = (values: readonly unknown[]): unknown[] => {
+  const distinct = new Map<string, unknown>();
+  for (const value of values) distinct.set(JSON.stringify(value), value);
+  return [...distinct.values()];
+};
+
+/**
+ * Cerebras requires every function parameter schema to have an object root.
+ * Our read tool's exact server-side schema is a root union by operation ID;
+ * present it to the model as one object with a constrained ID and nested
+ * argument union, then retain exact validation after the response returns.
+ */
+const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
+  if (!isRecord(value) || Array.isArray(value) || value.type === "object" || !Array.isArray(value.anyOf)) {
+    return value;
+  }
+  const variants = value.anyOf;
+  if (
+    !variants.length ||
+    variants.some((variant) =>
+      !isRecord(variant) || Array.isArray(variant) || variant.type !== "object" ||
+      !isRecord(variant.properties) || Array.isArray(variant.properties)
+    )
+  ) return value;
+
+  const fields = new Map<string, unknown[]>();
+  const required = new Set<string>();
+  for (const variant of variants) {
+    const properties = variant.properties as Record<string, unknown>;
+    for (const [name, schema] of Object.entries(properties)) {
+      const values = fields.get(name) ?? [];
+      values.push(schema);
+      fields.set(name, values);
+    }
+    if (Array.isArray(variant.required)) {
+      for (const name of variant.required) if (typeof name === "string") required.add(name);
+    }
+  }
+
+  const properties: Record<string, unknown> = {};
+  for (const [name, candidates] of fields) {
+    const distinct = distinctSchemas(candidates);
+    if (distinct.length === 1) {
+      properties[name] = distinct[0];
+      continue;
+    }
+    if (
+      name === "operationId" &&
+      distinct.every((candidate) => isRecord(candidate) && Array.isArray(candidate.enum))
+    ) {
+      properties[name] = {
+        enum: distinctSchemas(
+          distinct.flatMap((candidate) => (candidate as Record<string, unknown>).enum as unknown[]),
+        ),
+      };
+      continue;
+    }
+    properties[name] = { anyOf: distinct };
+  }
+  return {
+    type: "object",
+    properties,
+    required: [...required].sort(),
+    additionalProperties: false,
+  };
+};
+
+export const projectCerebrasToolSchema = (value: unknown): unknown =>
+  collapseCerebrasRootObjectUnion(projectCerebrasSchemaValue(value));
+
+const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, unknown> => {
+  if (!Array.isArray(body.tools)) return body;
+  return {
+    ...body,
+    tools: body.tools.map((tool) => {
+      if (!isRecord(tool) || Array.isArray(tool) || !isRecord(tool.function) || Array.isArray(tool.function)) {
+        return tool;
+      }
+      return {
+        ...tool,
+        function: {
+          ...tool.function,
+          ...(tool.function.parameters === undefined
+            ? {}
+            : { parameters: projectCerebrasToolSchema(tool.function.parameters) }),
+        },
+      };
+    }),
+  };
+};
+
+/**
  * Sends only canonical OpenAI Chat Completions JSON to Cerebras.  The caller
  * owns model selection; this transport never chooses or falls back to another
  * provider.
@@ -124,7 +247,7 @@ export const fetchCerebrasChatCompletions = async (
 ): Promise<Response> => {
   let encodedBody: string;
   try {
-    encodedBody = JSON.stringify(body);
+    encodedBody = JSON.stringify(projectCerebrasRequest(body));
   } catch {
     throw new CerebrasError(
       "Chat Completions requests must use a JSON-serializable body.",

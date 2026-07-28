@@ -122,7 +122,7 @@ const {
   markCodexQuotaBlocked,
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
-const { setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
+const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -6789,6 +6789,98 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
 
   Deno.env.set(envKey, fakeApiKey);
   try {
+    await t.step("projects strict tools to Cerebras supported schema fields", () => {
+      const projected = projectCerebrasToolSchema({
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          message: {
+            type: "string",
+            minLength: 1,
+            maxLength: 200,
+            pattern: "^[A-Z]",
+            format: "email",
+          },
+          references: {
+            type: "array",
+            minItems: 1,
+            maxItems: 3,
+            uniqueItems: true,
+            items: {
+              oneOf: [{ type: "object", properties: { source: { const: "view" } } }],
+            },
+          },
+        },
+        required: ["message"],
+      });
+      assert.deepEqual(projected, {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          message: { type: "string" },
+          references: {
+            type: "array",
+            items: {
+              anyOf: [{ type: "object", properties: { source: { enum: ["view"] } } }],
+            },
+          },
+        },
+        required: ["message"],
+      });
+
+      assert.deepEqual(
+        projectCerebrasToolSchema({
+          oneOf: [
+            {
+              type: "object",
+              properties: {
+                operationId: { const: "briefings.daily" },
+                arguments: { type: "object", properties: {}, additionalProperties: false },
+                references: { type: "array", items: { type: "string" } },
+              },
+              required: ["operationId", "arguments", "references"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: {
+                operationId: { const: "campaigns.summary" },
+                arguments: {
+                  type: "object",
+                  properties: { campaignId: { type: "string", minLength: 1 } },
+                  required: ["campaignId"],
+                  additionalProperties: false,
+                },
+                references: { type: "array", items: { type: "string" } },
+              },
+              required: ["operationId", "arguments", "references"],
+              additionalProperties: false,
+            },
+          ],
+        }),
+        {
+          type: "object",
+          properties: {
+            operationId: { enum: ["briefings.daily", "campaigns.summary"] },
+            arguments: {
+              anyOf: [
+                { type: "object", properties: {}, additionalProperties: false },
+                {
+                  type: "object",
+                  properties: { campaignId: { type: "string" } },
+                  required: ["campaignId"],
+                  additionalProperties: false,
+                },
+              ],
+            },
+            references: { type: "array", items: { type: "string" } },
+          },
+          required: ["arguments", "operationId", "references"],
+          additionalProperties: false,
+        },
+      );
+    });
+
     await t.step("routes the exact model and preserves native tools/tool choice", async () => {
       const upstreamCalls: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
       const logs: unknown[][] = [];
