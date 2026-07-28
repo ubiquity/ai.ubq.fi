@@ -388,6 +388,43 @@ Deno.test("429 classification reads fragmented JSON and preserves the response",
   assert.equal(await parsed.response.text(), payload);
 });
 
+Deno.test("429 classification rejects malformed UTF-8 before recognizing a usage-limit body", async () => {
+  const now = 1_700_000_000_000;
+  const encoder = new TextEncoder();
+  const prefix = encoder.encode('{"error":{"type":"usage_limit_reached","message":"');
+  const suffix = encoder.encode('"}}');
+  const bytes = new Uint8Array(prefix.length + 1 + suffix.length);
+  bytes.set(prefix);
+  bytes[prefix.length] = 0x80;
+  bytes.set(suffix, prefix.length + 1);
+  const parsed = await readCodex429(
+    new Response(bytes, {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": new Date(now + 60_000).toUTCString() },
+    }),
+    now,
+  );
+
+  assert.equal(parsed.usageLimitReached, false);
+  assert.equal(parsed.retryAtMs, now + 60_000);
+  assert.deepEqual(Array.from(new Uint8Array(await parsed.response.arrayBuffer())), Array.from(bytes));
+});
+
+Deno.test("429 classification rejects duplicate error keys before JSON last-key resolution", async () => {
+  const now = 1_700_000_000_000;
+  const payload = '{"error":{"type":"rate_limit_error","type":"usage_limit_reached"}}';
+  const parsed = await readCodex429(
+    new Response(payload, {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": new Date(now + 60_000).toUTCString() },
+    }),
+    now,
+  );
+
+  assert.equal(parsed.usageLimitReached, false);
+  assert.equal(await parsed.response.text(), payload);
+});
+
 Deno.test("429 classification returns a valid error when capture is truncated", async () => {
   const oversized = JSON.stringify({ error: { type: "usage_limit_reached", detail: "x".repeat(70 * 1_024) } });
   const parsed = await readCodex429(

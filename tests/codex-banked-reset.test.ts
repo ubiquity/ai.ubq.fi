@@ -1278,6 +1278,7 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
   type Event =
     | "request"
     | "qualifying_429"
+    | "non_qualifying_429"
     | "claim"
     | "submit"
     | "provider_commit"
@@ -1293,6 +1294,7 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
   const allEvents: readonly Event[] = [
     "request",
     "qualifying_429",
+    "non_qualifying_429",
     "claim",
     "submit",
     "provider_commit",
@@ -1355,24 +1357,45 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
     let lastOutcome: Awaited<ReturnType<typeof attemptCodexBankedReset>> | null = null;
     let postResetInferenceRetries = 0;
     let credentialWasRotated = false;
+    let qualifyingObservationIsCurrent = false;
+    const dispatchVerifiedInferenceRetry = (): void => {
+      // This is the generated model's post-reset transport. The public
+      // Responses/Chat matrix separately drives the real gateway transport;
+      // here it makes the retry permit an executable state transition rather
+      // than a bookkeeping increment.
+      postResetInferenceRetries += 1;
+    };
 
     for (const event of sequence) {
       const label = `seed ${sequenceSeed} event ${event}`;
+      const submissionsBefore = provider.redeemInputs.length;
       switch (event) {
         case "request":
+          qualifyingObservationIsCurrent = false;
+          lastOutcome = null;
+          break;
         case "qualifying_429":
+          qualifyingObservationIsCurrent = true;
+          lastOutcome = await attemptCodexBankedReset(reset, deps);
+          break;
         case "claim":
         case "submit":
-          lastOutcome = await attemptCodexBankedReset(reset, deps);
+          if (qualifyingObservationIsCurrent) lastOutcome = await attemptCodexBankedReset(reset, deps);
+          break;
+        case "non_qualifying_429":
+          // A generic, malformed, or otherwise non-qualifying 429 never
+          // enters the state machine's submission path.
+          qualifyingObservationIsCurrent = false;
+          lastOutcome = null;
           break;
         case "provider_commit":
           provider.redeemResult = clone(sanitizedProviderFixtures.rate_limit);
           provider.commitOnRedeem = true;
-          lastOutcome = await attemptCodexBankedReset(reset, deps);
+          if (qualifyingObservationIsCurrent) lastOutcome = await attemptCodexBankedReset(reset, deps);
           break;
         case "response_loss":
           provider.redeemFailureAfterCommit = new Error(`response loss ${sequenceSeed}`);
-          lastOutcome = await attemptCodexBankedReset(reset, deps);
+          if (qualifyingObservationIsCurrent) lastOutcome = await attemptCodexBankedReset(reset, deps);
           provider.redeemFailureAfterCommit = null;
           break;
         case "lookup":
@@ -1386,16 +1409,24 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
           provider.verifyResult = true;
           lastOutcome = await reconcileCodexBankedReset(reset, deps);
           break;
-        case "retry":
-          // The state machine only grants the gateway a retry permit through
-          // a verified outcome. The gateway integration separately proves
-          // that it consumes this permit at most once.
-          if (lastOutcome?.kind === "verified" && postResetInferenceRetries === 0) {
+        case "retry": {
+          const retriesBefore = postResetInferenceRetries;
+          let retryPermitted = false;
+          // The model can execute its one retry only from a verified durable
+          // outcome; it never treats an unknown or rejected state as a permit.
+          if (lastOutcome?.kind === "verified" && retriesBefore === 0) {
+            retryPermitted = true;
             assert.equal(lastOutcome.record?.state, "verified", label);
-            postResetInferenceRetries += 1;
+            dispatchVerifiedInferenceRetry();
           }
+          assert.equal(
+            postResetInferenceRetries > retriesBefore,
+            retryPermitted,
+            `${label}: retry must be granted only after verification`,
+          );
           assert.ok(postResetInferenceRetries <= 1, label);
           break;
+        }
         case "crash":
         case "lease_expire":
           clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
@@ -1420,13 +1451,21 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
       assert.ok(provider.commitCount <= 1, `${label}: more than one provider commit`);
       assert.ok(provider.redeemInputs.length <= 1, `${label}: more than one submission`);
       assert.ok(idempotencyKeys.size <= 1, `${label}: different idempotency keys`);
+      if (!qualifyingObservationIsCurrent) {
+        assert.equal(
+          provider.redeemInputs.length,
+          submissionsBefore,
+          `${label}: a non-qualifying response reached submission`,
+        );
+      }
       if (mode === "disabled" || mode === "shadow") {
         assert.equal(provider.commitCount, 0, `${label}: inactive mode committed`);
       }
       if (credentialWasRotated) {
         // A rotated fence may still permit provider-level reconciliation of a
-        // prior unknown record, but it cannot start another submission.
-        assert.ok(provider.redeemInputs.length <= 1, `${label}: stale fence submitted again`);
+        // prior unknown record, but it cannot start a submission under the
+        // stale candidate fence.
+        assert.equal(provider.redeemInputs.length, submissionsBefore, `${label}: stale fence submitted again`);
       }
     }
   }
@@ -1453,6 +1492,49 @@ Deno.test("global daily cap stops a second account before it reaches the provide
   assert.equal(second.reason, "global_limit_reached");
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
+});
+
+Deno.test("a claim held across UTC midnight cannot bypass the next day's global redemption cap", async () => {
+  const kv = new MemoryKv();
+  const provider = new FakeCodexUsageResetProvider();
+  const clock = new TestClock();
+  const dayMs = 24 * 60 * 60 * 1_000;
+  const firstCandidate = candidate({ quotaResetAtMs: clock.nowMs + 2 * dayMs });
+  const secondCandidate = candidate({
+    accountId: "test-account-b",
+    requestId: "next-day-account",
+    quotaResetAtMs: clock.nowMs + dayMs + 60_000,
+  });
+  await seedFences(kv, firstCandidate);
+  await seedFences(kv, secondCandidate);
+  const deps = dependencies(
+    kv,
+    provider,
+    clock,
+    config({ accountAllowlist: new Set([firstCandidate.accountId, secondCandidate.accountId]), maxGlobalPerDay: 1 }),
+  );
+  const inventoryGate = new Deferred<void>();
+  const inventoryEntered = new Deferred<void>();
+  provider.inventoryGate = inventoryGate.promise;
+  provider.inventoryEntered = inventoryEntered;
+
+  const heldClaim = attemptCodexBankedReset(firstCandidate, deps);
+  await inventoryEntered.promise;
+  clock.advance(dayMs);
+  provider.inventory = { ...provider.inventory, observedAtMs: clock.nowMs };
+  inventoryGate.resolve(undefined);
+
+  const first = await heldClaim;
+  assert.equal(first.kind, "rejected");
+  assert.equal(first.reason, "claim_day_elapsed");
+  assert.equal(provider.redeemInputs.length, 0);
+
+  const second = await attemptCodexBankedReset(secondCandidate, deps);
+  assert.equal(second.kind, "verified");
+  assert.equal(provider.redeemInputs.length, 1);
+  assert.equal(provider.commitCount, 1);
+  const currentDay = new Date(clock.nowMs).toISOString().slice(0, 10);
+  assert.equal((await kv.get<{ claimed_count: number }>(codexResetGlobalDailyKey(currentDay))).value?.claimed_count, 1);
 });
 
 Deno.test("empty or unsupported inventory and provider rejection become durable terminal rejections", async () => {

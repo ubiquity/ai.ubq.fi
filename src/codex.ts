@@ -231,11 +231,22 @@ export const getCodexRoutingProbe = (response: Response): RoutingAccount | null 
 /** The slot is isolate-local telemetry only; account IDs never leave the routing layer. */
 export const getCodexResponseSlot = (response: Response): number | null => codexSlotByResponse.get(response) ?? null;
 
-export const releaseCodexResponseProbe = async (response: Response): Promise<void> => {
+const takeCodexResponseProbe = (response: Response): RoutingAccount | null => {
   const probe = codexProbeByResponse.get(response);
+  if (probe) codexProbeByResponse.delete(response);
+  return probe ?? null;
+};
+
+/**
+ * Detach a response from its recovery probe without claiming success. Failed,
+ * cancelled, or incomplete streams release ordinary routing, but retain the
+ * durable ambiguity tombstone until a later recovery probe proves the account
+ * healthy.
+ */
+export const releaseCodexResponseProbe = async (response: Response): Promise<void> => {
+  const probe = takeCodexResponseProbe(response);
   if (!probe) return;
-  codexProbeByResponse.delete(response);
-  const transition = markCodexSuccess(probe);
+  const transition = releaseCodexRoutingProbe(probe);
   codexProbeTransitionsInFlight.add(transition);
   try {
     await transition;
@@ -244,7 +255,18 @@ export const releaseCodexResponseProbe = async (response: Response): Promise<voi
   }
 };
 
-export const markCodexResponseCompleted = releaseCodexResponseProbe;
+/** Only a validated upstream `response.completed` event may clear the recovery probe. */
+export const markCodexResponseCompleted = async (response: Response): Promise<void> => {
+  const probe = takeCodexResponseProbe(response);
+  if (!probe) return;
+  const transition = markCodexSuccess(probe);
+  codexProbeTransitionsInFlight.add(transition);
+  try {
+    await transition;
+  } finally {
+    codexProbeTransitionsInFlight.delete(transition);
+  }
+};
 
 export const cacheCodexAuthPool = (pool: CodexAuthPoolState): void => {
   authCacheGeneration += 1;
@@ -1734,6 +1756,10 @@ export const fetchCodexResponses = async (
   };
 
   const redeemAndRetryOnce = async (normalResponse: Response): Promise<Response> => {
+    // A half-open account could still be healthy, but another isolate owns
+    // its recovery probe. Keep the normal quota response instead of spending
+    // a reset that was inferred only from a sibling's 429.
+    if (probeUnavailable) return normalResponse;
     // Keep every independently qualifying account until a healthy fallback
     // proves no reset is needed. The last 429 may be from an unallowlisted
     // sibling, so a single overwritten candidate could otherwise suppress an

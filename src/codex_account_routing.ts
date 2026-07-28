@@ -476,6 +476,123 @@ export type Codex429Classification = Readonly<{
   resetDeadlineIsStable: boolean;
 }>;
 
+type JsonObjectKeyScanResult = "valid" | "invalid" | "duplicate";
+
+/**
+ * JSON.parse intentionally accepts repeated object keys and keeps only the
+ * last one. A quota decision cannot rely on that ambiguous interpretation, so
+ * scan the complete JSON grammar first and reject any repeated key.
+ */
+const hasDuplicateJsonObjectKeys = (source: string): boolean => {
+  let index = 0;
+  const skipWhitespace = (): void => {
+    while (index < source.length && /[\t\n\r ]/.test(source[index]!)) index += 1;
+  };
+  const parseString = (): string | null => {
+    if (source[index] !== '"') return null;
+    const start = index;
+    index += 1;
+    while (index < source.length) {
+      const code = source.charCodeAt(index);
+      if (code <= 0x1f) return null;
+      if (code === 0x5c) {
+        index += 2;
+        continue;
+      }
+      index += 1;
+      if (code !== 0x22) continue;
+      try {
+        const value: unknown = JSON.parse(source.slice(start, index));
+        return typeof value === "string" ? value : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+  const parseLiteral = (literal: string): boolean => {
+    if (!source.startsWith(literal, index)) return false;
+    index += literal.length;
+    return true;
+  };
+  const parseNumber = (): boolean => {
+    const match = /^(?:-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(source.slice(index));
+    if (!match) return false;
+    index += match[0].length;
+    return true;
+  };
+  function parseValue(): JsonObjectKeyScanResult {
+    skipWhitespace();
+    switch (source[index]) {
+      case "{":
+        return parseObject();
+      case "[":
+        return parseArray();
+      case '"':
+        return parseString() === null ? "invalid" : "valid";
+      case "t":
+        return parseLiteral("true") ? "valid" : "invalid";
+      case "f":
+        return parseLiteral("false") ? "valid" : "invalid";
+      case "n":
+        return parseLiteral("null") ? "valid" : "invalid";
+      default:
+        return parseNumber() ? "valid" : "invalid";
+    }
+  }
+  function parseArray(): JsonObjectKeyScanResult {
+    index += 1;
+    skipWhitespace();
+    if (source[index] === "]") {
+      index += 1;
+      return "valid";
+    }
+    while (index < source.length) {
+      const value = parseValue();
+      if (value !== "valid") return value;
+      skipWhitespace();
+      if (source[index] === "]") {
+        index += 1;
+        return "valid";
+      }
+      if (source[index] !== ",") return "invalid";
+      index += 1;
+    }
+    return "invalid";
+  }
+  function parseObject(): JsonObjectKeyScanResult {
+    index += 1;
+    skipWhitespace();
+    if (source[index] === "}") {
+      index += 1;
+      return "valid";
+    }
+    const keys = new Set<string>();
+    while (index < source.length) {
+      const key = parseString();
+      if (key === null) return "invalid";
+      if (keys.has(key)) return "duplicate";
+      keys.add(key);
+      skipWhitespace();
+      if (source[index] !== ":") return "invalid";
+      index += 1;
+      const value = parseValue();
+      if (value !== "valid") return value;
+      skipWhitespace();
+      if (source[index] === "}") {
+        index += 1;
+        return "valid";
+      }
+      if (source[index] !== ",") return "invalid";
+      index += 1;
+      skipWhitespace();
+    }
+    return "invalid";
+  }
+
+  return parseValue() === "duplicate";
+};
+
 /**
  * Read a bounded error body and replace the response so callers retain the
  * OpenAI-compatible upstream payload after routing has classified it.
@@ -493,11 +610,17 @@ export const readCodex429 = async (
   let usageLimitReached = false;
   if (complete) {
     try {
-      const body = JSON.parse(new TextDecoder().decode(bytes));
-      const error = isRecord(body) && isRecord(body.error) ? body.error : null;
-      usageLimitReached = getString(error?.type) === "usage_limit_reached";
+      const bodyText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      // Do not let a malformed byte sequence or JSON.parse's last-key-wins
+      // behavior turn an ambiguous upstream body into a durable reset signal.
+      if (!hasDuplicateJsonObjectKeys(bodyText)) {
+        const body = JSON.parse(bodyText);
+        const error = isRecord(body) && isRecord(body.error) ? body.error : null;
+        usageLimitReached = getString(error?.type) === "usage_limit_reached";
+      }
     } catch {
-      // A fully parsed OpenAI error is required before routing can persist a block.
+      // A valid UTF-8, unambiguous, fully parsed OpenAI error is required
+      // before routing can persist a block.
     }
   }
   const retryAfter = futureRetryAfterDeadline(headers, now);

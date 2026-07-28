@@ -8,7 +8,9 @@ const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
 class AuthKv {
   auth: CodexAuthPoolState;
   reads = 0;
+  routingReads = 0;
   nextReadGate: Promise<void> | null = null;
+  onRoutingRead: ((read: number) => void | Promise<void>) | null = null;
   authVersion = 1;
   readonly extra = new Map<string, { value: unknown; version: number }>();
 
@@ -19,12 +21,16 @@ class AuthKv {
   get<T>(key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
     assert.equal(options?.consistency, "strong");
     if (JSON.stringify(key) !== JSON.stringify(AUTH_KEY)) {
-      const entry = this.extra.get(JSON.stringify(key));
-      return Promise.resolve({
-        key,
-        value: (entry?.value ?? null) as T | null,
-        versionstamp: entry ? String(entry.version).padStart(20, "0") : null,
-      } as Deno.KvEntryMaybe<T>);
+      const routingRead = ++this.routingReads;
+      const hook = this.onRoutingRead;
+      return Promise.resolve(hook?.(routingRead)).then(() => {
+        const entry = this.extra.get(JSON.stringify(key));
+        return {
+          key,
+          value: (entry?.value ?? null) as T | null,
+          versionstamp: entry ? String(entry.version).padStart(20, "0") : null,
+        } as Deno.KvEntryMaybe<T>;
+      });
     }
     this.reads += 1;
     const value = this.auth as T;
@@ -122,11 +128,17 @@ const {
   CodexError,
   fetchCodexResponses,
   getCodexResponseSlot,
+  getCodexRoutingProbe,
+  markCodexResponseCompleted,
   orderCodexAuthAccounts,
+  releaseCodexResponseProbe,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
 const {
+  claimCodexRoutingProbe,
+  CODEX_ACCOUNT_ROUTING_KV_KEY,
   markCodexQuotaBlocked,
+  parseCodexAccountRoutingState,
   resetCodexAccountRoutingForTest,
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
@@ -1197,6 +1209,88 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
   }
 });
 
+Deno.test("post-reset response probes retain their tombstone until an explicit completed outcome", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+
+  const routingSlot = () => {
+    const state = parseCodexAccountRoutingState(kv.extra.get(JSON.stringify(CODEX_ACCOUNT_ROUTING_KV_KEY))?.value);
+    return state?.slots[0] ?? null;
+  };
+  const assertTombstone = () => {
+    const slot = routingSlot();
+    assert.equal(slot?.banked_reset_generation_ambiguous, true);
+    assert.notEqual(slot?.observed_reset_at_ms, null);
+  };
+  const fetchPostResetResponse = async (owner: string): Promise<Response> => {
+    const reset = scriptedResetProvider();
+    let inferenceCalls = 0;
+    kv.auth = pool(auth("one"));
+    kv.extra.clear();
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = () => {
+      inferenceCalls += 1;
+      return Promise.resolve(
+        inferenceCalls === 1
+          ? new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+          })
+          : new Response(
+            'data: {"type":"response.completed","response":{"output":[]}}\n\n',
+            { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          ),
+      );
+    };
+    const response = await fetchCodexResponses(
+      { input: `post-reset-probe-${owner}` },
+      {
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => owner,
+        },
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.equal(inferenceCalls, 2);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+    assert.ok(getCodexRoutingProbe(response));
+    assertTombstone();
+    return response;
+  };
+
+  try {
+    for (const outcome of ["failed", "incomplete", "cancelled"] as const) {
+      const response = await fetchPostResetResponse(`owner-post-reset-${outcome}`);
+      await releaseCodexResponseProbe(response);
+      assert.equal(getCodexRoutingProbe(response), null, outcome);
+      assertTombstone();
+      assert.equal(routingSlot()?.probe_lease, null, outcome);
+    }
+
+    const completed = await fetchPostResetResponse("owner-post-reset-completed");
+    await markCodexResponseCompleted(completed);
+    assert.equal(getCodexRoutingProbe(completed), null);
+    const slot = routingSlot();
+    assert.equal(slot?.banked_reset_generation_ambiguous, false);
+    assert.equal(slot?.observed_reset_at_ms, null);
+    assert.equal(slot?.probe_lease, null);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
 Deno.test("simultaneous gateway requests share one durable banked-reset submission", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
@@ -1545,6 +1639,98 @@ Deno.test("a healthy configured fallback prevents any banked-reset provider call
     assert.deepEqual(accountIds, ["account-one", "account-two"]);
     assert.deepEqual(reset.calls, []);
   } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  const reset = scriptedResetProvider();
+  let now = fixedStartMs;
+  Date.now = () => now;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  kv.onRoutingRead = null;
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+
+  try {
+    const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    const second = initial.accounts.find((account) => account.auth.account_id === "account-two");
+    assert.ok(second);
+    if (!second) return;
+    const expiredAtMs = now + 1_000;
+    await markCodexQuotaBlocked(
+      second,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(expiredAtMs).toUTCString() },
+      }),
+      now,
+    );
+    now = expiredAtMs + 1;
+
+    resetCodexAccountRoutingForTest();
+    const halfOpen = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, now);
+    assert.equal(halfOpen.kind, "eligible");
+    if (halfOpen.kind !== "eligible") return;
+    const foreignProbeCandidate = halfOpen.accounts.find((account) => account.auth.account_id === "account-two");
+    assert.ok(foreignProbeCandidate?.probeRequired);
+    if (!foreignProbeCandidate) return;
+
+    // Force a fresh selection, then have another isolate claim the half-open
+    // slot immediately after that selection and before this request reaches it.
+    resetCodexAccountRoutingForTest();
+    const routingReadsBeforeFetch = kv.routingReads;
+    let foreignProbeClaimed = false;
+    kv.onRoutingRead = async (routingRead) => {
+      if (routingRead !== routingReadsBeforeFetch + 2) return;
+      kv.onRoutingRead = null;
+      const claimed = await claimCodexRoutingProbe(kv.auth, foreignProbeCandidate, now);
+      assert.ok(claimed);
+      foreignProbeClaimed = true;
+    };
+    const candidateRetryAfter = new Date(now + 60_000).toUTCString();
+    globalThis.fetch = (input, init) => {
+      const request = new Request(input, init);
+      accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": candidateRetryAfter },
+        }),
+      );
+    };
+
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-probe-unavailable" },
+      {
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => now,
+          newOwnerToken: () => "owner-probe-unavailable",
+        },
+      },
+    );
+
+    assert.equal(response.status, 429);
+    assert.equal(foreignProbeClaimed, true);
+    assert.deepEqual(accountIds, ["account-one"]);
+    assert.deepEqual(reset.calls, []);
+  } finally {
+    kv.onRoutingRead = null;
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
     globalThis.fetch = originalFetch;

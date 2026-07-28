@@ -296,6 +296,17 @@ const utcDay = (nowMs: number): string | null => {
   }
 };
 
+/**
+ * A global cap is a cap on externally visible submissions, not merely on
+ * ledger claims. A claim that crosses UTC midnight must never carry an old
+ * day's reservation into a new day, where it could bypass that day's cap.
+ */
+const claimedDuringCurrentUtcDay = (record: CodexResetRedemptionRecord, nowMs: number): boolean => {
+  const claimedDay = utcDay(record.created_at_ms);
+  const currentDay = utcDay(nowMs);
+  return claimedDay !== null && claimedDay === currentDay;
+};
+
 const outcome = (
   kind: CodexBankedResetOutcome["kind"],
   reason: string,
@@ -748,6 +759,7 @@ const prepareSubmission = async (
       !current || !matchesContext(current, context) || current.owner_token !== expected.owner_token ||
       current.fence !== expected.fence || current.state !== "claimed"
     ) return { kind: "failure", code: "stale_owner" };
+    if (!claimedDuringCurrentUtcDay(current, nowMs)) return { kind: "failure", code: "claim_day_elapsed" };
     if (current.routing_generation !== candidate.routingGeneration || current.lease_expires_at_ms <= nowMs) {
       return { kind: "failure", code: "stale_owner" };
     }
@@ -803,6 +815,7 @@ const renewSubmittedForRedeem = async (
     ) {
       return { kind: "failure", code: "stale_owner" };
     }
+    if (!claimedDuringCurrentUtcDay(current, nowBeforeRead)) return { kind: "failure", code: "claim_day_elapsed" };
 
     const fences = await readCurrentFences(kv, candidate);
     if (fences.kind === "failure") return { kind: "failure", code: fences.code };
@@ -813,6 +826,9 @@ const renewSubmittedForRedeem = async (
     const nowBeforeCommit = readClock(clock);
     if (nowBeforeCommit === null) return { kind: "failure", code: "invalid_clock" };
     if (!quotaWindowIsOpen(candidate, nowBeforeCommit)) return { kind: "failure", code: "quota_window_expired" };
+    if (!claimedDuringCurrentUtcDay(current, nowBeforeCommit)) {
+      return { kind: "failure", code: "claim_day_elapsed" };
+    }
     if (current.lease_expires_at_ms <= nowBeforeCommit) return { kind: "failure", code: "stale_owner" };
     const expiresAtMs = leaseUntil(nowBeforeCommit);
     const renewedFence = nextFence(current.fence);
@@ -1079,6 +1095,10 @@ const submitClaimed = async (
   if (initialPolicy) return outcome("pending", `new_submission_${initialPolicy}`, context, record);
   const nowBeforeInventory = readClock(clock);
   if (nowBeforeInventory === null) return outcome("pending", "invalid_clock", context, record);
+  if (!claimedDuringCurrentUtcDay(record, nowBeforeInventory)) {
+    const rejected = await rejectOwned(kv, context, record, nowBeforeInventory, "claim_day_elapsed");
+    return outcome("rejected", "claim_day_elapsed", context, rejected ?? record);
+  }
   if (!quotaWindowIsOpen(candidate, nowBeforeInventory)) {
     const rejected = await rejectOwned(kv, context, record, nowBeforeInventory, "quota_window_expired");
     return outcome("rejected", "quota_window_expired", context, rejected ?? record);
@@ -1106,6 +1126,10 @@ const submitClaimed = async (
   }
   const nowAfterInventory = readClock(clock);
   if (nowAfterInventory === null) return outcome("pending", "invalid_clock", context, record);
+  if (!claimedDuringCurrentUtcDay(record, nowAfterInventory)) {
+    const rejected = await rejectOwned(kv, context, record, nowAfterInventory, "claim_day_elapsed");
+    return outcome("rejected", "claim_day_elapsed", context, rejected ?? record);
+  }
   if (!quotaWindowIsOpen(candidate, nowAfterInventory)) {
     const rejected = await rejectOwned(kv, context, record, nowAfterInventory, "quota_window_expired");
     return outcome("rejected", "quota_window_expired", context, rejected ?? record);
@@ -1147,6 +1171,10 @@ const submitClaimed = async (
   // boundary after that deadline.
   const nowBeforePreparation = readClock(clock);
   if (nowBeforePreparation === null) return outcome("pending", "invalid_clock", context, record);
+  if (!claimedDuringCurrentUtcDay(record, nowBeforePreparation)) {
+    const rejected = await rejectOwned(kv, context, record, nowBeforePreparation, "claim_day_elapsed");
+    return outcome("rejected", "claim_day_elapsed", context, rejected ?? record);
+  }
   if (!quotaWindowIsOpen(candidate, nowBeforePreparation)) {
     const rejected = await rejectOwned(kv, context, record, nowBeforePreparation, "quota_window_expired");
     return outcome("rejected", "quota_window_expired", context, rejected ?? record);
@@ -1183,6 +1211,9 @@ const submitClaimed = async (
   }
   const nowBeforeRedeem = readClock(clock);
   if (nowBeforeRedeem === null) return outcome("pending", "invalid_clock", context, renewed.record);
+  if (!claimedDuringCurrentUtcDay(renewed.record, nowBeforeRedeem)) {
+    return outcome("pending", "claim_day_elapsed", context, renewed.record);
+  }
   if (!quotaWindowIsOpen(candidate, nowBeforeRedeem)) {
     return outcome("pending", "quota_window_expired", context, renewed.record);
   }

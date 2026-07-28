@@ -99,9 +99,8 @@ const {
   handleModelCapabilities,
   handleModels,
   handleResponses,
-} = await import(
-  "../src/openai.ts"
-);
+  setCodexBankedResetOptionsForTest,
+} = await import("../src/openai.ts");
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
@@ -115,6 +114,21 @@ const {
 } = await import("../src/codex_account_routing.ts");
 
 const TEXT_ENCODER = new TextEncoder();
+
+class Deferred<T> {
+  readonly promise: Promise<T>;
+  #resolve!: (value: T | PromiseLike<T>) => void;
+
+  constructor() {
+    this.promise = new Promise<T>((resolve) => {
+      this.#resolve = resolve;
+    });
+  }
+
+  resolve(value: T): void {
+    this.#resolve(value);
+  }
+}
 
 const encodeBase64 = (bytes: Uint8Array): string => {
   let binary = "";
@@ -769,6 +783,169 @@ Deno.test("openai: a post-reset 429 is returned once without a successful stream
         assert.doesNotMatch(result.response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
         const body = await result.response.text();
         assert.doesNotMatch(body, /(?:^|\n)data:\s|response\.(?:created|output_text\.delta|completed)/);
+      });
+    }
+  }
+});
+
+Deno.test("openai: public handlers wait for verified banked redemption before one retry and delivery", async (t) => {
+  const routes = [
+    {
+      name: "Responses",
+      request: (stream: boolean) =>
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            input: "qualifying reset flow",
+            ...(stream ? { stream: true } : {}),
+          }),
+        }),
+      handle: handleResponses,
+      read: async (response: Response, stream: boolean, text: string): Promise<void> => {
+        if (stream) {
+          assert.equal(response.headers.get("Content-Type"), "text/event-stream");
+          assert.match(await response.text(), new RegExp(text));
+          return;
+        }
+        assert.equal(extractResponseOutputText(await response.json() as Record<string, unknown>), text);
+      },
+    },
+    {
+      name: "Chat",
+      request: (stream: boolean) =>
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{ role: "user", content: "qualifying reset flow" }],
+            ...(stream ? { stream: true } : {}),
+          }),
+        }),
+      handle: handleChatCompletions,
+      read: async (response: Response, stream: boolean, text: string): Promise<void> => {
+        if (stream) {
+          assert.equal(response.headers.get("Content-Type"), "text/event-stream");
+          const body = await response.text();
+          assert.match(body, new RegExp(text));
+          assert.match(body, /data: \[DONE\]/);
+          return;
+        }
+        const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+        assert.equal(payload.choices?.[0]?.message?.content, text);
+      },
+    },
+  ] as const;
+
+  for (const route of routes) {
+    for (const stream of [false, true]) {
+      await t.step(`${route.name} ${stream ? "streamed" : "buffered"}`, async () => {
+        const verificationGate = new Deferred<void>();
+        const verificationEntered = new Deferred<void>();
+        const providerCalls: string[] = [];
+        const provider: CodexUsageResetProvider = {
+          contract: {
+            idempotency: { callerSupplied: true, retentionMs: 86_400_000 },
+            lookup: { byIdempotencyKey: true, byProviderReceiptId: true },
+            verification: { independentlyVerifiable: true },
+            receiptIdsSafeToPersistAndLog: false,
+            supportedResetTypes: ["codex_usage_limit"],
+          },
+          readInventory: () => {
+            providerCalls.push("inventory");
+            return Promise.resolve({
+              availableCount: 1,
+              observedAtMs: Date.now(),
+              resetType: "codex_usage_limit",
+            });
+          },
+          redeem: () => {
+            providerCalls.push("redeem");
+            return Promise.resolve({ kind: "completed", providerReceiptId: "endpoint-fixture-receipt" } as const);
+          },
+          lookup: () => {
+            providerCalls.push("lookup");
+            return Promise.resolve({ kind: "completed", providerReceiptId: "endpoint-fixture-receipt" } as const);
+          },
+          verifyApplied: async () => {
+            providerCalls.push("verify");
+            verificationEntered.resolve(undefined);
+            await verificationGate.promise;
+            return true;
+          },
+        };
+        const upstreamUrls: string[] = [];
+        const postResetText = `${route.name}-${stream ? "stream" : "buffer"}-verified`;
+        const result = await withFetchMock(
+          (url) => {
+            upstreamUrls.push(url);
+            if (upstreamUrls.length === 1) {
+              return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+                status: 429,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Retry-After": new Date(Date.now() + 60_000).toUTCString(),
+                },
+              });
+            }
+            if (upstreamUrls.length === 2) {
+              return sseResponse([
+                `data: ${
+                  JSON.stringify({ type: "response.created", response: { id: "post_reset", created_at: 0 } })
+                }\n\n`,
+                `data: ${JSON.stringify({ type: "response.output_text.delta", delta: postResetText })}\n\n`,
+                `data: ${
+                  JSON.stringify({
+                    type: "response.completed",
+                    response: {
+                      model: DEFAULT_TEST_MODEL,
+                      output: [],
+                      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                    },
+                  })
+                }\n\n`,
+              ]);
+            }
+            throw new Error("A verified banked reset may retry inference only once.");
+          },
+          async () => {
+            clearBankedResetRecords();
+            setCodexBankedResetOptionsForTest({
+              config: liveBankedResetFixtureConfig("acct"),
+              provider,
+              kv: kvStub,
+              now: () => Date.now(),
+              newOwnerToken: () => `endpoint-${route.name}-${stream ? "stream" : "buffer"}`,
+            });
+            try {
+              let responseResolved = false;
+              const responsePromise = route.handle(route.request(stream)).then((response) => {
+                responseResolved = true;
+                return response;
+              });
+              await verificationEntered.promise;
+              await Promise.resolve();
+              assert.equal(responseResolved, false, "no public response may be committed before verification");
+              assert.deepEqual(upstreamUrls, ["https://chatgpt.com/backend-api/codex/responses"]);
+              assert.deepEqual(providerCalls, ["inventory", "redeem", "verify"]);
+              verificationGate.resolve(undefined);
+              return await responsePromise;
+            } finally {
+              setCodexBankedResetOptionsForTest(null);
+              clearBankedResetRecords();
+            }
+          },
+        );
+
+        assert.deepEqual(upstreamUrls, [
+          "https://chatgpt.com/backend-api/codex/responses",
+          "https://chatgpt.com/backend-api/codex/responses",
+        ]);
+        assert.deepEqual(providerCalls, ["inventory", "redeem", "verify"]);
+        assert.equal(result.status, 200);
+        await route.read(result, stream, postResetText);
       });
     }
   }
