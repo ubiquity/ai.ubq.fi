@@ -337,6 +337,7 @@ jobs:
             );
           '
           deno deploy env load \
+            --skip-existing \
             --json \
             --non-interactive \
             --org ubiquity-dao \
