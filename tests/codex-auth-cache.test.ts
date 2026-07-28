@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { CODEX_BANKED_RESET_LEASE_MS, type CodexBankedResetConfig } from "../src/codex_banked_reset.ts";
+import type { CodexUsageResetProvider } from "../src/codex_banked_reset_provider.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
@@ -125,6 +127,7 @@ const {
 } = await import("../src/codex.ts");
 const {
   markCodexQuotaBlocked,
+  resetCodexAccountRoutingForTest,
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
 
@@ -1076,5 +1079,1011 @@ Deno.test("a valid persisted Codex pool is not overlaid by a local configured se
     Date.now = originalNow;
     (config as { isDeploy: boolean; codexAuthJsonB64: string }).isDeploy = originalDeployFlag;
     (config as { isDeploy: boolean; codexAuthJsonB64: string }).codexAuthJsonB64 = originalSeed;
+  }
+});
+
+const liveBankedResetConfig = (accountId = "account-one"): CodexBankedResetConfig => ({
+  enabled: true,
+  mode: "live",
+  accountAllowlist: new Set([accountId]),
+  maxGlobalPerDay: 1,
+  maxPerAccountPerWindow: 1,
+});
+
+const stableBankedResetRetryAfter = new Date(fixedStartMs + 60_000).toUTCString();
+
+const scriptedResetProvider = (
+  options: Readonly<{
+    verify?: boolean;
+    redeemKind?: "completed" | "unknown" | "already_redeemed";
+    onInventory?: () => void;
+    onRedeem?: () => void;
+    onVerify?: () => void;
+    redeemGate?: Promise<void>;
+  }> = {},
+) => {
+  const calls: string[] = [];
+  const idempotencyKeys: string[] = [];
+  const redeemAccountIds: string[] = [];
+  const provider: CodexUsageResetProvider = {
+    contract: {
+      idempotency: { callerSupplied: true, retentionMs: 86_400_000 },
+      lookup: { byIdempotencyKey: true, byProviderReceiptId: true },
+      verification: { independentlyVerifiable: true },
+      receiptIdsSafeToPersistAndLog: true,
+      supportedResetTypes: ["codex_usage_limit"],
+    },
+    readInventory: () => {
+      calls.push("inventory");
+      options.onInventory?.();
+      return Promise.resolve({ availableCount: 1, observedAtMs: fixedStartMs, resetType: "codex_usage_limit" });
+    },
+    redeem: async (input) => {
+      calls.push("redeem");
+      idempotencyKeys.push(input.idempotencyKey);
+      redeemAccountIds.push(input.accountId);
+      options.onRedeem?.();
+      if (options.redeemGate) await options.redeemGate;
+      return options.redeemKind === "unknown"
+        ? { kind: "unknown", providerReceiptId: null }
+        : options.redeemKind === "already_redeemed"
+        ? { kind: "already_redeemed", providerReceiptId: "receipt-sanitized" }
+        : { kind: "completed", providerReceiptId: "receipt-sanitized" };
+    },
+    lookup: (input) => {
+      calls.push("lookup");
+      idempotencyKeys.push(input.idempotencyKey);
+      return Promise.resolve({ kind: "completed", providerReceiptId: "receipt-sanitized" });
+    },
+    verifyApplied: () => {
+      calls.push("verify");
+      options.onVerify?.();
+      return Promise.resolve(options.verify ?? true);
+    },
+  };
+  return { provider, calls, idempotencyKeys, redeemAccountIds };
+};
+
+Deno.test("banked reset exhausts normal routing, verifies, and retries the redeemed account once", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  const reset = scriptedResetProvider();
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    if (accountIds.length === 1) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        }),
+      );
+    }
+    return Promise.resolve(new Response(JSON.stringify({ id: "response-after-reset" }), { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-happy" },
+      {
+        requestId: "banked-reset-happy",
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-happy",
+        },
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(accountIds, ["account-one", "account-one"]);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+    assert.equal(reset.idempotencyKeys.length, 1);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("simultaneous gateway requests share one durable banked-reset submission", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  let signalRedeemEntered!: () => void;
+  let releaseRedeem!: () => void;
+  const redeemEntered = new Promise<void>((resolve) => {
+    signalRedeemEntered = resolve;
+  });
+  const redeemGate = new Promise<void>((resolve) => {
+    releaseRedeem = resolve;
+  });
+  const reset = scriptedResetProvider({
+    onRedeem: signalRedeemEntered,
+    redeemGate,
+  });
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    if (inferenceCalls === 1) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        }),
+      );
+    }
+    return Promise.resolve(new Response(JSON.stringify({ id: "response-after-concurrent-reset" }), { status: 200 }));
+  };
+
+  const bankedReset = {
+    config: liveBankedResetConfig(),
+    provider: reset.provider,
+    kv: kv as unknown as Deno.Kv,
+    now: () => fixedStartMs,
+    newOwnerToken: () => "owner-concurrent-gateway-reset",
+  };
+  try {
+    const first = fetchCodexResponses(
+      { input: "first-concurrent-banked-reset" },
+      { requestId: "first-concurrent-banked-reset", bankedReset },
+    );
+    await redeemEntered;
+
+    // The second request sees the durable `submitted` transaction while its
+    // provider call is stalled. It may return the normal quota response but
+    // must neither dispatch inference nor submit another reset.
+    const second = await fetchCodexResponses(
+      { input: "second-concurrent-banked-reset" },
+      { requestId: "second-concurrent-banked-reset", bankedReset },
+    );
+    assert.equal(second.status, 429);
+    assert.equal(inferenceCalls, 1);
+    assert.deepEqual(reset.calls, ["inventory", "redeem"]);
+    assert.equal(reset.idempotencyKeys.length, 1);
+
+    releaseRedeem();
+    const firstResponse = await first;
+    assert.equal(firstResponse.status, 200);
+    assert.equal(inferenceCalls, 2);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+    assert.equal(reset.idempotencyKeys.length, 1);
+    assert.equal(new Set(reset.idempotencyKeys).size, 1);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("an already-redeemed reset is independently verified before one same-account retry", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  const reset = scriptedResetProvider({ redeemKind: "already_redeemed" });
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    if (accountIds.length === 1) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        }),
+      );
+    }
+    return Promise.resolve(new Response(JSON.stringify({ id: "response-after-already-redeemed" }), { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-already-redeemed" },
+      {
+        requestId: "banked-reset-already-redeemed",
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-already-redeemed",
+        },
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(accountIds, ["account-one", "account-one"]);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+    assert.equal(reset.idempotencyKeys.length, 1);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("an auth rotation after verification fences off the post-reset retry", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  const reset = scriptedResetProvider({
+    onVerify: () => {
+      kv.auth = pool({
+        ...auth("one"),
+        access_token: accessToken("one-rotated"),
+        refresh_token: "refresh-one-rotated",
+      });
+      kv.authVersion += 1;
+    },
+  });
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+      }),
+    );
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-auth-rotation" },
+      {
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-auth-rotation",
+        },
+      },
+    );
+    assert.equal(response.status, 429);
+    assert.equal(inferenceCalls, 1, "a rotated auth-pool entry must prevent the post-reset retry");
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("an auth rotation inside the final dispatch hook fences off a post-reset retry", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  let inferenceCalls = 0;
+  let beforeDispatchCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  const reset = scriptedResetProvider();
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+      }),
+    );
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-dispatch-race" },
+      {
+        beforeDispatch: () => {
+          beforeDispatchCalls += 1;
+          if (beforeDispatchCalls === 2) {
+            // This occurs after the verified record and routing repair, but
+            // before the post-reset transport can mark itself started.
+            kv.auth = pool({
+              ...auth("one"),
+              access_token: accessToken("one-rotated-during-dispatch"),
+              refresh_token: "refresh-one-rotated-during-dispatch",
+            });
+            kv.authVersion += 1;
+          }
+          return Promise.resolve();
+        },
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-dispatch-race",
+        },
+      },
+    );
+    assert.equal(response.status, 429);
+    assert.equal(beforeDispatchCalls, 2);
+    assert.equal(inferenceCalls, 1, "the rotated second attempt must not reach upstream transport");
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("an auth-pool slot reorder during a claimed reset fences submission before redemption", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const stableRetryAfter = new Date(fixedStartMs + 60_000).toUTCString();
+  const upstreamAccounts: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  const reset = scriptedResetProvider({
+    onInventory: () => {
+      // Both accounts are quota-blocked. The second account is the reset
+      // candidate, then an operator reorders the pool while it is claimed.
+      kv.auth = pool(auth("two"), auth("one"));
+      kv.authVersion += 1;
+    },
+  });
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    upstreamAccounts.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": stableRetryAfter },
+      }),
+    );
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-slot-reorder" },
+      {
+        bankedReset: {
+          config: liveBankedResetConfig("account-two"),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-slot-reorder",
+        },
+      },
+    );
+    assert.equal(response.status, 429);
+    assert.deepEqual(upstreamAccounts, ["account-one", "account-two"]);
+    assert.deepEqual(reset.calls, ["inventory"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a healthy configured fallback prevents any banked-reset provider call", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  const reset = scriptedResetProvider();
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(
+      accountIds.length === 1
+        ? new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        })
+        : new Response(JSON.stringify({ id: "fallback-success" }), { status: 200 }),
+    );
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-fallback" },
+      {
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-fallback",
+        },
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(accountIds, ["account-one", "account-two"]);
+    assert.deepEqual(reset.calls, []);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a valid exhausted account remains eligible when a later account returns 403", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  const reset = scriptedResetProvider();
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    const accountId = request.headers.get("chatgpt-account-id") ?? "";
+    accountIds.push(accountId);
+    if (accountIds.length === 1) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        }),
+      );
+    }
+    if (accountIds.length === 2) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "forbidden" } }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }
+    return Promise.resolve(new Response(JSON.stringify({ id: "response-after-reset" }), { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-after-403" },
+      {
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-after-403",
+        },
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(accountIds, ["account-one", "account-two", "account-one"]);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("an earlier allowlisted exhausted account is redeemed after a later sibling also exhausts quota", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  const reset = scriptedResetProvider();
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    if (accountIds.length <= 2) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        }),
+      );
+    }
+    return Promise.resolve(new Response(JSON.stringify({ id: "response-after-earlier-reset" }), { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-earlier-allowlisted" },
+      {
+        bankedReset: {
+          config: liveBankedResetConfig("account-one"),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-earlier-allowlisted",
+        },
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(accountIds, ["account-one", "account-two", "account-one"]);
+    assert.deepEqual(reset.redeemAccountIds, ["account-one"]);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a 403 during the bounded retry preserves another verified exhaustion candidate", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  const reset = scriptedResetProvider();
+  const shortStableRetryAfter = new Date(fixedStartMs + 2_000).toUTCString();
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    const accountId = request.headers.get("chatgpt-account-id") ?? "";
+    accountIds.push(accountId);
+    if (accountIds.length <= 2) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": shortStableRetryAfter },
+        }),
+      );
+    }
+    if (accountIds.length === 3) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "forbidden" } }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }
+    return Promise.resolve(new Response(JSON.stringify({ id: "response-after-reset" }), { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-bounded-retry-403" },
+      {
+        retrySleep: () => Promise.resolve(),
+        bankedReset: {
+          config: liveBankedResetConfig("account-two"),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-bounded-retry-403",
+        },
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(accountIds, ["account-one", "account-two", "account-one", "account-two"]);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a successful ordinary bounded retry never spends a banked reset", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const reset = scriptedResetProvider();
+  const shortStableRetryAfter = new Date(fixedStartMs + 2_000).toUTCString();
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    if (inferenceCalls === 1) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": shortStableRetryAfter },
+        }),
+      );
+    }
+    return Promise.resolve(new Response(JSON.stringify({ id: "ordinary-retry-success" }), { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "ordinary-retry-success" },
+      {
+        retrySleep: () => Promise.resolve(),
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-ordinary-retry-success",
+        },
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(inferenceCalls, 2, "the ordinary retry is the only successful inference request");
+    assert.deepEqual(reset.calls, [], "a served request must not read inventory or submit a reset");
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("only a complete stable usage-limit response can reach the banked-reset provider", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const stableRetryAfter = new Date(fixedStartMs + 60_000).toUTCString();
+  const cases: Array<
+    Readonly<{
+      name: string;
+      status: number;
+      body: string;
+      retryAfter?: string;
+      expectedStatus: number;
+    }>
+  > = [
+    {
+      name: "generic rate limit",
+      status: 429,
+      body: JSON.stringify({ error: { type: "rate_limit_error" } }),
+      retryAfter: stableRetryAfter,
+      expectedStatus: 429,
+    },
+    {
+      name: "burst throttling",
+      status: 429,
+      body: JSON.stringify({ error: { type: "requests_per_minute" } }),
+      retryAfter: stableRetryAfter,
+      expectedStatus: 429,
+    },
+    {
+      name: "overload",
+      status: 429,
+      body: JSON.stringify({ error: { type: "server_error" } }),
+      retryAfter: stableRetryAfter,
+      expectedStatus: 429,
+    },
+    {
+      name: "policy error",
+      status: 429,
+      body: JSON.stringify({ error: { type: "policy_error" } }),
+      retryAfter: stableRetryAfter,
+      expectedStatus: 429,
+    },
+    {
+      name: "invalid request",
+      status: 429,
+      body: JSON.stringify({ error: { type: "invalid_request_error" } }),
+      retryAfter: stableRetryAfter,
+      expectedStatus: 429,
+    },
+    {
+      name: "unknown future error type",
+      status: 429,
+      body: JSON.stringify({ error: { type: "future_quota_signal" } }),
+      retryAfter: stableRetryAfter,
+      expectedStatus: 429,
+    },
+    {
+      name: "malformed body",
+      status: 429,
+      body: "{not JSON",
+      retryAfter: stableRetryAfter,
+      expectedStatus: 429,
+    },
+    {
+      name: "relative retry-after cannot name a reset window",
+      status: 429,
+      body: JSON.stringify({ error: { type: "usage_limit_reached" } }),
+      retryAfter: "60",
+      expectedStatus: 429,
+    },
+    {
+      name: "invalid decimal retry-after",
+      status: 429,
+      body: JSON.stringify({ error: { type: "usage_limit_reached" } }),
+      retryAfter: "0.5",
+      expectedStatus: 429,
+    },
+    {
+      name: "expired retry-after",
+      status: 429,
+      body: JSON.stringify({ error: { type: "usage_limit_reached" } }),
+      retryAfter: new Date(fixedStartMs - 1_000).toUTCString(),
+      expectedStatus: 429,
+    },
+    {
+      name: "overflowing retry-after",
+      status: 429,
+      body: JSON.stringify({ error: { type: "usage_limit_reached" } }),
+      retryAfter: "999999999999999999999999999999999999",
+      expectedStatus: 429,
+    },
+    {
+      name: "401",
+      status: 401,
+      body: JSON.stringify({ error: { type: "invalid_auth" } }),
+      expectedStatus: 401,
+    },
+    {
+      name: "403",
+      status: 403,
+      body: JSON.stringify({ error: { type: "forbidden" } }),
+      expectedStatus: 403,
+    },
+  ];
+
+  try {
+    Date.now = () => fixedStartMs;
+    (config as { isDeploy: boolean }).isDeploy = true;
+    for (const testCase of cases) {
+      kv.auth = pool(auth("one"));
+      kv.extra.clear();
+      resetCodexAuthCacheForTest();
+      resetCodexAccountRoutingForTest();
+      const reset = scriptedResetProvider();
+      globalThis.fetch = (input) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("oauth/token")) {
+          return Promise.resolve(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 401 }));
+        }
+        const headers = new Headers({ "Content-Type": "application/json" });
+        if (testCase.retryAfter) headers.set("Retry-After", testCase.retryAfter);
+        return Promise.resolve(new Response(testCase.body, { status: testCase.status, headers }));
+      };
+
+      const response = await fetchCodexResponses(
+        { input: `nonqualifying-${testCase.name}` },
+        {
+          retrySleep: async () => {},
+          bankedReset: {
+            config: liveBankedResetConfig(),
+            provider: reset.provider,
+            kv: kv as unknown as Deno.Kv,
+            now: () => fixedStartMs,
+            newOwnerToken: () => `owner-nonqualifying-${testCase.name}`,
+          },
+        },
+      );
+      assert.equal(response.status, testCase.expectedStatus, testCase.name);
+      assert.deepEqual(reset.calls, [], testCase.name);
+    }
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a later non-qualifying 429 clears an earlier banked-reset candidate", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const reset = scriptedResetProvider();
+  const stableRetryAfter = new Date(fixedStartMs + 60_000).toUTCString();
+  const accountIds: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    const accountId = request.headers.get("chatgpt-account-id") ?? "";
+    accountIds.push(accountId);
+    const errorType = accountIds.length === 1 ? "usage_limit_reached" : "rate_limit_error";
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { type: errorType } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": stableRetryAfter },
+      }),
+    );
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "later-nonqualifying-429" },
+      {
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-later-nonqualifying-429",
+        },
+      },
+    );
+    assert.equal(response.status, 429);
+    assert.deepEqual(accountIds, ["account-one", "account-two"]);
+    assert.deepEqual(reset.calls, []);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("post-reset inference may return one normal 429 but never triggers a second redemption", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const reset = scriptedResetProvider();
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+      }),
+    );
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-second-429" },
+      {
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-second-429",
+        },
+      },
+    );
+    assert.equal(response.status, 429);
+    assert.equal(inferenceCalls, 2);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("all-blocked routing recovers an unknown reset while new submissions are disabled", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const reset = scriptedResetProvider({ redeemKind: "unknown" });
+  let now = fixedStartMs;
+  let live = true;
+  let inferenceCalls = 0;
+  Date.now = () => now;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    return Promise.resolve(
+      inferenceCalls === 1
+        ? new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        })
+        : new Response(JSON.stringify({ id: "recovered-after-unknown" }), { status: 200 }),
+    );
+  };
+
+  const liveConfig = liveBankedResetConfig();
+  const disabledConfig: CodexBankedResetConfig = { ...liveConfig, enabled: false, mode: "disabled" };
+  const bankedReset = {
+    config: liveConfig,
+    reloadConfig: () => live ? liveConfig : disabledConfig,
+    provider: reset.provider,
+    kv: kv as unknown as Deno.Kv,
+    now: () => now,
+    newOwnerToken: () => "owner-recovery",
+  };
+  try {
+    const first = await fetchCodexResponses({ input: "unknown-reset" }, { bankedReset });
+    assert.equal(first.status, 429);
+    assert.deepEqual(reset.calls, ["inventory", "redeem"]);
+
+    // Let the durable unknown record's lease expire while retaining its
+    // original 60-second routing fence, then simulate an operator rollback.
+    now += CODEX_BANKED_RESET_LEASE_MS + 1;
+    live = false;
+    const recovered = await fetchCodexResponses({ input: "recover-reset" }, { bankedReset });
+    assert.equal(recovered.status, 200);
+    assert.equal(inferenceCalls, 2);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "lookup", "verify"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
   }
 });

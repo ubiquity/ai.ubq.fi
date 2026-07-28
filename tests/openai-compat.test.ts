@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import type { CodexBankedResetConfig } from "../src/codex_banked_reset.ts";
+import type { CodexUsageResetProvider } from "../src/codex_banked_reset_provider.ts";
+import type { CodexAuthPoolState } from "../src/types.ts";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
 import { setStreamFirstEventDeadlineMsForTest } from "../src/inference_deadline.ts";
 import { RELEASE_GIT_SHA } from "../src/release.ts";
@@ -102,6 +105,14 @@ const {
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const { attemptCodexBankedReset } = await import("../src/codex_banked_reset.ts");
+const {
+  CODEX_ACCOUNT_ROUTING_KV_KEY,
+  getCodexQuotaBlockFence,
+  isCodexQuotaBlockFenceCurrent,
+  markCodexQuotaBlocked,
+  selectCodexRoutingAccounts,
+} = await import("../src/codex_account_routing.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -327,6 +338,441 @@ const withFetchMock = async <T>(
     release();
   }
 };
+
+const clearBankedResetRecords = (): void => {
+  for (const encodedKey of [...kvStore.keys()]) {
+    const key = JSON.parse(encodedKey) as unknown[];
+    if (key[0] === "uos_ai" && key[1] === "codex_reset_redemption") kvStore.delete(encodedKey);
+  }
+};
+
+const liveBankedResetFixtureConfig = (accountId: string): CodexBankedResetConfig => ({
+  enabled: true,
+  mode: "live",
+  accountAllowlist: new Set([accountId]),
+  maxGlobalPerDay: 1,
+  maxPerAccountPerWindow: 1,
+});
+
+const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> => {
+  const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+  const now = Date.now();
+  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+  if (selection.kind !== "eligible") throw new Error(`Expected an eligible fixture account, got ${selection.kind}.`);
+  const routing = selection.accounts[0]!;
+  const blocked = await markCodexQuotaBlocked(
+    routing,
+    new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": new Date(now + 60_000).toUTCString() },
+    }),
+    now,
+  );
+  if (!blocked.usageLimitReached || blocked.retryAtMs === null) {
+    throw new Error("Expected a durable usage-limit quota fence.");
+  }
+  const routingGeneration = await getCodexQuotaBlockFence(routing, blocked.retryAtMs);
+  if (routingGeneration === null) throw new Error("Expected the durable quota fence to be readable.");
+
+  const calls: string[] = [];
+  const provider: CodexUsageResetProvider = {
+    contract: {
+      idempotency: { callerSupplied: true, retentionMs: 86_400_000 },
+      lookup: { byIdempotencyKey: true, byProviderReceiptId: true },
+      verification: { independentlyVerifiable: true },
+      receiptIdsSafeToPersistAndLog: true,
+      supportedResetTypes: ["codex_usage_limit"],
+    },
+    readInventory: () => {
+      calls.push("inventory");
+      return Promise.resolve({ availableCount: 1, observedAtMs: now, resetType: "codex_usage_limit" });
+    },
+    redeem: () => {
+      calls.push("redeem");
+      return Promise.resolve({ kind: "completed", providerReceiptId: "fixture-receipt" } as const);
+    },
+    lookup: () => {
+      calls.push("lookup");
+      return Promise.resolve({ kind: "completed", providerReceiptId: "fixture-receipt" } as const);
+    },
+    verifyApplied: () => {
+      calls.push("verify");
+      return Promise.resolve(true);
+    },
+  };
+  const reset = await attemptCodexBankedReset(
+    {
+      accountId: routing.auth.account_id,
+      credentialVersion: routing.credentialVersion,
+      quotaResetAtMs: blocked.retryAtMs,
+      routingGeneration,
+      fences: [{
+        key: CODEX_ACCOUNT_ROUTING_KV_KEY,
+        isCurrent: (value) => isCodexQuotaBlockFenceCurrent(value, routing, blocked.retryAtMs!, routingGeneration),
+      }],
+      requestId: "openai-compat-verified-reset-fixture",
+    },
+    {
+      config: liveBankedResetFixtureConfig(routing.auth.account_id),
+      provider,
+      kv: kvStub,
+      now: () => now,
+      newOwnerToken: () => "openai-compat-verified-reset-owner",
+    },
+  );
+  assert.equal(reset.kind, "verified");
+  assert.equal(reset.record?.routing_generation, routingGeneration);
+  return calls;
+};
+
+/**
+ * This creates a durable ambiguous transaction using only an in-memory fake.
+ * The public handlers deliberately keep the shipped provider unavailable, so
+ * their recovery-only path must return the ordinary quota error without ever
+ * committing a successful response stream.
+ */
+const createUnknownBankedResetFixture = async (): Promise<readonly string[]> => {
+  const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+  const now = Date.now();
+  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+  if (selection.kind !== "eligible") throw new Error(`Expected an eligible fixture account, got ${selection.kind}.`);
+  const routing = selection.accounts[0]!;
+  const blocked = await markCodexQuotaBlocked(
+    routing,
+    new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": new Date(now + 60_000).toUTCString() },
+    }),
+    now,
+  );
+  if (!blocked.usageLimitReached || blocked.retryAtMs === null) {
+    throw new Error("Expected a durable usage-limit quota fence.");
+  }
+  const routingGeneration = await getCodexQuotaBlockFence(routing, blocked.retryAtMs);
+  if (routingGeneration === null) throw new Error("Expected the durable quota fence to be readable.");
+
+  const calls: string[] = [];
+  const provider: CodexUsageResetProvider = {
+    contract: {
+      idempotency: { callerSupplied: true, retentionMs: 86_400_000 },
+      lookup: { byIdempotencyKey: true, byProviderReceiptId: true },
+      verification: { independentlyVerifiable: true },
+      receiptIdsSafeToPersistAndLog: true,
+      supportedResetTypes: ["codex_usage_limit"],
+    },
+    readInventory: () => {
+      calls.push("inventory");
+      return Promise.resolve({ availableCount: 1, observedAtMs: now, resetType: "codex_usage_limit" });
+    },
+    redeem: () => {
+      calls.push("redeem");
+      return Promise.resolve({ kind: "unknown", providerReceiptId: null } as const);
+    },
+    lookup: () => {
+      calls.push("lookup");
+      return Promise.resolve({ kind: "unknown", providerReceiptId: null } as const);
+    },
+    verifyApplied: () => {
+      calls.push("verify");
+      return Promise.resolve(false);
+    },
+  };
+  const reset = await attemptCodexBankedReset(
+    {
+      accountId: routing.auth.account_id,
+      credentialVersion: routing.credentialVersion,
+      quotaResetAtMs: blocked.retryAtMs,
+      routingGeneration,
+      fences: [{
+        key: CODEX_ACCOUNT_ROUTING_KV_KEY,
+        isCurrent: (value) => isCodexQuotaBlockFenceCurrent(value, routing, blocked.retryAtMs!, routingGeneration),
+      }],
+      requestId: "openai-compat-unknown-reset-fixture",
+    },
+    {
+      config: liveBankedResetFixtureConfig(routing.auth.account_id),
+      provider,
+      kv: kvStub,
+      now: () => now,
+      newOwnerToken: () => "openai-compat-unknown-reset-owner",
+    },
+  );
+  assert.equal(reset.kind, "pending");
+  assert.equal(reset.record?.state, "unknown");
+  return calls;
+};
+
+Deno.test("openai: verified banked reset recovers the fenced account before Responses delivery", async (t) => {
+  for (const clientWantsStream of [false, true]) {
+    await t.step(clientWantsStream ? "streamed" : "buffered", async () => {
+      const delivery = clientWantsStream ? "streamed" : "buffered";
+      const postResetText = `post-reset-${delivery}`;
+      const upstreamUrls: string[] = [];
+      const result = await withFetchMock(
+        (url, bodyText) => {
+          upstreamUrls.push(url);
+          assert.ok(bodyText);
+          const upstreamBody = JSON.parse(bodyText) as Record<string, unknown>;
+          assert.equal(upstreamBody.stream, true, "Codex transport must remain SSE-shaped for both client modes.");
+          return sseResponse([
+            `data: ${
+              JSON.stringify({ type: "response.created", response: { id: `resp_${delivery}`, created_at: 0 } })
+            }\n\n`,
+            `data: ${JSON.stringify({ type: "response.output_text.delta", delta: postResetText })}\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  output: [],
+                  usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                },
+              })
+            }\n\n`,
+          ]);
+        },
+        async () => {
+          clearBankedResetRecords();
+          try {
+            const resetProviderCalls = await createVerifiedBankedResetFixture();
+            const response = await handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  input: "recover an already verified reset",
+                  ...(clientWantsStream ? { stream: true } : {}),
+                }),
+              }),
+            );
+            const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+            const routingAfterRecovery = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+            return { response, resetProviderCalls, routingAfterRecovery: routingAfterRecovery.kind };
+          } finally {
+            clearBankedResetRecords();
+          }
+        },
+      );
+
+      // The only mocked transport is the one permitted post-reset inference.
+      // The banked-reset fake is in-memory, and recovery cannot call the
+      // shipped unavailable provider when it finds the verified record.
+      assert.deepEqual(upstreamUrls, ["https://chatgpt.com/backend-api/codex/responses"]);
+      assert.deepEqual(result.resetProviderCalls, ["inventory", "redeem", "verify"]);
+      assert.equal(result.routingAfterRecovery, "eligible", "the verified decision must clear its exact quota fence");
+      assert.equal(result.response.status, 200);
+      assert.equal(result.response.headers.get("x-uos-upstream"), "chatgpt_codex");
+      if (clientWantsStream) {
+        assert.equal(result.response.headers.get("Content-Type"), "text/event-stream");
+        const stream = await result.response.text();
+        assert.match(stream, new RegExp(postResetText));
+        assert.match(stream, /response\.completed/);
+      } else {
+        const payload = await result.response.json() as Record<string, unknown>;
+        assert.equal(extractResponseOutputText(payload), postResetText);
+      }
+    });
+  }
+});
+
+Deno.test("openai: verified banked reset recovers the fenced account before Chat delivery", async (t) => {
+  for (const clientWantsStream of [false, true]) {
+    await t.step(clientWantsStream ? "streamed" : "buffered", async () => {
+      const delivery = clientWantsStream ? "streamed" : "buffered";
+      const postResetText = `chat-post-reset-${delivery}`;
+      const upstreamUrls: string[] = [];
+      const result = await withFetchMock(
+        (url, bodyText) => {
+          upstreamUrls.push(url);
+          assert.ok(bodyText);
+          return sseResponse([
+            `data: ${
+              JSON.stringify({ type: "response.created", response: { id: `chat_${delivery}`, created_at: 0 } })
+            }\n\n`,
+            `data: ${JSON.stringify({ type: "response.output_text.delta", delta: postResetText })}\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  output: [],
+                  usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                },
+              })
+            }\n\n`,
+          ]);
+        },
+        async () => {
+          clearBankedResetRecords();
+          try {
+            const resetProviderCalls = await createVerifiedBankedResetFixture();
+            const response = await handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  messages: [{ role: "user", content: "recover an already verified reset" }],
+                  ...(clientWantsStream ? { stream: true } : {}),
+                }),
+              }),
+            );
+            return { response, resetProviderCalls };
+          } finally {
+            clearBankedResetRecords();
+          }
+        },
+      );
+
+      assert.deepEqual(upstreamUrls, ["https://chatgpt.com/backend-api/codex/responses"]);
+      assert.deepEqual(result.resetProviderCalls, ["inventory", "redeem", "verify"]);
+      assert.equal(result.response.status, 200);
+      if (clientWantsStream) {
+        assert.equal(result.response.headers.get("Content-Type"), "text/event-stream");
+        const stream = await result.response.text();
+        assert.match(stream, new RegExp(postResetText));
+        assert.match(stream, /data: \[DONE\]/);
+      } else {
+        const payload = await result.response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+        assert.equal(payload.choices?.[0]?.message?.content, postResetText);
+      }
+    });
+  }
+});
+
+Deno.test("openai: an unknown banked reset returns an ordinary error with no successful stream bytes", async (t) => {
+  const routes = [
+    {
+      name: "Responses",
+      request: (stream: boolean) =>
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            input: "unknown reset",
+            ...(stream ? { stream: true } : {}),
+          }),
+        }),
+      handle: handleResponses,
+    },
+    {
+      name: "Chat",
+      request: (stream: boolean) =>
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{ role: "user", content: "unknown reset" }],
+            ...(stream ? { stream: true } : {}),
+          }),
+        }),
+      handle: handleChatCompletions,
+    },
+  ] as const;
+
+  for (const route of routes) {
+    for (const stream of [false, true]) {
+      await t.step(`${route.name} ${stream ? "streamed" : "buffered"}`, async () => {
+        const result = await withFetchMock(
+          () => {
+            throw new Error("An unknown reset must not dispatch a post-reset inference request.");
+          },
+          async () => {
+            clearBankedResetRecords();
+            try {
+              const resetProviderCalls = await createUnknownBankedResetFixture();
+              const response = await route.handle(route.request(stream));
+              return { response, resetProviderCalls };
+            } finally {
+              clearBankedResetRecords();
+            }
+          },
+        );
+
+        assert.deepEqual(result.resetProviderCalls, ["inventory", "redeem"]);
+        assert.equal(result.response.status, 429);
+        assert.doesNotMatch(result.response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
+        const body = await result.response.text();
+        assert.doesNotMatch(body, /(?:^|\n)data:\s|response\.(?:created|output_text\.delta|completed)/);
+        const payload = JSON.parse(body) as { error?: { code?: unknown } };
+        assert.equal(payload.error?.code, "codex_quota_blocked");
+      });
+    }
+  }
+});
+
+Deno.test("openai: a post-reset 429 is returned once without a successful stream", async (t) => {
+  const routes = [
+    {
+      name: "Responses",
+      request: (stream: boolean) =>
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            input: "post-reset 429",
+            ...(stream ? { stream: true } : {}),
+          }),
+        }),
+      handle: handleResponses,
+    },
+    {
+      name: "Chat",
+      request: (stream: boolean) =>
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{ role: "user", content: "post-reset 429" }],
+            ...(stream ? { stream: true } : {}),
+          }),
+        }),
+      handle: handleChatCompletions,
+    },
+  ] as const;
+
+  for (const route of routes) {
+    for (const stream of [false, true]) {
+      await t.step(`${route.name} ${stream ? "streamed" : "buffered"}`, async () => {
+        let upstreamCalls = 0;
+        const result = await withFetchMock(
+          () => {
+            upstreamCalls += 1;
+            return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": new Date(Date.now() + 60_000).toUTCString(),
+              },
+            });
+          },
+          async () => {
+            clearBankedResetRecords();
+            try {
+              const resetProviderCalls = await createVerifiedBankedResetFixture();
+              const response = await route.handle(route.request(stream));
+              return { response, resetProviderCalls };
+            } finally {
+              clearBankedResetRecords();
+            }
+          },
+        );
+
+        assert.equal(upstreamCalls, 1);
+        assert.deepEqual(result.resetProviderCalls, ["inventory", "redeem", "verify"]);
+        assert.equal(result.response.status, 429);
+        assert.doesNotMatch(result.response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
+        const body = await result.response.text();
+        assert.doesNotMatch(body, /(?:^|\n)data:\s|response\.(?:created|output_text\.delta|completed)/);
+      });
+    }
+  }
+});
 
 Deno.test("openai: defaults + ignore temperature", async (t) => {
   await t.step("chat uses default model/reasoning and ignores temperature", async () => {
