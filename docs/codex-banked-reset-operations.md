@@ -2,9 +2,10 @@
 
 ## Status and operating boundary
 
-The pinned `lib/codex` submodule is the provider contract reference. Live mode uses an account-bound adapter only after
-the normal flag, allowlist, cap, KV fence, and healthy-fallback gates pass. Tests inject its transport; no test or this
-implementation run has called a real reset endpoint.
+The pinned `lib/codex` submodule is the provider contract reference. Live mode uses an account-bound adapter after the
+KV fence and healthy-fallback gates pass. It is active by default with a hard global cap of one reset per UTC day across
+the current account pool. Tests inject its transport; no test or this implementation run has called a real reset
+endpoint.
 
 For a configured Codex base, the adapter uses `GET .../rate-limit-reset-credits` and
 `POST .../rate-limit-reset-credits/consume`: `/api/codex/...` for the Codex layout and `/backend-api/wham/...` for the
@@ -35,16 +36,17 @@ ordinary quota failure and is never fed back into reset selection.
 
 ## Configuration and rollback
 
-Settings are read for each gateway request so a new claim observes a changed kill switch without deleting durable
-records.
+Settings are read for each gateway request. No setting is required for normal operation: the shipped default is live,
+unrestricted across the current pool, one global submission per UTC day, and one submission per account/window. Existing
+settings are optional restrictions and immediate kill switches; they do not add any required deployment configuration.
 
-| Variable                                        | Safe default | Requirement                                                                |
-| ----------------------------------------------- | ------------ | -------------------------------------------------------------------------- |
-| `CODEX_BANKED_RESET_ENABLED`                    | `false`      | Must be exactly `true` after trimming and case normalization.              |
-| `CODEX_BANKED_RESET_MODE`                       | `disabled`   | Only `disabled`, `shadow`, and `live` are accepted.                        |
-| `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | A nonempty list of exact account IDs or stable account hashes is required. |
-| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Must be a positive integer before a new claim is allowed.                  |
-| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Must be exactly `1`; all other values fail closed.                         |
+| Variable                                        | Safe default | Requirement                                                                  |
+| ----------------------------------------------- | ------------ | ---------------------------------------------------------------------------- |
+| `CODEX_BANKED_RESET_ENABLED`                    | `true`       | Set exactly `false` to immediately stop new claims.                          |
+| `CODEX_BANKED_RESET_MODE`                       | `live`       | Set `disabled` or `shadow` to restrict operation.                            |
+| `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | Empty permits the current pool; set exact account IDs or hashes to limit it. |
+| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `1`          | Set a positive integer to override the shipped daily cap.                    |
+| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Must be exactly `1`; all other values fail closed.                           |
 
 `shadow` records candidate decisions but makes no provider calls, including inventory reads. `disabled` and a false flag
 prevent new claims and submissions. Existing `submitted` or `unknown` records remain recovery-only: a future reviewed

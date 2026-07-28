@@ -53,9 +53,11 @@ const getEnv = (key: string): string | undefined => {
   }
 };
 
-const parseStrictBoolean = (value: string | undefined): boolean => value?.trim().toLowerCase() === "true";
+const parseStrictBoolean = (value: string | undefined, defaultValue: boolean): boolean =>
+  value === undefined ? defaultValue : value.trim().toLowerCase() === "true";
 
-const parseNonNegativeInteger = (value: string | undefined): number => {
+const parseNonNegativeInteger = (value: string | undefined, defaultValue: number): number => {
+  if (value === undefined) return defaultValue;
   const normalized = value?.trim() ?? "";
   if (!/^\d+$/.test(normalized)) return 0;
   const parsed = Number(normalized);
@@ -69,8 +71,9 @@ const parseMode = (value: string | undefined): CodexBankedResetMode => {
     case "live":
       return "live";
     case "disabled":
-    default:
       return "disabled";
+    default:
+      return "live";
   }
 };
 
@@ -90,11 +93,14 @@ const parseAllowlist = (value: string | undefined): ReadonlySet<string> =>
 export const parseCodexBankedResetConfig = (
   readEnv: (key: string) => string | undefined = getEnv,
 ): CodexBankedResetConfig => ({
-  enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED")),
+  // Automatic recovery is shipped live with one reset per UTC day. Existing
+  // deployment variables remain optional restrictions and immediate kill
+  // switches; no variable is required for the normal production path.
+  enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), true),
   mode: parseMode(readEnv("CODEX_BANKED_RESET_MODE")),
   accountAllowlist: parseAllowlist(readEnv("CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST")),
-  maxGlobalPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY")),
-  maxPerAccountPerWindow: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW")),
+  maxGlobalPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY"), 1),
+  maxPerAccountPerWindow: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW"), 1),
 });
 
 export const loadCodexBankedResetConfig = (): CodexBankedResetConfig => parseCodexBankedResetConfig();
@@ -335,8 +341,8 @@ const policyReason = (config: CodexBankedResetConfig, context: ResetContext): st
   try {
     if (!config.enabled) return "feature_disabled";
     if (config.mode === "disabled") return "mode_disabled";
-    if (!config.accountAllowlist.size) return "allowlist_missing";
     if (
+      config.accountAllowlist.size > 0 &&
       !config.accountAllowlist.has(context.account.accountId) &&
       !config.accountAllowlist.has(context.account.accountIdHash)
     ) {

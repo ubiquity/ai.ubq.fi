@@ -403,7 +403,7 @@ const dependencies = (
   };
 };
 
-Deno.test("banked reset disabled, shadow, missing allowlist, and invalid limits make zero provider calls", async () => {
+Deno.test("banked reset disabled, shadow, and invalid limits make zero provider calls", async () => {
   const clock = new TestClock();
   const cases: Array<
     Readonly<{
@@ -423,11 +423,6 @@ Deno.test("banked reset disabled, shadow, missing allowlist, and invalid limits 
       configured: config({ mode: "shadow", maxGlobalPerDay: 0 }),
       reason: "shadow",
       expectShadowEvent: true,
-    },
-    {
-      name: "missing allowlist",
-      configured: config({ accountAllowlist: new Set() }),
-      reason: "allowlist_missing",
     },
     {
       name: "global cap disabled",
@@ -2226,7 +2221,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
       maxGlobalPerDay: defaults.maxGlobalPerDay,
       maxPerAccountPerWindow: defaults.maxPerAccountPerWindow,
     },
-    { enabled: false, mode: "disabled", allowlist: [], maxGlobalPerDay: 0, maxPerAccountPerWindow: 0 },
+    { enabled: true, mode: "live", allowlist: [], maxGlobalPerDay: 1, maxPerAccountPerWindow: 1 },
   );
 
   const environment = new Map<string, string>([

@@ -560,9 +560,23 @@ Deno.test("openai: verified banked reset recovers the fenced account before Resp
                 }),
               }),
             );
+            const responseStatus = response.status;
+            const responseContentType = response.headers.get("Content-Type");
+            const responseUpstream = response.headers.get("x-uos-upstream");
+            // A streamed response owns the recovery probe until its terminal
+            // event is consumed and validated; merely creating the Response
+            // is not proof of successful recovery.
+            const responseBody = await response.text();
             const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
             const routingAfterRecovery = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
-            return { response, resetProviderCalls, routingAfterRecovery: routingAfterRecovery.kind };
+            return {
+              responseStatus,
+              responseContentType,
+              responseUpstream,
+              responseBody,
+              resetProviderCalls,
+              routingAfterRecovery: routingAfterRecovery.kind,
+            };
           } finally {
             clearBankedResetRecords();
           }
@@ -575,15 +589,14 @@ Deno.test("openai: verified banked reset recovers the fenced account before Resp
       assert.deepEqual(upstreamUrls, ["https://chatgpt.com/backend-api/codex/responses"]);
       assert.deepEqual(result.resetProviderCalls, ["inventory", "redeem", "verify"]);
       assert.equal(result.routingAfterRecovery, "eligible", "the verified decision must clear its exact quota fence");
-      assert.equal(result.response.status, 200);
-      assert.equal(result.response.headers.get("x-uos-upstream"), "chatgpt_codex");
+      assert.equal(result.responseStatus, 200);
+      assert.equal(result.responseUpstream, "chatgpt_codex");
       if (clientWantsStream) {
-        assert.equal(result.response.headers.get("Content-Type"), "text/event-stream");
-        const stream = await result.response.text();
-        assert.match(stream, new RegExp(postResetText));
-        assert.match(stream, /response\.completed/);
+        assert.equal(result.responseContentType, "text/event-stream");
+        assert.match(result.responseBody, new RegExp(postResetText));
+        assert.match(result.responseBody, /response\.completed/);
       } else {
-        const payload = await result.response.json() as Record<string, unknown>;
+        const payload = JSON.parse(result.responseBody) as Record<string, unknown>;
         assert.equal(extractResponseOutputText(payload), postResetText);
       }
     });
