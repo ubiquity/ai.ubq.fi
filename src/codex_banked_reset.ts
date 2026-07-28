@@ -4,6 +4,7 @@ import {
   providerReceiptIdsSafeToPersistAndLog,
   providerSupportsLiveRedemption,
   providerSupportsResetType,
+  providerTreatsRedeemOutcomeAsFinal,
   type RedeemResetResult,
   type ResetAccountContext,
   type ResetInventory,
@@ -869,6 +870,7 @@ const validInventory = (
 ): inventory is ResetInventory =>
   isRecord(inventory) && isSafeNonnegativeInteger(inventory.availableCount) &&
   isSafeMs(inventory.observedAtMs) && isNonEmptyText(inventory.resetType, 128) &&
+  (inventory.creditId === null || isNonEmptyText(inventory.creditId, 512)) &&
   inventory.observedAtMs <= nowMs && nowMs - inventory.observedAtMs <= CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS &&
   providerSupportsResetType(provider, inventory.resetType);
 
@@ -1022,6 +1024,37 @@ const verifyOwned = async (
   );
   metric(telemetry, "codex_reset_estimated_spend_total", 1, telemetryFields(context, candidate, {}));
   return outcome("verified", "verified", context, finalized);
+};
+
+/**
+ * The upstream adapter has already parsed a documented terminal redemption
+ * result (`reset` or `already_redeemed`). Lost, malformed, and non-2xx
+ * responses never reach this path.
+ */
+const finalizeDocumentedRedeemOutcome = async (
+  kv: Deno.Kv,
+  context: ResetContext,
+  record: CodexResetRedemptionRecord,
+  candidate: CodexBankedResetCandidate,
+  nowMs: number,
+  telemetry: CodexBankedResetTelemetry,
+): Promise<CodexBankedResetOutcome> => {
+  const finalized = await updateOwnedRecord(
+    kv,
+    context,
+    record,
+    (current) => stateWith(current, "verified", nowMs, { verified_at_ms: nowMs, last_error_code: null }),
+  );
+  if (!finalized) return outcome("pending", "redeem_outcome_finalization_cas_failed", context, record);
+  emit(
+    telemetry,
+    "codex_reset_verified",
+    telemetryFields(context, candidate, { state: "verified", verification_source: "redeem_outcome" }),
+  );
+  metric(telemetry, "codex_reset_verified_total", 1, telemetryFields(context, candidate, {}));
+  metric(telemetry, "codex_reset_verification_latency_ms", 0, telemetryFields(context, candidate, {}));
+  metric(telemetry, "codex_reset_estimated_spend_total", 1, telemetryFields(context, candidate, {}));
+  return outcome("verified", "redeem_outcome", context, finalized);
 };
 
 const reconcileOwned = async (
@@ -1226,7 +1259,7 @@ const submitClaimed = async (
     // Do not insert telemetry or another await between the final synchronous
     // kill-switch check above and starting the provider invocation.
     submittedPromise = dependencies.provider.redeem(
-      { ...context.account, idempotencyKey: context.idempotencyKey },
+      { ...context.account, idempotencyKey: context.idempotencyKey, creditId: inventory.creditId },
       candidate.signal ?? new AbortController().signal,
     );
   } catch {
@@ -1272,6 +1305,17 @@ const submitClaimed = async (
       durableReceiptId(dependencies.provider, submittedResult.providerReceiptId),
     );
     return unknownOutcome(telemetry, context, candidate, "provider_commit_unknown", unknown ?? renewed.record);
+  }
+  if (
+    (submittedResult.kind === "completed" || submittedResult.kind === "already_redeemed") &&
+    providerTreatsRedeemOutcomeAsFinal(dependencies.provider)
+  ) {
+    emit(
+      telemetry,
+      "codex_reset_submitted",
+      telemetryFields(context, candidate, { state: "submitted", provider_receipt_id: null }),
+    );
+    return await finalizeDocumentedRedeemOutcome(kv, context, renewed.record, candidate, nowAfterRedeem, telemetry);
   }
   const receipt = receiptId(submittedResult.providerReceiptId);
   if (!receipt) {

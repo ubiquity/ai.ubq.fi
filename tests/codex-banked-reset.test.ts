@@ -159,8 +159,18 @@ type FakeProviderCall = Readonly<{
  * the injectable provider contract while keeping tests completely offline.
  */
 const sanitizedProviderFixtures = Object.freeze({
-  inventory_available: Object.freeze({ availableCount: 1, observedAtMs: 1_700_000_000_000, resetType: "banked_reset" }),
-  inventory_empty: Object.freeze({ availableCount: 0, observedAtMs: 1_700_000_000_000, resetType: "banked_reset" }),
+  inventory_available: Object.freeze({
+    availableCount: 1,
+    observedAtMs: 1_700_000_000_000,
+    resetType: "banked_reset",
+    creditId: null,
+  }),
+  inventory_empty: Object.freeze({
+    availableCount: 0,
+    observedAtMs: 1_700_000_000_000,
+    resetType: "banked_reset",
+    creditId: null,
+  }),
   redemption_completed: Object.freeze({ kind: "completed", providerReceiptId: "fixture-completed" } as const),
   redemption_accepted: Object.freeze({ kind: "accepted", providerReceiptId: "fixture-accepted" } as const),
   redemption_already_redeemed: Object.freeze(
@@ -185,7 +195,12 @@ class FakeCodexUsageResetProvider implements CodexUsageResetProvider {
   readonly redeemInputs: RedeemResetInput[] = [];
   readonly lookupInputs: LookupRedeemResetInput[] = [];
   readonly verificationInputs: ResetAccountContext[] = [];
-  inventory: ResetInventory = { availableCount: 1, observedAtMs: 1_700_000_000_000, resetType: "banked_reset" };
+  inventory: ResetInventory = {
+    availableCount: 1,
+    observedAtMs: 1_700_000_000_000,
+    resetType: "banked_reset",
+    creditId: null,
+  };
   redeemResult: RedeemResetResult = { kind: "completed", providerReceiptId: "receipt-completed" };
   lookupResult: RedeemResetResult = { kind: "completed", providerReceiptId: "receipt-lookup" };
   verifyResult: unknown = true;
@@ -888,29 +903,37 @@ Deno.test("an unapproved provider receipt stays out of the durable record and te
   assert.deepEqual(submittedFields.map((fields) => fields.provider_receipt_id), [null]);
 });
 
-Deno.test("a completed result without a reconcilable provider contract is rejected before provider calls", async () => {
+Deno.test("a provider with documented final outcomes completes without lookup or body verification", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider({
     ...provenContract(),
     idempotency: { callerSupplied: true, retentionMs: null },
     lookup: { byIdempotencyKey: false, byProviderReceiptId: false },
     verification: { independentlyVerifiable: false },
+    redeemOutcomeIsFinal: true,
     receiptIdsSafeToPersistAndLog: false,
   });
   const clock = new TestClock();
   const reset = candidate();
+  const events: string[] = [];
   await seedFences(kv, reset);
   provider.redeemResult = { kind: "completed", providerReceiptId: "status-204" };
   provider.verifyResult = false;
 
-  const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, clock));
+  const result = await attemptCodexBankedReset(
+    reset,
+    dependencies(kv, provider, clock, config(), { event: (event) => events.push(event) }),
+  );
 
-  assert.equal(result.kind, "skipped");
-  assert.equal(result.reason, "provider_contract_unproven");
-  assert.equal(result.record, null);
-  assert.equal(provider.redeemInputs.length, 0);
+  assert.equal(result.kind, "verified");
+  assert.equal(result.reason, "redeem_outcome");
+  assert.equal(result.record?.state, "verified");
+  assert.equal(result.record?.provider_receipt_id, null);
+  assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.verificationInputs.length, 0);
   assert.equal(provider.lookupInputs.length, 0);
+  assert.ok(events.includes("codex_reset_submitted"));
+  assert.ok(events.includes("codex_reset_verified"));
 });
 
 Deno.test("banked-reset telemetry retains only safe correlation fields", async () => {
@@ -1549,7 +1572,12 @@ Deno.test("empty or unsupported inventory and provider rejection become durable 
     {
       name: "empty inventory",
       configure: (provider) => {
-        provider.inventory = { availableCount: 0, observedAtMs: 1_700_000_000_000, resetType: "banked_reset" };
+        provider.inventory = {
+          availableCount: 0,
+          observedAtMs: 1_700_000_000_000,
+          resetType: "banked_reset",
+          creditId: null,
+        };
       },
       reason: "inventory_empty",
       redeemCalls: 0,
@@ -1557,7 +1585,12 @@ Deno.test("empty or unsupported inventory and provider rejection become durable 
     {
       name: "unsupported inventory type",
       configure: (provider) => {
-        provider.inventory = { availableCount: 1, observedAtMs: 1_700_000_000_000, resetType: "unreviewed_reset" };
+        provider.inventory = {
+          availableCount: 1,
+          observedAtMs: 1_700_000_000_000,
+          resetType: "unreviewed_reset",
+          creditId: null,
+        };
       },
       reason: "inventory_response_invalid_or_unsupported",
       redeemCalls: 0,

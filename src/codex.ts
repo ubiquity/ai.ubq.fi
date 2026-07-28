@@ -26,7 +26,11 @@ import {
   reportCodexBankedResetEvent,
   reportCodexBankedResetMetric,
 } from "./codex_banked_reset.ts";
-import { type CodexUsageResetProvider, unavailableCodexUsageResetProvider } from "./codex_banked_reset_provider.ts";
+import {
+  type CodexUsageResetProvider,
+  createUpstreamCodexUsageResetProvider,
+  unavailableCodexUsageResetProvider,
+} from "./codex_banked_reset_provider.ts";
 import {
   type CodexModelsSnapshot,
   mergeCodexModelPromptCacheCapabilities,
@@ -1299,7 +1303,7 @@ type CodexResponseTimingHooks = Readonly<{
 type CodexAttemptPhase = "initial" | "post_refresh" | "two_second_retry" | "post_retry_refresh" | "post_banked_reset";
 
 type CodexBankedResetOptions = Readonly<{
-  /** Test-only injection seam; normal gateway traffic uses the non-networking provider. */
+  /** Test seam; normal traffic creates an account-bound upstream adapter only for a live reset candidate. */
   config?: CodexBankedResetConfig;
   /** Test seam for proving a live configuration change stops a pending submission. */
   reloadConfig?: () => CodexBankedResetConfig;
@@ -1564,6 +1568,32 @@ export const fetchCodexResponses = async (
     signal: options.signal,
   });
 
+  /**
+   * Bind the reset transport to the freshly fenced credentials that produced
+   * this candidate. Credentials stay in this closure rather than entering the
+   * durable transaction context. Tests inject a provider explicitly and never
+   * reach this transport.
+   */
+  const resetDependenciesForCandidate = (
+    candidate: CodexBankedResetCandidate,
+  ): CodexBankedResetDependencies => {
+    if (configuredBankedReset?.provider) return bankedResetDependencies;
+    try {
+      return {
+        ...bankedResetDependencies,
+        provider: createUpstreamCodexUsageResetProvider({
+          codexBaseUrl: config.codexBaseUrl,
+          accountId: candidate.auth.account_id,
+          accessToken: candidate.auth.access_token,
+          userAgent: codexUserAgent(options.clientVersion),
+          now: bankedResetDependencies.now,
+        }),
+      };
+    } catch {
+      return bankedResetDependencies;
+    }
+  };
+
   const captureBankedResetCandidate = async (
     accountEntry: CodexAuthAccountEntry,
     routing: RoutingAccount,
@@ -1777,7 +1807,7 @@ export const fetchCodexResponses = async (
       if (currentFence === null) continue;
       const reset = await attemptCodexBankedReset(
         resetInput(candidate, currentFence),
-        bankedResetDependencies,
+        resetDependenciesForCandidate(candidate),
       );
       if (reset.kind !== "verified" || !reset.record) {
         if (reset.kind === "skipped" && reset.reason === "account_not_allowlisted") continue;
@@ -1890,7 +1920,7 @@ export const fetchCodexResponses = async (
       if (!candidate) continue;
       const reset = await reconcileCodexBankedReset(
         resetInput(candidate, candidate.routingGeneration),
-        bankedResetDependencies,
+        resetDependenciesForCandidate(candidate),
       );
       if (reset.kind !== "verified" || !reset.record) continue;
       const reconciled = await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {

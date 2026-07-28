@@ -2,18 +2,18 @@
 
 ## Status and operating boundary
 
-Live redemption is deliberately unavailable in this revision. The only shipped production provider is the non-networking
-unavailable provider, so setting the feature flag to `live` cannot make a provider request or consume a reset.
+The pinned `lib/codex` submodule is the provider contract reference. Live mode uses an account-bound adapter only after
+the normal flag, allowlist, cap, KV fence, and healthy-fallback gates pass. Tests inject its transport; no test or this
+implementation run has called a real reset endpoint.
 
-This is intentional. The exact live-mode blocker is both of the following:
+For a configured Codex base, the adapter uses `GET .../rate-limit-reset-credits` and
+`POST .../rate-limit-reset-credits/consume`: `/api/codex/...` for the Codex layout and `/backend-api/wham/...` for the
+ChatGPT layout. It sends Bearer auth, `ChatGPT-Account-ID`, and the Codex user agent. The consume JSON is
+`{ "redeem_request_id": "<durable key>", "credit_id": "<optional opaque id>" }`.
 
-1. There is no reviewed provider contract proving caller-supplied idempotency, retention of that key, lookup by
-   idempotency key after an ambiguous result, and an independent observation that quota was restored.
-2. There is no production adapter implementing such a contract.
-
-HTTP success alone is never verification. Do not infer endpoint paths, request bodies, inventory semantics, receipts, or
-reset types from an inference base URL. A future adapter must be reviewed independently and remain unreachable from
-automated tests.
+Every returned 2xx is a successful HTTP transport response, but a reset is complete only when its documented JSON `code`
+is `reset` or `already_redeemed`. `nothing_to_reset` and `no_credit` are definitive rejections. A non-2xx, empty,
+malformed, or unrecognized 2xx response remains `unknown` and is never automatically re-submitted.
 
 ## Candidate eligibility and routing
 
@@ -63,16 +63,16 @@ CODEX_BANKED_RESET_ENABLED=false
 CODEX_BANKED_RESET_MODE=disabled
 ```
 
-## Provider contract required before activation
+## Provider contract and ambiguity
 
-A future adapter must document endpoint/method/auth/account scope, inventory and reset-type schemas, redemption result
-schemas, caller-supplied idempotency-key retention, lookup by that key after timeout or response loss, the exact meaning
-of each terminal result, an independent proof of restored quota, and whether the reset is account-, subscription-,
-organization-, or workspace-scoped.
+The upstream inventory body is `{ credits, available_count }`; `available_count` is authoritative and the optional
+available `codex_rate_limits` credit ID is sent when present. Omission asks upstream to choose the next eligible credit.
+The response body does not contain a receipt ID, so none is retained.
 
-The runtime contract gate requires positive idempotency retention, lookup by idempotency key, independent verification,
-and at least one reviewed nonempty reset type. Missing or malformed capabilities fail closed before inventory, lookup,
-verification, or redemption. Receipt IDs are retained only when an adapter explicitly declares them non-secret and safe.
+Upstream documents a caller-supplied `redeem_request_id`, same-key idempotent replay, and `already_redeemed`. It does
+not document a retention period or standalone lookup endpoint. Consequently, this gateway treats a parsed terminal
+result as final, but keeps response-loss records as `unknown` and never performs an automatic replay. Operators must
+preserve those records and investigate before any manually authorized same-key reconciliation.
 
 ## Durable transaction and routing repair
 
@@ -83,8 +83,9 @@ The ledger is separate from routing state:
 ```
 
 `claimed` has an owner lease; `submitted` means the provider may have received the request; `unknown` covers any
-possibly-spent ambiguity and can only reconcile using the same deterministic key; `verified` requires independent
-provider verification; `rejected` is terminal for definitive no-inventory, unsupported type, or provider rejection.
+possibly-spent ambiguity and is never automatically re-submitted; `verified` follows a documented `reset` or
+`already_redeemed` result; `rejected` is terminal for definitive no-inventory, unsupported type, `nothing_to_reset`,
+`no_credit`, or provider rejection.
 
 The deterministic identity derives from account hash and canonical observed deadline, never a request ID. It is stable
 across credential refresh; only account, credential, and idempotency hashes are persisted or emitted.
@@ -103,10 +104,10 @@ the normal quota result.
 
 For a `submitted` or `unknown` ledger record, first set the rollback values above. Locate the record by its logged
 account hash and quota generation, preserve the record and its deterministic key, and inspect its owner/fence,
-timestamps, and stable error code. Do not delete it, edit it, inventory-read, or submit a replacement. Once a reviewed
-provider exists, allow only lookup by that same idempotency key followed by independent verification; reconcile the
-routing circuit only after `verified`. If verification cannot prove application, keep the record `unknown` and leave the
-normal quota failure in place.
+timestamps, and stable error code. Do not delete it, edit it, inventory-read, or submit a replacement. The only
+upstream-supported reconciliation is a manually authorized repeat with the same `redeem_request_id`; accept only its
+documented `already_redeemed` or `reset` result, then perform the normal one-time inference retry. Otherwise retain
+`unknown` and leave the normal quota failure in place.
 
 Alert immediately on `codex_reset_unknown`, a `codex_reset_submit_started` event that lacks a terminal state after its
 lease, any `codex_reset_duplicate_prevented` event, a verification failure, or a failed post-reset inference retry. The
@@ -125,12 +126,11 @@ Metrics cover eligible and shadow candidates, submissions, verified and unknown 
 verification latency, estimated spend, and post-reset retry outcome. Raw tokens, auth JSON, provider credentials, and
 raw idempotency keys must never appear in logs or KV.
 
-All current tests use injected fake providers, fake clocks, versionstamped fake KV, and mocked inference transports. No
-test has a provider URL, credential, or live redemption implementation. They cover strict trigger parsing, policy gates,
-leases, CAS/credential fencing, ambiguity recovery, timeouts, crashes, generated state-machine sequences, simultaneous
-requests, and full qualifying-429-to-verified-retry delivery through Responses and Chat in buffered and streamed modes.
+All current tests use injected fake providers or mocked adapter transports, fake clocks, versionstamped fake KV, and
+mocked inference transports. They cover strict trigger parsing, policy gates, leases, CAS/credential fencing, ambiguity
+recovery, timeouts, crashes, generated state-machine sequences, simultaneous requests, and full
+qualifying-429-to-verified-retry delivery through Responses and Chat in buffered and streamed modes.
 
-Do not run a real canary until a reviewed adapter satisfies the contract above, shadow mode has observed real qualifying
-events without false positives, exactly one account is allowlisted with a global limit of one, rollback has been
-rehearsed without a provider call, and an operator can audit the ledger, verification, and one retry. Until then, live
-redemption remains unavailable by design.
+Do not run a real canary without separate authorization. Before one, shadow mode must observe real qualifying events
+without false positives, exactly one account must be allowlisted with a global limit of one, rollback must be rehearsed
+without a provider call, and an operator must be able to audit the ledger and one retry.

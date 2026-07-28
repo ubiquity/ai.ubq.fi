@@ -399,7 +399,7 @@ const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> =>
     },
     readInventory: () => {
       calls.push("inventory");
-      return Promise.resolve({ availableCount: 1, observedAtMs: now, resetType: "codex_usage_limit" });
+      return Promise.resolve({ availableCount: 1, observedAtMs: now, resetType: "codex_usage_limit", creditId: null });
     },
     redeem: () => {
       calls.push("redeem");
@@ -476,7 +476,7 @@ const createUnknownBankedResetFixture = async (): Promise<readonly string[]> => 
     },
     readInventory: () => {
       calls.push("inventory");
-      return Promise.resolve({ availableCount: 1, observedAtMs: now, resetType: "codex_usage_limit" });
+      return Promise.resolve({ availableCount: 1, observedAtMs: now, resetType: "codex_usage_limit", creditId: null });
     },
     redeem: () => {
       calls.push("redeem");
@@ -859,6 +859,7 @@ Deno.test("openai: public handlers wait for verified banked redemption before on
               availableCount: 1,
               observedAtMs: Date.now(),
               resetType: "codex_usage_limit",
+              creditId: null,
             });
           },
           redeem: () => {

@@ -27,11 +27,11 @@
     "kv:validate": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net --allow-read=.kv-migration --allow-write=.kv-migration scripts/kv-migrate.ts validate",
     "kv:incident-v2": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net scripts/kv-migrate.ts incident-v2",
     "kv:validate-http": "deno run --allow-env=DENO_DEPLOY_TOKEN,UOS_AI_TOKEN --allow-net scripts/kv-migrate.ts validate-http",
-    "test": "deno test --env --allow-net=127.0.0.1 --allow-env=VOYAGEAI_API_KEY,YUNWU_API_KEY,YUNWU_SYSTEM_TOKEN,YUNWU_USER_ID,GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID --ignore=tests/failover-stress-http.test.ts && deno task test:stress",
+    "test": "deno test --env --allow-net=127.0.0.1 --allow-env=VOYAGEAI_API_KEY,YUNWU_API_KEY,YUNWU_SYSTEM_TOKEN,YUNWU_USER_ID,GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID --ignore=lib/codex --ignore=tests/failover-stress-http.test.ts && deno task test:stress",
     "test:stress": "deno test --env --unstable-kv --allow-net=127.0.0.1 --allow-env=YUNWU_API_KEY tests/failover-stress-http.test.ts",
     "test:e2e": "deno test --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
-    "fmt": "deno fmt",
-    "lint": "deno lint"
+    "fmt": "deno fmt serve.ts src tests scripts docs",
+    "lint": "deno lint serve.ts src tests scripts"
   },
   "fmt": {
     "lineWidth": 120,

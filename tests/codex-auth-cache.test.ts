@@ -1128,7 +1128,12 @@ const scriptedResetProvider = (
     readInventory: () => {
       calls.push("inventory");
       options.onInventory?.();
-      return Promise.resolve({ availableCount: 1, observedAtMs: fixedStartMs, resetType: "codex_usage_limit" });
+      return Promise.resolve({
+        availableCount: 1,
+        observedAtMs: fixedStartMs,
+        resetType: "codex_usage_limit",
+        creditId: null,
+      });
     },
     redeem: async (input) => {
       calls.push("redeem");
@@ -1206,6 +1211,103 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
     globalThis.fetch = originalFetch;
     Date.now = originalNow;
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("the default upstream banked reset adapter maps a mocked reset outcome and retries once", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const originalCodexBaseUrl = config.codexBaseUrl;
+  const requests: Array<Readonly<{ url: string; method: string; headers: Headers; body: string }>> = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = true;
+  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl =
+    "https://upstream-reset.test/backend-api/codex";
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    requests.push({
+      url: request.url,
+      method: request.method,
+      headers: new Headers(request.headers),
+      body: request.method === "POST" ? await request.text() : "",
+    });
+    switch (requests.length) {
+      case 1:
+        return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        });
+      case 2:
+        return new Response(
+          JSON.stringify({
+            available_count: 1,
+            credits: [{ id: "credit-one", reset_type: "codex_rate_limits", status: "available" }],
+          }),
+          { status: 200 },
+        );
+      case 3:
+        return new Response(JSON.stringify({ code: "reset", windows_reset: 2 }), { status: 299 });
+      case 4:
+        return new Response(JSON.stringify({ id: "response-after-upstream-reset" }), { status: 200 });
+      default:
+        throw new Error(`unexpected request ${request.method} ${request.url}`);
+    }
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "default-upstream-banked-reset" },
+      {
+        clientVersion: "0.145.0",
+        requestId: "default-upstream-banked-reset",
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-default-upstream",
+          hash: () => Promise.resolve("deterministic"),
+        },
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      requests.map((request) => `${request.method} ${request.url}`),
+      [
+        "POST https://upstream-reset.test/backend-api/codex/responses",
+        "GET https://upstream-reset.test/backend-api/wham/rate-limit-reset-credits",
+        "POST https://upstream-reset.test/backend-api/wham/rate-limit-reset-credits/consume",
+        "POST https://upstream-reset.test/backend-api/codex/responses",
+      ],
+    );
+    assert.equal(
+      requests.filter((request) => request.url.endsWith("/backend-api/codex/responses")).length,
+      2,
+      "the original inference is retried exactly once after a successful reset",
+    );
+    for (const request of requests.slice(1, 3)) {
+      assert.equal(request.headers.get("authorization"), `Bearer ${accessToken("one")}`);
+      assert.equal(request.headers.get("chatgpt-account-id"), "account-one");
+      assert.equal(request.headers.get("user-agent"), "codex_cli_rs/0.145.0 (ai.ubq.fi)");
+    }
+    assert.equal(requests[1].headers.has("content-type"), false);
+    assert.equal(requests[2].headers.get("content-type"), "application/json");
+    assert.equal(
+      requests[2].body,
+      JSON.stringify({ redeem_request_id: "uos_ai_codex_reset_v1_deterministic", credit_id: "credit-one" }),
+    );
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = originalDeployFlag;
+    (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl = originalCodexBaseUrl;
   }
 });
 
