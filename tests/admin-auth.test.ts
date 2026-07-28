@@ -669,6 +669,10 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
             display_name: "Codex Auto Review",
             visibility: "hide",
             supported_in_api: true,
+          }, {
+            slug: "codex-internal-evals",
+            visibility: "hide",
+            supported_in_api: false,
           }],
         }),
         {
@@ -706,7 +710,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
 
     assert.equal(response.status, 200);
     const payload = await response.json() as { models?: { count?: number; source?: string } };
-    assert.equal(payload.models?.count, 1);
+    assert.equal(payload.models?.count, 2);
     assert.equal(payload.models?.source, "chatgpt_codex");
     assert.equal(fetchUrls.length, 1);
 
@@ -720,6 +724,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
           max_context_window?: number;
           auto_compact_token_limit?: number | null;
           supported_in_api?: boolean;
+          visibility?: string;
           default_reasoning_level?: string;
           supported_reasoning_levels?: string[];
           reasoning_effort_wire_map?: Record<string, string>;
@@ -728,7 +733,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
       | undefined;
     assert.equal(stored?.source, "chatgpt_codex");
     assert.equal(stored?.client_version, "0.126.0");
-    assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.3-codex-spark"]);
+    assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.3-codex-spark", "codex-auto-review"]);
     assert.equal(stored?.models?.[0]?.supported_in_api, false);
     assert.equal(stored?.models?.[0]?.default_reasoning_level, "high");
     assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, [
@@ -741,6 +746,8 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
       "ultra",
     ]);
     assert.deepEqual(stored?.models?.[0]?.reasoning_effort_wire_map, { ultra: "max" });
+    assert.equal(stored?.models?.[1]?.visibility, "hide");
+    assert.equal(stored?.models?.[1]?.supported_in_api, true);
   } finally {
     globalThis.fetch = originalFetch;
   }

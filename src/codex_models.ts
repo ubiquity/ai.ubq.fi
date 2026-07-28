@@ -37,7 +37,7 @@ export const getCodexModelsSnapshotDefaultModel = (snapshot: CodexModelsSnapshot
 };
 
 const isHiddenCodexModel = (value: Record<string, unknown>): boolean =>
-  getString(value.visibility)?.trim().toLowerCase() === "hide";
+  getString(value.visibility)?.trim().toLowerCase() === "hide" && value.supported_in_api !== true;
 
 const normalizeNonNegativeInteger = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;

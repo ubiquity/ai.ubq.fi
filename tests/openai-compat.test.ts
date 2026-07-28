@@ -932,6 +932,39 @@ Deno.test("openai: models returns stored Codex snapshot without upstream fetch",
   assert.equal(Object.prototype.hasOwnProperty.call(model, "display_name"), false);
 });
 
+Deno.test("openai: models exposes API-supported hidden review models from the snapshot", async () => {
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const previousSnapshot = kvStore.get(snapshotKey);
+  kvStore.set(snapshotKey, {
+    source: "chatgpt_codex",
+    client_version: "0.125.0",
+    updated_at_ms: Date.now(),
+    models: [{ slug: DEFAULT_TEST_MODEL }, {
+      slug: "codex-auto-review",
+      display_name: "Codex Auto Review",
+      visibility: "hide",
+      supported_in_api: true,
+    }],
+  });
+
+  try {
+    const response = await withFetchMock(
+      () => {
+        throw new Error("handleModels should not fetch upstream models");
+      },
+      () => handleModels(),
+    );
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { data?: Array<{ id?: string }> };
+    assert.ok(payload.data?.some((model) => model.id === "codex-auto-review"));
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+    resetRuntimeConfigCacheForTest();
+  }
+});
+
 Deno.test("openai: model capabilities are exposed outside /v1 model objects", async () => {
   const response = await withFetchMock(
     () => {

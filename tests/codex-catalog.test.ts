@@ -588,9 +588,27 @@ Deno.test("codex catalog: only same-or-newer clients update the normalized snaps
       "client_version",
     )!;
     return Promise.resolve(
-      new Response(catalogBody(version), {
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        catalogBody(version, {
+          models: [{
+            slug: `gpt-${version}`,
+            display_name: `Rich ${version}`,
+            supported_reasoning_levels: [{ effort: "high", description: "deep" }],
+          }, {
+            slug: "codex-auto-review",
+            display_name: "Codex Auto Review",
+            visibility: "hide",
+            supported_in_api: true,
+          }, {
+            slug: "codex-internal-evals",
+            visibility: "hide",
+            supported_in_api: false,
+          }],
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
     );
   };
   try {
@@ -601,19 +619,19 @@ Deno.test("codex catalog: only same-or-newer clients update the normalized snaps
     assert.equal((await handleCodexCatalogModels(request("0.201.0"), "0.201.0")).status, 200);
     const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as {
       client_version: string;
-      models: unknown[];
+      models: Array<{ slug: string }>;
     };
     assert.equal(snapshot.client_version, "0.201.0");
-    assert.equal(snapshot.models.length, 1);
+    assert.deepEqual(snapshot.models.map((model) => model.slug), ["gpt-0.201.0", "codex-auto-review"]);
     const runtime = kvStore.get(keyToString(RUNTIME_CONFIG_V2_KEY))?.value as {
       default_model: string;
       default_reasoning_effort: string;
-      codex_models: { client_version: string; models: unknown[] };
+      codex_models: { client_version: string; models: Array<{ slug: string }> };
     };
     assert.equal(runtime.default_model, "gpt-0.201.0");
     assert.equal(runtime.default_reasoning_effort, "medium");
     assert.equal(runtime.codex_models.client_version, "0.201.0");
-    assert.equal(runtime.codex_models.models.length, 1);
+    assert.deepEqual(runtime.codex_models.models.map((model) => model.slug), ["gpt-0.201.0", "codex-auto-review"]);
 
     // The catalog publisher must seed the isolate cache with exactly the
     // compact configuration committed in the same transaction.

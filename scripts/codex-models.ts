@@ -216,7 +216,7 @@ const getNonNegativeInteger = (value: unknown): number | null => {
 };
 
 const isHiddenCodexModel = (value: Record<string, unknown>): boolean =>
-  getString(value.visibility)?.trim().toLowerCase() === "hide";
+  getString(value.visibility)?.trim().toLowerCase() === "hide" && value.supported_in_api !== true;
 
 export const extractCodexModelsFromText = (text: string): ExtractedCodexModels | null => {
   const versionMatch = text.match(/codex_cli_rs\/([0-9]+(?:\.[0-9]+){1,2})/);
