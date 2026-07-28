@@ -128,7 +128,7 @@ const targetKeyParts = (model: string): readonly string[] => [
   "codex_chatgpt",
   "chatgpt_codex",
   "codex_account_pool",
-  "responses_explicit_input_text_keyed_30m",
+  "responses_implicit_input_text_keyed",
   model,
 ];
 const evidenceKeyFor = (model: string): Deno.KvKey => [
@@ -149,7 +149,7 @@ const leaseKey = (model: string): Deno.KvKey => [
   "codex_chatgpt",
   "chatgpt_codex",
   "codex_account_pool",
-  "responses_explicit_input_text_keyed_30m",
+  "responses_implicit_input_text_keyed",
   model,
 ];
 const campaignLeaseKey: Deno.KvKey = [
@@ -157,7 +157,7 @@ const campaignLeaseKey: Deno.KvKey = [
   "campaign",
   "codex_chatgpt",
   "chatgpt_codex",
-  "responses_explicit_input_text_keyed_30m",
+  "responses_implicit_input_text_keyed",
 ];
 
 const makeAuth = (label: string) => ({
@@ -192,9 +192,6 @@ const promotionBinding = async () => ({
 
 const cacheControls = {
   key: true,
-  explicit_breakpoints: true,
-  modes: ["explicit"],
-  ttls: ["30m"],
   expected_usage_fields: ["cached_tokens", "cache_write_tokens"],
   source: "catalog",
   verified_at_ms: 1_000,
@@ -273,7 +270,7 @@ const scopeBaselineFor = async (model = MODEL) => {
       telemetry_provider: "chatgpt_codex" as const,
       topology_kind: "codex_account_pool" as const,
       model,
-      probe_profile: "responses_explicit_input_text_keyed_30m" as const,
+      probe_profile: "responses_implicit_input_text_keyed" as const,
       capability_fingerprint: target.capability_fingerprint,
       inventory_fingerprint: inventory.inventory_fingerprint,
       catalog_versionstamp: target.catalog_versionstamp,
@@ -362,7 +359,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     assert.equal(second.completed_cycles, 2);
     assert.equal(third.status, "completed");
     assert.deepEqual(third.scope, {
-      probe_profile: "responses_explicit_input_text_keyed_30m",
+      probe_profile: "responses_implicit_input_text_keyed",
       account_slots: "account_scoped",
       token_refresh: "preserved",
       conversation_id: "independent",
@@ -386,13 +383,16 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
         "account-one",
       ]);
       assert.equal(rows.every((row) => row.body === rows[0]?.body), true);
+      assert.equal(
+        new Set(rows.map((row) => (JSON.parse(row.body) as Record<string, unknown>).prompt_cache_key)).size,
+        1,
+      );
       const body = JSON.parse(rows[0]?.body ?? "") as Record<string, unknown>;
       assert.deepEqual(Object.keys(body).sort(), [
         "input",
         "max_output_tokens",
         "model",
         "prompt_cache_key",
-        "prompt_cache_options",
         "reasoning",
         "store",
         "stream",
@@ -402,8 +402,8 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
       assert.equal(body.stream, true);
       assert.equal(body.max_output_tokens, 16);
       assert.deepEqual(body.reasoning, { effort: "none" });
-      assert.deepEqual(body.prompt_cache_options, { mode: "explicit", ttl: "30m" });
-      assert.match(String(body.prompt_cache_key), /^uos-cache-scope-v3-[0-9a-f-]{36}$/);
+      assert.equal("prompt_cache_options" in body, false);
+      assert.match(String(body.prompt_cache_key), /^uos-cache-scope-v4-[0-9a-f-]{36}$/);
       assert.equal("cache_affinity" in body, false);
       const input = body.input as Array<Record<string, unknown>>;
       assert.equal(input.length, 2);
@@ -411,8 +411,10 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
       assert.deepEqual(input[0]?.role, "developer");
       const prefix = input[0]?.content as Array<Record<string, unknown>>;
       assert.deepEqual(prefix[0]?.type, "input_text");
-      assert.deepEqual(prefix[0]?.prompt_cache_breakpoint, { mode: "explicit" });
-      assert.match(String(prefix[0]?.text), /^cache(?: cache){2,}\n\ncache-scope-cycle:/);
+      assert.equal("prompt_cache_breakpoint" in (prefix[0] ?? {}), false);
+      const [stablePrefix, cycleSuffix] = String(prefix[0]?.text).split("\n\n");
+      assert.equal(stablePrefix.split(" ").length, 2_560);
+      assert.match(cycleSuffix ?? "", /^cache-scope-cycle:/);
       const request = input[1]?.content as Array<Record<string, unknown>>;
       assert.deepEqual(input[1]?.role, "user");
       assert.deepEqual(request, [{ type: "input_text", text: "Reply with exactly: cache scope experiment." }]);
@@ -429,7 +431,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     const provider = snapshot.models?.[0]?.prompt_cache?.providers?.[0];
     assert.equal(provider?.id, "codex_chatgpt");
     assert.deepEqual(provider?.scope, {
-      probe_profile: "responses_explicit_input_text_keyed_30m",
+      probe_profile: "responses_implicit_input_text_keyed",
       account_slots: "account_scoped",
       token_refresh: "preserved",
       conversation_id: "independent",
@@ -492,7 +494,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     }
     const serializedEvidence = JSON.stringify(evidence);
     assert.equal(serializedEvidence.includes("account-one"), false);
-    assert.equal(serializedEvidence.includes("uos-cache-scope-v2"), false);
+    assert.equal(serializedEvidence.includes("uos-cache-scope-v4"), false);
     assert.equal(serializedEvidence.includes("cache-scope-cycle"), false);
     assert.equal(serializedEvidence.includes(requests[0]?.conversation ?? "missing-conversation"), false);
   } finally {
@@ -613,6 +615,45 @@ Deno.test("a provider campaign lease blocks a sibling target between cycles and 
     assert.equal(secondA.completed_cycles, 2);
     assert.equal(inferenceCalls, 20);
     assert.equal(refreshes, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetCodexAuthCacheForTest();
+    resetRuntimeConfigCacheForTest();
+  }
+});
+
+Deno.test("a v3 campaign lease cannot block the v4 plain-key experiment", async () => {
+  seed();
+  const legacyCampaignKey: Deno.KvKey = [
+    "uos_ai",
+    "prompt_cache_scope_experiment",
+    "v3",
+    "campaign",
+    "codex_chatgpt",
+    "chatgpt_codex",
+    "responses_implicit_input_text_keyed",
+  ];
+  kv.put(legacyCampaignKey, {
+    owner: "legacy-owner",
+    target_id: "legacy-target",
+    inventory_fingerprint: "legacy-inventory",
+    lease_until_ms: Date.now() + 60_000,
+  });
+  const originalFetch = globalThis.fetch;
+  let inferenceCalls = 0;
+  globalThis.fetch = (input) => {
+    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+    if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
+    inferenceCalls += 1;
+    return Promise.resolve(sseCompleted(0, 0));
+  };
+
+  try {
+    const result = await runExperiment();
+    assert.equal(result.status, "inconclusive");
+    assert.equal(result.inconclusive_reason, "invalid_cache_signal");
+    assert.equal(inferenceCalls, 1);
+    assert.ok(kv.values.has(encodeKey(legacyCampaignKey)));
   } finally {
     globalThis.fetch = originalFetch;
     resetCodexAuthCacheForTest();
@@ -862,7 +903,7 @@ Deno.test("semantically inconsistent ready-to-promote state cannot publish a sco
   const baseline = await scopeBaselineFor();
   const startedAtMs = Date.now();
   const observation = {
-    probe_profile: "responses_explicit_input_text_keyed_30m",
+    probe_profile: "responses_implicit_input_text_keyed",
     account_slots: "account_scoped",
     token_refresh: "preserved",
     conversation_id: "independent",
@@ -1482,7 +1523,7 @@ Deno.test("scope promotion rejects unknown dimensions and a renamed target model
   };
   kv.put(lease.key, { owner: lease.owner, lease_until_ms: Date.now() + 60_000 });
   const common = {
-    probe_profile: "responses_explicit_input_text_keyed_30m" as const,
+    probe_profile: "responses_implicit_input_text_keyed" as const,
     effective_model: MODEL,
     reproducible_cycles: 3,
     source: "live_probe" as const,
@@ -1581,7 +1622,7 @@ Deno.test("scope promotion publishes a non-default target and preserves the runt
     authPoolVersionstamp: await authPoolVersionstamp(),
     ...(await promotionBinding()),
     scope: {
-      probe_profile: "responses_explicit_input_text_keyed_30m",
+      probe_profile: "responses_implicit_input_text_keyed",
       account_slots: "account_scoped",
       token_refresh: "preserved",
       conversation_id: "independent",
@@ -1624,7 +1665,7 @@ Deno.test("successful scope promotion atomically extends its same-owner lease", 
     authPoolVersionstamp: await authPoolVersionstamp(),
     ...(await promotionBinding()),
     scope: {
-      probe_profile: "responses_explicit_input_text_keyed_30m",
+      probe_profile: "responses_implicit_input_text_keyed",
       account_slots: "account_scoped",
       token_refresh: "preserved",
       conversation_id: "independent",
@@ -1681,7 +1722,7 @@ Deno.test("scope promotion fences auth-pool drift before catalog publication", a
     authPoolVersionstamp: expectedAuthPoolVersionstamp,
     ...(await promotionBinding()),
     scope: {
-      probe_profile: "responses_explicit_input_text_keyed_30m",
+      probe_profile: "responses_implicit_input_text_keyed",
       account_slots: "account_scoped",
       token_refresh: "preserved",
       conversation_id: "independent",

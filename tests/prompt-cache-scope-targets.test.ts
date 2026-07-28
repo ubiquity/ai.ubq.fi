@@ -9,9 +9,6 @@ const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
 
 const qualifiedControls = {
   key: true,
-  explicit_breakpoints: true,
-  modes: ["explicit"],
-  ttls: ["30m"],
   expected_usage_fields: ["cached_tokens", "cache_write_tokens"],
   source: "catalog",
   verified_at_ms: 1,
@@ -152,10 +149,14 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
       makeModel("qualified"),
       makeModel("unqualified", {
         key: true,
-        explicit_breakpoints: true,
-        modes: ["explicit"],
-        ttls: ["30m"],
         expected_usage_fields: ["cached_tokens"],
+        source: "catalog",
+        verified_at_ms: 1,
+      }),
+      makeModel("implicit-disabled", {
+        key: true,
+        implicit: false,
+        expected_usage_fields: ["cached_tokens", "cache_write_tokens"],
         source: "catalog",
         verified_at_ms: 1,
       }),
@@ -163,11 +164,14 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
   });
   const qualified = inventory.targets.find((target) => target.model === "qualified");
   const unqualified = inventory.targets.find((target) => target.model === "unqualified");
+  const implicitDisabled = inventory.targets.find((target) => target.model === "implicit-disabled");
 
   assert.equal(qualified?.codex_cache_qualification, "qualified");
   assert.deepEqual(qualified?.probeability, { status: "probeable", adapter: "codex_two_slot" });
   assert.equal(unqualified?.codex_cache_qualification, "unqualified");
   assert.deepEqual(unqualified?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
+  assert.equal(implicitDisabled?.codex_cache_qualification, "unqualified");
+  assert.deepEqual(implicitDisabled?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
 });
 
 Deno.test("an authoritative Yunwu roster creates only catalog intersections and reports the rest", async () => {
@@ -232,7 +236,7 @@ Deno.test("published scope evidence does not change the dispatch capability or i
         id: "codex_chatgpt",
         controls: qualifiedControls,
         scope: {
-          probe_profile: "responses_explicit_input_text_keyed_30m",
+          probe_profile: "responses_implicit_input_text_keyed",
           account_slots: "account_scoped",
           token_refresh: "preserved",
           conversation_id: "independent",

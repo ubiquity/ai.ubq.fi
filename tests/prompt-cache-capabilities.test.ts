@@ -34,7 +34,7 @@ const promptCacheEvidence = {
         verified_at_ms: 1_001,
       },
       scope: {
-        probe_profile: "responses_explicit_input_text_keyed_30m",
+        probe_profile: "responses_implicit_input_text_keyed",
         account_slots: "unknown",
         token_refresh: "unknown",
         conversation_id: "independent",
@@ -134,7 +134,7 @@ Deno.test("prompt-cache scope requires three reproducible cycles before publicat
     providers: [{
       id: "codex_chatgpt",
       scope: {
-        probe_profile: "responses_explicit_input_text_keyed_30m",
+        probe_profile: "responses_implicit_input_text_keyed",
         account_slots: "shared",
         token_refresh: "preserved",
         conversation_id: "independent",
@@ -187,7 +187,7 @@ Deno.test("prompt-cache scope requires three reproducible cycles before publicat
       ...verifiedScope.providers[0],
       scope: {
         ...verifiedScope.providers[0].scope,
-        probe_profile: "responses_implicit_input_text_keyed_30m",
+        probe_profile: "responses_explicit_input_text_keyed_30m",
       },
     }],
   };

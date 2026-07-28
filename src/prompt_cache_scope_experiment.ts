@@ -31,10 +31,10 @@ import type { ResponseInputItem } from "./types.ts";
 export const PROMPT_CACHE_SCOPE_EXPERIMENT_PROVIDER = CODEX_CHATGPT_PROMPT_CACHE_PROVIDER;
 const CODEX_CHATGPT_PROMPT_CACHE_TELEMETRY_PROVIDER: PromptCacheTelemetryProvider = "chatgpt_codex";
 /**
- * v3 is a hard cutover from the singleton/default-model experiment state.
- * Every durable key below includes the fixed probe profile and exact target.
+ * v4 is a hard cutover from the explicit-control request shape. Every durable
+ * key below includes the fixed probe profile and exact target.
  */
-export const PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX = ["uos_ai", "prompt_cache_scope_experiment", "v3"] as const;
+export const PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX = ["uos_ai", "prompt_cache_scope_experiment", "v4"] as const;
 export const PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES = 3;
 export const PROMPT_CACHE_SCOPE_EXPERIMENT_SAMPLES_PER_CYCLE = 10;
 
@@ -438,7 +438,6 @@ const buildExperimentRequest = (model: string, cycleId: string, cacheKey: string
       content: [{
         type: "input_text",
         text: `${staticPrefix}\n\ncache-scope-cycle:${cycleId}`,
-        prompt_cache_breakpoint: { mode: "explicit" },
       }],
     },
     {
@@ -455,7 +454,6 @@ const buildExperimentRequest = (model: string, cycleId: string, cacheKey: string
     max_output_tokens: 16,
     reasoning: { effort: "none" },
     prompt_cache_key: cacheKey,
-    prompt_cache_options: { mode: "explicit", ttl: "30m" },
   };
 };
 
@@ -1283,7 +1281,7 @@ const runCycle = async (
   const body = buildExperimentRequest(
     state.target.model,
     crypto.randomUUID(),
-    `uos-cache-scope-v3-${crypto.randomUUID()}`,
+    `uos-cache-scope-v4-${crypto.randomUUID()}`,
   );
   const expectedBody = JSON.stringify(body);
   const conversationA = crypto.randomUUID();

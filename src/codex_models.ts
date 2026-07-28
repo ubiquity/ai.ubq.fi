@@ -17,11 +17,11 @@ export type PromptCacheTokenRefresh = "preserved" | "changed" | "unknown";
 export type PromptCacheConversationId = "independent" | "scoped" | "unknown";
 
 /**
- * Scope evidence is valid only for the fixed experiment request shape. Keep
- * this literal immutable so an explicit Responses observation cannot be read
- * as implicit-mode or provider-wide evidence.
+ * Scope evidence is valid only for the fixed implicit Responses request shape.
+ * Keep this literal immutable so a plain-key observation cannot be read as
+ * explicit-mode or provider-wide evidence.
  */
-export const PROMPT_CACHE_SCOPE_PROBE_PROFILE = "responses_explicit_input_text_keyed_30m" as const;
+export const PROMPT_CACHE_SCOPE_PROBE_PROFILE = "responses_implicit_input_text_keyed" as const;
 export type PromptCacheScopeProbeProfile = typeof PROMPT_CACHE_SCOPE_PROBE_PROFILE;
 
 /** The capability-catalog identity for the ChatGPT Codex transport. */
@@ -364,7 +364,7 @@ export const getCodexModelPromptCacheProvider = (
   return promptCache.providers.find((provider) => provider.id === providerId) ?? null;
 };
 
-/** Exact controls required before the fixed live scope matrix may dispatch. */
+/** Exact controls required before the fixed plain-key scope matrix may dispatch. */
 export const isCodexModelPromptCacheScopeExperimentEligible = (
   snapshot: CodexModelsSnapshot,
   slug: string,
@@ -372,9 +372,7 @@ export const isCodexModelPromptCacheScopeExperimentEligible = (
   const controls = getCodexModelPromptCacheProvider(snapshot, slug, CODEX_CHATGPT_PROMPT_CACHE_PROVIDER)?.controls;
   return Boolean(
     controls?.key === true &&
-      controls.explicit_breakpoints === true &&
-      controls.modes?.includes("explicit") &&
-      controls.ttls?.includes("30m") &&
+      controls.implicit !== false &&
       controls.expected_usage_fields?.includes("cached_tokens") &&
       controls.expected_usage_fields?.includes("cache_write_tokens"),
   );
