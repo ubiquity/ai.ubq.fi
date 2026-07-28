@@ -34,7 +34,7 @@ const promptCacheEvidence = {
         verified_at_ms: 1_001,
       },
       scope: {
-        probe_profile: "responses_implicit_input_text_keyed",
+        probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
         account_slots: "unknown",
         token_refresh: "unknown",
         conversation_id: "independent",
@@ -134,7 +134,7 @@ Deno.test("prompt-cache scope requires three reproducible cycles before publicat
     providers: [{
       id: "codex_chatgpt",
       scope: {
-        probe_profile: "responses_implicit_input_text_keyed",
+        probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
         account_slots: "shared",
         token_refresh: "preserved",
         conversation_id: "independent",
@@ -192,6 +192,18 @@ Deno.test("prompt-cache scope requires three reproducible cycles before publicat
     }],
   };
   assert.equal(normalizePromptCacheCapabilities(wrongProfile), null);
+
+  const priorExperimentDefinition = {
+    ...verifiedScope,
+    providers: [{
+      ...verifiedScope.providers[0],
+      scope: {
+        ...verifiedScope.providers[0].scope,
+        probe_profile: "responses_implicit_input_text_keyed",
+      },
+    }],
+  };
+  assert.equal(normalizePromptCacheCapabilities(priorExperimentDefinition), null);
 });
 
 Deno.test("catalog prompt-cache merges retain same-slug provider evidence without cross-provider collapse", () => {

@@ -17,11 +17,12 @@ export type PromptCacheTokenRefresh = "preserved" | "changed" | "unknown";
 export type PromptCacheConversationId = "independent" | "scoped" | "unknown";
 
 /**
- * Scope evidence is valid only for the fixed implicit Responses request shape.
- * Keep this literal immutable so a plain-key observation cannot be read as
- * explicit-mode or provider-wide evidence.
+ * Scope evidence is valid only for this fixed v5 implicit Responses request
+ * shape. Keep this literal immutable so an earlier experiment definition,
+ * plain-key observation, explicit-mode request, or provider-wide result cannot
+ * be read as current scope evidence.
  */
-export const PROMPT_CACHE_SCOPE_PROBE_PROFILE = "responses_implicit_input_text_keyed" as const;
+export const PROMPT_CACHE_SCOPE_PROBE_PROFILE = "responses_implicit_input_text_keyed_cycle_isolated_v5" as const;
 export type PromptCacheScopeProbeProfile = typeof PROMPT_CACHE_SCOPE_PROBE_PROFILE;
 
 /** The capability-catalog identity for the ChatGPT Codex transport. */

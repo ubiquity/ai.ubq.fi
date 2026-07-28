@@ -721,7 +721,7 @@ Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-c
     providers: [{
       id: "codex_chatgpt",
       scope: {
-        probe_profile: "responses_implicit_input_text_keyed",
+        probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
         account_slots: "unknown",
         token_refresh: "preserved",
         conversation_id: "independent",

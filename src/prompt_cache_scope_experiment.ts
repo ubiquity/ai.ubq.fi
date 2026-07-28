@@ -35,10 +35,11 @@ import type { ResponseInputItem } from "./types.ts";
 export const PROMPT_CACHE_SCOPE_EXPERIMENT_PROVIDER = CODEX_CHATGPT_PROMPT_CACHE_PROVIDER;
 const CODEX_CHATGPT_PROMPT_CACHE_TELEMETRY_PROVIDER: PromptCacheTelemetryProvider = "chatgpt_codex";
 /**
- * v4 is a hard cutover from the explicit-control request shape. Every durable
- * key below includes the fixed probe profile and exact target.
+ * v5 is a hard cutover from the prior cycle shape. This namespace is the
+ * durable experiment-definition fence; every key also includes the fixed
+ * probe profile and exact target.
  */
-export const PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX = ["uos_ai", "prompt_cache_scope_experiment", "v4"] as const;
+export const PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX = ["uos_ai", "prompt_cache_scope_experiment", "v5"] as const;
 export const PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES = 3;
 export const PROMPT_CACHE_SCOPE_EXPERIMENT_SAMPLES_PER_CYCLE = 10;
 
@@ -60,6 +61,7 @@ const CACHE_SCOPE_STEP_NAMES = [
   "slot_1_original_conversation_recheck",
 ] as const;
 const CACHE_SCOPE_EXPECTED_SLOTS = [1, 1, 2, 2, 1, 1, 1, 1, 1, 1] as const;
+const CACHE_SCOPE_DISCRIMINATOR_INDEXES = new Set([2, 5, 7]);
 
 /**
  * Test-only dependency injection. The admin route calls the assertion without
@@ -82,6 +84,18 @@ export type PromptCacheScopeExperimentTelemetryBaseline = Readonly<{
 
 type CacheScopeStepName = typeof CACHE_SCOPE_STEP_NAMES[number];
 type CacheSignal = "read" | "write";
+const CACHE_SCOPE_EXPECTED_SIGNALS: readonly (CacheSignal | null)[] = [
+  "write",
+  "read",
+  null,
+  "read",
+  "read",
+  null,
+  "read",
+  null,
+  "read",
+  "read",
+];
 type InconclusiveReason =
   | "auth_pool_drift"
   | "capability_changed"
@@ -432,16 +446,20 @@ const cancelResponse = (response: Response): void => {
   }
 };
 
+const CACHE_SCOPE_MIN_REUSABLE_TOKENS = 2_000;
 const staticPrefix = Array.from({ length: 2_560 }, () => "cache").join(" ");
 
 const buildExperimentRequest = (model: string, cycleId: string, cacheKey: string): Record<string, unknown> => {
+  // Cache lookup is prefix-based. Keep this nonce stable for all ten rows in a
+  // cycle but before the reusable material, so no prior cycle can satisfy its
+  // initial cacheable prefix.
   const input: ResponseInputItem[] = [
     {
       type: "message",
       role: "developer",
       content: [{
         type: "input_text",
-        text: `${staticPrefix}\n\ncache-scope-cycle:${cycleId}`,
+        text: `cache-scope-cycle:${cycleId}\n\n${staticPrefix}`,
       }],
     },
     {
@@ -493,7 +511,30 @@ const sameUsage = (left: NormalizedUsage, right: NormalizedUsage): boolean =>
   left.output_tokens === right.output_tokens &&
   left.total_tokens === right.total_tokens;
 
+const isPrefixScaleCounter = (tokens: number, inputTokens: number): boolean =>
+  tokens === 0 || (tokens >= CACHE_SCOPE_MIN_REUSABLE_TOKENS && tokens <= inputTokens);
+
+const hasMixedPrefixScaleCacheSignals = (usage: NormalizedUsage): boolean =>
+  isPrefixScaleCounter(usage.cached_tokens, usage.input_tokens) &&
+  isPrefixScaleCounter(usage.cache_write_tokens, usage.input_tokens) &&
+  usage.cached_tokens > 0 && usage.cache_write_tokens > 0;
+
+/**
+ * The warm write is the cycle's observed counter for the server-owned prefix.
+ * Every later non-zero counter must match it exactly before it can carry scope
+ * evidence; a merely prefix-scale counter could describe another breakpoint.
+ */
+const matchesCycleReusableCounter = (usage: NormalizedUsage, reusableTokens: number): boolean =>
+  (usage.cached_tokens === 0 || usage.cached_tokens === reusableTokens) &&
+  (usage.cache_write_tokens === 0 || usage.cache_write_tokens === reusableTokens);
+
 const cacheSignal = (usage: NormalizedUsage): CacheSignal | null => {
+  // The probe has a fixed ~2,560-token reusable prefix. A smaller counter can
+  // describe unrelated transient cache activity, not the tested prefix.
+  if (
+    !isPrefixScaleCounter(usage.cached_tokens, usage.input_tokens) ||
+    !isPrefixScaleCounter(usage.cache_write_tokens, usage.input_tokens)
+  ) return null;
   // OpenAI reports cache reads and writes as independent dimensions. A request
   // can read an earlier matching breakpoint while also writing a later one, so
   // a positive cached_tokens value is still conclusive cache-read evidence.
@@ -557,7 +598,7 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
       total_tokens: normalized.totalTokens,
     };
     if (!sameUsage(raw, usage)) return { status: "inconclusive", reason: "incomplete_telemetry" };
-    if (usage.input_tokens < 2_000 || usage.input_tokens > 4_000) {
+    if (usage.input_tokens < CACHE_SCOPE_MIN_REUSABLE_TOKENS || usage.input_tokens > 4_000) {
       return { status: "inconclusive", reason: "invalid_input_size" };
     }
     const signalValue = cacheSignal(usage);
@@ -600,19 +641,23 @@ const classifyCycle = (
     samples.some((sample, index) => sample.slot !== CACHE_SCOPE_EXPECTED_SLOTS[index]) ||
     samples.some((sample) => sample.usage.input_tokens !== samples[0]?.usage.input_tokens)
   ) return null;
-  const expected: Array<CacheSignal | null> = [
-    "write",
-    "read",
-    null,
-    "read",
-    "read",
-    null,
-    "read",
-    null,
-    "read",
-    "read",
-  ];
-  if (signals.some((signal, index) => expected[index] !== null && signal !== expected[index])) return null;
+  const reusableTokens = samples[0]?.usage.cache_write_tokens;
+  if (
+    reusableTokens === undefined || reusableTokens === 0 ||
+    samples.some((sample) => !matchesCycleReusableCounter(sample.usage, reusableTokens))
+  ) return null;
+  // A simultaneous read/write cannot attribute the tested prefix to either
+  // side of a discriminator, so it must never authorize a concrete scope.
+  if (
+    samples.some((sample, index) =>
+      CACHE_SCOPE_DISCRIMINATOR_INDEXES.has(index) && hasMixedPrefixScaleCacheSignals(sample.usage)
+    )
+  ) return null;
+  if (
+    signals.some((signal, index) =>
+      CACHE_SCOPE_EXPECTED_SIGNALS[index] !== null && signal !== CACHE_SCOPE_EXPECTED_SIGNALS[index]
+    )
+  ) return null;
   const accountSlots = signals[2] === "read" ? "shared" : signals[2] === "write" ? "account_scoped" : null;
   const tokenRefresh = signals[5] === "read" ? "preserved" : signals[5] === "write" ? "changed" : null;
   const conversationId = signals[7] === "read" ? "independent" : signals[7] === "write" ? "scoped" : null;
@@ -1313,7 +1358,7 @@ const runCycle = async (
   const body = buildExperimentRequest(
     state.target.model,
     crypto.randomUUID(),
-    `uos-cache-scope-v4-${crypto.randomUUID()}`,
+    `uos-cache-scope-v5-${crypto.randomUUID()}`,
   );
   const expectedBody = JSON.stringify(body);
   const conversationA = crypto.randomUUID();
@@ -1387,6 +1432,22 @@ const runCycle = async (
       sampleSignal,
     );
     if (parsed.status === "inconclusive") return inconclusive(parsed.reason);
+    const expectedSignal = CACHE_SCOPE_EXPECTED_SIGNALS[index] ?? null;
+    if (expectedSignal !== null && parsed.signal !== expectedSignal) return inconclusive("invalid_cache_signal");
+    const reusableTokens = samples[0]?.usage.cache_write_tokens;
+    if (
+      index > 0 && (reusableTokens === undefined || !matchesCycleReusableCounter(parsed.sample.usage, reusableTokens))
+    ) {
+      return inconclusive("invalid_cache_signal");
+    }
+    if (
+      CACHE_SCOPE_DISCRIMINATOR_INDEXES.has(index) &&
+      hasMixedPrefixScaleCacheSignals(parsed.sample.usage)
+    ) {
+      // Stop before another paid request: the mixed tuple cannot identify the
+      // side of this discriminator that supplied the reusable prefix.
+      return inconclusive("invalid_cache_signal");
+    }
     samples.push({ step: CACHE_SCOPE_STEP_NAMES[index]!, ...parsed.sample });
     signals.push(parsed.signal);
   }

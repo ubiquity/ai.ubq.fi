@@ -1665,7 +1665,7 @@ Deno.test("openai: prompt-cache capability records are UOS-only and keep provide
           verified_at_ms: 2_000,
         },
         scope: {
-          probe_profile: "responses_implicit_input_text_keyed",
+          probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
           account_slots: "shared",
           token_refresh: "preserved",
           conversation_id: "independent",
