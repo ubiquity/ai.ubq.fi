@@ -56,14 +56,14 @@ Deno.test("Stage 0 cache telemetry analyzer groups completed inference and prese
   assert.equal(report.completed_inference, 4);
   assert.deepEqual(report.completed_status_totals, { "200": 3, "201": 1 });
   assert.deepEqual(report.usage_telemetry_status_totals, { partial: 1, reported: 3 });
-  assert.deepEqual(report.cache_read_input_tokens, {
+  assert.deepEqual(report.observed_completed_cache_read_input_tokens, {
     sum_tokens: 87,
     observed_events: 3,
     null_events: 1,
     zero_events: 1,
     positive_events: 2,
   });
-  assert.deepEqual(report.cache_write_input_tokens, {
+  assert.deepEqual(report.observed_completed_cache_write_input_tokens, {
     sum_tokens: 100,
     observed_events: 3,
     null_events: 1,
@@ -98,12 +98,31 @@ Deno.test("Stage 0 cache telemetry analyzer applies aggregate, observed-cohort, 
   assert.equal(aggregateReport.gates.stage0_eligibility.status, "not_evaluated");
   assert.equal(aggregateReport.cohorts[0]?.completed_1k_gate.minimum_completed, STAGE0_COHORT_MIN_COMPLETED);
 
+  const belowAggregateReport = analyzeStage0CacheTelemetryLines(
+    aggregateLines.slice(0, STAGE0_AGGREGATE_MIN_COMPLETED - 1),
+  );
+  assert.equal(belowAggregateReport.gates.aggregate_completed_10k.passed, false);
+
+  const belowCohortReport = analyzeStage0CacheTelemetryLines(
+    aggregateLines.slice(0, STAGE0_COHORT_MIN_COMPLETED - 1),
+  );
+  assert.equal(belowCohortReport.cohorts[0]?.completed_1k_gate.passed, false);
+  const qualifyingCohortReport = analyzeStage0CacheTelemetryLines(
+    aggregateLines.slice(0, STAGE0_COHORT_MIN_COMPLETED),
+  );
+  assert.equal(qualifyingCohortReport.cohorts[0]?.completed_1k_gate.passed, true);
+
   const coverageReport = analyzeStage0CacheTelemetryLines([
     ...Array.from({ length: 199 }, () => terminalLine()),
-    terminalLine({ cached_input_tokens: null, usage_telemetry_status: "partial" }),
+    terminalLine({ model: "gpt-no-telemetry", cached_input_tokens: null, usage_telemetry_status: "partial" }),
   ]);
   assert.equal(coverageReport.reported_over_completed.ratio, 0.995);
   assert.equal(coverageReport.gates.reported_coverage_99_5.observed_all_completed_passed, true);
+  assert.equal(coverageReport.gates.reported_coverage_99_5.all_observed_cohorts_passed, false);
+  assert.equal(
+    coverageReport.cohorts.find((cohort) => cohort.model === "gpt-no-telemetry")?.reported_coverage_99_5_gate.passed,
+    false,
+  );
 
   const belowCoverageReport = analyzeStage0CacheTelemetryLines([
     ...Array.from({ length: 198 }, () => terminalLine()),
@@ -154,14 +173,26 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
     () => analyzeStage0CacheTelemetryLines([terminalLine({ usage_observed: false })]),
     /inconsistent usage_observed/,
   );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ cached_input_tokens: "0" })]),
+    /invalid cached_input_tokens field/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ cache_write_input_tokens: -1 })]),
+    /invalid cache_write_input_tokens field/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([JSON.stringify({ message: terminalLine() })]),
+    /must use raw log text or a string body envelope/,
+  );
 
   const duplicateRequestId = `req-${secret}`;
+  const duplicateLines = Array.from(
+    { length: STAGE0_AGGREGATE_MIN_COMPLETED },
+    () => terminalLine({ request_id: duplicateRequestId }),
+  );
   assert.throws(
-    () =>
-      analyzeStage0CacheTelemetryLines([
-        terminalLine({ request_id: duplicateRequestId }),
-        terminalLine({ request_id: duplicateRequestId }),
-      ]),
+    () => analyzeStage0CacheTelemetryLines(duplicateLines),
     (error: unknown) => {
       assert.ok(error instanceof Stage0CacheTelemetryGateError);
       assert.match(error.message, /duplicate request_terminal event/);
