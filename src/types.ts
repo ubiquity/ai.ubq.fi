@@ -10,6 +10,42 @@ export type CodexAuthPoolState = Readonly<{
   updated_at_ms: number;
 }>;
 
+/**
+ * A durable audit record for a banked Codex reset. This is intentionally
+ * separate from account-routing state: routing answers whether an account is
+ * currently usable, while this record fences an expensive external mutation.
+ * It never contains an access token, refresh token, raw account identifier,
+ * or raw provider idempotency key.
+ */
+export type CodexResetRedemptionState = "claimed" | "submitted" | "unknown" | "verified" | "rejected";
+
+export type CodexResetRedemptionRecord = Readonly<{
+  v: 1;
+  account_id_hash: string;
+  credential_version: string;
+  quota_generation: string;
+  routing_generation: number;
+  idempotency_key_hash: string;
+  state: CodexResetRedemptionState;
+  owner_token: string;
+  fence: number;
+  lease_expires_at_ms: number;
+  provider_receipt_id: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  submitted_at_ms: number | null;
+  verified_at_ms: number | null;
+  last_error_code: string | null;
+}>;
+
+/** A UTC-day budget consumed when a new logical reset transaction is claimed. */
+export type CodexResetGlobalDailyRecord = Readonly<{
+  v: 1;
+  day: string;
+  claimed_count: number;
+  updated_at_ms: number;
+}>;
+
 export type ApiKeyRecord = Readonly<{
   id: string;
   name: string;
