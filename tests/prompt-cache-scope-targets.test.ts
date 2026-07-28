@@ -160,11 +160,19 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
         source: "catalog",
         verified_at_ms: 1,
       }),
+      makeModel("explicit-only", {
+        key: true,
+        modes: ["explicit"],
+        expected_usage_fields: ["cached_tokens", "cache_write_tokens"],
+        source: "catalog",
+        verified_at_ms: 1,
+      }),
     ]),
   });
   const qualified = inventory.targets.find((target) => target.model === "qualified");
   const unqualified = inventory.targets.find((target) => target.model === "unqualified");
   const implicitDisabled = inventory.targets.find((target) => target.model === "implicit-disabled");
+  const explicitOnly = inventory.targets.find((target) => target.model === "explicit-only");
 
   assert.equal(qualified?.codex_cache_qualification, "qualified");
   assert.deepEqual(qualified?.probeability, { status: "probeable", adapter: "codex_two_slot" });
@@ -172,6 +180,8 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
   assert.deepEqual(unqualified?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
   assert.equal(implicitDisabled?.codex_cache_qualification, "unqualified");
   assert.deepEqual(implicitDisabled?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
+  assert.equal(explicitOnly?.codex_cache_qualification, "unqualified");
+  assert.deepEqual(explicitOnly?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
 });
 
 Deno.test("an authoritative Yunwu roster creates only catalog intersections and reports the rest", async () => {
