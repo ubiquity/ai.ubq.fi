@@ -419,8 +419,14 @@ Deno.test("banked reset disabled, shadow, and invalid limits make zero provider 
       reason: "feature_disabled",
     },
     {
-      name: "allowlist required",
-      configured: config({ accountAllowlist: new Set() }),
+      name: "global shadow",
+      configured: config({ mode: "shadow", accountAllowlist: new Set(), maxGlobalPerDay: 0 }),
+      reason: "shadow",
+      expectShadowEvent: true,
+    },
+    {
+      name: "live allowlist required",
+      configured: config({ mode: "live", accountAllowlist: new Set() }),
       reason: "account_allowlist_required",
     },
     {
@@ -2221,7 +2227,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
       maxGlobalPerDay: defaults.maxGlobalPerDay,
       maxPerAccountPerWindow: defaults.maxPerAccountPerWindow,
     },
-    { enabled: false, mode: "disabled", allowlist: [], maxGlobalPerDay: 0, maxPerAccountPerWindow: 1 },
+    { enabled: true, mode: "shadow", allowlist: [], maxGlobalPerDay: 0, maxPerAccountPerWindow: 1 },
   );
 
   const environment = new Map<string, string>([

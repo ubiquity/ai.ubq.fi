@@ -64,6 +64,7 @@ const parseNonNegativeInteger = (value: string | undefined, defaultValue: number
 };
 
 const parseMode = (value: string | undefined): CodexBankedResetMode => {
+  if (value === undefined) return "shadow";
   switch (value?.trim().toLowerCase()) {
     case "shadow":
       return "shadow";
@@ -92,9 +93,10 @@ const parseAllowlist = (value: string | undefined): ReadonlySet<string> =>
 export const parseCodexBankedResetConfig = (
   readEnv: (key: string) => string | undefined = getEnv,
 ): CodexBankedResetConfig => ({
-  // A reset is an external spend. Enablement, live mode, a positive cap, and
-  // a concrete allowlist must all be supplied before a provider is reachable.
-  enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), false),
+  // Shadow telemetry is safe to ship globally: it never calls the provider.
+  // A reset spend still requires explicit live mode, a cap, an allowlist, and
+  // a provider contract that proves recovery is possible.
+  enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), true),
   mode: parseMode(readEnv("CODEX_BANKED_RESET_MODE")),
   accountAllowlist: parseAllowlist(readEnv("CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST")),
   maxGlobalPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY"), 0),
@@ -339,6 +341,10 @@ const policyReason = (config: CodexBankedResetConfig, context: ResetContext): st
   try {
     if (!config.enabled) return "feature_disabled";
     if (config.mode === "disabled") return "mode_disabled";
+    // Shadow mode deliberately does not require live spending limits. This is
+    // what makes it possible to observe all current accounts with the shipped
+    // zero cap and no allowlist, without touching the provider.
+    if (config.mode === "shadow") return null;
     if (config.accountAllowlist.size === 0) return "account_allowlist_required";
     if (
       !config.accountAllowlist.has(context.account.accountId) &&
@@ -346,9 +352,6 @@ const policyReason = (config: CodexBankedResetConfig, context: ResetContext): st
     ) {
       return "account_not_allowlisted";
     }
-    // Shadow mode deliberately does not require live spending limits. This is
-    // what makes it possible to observe candidates with the shipped zero cap.
-    if (config.mode === "shadow") return null;
     if (config.maxGlobalPerDay <= 0) return "global_limit_disabled";
     // The non-negotiable at-most-once rule is stronger than a mutable setting.
     if (config.maxPerAccountPerWindow !== 1) return "per_account_window_limit_invalid";

@@ -28,10 +28,10 @@ later live-decision evidence.
 
 ## Shipped behavior after production promotion
 
-Defaults are disabled: `CODEX_BANKED_RESET_ENABLED=false`, `CODEX_BANKED_RESET_MODE=disabled`, an empty allowlist, and a
-zero global cap. Shadow observation requires explicit enablement and an allowlist. Live configuration cannot reach the
-provider because the pinned upstream source lacks documented idempotency retention, lookup, and independent
-verification; see `codex-banked-reset-operations.md` for the reconciliation boundary.
+Defaults are global shadow telemetry: `CODEX_BANKED_RESET_ENABLED=true`, `CODEX_BANKED_RESET_MODE=shadow`, an empty
+allowlist, and a zero global cap. Shadow cannot contact the provider. Live configuration still requires a non-empty
+allowlist and cannot reach the provider because the pinned upstream source lacks documented idempotency retention,
+lookup, and independent verification; see `codex-banked-reset-operations.md` for the reconciliation boundary.
 
 The reset candidate is reached only after normal Codex account failover and the ordinary bounded retry are exhausted,
 and only for a completely parsed `429` whose type is exactly `usage_limit_reached` with a stable absolute `Retry-After`
@@ -59,8 +59,8 @@ is rejected and retained only as an audit artifact; no other banked-reset worktr
 ## Next verification after limits naturally exhaust
 
 1. Confirm the served production health response reports the promoted Git SHA and deployment ID.
-2. If shadow mode is explicitly enabled for one allowlisted account, wait for a natural qualifying Codex `429`; do not
-   call the reset endpoint as a smoke test.
+2. With the shipped global shadow default, wait for a natural qualifying Codex `429`; do not call the reset endpoint as
+   a smoke test.
 3. Inspect redacted `codex_reset_eligible` and `codex_reset_shadow_candidate` events. There must be no `submit_started`,
    inventory, or consume request.
 4. Do not authorize live redemption until the provider supplies the missing retention, lookup, and independent

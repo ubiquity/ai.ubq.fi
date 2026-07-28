@@ -37,17 +37,18 @@ ordinary quota failure and is never fed back into reset selection.
 
 ## Configuration and rollback
 
-Settings are read for each gateway request. New claims require every live control: explicit enablement, `live` mode, a
-non-empty account allowlist, a positive global cap, and per-window cap exactly one. Those settings alone do not override
-the provider-contract gate described above.
+Settings are read for each gateway request. The shipped default is global `shadow` telemetry: it observes eligible
+exhaustion across the current account pool but never contacts the provider. A live claim requires explicit `live` mode,
+a non-empty account allowlist, a positive global cap, and per-window cap exactly one. Those settings alone do not
+override the provider-contract gate described above.
 
-| Variable                                        | Safe default | Requirement                                                            |
-| ----------------------------------------------- | ------------ | ---------------------------------------------------------------------- |
-| `CODEX_BANKED_RESET_ENABLED`                    | `false`      | Must be exactly `true` before shadow or live candidates are evaluated. |
-| `CODEX_BANKED_RESET_MODE`                       | `disabled`   | Use `shadow` to observe candidates; `live` remains contract-gated.     |
-| `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | Required for shadow/live; exact account IDs or stable hashes only.     |
-| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Must be positive for a live claim; cannot override the provider gate.  |
-| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Must be exactly `1`; all other values fail closed.                     |
+| Variable                                        | Safe default | Requirement                                                           |
+| ----------------------------------------------- | ------------ | --------------------------------------------------------------------- |
+| `CODEX_BANKED_RESET_ENABLED`                    | `true`       | Set exactly `false` to stop shadow and live candidates immediately.   |
+| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | Observes all current accounts; `live` remains contract-gated.         |
+| `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | Required for live only; exact account IDs or stable hashes only.      |
+| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Must be positive for a live claim; cannot override the provider gate. |
+| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Must be exactly `1`; all other values fail closed.                    |
 
 `shadow` records candidate decisions but makes no provider calls, including inventory reads. `disabled` and a false flag
 prevent new claims and submissions. Existing `submitted` or `unknown` records remain recovery-only: a future reviewed
@@ -74,15 +75,15 @@ Shadow mode is the only approved next step. It exercises the qualifying-429, hea
 and redacted-event paths, but it makes **zero** inventory, consume, lookup, or verification calls to the reset provider.
 It cannot spend a banked reset.
 
-1. Choose exactly one Codex account. Use its exact account ID or the stable account hash already emitted by normal
-   routing telemetry; do not put an access token, refresh token, or auth JSON in the allowlist.
-2. Set the existing deployment configuration to the following values. Replace the placeholder with that one account ID
-   or hash; do not use an empty allowlist or a wildcard.
+1. The shipped default observes every current Codex account. No allowlist is needed for shadow because it never reaches
+   the provider. Do not add credentials, auth JSON, or arbitrary identifiers to the allowlist.
+2. To make the global-shadow choice explicit in deployment configuration, set the existing values below. The empty
+   allowlist is intentional in this phase.
 
    ```text
    CODEX_BANKED_RESET_ENABLED=true
    CODEX_BANKED_RESET_MODE=shadow
-   CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST=<one-account-id-or-stable-hash>
+   CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST=
    CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY=0
    CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW=1
    ```
@@ -94,9 +95,9 @@ It cannot spend a banked reset.
    `codex_reset_shadow_candidate`, with any `codex_reset_skipped_healthy_fallback` explained by a successful sibling
    account. There must be no `codex_reset_claimed`, `codex_reset_submit_started`, `codex_reset_submitted`,
    `codex_reset_verified`, inventory request, consume request, or ledger spend record.
-6. Keep shadow enabled for the agreed observation period (for example, several days) and audit false positives,
-   allowlist matches, stable deadlines, healthy fallback behavior, and log redaction. Roll back immediately with the two
-   disabled values above if the account selection or telemetry is wrong.
+6. Keep shadow enabled for the agreed observation period (for example, several days) and audit false positives, stable
+   deadlines, healthy fallback behavior, and log redaction. Roll back immediately with the two disabled values above if
+   the telemetry is wrong.
 
 ### Phase 2 — live redemption decision
 
