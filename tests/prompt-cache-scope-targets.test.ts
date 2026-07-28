@@ -160,7 +160,7 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
         source: "catalog",
         verified_at_ms: 1,
       }),
-      makeModel("explicit-only", {
+      makeModel("explicit-options-only", {
         key: true,
         modes: ["explicit"],
         expected_usage_fields: ["cached_tokens", "cache_write_tokens"],
@@ -172,7 +172,7 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
   const qualified = inventory.targets.find((target) => target.model === "qualified");
   const unqualified = inventory.targets.find((target) => target.model === "unqualified");
   const implicitDisabled = inventory.targets.find((target) => target.model === "implicit-disabled");
-  const explicitOnly = inventory.targets.find((target) => target.model === "explicit-only");
+  const explicitOptionsOnly = inventory.targets.find((target) => target.model === "explicit-options-only");
 
   assert.equal(qualified?.codex_cache_qualification, "qualified");
   assert.deepEqual(qualified?.probeability, { status: "probeable", adapter: "codex_two_slot" });
@@ -180,8 +180,10 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
   assert.deepEqual(unqualified?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
   assert.equal(implicitDisabled?.codex_cache_qualification, "unqualified");
   assert.deepEqual(implicitDisabled?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
-  assert.equal(explicitOnly?.codex_cache_qualification, "unqualified");
-  assert.deepEqual(explicitOnly?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
+  // The scope runner omits prompt_cache_options, so a list that only accepts
+  // explicit options does not constrain its plain-key request shape.
+  assert.equal(explicitOptionsOnly?.codex_cache_qualification, "qualified");
+  assert.deepEqual(explicitOptionsOnly?.probeability, { status: "probeable", adapter: "codex_two_slot" });
 });
 
 Deno.test("an authoritative Yunwu roster creates only catalog intersections and reports the rest", async () => {

@@ -373,12 +373,9 @@ export const isCodexModelPromptCacheScopeExperimentEligible = (
   return Boolean(
     controls?.key === true &&
       controls.implicit !== false &&
-      // The fixed scope profile omits prompt_cache_options, which is the
-      // standard implicit-cache request shape. An omitted modes list remains
-      // unknown and can be measured, but an explicit list that excludes
-      // implicit is contradictory evidence and must fail closed before any
-      // paid probe request is sent.
-      (controls.modes === undefined || controls.modes.includes("implicit")) &&
+      // The fixed profile uses only prompt_cache_key. `modes` describes the
+      // optional prompt_cache_options field, so an explicit-only options
+      // declaration cannot disqualify this distinct request shape.
       controls.expected_usage_fields?.includes("cached_tokens") &&
       controls.expected_usage_fields?.includes("cache_write_tokens"),
   );
