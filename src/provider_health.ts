@@ -35,7 +35,7 @@ export type ProviderHealthView = Readonly<{
   last_refresh_succeeded: boolean | null;
 }>;
 
-type RecordProvider = "codex" | "yunwu";
+type RecordProvider = "cerebras" | "codex" | "yunwu";
 
 const PROVIDER_RECORDS = [
   "current",
@@ -191,6 +191,12 @@ export const recordYunwuProviderHealth = (
   now: () => number = Date.now,
 ): Promise<void> => recordProviderHealth("yunwu", "default", event, status, now);
 
+export const recordCerebrasProviderHealth = (
+  event: ProviderHealthEvent,
+  status: number | null = null,
+  now: () => number = Date.now,
+): Promise<void> => recordProviderHealth("cerebras", "default", event, status, now);
+
 const unknownView = (): ProviderHealthView => ({
   state: "unknown",
   stale: null,
@@ -277,6 +283,10 @@ export const getCodexProviderHealth = (
 export const getYunwuProviderHealth = (
   now: () => number = Date.now,
 ): Promise<ProviderHealthView> => readProviderHealth("yunwu", "default", now);
+
+export const getCerebrasProviderHealth = (
+  now: () => number = Date.now,
+): Promise<ProviderHealthView> => readProviderHealth("cerebras", "default", now);
 
 export const resetProviderHealthThrottleForTest = (): void => {
   lastHeartbeatWriteAtMs.clear();

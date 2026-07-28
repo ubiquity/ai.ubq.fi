@@ -1,4 +1,5 @@
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
+import { readCerebrasApiKey } from "./cerebras.ts";
 import {
   CODEX_AUTH_POOL_KV_KEY,
   fetchCodexModels,
@@ -9,6 +10,7 @@ import {
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
 import {
+  getCerebrasProviderHealth,
   getCodexProviderHealth,
   getYunwuProviderHealth,
   PROVIDER_HEALTH_STALE_AFTER_MS,
@@ -217,7 +219,8 @@ export const getPassiveProviderHealthSnapshot = async (
 ): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
-  const [codexHealth, yunwuHealth, yunwuQuota] = await Promise.all([
+  const [cerebrasHealth, codexHealth, yunwuHealth, yunwuQuota] = await Promise.all([
+    getCerebrasProviderHealth(),
     Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
     getYunwuProviderHealth(),
     getCachedConfiguredYunwuQuotaSnapshot(),
@@ -237,6 +240,10 @@ export const getPassiveProviderHealthSnapshot = async (
       account_count: auth.account_count,
       state: aggregateProviderStates(codexHealth.map((health) => health.state)),
       accounts: codexAccounts,
+    },
+    cerebras: {
+      configured: readCerebrasApiKey() !== null,
+      health: cerebrasHealth,
     },
     yunwu: {
       configured: readYunwuApiKey() !== null,

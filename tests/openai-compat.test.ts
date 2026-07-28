@@ -9,6 +9,7 @@ import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 const DEFAULT_TEST_MODEL = "gpt-5-fixture-default";
+const TERRA_TEST_MODEL = "gpt-5.6-terra";
 const TEST_CODEX_MODELS_KEY = ["ubq_ai", "codex_models"] as const;
 
 const kvStore = new Map<string, unknown>();
@@ -32,6 +33,15 @@ kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
   models: [{
     slug: DEFAULT_TEST_MODEL,
     display_name: "GPT-5 Fixture Default",
+    context_window: 272000,
+    max_context_window: 1000000,
+    auto_compact_token_limit: null,
+    default_reasoning_level: "medium",
+    supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
+    reasoning_effort_wire_map: { ultra: "max" },
+  }, {
+    slug: TERRA_TEST_MODEL,
+    display_name: "GPT-5.6 Terra fixture",
     context_window: 272000,
     max_context_window: 1000000,
     auto_compact_token_limit: null,
@@ -112,6 +122,7 @@ const {
   markCodexQuotaBlocked,
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
+const { setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -1283,6 +1294,41 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     const recorded = recordedBody as Record<string, unknown>;
     assert.deepEqual(recorded["context_management"], contextManagement);
   });
+});
+
+Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly ignores temperature", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: TERRA_TEST_MODEL,
+            messages: [{ role: "user", content: "ping" }],
+            temperature: 0,
+            max_completion_tokens: 2048,
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+  assert.ok(warnings.includes("temperature_ignored"));
+  assert.equal(warnings.includes("max_output_tokens_ignored"), false);
+  assert.ok(recordedBody);
+  const recorded = recordedBody as Record<string, unknown>;
+  assert.equal(recorded.model, TERRA_TEST_MODEL);
+  assert.equal(recorded.max_output_tokens, 2048);
+  assert.equal("max_completion_tokens" in recorded, false);
+  assert.equal("temperature" in recorded, false);
 });
 
 Deno.test("openai: default model requires configured model or stored snapshot", async () => {
@@ -3853,6 +3899,7 @@ Deno.test("http: CORS wrapper exposes a gateway request id", () => {
   const response = withCors(new Response("{}", { headers: { "Content-Type": "application/json" } }));
   assert.ok(response.headers.get("x-uos-request-id"));
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-request-id/);
+  assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-provider-request-id/);
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-upstream/);
 });
 
@@ -6696,6 +6743,521 @@ Deno.test("openai: buffered Chat Completions release the upstream stream reader"
   const body = upstreamBody as ReadableStream<Uint8Array> | null;
   assert.ok(body);
   assert.equal(body.locked, false);
+});
+
+Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded, and content-safe", async (t) => {
+  const envKey = "CEREBRAS_API_KEY";
+  const fakeApiKey = "cerebras-test-key";
+  const originalApiKey = Deno.env.get(envKey);
+  const restoreApiKey = (): void => {
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  };
+  const request = (body: Record<string, unknown>, signal?: AbortSignal): Request =>
+    new Request("https://ai.ubq.fi/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-uos-upstream": "chatgpt_codex" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  const canonicalBody = {
+    model: "gpt-oss-120b",
+    messages: [
+      { role: "developer", content: "Use exactly one function tool call." },
+      { role: "user", content: "Prepare the dashboard summary." },
+    ],
+    tools: [{
+      type: "function",
+      function: {
+        name: "assistant_message",
+        description: "Return the assistant response envelope.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: { message: { type: "string" } },
+          required: ["message"],
+        },
+      },
+    }],
+    tool_choice: "required",
+    parallel_tool_calls: false,
+    reasoning_effort: "medium",
+    temperature: 0,
+    max_completion_tokens: 2048,
+    stream: false,
+  } as const;
+
+  Deno.env.set(envKey, fakeApiKey);
+  try {
+    await t.step("routes the exact model and preserves native tools/tool choice", async () => {
+      const upstreamCalls: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
+      const logs: unknown[][] = [];
+      const originalError = console.error;
+      console.error = (...args: unknown[]) => logs.push(args);
+      try {
+        const response = await withFetchMock(
+          (url, bodyText, init) => {
+            upstreamCalls.push({
+              url,
+              body: bodyText ? JSON.parse(bodyText) as Record<string, unknown> : {},
+              headers: new Headers(init?.headers),
+            });
+            return new Response(
+              JSON.stringify({
+                id: "chatcmpl_cerebras_fixture",
+                object: "chat.completion",
+                created: 1_728_000_000,
+                model: "gpt-oss-120b",
+                choices: [{
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: null,
+                    tool_calls: [{
+                      id: "call_fixture",
+                      type: "function",
+                      provider_trace: "provider-tool-field-must-not-be-relayed",
+                      function: { name: "assistant_message", arguments: '{"message":"Ready"}' },
+                    }],
+                  },
+                  finish_reason: "tool_calls",
+                }],
+                usage: { prompt_tokens: 13, completion_tokens: 7, total_tokens: 20 },
+                provider_debug: "provider-body-must-not-be-logged-or-relayed",
+              }),
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Request-Id": "cerebras-header-request-1",
+                },
+              },
+            );
+          },
+          () =>
+            handleChatCompletions(
+              request(canonicalBody),
+              {
+                keyId: null,
+                kernelRepo: null,
+                kernelOrg: null,
+                requestId: "cerebras-success",
+                startedAtMs: Date.now(),
+                startedAtMonotonicMs: performance.now(),
+              },
+            ),
+        );
+
+        assert.equal(response.status, 200);
+        assert.deepEqual(upstreamCalls.map((call) => call.url), ["https://api.cerebras.ai/v1/chat/completions"]);
+        assert.deepEqual(upstreamCalls[0]?.body, canonicalBody);
+        assert.equal(upstreamCalls[0]?.headers.get("Authorization"), `Bearer ${fakeApiKey}`);
+        assert.equal(upstreamCalls[0]?.headers.get("Content-Type"), "application/json");
+        const payload = await response.json() as {
+          model?: string;
+          choices?: Array<{ message?: { tool_calls?: Array<Record<string, unknown>> } }>;
+          usage?: Record<string, unknown>;
+          provider_debug?: unknown;
+        };
+        assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
+        assert.equal(response.headers.get("x-uos-provider-request-id"), "cerebras-header-request-1");
+        assert.equal(payload.model, "gpt-oss-120b");
+        assert.equal(payload.provider_debug, undefined);
+        assert.deepEqual(payload.choices?.[0]?.message?.tool_calls, [{
+          id: "call_fixture",
+          type: "function",
+          function: { name: "assistant_message", arguments: '{"message":"Ready"}' },
+        }]);
+        assert.deepEqual(payload.usage, { prompt_tokens: 13, completion_tokens: 7, total_tokens: 20 });
+        const telemetry = getResponseTelemetry(response);
+        assert.equal(telemetry?.provider, "cerebras");
+        assert.equal(telemetry?.providerRequestId, "cerebras-header-request-1");
+        assert.equal(telemetry?.inputTokens, 13);
+        assert.equal(telemetry?.outputTokens, 7);
+        assert.equal(telemetry?.completed, true);
+        assert.equal(telemetry?.stream, false);
+        assert.equal(typeof telemetry?.firstProviderDispatchMs, "number");
+        assert.equal(typeof telemetry?.firstProviderHeadersMs, "number");
+        const logText = JSON.stringify(logs);
+        assert.doesNotMatch(logText, /cerebras-test-key/);
+        assert.doesNotMatch(logText, /provider-body-must-not-be-logged-or-relayed/);
+      } finally {
+        console.error = originalError;
+      }
+    });
+
+    await t.step("keeps reading a valid buffered body past the error-body deadline", async () => {
+      const delayedPayload = JSON.stringify({
+        id: "chatcmpl_cerebras_delayed_body",
+        object: "chat.completion",
+        created: 1_728_000_000,
+        model: "gpt-oss-120b",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "Ready" },
+          finish_reason: "stop",
+        }],
+        usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+      });
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller) {
+                await new Promise((resolve) => setTimeout(resolve, 1_050));
+                controller.enqueue(TEXT_ENCODER.encode(delayedPayload));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request(canonicalBody)),
+      );
+      assert.equal(response.status, 200);
+      assert.equal((await response.json() as { id?: string }).id, "chatcmpl_cerebras_delayed_body");
+    });
+
+    await t.step("does not route similarly named models to Cerebras", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () => handleChatCompletions(request({ ...canonicalBody, model: "gpt-oss-120b-preview" })),
+      );
+      assert.notEqual(response.status, 200);
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("defaults omitted reasoning to medium without converting native Chat fields", async () => {
+      const { reasoning_effort: _reasoningEffort, ...withoutReasoning } = canonicalBody;
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          if (bodyText) upstreamBodies.push(JSON.parse(bodyText) as Record<string, unknown>);
+          return new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_default_reasoning",
+              object: "chat.completion",
+              created: 1_728_000_001,
+              model: "gpt-oss-120b",
+              choices: [{
+                index: 0,
+                message: { role: "assistant", content: "Ready" },
+                finish_reason: "stop",
+              }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        },
+        () => handleChatCompletions(request(withoutReasoning)),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(upstreamBodies.length, 1);
+      const upstreamBody = upstreamBodies[0]!;
+      assert.equal(upstreamBody.reasoning_effort, "medium");
+      assert.deepEqual(upstreamBody.tools, canonicalBody.tools);
+      assert.equal(upstreamBody.tool_choice, canonicalBody.tool_choice);
+      assert.equal(upstreamBody.stream, false);
+    });
+
+    await t.step("rejects streaming and Responses requests without provider dispatch", async () => {
+      let cerebrasCalls = 0;
+      const streamResponse = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () => handleChatCompletions(request({ ...canonicalBody, stream: true })),
+      );
+      assert.equal(streamResponse.status, 400);
+      assert.equal((await streamResponse.json() as { error?: { param?: string } }).error?.param, "stream");
+
+      const responsesResponse = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "gpt-oss-120b", input: "ping" }),
+            }),
+          ),
+      );
+      assert.equal(responsesResponse.status, 400);
+      assert.equal((await responsesResponse.json() as { error?: { param?: string } }).error?.param, "model");
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("rejects a missing server credential without provider dispatch", async () => {
+      Deno.env.delete(envKey);
+      try {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return sseResponse(baseSseChunks());
+          },
+          () => handleChatCompletions(request(canonicalBody)),
+        );
+        assert.equal(response.status, 503);
+        assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
+        assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "cerebras_api_key_missing");
+        assert.equal(cerebrasCalls, 0);
+      } finally {
+        Deno.env.set(envKey, fakeApiKey);
+      }
+    });
+
+    await t.step("normalizes upstream 400/401/408/429/5xx without logging provider bodies", async () => {
+      const cases = [
+        { status: 400, expectedType: "invalid_request_error" },
+        { status: 401, expectedType: "invalid_request_error" },
+        { status: 408, expectedType: "server_error" },
+        { status: 429, expectedType: "rate_limit_error" },
+        { status: 503, expectedType: "server_error" },
+      ] as const;
+      for (const testCase of cases) {
+        const logs: unknown[][] = [];
+        const originalError = console.error;
+        console.error = (...args: unknown[]) => logs.push(args);
+        try {
+          const response = await withFetchMock(
+            (url) => {
+              assert.equal(url, "https://api.cerebras.ai/v1/chat/completions");
+              return new Response(
+                JSON.stringify({
+                  error: {
+                    message: "provider-body-must-not-be-logged-or-relayed",
+                    code: "fixture_failure",
+                  },
+                }),
+                {
+                  status: testCase.status,
+                  headers: {
+                    "Content-Type": "application/json",
+                    "X-Request-Id": `cerebras-error-${testCase.status}`,
+                    ...(testCase.status === 429 ? { "Retry-After": "17" } : {}),
+                  },
+                },
+              );
+            },
+            () => handleChatCompletions(request(canonicalBody)),
+          );
+          assert.equal(response.status, testCase.status);
+          assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
+          assert.equal(response.headers.get("x-uos-provider-request-id"), `cerebras-error-${testCase.status}`);
+          assert.equal(response.headers.get("Retry-After"), testCase.status === 429 ? "17" : null);
+          const payload = await response.json() as { error?: { message?: string; type?: string; code?: string } };
+          assert.equal(payload.error?.type, testCase.expectedType);
+          assert.equal(payload.error?.code, "cerebras_upstream_error");
+          assert.doesNotMatch(payload.error?.message ?? "", /provider-body-must-not-be-logged-or-relayed/);
+          const logText = JSON.stringify(logs);
+          assert.doesNotMatch(logText, /provider-body-must-not-be-logged-or-relayed/);
+          assert.doesNotMatch(logText, /cerebras-test-key/);
+        } finally {
+          console.error = originalError;
+        }
+      }
+    });
+
+    await t.step("rejects malformed tool-call output without reflecting provider content", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_invalid_tool",
+              object: "chat.completion",
+              created: 1_728_000_002,
+              model: "gpt-oss-120b",
+              choices: [{
+                index: 0,
+                message: {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [{
+                    id: "call_invalid",
+                    type: "function",
+                    function: {
+                      name: "assistant_message",
+                      arguments: { marker: "provider-body-must-not-be-relayed" },
+                    },
+                  }],
+                },
+              }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request(canonicalBody)),
+      );
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
+      const payload = await response.json() as { error?: { code?: string; message?: string } };
+      assert.equal(payload.error?.code, "cerebras_upstream_invalid_response");
+      assert.doesNotMatch(payload.error?.message ?? "", /provider-body-must-not-be-relayed/);
+    });
+
+    await t.step("rejects missing or rewritten native tool-call fields", async () => {
+      const malformedCalls = [
+        {
+          id: "call_missing_type",
+          function: { name: "assistant_message", arguments: "{}" },
+        },
+        {
+          id: " call_with_whitespace",
+          type: "function",
+          function: { name: "assistant_message", arguments: "{}" },
+        },
+        {
+          id: "call_name_whitespace",
+          type: "function",
+          function: { name: " assistant_message", arguments: "{}" },
+        },
+      ];
+      for (const toolCall of malformedCalls) {
+        const response = await withFetchMock(
+          () =>
+            new Response(
+              JSON.stringify({
+                id: "chatcmpl_cerebras_invalid_native_tool",
+                object: "chat.completion",
+                created: 1_728_000_003,
+                model: "gpt-oss-120b",
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: null, tool_calls: [toolCall] },
+                  finish_reason: "tool_calls",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          () => handleChatCompletions(request(canonicalBody)),
+        );
+        assert.equal(response.status, 502);
+        assert.equal(
+          (await response.json() as { error?: { code?: string } }).error?.code,
+          "cerebras_upstream_invalid_response",
+        );
+      }
+    });
+
+    await t.step("bounds a pre-header timeout and forwards downstream cancellation", async () => {
+      setCerebrasFetchTimeoutMsForTest(10);
+      try {
+        let timeoutCalls = 0;
+        const timeoutResponse = await withFetchMock(
+          (url, _body, init) => {
+            timeoutCalls += 1;
+            assert.equal(url, "https://api.cerebras.ai/v1/chat/completions");
+            return new Promise<Response>((_resolve, reject) => {
+              const signal = init?.signal;
+              if (!signal) {
+                reject(new Error("Cerebras request did not receive a cancellation signal"));
+                return;
+              }
+              const rejectWithReason = () => reject(signal.reason);
+              if (signal.aborted) rejectWithReason();
+              else signal.addEventListener("abort", rejectWithReason, { once: true });
+            });
+          },
+          () => handleChatCompletions(request(canonicalBody)),
+        );
+        assert.equal(timeoutCalls, 1);
+        assert.equal(timeoutResponse.status, 504);
+        assert.equal(timeoutResponse.headers.get("x-uos-upstream"), "cerebras");
+        assert.equal((await timeoutResponse.json() as { error?: { code?: string } }).error?.code, "gateway_timeout");
+      } finally {
+        setCerebrasFetchTimeoutMsForTest(null);
+      }
+
+      const controller = new AbortController();
+      let downstreamAbortObserved = false;
+      let cancellationCalls = 0;
+      const cancelledResponse = await withFetchMock(
+        (url, _body, init) => {
+          cancellationCalls += 1;
+          assert.equal(url, "https://api.cerebras.ai/v1/chat/completions");
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) {
+              reject(new Error("Cerebras request did not receive a cancellation signal"));
+              return;
+            }
+            const rejectWithReason = () => {
+              downstreamAbortObserved = true;
+              reject(signal.reason);
+            };
+            signal.addEventListener("abort", rejectWithReason, { once: true });
+            controller.abort(new DOMException("client disconnected", "AbortError"));
+          });
+        },
+        () => handleChatCompletions(request(canonicalBody, controller.signal)),
+      );
+      assert.equal(cancellationCalls, 1);
+      assert.equal(downstreamAbortObserved, true);
+      assert.equal(cancelledResponse.status, 499);
+      assert.equal(cancelledResponse.headers.get("x-uos-upstream"), "cerebras");
+    });
+
+    await t.step("maps downstream cancellation while draining a buffered body to 499", async () => {
+      const controller = new AbortController();
+      let signalSecondRead: (() => void) | null = null;
+      const secondReadStarted = new Promise<void>((resolve) => {
+        signalSecondRead = resolve;
+      });
+      let upstreamCancelled = false;
+      const response = await withFetchMock(
+        () => {
+          let emittedPartialChunk = false;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              pull(streamController) {
+                if (!emittedPartialChunk) {
+                  emittedPartialChunk = true;
+                  streamController.enqueue(TEXT_ENCODER.encode('{"partial":'));
+                  return;
+                }
+                signalSecondRead?.();
+                return new Promise<void>(() => {});
+              },
+              cancel() {
+                upstreamCancelled = true;
+              },
+            }),
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Request-Id": "cerebras-body-cancel-request",
+              },
+            },
+          );
+        },
+        async () => {
+          const pending = handleChatCompletions(request(canonicalBody, controller.signal));
+          await secondReadStarted;
+          controller.abort(new DOMException("client disconnected", "AbortError"));
+          return await pending;
+        },
+      );
+
+      assert.equal(response.status, 499);
+      assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
+      assert.equal(response.headers.get("x-uos-provider-request-id"), "cerebras-body-cancel-request");
+      assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "request_cancelled");
+      assert.equal(upstreamCancelled, true);
+    });
+  } finally {
+    restoreApiKey();
+    setCerebrasFetchTimeoutMsForTest(null);
+  }
 });
 
 Deno.test("openai: streamed Responses force the SSE content type", async () => {

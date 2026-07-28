@@ -110,7 +110,7 @@ export type ApiKeyUsageRequestV3 = Readonly<{
   state: "reserved" | "dispatched" | "released";
   reserved_at_ms: number;
   lease_expires_at_ms: number;
-  provider: "chatgpt_codex" | "yunwu" | "voyage" | null;
+  provider: "cerebras" | "chatgpt_codex" | "yunwu" | "voyage" | null;
   dispatched_at_ms: number | null;
   released_at_ms: number | null;
   release_reason: string | null;
@@ -162,7 +162,7 @@ export type ApiKeyRequestLogRecord = Readonly<{
   model: string | null;
   reasoning: string | null;
   created_at_ms: number;
-  provider: "chatgpt_codex" | "voyage" | "yunwu";
+  provider: "cerebras" | "chatgpt_codex" | "voyage" | "yunwu";
   fallback_reason: string | null;
   provider_request_id: string | null;
   completed_at_ms: number | null;

@@ -979,6 +979,8 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       status: 200,
       provider: "chatgpt_codex",
       latency_ms: terminalPayload.latency_ms,
+      first_provider_dispatch_ms: terminalPayload.first_provider_dispatch_ms,
+      first_provider_headers_ms: terminalPayload.first_provider_headers_ms,
       first_codex_dispatch_ms: terminalPayload.first_codex_dispatch_ms,
       first_codex_headers_ms: terminalPayload.first_codex_headers_ms,
       first_sse_event_ms: terminalPayload.first_sse_event_ms,
@@ -998,6 +1000,7 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       explicit_breakpoint_count: 0,
       account_slot: 1,
       affinity_outcome: "none",
+      provider_request_id: null,
       fallback_reason: null,
       stream: false,
       stream_terminal_type: "response.completed",
@@ -1141,6 +1144,7 @@ Deno.test("streaming inference emits one terminal log only after the response bo
     assert.equal(terminal.provider, "chatgpt_codex");
     assert.equal(terminal.model, MODEL);
     assert.equal(terminal.reasoning, "medium");
+    assert.equal(terminal.provider_request_id, null);
     assert.equal(terminal.stream_terminal_type, "response.completed");
     assertOrderedTerminalTimings(terminal, true);
     assert.equal(terminal.input_tokens, 3);
@@ -1733,6 +1737,7 @@ Deno.test("KV budget: malformed tokens are rejected without KV and policy expiry
     assert.equal(terminal.output_tokens, null);
     assert.equal(terminal.total_tokens, null);
     assert.equal(terminal.usage_telemetry_status, "missing");
+    assert.equal(terminal.provider_request_id, null);
   } finally {
     console.info = originalInfo;
   }

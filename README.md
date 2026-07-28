@@ -328,6 +328,8 @@ ubq-ai admin keys list | jq
   gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
+- `CEREBRAS_API_KEY` (optional): Server-side credential for explicit non-streaming Chat Completions requests to Cerebras
+  `gpt-oss-120b`. It is never accepted from clients or exposed by health responses.
 - `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
   Deno KV at `["uos_ai","voyage_api_key"]`.
 - `YUNWU_SYSTEM_TOKEN` (required for Codex quota reporting): YunWu System Access Token used only by the server to read
@@ -337,6 +339,18 @@ ubq-ai admin keys list | jq
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.
+
+## Chat Completions provider contract
+
+`gpt-oss-120b` is sent to Cerebras as a non-streaming Chat Completions request. Its standard `temperature` and
+`max_completion_tokens` fields are forwarded unchanged. The existing Terra/Codex Chat Completions path translates
+`max_completion_tokens` to the upstream Responses `max_output_tokens` cap. Terra/Codex does not support `temperature`;
+the gateway intentionally omits it and returns `x-uos-warning: temperature_ignored` rather than silently treating it as
+a cost or behavior control.
+
+When a provider supplies an opaque request ID, the gateway preserves its bounded, header-safe value as
+`x-uos-provider-request-id` and in terminal response telemetry as `providerRequestId` / `provider_request_id`. It is a
+support-correlation value only, never a credential or provider response body.
 
 ## Admin: upload/validate Codex auth.json
 
