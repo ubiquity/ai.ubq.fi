@@ -153,6 +153,25 @@ Use `GET /uos/models/capabilities` for gateway-specific model metadata such as `
 `supported_endpoints`, and `upstream_provider`. This metadata is intentionally not included in `/v1/models` so
 OpenAI-compatible SDKs receive an OpenAI-shaped response.
 
+## Prompt-cache observations
+
+The gateway does not store, copy, or move an upstream prompt cache. It forwards a client-supplied
+`prompt_cache_key`; keep that key stable for the same conversation prefix. Do not derive it from an `auth.json` file:
+changing the key deliberately creates a new cold cache.
+
+Production observations on 2026-07-28 confirm that streaming Codex conversation traffic is cached. An identical
+streaming `gpt-5.6-terra` request with a stable key reported 12,032 cached input tokens out of 12,612 input tokens.
+The second Codex account also served live cache hits, including 76,032 cached tokens out of 84,188 input tokens and
+83,712 out of 91,088. This means moving ordinary traffic to the second account does not make all traffic cold.
+
+Cache reuse is still prefix-dependent: a request with a changed or non-cacheable prefix can be cold, and a cache hit
+on account B alone does not prove that account B reused account A's exact upstream entry. Do not promise that every
+active conversation retains its cache after an account change until a controlled A-to-B probe has completed.
+
+For this Codex upstream, use the plain `prompt_cache_key` for live traffic. During the same production investigation,
+the upstream rejected `prompt_cache_options` as unsupported; do not rely on explicit-mode or TTL controls until the
+upstream accepts them.
+
 ## Codex quota reporting
 
 After an inference response, stock Codex terminal and GUI clients can show the YunWu wallet in `/status` and emit their
