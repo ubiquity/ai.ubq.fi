@@ -25,7 +25,7 @@ export type ApiKeyRequestLogInput = Readonly<{
   model?: string | null;
   reasoning?: string | null;
   created_at_ms: number;
-  provider?: "chatgpt_codex" | "voyage" | "yunwu";
+  provider?: "cerebras" | "chatgpt_codex" | "voyage" | "yunwu";
   fallback_reason?: string | null;
   provider_request_id?: string | null;
   completed_at_ms?: number | null;
@@ -76,7 +76,13 @@ const normalize = (
     model: text(value.model) || null,
     reasoning: text(value.reasoning) || null,
     created_at_ms: integer(value.created_at_ms, createdAtMs),
-    provider: value.provider === "voyage" ? "voyage" : value.provider === "yunwu" ? "yunwu" : "chatgpt_codex",
+    provider: value.provider === "cerebras"
+      ? "cerebras"
+      : value.provider === "voyage"
+      ? "voyage"
+      : value.provider === "yunwu"
+      ? "yunwu"
+      : "chatgpt_codex",
     fallback_reason: text(value.fallback_reason) || null,
     provider_request_id: text(value.provider_request_id) || null,
     completed_at_ms: nullableInteger(value.completed_at_ms),

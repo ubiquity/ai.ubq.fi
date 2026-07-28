@@ -65,7 +65,9 @@ const {
 const { default: handler } = await import("../src/handler.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const {
+  getCerebrasProviderHealth,
   getCodexProviderHealth,
+  recordCerebrasProviderHealth,
   recordCodexProviderHealth,
   recordYunwuProviderHealth,
   resetProviderHealthThrottleForTest,
@@ -141,6 +143,34 @@ Deno.test("passive provider health returns every Codex slot without contacting u
     assert.equal(text.includes("private-account-b"), false);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("passive provider health reports configured Cerebras without probing it", async () => {
+  const envKey = "CEREBRAS_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.set(envKey, "cerebras-test-key");
+  kvStore.clear();
+  resetProviderHealthThrottleForTest();
+  await recordCerebrasProviderHealth("success", 200, () => 4_000);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => {
+    throw new Error("passive Cerebras health must not probe an upstream");
+  };
+  try {
+    const response = await handleHealthProviders();
+    const payload = await response.json() as {
+      cerebras?: { configured?: boolean; health?: { state?: string; last_status?: number | null } };
+    };
+    assert.equal(response.status, 200);
+    assert.equal(payload.cerebras?.configured, true);
+    assert.equal(payload.cerebras?.health?.state, "healthy");
+    assert.equal(payload.cerebras?.health?.last_status, 200);
+    assert.equal((await getCerebrasProviderHealth(() => 4_001)).state, "healthy");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
   }
 });
 

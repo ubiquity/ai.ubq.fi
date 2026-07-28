@@ -3,6 +3,7 @@ import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-warning",
   "x-uos-request-id",
+  "x-uos-provider-request-id",
   "x-uos-upstream",
   "x-uos-router-revision",
   "x-uos-git-sha",
