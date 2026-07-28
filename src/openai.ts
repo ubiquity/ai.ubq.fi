@@ -17,6 +17,7 @@ import {
   getCerebrasProviderRequestId,
   normalizeCerebrasChatCompletion,
   normalizeCerebrasProviderRequestId,
+  readCerebrasApiKey,
 } from "./cerebras.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import {
@@ -3450,6 +3451,44 @@ const normalizeModelList = (payload: unknown): { object: "list"; data: Record<st
   return null;
 };
 
+const configuredCerebrasModel = (): Record<string, unknown> | null =>
+  readCerebrasApiKey()
+    ? {
+      id: CEREBRAS_GPT_OSS_120B_MODEL,
+      object: "model",
+      created: 0,
+      owned_by: "cerebras",
+    }
+    : null;
+
+const configuredCerebrasModelCapabilities = (): Record<string, unknown> | null =>
+  readCerebrasApiKey()
+    ? {
+      id: CEREBRAS_GPT_OSS_120B_MODEL,
+      object: "uos.model_capabilities",
+      owned_by: "cerebras",
+      display_name: "GPT-OSS 120B",
+      upstream_provider: "cerebras",
+      supported_endpoints: ["/v1/chat/completions"],
+      supported_reasoning_levels: ["medium"],
+      default_reasoning_effort: "medium",
+      reasoning_effort_wire_map: {},
+      context_window_tokens: null,
+      max_context_window_tokens: null,
+      auto_compact_token_limit_tokens: null,
+    }
+    : null;
+
+const withConfiguredCerebrasModel = (
+  models: readonly Record<string, unknown>[],
+): Record<string, unknown>[] => {
+  const cerebras = configuredCerebrasModel();
+  if (!cerebras || models.some((model) => model.id === CEREBRAS_GPT_OSS_120B_MODEL)) {
+    return [...models];
+  }
+  return [...models, cerebras];
+};
+
 const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown> | null => {
   if (!isRecord(value)) return null;
   const id = modelIdFromSnapshotRecord(value);
@@ -4559,10 +4598,11 @@ export const handleModels = async (req?: Request): Promise<Response> => {
   const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
     ? normalizeModelList(snapshot)
     : null;
+  const data = withConfiguredCerebrasModel(normalized?.data ?? []);
 
   return json(
     200,
-    normalized ?? { object: "list", data: [] },
+    { object: "list", data },
     { "x-uos-upstream": snapshot?.source || "stored_codex_models" },
   );
 };
@@ -4572,6 +4612,10 @@ export const handleModelCapabilities = async (): Promise<Response> => {
   const data = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
     ? snapshot.models.map(normalizeModelCapabilitiesEntry).filter(Boolean) as Record<string, unknown>[]
     : [];
+  const cerebras = configuredCerebrasModelCapabilities();
+  if (cerebras && !data.some((model) => model.id === CEREBRAS_GPT_OSS_120B_MODEL)) {
+    data.push(cerebras);
+  }
 
   return json(
     200,

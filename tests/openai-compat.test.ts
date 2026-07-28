@@ -1776,7 +1776,10 @@ Deno.test("openai: prompt-cache capability records are UOS-only and keep provide
 Deno.test("openai: models returns an empty list when no snapshot is stored", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
+  const envKey = "CEREBRAS_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
   kvStore.delete(snapshotKey);
+  Deno.env.delete(envKey);
 
   try {
     const response = await withFetchMock(
@@ -1793,6 +1796,50 @@ Deno.test("openai: models returns an empty list when no snapshot is stored", asy
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering the Codex catalog", async () => {
+  const envKey = "CEREBRAS_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.set(envKey, "cerebras-test-key");
+  try {
+    const models = await handleModels();
+    assert.equal(models.status, 200);
+    const modelList = await models.json() as { data?: Array<Record<string, unknown>> };
+    const model = modelList.data?.find((entry) => entry.id === "gpt-oss-120b");
+    assert.deepEqual(model, {
+      id: "gpt-oss-120b",
+      object: "model",
+      created: 0,
+      owned_by: "cerebras",
+    });
+
+    const capabilities = await handleModelCapabilities();
+    assert.equal(capabilities.status, 200);
+    const capabilityList = await capabilities.json() as { data?: Array<Record<string, unknown>> };
+    assert.deepEqual(
+      capabilityList.data?.find((entry) => entry.id === "gpt-oss-120b"),
+      {
+        id: "gpt-oss-120b",
+        object: "uos.model_capabilities",
+        owned_by: "cerebras",
+        display_name: "GPT-OSS 120B",
+        upstream_provider: "cerebras",
+        supported_endpoints: ["/v1/chat/completions"],
+        supported_reasoning_levels: ["medium"],
+        default_reasoning_effort: "medium",
+        reasoning_effort_wire_map: {},
+        context_window_tokens: null,
+        max_context_window_tokens: null,
+        auto_compact_token_limit_tokens: null,
+      },
+    );
+  } finally {
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
   }
 });
 
@@ -6876,6 +6923,41 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
             references: { type: "array", items: { type: "string" } },
           },
           required: ["arguments", "operationId", "references"],
+          additionalProperties: false,
+        },
+      );
+
+      assert.deepEqual(
+        projectCerebrasToolSchema({
+          oneOf: [
+            {
+              type: "object",
+              properties: {
+                operationId: { const: "search" },
+                query: { type: "string" },
+              },
+              required: ["operationId", "query"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: {
+                operationId: { const: "read" },
+                documentId: { type: "string" },
+              },
+              required: ["operationId", "documentId"],
+              additionalProperties: false,
+            },
+          ],
+        }),
+        {
+          type: "object",
+          properties: {
+            operationId: { enum: ["search", "read"] },
+            query: { type: "string" },
+            documentId: { type: "string" },
+          },
+          required: ["operationId"],
           additionalProperties: false,
         },
       );

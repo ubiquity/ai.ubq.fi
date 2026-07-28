@@ -171,7 +171,7 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
   ) return value;
 
   const fields = new Map<string, unknown[]>();
-  const required = new Set<string>();
+  let requiredByEveryVariant: Set<string> | null = null;
   for (const variant of variants) {
     const properties = variant.properties as Record<string, unknown>;
     for (const [name, schema] of Object.entries(properties)) {
@@ -179,9 +179,12 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
       values.push(schema);
       fields.set(name, values);
     }
-    if (Array.isArray(variant.required)) {
-      for (const name of variant.required) if (typeof name === "string") required.add(name);
-    }
+    const required = new Set<string>(
+      Array.isArray(variant.required)
+        ? variant.required.filter((name: unknown): name is string => typeof name === "string")
+        : [],
+    );
+    requiredByEveryVariant = requiredByEveryVariant === null ? required : requiredByEveryVariant.intersection(required);
   }
 
   const properties: Record<string, unknown> = {};
@@ -207,7 +210,7 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
   return {
     type: "object",
     properties,
-    required: [...required].sort(),
+    required: [...(requiredByEveryVariant ?? [])].sort(),
     additionalProperties: false,
   };
 };
