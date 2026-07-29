@@ -163,6 +163,7 @@ jobs:
       TARGET_PROJECT: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
       UOS_AI_TOKEN: ${{ secrets.UBIQUITY_AI_USER_TOKEN }}
       UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
       VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY }}
       YUNWU_API_KEY: ${{ secrets.YUNWU_API_KEY }}
       YUNWU_SYSTEM_TOKEN: ${{ secrets.YUNWU_SYSTEM_TOKEN }}
@@ -185,6 +186,7 @@ jobs:
               const required = ["UOS_AI_TOKEN", "YUNWU_API_KEY"];
               const optional = [
                 "UOS_AI_KERNEL_PUBLIC_KEY",
+                "CEREBRAS_API_KEY",
                 "VOYAGEAI_API_KEY",
                 "YUNWU_SYSTEM_TOKEN",
               ];
