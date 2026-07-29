@@ -119,6 +119,50 @@ const withRequestId = (response: Response, requestId: string): Response => {
   });
 };
 
+type InferenceTimingState = {
+  authStartedAtMonotonicMs: number;
+  authCompletedAtMonotonicMs: number;
+  quotaCompletedAtMonotonicMs: number;
+  contextReadyAtMonotonicMs: number;
+};
+
+const serverTimingDuration = (value: number): string => String(Math.max(0, Math.round(value)));
+
+const withInferenceServerTiming = (
+  response: Response,
+  telemetry: ResponseTelemetry | null,
+  requestStartedAtMonotonicMs: number,
+  timing: InferenceTimingState,
+): Response => {
+  const completedAtMonotonicMs = performance.now();
+  const metrics = [
+    `auth;dur=${serverTimingDuration(timing.authCompletedAtMonotonicMs - timing.authStartedAtMonotonicMs)}`,
+    `quota;dur=${serverTimingDuration(timing.quotaCompletedAtMonotonicMs - timing.authCompletedAtMonotonicMs)}`,
+    `context;dur=${serverTimingDuration(timing.contextReadyAtMonotonicMs - timing.quotaCompletedAtMonotonicMs)}`,
+  ];
+  if (telemetry?.firstProviderDispatchMs !== null && telemetry?.firstProviderDispatchMs !== undefined) {
+    const dispatchAtMonotonicMs = requestStartedAtMonotonicMs + telemetry.firstProviderDispatchMs;
+    metrics.push(
+      `pre_provider;dur=${serverTimingDuration(dispatchAtMonotonicMs - timing.contextReadyAtMonotonicMs)}`,
+    );
+    if (telemetry.firstProviderHeadersMs !== null) {
+      const headersAtMonotonicMs = requestStartedAtMonotonicMs + telemetry.firstProviderHeadersMs;
+      metrics.push(
+        `provider;dur=${serverTimingDuration(headersAtMonotonicMs - dispatchAtMonotonicMs)}`,
+        `post_provider;dur=${serverTimingDuration(completedAtMonotonicMs - headersAtMonotonicMs)}`,
+      );
+    }
+  }
+  metrics.push(`total;dur=${serverTimingDuration(completedAtMonotonicMs - requestStartedAtMonotonicMs)}`);
+  const headers = new Headers(response.headers);
+  headers.set("Server-Timing", metrics.join(", "));
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
+
 const decorateInferenceQuota = (
   response: Response,
   policy: ApiKeyPolicy | null,
@@ -586,7 +630,9 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   const terminalRoute = terminalRouteForRequest(req.method, path);
+  const authStartedAtMonotonicMs = performance.now();
   const authResult = await authenticateClient(req);
+  const authCompletedAtMonotonicMs = performance.now();
   if (!authResult.ok) {
     const response = withCors(withRequestId(authResult.response, requestId));
     return terminalRoute
@@ -602,7 +648,10 @@ export default async function handler(req: Request): Promise<Response> {
   const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
   let usageReservation: ApiKeyUsageReservation | null = null;
   if (usagePolicy && terminalRoute) {
-    const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute, { deferWhenFull: true });
+    const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute, {
+      deferWhenFull: true,
+      ...(terminalRoute === "chat.completions" ? { unmeteredProviderWhenUnlimited: "cerebras" as const } : {}),
+    });
     if (!admission.ok) {
       const response = withCors(withRequestId(admission.response, requestId));
       return await withTerminalRequestLog(response, {
@@ -612,10 +661,12 @@ export default async function handler(req: Request): Promise<Response> {
       });
     }
     usageReservation = admission.reservation;
-    // Admission re-reads the strict hash policy, so downstream quota headers
-    // and paid fallback use the policy that actually reserved this request.
+    // Full admission exposes its strict live policy immediately. The unlimited
+    // Cerebras path refreshes this getter at provider dispatch, and response
+    // decoration samples it again after the handler completes.
     usagePolicy = admission.reservation.policy;
   }
+  const quotaCompletedAtMonotonicMs = performance.now();
   const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
   let kernelRepo = authResult.method.kind === "github_token"
     ? { owner: authResult.method.owner, repo: authResult.method.repo }
@@ -631,12 +682,20 @@ export default async function handler(req: Request): Promise<Response> {
     keyId: usageKeyId,
     kernelRepo,
     kernelOrg,
-    paidFallbackEnabled: usagePolicy?.paid_fallback_enabled === true,
+    get paidFallbackEnabled() {
+      return (usageReservation?.policy ?? usagePolicy)?.paid_fallback_enabled === true;
+    },
     idempotencyPrincipal,
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,
     beforeProviderDispatch: usageReservation?.beforeProviderDispatch,
+  };
+  const inferenceTiming: InferenceTimingState = {
+    authStartedAtMonotonicMs,
+    authCompletedAtMonotonicMs,
+    quotaCompletedAtMonotonicMs,
+    contextReadyAtMonotonicMs: performance.now(),
   };
   if (terminalRoute) {
     console.info(
@@ -671,15 +730,22 @@ export default async function handler(req: Request): Promise<Response> {
     includeQuota = false,
     onCompleted?: () => Promise<void>,
   ): Promise<Response> => {
+    usagePolicy = usageReservation?.policy ?? usagePolicy;
     const telemetry = getResponseTelemetry(response);
     const decorated = includeQuota ? decorateInferenceQuota(response, usagePolicy, telemetry) : response;
-    return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
+    const terminalResponse = await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
       route,
       telemetryResponse: response,
       startedAtMonotonicMs: requestStartedAtMonotonicMs,
       requestId,
       onCompleted,
     });
+    return withInferenceServerTiming(
+      terminalResponse,
+      telemetry,
+      requestStartedAtMonotonicMs,
+      inferenceTiming,
+    );
   };
   const bestEffortKernelInferenceUsage = async (): Promise<void> => {
     try {

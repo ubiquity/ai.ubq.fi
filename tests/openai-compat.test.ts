@@ -3957,6 +3957,7 @@ Deno.test("http: CORS wrapper exposes a gateway request id", () => {
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-request-id/);
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-provider-request-id/);
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-upstream/);
+  assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /Server-Timing/);
 });
 
 Deno.test("http: CORS wrapper exposes baked source identity and deployment headers", () => {

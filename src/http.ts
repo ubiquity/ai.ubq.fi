@@ -11,6 +11,7 @@ const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-cache",
   "ETag",
   "Retry-After",
+  "Server-Timing",
   "x-codex-limit-name",
   "x-codex-primary-used-percent",
 ] as const;

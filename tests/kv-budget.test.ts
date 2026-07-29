@@ -455,6 +455,106 @@ Deno.test("V3 dispatch ledger commits unlimited API-key requests exactly once", 
   }
 });
 
+Deno.test("V3 unlimited Cerebras admission performs one strong policy read and no ledger writes", async () => {
+  const { policy } = await prepareApiKeyInference("1", "unlimited-cerebras-fast-path", -1);
+  kv.resetCounts();
+
+  const admission = await reserveApiKeyUsageV3(
+    policy,
+    "unlimited-cerebras-fast-path",
+    "chat.completions",
+    {
+      kv: kv as unknown as Deno.Kv,
+      unmeteredProviderWhenUnlimited: "cerebras",
+    },
+  );
+  assert.equal(admission.ok, true);
+  if (!admission.ok) return;
+  assert.equal(kv.reads, 0);
+  assert.equal(kv.writes, 0);
+
+  await admission.reservation.beforeProviderDispatch("cerebras");
+  await admission.reservation.release();
+
+  assert.equal(kv.reads, 1);
+  assert.equal(kv.writes, 0);
+  assert.deepEqual(kv.readKeys, [["ubq_ai", "api_keys", "hash", policy.token_hash]]);
+  assert.equal(
+    [...kv.values.keys()].some((key) => key.includes('"api_key_usage","v3"')),
+    false,
+  );
+});
+
+Deno.test("V3 Cerebras fast path falls back to the full ledger when the live policy becomes bounded", async () => {
+  const { hash, record, policy } = await prepareApiKeyInference("1", "cerebras-became-bounded", -1);
+  const admission = await reserveApiKeyUsageV3(
+    policy,
+    "cerebras-became-bounded",
+    "chat.completions",
+    {
+      kv: kv as unknown as Deno.Kv,
+      unmeteredProviderWhenUnlimited: "cerebras",
+    },
+  );
+  assert.equal(admission.ok, true);
+  if (!admission.ok) return;
+  kv.values.set(encodeKey(["ubq_ai", "api_keys", "hash", hash]), {
+    ...record,
+    usage_limit_requests: 1,
+  });
+
+  await admission.reservation.beforeProviderDispatch("cerebras");
+
+  assert.equal(admission.reservation.policy.usage_limit_requests, 1);
+  assert.deepEqual(usageWindow(admission.reservation.policy), {
+    committed_requests: 1,
+    reserved_requests: 0,
+    window_reset_at_ms: policy.usage_reset_at_ms,
+  });
+});
+
+Deno.test("V3 Cerebras fast path preserves live revocation and meters every other provider", async () => {
+  const revoked = await prepareApiKeyInference("1", "cerebras-revoked", -1);
+  const revokedAdmission = await reserveApiKeyUsageV3(
+    revoked.policy,
+    "cerebras-revoked",
+    "chat.completions",
+    {
+      kv: kv as unknown as Deno.Kv,
+      unmeteredProviderWhenUnlimited: "cerebras",
+    },
+  );
+  assert.equal(revokedAdmission.ok, true);
+  if (!revokedAdmission.ok) return;
+  kv.values.set(encodeKey(["ubq_ai", "api_keys", "hash", revoked.hash]), {
+    ...revoked.record,
+    revoked_at_ms: Date.now(),
+  });
+  await assert.rejects(
+    () => revokedAdmission.reservation.beforeProviderDispatch("cerebras"),
+    (error: unknown) => error instanceof ApiKeyQuotaDispatchError && error.status === 401,
+  );
+
+  const other = await prepareApiKeyInference("1", "unlimited-other-provider", -1);
+  const otherAdmission = await reserveApiKeyUsageV3(
+    other.policy,
+    "unlimited-other-provider",
+    "chat.completions",
+    {
+      kv: kv as unknown as Deno.Kv,
+      unmeteredProviderWhenUnlimited: "cerebras",
+    },
+  );
+  assert.equal(otherAdmission.ok, true);
+  if (!otherAdmission.ok) return;
+  await otherAdmission.reservation.beforeProviderDispatch("chatgpt_codex");
+  assert.deepEqual(usageWindow(otherAdmission.reservation.policy), {
+    committed_requests: 1,
+    reserved_requests: 0,
+    window_reset_at_ms: other.policy.usage_reset_at_ms,
+  });
+});
+
 Deno.test("V3 unlimited concurrent reservations avoid local CAS exhaustion and lease scans", async () => {
   const { policy } = await prepareApiKeyInference("9", "unlimited-concurrent", -1);
   const concurrency = 100;
@@ -1246,6 +1346,66 @@ Deno.test("Chat streaming terminal telemetry reports ordered timings once", asyn
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("unlimited GPT-OSS requests expose gateway timing without writing the V3 ledger", async () => {
+  const { token } = await prepareApiKeyInference("c", "gpt-oss-server-timing", -1);
+  const originalFetch = globalThis.fetch;
+  const originalCerebrasApiKey = Deno.env.get("CEREBRAS_API_KEY");
+  Deno.env.set("CEREBRAS_API_KEY", "cerebras-test-key");
+  globalThis.fetch = (input) => {
+    assert.equal(String(input), "https://api.cerebras.ai/v1/chat/completions");
+    return Promise.resolve(Response.json({
+      id: "chatcmpl_gateway_timing",
+      object: "chat.completion",
+      created: 1_728_000_000,
+      model: "gpt-oss-120b",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: "Ready." },
+        finish_reason: "stop",
+      }],
+      usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+    }));
+  };
+  try {
+    const response = await handler(
+      new Request("https://ai.ubq.fi/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "gpt-oss-120b",
+          messages: [{ role: "user", content: "ping" }],
+          stream: false,
+        }),
+      }),
+    );
+    assert.equal(response.status, 200);
+    await response.text();
+    const serverTiming = response.headers.get("Server-Timing") ?? "";
+    for (
+      const metric of [
+        "auth",
+        "quota",
+        "context",
+        "pre_provider",
+        "provider",
+        "post_provider",
+        "total",
+      ]
+    ) {
+      assert.match(serverTiming, new RegExp(`(?:^|, )${metric};dur=\\d+`));
+    }
+    assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /Server-Timing/);
+    assert.equal(
+      [...kv.values.keys()].some((key) => key.includes('"api_key_usage","v3"')),
+      false,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCerebrasApiKey === undefined) Deno.env.delete("CEREBRAS_API_KEY");
+    else Deno.env.set("CEREBRAS_API_KEY", originalCerebrasApiKey);
   }
 });
 
