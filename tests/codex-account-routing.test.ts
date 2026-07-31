@@ -143,18 +143,48 @@ Deno.test("ordinary and incomplete 429 variants never persist a quota block", as
       retryAtMs: now + 60_000,
     },
     {
-      name: "legacy reset fields only",
+      name: "usage limit with string body reset",
       response: () =>
         new Response(
-          JSON.stringify({ error: { type: "usage_limit_reached", resets_at: futureResetSeconds } }),
+          JSON.stringify({ error: { type: "usage_limit_reached", resets_at: String(futureResetSeconds) } }),
           {
             status: 429,
-            headers: {
-              "Content-Type": "application/json",
-              "x-codex-primary-reset-at": String(futureResetSeconds),
-            },
+            headers: { "Content-Type": "application/json" },
           },
         ),
+      usageLimitReached: true,
+      retryAtMs: null,
+    },
+    {
+      name: "usage limit with fractional body reset",
+      response: () =>
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached", resets_at: futureResetSeconds + 0.5 } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      usageLimitReached: true,
+      retryAtMs: null,
+    },
+    {
+      name: "usage limit with expired body reset",
+      response: () =>
+        new Response(
+          JSON.stringify({ error: { type: "usage_limit_reached", resets_at: Math.floor(now / 1_000) - 1 } }),
+          {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      usageLimitReached: true,
+      retryAtMs: null,
+    },
+    {
+      name: "usage limit with overflowing body reset",
+      response: () =>
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached", resets_at: Number.MAX_SAFE_INTEGER } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
       usageLimitReached: true,
       retryAtMs: null,
     },
@@ -215,6 +245,140 @@ Deno.test("ordinary and incomplete 429 variants never persist a quota block", as
       setKvForTest(null);
       resetCodexAccountRoutingForTest();
     }
+  }
+});
+
+Deno.test("exact future body resets_at durably identifies the Codex quota window", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const resetAtSeconds = Math.floor(now / 1_000) + 120;
+    const resetAtMs = resetAtSeconds * 1_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+
+    const classified = await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(
+        JSON.stringify({
+          error: {
+            type: "usage_limit_reached",
+            resets_at: resetAtSeconds,
+            resets_in_seconds: 120,
+          },
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "x-codex-primary-reset-at": String(resetAtSeconds),
+          },
+        },
+      ),
+      now,
+    );
+    assert.equal(classified.usageLimitReached, true);
+    assert.equal(classified.retryAtMs, resetAtMs);
+    assert.equal(classified.quotaBlockSource, "body_resets_at");
+    assert.equal(classified.resetDeadlineIsStable, true);
+    assert.equal(classified.resetDeadlineConflict, false);
+
+    const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(state?.slots[0]?.quota_blocked_until_ms, resetAtMs);
+    assert.equal(state?.slots[0]?.quota_block_source, "body_resets_at");
+    assert.equal(state?.slots[0]?.observed_reset_at_ms, resetAtMs);
+    assert.equal(state?.slots[0]?.observed_reset_at_is_stable, true);
+    assert.equal(state?.slots[0]?.banked_reset_generation_ambiguous, false);
+
+    resetCodexAccountRoutingForTest();
+    const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
+    assert.equal(selected.kind, "quota_blocked");
+    if (selected.kind !== "quota_blocked") return;
+    assert.deepEqual(
+      selected.blockedAccounts.map(({ quotaResetAtMs, routingGeneration }) => ({
+        quotaResetAtMs,
+        routingGeneration,
+      })),
+      [{ quotaResetAtMs: resetAtMs, routingGeneration: state!.slots[0]!.generation }],
+    );
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("conflicting absolute body and header deadlines permanently fail closed", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const bodyResetAtSeconds = Math.floor(now / 1_000) + 60;
+    const headerResetAtMs = now + 120_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+
+    const classified = await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(
+        JSON.stringify({ error: { type: "usage_limit_reached", resets_at: bodyResetAtSeconds } }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": new Date(headerResetAtMs).toUTCString(),
+          },
+        },
+      ),
+      now,
+    );
+    assert.equal(classified.retryAtMs, headerResetAtMs);
+    assert.equal(classified.quotaBlockSource, "body_resets_at");
+    assert.equal(classified.resetDeadlineIsStable, false);
+    assert.equal(classified.resetDeadlineConflict, true);
+
+    const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(state?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(await getCodexQuotaBlockFence(initial.accounts[0]!, headerResetAtMs), null);
+
+    resetCodexAccountRoutingForTest();
+    const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
+    assert.equal(selected.kind, "quota_blocked");
+    if (selected.kind === "quota_blocked") assert.deepEqual(selected.blockedAccounts, []);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("body resets_at preserves longer relative routing delays without authorizing redemption", async () => {
+  const now = 1_700_000_000_000;
+  const bodyResetAtSeconds = Math.floor(now / 1_000) + 60;
+  for (
+    const testCase of [
+      { name: "shorter", retryAfter: "30", expectedRetryAtMs: now + 60_000, stable: true, conflict: false },
+      { name: "equal", retryAfter: "60", expectedRetryAtMs: now + 60_000, stable: true, conflict: false },
+      { name: "longer", retryAfter: "120", expectedRetryAtMs: now + 120_000, stable: false, conflict: true },
+    ] as const
+  ) {
+    const classified = await readCodex429(
+      new Response(
+        JSON.stringify({ error: { type: "usage_limit_reached", resets_at: bodyResetAtSeconds } }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": testCase.retryAfter },
+        },
+      ),
+      now,
+    );
+    assert.equal(classified.retryAtMs, testCase.expectedRetryAtMs, testCase.name);
+    assert.equal(classified.quotaBlockSource, "body_resets_at", testCase.name);
+    assert.equal(classified.resetDeadlineIsStable, testCase.stable, testCase.name);
+    assert.equal(classified.resetDeadlineConflict, testCase.conflict, testCase.name);
   }
 });
 

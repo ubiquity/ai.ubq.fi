@@ -1269,10 +1269,18 @@ Deno.test("the default upstream adapter shadows and redeems one partial blocked 
     const accountId = request.headers.get("chatgpt-account-id");
     if (request.url.endsWith("/backend-api/codex/responses")) {
       if (accountId === "account-one" && !live) {
-        return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-          status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-        });
+        return new Response(
+          JSON.stringify({
+            error: {
+              type: "usage_limit_reached",
+              resets_at: Math.floor(Date.parse(stableBankedResetRetryAfter) / 1_000),
+            },
+          }),
+          {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
       }
       return new Response(JSON.stringify({ id: `response-${accountId}` }), { status: 200 });
     }

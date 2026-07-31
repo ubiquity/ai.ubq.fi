@@ -1355,7 +1355,12 @@ const codexErrorClass = (error: unknown): string => {
 };
 
 const logCodexRouting = (
-  event: "codex_attempt" | "codex_token_refresh" | "codex_two_second_retry",
+  event:
+    | "codex_attempt"
+    | "codex_banked_reset_preflight"
+    | "codex_quota_classification"
+    | "codex_token_refresh"
+    | "codex_two_second_retry",
   fields: Readonly<Record<string, string | number | null>>,
 ): void => {
   try {
@@ -1649,19 +1654,21 @@ export const fetchCodexResponses = async (
       retryAtMs: number | null;
       resetDeadlineIsStable: boolean;
     }>,
-  ): Promise<void> => {
+  ): Promise<"captured" | "ineligible" | "routing_fence_unavailable"> => {
     // Relative Retry-After delays are valid for ordinary routing, but their
     // Date.now-derived deadline cannot name a durable reset window. A
     // canonical absolute HTTP-date is only a provisional identity; the
     // durable no-revision fence is what permits it to receive a key.
-    if (!disposition.usageLimitReached || disposition.retryAtMs === null || !disposition.resetDeadlineIsStable) return;
+    if (!disposition.usageLimitReached || disposition.retryAtMs === null || !disposition.resetDeadlineIsStable) {
+      return "ineligible";
+    }
     const routingGeneration = await getCodexQuotaBlockFence(routing, disposition.retryAtMs);
     if (routingGeneration === null) {
       // A revised quota window invalidates any older observation for this
       // slot. It must not remain selectable just because capture could not
       // establish a fresh fence for the new deadline.
       bankedResetCandidates.delete(routing.slot);
-      return;
+      return "routing_fence_unavailable";
     }
     bankedResetCandidates.set(routing.slot, {
       accountEntry,
@@ -1670,6 +1677,7 @@ export const fetchCodexResponses = async (
       quotaResetAtMs: disposition.retryAtMs,
       routingGeneration,
     });
+    return "captured";
   };
 
   const logBankedResetEvent = (
@@ -1717,7 +1725,16 @@ export const fetchCodexResponses = async (
     } catch {
       return null;
     }
-    const routedPool = await selectCodexRoutingAccounts(currentPoolEntry.pool, currentPoolEntry.pool.accounts);
+    const routedPool = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts);
+    if (routedPool.kind === "routing_unavailable") {
+      logCodexRouting("codex_banked_reset_preflight", {
+        request_id: options.requestId ?? null,
+        require_full_pool: requireFullPool ? "true" : "false",
+        outcome: "routing_unavailable",
+        reason: "strong_routing_read_failed",
+      });
+      return null;
+    }
     const blockedAccounts = routedPool.kind === "credentials_invalid" ? [] : routedPool.blockedAccounts;
     if (!blockedAccounts.length) return null;
     let partialCohort: PartialBankedResetCohortFence | null = null;
@@ -1775,6 +1792,14 @@ export const fetchCodexResponses = async (
       provider: resetDependenciesForCandidate(candidate).provider,
     }));
     const evaluated = await evaluateCodexBankedResetPool(poolCandidates, bankedResetDependencies);
+    logCodexRouting("codex_banked_reset_preflight", {
+      request_id: options.requestId ?? null,
+      require_full_pool: requireFullPool ? "true" : "false",
+      outcome: evaluated.kind,
+      reason: evaluated.reason,
+      candidate_count: poolCandidates.length,
+      selected_slot: evaluated.selected === null ? null : evaluated.selected.slot + 1,
+    });
     if (!evaluated.selected || !evaluated.reset) return null;
     const candidate = localCandidates.find((item) => item.routing.slot === evaluated.selected!.slot);
     return candidate ? { candidate, reset: evaluated.reset } : null;
@@ -1881,14 +1906,25 @@ export const fetchCodexResponses = async (
     response: Response,
   ): Promise<Response> => {
     const disposition = await markCodexQuotaBlocked(routing, response);
+    let candidateOutcome: "captured" | "ineligible" | "routing_fence_unavailable" = "ineligible";
     if (disposition.usageLimitReached && disposition.retryAtMs !== null && disposition.resetDeadlineIsStable) {
-      await captureBankedResetCandidate(accountEntry, routing, auth, disposition);
+      candidateOutcome = await captureBankedResetCandidate(accountEntry, routing, auth, disposition);
     } else {
       // A later ordinary/ambiguous 429 means this request did not establish
       // that every failed account is genuinely quota-exhausted. Do not spend
       // a reset based on an older candidate in the same failover pass.
       bankedResetCandidates.clear();
     }
+    logCodexRouting("codex_quota_classification", {
+      request_id: options.requestId ?? null,
+      slot: routing.slot + 1,
+      usage_limit_reached: disposition.usageLimitReached ? "true" : "false",
+      retry_at_ms: disposition.retryAtMs,
+      quota_block_source: disposition.quotaBlockSource,
+      reset_deadline_is_stable: disposition.resetDeadlineIsStable ? "true" : "false",
+      reset_deadline_conflict: disposition.resetDeadlineConflict ? "true" : "false",
+      candidate_outcome: candidateOutcome,
+    });
     const classifiedAtMs = Date.now();
     const retryAfterDelay = disposition.retryAtMs === null ? 0 : Math.max(0, disposition.retryAtMs - classifiedAtMs);
     const mayRetryWithinBound = !disposition.usageLimitReached ||

@@ -16,7 +16,7 @@ export const CODEX_HALF_OPEN_LEASE_MS = 30_000;
 // normal traffic off KV while limiting cross-isolate stale routing decisions.
 const ROUTING_CACHE_REVALIDATE_MS = 5_000;
 
-export type CodexQuotaBlockSource = "header_retry_after";
+export type CodexQuotaBlockSource = "body_resets_at" | "header_retry_after";
 
 export type CodexRoutingSlot = Readonly<{
   /** Opaque account-scope hash; durable state never stores a raw account id. */
@@ -28,10 +28,10 @@ export type CodexRoutingSlot = Readonly<{
   primary_used_percent: number | null;
   secondary_used_percent: number | null;
   observed_reset_at_ms: number | null;
-  /** True only when the upstream supplied a canonical absolute HTTP-date. */
+  /** True only when the upstream supplied a canonical absolute reset deadline. */
   observed_reset_at_is_stable: boolean;
   /**
-   * A stable Retry-After plus any later conflicting or relative value cannot
+   * A stable reset deadline plus any later conflicting or relative value cannot
    * be proved to name a new provider quota generation. While it remains true,
    * ordinary routing continues but banked-reset claims fail closed and
    * existing records are lookup-only.
@@ -61,7 +61,7 @@ export type RoutingAccount = Readonly<{
   probeToken: string | null;
 }>;
 
-/** A durable header-derived circuit that may have an existing reset record to reconcile. */
+/** A durable provider-deadline circuit that may have an existing reset record to reconcile. */
 export type CodexBlockedRoutingAccount =
   & RoutingAccount
   & Readonly<{
@@ -102,7 +102,7 @@ const hasUnresolvedLegacyResetIdentity = (state: CodexAccountRoutingState | null
 const parseSlot = (value: unknown): CodexRoutingSlot | null => {
   if (!isRecord(value) || typeof value.credential_version !== "string") return null;
   const source = value.quota_block_source;
-  if (source !== null && source !== "header_retry_after") return null;
+  if (source !== null && source !== "body_resets_at" && source !== "header_retry_after") return null;
   const lease = value.probe_lease;
   const parsedLease = lease === null
     ? null
@@ -482,8 +482,11 @@ export type Codex429Classification = Readonly<{
   response: Response;
   usageLimitReached: boolean;
   retryAtMs: number | null;
-  /** Whether `retryAtMs` is a canonical absolute HTTP-date (not a provider generation by itself). */
+  quotaBlockSource: CodexQuotaBlockSource | null;
+  /** Whether `retryAtMs` is a canonical absolute deadline (not a provider generation by itself). */
   resetDeadlineIsStable: boolean;
+  /** Conflicting deadline signals permanently fence this observation from redemption. */
+  resetDeadlineConflict: boolean;
 }>;
 
 type JsonObjectKeyScanResult = "valid" | "invalid" | "duplicate";
@@ -618,6 +621,7 @@ export const readCodex429 = async (
     cancellationReason: "Codex 429 classified",
   });
   let usageLimitReached = false;
+  let bodyResetAtMs: number | null = null;
   if (complete) {
     try {
       const bodyText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -627,6 +631,14 @@ export const readCodex429 = async (
         const body = JSON.parse(bodyText);
         const error = isRecord(body) && isRecord(body.error) ? body.error : null;
         usageLimitReached = getString(error?.type) === "usage_limit_reached";
+        const resetsAtSeconds = error?.resets_at;
+        if (
+          usageLimitReached && typeof resetsAtSeconds === "number" && Number.isSafeInteger(resetsAtSeconds) &&
+          resetsAtSeconds >= 0
+        ) {
+          const deadlineMs = resetsAtSeconds * 1_000;
+          if (Number.isSafeInteger(deadlineMs) && deadlineMs > now) bodyResetAtMs = deadlineMs;
+        }
       }
     } catch {
       // A valid UTF-8, unambiguous, fully parsed OpenAI error is required
@@ -634,8 +646,22 @@ export const readCodex429 = async (
     }
   }
   const retryAfter = futureRetryAfterDeadline(headers, now);
-  const retryAtMs = retryAfter?.deadlineMs ?? null;
-  const resetDeadlineIsStable = retryAfter?.isStable === true;
+  const absoluteHeaderConflict = bodyResetAtMs !== null && retryAfter?.isStable === true &&
+    retryAfter.deadlineMs !== bodyResetAtMs;
+  const relativeHeaderExtendsPastBody = bodyResetAtMs !== null && retryAfter?.isStable === false &&
+    retryAfter.deadlineMs > bodyResetAtMs;
+  const resetDeadlineConflict = absoluteHeaderConflict || relativeHeaderExtendsPastBody;
+  const retryAtMs = bodyResetAtMs === null
+    ? retryAfter?.deadlineMs ?? null
+    : resetDeadlineConflict
+    ? Math.max(bodyResetAtMs, retryAfter!.deadlineMs)
+    : bodyResetAtMs;
+  const quotaBlockSource: CodexQuotaBlockSource | null = bodyResetAtMs !== null
+    ? "body_resets_at"
+    : retryAfter
+    ? "header_retry_after"
+    : null;
+  const resetDeadlineIsStable = bodyResetAtMs !== null ? !resetDeadlineConflict : retryAfter?.isStable === true;
   if (!complete) {
     headers.set("Content-Type", "application/json");
     return {
@@ -652,14 +678,18 @@ export const readCodex429 = async (
       ),
       usageLimitReached: false,
       retryAtMs,
+      quotaBlockSource,
       resetDeadlineIsStable,
+      resetDeadlineConflict,
     };
   }
   return {
     response: new Response(bytes, { status: response.status, statusText: response.statusText, headers }),
     usageLimitReached,
     retryAtMs,
+    quotaBlockSource,
     resetDeadlineIsStable,
+    resetDeadlineConflict,
   };
 };
 
@@ -670,7 +700,8 @@ export const markCodexQuotaBlocked = async (
 ): Promise<Codex429Classification> => {
   const parsed = await readCodex429(response, now);
   const retryAtMs = parsed.retryAtMs;
-  if (!parsed.usageLimitReached || retryAtMs === null) {
+  const quotaBlockSource = parsed.quotaBlockSource;
+  if (!parsed.usageLimitReached || retryAtMs === null || quotaBlockSource === null) {
     // An expired circuit is represented by a fenced half-open probe. A
     // non-blocking 429 must release that old circuit, while the generation and
     // token checks prevent a stale probe from clearing a newer claim.
@@ -707,13 +738,14 @@ export const markCodexQuotaBlocked = async (
     const priorDeadline = current.quota_blocked_until_ms ?? 0;
     const deadline = Math.max(priorDeadline, retryAtMs);
     const hasStableObservation = current.observed_reset_at_ms !== null && current.observed_reset_at_is_stable;
-    // A stable HTTP-date is not a provider-proven quota-window generation.
+    // A stable absolute deadline is not by itself a provider-proven new
+    // quota-window generation.
     // Once a stable observation exists, a changed date *or any later relative
     // delay* cannot prove a new provider quota generation. Keep the first
     // stable observation lookup-only and fence claims until a successful
     // half-open probe clears it. Expiry and administrative rechecks are not
     // proof that the provider advanced the quota generation.
-    const generationAmbiguous = current.banked_reset_generation_ambiguous ||
+    const generationAmbiguous = current.banked_reset_generation_ambiguous || parsed.resetDeadlineConflict ||
       (hasStableObservation &&
         (!parsed.resetDeadlineIsStable || retryAtMs !== current.observed_reset_at_ms));
     const preserveStableObservation = hasStableObservation && generationAmbiguous;
@@ -734,7 +766,7 @@ export const markCodexQuotaBlocked = async (
       ...current,
       account_id_hash: account.accountIdHash,
       quota_blocked_until_ms: deadline,
-      quota_block_source: "header_retry_after",
+      quota_block_source: quotaBlockSource,
       primary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-primary-used-percent")) ??
         current.primary_used_percent,
       secondary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-secondary-used-percent")) ??
@@ -876,7 +908,7 @@ export const isCodexQuotaBlockFenceCurrent = (
   return !hasUnresolvedLegacyResetIdentity(state) && current?.credential_version === account.credentialVersion &&
     current.account_id_hash === account.accountIdHash &&
     current.generation === routingGeneration &&
-    current.quota_block_source === "header_retry_after" &&
+    (current.quota_block_source === "body_resets_at" || current.quota_block_source === "header_retry_after") &&
     current.observed_reset_at_ms === quotaResetAtMs &&
     current.observed_reset_at_is_stable === true &&
     current.banked_reset_generation_ambiguous === false &&
@@ -1170,7 +1202,8 @@ const selectCodexRoutingAccountsFromState = async (
       hasQuotaBlock = true;
       retryAt = retryAt === null ? slot.quota_blocked_until_ms : Math.min(retryAt, slot.quota_blocked_until_ms);
       if (
-        slot.quota_block_source === "header_retry_after" && slot.observed_reset_at_ms !== null &&
+        (slot.quota_block_source === "body_resets_at" || slot.quota_block_source === "header_retry_after") &&
+        slot.observed_reset_at_ms !== null &&
         slot.observed_reset_at_is_stable
       ) {
         blockedAccounts.push({

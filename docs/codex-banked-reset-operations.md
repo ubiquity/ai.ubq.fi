@@ -35,8 +35,10 @@ All automated tests use fake providers or mocked transports. They do not call th
 Banked-reset selection is downstream of the durable Codex routing state:
 
 1. A slot must have returned a completely parsed upstream `429` whose error type is exactly `usage_limit_reached`.
-2. The response must contain a canonical absolute `Retry-After` HTTP-date in the future. Relative delays remain valid
-   for ordinary routing but cannot identify a banked-reset window.
+2. The response must contain an exact future integer `error.resets_at` Unix timestamp, matching the Codex client wire
+   contract, or a canonical absolute `Retry-After` HTTP-date. Relative delays remain valid for ordinary routing but
+   cannot identify a banked-reset window. Conflicting absolute deadlines, or a longer relative routing delay, fail
+   closed for redemption.
 3. A revised deadline, ambiguous generation, active recovery-probe lease, invalid credential, unmapped slot, stale
    fence, or unavailable KV prevents the cohort from being complete.
 4. A fresh strong routing read must account for every current auth-pool slot as either:
