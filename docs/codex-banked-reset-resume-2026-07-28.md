@@ -26,21 +26,27 @@ codex exec resume 019fa7f1-a319-7002-9886-d5e295191c3e \
 Use the primary thread ID above to locate this implementation conversation when reviewing the shadow observation or
 later live-decision evidence.
 
-## Shipped behavior after production promotion
+## Current continuation for the expiring-credit canary
 
-This note predates the account-bound shadow canary revision. The deployed canary configuration must use `shadow`, the
-exact eventual allowlist, and a global cap of `1`. Shadow now makes account-bound inventory GETs and records a redacted
-decision; it still makes zero consume calls. Live configuration cannot reach a real consume because the pinned upstream
-source lacks documented idempotency retention, lookup, and independent verification; see
-`codex-banked-reset-operations.md` for the reconciliation boundary.
+Production was rechecked on 2026-07-30 at `2b437eb11744e59c9e54dfeb4e1eac51991a24a7` / deployment `k72eejpydv8g`. It
+remained in `shadow` with both caps set to `1`, the secret allowlist present, one exhausted account, one healthy
+account, and an empty shadow-decision ledger. The old full-pool trigger therefore did **not** fire and no credit was
+consumed.
 
-The reset candidate is reached only after normal Codex account failover and the ordinary bounded retry are exhausted,
-and only for a completely parsed `429` whose type is exactly `usage_limit_reached` with a stable absolute `Retry-After`
-date. The full-pool evaluator reads each account's inventory in shadow and chooses an explicit credit, but cannot issue
-a consume call. The pinned upstream source does document that a `2xx` must still be parsed for JSON `code`; that adapter
-remains offline behind the contract gate.
+The continuation broadens selection to a complete blocked cohort: every current auth slot must be either a stable
+blocked account or a healthy non-probing sibling, but only blocked accounts reach inventory or redemption. Shadow still
+makes zero consume calls. A repeated same-fence shadow request reuses its durable decision without a second inventory
+GET.
 
-## Validation evidence before the final fail-closed correction
+The pinned upstream source defines exact terminal `reset` and `already_redeemed` consume codes. The continuation accepts
+only those parsed codes as authoritative for a single at-most-one submission. Non-2xx, timeout, malformed/unknown JSON,
+or response loss remains durable `unknown` and is never submitted again. This is not independently reconcilable
+exactly-once behavior.
+
+Terminal-only live mode additionally requires the global cap to be exactly `1`. That cap resets each UTC day, so the
+operator must restore mode to `shadow` immediately after the one controlled canary.
+
+## Historical validation evidence before the current continuation
 
 - `deno task build` — passed
 - `deno fmt --check serve.ts src tests scripts docs` — passed
@@ -58,18 +64,17 @@ is not integrated: it adds a status-only adapter that treats every `2xx` as a co
 documented response code or proving reconciliation. The pinned upstream source disproves that assumption, so this branch
 is rejected and retained only as an audit artifact; no other banked-reset worktree or branch contains work to merge.
 
-## Next verification after limits naturally exhaust
+## Next verification for the one-reset window
 
-1. Confirm the served production health response reports the promoted Git SHA and deployment ID.
-2. With shadow configured with the eventual allowlist and cap one, wait for a natural qualifying Codex `429`; do not
-   call the reset endpoint as a smoke test.
-3. Inspect the redacted shadow-decision endpoint and events. There must be no `submit_started` or consume request;
-   account-bound inventory GETs are expected.
-4. Do not authorize live redemption until the provider supplies the missing retention, lookup, and independent
-   verification guarantees; preserve every `submitted` or `unknown` record and never replay a provider call.
+1. Freeze and deploy one exact candidate SHA while effective mode remains `shadow`.
+2. Require both health domains to report that SHA and the same routed deployment ID.
+3. Send one controlled normal request, then require a current `decision_reason: "selected"` record from the redacted
+   shadow endpoint. There must be no submission event or consume call.
+4. Change only the existing mode to `live`, re-attest configuration, and send exactly one controlled normal request.
+5. Observe at most one consume call and one same-account recovery probe. A definitive probe `401`, `403`, or `429` may
+   fall through once to the healthy sibling; a transport ambiguity must never replay.
+6. Immediately restore mode to `shadow`, then audit the terminal `redeem_outcome` or durable `unknown` state and
+   preserve every KV record.
 
-The exact shadow configuration, event-by-event acceptance criteria, rollback, and live-decision prerequisites are in
-`codex-banked-reset-operations.md` under “Two-phase rollout: shadow first, live only after contract closure.”
-
-At the time this file was written, no real provider reset endpoint had been called by this implementation or its test
-suite. The production workflow must provide immutable deployment attestation before the promotion is considered live.
+The exact acceptance criteria, rollback commands, ambiguity boundary, and temporary-directory rule for all `deno deploy`
+commands are in `codex-banked-reset-operations.md`.

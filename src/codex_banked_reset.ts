@@ -4,6 +4,7 @@ import {
   providerReceiptIdsSafeToPersistAndLog,
   providerSupportsLiveRedemption,
   providerSupportsResetType,
+  providerTreatsRedeemOutcomeAsFinal,
   type RedeemResetResult,
   type ResetAccountContext,
   type ResetInventory,
@@ -28,6 +29,8 @@ export const CODEX_RESET_SHADOW_DECISION_KV_PREFIX = ["uos_ai", "codex_reset_sha
 export const CODEX_BANKED_RESET_LEASE_MS = 30_000;
 /** Inventory is an authorization input for an external spend, not a cache. */
 export const CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS = 30_000;
+/** A reset preflight may not hold an otherwise healthy fallback indefinitely. */
+export const CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS = 5_000;
 const MAX_CAS_ATTEMPTS = 4;
 
 export const codexResetRedemptionKey = (accountIdHash: string, quotaGeneration: string): Deno.KvKey => [
@@ -105,9 +108,9 @@ const parseAllowlist = (value: string | undefined): ReadonlySet<string> =>
 export const parseCodexBankedResetConfig = (
   readEnv: (key: string) => string | undefined = getEnv,
 ): CodexBankedResetConfig => ({
-  // Shadow telemetry is safe to ship globally: it never calls the provider.
-  // A reset spend still requires explicit live mode, a cap, an allowlist, and
-  // a provider contract that proves recovery is possible.
+  // Shadow telemetry may read an allowlisted blocked account's inventory, but
+  // it never consumes a credit. A spend still requires explicit live mode,
+  // caps, an allowlist, and an approved provider contract.
   enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), true),
   mode: parseMode(readEnv("CODEX_BANKED_RESET_MODE")),
   accountAllowlist: parseAllowlist(readEnv("CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST")),
@@ -224,7 +227,7 @@ export type CodexBankedResetOutcome = Readonly<{
   record: CodexResetRedemptionRecord | null;
 }>;
 
-/** One currently fenced account supplied to the full-pool evaluator. */
+/** One currently fenced account supplied to the blocked-cohort evaluator. */
 export type CodexBankedResetPoolCandidate = Readonly<{
   slot: number;
   candidate: CodexBankedResetCandidate;
@@ -428,9 +431,9 @@ const policyReason = (config: CodexBankedResetConfig, context: ResetContext): st
   try {
     if (!config.enabled) return "feature_disabled";
     if (config.mode === "disabled") return "mode_disabled";
-    // Shadow mode deliberately does not require live spending limits. This is
-    // what makes it possible to observe all current accounts with the shipped
-    // zero cap and no allowlist, without touching the provider.
+    // This single-candidate state-machine seam makes no provider call in
+    // shadow. The production cohort evaluator separately requires an
+    // allowlist and positive cap before its bounded inventory reads.
     if (config.mode === "shadow") return null;
     if (config.accountAllowlist.size === 0) return "account_allowlist_required";
     if (
@@ -446,6 +449,19 @@ const policyReason = (config: CodexBankedResetConfig, context: ResetContext): st
   } catch {
     return "configuration_invalid";
   }
+};
+
+const providerPolicyReason = (
+  config: CodexBankedResetConfig,
+  provider: CodexUsageResetProvider,
+): string | null =>
+  config.mode === "live" && providerTreatsRedeemOutcomeAsFinal(provider) && config.maxGlobalPerDay !== 1
+    ? "terminal_outcome_global_limit_must_be_one"
+    : null;
+
+const boundedInventorySignal = (signal?: AbortSignal): AbortSignal => {
+  const timeout = AbortSignal.timeout(CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 };
 
 const telemetryFields = (
@@ -517,8 +533,8 @@ const makeResetContext = async (
     const accountIdHash = await hash(candidate.accountId);
     // The routing layer permits this deadline-derived identity only while its
     // durable fence proves the absolute observation has not been revised.
-    // A future live adapter should replace it with a provider-proven quota
-    // generation; an observed deadline change fails closed before this path.
+    // A future provider-proven quota generation should replace this deadline
+    // identity; an observed deadline change fails closed before this path.
     // Credential version remains a separate routing fence, so refresh cannot
     // manufacture a second logical redemption for one observed window.
     const credentialVersion = `v1:${await hash(
@@ -1116,7 +1132,7 @@ const loadLiveSubmissionConfig = (
   } catch {
     return { config: null, reason: "configuration_unavailable" };
   }
-  const reason = policyReason(config, context);
+  const reason = policyReason(config, context) ?? providerPolicyReason(config, dependencies.provider);
   return reason || config.mode !== "live"
     ? { config: null, reason: reason ?? "mode_not_live" }
     : { config, reason: null };
@@ -1175,6 +1191,42 @@ const verifyOwned = async (
   return outcome("verified", "verified", context, finalized);
 };
 
+/**
+ * The upstream adapter has already parsed a documented terminal redemption
+ * result (`reset` or `already_redeemed`). Lost, malformed, non-2xx, and unknown
+ * responses never reach this path and remain durable `unknown`.
+ */
+const finalizeDocumentedRedeemOutcome = async (
+  kv: Deno.Kv,
+  context: ResetContext,
+  record: CodexResetRedemptionRecord,
+  candidate: CodexBankedResetCandidate,
+  nowMs: number,
+  telemetry: CodexBankedResetTelemetry,
+  redeemOutcome: "reset" | "already_redeemed",
+): Promise<CodexBankedResetOutcome> => {
+  const finalized = await updateOwnedRecord(
+    kv,
+    context,
+    record,
+    (current) => stateWith(current, "verified", nowMs, { verified_at_ms: nowMs, last_error_code: null }),
+  );
+  if (!finalized) return outcome("pending", "redeem_outcome_finalization_cas_failed", context, record);
+  emit(
+    telemetry,
+    "codex_reset_verified",
+    telemetryFields(context, candidate, {
+      state: "verified",
+      verification_source: "redeem_outcome",
+      redeem_outcome: redeemOutcome,
+    }),
+  );
+  metric(telemetry, "codex_reset_verified_total", 1, telemetryFields(context, candidate, {}));
+  metric(telemetry, "codex_reset_verification_latency_ms", 0, telemetryFields(context, candidate, {}));
+  metric(telemetry, "codex_reset_estimated_spend_total", 1, telemetryFields(context, candidate, {}));
+  return outcome("verified", `redeem_outcome_${redeemOutcome}`, context, finalized);
+};
+
 const reconcileOwned = async (
   kv: Deno.Kv,
   context: ResetContext,
@@ -1185,6 +1237,18 @@ const reconcileOwned = async (
   telemetry: CodexBankedResetTelemetry,
 ): Promise<CodexBankedResetOutcome> => {
   if (candidate.signal?.aborted) return outcome("pending", "client_aborted_before_reconciliation", context, record);
+  let terminalOutcomeCannotReconcile: boolean;
+  try {
+    terminalOutcomeCannotReconcile = providerTreatsRedeemOutcomeAsFinal(provider) &&
+      provider.contract.lookup?.byIdempotencyKey !== true &&
+      provider.contract.lookup?.byProviderReceiptId !== true &&
+      provider.contract.verification?.independentlyVerifiable !== true;
+  } catch {
+    return outcome("pending", "provider_contract_unproven", context, record);
+  }
+  if (terminalOutcomeCannotReconcile) {
+    return outcome("pending", "terminal_outcome_ambiguous", context, record);
+  }
   let lookedUp: RedeemResetResult;
   try {
     lookedUp = await provider.lookup(
@@ -1265,7 +1329,7 @@ const submitClaimed = async (
     try {
       inventory = await dependencies.provider.readInventory(
         context.account,
-        candidate.signal ?? new AbortController().signal,
+        boundedInventorySignal(candidate.signal),
       );
     } catch {
       const nowMs = readClock(clock);
@@ -1372,7 +1436,7 @@ const submitClaimed = async (
   // `prepareSubmission` itself awaits strong reads and a CAS. Re-read the
   // kill switch after that durable transition. A disable visible at this
   // final pre-renewal check leaves the conservative `submitted` record
-  // available for lookup-only recovery and makes no provider call.
+  // available for non-submitting recovery and makes no provider call.
   const beforeRedeemPolicy = liveSubmissionPolicyReason(dependencies, context);
   if (beforeRedeemPolicy) return outcome("pending", `new_submission_${beforeRedeemPolicy}`, context, prepared.record);
   if (candidate.signal?.aborted) {
@@ -1461,6 +1525,25 @@ const submitClaimed = async (
     );
     return unknownOutcome(telemetry, context, candidate, "provider_commit_unknown", unknown ?? renewed.record);
   }
+  if (
+    (submittedResult.kind === "completed" || submittedResult.kind === "already_redeemed") &&
+    providerTreatsRedeemOutcomeAsFinal(dependencies.provider)
+  ) {
+    emit(
+      telemetry,
+      "codex_reset_submitted",
+      telemetryFields(context, candidate, { state: "submitted", provider_receipt_id: null }),
+    );
+    return await finalizeDocumentedRedeemOutcome(
+      kv,
+      context,
+      renewed.record,
+      candidate,
+      nowAfterRedeem,
+      telemetry,
+      submittedResult.kind === "completed" ? "reset" : "already_redeemed",
+    );
+  }
   const receipt = receiptId(submittedResult.providerReceiptId);
   if (!receipt) {
     const unknown = await unknownOwned(kv, context, renewed.record, nowAfterRedeem, "submit_response_invalid", null);
@@ -1538,6 +1621,8 @@ const attemptInternal = async (
     }
     const reason = policyReason(configForClaim, context);
     if (reason) return outcome("skipped", reason, context);
+    const providerReason = providerPolicyReason(configForClaim, dependencies.provider);
+    if (providerReason) return outcome("skipped", providerReason, context);
     emit(telemetry, "codex_reset_eligible", fields);
     metric(telemetry, "codex_reset_eligible_total", 1, fields);
     if (configForClaim.mode === "shadow") {
@@ -1767,11 +1852,11 @@ export const listCodexResetShadowDecisions = async (
 };
 
 /**
- * Evaluate one complete currently fenced account pool. Shadow reads every
- * account-bound inventory and persists exactly one redacted decision. Live
- * first requires that decision, then repeats the fence and inventory proof;
- * it reaches the existing durable ledger only when the exact account and
- * exact opaque credit still match.
+ * Evaluate one complete currently fenced blocked cohort. Shadow reads each
+ * blocked account's inventory and persists exactly one redacted decision.
+ * Live first requires that decision, then repeats the fence and inventory
+ * proof; it reaches the durable ledger only when the exact account and exact
+ * opaque credit still match.
  */
 export const evaluateCodexBankedResetPool = async (
   candidates: readonly CodexBankedResetPoolCandidate[],
@@ -1791,6 +1876,12 @@ export const evaluateCodexBankedResetPool = async (
   const loadedConfig = loadCurrentPoolConfig(dependencies);
   if (!loadedConfig.config) return poolOutcome("skipped", loadedConfig.reason);
   const config = loadedConfig.config;
+  if (
+    config.mode === "live" && config.maxGlobalPerDay !== 1 &&
+    ordered.some(({ provider }) => providerTreatsRedeemOutcomeAsFinal(provider))
+  ) {
+    return poolOutcome("skipped", "terminal_outcome_global_limit_must_be_one");
+  }
   let kv: Deno.Kv | null;
   try {
     kv = dependencies.kv === undefined ? await getKv() : dependencies.kv;
@@ -1841,11 +1932,41 @@ export const evaluateCodexBankedResetPool = async (
     }
   }
 
+  if (config.mode === "shadow") {
+    const existing = await readShadowDecision(kv, episodeHash);
+    if (
+      existing && existing.expires_at_ms > nowMs && sameShadowFences(existing.fences, fences)
+    ) {
+      const selected = complete.find(({ context }) =>
+        context.account.accountIdHash === existing.selected_account_id_hash
+      ) ?? null;
+      const telemetry = dependencies.telemetry ?? defaultTelemetry;
+      const telemetryCandidate = selected ?? complete[0]!;
+      const fields = telemetryFields(telemetryCandidate.context, telemetryCandidate.pool.candidate, {
+        episode_hash: episodeHash,
+        credit_id_hash: existing.selected_credit_id_hash,
+        selected: existing.selected_account_id_hash !== null,
+        reason: existing.decision_reason,
+      });
+      emit(telemetry, "codex_reset_duplicate_prevented", { ...fields, reason: "shadow_decision_exists" });
+      metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
+      const wouldSpend = existing.decision_reason === "selected" &&
+        existing.selected_account_id_hash !== null &&
+        existing.selected_credit_id_hash !== null &&
+        selected !== null;
+      return poolOutcome(
+        "shadow",
+        wouldSpend ? "already_would_spend_once" : existing.decision_reason,
+        wouldSpend ? selected.pool : null,
+      );
+    }
+  }
+
   const inventoryResults = await Promise.all(complete.map(async (resolvedCandidate) => {
     try {
       const inventory = await resolvedCandidate.pool.provider.readInventory(
         resolvedCandidate.context.account,
-        resolvedCandidate.pool.candidate.signal ?? new AbortController().signal,
+        boundedInventorySignal(resolvedCandidate.pool.candidate.signal),
       );
       return { resolvedCandidate, inventory } as const;
     } catch {
@@ -1964,10 +2085,10 @@ export const evaluateCodexBankedResetPool = async (
       audited.expires_at_ms <= nowAfterInventory)
   ) return poolOutcome("skipped", "shadow_decision_drift");
 
-  // The durable claim/submission path must continue to fence every account
-  // that established the full-pool episode, not just the selected owner.
-  // A sibling recovering or rotating after the shadow read makes the pool
-  // evidence stale and must block the external consume.
+  // The durable claim/submission path must continue to fence every blocked
+  // account that established the audited episode, not just the selected
+  // owner. Recovery or rotation after the shadow read makes the episode stale
+  // and must block the external consume.
   const fullPoolFences = complete.flatMap(({ pool }) => pool.candidate.fences);
 
   const reset = await attemptCodexBankedReset(

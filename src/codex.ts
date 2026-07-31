@@ -7,12 +7,14 @@ import {
   markCodexCredentialInvalid,
   markCodexQuotaBlocked,
   markCodexSuccess,
+  parseCodexAccountRoutingState,
   reconcileCodexQuotaAfterVerifiedReset,
   reconcileCodexRoutingAccount,
   releaseCodexRoutingProbe,
   resetCodexAccountRoutingForTest,
   type RoutingAccount,
   selectCodexRoutingAccounts,
+  selectCodexRoutingAccountsStrong,
 } from "./codex_account_routing.ts";
 import {
   type CodexBankedResetConfig,
@@ -1418,8 +1420,8 @@ export const fetchCodexResponses = async (
   if (codexProbeTransitionsInFlight.size) {
     await Promise.allSettled([...codexProbeTransitionsInFlight]);
   }
-  const poolEntry = await getAuthPoolEntry();
-  const selected = await selectCodexRoutingAccounts(
+  let poolEntry = await getAuthPoolEntry();
+  let selected = await selectCodexRoutingAccounts(
     poolEntry.pool,
     poolEntry.pool.accounts,
   );
@@ -1430,7 +1432,7 @@ export const fetchCodexResponses = async (
       "codex_auth_invalid",
     );
   }
-  const accountEntries = selected.kind === "eligible"
+  let accountEntries = selected.kind === "eligible"
     ? selected.accounts.map((routing) => ({ ...poolEntry, auth: routing.auth, routing }))
     : [];
   const url = `${config.codexBaseUrl}/responses`;
@@ -1526,6 +1528,39 @@ export const fetchCodexResponses = async (
     },
   });
 
+  type PartialBankedResetCohortFence = Readonly<{
+    authPool: CodexAuthPoolState;
+    healthyAccounts: readonly RoutingAccount[];
+    observedAtMs: number;
+  }>;
+
+  const partialCohortAuthIsCurrent = (
+    value: unknown,
+    cohort: PartialBankedResetCohortFence,
+  ): boolean => {
+    const current = parseCodexAuthPool(value);
+    return current?.accounts.length === cohort.authPool.accounts.length &&
+      cohort.authPool.accounts.every((expected, slot) => {
+        const actual = current.accounts[slot];
+        return actual?.account_id === expected.account_id && sameCodexCredentials(actual, expected);
+      });
+  };
+
+  const partialCohortRoutingIsCurrent = (
+    value: unknown,
+    cohort: PartialBankedResetCohortFence,
+  ): boolean => {
+    const current = parseCodexAccountRoutingState(value);
+    return current !== null && cohort.healthyAccounts.every((account) => {
+      const slot = current.slots[account.slot];
+      return slot?.account_id_hash === account.accountIdHash &&
+        slot.credential_version === account.credentialVersion &&
+        slot.invalid_credential_version !== account.credentialVersion &&
+        slot.quota_blocked_until_ms === null &&
+        (slot.probe_lease?.expires_at_ms ?? 0) <= cohort.observedAtMs;
+    });
+  };
+
   /**
    * This runs inside the transport's final dispatch hook, after any API-key
    * reservation hook and immediately before `fetch`. It closes the last
@@ -1545,6 +1580,7 @@ export const fetchCodexResponses = async (
   const resetFences = (
     candidate: CodexBankedResetCandidate,
     routingGeneration: number,
+    partialCohort: PartialBankedResetCohortFence | null = null,
   ) => [
     {
       key: CODEX_ACCOUNT_ROUTING_KV_KEY,
@@ -1554,20 +1590,26 @@ export const fetchCodexResponses = async (
           candidate.routing,
           candidate.quotaResetAtMs,
           routingGeneration,
-        ),
+        ) && (partialCohort === null || partialCohortRoutingIsCurrent(value, partialCohort)),
     },
-    authPoolFence(candidate),
+    {
+      key: CODEX_AUTH_POOL_KV_KEY,
+      isCurrent: (value: unknown): boolean =>
+        authPoolFence(candidate).isCurrent(value) &&
+        (partialCohort === null || partialCohortAuthIsCurrent(value, partialCohort)),
+    },
   ];
 
   const resetInput = (
     candidate: CodexBankedResetCandidate,
     routingGeneration: number,
+    partialCohort: PartialBankedResetCohortFence | null = null,
   ) => ({
     accountId: candidate.auth.account_id,
     credentialVersion: candidate.routing.credentialVersion,
     quotaResetAtMs: candidate.quotaResetAtMs,
     routingGeneration,
-    fences: resetFences(candidate, routingGeneration),
+    fences: resetFences(candidate, routingGeneration, partialCohort),
     requestId: options.requestId ?? null,
     signal: options.signal,
   });
@@ -1656,12 +1698,15 @@ export const fetchCodexResponses = async (
   };
 
   /**
-   * A reset can be considered only after a fresh routing pass proves that the
-   * entire current pool is fenced by stable future quota deadlines. This one
-   * evaluator is shared by the normal-failover and already-all-blocked paths;
-   * neither path can silently choose a different account or credit.
+   * Re-read the current pool before every banked-reset decision. The ordinary
+   * all-blocked path requires the full pool. The expiring-credit canary may
+   * instead evaluate a complete cohort containing stable blocked accounts plus
+   * healthy, non-probing siblings; only the blocked cohort can reach inventory
+   * or redemption.
    */
-  const evaluateFullPoolBankedReset = async (): Promise<
+  const evaluateBlockedCohortBankedReset = async (
+    requireFullPool: boolean,
+  ): Promise<
     | Readonly<{ candidate: CodexBankedResetCandidate; reset: Awaited<ReturnType<typeof reconcileCodexBankedReset>> }>
     | null
   > => {
@@ -1672,13 +1717,34 @@ export const fetchCodexResponses = async (
     } catch {
       return null;
     }
-    const fullPool = await selectCodexRoutingAccounts(currentPoolEntry.pool, currentPoolEntry.pool.accounts);
-    if (
-      fullPool.kind !== "quota_blocked" || fullPool.blockedAccounts.length !== currentPoolEntry.pool.accounts.length
-    ) {
-      return null;
+    const routedPool = await selectCodexRoutingAccounts(currentPoolEntry.pool, currentPoolEntry.pool.accounts);
+    const blockedAccounts = routedPool.kind === "credentials_invalid" ? [] : routedPool.blockedAccounts;
+    if (!blockedAccounts.length) return null;
+    let partialCohort: PartialBankedResetCohortFence | null = null;
+    if (requireFullPool) {
+      if (routedPool.kind !== "quota_blocked" || blockedAccounts.length !== currentPoolEntry.pool.accounts.length) {
+        return null;
+      }
+    } else {
+      const eligibleAccounts = routedPool.kind === "eligible" ? routedPool.accounts : [];
+      const coveredSlots = [
+        ...eligibleAccounts.map((account) => account.slot),
+        ...blockedAccounts.map((account) => account.slot),
+      ];
+      if (
+        routedPool.kind !== "eligible" || eligibleAccounts.some((account) => account.probeRequired) ||
+        coveredSlots.length !== currentPoolEntry.pool.accounts.length ||
+        new Set(coveredSlots).size !== currentPoolEntry.pool.accounts.length
+      ) {
+        return null;
+      }
+      partialCohort = {
+        authPool: currentPoolEntry.pool,
+        healthyAccounts: eligibleAccounts,
+        observedAtMs: Date.now(),
+      };
     }
-    const localCandidates = fullPool.blockedAccounts.map((routing) => ({
+    const localCandidates = blockedAccounts.map((routing) => ({
       accountEntry: { ...currentPoolEntry, auth: routing.auth, routing },
       auth: routing.auth,
       routing,
@@ -1686,7 +1752,7 @@ export const fetchCodexResponses = async (
       routingGeneration: routing.routingGeneration,
     } satisfies CodexBankedResetCandidate));
     if (
-      new Set(localCandidates.map((candidate) => candidate.routing.slot)).size !== currentPoolEntry.pool.accounts.length
+      new Set(localCandidates.map((candidate) => candidate.routing.slot)).size !== blockedAccounts.length
     ) {
       return null;
     }
@@ -1696,7 +1762,7 @@ export const fetchCodexResponses = async (
     // replacement spend; a verified one is returned for its single retry.
     for (const candidate of localCandidates) {
       const reset = await reconcileCodexBankedReset(
-        resetInput(candidate, candidate.routingGeneration),
+        resetInput(candidate, candidate.routingGeneration, partialCohort),
         resetDependenciesForCandidate(candidate),
       );
       if (reset.kind === "verified") return { candidate, reset };
@@ -1705,7 +1771,7 @@ export const fetchCodexResponses = async (
 
     const poolCandidates = localCandidates.map((candidate) => ({
       slot: candidate.routing.slot,
-      candidate: resetInput(candidate, candidate.routingGeneration),
+      candidate: resetInput(candidate, candidate.routingGeneration, partialCohort),
       provider: resetDependenciesForCandidate(candidate).provider,
     }));
     const evaluated = await evaluateCodexBankedResetPool(poolCandidates, bankedResetDependencies);
@@ -1853,14 +1919,14 @@ export const fetchCodexResponses = async (
     // its recovery probe. Keep the normal quota response instead of spending
     // a reset that was inferred only from a sibling's 429.
     if (probeUnavailable) return normalResponse;
-    const evaluated = await evaluateFullPoolBankedReset();
+    const evaluated = await evaluateBlockedCohortBankedReset(true);
     if (!evaluated || evaluated.reset.kind !== "verified" || !evaluated.reset.record) return normalResponse;
     const { candidate, reset } = evaluated;
     const resetRecord = reset.record!;
 
-    // The transaction can be independently verified yet still be fenced off
-    // by a credential rotation or later 429. In that case preserve the normal
-    // upstream response; a stale worker must not dispatch an inference retry.
+    // The transaction can be verified yet still be fenced off by a credential
+    // rotation or later 429. In that case preserve the normal upstream
+    // response; a stale worker must not dispatch an inference retry.
     const reconciled = await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
       quotaResetAtMs: candidate.quotaResetAtMs,
       routingGeneration: resetRecord.routing_generation,
@@ -1948,9 +2014,8 @@ export const fetchCodexResponses = async (
     return retried;
   };
 
-  const recoverBlockedReset = async (): Promise<Response | null> => {
-    if (selected.kind !== "quota_blocked") return null;
-    const evaluated = await evaluateFullPoolBankedReset();
+  const recoverBlockedReset = async (requireFullPool: boolean): Promise<Response | null> => {
+    const evaluated = await evaluateBlockedCohortBankedReset(requireFullPool);
     if (!evaluated || evaluated.reset.kind !== "verified" || !evaluated.reset.record) return null;
     const { candidate, reset } = evaluated;
     const resetRecord = reset.record!;
@@ -2037,8 +2102,72 @@ export const fetchCodexResponses = async (
     return retried;
   };
 
+  if (selected.kind === "eligible" && selected.blockedAccounts.length) {
+    const fallbackAccountIds = new Set(selected.accounts.map((account) => account.auth.account_id));
+    let definitiveCanaryFailure: Response | null = null;
+    try {
+      const canary = await recoverBlockedReset(false);
+      if (canary?.ok) return canary;
+      if (canary && (canary.status === 401 || canary.status === 403 || canary.status === 429)) {
+        definitiveCanaryFailure = canary;
+      } else if (canary) {
+        return canary;
+      }
+    } catch (error) {
+      // A post-reset transport ambiguity may have dispatched upstream work.
+      // Preserve ordinary no-replay semantics instead of trying a sibling.
+      throw error;
+    }
+
+    // Partial-cohort preflight may await inventory, redemption, and a recovery
+    // probe. Do not dispatch ordinary fallback with the auth/routing snapshot
+    // captured before those operations: a sibling may now be blocked, rotated,
+    // invalid, reordered, or probing.
+    poolEntry = await getAuthPoolEntry(true, true);
+    const refreshedSelection = await selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts);
+    if (refreshedSelection.kind === "routing_unavailable") {
+      if (definitiveCanaryFailure) return definitiveCanaryFailure;
+      throw new CodexError(
+        "Codex routing state is unavailable after banked-reset preflight.",
+        "codex_auth_missing",
+        503,
+      );
+    }
+    selected = refreshedSelection;
+    if (selected.kind === "credentials_invalid") {
+      if (definitiveCanaryFailure) cancelResponseBody(definitiveCanaryFailure);
+      return routingErrorResponse(
+        401,
+        "All configured Codex credentials are invalid.",
+        "codex_auth_invalid",
+      );
+    }
+    if (selected.kind === "quota_blocked") {
+      if (definitiveCanaryFailure) cancelResponseBody(definitiveCanaryFailure);
+      // The cohort changed while the partial preflight was in flight. Do not
+      // start a second, now-all-blocked reset evaluation in the same request.
+      return routingErrorResponse(
+        429,
+        "All configured Codex accounts are quota-blocked; retry after their next reset.",
+        "codex_quota_blocked",
+        selected.retryAtMs,
+      );
+    }
+    const refreshedFallbacks = selected.accounts.filter((account) => fallbackAccountIds.has(account.auth.account_id));
+    if (!refreshedFallbacks.length) {
+      if (definitiveCanaryFailure) return definitiveCanaryFailure;
+      throw new CodexError(
+        "No originally healthy Codex fallback remains eligible after banked-reset preflight.",
+        "codex_auth_missing",
+        503,
+      );
+    }
+    if (definitiveCanaryFailure) cancelResponseBody(definitiveCanaryFailure);
+    accountEntries = refreshedFallbacks.map((routing) => ({ ...poolEntry, auth: routing.auth, routing }));
+  }
+
   if (selected.kind === "quota_blocked") {
-    const recovered = await recoverBlockedReset();
+    const recovered = await recoverBlockedReset(true);
     if (recovered) return recovered;
     return routingErrorResponse(
       429,

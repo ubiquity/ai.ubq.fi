@@ -41,9 +41,9 @@ export type ResetInventory = Readonly<{
 }>;
 
 /**
- * Results deliberately preserve ambiguity. Callers must reconcile `unknown`
- * through `lookup()` and `verifyApplied()` rather than issuing another
- * redemption.
+ * Results deliberately preserve ambiguity. Callers must never issue another
+ * redemption for `unknown`: reconcilable providers use `lookup()` and
+ * `verifyApplied()`, while terminal-only providers retain the ambiguity.
  */
 export type RedeemResetResult =
   | Readonly<{ kind: "completed"; providerReceiptId: string }>
@@ -75,9 +75,14 @@ export type CodexUsageResetProviderContract = Readonly<{
     independentlyVerifiable: boolean;
   }>;
   /**
+   * The provider's parsed terminal `redeem` result is authoritative for this
+   * one submission. Ambiguous transport or response outcomes never qualify.
+   */
+  redeemOutcomeIsFinal?: boolean;
+  /**
    * Whether a receipt identifier is non-secret and may be retained in the
-   * durable audit record or emitted in logs. When false, reconciliation uses
-   * the caller-supplied idempotency key instead.
+   * durable audit record or emitted in logs. When false, a provider that
+   * supports reconciliation uses the caller-supplied idempotency key instead.
    */
   receiptIdsSafeToPersistAndLog: boolean;
   /** Only reset types whose exact semantics have been documented and reviewed. */
@@ -255,6 +260,10 @@ const upstreamProviderContract: CodexUsageResetProviderContract = Object.freeze(
   idempotency: Object.freeze({ callerSupplied: true, retentionMs: null }),
   lookup: Object.freeze({ byIdempotencyKey: false, byProviderReceiptId: false }),
   verification: Object.freeze({ independentlyVerifiable: false }),
+  // The pinned Codex schema defines `reset` and `already_redeemed` as terminal
+  // success codes. Transport loss, non-2xx, malformed JSON, and unknown codes
+  // remain ambiguous and are never replayed automatically.
+  redeemOutcomeIsFinal: true,
   // The documented response has no provider receipt identifier.
   receiptIdsSafeToPersistAndLog: false,
   supportedResetTypes: Object.freeze(["codex_rate_limits"]) as readonly string[],
@@ -413,10 +422,22 @@ export const providerReceiptIdsSafeToPersistAndLog = (
   }
 };
 
+/** Returns true only for a provider with documented terminal redeem outcomes. */
+export const providerTreatsRedeemOutcomeAsFinal = (
+  provider: Pick<CodexUsageResetProvider, "contract">,
+): boolean => {
+  try {
+    return provider?.contract?.redeemOutcomeIsFinal === true;
+  } catch {
+    return false;
+  }
+};
+
 /**
- * Returns true only when the provider proves a replay-safe, independently
- * reconcilable contract. A terminal response body cannot replace a lookup or
- * independent proof for transport-loss and process-crash cases.
+ * Returns true for a provider with either a replay-safe, independently
+ * reconcilable contract or documented terminal redeem outcomes. The latter is
+ * deliberately at-most-once: an ambiguous outcome remains durable `unknown`
+ * and is never submitted again.
  */
 export const providerSupportsLiveRedemption = (
   provider: Pick<CodexUsageResetProvider, "contract">,
@@ -431,8 +452,9 @@ export const providerSupportsLiveRedemption = (
     }
     const supportsResetType = Array.isArray(contract.supportedResetTypes) &&
       contract.supportedResetTypes.some(hasNonEmptyResetType);
-    return supportsResetType && contract.idempotency.callerSupplied === true &&
-      isPositiveSafeInteger(contract.idempotency.retentionMs) &&
+    if (!supportsResetType || contract.idempotency.callerSupplied !== true) return false;
+    if (contract.redeemOutcomeIsFinal === true) return true;
+    return isPositiveSafeInteger(contract.idempotency.retentionMs) &&
       contract.lookup.byIdempotencyKey === true &&
       contract.verification.independentlyVerifiable === true;
   } catch {
@@ -463,6 +485,7 @@ export const unavailableCodexUsageResetProvider: CodexUsageResetProvider = Objec
     idempotency: Object.freeze({ callerSupplied: false, retentionMs: null }),
     lookup: Object.freeze({ byIdempotencyKey: false, byProviderReceiptId: false }),
     verification: Object.freeze({ independentlyVerifiable: false }),
+    redeemOutcomeIsFinal: false,
     receiptIdsSafeToPersistAndLog: false,
     supportedResetTypes: Object.freeze([]) as readonly string[],
   }),

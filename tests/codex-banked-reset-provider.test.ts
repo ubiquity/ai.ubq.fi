@@ -4,6 +4,7 @@ import {
   CodexUsageResetProviderConfigurationError,
   CodexUsageResetProviderHttpError,
   createUpstreamCodexUsageResetProvider,
+  providerSupportsLiveRedemption,
   type RedeemResetInput,
   type ResetAccountContext,
   resolveCodexUsageResetCreditEndpoints,
@@ -86,6 +87,7 @@ Deno.test("upstream reset adapter parses inventory and sends the selected credit
     return Promise.resolve(response);
   });
 
+  assert.equal(providerSupportsLiveRedemption(resetProvider), true);
   assert.deepEqual(await resetProvider.readInventory(context(), signal()), {
     availableCount: 2,
     observedAtMs: 1_700_000_000_000,

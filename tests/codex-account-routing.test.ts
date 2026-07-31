@@ -321,6 +321,45 @@ Deno.test("valid HTTP-date Retry-After durably blocks a fully parsed usage limit
   }
 });
 
+Deno.test("eligible routing exposes only stable blocked siblings to the banked-reset cohort", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const retryAtMs = now + 120_000;
+    const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+
+    const classified = await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": new Date(retryAtMs).toUTCString(),
+        },
+      }),
+      now,
+    );
+    assert.equal(classified.resetDeadlineIsStable, true);
+
+    resetCodexAccountRoutingForTest();
+    const selected = await selectCodexRoutingAccounts(pool, pool.accounts, now + 1);
+    assert.equal(selected.kind, "eligible");
+    if (selected.kind !== "eligible") return;
+    assert.deepEqual(selected.accounts.map((account) => account.slot), [1]);
+    assert.equal(selected.accounts[0]?.probeRequired, false);
+    assert.equal(selected.blockedAccounts.length, 1);
+    assert.equal(selected.blockedAccounts[0]?.slot, 0);
+    assert.equal(selected.blockedAccounts[0]?.quotaResetAtMs, retryAtMs);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("quota circuits skip blocked slots and synthesize direct-fallback eligibility", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
@@ -343,6 +382,7 @@ Deno.test("quota circuits skip blocked slots and synthesize direct-fallback elig
     assert.equal(afterOne.kind, "eligible");
     if (afterOne.kind !== "eligible") return;
     assert.deepEqual(afterOne.accounts.map((account) => account.auth.account_id), ["two"]);
+    assert.deepEqual(afterOne.blockedAccounts, []);
 
     await markCodexQuotaBlocked(
       afterOne.accounts[0]!,
@@ -358,7 +398,11 @@ Deno.test("quota circuits skip blocked slots and synthesize direct-fallback elig
     assert.equal(await recheckCodexRoutingSlot(1), true);
     const halfOpen = await selectCodexRoutingAccounts(pool, pool.accounts, Date.now());
     assert.equal(halfOpen.kind, "eligible");
-    if (halfOpen.kind === "eligible") assert.equal(halfOpen.accounts.length, 1);
+    if (halfOpen.kind === "eligible") {
+      assert.equal(halfOpen.accounts.length, 1);
+      assert.equal(halfOpen.accounts[0]?.probeRequired, true);
+      assert.deepEqual(halfOpen.blockedAccounts, []);
+    }
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();

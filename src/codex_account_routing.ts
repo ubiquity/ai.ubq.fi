@@ -70,7 +70,13 @@ export type CodexBlockedRoutingAccount =
   }>;
 
 export type RouteSelection =
-  | Readonly<{ kind: "eligible"; accounts: readonly RoutingAccount[]; skippedSlots: readonly number[] }>
+  | Readonly<{
+    kind: "eligible";
+    accounts: readonly RoutingAccount[];
+    skippedSlots: readonly number[];
+    /** Stable absolute quota fences omitted from ordinary eligible routing. */
+    blockedAccounts: readonly CodexBlockedRoutingAccount[];
+  }>
   | Readonly<{
     kind: "quota_blocked";
     skippedSlots: readonly number[];
@@ -78,6 +84,10 @@ export type RouteSelection =
     blockedAccounts: readonly CodexBlockedRoutingAccount[];
   }>
   | Readonly<{ kind: "credentials_invalid"; skippedSlots: readonly number[] }>;
+
+export type StrongRouteSelection =
+  | RouteSelection
+  | Readonly<{ kind: "routing_unavailable" }>;
 
 const isSafeMs = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -1118,12 +1128,12 @@ export const claimCodexRoutingProbe = async (
   return await claimExpiredProbe(state, account, now);
 };
 
-export const selectCodexRoutingAccounts = async (
+const selectCodexRoutingAccountsFromState = async (
+  state: CodexAccountRoutingState,
   pool: CodexAuthPoolState,
   orderedAccounts: readonly CodexAuthState[],
-  now = Date.now(),
+  now: number,
 ): Promise<RouteSelection> => {
-  const state = await loadCodexAccountRouting(pool);
   const identities = await Promise.all(pool.accounts.map(routingAccountIdentity));
   const byId = new Map(
     pool.accounts.map((auth, slot) => [auth.account_id, { slot, ...identities[slot]! }]),
@@ -1189,9 +1199,50 @@ export const selectCodexRoutingAccounts = async (
     }
     available.push(routedAccount);
   }
-  if (available.length) return { kind: "eligible", accounts: available, skippedSlots: skipped };
+  if (available.length) return { kind: "eligible", accounts: available, skippedSlots: skipped, blockedAccounts };
   if (hasQuotaBlock) return { kind: "quota_blocked", skippedSlots: skipped, retryAtMs: retryAt, blockedAccounts };
   return { kind: "credentials_invalid", skippedSlots: skipped };
+};
+
+export const selectCodexRoutingAccounts = async (
+  pool: CodexAuthPoolState,
+  orderedAccounts: readonly CodexAuthState[],
+  now = Date.now(),
+): Promise<RouteSelection> =>
+  await selectCodexRoutingAccountsFromState(
+    await loadCodexAccountRouting(pool),
+    pool,
+    orderedAccounts,
+    now,
+  );
+
+/**
+ * Re-selects accounts from a fresh durable routing record. Unlike ordinary
+ * routing, this path never synthesizes or reuses local state: it guards the
+ * fallback dispatch after a partial banked-reset preflight may have awaited
+ * work long enough for another isolate to block a sibling.
+ */
+export const selectCodexRoutingAccountsStrong = async (
+  pool: CodexAuthPoolState,
+  orderedAccounts: readonly CodexAuthState[],
+  now = Date.now(),
+): Promise<StrongRouteSelection> => {
+  try {
+    const kv = await getKv();
+    if (!kv) return { kind: "routing_unavailable" };
+    const entry = await kv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY, {
+      consistency: "strong",
+    });
+    const durable = parseCodexAccountRoutingState(entry.value);
+    if (!durable) return { kind: "routing_unavailable" };
+    const normalized = await normalizeRoutingState(durable, pool);
+    cachedState = normalized;
+    cachedVersionstamp = entry.versionstamp;
+    cachedStateLoadedAtMs = Date.now();
+    return await selectCodexRoutingAccountsFromState(normalized, pool, orderedAccounts, now);
+  } catch {
+    return { kind: "routing_unavailable" };
+  }
 };
 
 /**
