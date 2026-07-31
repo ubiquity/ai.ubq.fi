@@ -99,7 +99,7 @@ const hasUnresolvedLegacyResetIdentity = (state: CodexAccountRoutingState | null
   state?.banked_reset_legacy_identity_unresolved === true ||
   state?.slots.some(isLegacyStableResetIdentity) === true;
 
-const parseSlot = (value: unknown): CodexRoutingSlot | null => {
+const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRoutingSlot | null => {
   if (!isRecord(value) || typeof value.credential_version !== "string") return null;
   const source = value.quota_block_source;
   if (source !== null && source !== "body_resets_at" && source !== "header_retry_after") return null;
@@ -111,18 +111,58 @@ const parseSlot = (value: unknown): CodexRoutingSlot | null => {
     ? { token: lease.token, expires_at_ms: lease.expires_at_ms, generation: lease.generation }
     : null;
   if (lease !== null && !parsedLease) return null;
+  const accountIdHash = typeof value.account_id_hash === "string" && value.account_id_hash.length > 0
+    ? value.account_id_hash
+    : null;
+  const quotaBlockedUntilMs = value.quota_blocked_until_ms === null || isSafeMs(value.quota_blocked_until_ms)
+    ? value.quota_blocked_until_ms as number | null
+    : null;
+  const invalidCredentialVersion = typeof value.invalid_credential_version === "string"
+    ? value.invalid_credential_version
+    : null;
+  const observedResetAtMs = value.observed_reset_at_ms === null || isSafeMs(value.observed_reset_at_ms)
+    ? value.observed_reset_at_ms as number | null
+    : null;
+  const observedResetAtIsStable = value.observed_reset_at_is_stable === true;
+  const generation =
+    typeof value.generation === "number" && Number.isSafeInteger(value.generation) && value.generation >= 0
+      ? value.generation
+      : 0;
+  const isExactLegacyNeutralSlot = allowLegacyNeutralRepair &&
+    !("account_id_hash" in value) &&
+    !("observed_reset_at_is_stable" in value) &&
+    !("banked_reset_generation_ambiguous" in value) &&
+    value.generation === 0 &&
+    value.quota_blocked_until_ms === null &&
+    source === null &&
+    value.invalid_credential_version === null &&
+    value.primary_used_percent === null &&
+    value.secondary_used_percent === null &&
+    value.observed_reset_at_ms === null &&
+    lease === null;
+  // The first body-derived fence written after an exact legacy-neutral slot
+  // inherited the old parser's synthetic ambiguity. Generation one proves
+  // there was no prior quota transition; every real revision, recheck,
+  // credential rotation, or recovery transition increments it again.
+  const isLegacyNeutralFirstBodyFence = allowLegacyNeutralRepair &&
+    value.banked_reset_generation_ambiguous === true &&
+    value.generation === 1 &&
+    accountIdHash !== null &&
+    source === "body_resets_at" &&
+    quotaBlockedUntilMs !== null &&
+    observedResetAtMs === quotaBlockedUntilMs &&
+    observedResetAtIsStable &&
+    lease === null &&
+    value.invalid_credential_version === null;
+  const bankedResetGenerationAmbiguous = isExactLegacyNeutralSlot || isLegacyNeutralFirstBodyFence
+    ? false
+    : value.banked_reset_generation_ambiguous !== false;
   return {
-    account_id_hash: typeof value.account_id_hash === "string" && value.account_id_hash.length > 0
-      ? value.account_id_hash
-      : null,
+    account_id_hash: accountIdHash,
     credential_version: value.credential_version,
-    quota_blocked_until_ms: value.quota_blocked_until_ms === null || isSafeMs(value.quota_blocked_until_ms)
-      ? value.quota_blocked_until_ms as number | null
-      : null,
+    quota_blocked_until_ms: quotaBlockedUntilMs,
     quota_block_source: source as CodexQuotaBlockSource | null,
-    invalid_credential_version: typeof value.invalid_credential_version === "string"
-      ? value.invalid_credential_version
-      : null,
+    invalid_credential_version: invalidCredentialVersion,
     primary_used_percent: typeof value.primary_used_percent === "number" && Number.isFinite(value.primary_used_percent)
       ? value.primary_used_percent
       : null,
@@ -130,27 +170,24 @@ const parseSlot = (value: unknown): CodexRoutingSlot | null => {
       typeof value.secondary_used_percent === "number" && Number.isFinite(value.secondary_used_percent)
         ? value.secondary_used_percent
         : null,
-    observed_reset_at_ms: value.observed_reset_at_ms === null || isSafeMs(value.observed_reset_at_ms)
-      ? value.observed_reset_at_ms as number | null
-      : null,
+    observed_reset_at_ms: observedResetAtMs,
     // Older routing records did not carry this flag. Treat their header
     // deadline as unsuitable for an expensive reset rather than guessing its
     // identity from a relative timeout.
-    observed_reset_at_is_stable: value.observed_reset_at_is_stable === true,
+    observed_reset_at_is_stable: observedResetAtIsStable,
     // A record written before this fence cannot prove that its deadline was
-    // never revised. Preserve ordinary routing but make banked redemption
-    // fail closed until a successful recovery probe clears the observation.
-    banked_reset_generation_ambiguous: value.banked_reset_generation_ambiguous !== false,
-    generation: typeof value.generation === "number" && Number.isSafeInteger(value.generation) && value.generation >= 0
-      ? value.generation
-      : 0,
+    // never revised. The two exact legacy-contamination repairs above are the
+    // only exceptions; every other old or malformed record remains fail closed.
+    banked_reset_generation_ambiguous: bankedResetGenerationAmbiguous,
+    generation,
     probe_lease: parsedLease,
   };
 };
 
 export const parseCodexAccountRoutingState = (value: unknown): CodexAccountRoutingState | null => {
   if (!isRecord(value) || value.v !== 2 || !isSafeMs(value.updated_at_ms) || !Array.isArray(value.slots)) return null;
-  const slots = value.slots.map(parseSlot);
+  const legacyIdentityUnresolved = value.banked_reset_legacy_identity_unresolved === true;
+  const slots = value.slots.map((slot) => parseSlot(slot, !legacyIdentityUnresolved));
   if (slots.some((slot) => !slot)) return null;
   return {
     v: 2,
@@ -158,7 +195,7 @@ export const parseCodexAccountRoutingState = (value: unknown): CodexAccountRouti
     // The field is deliberately opt-in here: normalization can still attach a
     // legacy stable identity when its credential version proves the account.
     // Exact reset fences independently reject any un-hashed stable slot.
-    banked_reset_legacy_identity_unresolved: value.banked_reset_legacy_identity_unresolved === true,
+    banked_reset_legacy_identity_unresolved: legacyIdentityUnresolved,
     slots: slots as CodexRoutingSlot[],
   };
 };

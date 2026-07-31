@@ -310,6 +310,145 @@ Deno.test("exact future body resets_at durably identifies the Codex quota window
   }
 });
 
+Deno.test("legacy neutral v2 state permits its first canonical body resets_at fence", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const resetAtSeconds = Math.floor(now / 1_000) + 120;
+    const resetAtMs = resetAtSeconds * 1_000;
+    const credentialVersion = await codexCredentialVersion(singlePool.accounts[0]!);
+    await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
+      v: 2,
+      updated_at_ms: now,
+      slots: [{
+        credential_version: credentialVersion,
+        quota_blocked_until_ms: null,
+        quota_block_source: null,
+        invalid_credential_version: null,
+        primary_used_percent: null,
+        secondary_used_percent: null,
+        observed_reset_at_ms: null,
+        generation: 0,
+        probe_lease: null,
+      }],
+    });
+
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(
+        JSON.stringify({ error: { type: "usage_limit_reached", resets_at: resetAtSeconds } }),
+        { status: 429, headers: { "Content-Type": "application/json" } },
+      ),
+      now,
+    );
+
+    const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(state?.slots[0]?.generation, 1);
+    assert.equal(state?.slots[0]?.quota_block_source, "body_resets_at");
+    assert.equal(state?.slots[0]?.observed_reset_at_ms, resetAtMs);
+    assert.equal(state?.slots[0]?.observed_reset_at_is_stable, true);
+    assert.equal(state?.slots[0]?.banked_reset_generation_ambiguous, false);
+    assert.equal(await getCodexQuotaBlockFence(initial.accounts[0]!, resetAtMs), 1);
+
+    resetCodexAccountRoutingForTest();
+    const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
+    assert.equal(selected.kind, "quota_blocked");
+    if (selected.kind !== "quota_blocked") return;
+    assert.deepEqual(
+      selected.blockedAccounts.map(({ quotaResetAtMs, routingGeneration }) => ({
+        quotaResetAtMs,
+        routingGeneration,
+      })),
+      [{ quotaResetAtMs: resetAtMs, routingGeneration: 1 }],
+    );
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("only the exact contaminated first body fence repairs legacy ambiguity", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const resetAtMs = now + 120_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    const account = initial.accounts[0]!;
+    const contaminatedSlot = {
+      account_id_hash: account.accountIdHash,
+      credential_version: account.credentialVersion,
+      quota_blocked_until_ms: resetAtMs,
+      quota_block_source: "body_resets_at",
+      invalid_credential_version: null,
+      primary_used_percent: 100,
+      secondary_used_percent: 0,
+      observed_reset_at_ms: resetAtMs,
+      observed_reset_at_is_stable: true,
+      banked_reset_generation_ambiguous: true,
+      generation: 1,
+      probe_lease: null,
+    };
+    const state = (slot: Record<string, unknown>, legacyIdentityUnresolved = false) => ({
+      v: 2,
+      updated_at_ms: now,
+      banked_reset_legacy_identity_unresolved: legacyIdentityUnresolved,
+      slots: [slot],
+    });
+
+    const repaired = parseCodexAccountRoutingState(state(contaminatedSlot));
+    assert.equal(repaired?.slots[0]?.banked_reset_generation_ambiguous, false);
+    await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, state(contaminatedSlot));
+    assert.equal(await getCodexQuotaBlockFence(account, resetAtMs), 1);
+
+    const missingInvalidCredential: Record<string, unknown> = { ...contaminatedSlot };
+    delete missingInvalidCredential.invalid_credential_version;
+    const nearMisses = [
+      { name: "later generation", slot: { ...contaminatedSlot, generation: 2 } },
+      { name: "header source", slot: { ...contaminatedSlot, quota_block_source: "header_retry_after" } },
+      {
+        name: "deadline mismatch",
+        slot: { ...contaminatedSlot, quota_blocked_until_ms: resetAtMs + 1 },
+      },
+      {
+        name: "unstable observation",
+        slot: { ...contaminatedSlot, observed_reset_at_is_stable: false },
+      },
+      {
+        name: "active probe",
+        slot: {
+          ...contaminatedSlot,
+          probe_lease: { token: "probe", expires_at_ms: now + 30_000, generation: 1 },
+        },
+      },
+      {
+        name: "invalid credential",
+        slot: { ...contaminatedSlot, invalid_credential_version: account.credentialVersion },
+      },
+      { name: "missing invalid credential field", slot: missingInvalidCredential },
+      { name: "malformed invalid credential field", slot: { ...contaminatedSlot, invalid_credential_version: 1 } },
+      { name: "missing account identity", slot: { ...contaminatedSlot, account_id_hash: null } },
+    ];
+    for (const testCase of nearMisses) {
+      const parsed = parseCodexAccountRoutingState(state(testCase.slot));
+      assert.equal(parsed?.slots[0]?.banked_reset_generation_ambiguous, true, testCase.name);
+    }
+    const globallyUnresolved = parseCodexAccountRoutingState(state(contaminatedSlot, true));
+    assert.equal(globallyUnresolved?.slots[0]?.banked_reset_generation_ambiguous, true);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("conflicting absolute body and header deadlines permanently fail closed", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
