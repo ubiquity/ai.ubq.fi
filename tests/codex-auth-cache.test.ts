@@ -1389,6 +1389,193 @@ Deno.test("the default upstream adapter shadows and redeems one partial blocked 
   }
 });
 
+Deno.test("persistent live auto-arms a partial cohort before one later consume and reset retry", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const originalCodexBaseUrl = config.codexBaseUrl;
+  const inventoryAccountIds: string[] = [];
+  const consumeAccountIds: string[] = [];
+  const inferenceAccountIds: string[] = [];
+  const consumeBodies: unknown[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = true;
+  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl =
+    "https://upstream-reset.test/backend-api/codex";
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  await seedStableBankedResetBlock();
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const accountId = request.headers.get("chatgpt-account-id") ?? "";
+    if (request.url.endsWith("/backend-api/codex/responses")) {
+      inferenceAccountIds.push(accountId);
+      return Response.json({ id: `response-${accountId}` });
+    }
+    if (request.url.endsWith("/backend-api/wham/rate-limit-reset-credits")) {
+      inventoryAccountIds.push(accountId);
+      return Response.json({
+        available_count: 1,
+        credits: [
+          {
+            id: `credit-${accountId}`,
+            status: "available",
+            reset_type: "codex_rate_limits",
+            expires_at: null,
+          },
+        ],
+      });
+    }
+    if (request.url.endsWith("/backend-api/wham/rate-limit-reset-credits/consume")) {
+      consumeAccountIds.push(accountId);
+      consumeBodies.push(JSON.parse(await request.text()));
+      return Response.json({ code: "reset", windows_reset: 1 });
+    }
+    throw new Error(`unexpected request ${request.method} ${request.url}`);
+  };
+
+  const options = (requestId: string) => ({
+    clientVersion: "0.145.0",
+    requestId,
+    bankedReset: {
+      config: liveBankedResetConfig(),
+      kv: kv as unknown as Deno.Kv,
+      now: () => fixedStartMs,
+      newOwnerToken: () => `owner-${requestId}`,
+    },
+  });
+
+  try {
+    const armed = await fetchCodexResponses(
+      { input: "persistent-live-partial-arm" },
+      options("persistent-live-partial-arm"),
+    );
+    assert.equal(armed.status, 200);
+    assert.deepEqual(inventoryAccountIds, ["account-one"]);
+    assert.deepEqual(consumeAccountIds, []);
+    assert.deepEqual(inferenceAccountIds, ["account-two"]);
+
+    const consumed = await fetchCodexResponses(
+      { input: "persistent-live-partial-consume" },
+      options("persistent-live-partial-consume"),
+    );
+    assert.equal(consumed.status, 200);
+    assert.ok(getCodexRoutingProbe(consumed));
+    assert.deepEqual(inventoryAccountIds, ["account-one", "account-one"]);
+    assert.deepEqual(consumeAccountIds, ["account-one"]);
+    assert.deepEqual(inferenceAccountIds, ["account-two", "account-one"]);
+    assert.equal(consumeBodies.length, 1);
+    assert.equal((consumeBodies[0] as { credit_id: unknown }).credit_id, "credit-account-one");
+    assert.equal(typeof (consumeBodies[0] as { redeem_request_id: unknown }).redeem_request_id, "string");
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = originalDeployFlag;
+    (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl = originalCodexBaseUrl;
+  }
+});
+
+Deno.test("persistent live auto-arms an all-blocked cohort before one later consume and reset retry", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const originalCodexBaseUrl = config.codexBaseUrl;
+  const inventoryAccountIds: string[] = [];
+  const consumeAccountIds: string[] = [];
+  const inferenceAccountIds: string[] = [];
+  const consumeBodies: unknown[] = [];
+  const persistentLiveConfig: CodexBankedResetConfig = {
+    ...liveBankedResetConfig(),
+    accountAllowlist: new Set(["account-one", "account-two"]),
+  };
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = true;
+  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl =
+    "https://upstream-reset.test/backend-api/codex";
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  await seedStableBankedResetBlock("account-one");
+  await seedStableBankedResetBlock("account-two");
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const accountId = request.headers.get("chatgpt-account-id") ?? "";
+    if (request.url.endsWith("/backend-api/codex/responses")) {
+      inferenceAccountIds.push(accountId);
+      return Response.json({ id: `response-${accountId}` });
+    }
+    if (request.url.endsWith("/backend-api/wham/rate-limit-reset-credits")) {
+      inventoryAccountIds.push(accountId);
+      return Response.json({
+        available_count: 1,
+        credits: [
+          {
+            id: `credit-${accountId}`,
+            status: "available",
+            reset_type: "codex_rate_limits",
+            expires_at: null,
+          },
+        ],
+      });
+    }
+    if (request.url.endsWith("/backend-api/wham/rate-limit-reset-credits/consume")) {
+      consumeAccountIds.push(accountId);
+      consumeBodies.push(JSON.parse(await request.text()));
+      return Response.json({ code: "reset", windows_reset: 1 });
+    }
+    throw new Error(`unexpected request ${request.method} ${request.url}`);
+  };
+
+  const options = (requestId: string) => ({
+    clientVersion: "0.145.0",
+    requestId,
+    bankedReset: {
+      config: persistentLiveConfig,
+      kv: kv as unknown as Deno.Kv,
+      now: () => fixedStartMs,
+      newOwnerToken: () => `owner-${requestId}`,
+    },
+  });
+
+  try {
+    const armed = await fetchCodexResponses(
+      { input: "persistent-live-all-blocked-arm" },
+      options("persistent-live-all-blocked-arm"),
+    );
+    assert.equal(armed.status, 429);
+    assert.equal((await armed.json()).error.code, "codex_quota_blocked");
+    assert.deepEqual([...inventoryAccountIds].sort(), ["account-one", "account-two"]);
+    assert.deepEqual(consumeAccountIds, []);
+    assert.deepEqual(inferenceAccountIds, []);
+
+    const consumed = await fetchCodexResponses(
+      { input: "persistent-live-all-blocked-consume" },
+      options("persistent-live-all-blocked-consume"),
+    );
+    assert.equal(consumed.status, 200);
+    assert.ok(getCodexRoutingProbe(consumed));
+    assert.equal(inventoryAccountIds.filter((accountId) => accountId === "account-one").length, 2);
+    assert.equal(inventoryAccountIds.filter((accountId) => accountId === "account-two").length, 2);
+    assert.deepEqual(consumeAccountIds, ["account-one"]);
+    assert.deepEqual(inferenceAccountIds, ["account-one"]);
+    assert.equal(consumeBodies.length, 1);
+    assert.equal((consumeBodies[0] as { credit_id: unknown }).credit_id, "credit-account-one");
+    assert.equal(typeof (consumeBodies[0] as { redeem_request_id: unknown }).redeem_request_id, "string");
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = originalDeployFlag;
+    (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl = originalCodexBaseUrl;
+  }
+});
+
 Deno.test("post-reset response probes retain their tombstone until an explicit completed outcome", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;

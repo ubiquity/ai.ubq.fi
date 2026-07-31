@@ -1462,7 +1462,7 @@ export const fetchCodexResponses = async (
     telemetry: configuredBankedReset?.telemetry,
     // A supplied provider exists only as the hermetic `fetchCodexResponses`
     // test seam. Real traffic creates its account-bound adapter below and
-    // therefore always enforces a durable shadow decision before live mode.
+    // therefore always enforces a durable decision before live submission.
     allowLiveWithoutShadowForTest: configuredBankedReset?.provider !== undefined,
   };
   let lastResponse: Response | null = null;

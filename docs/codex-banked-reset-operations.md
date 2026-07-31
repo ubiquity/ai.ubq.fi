@@ -25,8 +25,9 @@ This rollout is deliberately **at-most-one**, not generally reconcilable exactly
   treat `unknown` as possibly spent.
 
 The terminal-only path is structurally enabled only when `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY` is exactly `1`. The cap
-is one provider submission per UTC day, not one for the lifetime of the deployment. Return mode to `shadow` immediately
-after the canary.
+is one provider submission per UTC day, not one for the lifetime of the deployment. The historical one-reset canary
+returned mode to `shadow` immediately. An explicitly approved persistent production rollout may remain in `live`, but
+every new quota episode still requires a separate read-only arm request before any later request can submit.
 
 All automated tests use fake providers or mocked transports. They do not call the real reset-credit endpoint.
 
@@ -72,7 +73,7 @@ Settings are re-read on each gateway request and immediately before the consume 
 | Variable                                        | Safe default | Canary requirement                                                       |
 | ----------------------------------------------- | ------------ | ------------------------------------------------------------------------ |
 | `CODEX_BANKED_RESET_ENABLED`                    | `true`       | `true` during shadow/live; `false` for fail-closed rollback.             |
-| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | `shadow`, then briefly `live`, then immediately back to `shadow`.        |
+| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | Canary: `shadow` -> `live` -> `shadow`; persistent rollout: `live`.      |
 | `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | Stable hashes for every approved current account; never raw credentials. |
 | `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Exactly `1`; terminal-only live rejects every other value.               |
 | `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Exactly `1`; every other value fails closed.                             |
@@ -109,12 +110,13 @@ Never clear routing KV, shadow decisions, the redemption ledger, or daily-cap re
 An empty ledger, an expired decision, any non-`selected` reason, changed fences, or unavailable inventory is a failed
 shadow gate. Stay in `shadow`.
 
-## One-reset live canary
+## Historical one-reset live canary
 
 Freeze one release operator, one exact served SHA, and one production configuration writer. Do not run another deploy,
 workflow retry, console promotion, or Deno configuration change concurrently.
 
-Only after the shadow proof above:
+This procedure records the initial one-reset rollout gate. It remains the required canary before approving persistent
+production live mode. Only after the shadow proof above:
 
 1. Change only the existing mode:
 
@@ -156,6 +158,28 @@ Only after the shadow proof above:
 If the live request returns through the healthy sibling after a definitive `401`, `403`, or `429` probe, the reset
 submission may still have succeeded; judge the consume result from the durable transaction event, not only the client
 response.
+
+## Persistent production live
+
+After the historical canary is accepted, mode may remain `live` with both caps fixed at `1` and the full approved
+account allowlist intact. Do not call the consume route directly. Ordinary inference traffic drives both phases:
+
+1. The first eligible request for a new quota episode strongly reads every cohort fence, performs the bounded
+   account-bound inventory reads, then strongly checks every fence again.
+2. If one exact allowlisted credit is eligible, that request atomically writes one redacted decision and returns
+   `live_armed`. It creates no redemption claim, reserves no daily capacity, sends no consume request, and starts no
+   post-reset inference probe. Concurrent first evaluations deduplicate on the same decision and also do not consume.
+3. With a healthy sibling, the arm request continues through ordinary routing on that sibling. With every account
+   blocked, the arm request returns the ordinary quota-blocked response.
+4. A later ordinary request strongly re-reads the persisted decision, repeats inventory and fence validation, and
+   requires the exact selected account, credit hash, credit expiry, and episode fences to match.
+5. Only that later matching request may enter the unchanged durable claim/submission path, atomically reserve the daily
+   cap, submit one consume request, and run the single post-reset inference probe.
+
+Invalid, unavailable, expired, or ineligible inventory cannot arm or consume. A negative live observation is not
+persisted, so later requests may repeat the bounded inventory read until the episode becomes eligible. An expired
+decision, changed inventory, changed fence, ambiguous generation, or unavailable KV remains fail-closed. Manual `shadow`
+-> `live` promotion remains valid for a controlled canary, and the rollback rules below are unchanged.
 
 ## Durable state and ambiguity
 
@@ -226,6 +250,6 @@ deno task test
 git diff --check
 ```
 
-The gateway tests cover partial-cohort shadow selection, sequential deduplication, exact shadow-to-live credit matching,
-one terminal consume, concurrency and the daily cap, definitive probe fallback, transport no-replay, inventory timeout,
-fence and credit drift, and full-pool recovery.
+The gateway tests cover partial-cohort shadow selection, persistent-live partial and all-blocked auto-arm, sequential
+deduplication, exact decision-to-live credit matching, one terminal consume, concurrency and the daily cap, definitive
+probe fallback, transport no-replay, inventory timeout, fence and credit drift, and full-pool recovery.
