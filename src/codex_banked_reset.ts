@@ -1854,9 +1854,10 @@ export const listCodexResetShadowDecisions = async (
 /**
  * Evaluate one complete currently fenced blocked cohort. Shadow reads each
  * blocked account's inventory and persists exactly one redacted decision.
- * Live first requires that decision, then repeats the fence and inventory
- * proof; it reaches the durable ledger only when the exact account and exact
- * opaque credit still match.
+ * Live without a decision first performs that same read-only arm phase. A
+ * later live evaluation repeats the fence and inventory proof; it reaches the
+ * durable ledger only when the exact account and exact opaque credit still
+ * match.
  */
 export const evaluateCodexBankedResetPool = async (
   candidates: readonly CodexBankedResetPoolCandidate[],
@@ -1917,12 +1918,15 @@ export const evaluateCodexBankedResetPool = async (
   if (!isNonEmptyText(episodeHash)) return poolOutcome("skipped", "episode_hash_unavailable");
 
   let audited: CodexResetShadowDecisionRecord | null = null;
+  let liveNeedsArming = false;
   if (config.mode === "live" && !dependencies.allowLiveWithoutShadowForTest) {
     audited = await readShadowDecision(kv, episodeHash);
     if (
-      !audited || audited.expires_at_ms <= nowMs || audited.decision_reason !== "selected" ||
-      !sameShadowFences(audited.fences, fences)
+      audited &&
+      (audited.expires_at_ms <= nowMs || audited.decision_reason !== "selected" ||
+        !sameShadowFences(audited.fences, fences))
     ) return poolOutcome("skipped", "shadow_decision_missing_or_expired");
+    liveNeedsArming = audited === null;
   }
 
   for (const { pool } of complete) {
@@ -2077,6 +2081,35 @@ export const evaluateCodexBankedResetPool = async (
   // that no external redemption was attempted because the fresh inventory
   // itself was no longer eligible.
   if (!selected) return poolOutcome("skipped", decisionReason);
+  if (liveNeedsArming) {
+    const persisted = await shadowDecisionRecord(kv, decision, nowAfterInventory);
+    if (!persisted) return poolOutcome("skipped", "shadow_decision_unavailable");
+    if (
+      persisted.record.decision_reason !== "selected" ||
+      persisted.record.selected_account_id_hash !== selected.resolved.context.account.accountIdHash ||
+      persisted.record.selected_credit_id_hash !== selected.creditIdHash ||
+      persisted.record.selected_credit_expires_at_ms !== selected.credit.expiresAtMs ||
+      !sameShadowFences(persisted.record.fences, fences)
+    ) return poolOutcome("skipped", "shadow_decision_drift");
+
+    const telemetry = dependencies.telemetry ?? defaultTelemetry;
+    const fields = telemetryFields(selected.resolved.context, selected.resolved.pool.candidate, {
+      episode_hash: episodeHash,
+      credit_id_hash: selected.creditIdHash,
+      selected: true,
+      reason: persisted.record.decision_reason,
+    });
+    if (persisted.kind === "duplicate") {
+      emit(telemetry, "codex_reset_duplicate_prevented", { ...fields, reason: "shadow_decision_exists" });
+      metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
+    } else {
+      emit(telemetry, "codex_reset_eligible", fields);
+      emit(telemetry, "codex_reset_shadow_candidate", fields);
+      metric(telemetry, "codex_reset_eligible_total", 1, fields);
+      metric(telemetry, "codex_reset_shadow_candidates_total", 1, fields);
+    }
+    return poolOutcome("shadow", "live_armed", selected.resolved.pool);
+  }
   if (
     !dependencies.allowLiveWithoutShadowForTest &&
     (!audited || audited.selected_account_id_hash !== selected.resolved.context.account.accountIdHash ||

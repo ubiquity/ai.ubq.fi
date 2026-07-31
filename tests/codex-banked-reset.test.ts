@@ -2478,6 +2478,182 @@ Deno.test("full-pool shadow reads each account inventory, selects the earliest e
   assert.equal(JSON.stringify(decision).includes("credit-b-earlier"), false);
 });
 
+Deno.test("a new persistent-live episode auto-arms without spending, then consumes exactly once", async () => {
+  const clock = new TestClock();
+  const kv = new MemoryKv();
+  const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
+  await seedFences(kv, reset);
+  const provider = new FakeCodexUsageResetProvider();
+  provider.inventory = inventory("expiring-credit", clock.nowMs + 20_000);
+  const pool = [{ slot: 0, candidate: reset, provider }] as const;
+  const events: string[] = [];
+  const live = config({
+    mode: "live",
+    accountAllowlist: new Set([reset.accountId]),
+    maxGlobalPerDay: 1,
+  });
+  const deps = dependencies(kv, provider, clock, live, {
+    event: (event) => events.push(event),
+  });
+
+  const armed = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(armed.kind, "shadow");
+  assert.equal(armed.reason, "live_armed");
+  assert.equal(armed.selected?.slot, 0);
+  assert.equal(armed.reset, null);
+  assert.equal(provider.inventoryInputs.length, 1);
+  assert.equal(provider.redeemInputs.length, 0);
+  assert.equal(provider.commitCount, 0);
+  assert.ok(events.includes("codex_reset_eligible"));
+  assert.ok(events.includes("codex_reset_shadow_candidate"));
+  assert.equal(shadowDecisionFrom(kv).decision_reason, "selected");
+  assert.equal(kv.entries.size, 3);
+
+  const day = new Date(clock.nowMs).toISOString().slice(0, 10);
+  assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
+
+  const consumed = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(consumed.kind, "verified");
+  assert.equal(consumed.selected?.slot, 0);
+  assert.equal(provider.inventoryInputs.length, 2);
+  assert.equal(provider.redeemInputs.length, 1);
+  assert.equal(provider.redeemInputs[0]?.creditId, "expiring-credit");
+  assert.equal(provider.commitCount, 1);
+  assert.equal(
+    (await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count,
+    1,
+  );
+
+  const repeated = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(repeated.kind, "verified");
+  assert.equal(provider.redeemInputs.length, 1);
+  assert.equal(provider.commitCount, 1);
+});
+
+Deno.test("concurrent initial persistent-live evaluations only arm before a later single consume", async () => {
+  const clock = new TestClock();
+  const kv = new MemoryKv();
+  const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
+  await seedFences(kv, reset);
+  const provider = new FakeCodexUsageResetProvider();
+  provider.inventory = inventory("expiring-credit", clock.nowMs + 20_000);
+  const originalReadInventory = provider.readInventory.bind(provider);
+  const bothInventoriesEntered = new Deferred<void>();
+  const inventoryGate = new Deferred<void>();
+  let inventoryEntrances = 0;
+  provider.readInventory = async (input, signal) => {
+    inventoryEntrances += 1;
+    if (inventoryEntrances === 2) bothInventoriesEntered.resolve(undefined);
+    await inventoryGate.promise;
+    return await originalReadInventory(input, signal);
+  };
+  const pool = [{ slot: 0, candidate: reset, provider }] as const;
+  const live = config({
+    mode: "live",
+    accountAllowlist: new Set([reset.accountId]),
+    maxGlobalPerDay: 1,
+  });
+  const deps = dependencies(kv, provider, clock, live);
+
+  const first = evaluateCodexBankedResetPool(pool, deps);
+  const second = evaluateCodexBankedResetPool(pool, deps);
+  await bothInventoriesEntered.promise;
+  assert.equal(provider.redeemInputs.length, 0);
+  inventoryGate.resolve(undefined);
+  const initial = await Promise.all([first, second]);
+
+  assert.deepEqual(initial.map(({ kind }) => kind), ["shadow", "shadow"]);
+  assert.deepEqual(initial.map(({ reason }) => reason), ["live_armed", "live_armed"]);
+  assert.equal(provider.redeemInputs.length, 0);
+  assert.equal(provider.commitCount, 0);
+  assert.equal(shadowDecisionFrom(kv).decision_reason, "selected");
+  assert.equal(kv.entries.size, 3);
+  const day = new Date(clock.nowMs).toISOString().slice(0, 10);
+  assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
+
+  const consumed = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(consumed.kind, "verified");
+  assert.equal(provider.inventoryInputs.length, 3);
+  assert.equal(provider.redeemInputs.length, 1);
+  assert.equal(provider.redeemInputs[0]?.creditId, "expiring-credit");
+  assert.equal(provider.commitCount, 1);
+  assert.equal(
+    (await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count,
+    1,
+  );
+});
+
+Deno.test("invalid or ineligible live inventory cannot arm or consume", async (t) => {
+  for (
+    const scenario of [
+      {
+        name: "invalid",
+        inventory: {
+          availableCount: 2,
+          observedAtMs: 1_700_000_000_000,
+          credits: [
+            {
+              id: "incomplete-credit",
+              status: "available",
+              resetType: "codex_rate_limits",
+              expiresAtMs: null,
+            },
+          ],
+        },
+        reason: "inventory_response_invalid_or_expired",
+      },
+      {
+        name: "ineligible",
+        inventory: {
+          availableCount: 1,
+          observedAtMs: 1_700_000_000_000,
+          credits: [
+            {
+              id: "unsupported-credit",
+              status: "available",
+              resetType: "unsupported_reset",
+              expiresAtMs: null,
+            },
+          ],
+        },
+        reason: "inventory_no_eligible_codex_credit",
+      },
+    ] satisfies readonly {
+      name: string;
+      inventory: ResetInventory;
+      reason: string;
+    }[]
+  ) {
+    await t.step(scenario.name, async () => {
+      const clock = new TestClock();
+      const kv = new MemoryKv();
+      const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
+      await seedFences(kv, reset);
+      const provider = new FakeCodexUsageResetProvider();
+      provider.inventory = scenario.inventory;
+      const events: string[] = [];
+      const live = config({
+        mode: "live",
+        accountAllowlist: new Set([reset.accountId]),
+        maxGlobalPerDay: 1,
+      });
+
+      const result = await evaluateCodexBankedResetPool(
+        [{ slot: 0, candidate: reset, provider }],
+        dependencies(kv, provider, clock, live, { event: (event) => events.push(event) }),
+      );
+
+      assert.equal(result.kind, "skipped");
+      assert.equal(result.reason, scenario.reason);
+      assert.equal(provider.inventoryInputs.length, 1);
+      assert.equal(provider.redeemInputs.length, 0);
+      assert.equal(provider.commitCount, 0);
+      assert.equal(events.includes("codex_reset_shadow_candidate"), false);
+      assert.equal(kv.entries.size, 2);
+    });
+  }
+});
+
 Deno.test("sequential shadow duplicates skip inventory only after current strong fences pass", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
