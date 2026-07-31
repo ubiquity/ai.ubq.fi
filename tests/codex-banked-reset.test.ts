@@ -561,6 +561,24 @@ Deno.test("banked reset live happy path commits exactly once with a stable durab
   assert.equal(provider.commitCount, 1);
 });
 
+Deno.test("banked reset production owner token generator is called with its Crypto receiver", async () => {
+  const kv = new MemoryKv();
+  const provider = new FakeCodexUsageResetProvider();
+  const clock = new TestClock();
+  const reset = candidate();
+  const { newOwnerToken: _injectedOwnerToken, ...deps } = dependencies(kv, provider, clock);
+  await seedFences(kv, reset);
+
+  const result = await attemptCodexBankedReset(reset, deps);
+
+  assert.equal(result.kind, "verified");
+  assert.match(
+    result.record?.owner_token ?? "",
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
+  assert.equal(provider.commitCount, 1);
+});
+
 Deno.test("unknown provider outcome is recovered through lookup with the same key and no second redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();

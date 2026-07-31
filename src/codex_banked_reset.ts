@@ -1652,7 +1652,7 @@ const attemptInternal = async (
   const clock = dependencies.now ?? Date.now;
   const nowMs = readClock(clock);
   if (nowMs === null) return outcome("skipped", "invalid_clock", context, existing.record);
-  const ownerToken = safeOwnerToken(dependencies.newOwnerToken ?? crypto.randomUUID);
+  const ownerToken = safeOwnerToken(dependencies.newOwnerToken ?? (() => crypto.randomUUID()));
   if (!ownerToken) return outcome("skipped", "owner_token_unavailable", context, existing.record);
   const claimed = await claimTransaction(
     kv,
