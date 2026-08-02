@@ -7149,17 +7149,47 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(upstreamBody.stream, false);
     });
 
-    await t.step("rejects streaming and Responses requests without provider dispatch", async () => {
+    await t.step("downgrades Chat Completions streaming while keeping Responses unavailable", async () => {
       let cerebrasCalls = 0;
+      const upstreamBodies: Record<string, unknown>[] = [];
       const streamResponse = await withFetchMock(
-        (url) => {
-          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
-          return sseResponse(baseSseChunks());
+        (url, bodyText) => {
+          if (url !== "https://api.cerebras.ai/v1/chat/completions") throw new Error(`unexpected URL: ${url}`);
+          cerebrasCalls += 1;
+          if (bodyText) upstreamBodies.push(JSON.parse(bodyText) as Record<string, unknown>);
+          return new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_buffered_stream",
+              object: "chat.completion",
+              created: 1_728_000_004,
+              model: "gpt-oss-120b",
+              choices: [{
+                index: 0,
+                message: { role: "assistant", content: "Ready" },
+                finish_reason: "stop",
+              }],
+              usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
         },
-        () => handleChatCompletions(request({ ...canonicalBody, stream: true })),
+        () =>
+          handleChatCompletions(
+            request({ ...canonicalBody, stream: true, stream_options: { include_usage: true } }),
+          ),
       );
-      assert.equal(streamResponse.status, 400);
-      assert.equal((await streamResponse.json() as { error?: { param?: string } }).error?.param, "stream");
+      assert.equal(streamResponse.status, 200);
+      assert.equal(streamResponse.headers.get("Content-Type"), "text/event-stream");
+      assert.equal(streamResponse.headers.get("x-uos-warning"), "gpt_oss_stream_downgraded");
+      const streamText = await streamResponse.text();
+      assert.match(streamText, /"object":"chat\.completion\.chunk"/);
+      assert.match(streamText, /"content":"Ready"/);
+      assert.match(streamText, /"usage":\{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4\}/);
+      assert.match(streamText, /data: \[DONE\]/);
+      const upstreamBody = upstreamBodies[0]!;
+      assert.equal(upstreamBody.stream, false);
+      assert.equal(upstreamBody.stream_options, undefined);
+      assert.equal(cerebrasCalls, 1);
 
       const responsesResponse = await withFetchMock(
         (url) => {
@@ -7177,7 +7207,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       );
       assert.equal(responsesResponse.status, 400);
       assert.equal((await responsesResponse.json() as { error?: { param?: string } }).error?.param, "model");
-      assert.equal(cerebrasCalls, 0);
+      assert.equal(cerebrasCalls, 1);
     });
 
     await t.step("rejects a missing server credential without provider dispatch", async () => {

@@ -343,10 +343,13 @@ ubq-ai admin keys list | jq
 ## Chat Completions provider contract
 
 `gpt-oss-120b` is sent to Cerebras as a non-streaming Chat Completions request. Its standard `temperature` and
-`max_completion_tokens` fields are forwarded unchanged. The existing Terra/Codex Chat Completions path translates
-`max_completion_tokens` to the upstream Responses `max_output_tokens` cap. Terra/Codex does not support `temperature`;
-the gateway intentionally omits it and returns `x-uos-warning: temperature_ignored` rather than silently treating it as
-a cost or behavior control.
+`max_completion_tokens` fields are forwarded unchanged. If a client requests `stream: true`, the gateway keeps the
+client-facing SSE contract but buffers the Cerebras completion first, and returns
+`x-uos-warning: gpt_oss_stream_downgraded`. Successful downgraded requests remain HTTP `200`; a non-2xx status would
+make compatible clients treat the completed response as an error. The existing Terra/Codex Chat Completions path
+translates `max_completion_tokens` to the upstream Responses `max_output_tokens` cap. Terra/Codex does not support
+`temperature`; the gateway intentionally omits it and returns `x-uos-warning: temperature_ignored` rather than silently
+treating it as a cost or behavior control.
 
 When a provider supplies an opaque request ID, the gateway preserves its bounded, header-safe value as
 `x-uos-provider-request-id` and in terminal response telemetry as `providerRequestId` / `provider_request_id`. It is a

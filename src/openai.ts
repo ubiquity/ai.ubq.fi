@@ -724,10 +724,81 @@ const toCerebrasErrorResponse = (error: unknown): Response => {
   return withUpstreamProviderHeader(response, "cerebras");
 };
 
-const cerebrasResponseHeaders = (providerRequestId: string | null): Record<string, string> => ({
+const cerebrasResponseHeaders = (
+  providerRequestId: string | null,
+  warning?: string,
+): Record<string, string> => ({
   "x-uos-upstream": "cerebras",
   ...(providerRequestId ? { "x-uos-provider-request-id": providerRequestId } : {}),
+  ...(warning ? { "x-uos-warning": warning } : {}),
 });
+
+const GPT_OSS_STREAM_DOWNGRADED_WARNING = "gpt_oss_stream_downgraded";
+
+const streamCerebrasChatCompletion = (
+  completion: Record<string, unknown>,
+  includeUsage: boolean,
+  headers: HeadersInit,
+): Response => {
+  const id = getString(completion.id) ?? `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
+  const created = typeof completion.created === "number" ? completion.created : Math.floor(Date.now() / 1000);
+  const model = getString(completion.model) ?? CEREBRAS_GPT_OSS_120B_MODEL;
+  const choices = Array.isArray(completion.choices) ? completion.choices : [];
+  const events: string[] = [];
+  const appendEvent = (value: Record<string, unknown>): void => {
+    events.push(`data: ${JSON.stringify(value)}\n\n`);
+  };
+
+  for (const [choiceIndex, value] of choices.entries()) {
+    if (!isRecord(value) || Array.isArray(value)) continue;
+    const index = typeof value.index === "number" ? value.index : choiceIndex;
+    const message = isRecord(value.message) && !Array.isArray(value.message) ? value.message : {};
+    const delta: Record<string, unknown> = { role: "assistant" };
+    if (typeof message.content === "string") delta.content = message.content;
+
+    if (Array.isArray(message.tool_calls)) {
+      delta.tool_calls = message.tool_calls.flatMap((toolCall, toolCallIndex) => {
+        if (!isRecord(toolCall) || Array.isArray(toolCall)) return [];
+        const fn = isRecord(toolCall.function) && !Array.isArray(toolCall.function) ? toolCall.function : null;
+        if (!fn) return [];
+        return [{
+          index: toolCallIndex,
+          id: toolCall.id,
+          type: "function",
+          function: {
+            name: fn.name,
+            arguments: fn.arguments,
+          },
+        }];
+      });
+    }
+
+    appendEvent({
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{ index, delta, finish_reason: null }],
+    });
+    appendEvent({
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{ index, delta: {}, finish_reason: getString(value.finish_reason) ?? "stop" }],
+    });
+  }
+
+  if (includeUsage && completion.usage !== undefined) {
+    appendEvent({ id, object: "chat.completion.chunk", created, model, choices: [], usage: completion.usage });
+  }
+  events.push("data: [DONE]\n\n");
+
+  const responseHeaders = new Headers(headers);
+  responseHeaders.set("Content-Type", "text/event-stream");
+  responseHeaders.set("Cache-Control", "no-cache");
+  return new Response(events.join(""), { status: 200, headers: responseHeaders });
+};
 
 type UpstreamErrorDetails = Readonly<{
   message: string;
@@ -5696,14 +5767,11 @@ const handleCerebrasChatCompletions = async (
   if (!parsedStream.ok) {
     return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
   }
-  if (parsedStream.value) {
-    return openaiError(
-      400,
-      "stream must be false for gpt-oss-120b.",
-      "unsupported_value",
-      { param: "stream" },
-    );
+  const streamOptions = parseChatStreamOptions(rawRecord.stream_options);
+  if (!streamOptions.ok) {
+    return openaiError(400, streamOptions.message, "invalid_request_error", { param: "stream_options" });
   }
+  const clientWantsStream = parsedStream.value;
 
   // Preserve the official nested Chat tools/tool_choice contract. In
   // particular, do not run the Codex-specific flattening that follows this
@@ -5715,6 +5783,7 @@ const handleCerebrasChatCompletions = async (
     reasoning_effort: reasoning,
     stream: false,
   };
+  delete cerebrasBody.stream_options;
   if (usageContext?.responseTelemetry) {
     usageContext.responseTelemetry.provider = "cerebras";
     usageContext.responseTelemetry.reasoning = reasoning;
@@ -5722,7 +5791,7 @@ const handleCerebrasChatCompletions = async (
   await recordRequestUsage(usageContext, {
     model: modelRaw,
     route: "chat.completions",
-    stream: false,
+    stream: clientWantsStream,
     reasoning,
   });
 
@@ -5818,9 +5887,18 @@ const handleCerebrasChatCompletions = async (
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const usage = extractChatUsageTokens(normalized.value.usage);
   await recordCompletionUsage(usageContext, usage);
+  if (clientWantsStream) recordFirstSseEvent(usageContext);
   recordStreamTerminalType(usageContext, "response.completed");
   recordCerebrasResponseHealth(upstream.status);
-  return json(200, normalized.value, cerebrasResponseHeaders(providerRequestId));
+  const responseHeaders = cerebrasResponseHeaders(
+    providerRequestId,
+    clientWantsStream ? GPT_OSS_STREAM_DOWNGRADED_WARNING : undefined,
+  );
+  if (clientWantsStream) {
+    recordStreamTerminal(usageContext);
+    return streamCerebrasChatCompletion(normalized.value, streamOptions.includeUsage, responseHeaders);
+  }
+  return json(200, normalized.value, responseHeaders);
 };
 
 const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
