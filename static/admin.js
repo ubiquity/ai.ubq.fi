@@ -141,6 +141,9 @@ const yunwuProviderBalance = mustGet("yunwu-provider-balance");
 const yunwuProviderRemaining = mustGet("yunwu-provider-remaining");
 const yunwuProviderQuotaObserved = mustGet("yunwu-provider-quota-observed");
 const yunwuProviderCache = mustGet("yunwu-provider-cache");
+const providerCapacityBadge = mustGet("provider-capacity-badge");
+const providerCapacityUpdated = mustGet("provider-capacity-updated");
+const providerCapacityList = mustGet("provider-capacity-list");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -155,6 +158,8 @@ let keysLoading = false;
 let keysLoadedAt = 0;
 let providersLoading = false;
 let providersLoadedAt = 0;
+let providerCapacityLoading = false;
+let providerCapacityLoadedAt = 0;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
 const API_KEY_REQUEST_LOG_STATUS_OK = "OK";
@@ -752,7 +757,238 @@ const renderYunwuProvider = (yunwu) => {
   yunwuProviderCache.textContent = quota.cache_state ?? "Unavailable";
 };
 
+const capacityBadgeState = (state) => state === "available" ? "ok" : state === "stale" ? "unknown" : "bad";
+
+const capacityStateLabel = (state) => {
+  if (state === "available") return "Live";
+  if (state === "stale") return "Stale";
+  return "Unavailable";
+};
+
+const formatCapacityTimestamp = (value, unavailable = "Not reported") =>
+  typeof value === "number" && Number.isFinite(value) ? formatDate(value) : unavailable;
+
+const formatCapacityPercent = (value) =>
+  typeof value === "number" && Number.isFinite(value) ? `${quotaPercentFormatter.format(value)}%` : "Not reported";
+
+const capacityRemainingPercent = (usedPercent) =>
+  typeof usedPercent === "number" && Number.isFinite(usedPercent)
+    ? Math.max(0, Math.min(100, 100 - usedPercent))
+    : null;
+
+const capacityProgressTone = (remainingPercent) => {
+  if (remainingPercent === null) return "unavailable";
+  if (remainingPercent <= 10) return "critical";
+  if (remainingPercent <= 25) return "warning";
+  return "healthy";
+};
+
+const renderCapacityWindow = (container, label, window) => {
+  const card = document.createElement("section");
+  card.dataset.capacityWindow = "";
+  const title = document.createElement("h4");
+  title.textContent = label;
+  const remainingPercent = capacityRemainingPercent(window?.used_percent);
+  const usage = document.createElement("div");
+  usage.dataset.capacityUsage = "";
+  const remaining = document.createElement("div");
+  remaining.dataset.capacityRemaining = "";
+  const remainingValue = document.createElement("strong");
+  remainingValue.textContent = remainingPercent === null
+    ? "Not reported"
+    : `${formatCapacityPercent(remainingPercent)} remaining`;
+  remaining.appendChild(remainingValue);
+  usage.appendChild(remaining);
+  const progress = document.createElement("div");
+  progress.dataset.capacityProgress = "";
+  progress.dataset.tone = capacityProgressTone(remainingPercent);
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-label", `${label} remaining capacity`);
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", "100");
+  if (remainingPercent === null) {
+    progress.dataset.state = "unavailable";
+    progress.setAttribute("aria-valuetext", "Remaining capacity not reported");
+  } else {
+    progress.style.setProperty("--capacity-progress", `${remainingPercent}%`);
+    progress.setAttribute("aria-valuenow", String(remainingPercent));
+    progress.setAttribute("aria-valuetext", `${formatCapacityPercent(remainingPercent)} remaining`);
+  }
+  usage.appendChild(progress);
+  const facts = document.createElement("dl");
+  facts.dataset.capacityFacts = "";
+  appendProviderFact(facts, "Used", formatCapacityPercent(window?.used_percent));
+  appendProviderFact(
+    facts,
+    "Window",
+    typeof window?.limit_window_seconds === "number"
+      ? formatWindowShort(window.limit_window_seconds * 1000)
+      : "Not reported",
+  );
+  appendProviderFact(facts, "Reset", formatCapacityTimestamp(window?.reset_at_ms));
+  card.append(title, usage, facts);
+  container.appendChild(card);
+};
+
+const appendCapacitySourceMeta = (row, source) => {
+  const facts = document.createElement("dl");
+  facts.dataset.capacityMeta = "";
+  appendProviderFact(facts, "Observed", formatCapacityTimestamp(source.source_observed_at_ms));
+  appendProviderFact(facts, "Snapshot", formatCapacityTimestamp(source.snapshot_at_ms));
+  row.appendChild(facts);
+};
+
+const renderCodexCapacitySource = (source) => {
+  const row = document.createElement("article");
+  row.dataset.capacitySource = "codex";
+  row.dataset.state = source.state;
+  row.setAttribute("role", "listitem");
+
+  const header = document.createElement("header");
+  const title = document.createElement("h3");
+  title.textContent = `Codex account ${source.slot}`;
+  const badge = document.createElement("span");
+  badge.dataset.badge = "";
+  setBadge(badge, capacityBadgeState(source.state), capacityStateLabel(source.state));
+  header.append(title, badge);
+
+  const windows = document.createElement("div");
+  windows.dataset.capacityWindows = "";
+  renderCapacityWindow(windows, "Primary window", source.windows?.primary);
+  renderCapacityWindow(windows, "Secondary window", source.windows?.secondary);
+  row.append(header, windows);
+  appendCapacitySourceMeta(row, source);
+  return row;
+};
+
+const renderYunwuCapacitySource = (source) => {
+  const row = document.createElement("article");
+  row.dataset.capacitySource = "yunwu";
+  row.dataset.state = source.state;
+  row.setAttribute("role", "listitem");
+
+  const header = document.createElement("header");
+  const title = document.createElement("h3");
+  title.textContent = "YunWu fallback";
+  const badge = document.createElement("span");
+  badge.dataset.badge = "";
+  setBadge(badge, capacityBadgeState(source.state), capacityStateLabel(source.state));
+  header.append(title, badge);
+
+  const facts = document.createElement("dl");
+  facts.dataset.capacityFacts = "";
+  const wallet = source.wallet ?? {};
+  appendProviderFact(
+    facts,
+    "Balance",
+    wallet.balance_credits === null ? "Not available" : formatCredits(wallet.balance_credits),
+  );
+  appendProviderFact(facts, "Refill remaining", formatCapacityPercent(wallet.refill_cycle_remaining_percent));
+  appendProviderFact(
+    facts,
+    "Refill baseline",
+    wallet.baseline_credits === null ? "Not available" : formatCredits(wallet.baseline_credits),
+  );
+  appendProviderFact(facts, "Confidence", wallet.confidence ?? "Not available");
+  appendProviderFact(facts, "Cycle started", formatCapacityTimestamp(wallet.cycle_started_at_ms));
+  appendProviderFact(facts, "Reset", "Not provided for refill cycle");
+  row.append(header, facts);
+  appendCapacitySourceMeta(row, source);
+  return row;
+};
+
+const unavailableCapacitySource = (source, slot = null) =>
+  source === "yunwu"
+    ? {
+      source: "yunwu",
+      state: "unavailable",
+      source_observed_at_ms: null,
+      snapshot_at_ms: null,
+      wallet: {
+        balance_credits: null,
+        baseline_credits: null,
+        refill_cycle_remaining_percent: null,
+        refill_cycle_used_percent: null,
+        cycle_started_at_ms: null,
+        last_credit_at_ms: null,
+        confidence: null,
+        cache_state: null,
+      },
+    }
+    : {
+      source: "codex",
+      slot,
+      state: "unavailable",
+      source_observed_at_ms: null,
+      snapshot_at_ms: null,
+      windows: { primary: null, secondary: null },
+    };
+
+const renderProviderCapacity = (snapshot) => {
+  const rawSources = Array.isArray(snapshot?.sources) ? snapshot.sources : [];
+  const sourceForSlot = (slot) =>
+    rawSources.find((source) => source?.source === "codex" && source.slot === slot) ??
+      unavailableCapacitySource("codex", slot);
+  const sources = [
+    sourceForSlot(1),
+    sourceForSlot(2),
+    rawSources.find((source) => source?.source === "yunwu") ?? unavailableCapacitySource("yunwu"),
+  ];
+  providerCapacityList.replaceChildren();
+  for (const source of sources) {
+    providerCapacityList.appendChild(
+      source.source === "yunwu" ? renderYunwuCapacitySource(source) : renderCodexCapacitySource(source),
+    );
+  }
+
+  const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
+  const staleCount = sources.filter((source) => source.state === "stale").length;
+  if (unavailableCount === sources.length) {
+    setBadge(providerCapacityBadge, "bad", "Unavailable");
+  } else if (unavailableCount > 0) {
+    setBadge(providerCapacityBadge, "unknown", `Partial · ${unavailableCount} unavailable`);
+  } else if (staleCount > 0) {
+    setBadge(providerCapacityBadge, "unknown", `Stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
+  } else {
+    setBadge(providerCapacityBadge, "ok", "Live");
+  }
+  const snapshotAt = typeof snapshot?.snapshot_at_ms === "number" ? snapshot.snapshot_at_ms : null;
+  const cacheState = typeof snapshot?.cache_state === "string" ? snapshot.cache_state : "unavailable";
+  providerCapacityUpdated.textContent = `Snapshot ${formatCapacityTimestamp(snapshotAt)} · ${cacheState}`;
+};
+
+const loadProviderCapacity = async () => {
+  if (providerCapacityLoading) return;
+  const token = getAdminToken();
+  if (!adminAccessState.isAdmin || !token) {
+    setBadge(providerCapacityBadge, "bad", "Sign in required");
+    return;
+  }
+  providerCapacityLoading = true;
+  setBadge(providerCapacityBadge, "unknown", "Loading capacity");
+  try {
+    const response = await fetch(apiUrl("/admin/providers/capacity"), {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload) {
+      setBadge(providerCapacityBadge, "bad", payload?.error?.message ?? "Capacity unavailable");
+      providerCapacityUpdated.textContent = "Snapshot unavailable";
+      return;
+    }
+    renderProviderCapacity(payload);
+    providerCapacityLoadedAt = Date.now();
+  } catch {
+    setBadge(providerCapacityBadge, "bad", "Offline");
+    providerCapacityUpdated.textContent = "Snapshot unavailable";
+  } finally {
+    providerCapacityLoading = false;
+  }
+};
+
 const loadProviders = async () => {
+  if (currentAdminView === "providers") void loadProviderCapacity();
   if (providersLoading) return;
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !token) {
@@ -5495,6 +5731,8 @@ tokenInput.addEventListener("input", () => {
   kernelQueueLoadedAt = 0;
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
+  providersLoadedAt = 0;
+  providerCapacityLoadedAt = 0;
   clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
@@ -5706,6 +5944,8 @@ baseSelect.addEventListener("change", () => {
   kernelPubKeys = [];
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
+  providersLoadedAt = 0;
+  providerCapacityLoadedAt = 0;
   resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {

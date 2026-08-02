@@ -427,6 +427,140 @@ body[data-page="admin"] [data-provider-empty] {
   line-height: 1.5;
 }
 
+body[data-page="admin"] [data-capacity-list] {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body[data-page="admin"] [data-capacity-source] {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+body[data-page="admin"] [data-capacity-source] > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+body[data-page="admin"] [data-capacity-source] h3,
+body[data-page="admin"] [data-capacity-window] h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+body[data-page="admin"] [data-capacity-windows] {
+  display: grid;
+  gap: 8px;
+}
+
+body[data-page="admin"] [data-capacity-window] {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+body[data-page="admin"] [data-capacity-usage] {
+  display: grid;
+  gap: 8px;
+}
+
+body[data-page="admin"] [data-capacity-remaining] {
+  display: flex;
+  align-items: baseline;
+  min-height: 28px;
+}
+
+body[data-page="admin"] [data-capacity-remaining] strong {
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+
+body[data-page="admin"] [data-capacity-progress] {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+body[data-page="admin"] [data-capacity-progress]::after {
+  display: block;
+  width: var(--capacity-progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.82);
+  content: "";
+  transition: width 180ms ease;
+}
+
+body[data-page="admin"] [data-capacity-progress][data-tone="healthy"]::after {
+  background: #20c66a;
+}
+
+body[data-page="admin"] [data-capacity-progress][data-tone="warning"]::after {
+  background: #f59e0b;
+}
+
+body[data-page="admin"] [data-capacity-progress][data-tone="critical"]::after {
+  background: #c50f16;
+}
+
+body[data-page="admin"] [data-capacity-progress][data-state="unavailable"]::after {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+body[data-page="admin"] [data-capacity-facts],
+body[data-page="admin"] [data-capacity-meta] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+body[data-page="admin"] [data-capacity-facts] > div,
+body[data-page="admin"] [data-capacity-meta] > div {
+  min-width: 0;
+}
+
+body[data-page="admin"] [data-capacity-facts] dt,
+body[data-page="admin"] [data-capacity-meta] dt {
+  color: var(--muted-2);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+body[data-page="admin"] [data-capacity-facts] dd,
+body[data-page="admin"] [data-capacity-meta] dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+body[data-page="admin"] [data-capacity-meta] {
+  padding-top: 2px;
+}
+
+@media (max-width: 900px) {
+  body[data-page="admin"] [data-capacity-list] {
+    grid-template-columns: 1fr;
+  }
+}
+
 body[data-page="admin"] [data-paid-fallback-create],
 body[data-page="admin"] [data-paid-fallback-editor],
 body[data-page="admin"] [data-paid-fallback-summary] {

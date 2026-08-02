@@ -74,6 +74,7 @@ import {
 import { withCodexQuotaHeaders } from "./codex_quota.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
 import { sha256Hex } from "./utils.ts";
+import { handleProviderCapacity } from "./provider_capacity.ts";
 
 type AuthenticatedClientResult = Extract<
   Awaited<ReturnType<typeof authenticateClient>>,
@@ -464,6 +465,12 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleHealthProviders({ includeQuota: true }));
+  }
+
+  if (req.method === "GET" && path === "/admin/providers/capacity") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleProviderCapacity());
   }
 
   if (req.method === "POST" && path === "/admin/api-keys") {

@@ -474,6 +474,26 @@ const getAuthPoolEntry = async (forceKv = false, bypassInFlight = false): Promis
 };
 
 /**
+ * Control-plane credentials for the redacted admin capacity snapshot. The
+ * caller uses these only to make account-bound upstream reads; account IDs
+ * and access tokens must never cross the HTTP response boundary.
+ */
+export type CodexCapacityAccount = Readonly<{
+  slot: number;
+  account_id: string;
+  access_token: string;
+}>;
+
+export const getCodexCapacityAccounts = async (): Promise<readonly CodexCapacityAccount[]> => {
+  const current = await getAuthPoolEntry(true);
+  return current.pool.accounts.map((account, index) => ({
+    slot: index + 1,
+    account_id: account.account_id,
+    access_token: account.access_token,
+  }));
+};
+
+/**
  * Private control-plane state for the fixed prompt-cache experiment. Account
  * identities stay inside this transport module and are never persisted by the
  * experiment coordinator or returned from its admin endpoint.
