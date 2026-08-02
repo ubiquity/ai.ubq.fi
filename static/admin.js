@@ -159,7 +159,6 @@ let keysLoadedAt = 0;
 let providersLoading = false;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
-let providerCapacityLoadedAt = 0;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
 const API_KEY_REQUEST_LOG_STATUS_OK = "OK";
@@ -978,7 +977,6 @@ const loadProviderCapacity = async () => {
       return;
     }
     renderProviderCapacity(payload);
-    providerCapacityLoadedAt = Date.now();
   } catch {
     setBadge(providerCapacityBadge, "bad", "Offline");
     providerCapacityUpdated.textContent = "Snapshot unavailable";
@@ -5732,7 +5730,6 @@ tokenInput.addEventListener("input", () => {
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
   providersLoadedAt = 0;
-  providerCapacityLoadedAt = 0;
   clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
@@ -5945,7 +5942,6 @@ baseSelect.addEventListener("change", () => {
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
   providersLoadedAt = 0;
-  providerCapacityLoadedAt = 0;
   resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
