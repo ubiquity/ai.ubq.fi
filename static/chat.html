@@ -148,6 +148,13 @@
                   <option value="">Loading models...</option>
                 </select>
               </label>
+              <div data-layout="row">
+                <label data-check>
+                  <input id="stream" type="checkbox" checked />
+                  <span>Stream response</span>
+                </label>
+                <span id="stream-hint" data-muted hidden>GPT-OSS 120B requires streaming off</span>
+              </div>
               <label data-field>
                 <span data-label>System prompt (optional)</span>
                 <textarea id="system" rows="4" placeholder="You are a helpful assistant."></textarea>

@@ -25,6 +25,7 @@ const STORAGE_KEYS = {
   passkeyCredentialIds: AUTH_STORAGE_KEYS.passkeyCredentialIds,
   model: "uos_ai.playground.model",
   reasoningEffort: "uos_ai.playground.reasoning_effort",
+  stream: "uos_ai.playground.stream",
   systemPrompt: "uos_ai.playground.system_prompt",
 };
 
@@ -57,6 +58,8 @@ const signOutBtn = mustGet("sign-out");
 const passkeyStatus = mustGet("passkey-status");
 const modelInput = mustGet("model");
 const reasoningSelect = mustGet("reasoning-effort");
+const streamInput = mustGet("stream");
+const streamHint = mustGet("stream-hint");
 const systemInput = mustGet("system");
 const authBadge = mustGet("auth-badge");
 const messagesEl = mustGet("messages");
@@ -68,6 +71,7 @@ const sendBtn = mustGet("send");
 const panels = Array.from(document.querySelectorAll("details[data-chat-panel][data-panel-key]"));
 
 const DEFAULT_MODEL = "";
+const STREAM_UNSUPPORTED_MODELS = new Set(["gpt-oss-120b"]);
 
 const setAuthBadge = (state, text) => {
   authBadge.dataset.state = state;
@@ -114,6 +118,19 @@ let modelsLoadedToken = "";
 let modelCatalog = new Map();
 let preferredModel = DEFAULT_MODEL;
 let preferredReasoningEffort = "";
+let preferredStream = true;
+let chatBusy = false;
+
+const updateStreamControl = (modelId = modelInput.value) => {
+  const unsupported = STREAM_UNSUPPORTED_MODELS.has(modelId.trim());
+  streamInput.disabled = chatBusy || unsupported;
+  streamHint.hidden = !unsupported;
+  if (unsupported) {
+    streamInput.checked = false;
+    return;
+  }
+  streamInput.checked = preferredStream;
+};
 
 const normalizeModelId = (model) => {
   if (!model || typeof model !== "object") return "";
@@ -181,6 +198,7 @@ const setModelPlaceholder = (label) => {
   option.disabled = true;
   modelInput.appendChild(option);
   modelInput.disabled = true;
+  updateStreamControl();
 };
 
 const setReasoningPlaceholder = (label) => {
@@ -320,6 +338,7 @@ const loadModels = async (token, options = {}) => {
     modelsLoadedToken = trimmed;
     preferredReasoningEffort = updateReasoningForModel(selected || modelInput.value.trim(), preferredReasoningEffort) ??
       "";
+    updateStreamControl(selected || modelInput.value.trim());
   } catch {
     if (requestId !== modelsRequestId) return;
   }
@@ -423,6 +442,9 @@ const restoreSettings = () => {
 
   preferredModel = storage.get(STORAGE_KEYS.model) ?? DEFAULT_MODEL;
   preferredReasoningEffort = storage.get(STORAGE_KEYS.reasoningEffort) ?? "";
+  preferredStream = storage.get(STORAGE_KEYS.stream) !== "0";
+  streamInput.checked = preferredStream;
+  updateStreamControl();
   setModelPlaceholder("Loading models...");
   setReasoningPlaceholder("Loading models...");
   systemInput.value = storage.get(STORAGE_KEYS.systemPrompt) ?? "";
@@ -616,6 +638,7 @@ const handleModelChange = () => {
   if (nextModel) preferredModel = nextModel;
   scheduleModelPersist();
   preferredReasoningEffort = updateReasoningForModel(nextModel, reasoningSelect.value) ?? "";
+  updateStreamControl(nextModel);
 };
 
 modelInput.addEventListener("input", handleModelChange);
@@ -624,6 +647,11 @@ systemInput.addEventListener("input", () => scheduleSystemPersist());
 reasoningSelect.addEventListener("change", () => {
   preferredReasoningEffort = reasoningSelect.value;
   persistSetting(STORAGE_KEYS.reasoningEffort, reasoningSelect.value);
+});
+streamInput.addEventListener("change", () => {
+  preferredStream = streamInput.checked;
+  persistSetting(STORAGE_KEYS.stream, preferredStream ? "1" : "0");
+  updateStreamControl();
 });
 
 const appendMessage = (role, text) => {
@@ -636,10 +664,12 @@ const appendMessage = (role, text) => {
 };
 
 const setBusy = (busy) => {
+  chatBusy = busy;
   sendBtn.disabled = busy;
   stopBtn.disabled = !busy;
   promptInput.disabled = busy;
   resetChatBtn.disabled = busy;
+  updateStreamControl();
 };
 
 let abortController = null;
@@ -713,7 +743,7 @@ const sendPrompt = async () => {
   const payload = {
     model: modelInput.value.trim() || undefined,
     messages: requestMessages,
-    stream: true,
+    stream: streamInput.checked,
   };
 
   const reasoningEffort = getReasoningEffortForChatRequest(reasoningSelect.value);
