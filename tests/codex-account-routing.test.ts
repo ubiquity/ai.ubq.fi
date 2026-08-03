@@ -313,6 +313,62 @@ Deno.test("exact future body resets_at durably identifies the Codex quota window
   }
 });
 
+Deno.test("an ordinary ambiguous deadline does not use the bounded recovery-probe lease", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const firstResetAtMs = now + 60_000;
+    const conflictingResetAtMs = now + 120_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(
+        JSON.stringify({
+          error: { type: "usage_limit_reached", resets_at: Math.floor(firstResetAtMs / 1_000) },
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": new Date(conflictingResetAtMs).toUTCString(),
+          },
+        },
+      ),
+      now,
+    );
+    const conflicted = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(conflicted?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(conflicted?.slots[0]?.banked_reset_recovery_probe_pending, false);
+
+    const halfOpen = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, conflictingResetAtMs + 1);
+    assert.equal(halfOpen.kind, "eligible");
+    if (halfOpen.kind !== "eligible") return;
+    const claimed = await claimCodexRoutingProbe(singlePool, halfOpen.accounts[0]!, conflictingResetAtMs + 1);
+    assert.ok(claimed);
+    if (!claimed) return;
+    const longResetAtMs = conflictingResetAtMs + 120_000;
+    await markCodexQuotaBlocked(
+      claimed,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(longResetAtMs).toUTCString() },
+      }),
+      conflictingResetAtMs + 1,
+    );
+    const afterProbe = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(afterProbe?.slots[0]?.quota_blocked_until_ms, longResetAtMs);
+    assert.equal(afterProbe?.slots[0]?.banked_reset_recovery_probe_pending, false);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("a failed verified-reset probe uses a bounded retry instead of the old quota deadline", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
@@ -354,6 +410,7 @@ Deno.test("a failed verified-reset probe uses a bounded retry instead of the old
     const afterProbe = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(afterProbe?.slots[0]?.quota_blocked_until_ms, now + CODEX_HALF_OPEN_LEASE_MS);
     assert.equal(afterProbe?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(afterProbe?.slots[0]?.banked_reset_recovery_probe_pending, true);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();

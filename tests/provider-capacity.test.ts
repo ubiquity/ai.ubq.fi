@@ -233,12 +233,10 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   });
   assert.equal(callsInSameBucket.length, 2);
   assert.equal(second.history.length, 1);
-  assert.equal(
-    [...kvStore.keys()].filter((key) =>
-      key.startsWith(JSON.stringify(PROVIDER_CAPACITY_HISTORY_KEY_PREFIX).replace(/]$/, ","))
-    ).length,
-    1,
-  );
+  const historyKeyCount = [...kvStore.keys()]
+    .map((key) => JSON.parse(key) as Deno.KvKey)
+    .filter((key) => PROVIDER_CAPACITY_HISTORY_KEY_PREFIX.every((part, index) => key[index] === part)).length;
+  assert.equal(historyKeyCount, 1);
 
   const serialized = JSON.stringify({
     response: second,
@@ -326,7 +324,11 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
     now: () => nowMs,
     createLeaseOwner: () => "sampler",
   });
-  while (calls.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+  const waitDeadline = Date.now() + 2_000;
+  while (calls.length < 2) {
+    assert.ok(Date.now() < waitDeadline, "first refresh did not issue two upstream calls");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
   const secondPromise = refreshProviderCapacity({
     kv: kvStub,
     fetcher,
@@ -371,7 +373,7 @@ Deno.test("persisted Codex data becomes stale after the missed-run allowance", a
   });
   assert.equal(stale.cache_state, "stale");
   assert.equal(stale.sources.find((source) => source.source === "codex" && source.slot === 1)?.state, "stale");
-  assert.equal(stale.sources.find((source) => source.source === "yunwu")?.state, "available");
+  assert.equal(stale.sources.find((source) => source.source === "yunwu")?.state, "stale");
   assert.equal(stale.history[0]?.sources[0]?.state, "available");
 });
 

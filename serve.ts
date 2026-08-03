@@ -26,10 +26,13 @@ if (config.isDeploy) {
   Deno.cron("sample Codex provider capacity", "*/15 * * * *", async () => {
     try {
       const kv = await getKv();
-      if (!kv) throw new Error("Deno KV unavailable");
+      if (!kv) return;
       await refreshProviderCapacity({ kv });
-    } catch {
-      console.error("[ai.ubq.fi] Provider capacity sampler failed.");
+    } catch (error) {
+      console.error(
+        "[ai.ubq.fi] Provider capacity sampler failed:",
+        error instanceof Error ? error.message : String(error),
+      );
     }
   });
 }

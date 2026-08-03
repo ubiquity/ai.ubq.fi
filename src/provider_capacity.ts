@@ -97,11 +97,7 @@ type CapacityLease = Readonly<{
   lease_until_ms: number;
 }>;
 
-type StoredHistoryPoint = Readonly<{
-  bucket_start_at_ms: number;
-  sampled_at_ms: number;
-  sources: readonly [ProviderCapacityCodexSource, ProviderCapacityCodexSource];
-}>;
+type StoredHistoryPoint = ProviderCapacityHistoryPoint;
 
 const capacityState = (value: unknown): CapacityState | null =>
   value === "available" || value === "stale" || value === "unavailable" ? value : null;
@@ -432,12 +428,22 @@ const readStoredHistoryPoint = (value: unknown): StoredHistoryPoint | null => {
   };
 };
 
+export const providerCapacityHistoryKey = (bucketStartAtMs: number): Deno.KvKey => [
+  ...PROVIDER_CAPACITY_HISTORY_KEY_PREFIX,
+  bucketStartAtMs,
+];
+
 const readCapacityHistory = async (kv: Deno.Kv, nowMs: number): Promise<ProviderCapacityHistoryPoint[]> => {
   const cutoffMs = Math.max(0, nowMs - PROVIDER_CAPACITY_HISTORY_RETENTION_MS);
   const newestBucketMs = Math.floor(nowMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
   const points: ProviderCapacityHistoryPoint[] = [];
   try {
-    for await (const entry of kv.list<unknown>({ prefix: PROVIDER_CAPACITY_HISTORY_KEY_PREFIX })) {
+    for await (
+      const entry of kv.list<unknown>({
+        start: providerCapacityHistoryKey(cutoffMs),
+        end: providerCapacityHistoryKey(newestBucketMs + 1),
+      })
+    ) {
       const keyBucket = entry.key[entry.key.length - 1];
       if (typeof keyBucket !== "number" || keyBucket < cutoffMs || keyBucket > newestBucketMs) continue;
       const point = readStoredHistoryPoint(entry.value);
@@ -447,15 +453,8 @@ const readCapacityHistory = async (kv: Deno.Kv, nowMs: number): Promise<Provider
   } catch {
     return [];
   }
-  const unique = new Map<number, ProviderCapacityHistoryPoint>();
-  for (const point of points) unique.set(point.bucket_start_at_ms, point);
-  return [...unique.values()].sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
+  return points.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
 };
-
-export const providerCapacityHistoryKey = (bucketStartAtMs: number): Deno.KvKey => [
-  ...PROVIDER_CAPACITY_HISTORY_KEY_PREFIX,
-  bucketStartAtMs,
-];
 
 const historyBucketStartAtMs = (snapshotAtMs: number): number =>
   Math.floor(snapshotAtMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
@@ -482,12 +481,19 @@ const mergeHistoryPoints = (
   return [...byBucket.values()].sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
 };
 
-const staleCodexSnapshot = (snapshot: ProviderCapacitySnapshot, nowMs: number): ProviderCapacitySnapshot => {
-  if (nowMs < snapshot.snapshot_at_ms + snapshot.stale_after_ms) return snapshot;
+const staleProviderSnapshot = (snapshot: ProviderCapacitySnapshot, nowMs: number): ProviderCapacitySnapshot => {
   return {
     ...snapshot,
     sources: snapshot.sources.map((source) =>
-      source.source === "codex" && source.state === "available" ? { ...source, state: "stale" as const } : source
+      source.state !== "available"
+        ? source
+        : source.source === "codex" && nowMs >= source.snapshot_at_ms + snapshot.stale_after_ms
+        ? { ...source, state: "stale" as const }
+        : source.source === "yunwu" &&
+            (source.wallet.cache_state === "stale" || source.source_observed_at_ms === null ||
+              nowMs - source.source_observed_at_ms >= YUNWU_QUOTA_FRESH_MS)
+        ? { ...source, state: "stale" as const }
+        : source
     ) as [ProviderCapacitySource, ProviderCapacitySource, ProviderCapacitySource],
   };
 };
@@ -498,8 +504,8 @@ const toCapacityView = (
   history: readonly ProviderCapacityHistoryPoint[],
   nowMs: number,
 ): ProviderCapacityView => {
-  const current = staleCodexSnapshot(snapshot, nowMs);
-  const stale = current.sources.some((source) => source.source === "codex" && source.state === "stale");
+  const current = staleProviderSnapshot(snapshot, nowMs);
+  const stale = current.sources.some((source) => source.state === "stale");
   return {
     ...current,
     cache_state: stale ? "stale" : requestedState,

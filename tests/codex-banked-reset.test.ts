@@ -581,6 +581,8 @@ Deno.test("a verified reset from an older routing generation is not reusable", a
 
   assert.equal(later.kind, "skipped");
   assert.equal(later.reason, "verified_routing_generation_stale");
+  assert.ok(later.record);
+  assert.equal(later.record?.routing_generation, firstCandidate.routingGeneration);
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
 });

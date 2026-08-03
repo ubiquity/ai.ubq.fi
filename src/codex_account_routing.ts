@@ -37,6 +37,8 @@ export type CodexRoutingSlot = Readonly<{
    * existing records are lookup-only.
    */
   banked_reset_generation_ambiguous: boolean;
+  /** A verified banked reset is waiting for its bounded post-reset probe. */
+  banked_reset_recovery_probe_pending: boolean;
   generation: number;
   probe_lease: Readonly<{ token: string; expires_at_ms: number; generation: number }> | null;
 }>;
@@ -157,6 +159,7 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
   const bankedResetGenerationAmbiguous = isExactLegacyNeutralSlot || isLegacyNeutralFirstBodyFence
     ? false
     : value.banked_reset_generation_ambiguous !== false;
+  const bankedResetRecoveryProbePending = value.banked_reset_recovery_probe_pending === true;
   return {
     account_id_hash: accountIdHash,
     credential_version: value.credential_version,
@@ -179,6 +182,7 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
     // never revised. The two exact legacy-contamination repairs above are the
     // only exceptions; every other old or malformed record remains fail closed.
     banked_reset_generation_ambiguous: bankedResetGenerationAmbiguous,
+    banked_reset_recovery_probe_pending: bankedResetRecoveryProbePending,
     generation,
     probe_lease: parsedLease,
   };
@@ -230,6 +234,7 @@ const neutralSlot = (credentialVersion: string, accountIdHash: string | null): C
   observed_reset_at_ms: null,
   observed_reset_at_is_stable: false,
   banked_reset_generation_ambiguous: false,
+  banked_reset_recovery_probe_pending: false,
   generation: 0,
   probe_lease: null,
 });
@@ -257,6 +262,7 @@ const rotateCredentialForSameAccount = (
   primary_used_percent: null,
   secondary_used_percent: null,
   banked_reset_generation_ambiguous: preservesStableResetIdentity(slot),
+  banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending,
   generation: slot.generation + 1,
   probe_lease: null,
 });
@@ -775,7 +781,7 @@ const markCodexQuotaBlockedWithMode = async (
     ) return null;
     const priorDeadline = current.quota_blocked_until_ms ?? 0;
     const boundedRecoveryProbe = recoveryProbe ||
-      (current.banked_reset_generation_ambiguous && account.probeGeneration !== null);
+      (current.banked_reset_recovery_probe_pending && account.probeGeneration !== null);
     // A verified reset can take a short time to propagate to the inference
     // endpoint. A failed recovery probe must not turn that transient 429 into
     // the old, week-long circuit. Keep the account fenced and retry a bounded
@@ -821,6 +827,7 @@ const markCodexQuotaBlockedWithMode = async (
       observed_reset_at_ms: observedResetAtMs,
       observed_reset_at_is_stable: observedResetAtIsStable,
       banked_reset_generation_ambiguous: generationAmbiguous,
+      banked_reset_recovery_probe_pending: current.banked_reset_recovery_probe_pending || recoveryProbe,
       generation: current.generation + 1,
       probe_lease: null,
     };
@@ -947,6 +954,7 @@ export const markCodexSuccess = async (account: RoutingAccount): Promise<void> =
       observed_reset_at_ms: null,
       observed_reset_at_is_stable: false,
       banked_reset_generation_ambiguous: false,
+      banked_reset_recovery_probe_pending: false,
       probe_lease: null,
     });
   });
@@ -1050,22 +1058,26 @@ const withReconciliationFences = (
   return next;
 };
 
+type CodexQuotaProbeEligibility = (
+  state: CodexAccountRoutingState,
+  current: CodexRoutingSlot,
+  nowMs: number,
+) => boolean;
+
 /**
- * A verified reset may release only the exact circuit observation that caused
- * it. Preserve that stable observation as an ambiguous tombstone and claim a
- * fenced recovery probe for the one post-reset inference retry. The lease
- * prevents an older ordinary request from turning its delayed 429 into a new
- * quota identity before that retry proves the account healthy. Credential and
- * generation checks also prevent an old provider transaction from admitting a
- * newly rotated credential or a later quota window.
+ * Claim a fenced recovery probe after a verified reset. The eligibility
+ * predicate is kept separate because stale ledger records need a different
+ * proof than the current-generation fence, while the CAS/lease transition
+ * must remain identical.
  */
-export const reconcileCodexQuotaAfterVerifiedReset = async (
+const reconcileCodexQuotaAfterProbe = async (
   account: RoutingAccount,
   input: Readonly<{
     quotaResetAtMs: number;
     routingGeneration: number;
     fences?: readonly CodexQuotaResetReconciliationFence[];
   }>,
+  isEligible: CodexQuotaProbeEligibility,
 ): Promise<RoutingAccount | null> => {
   if (
     !isSafeMs(input.quotaResetAtMs) || !Number.isSafeInteger(input.routingGeneration) || input.routingGeneration < 0
@@ -1083,16 +1095,12 @@ export const reconcileCodexQuotaAfterVerifiedReset = async (
     try {
       const entry = await kv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" });
       const state = parseCodexAccountRoutingState(entry.value);
-      if (
-        !state || !isCodexQuotaBlockFenceCurrent(entry.value, account, input.quotaResetAtMs, input.routingGeneration)
-      ) {
-        return null;
-      }
+      const current = state?.slots[account.slot];
+      const nowMs = Date.now();
+      if (!state || !current || !isEligible(state, current, nowMs)) return null;
       const fenceEntries = input.fences === undefined ? [] : await readCurrentReconciliationFences(kv, input.fences);
       if (!fenceEntries) return null;
-      const current = state.slots[account.slot]!;
       const nextGeneration = current.generation + 1;
-      const nowMs = Date.now();
       const probeExpiresAtMs = nowMs + CODEX_HALF_OPEN_LEASE_MS;
       if (!Number.isSafeInteger(nextGeneration) || !isSafeMs(nowMs) || !isSafeMs(probeExpiresAtMs)) return null;
       const recoveryLease = {
@@ -1106,11 +1114,12 @@ export const reconcileCodexQuotaAfterVerifiedReset = async (
         quota_block_source: null,
         // The verified reset makes normal routing eligible, but an absolute
         // Retry-After cannot prove whether a delayed response names this old
-        // window or a new one. Keep D1 lookup-only until a recovery probe
-        // independently proves the circuit healthy.
+        // window or a new one. Keep the observation lookup-only until a
+        // recovery probe independently proves the circuit healthy.
         observed_reset_at_ms: current.observed_reset_at_ms,
         observed_reset_at_is_stable: current.observed_reset_at_is_stable,
         banked_reset_generation_ambiguous: true,
+        banked_reset_recovery_probe_pending: true,
         generation: nextGeneration,
         probe_lease: recoveryLease,
       });
@@ -1136,6 +1145,25 @@ export const reconcileCodexQuotaAfterVerifiedReset = async (
 };
 
 /**
+ * A verified reset may release only the exact circuit observation that caused
+ * it. Credential and generation checks prevent an old provider transaction
+ * from admitting a newly rotated credential or a later quota window.
+ */
+export const reconcileCodexQuotaAfterVerifiedReset = async (
+  account: RoutingAccount,
+  input: Readonly<{
+    quotaResetAtMs: number;
+    routingGeneration: number;
+    fences?: readonly CodexQuotaResetReconciliationFence[];
+  }>,
+): Promise<RoutingAccount | null> =>
+  await reconcileCodexQuotaAfterProbe(
+    account,
+    input,
+    (state) => isCodexQuotaBlockFenceCurrent(state, account, input.quotaResetAtMs, input.routingGeneration),
+  );
+
+/**
  * Recover an account whose verified reset record predates later routing
  * transitions. The ledger proves the reset was already spent, so this path
  * only fences a new inference probe; it never submits another reset.
@@ -1148,69 +1176,23 @@ export const reconcileCodexQuotaAfterStaleVerifiedReset = async (
     fences?: readonly CodexQuotaResetReconciliationFence[];
   }>,
 ): Promise<RoutingAccount | null> => {
-  if (
-    !isSafeMs(input.quotaResetAtMs) || !Number.isSafeInteger(input.routingGeneration) || input.routingGeneration < 0
-  ) return null;
-  let kv: Deno.Kv | null;
-  try {
-    kv = await getKv();
-  } catch {
-    return null;
-  }
-  if (!kv) return null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const entry = await kv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" });
-      const state = parseCodexAccountRoutingState(entry.value);
-      const current = state?.slots[account.slot];
-      const nowMs = Date.now();
-      if (
-        !state || state.banked_reset_legacy_identity_unresolved || !current ||
-        !slotMatchesRoutingAccount(current, account) || current.account_id_hash !== account.accountIdHash ||
-        current.credential_version !== account.credentialVersion || current.generation !== input.routingGeneration ||
-        current.invalid_credential_version === account.credentialVersion ||
-        current.quota_blocked_until_ms === null || current.quota_blocked_until_ms < input.quotaResetAtMs ||
-        current.observed_reset_at_ms !== input.quotaResetAtMs || !current.observed_reset_at_is_stable ||
-        (current.quota_block_source !== "body_resets_at" && current.quota_block_source !== "header_retry_after") ||
-        (current.probe_lease?.expires_at_ms ?? 0) > nowMs
-      ) return null;
-      const fenceEntries = input.fences === undefined ? [] : await readCurrentReconciliationFences(kv, input.fences);
-      if (!fenceEntries) return null;
-      const nextGeneration = current.generation + 1;
-      const probeExpiresAtMs = nowMs + CODEX_HALF_OPEN_LEASE_MS;
-      if (!Number.isSafeInteger(nextGeneration) || !isSafeMs(nowMs) || !isSafeMs(probeExpiresAtMs)) return null;
-      const recoveryLease = {
-        token: crypto.randomUUID(),
-        expires_at_ms: probeExpiresAtMs,
-        generation: nextGeneration,
-      };
-      const next = withSlot(state, account.slot, {
-        ...current,
-        quota_blocked_until_ms: null,
-        quota_block_source: null,
-        banked_reset_generation_ambiguous: true,
-        generation: nextGeneration,
-        probe_lease: recoveryLease,
-      });
-      const committed = await withReconciliationFences(kv.atomic().check(entry), fenceEntries)
-        .set(CODEX_ACCOUNT_ROUTING_KV_KEY, next)
-        .commit();
-      if (!committed.ok) continue;
-      cachedState = next;
-      cachedVersionstamp = committed.versionstamp;
-      cachedStateLoadedAtMs = Date.now();
-      return {
-        ...account,
-        quotaHeadroom: quotaHeadroomFor(next.slots[account.slot]!),
-        probeRequired: false,
-        probeGeneration: recoveryLease.generation,
-        probeToken: recoveryLease.token,
-      };
-    } catch {
-      return null;
-    }
-  }
-  return null;
+  return await reconcileCodexQuotaAfterProbe(
+    account,
+    input,
+    (state, current, nowMs) =>
+      !state.banked_reset_legacy_identity_unresolved &&
+      slotMatchesRoutingAccount(current, account) &&
+      current.account_id_hash === account.accountIdHash &&
+      current.credential_version === account.credentialVersion &&
+      current.generation === input.routingGeneration &&
+      current.invalid_credential_version !== account.credentialVersion &&
+      current.quota_blocked_until_ms !== null &&
+      current.quota_blocked_until_ms >= input.quotaResetAtMs &&
+      current.observed_reset_at_ms === input.quotaResetAtMs &&
+      current.observed_reset_at_is_stable &&
+      (current.quota_block_source === "body_resets_at" || current.quota_block_source === "header_retry_after") &&
+      (current.probe_lease?.expires_at_ms ?? 0) <= nowMs,
+  );
 };
 
 const claimExpiredProbe = async (

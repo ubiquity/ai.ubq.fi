@@ -1,11 +1,12 @@
 import {
   buildCodexRequest,
-  CODEX_ROUTING_ERROR_HEADER,
+  CODEX_QUOTA_BLOCKED_ERROR_CODE,
   CodexError,
   type CodexModelsSnapshot,
   fetchCodexResponses,
   getCodexModelsSnapshotDefaultModel,
   getCodexResponseSlot,
+  getCodexRoutingError,
   loadCodexModelsSnapshot,
   loadFullCodexModelsSnapshot,
   markCodexResponseCompleted,
@@ -1029,19 +1030,7 @@ const fetchResponsesWithPaidFallback = async (
     primary = openaiError(error.status, error.message, error.code);
   }
   if (telemetry) telemetry.accountSlot = getCodexResponseSlot(primary);
-  // This is a gateway-generated routing result, not an upstream 429. Sending
-  // it through paid fallback would hide the routing failure and can produce a
-  // misleading YunWu quota error.
-  if (primary.headers.get(CODEX_ROUTING_ERROR_HEADER) === "codex_quota_blocked") {
-    if (telemetry) telemetry.fallbackReason = null;
-    return {
-      response: primary,
-      provider: "chatgpt_codex",
-      paidFallback: null,
-      gatewayResponse: true,
-      fallbackReason: null,
-    };
-  }
+  const gatewayResponse = getCodexRoutingError(primary) === CODEX_QUOTA_BLOCKED_ERROR_CODE;
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
@@ -1064,7 +1053,7 @@ const fetchResponsesWithPaidFallback = async (
       response: primary,
       provider: "chatgpt_codex",
       paidFallback: null,
-      gatewayResponse: false,
+      gatewayResponse,
       fallbackReason,
     };
   }
@@ -1095,7 +1084,7 @@ const fetchResponsesWithPaidFallback = async (
       response: primary,
       provider: "chatgpt_codex",
       paidFallback: null,
-      gatewayResponse: false,
+      gatewayResponse,
       fallbackReason: reservationInput.reason,
     };
   }
@@ -1104,7 +1093,7 @@ const fetchResponsesWithPaidFallback = async (
       response: primary,
       provider: "chatgpt_codex",
       paidFallback: null,
-      gatewayResponse: false,
+      gatewayResponse,
       fallbackReason: reservationInput.reason,
     };
   }
@@ -1113,7 +1102,7 @@ const fetchResponsesWithPaidFallback = async (
       response: primary,
       provider: "chatgpt_codex",
       paidFallback: null,
-      gatewayResponse: false,
+      gatewayResponse,
       fallbackReason: reservationInput.reason,
     };
   }

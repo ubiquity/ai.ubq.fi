@@ -57,7 +57,13 @@ const CODEX_REFRESH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_CLIENT_VERSION = "0.100.0";
-export const CODEX_ROUTING_ERROR_HEADER = "x-uos-codex-routing-error";
+export const CODEX_QUOTA_BLOCKED_ERROR_CODE = "codex_quota_blocked";
+
+// Routing errors need to remain distinguishable to the gateway's fallback
+// adapter without adding gateway-only headers to OpenAI-compatible responses.
+const codexRoutingErrors = new WeakMap<Response, string>();
+
+export const getCodexRoutingError = (response: Response): string | null => codexRoutingErrors.get(response) ?? null;
 
 const parseSemverTriplet = (value: string): [number, number, number] | null => {
   const parts = value.trim().split(".");
@@ -1304,11 +1310,10 @@ const routingErrorResponse = (
   retryAtMs: number | null = null,
 ): Response => {
   const headers = new Headers({ "Content-Type": "application/json" });
-  if (code === "codex_quota_blocked") headers.set(CODEX_ROUTING_ERROR_HEADER, code);
   if (status === 429 && retryAtMs !== null) {
     headers.set("Retry-After", String(Math.max(1, Math.ceil((retryAtMs - Date.now()) / 1000))));
   }
-  return new Response(
+  const response = new Response(
     JSON.stringify({
       error: {
         message,
@@ -1319,6 +1324,8 @@ const routingErrorResponse = (
     }),
     { status, headers },
   );
+  if (code === CODEX_QUOTA_BLOCKED_ERROR_CODE) codexRoutingErrors.set(response, code);
+  return response;
 };
 
 type CodexResponseTimingHooks = Readonly<{
@@ -1987,20 +1994,17 @@ export const fetchCodexResponses = async (
     return disposition.response;
   };
 
-  const redeemAndRetryOnce = async (normalResponse: Response): Promise<Response> => {
-    // A half-open account could still be healthy, but another isolate owns
-    // its recovery probe. Keep the normal quota response instead of spending
-    // a reset that was inferred only from a sibling's 429.
-    if (probeUnavailable) return normalResponse;
-    const evaluated = await evaluateBlockedCohortBankedReset(true);
-    if (!evaluated || !evaluated.reset.record) return normalResponse;
-    if (evaluated.reset.kind !== "verified" && !evaluated.recoveryProbe) return normalResponse;
+  type EvaluatedBlockedReset = NonNullable<Awaited<ReturnType<typeof evaluateBlockedCohortBankedReset>>>;
+
+  const runPostResetRetry = async (
+    evaluated: EvaluatedBlockedReset,
+    normalResponse: Response | null,
+  ): Promise<Response | null> => {
+    if (!evaluated.reset.record || (evaluated.reset.kind !== "verified" && !evaluated.recoveryProbe)) {
+      return normalResponse;
+    }
     const { candidate, reset } = evaluated;
     const resetRecord = reset.record!;
-
-    // The transaction can be verified yet still be fenced off by a credential
-    // rotation or later 429. In that case preserve the normal upstream
-    // response; a stale worker must not dispatch an inference retry.
     const reconciled = evaluated.recoveryProbe ?? await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
       quotaResetAtMs: candidate.quotaResetAtMs,
       routingGeneration: resetRecord.routing_generation,
@@ -2052,7 +2056,7 @@ export const fetchCodexResponses = async (
       );
       throw error;
     }
-    cancelResponseBody(normalResponse);
+    if (normalResponse) cancelResponseBody(normalResponse);
     if (retried.status === 401) await markCodexCredentialInvalid(retryCandidate.routing);
     if (retried.status === 429) {
       // This is the one permitted post-reset inference attempt. Preserve a
@@ -2088,93 +2092,19 @@ export const fetchCodexResponses = async (
     return retried;
   };
 
+  const redeemAndRetryOnce = async (normalResponse: Response): Promise<Response> => {
+    // A half-open account could still be healthy, but another isolate owns
+    // its recovery probe. Keep the normal quota response instead of spending
+    // a reset that was inferred only from a sibling's 429.
+    if (probeUnavailable) return normalResponse;
+    const evaluated = await evaluateBlockedCohortBankedReset(true);
+    if (!evaluated) return normalResponse;
+    return await runPostResetRetry(evaluated, normalResponse) ?? normalResponse;
+  };
+
   const recoverBlockedReset = async (requireFullPool: boolean): Promise<Response | null> => {
     const evaluated = await evaluateBlockedCohortBankedReset(requireFullPool);
-    if (!evaluated || !evaluated.reset.record) return null;
-    if (evaluated.reset.kind !== "verified" && !evaluated.recoveryProbe) return null;
-    const { candidate, reset } = evaluated;
-    const resetRecord = reset.record!;
-    const reconciled = evaluated.recoveryProbe ?? await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
-      quotaResetAtMs: candidate.quotaResetAtMs,
-      routingGeneration: resetRecord.routing_generation,
-      fences: [authPoolFence(candidate)],
-    });
-    if (!reconciled) return null;
-    const refreshedCandidate = await refreshBankedResetCandidate(candidate);
-    if (!refreshedCandidate) return null;
-    const retryCandidate = withResetRecoveryProbe(refreshedCandidate, reconciled);
-    logBankedResetEvent("codex_reset_inference_retry", {
-      request_id: options.requestId ?? null,
-      account_id_hash: reset.accountIdHash,
-      quota_generation: reset.quotaGeneration,
-      idempotency_key_hash: reset.idempotencyKeyHash,
-      routing_generation: resetRecord.routing_generation,
-    });
-    let retried: Response;
-    try {
-      retried = await fetchAttempt(
-        retryCandidate.accountEntry,
-        retryCandidate.auth,
-        retryCandidate.routing,
-        "post_banked_reset",
-        () => ensurePostResetRetryAuthCurrent(retryCandidate),
-      );
-    } catch (error) {
-      if (error instanceof CodexBankedResetRetryFenceError) return null;
-      logBankedResetEvent("codex_reset_inference_retry_result", {
-        request_id: options.requestId ?? null,
-        account_id_hash: reset.accountIdHash,
-        quota_generation: reset.quotaGeneration,
-        idempotency_key_hash: reset.idempotencyKeyHash,
-        routing_generation: resetRecord.routing_generation,
-        status: error instanceof CodexError ? error.status : null,
-      });
-      reportCodexBankedResetMetric(
-        bankedResetDependencies.telemetry,
-        "codex_reset_post_retry_total",
-        1,
-        {
-          request_id: options.requestId ?? null,
-          account_id_hash: reset.accountIdHash,
-          quota_generation: reset.quotaGeneration,
-          idempotency_key_hash: reset.idempotencyKeyHash,
-          routing_generation: resetRecord.routing_generation,
-          status: error instanceof CodexError ? error.status : null,
-        },
-      );
-      throw error;
-    }
-    if (retried.status === 401) await markCodexCredentialInvalid(retryCandidate.routing);
-    if (retried.status === 429) {
-      retried = (await markCodexRecoveryProbeQuotaBlocked(retryCandidate.routing, retried)).response;
-    } else if (!retried.ok) {
-      await releaseCodexRoutingProbe(retryCandidate.routing);
-    }
-    if (retried.ok && retryCandidate.routing.probeGeneration !== null) {
-      codexProbeByResponse.set(retried, retryCandidate.routing);
-    }
-    logBankedResetEvent("codex_reset_inference_retry_result", {
-      request_id: options.requestId ?? null,
-      account_id_hash: reset.accountIdHash,
-      quota_generation: reset.quotaGeneration,
-      idempotency_key_hash: reset.idempotencyKeyHash,
-      routing_generation: resetRecord.routing_generation,
-      status: retried.status,
-    });
-    reportCodexBankedResetMetric(
-      bankedResetDependencies.telemetry,
-      "codex_reset_post_retry_total",
-      1,
-      {
-        request_id: options.requestId ?? null,
-        account_id_hash: reset.accountIdHash,
-        quota_generation: reset.quotaGeneration,
-        idempotency_key_hash: reset.idempotencyKeyHash,
-        routing_generation: resetRecord.routing_generation,
-        status: retried.status,
-      },
-    );
-    return retried;
+    return evaluated ? await runPostResetRetry(evaluated, null) : null;
   };
 
   if (selected.kind === "eligible" && selected.blockedAccounts.length) {
@@ -2224,7 +2154,7 @@ export const fetchCodexResponses = async (
       return routingErrorResponse(
         429,
         "All configured Codex accounts are quota-blocked; retry after their next reset.",
-        "codex_quota_blocked",
+        CODEX_QUOTA_BLOCKED_ERROR_CODE,
         selected.retryAtMs,
       );
     }
@@ -2247,7 +2177,7 @@ export const fetchCodexResponses = async (
     return routingErrorResponse(
       429,
       "All configured Codex accounts are quota-blocked; retry after their next reset.",
-      "codex_quota_blocked",
+      CODEX_QUOTA_BLOCKED_ERROR_CODE,
       selected.retryAtMs,
     );
   }
@@ -2334,7 +2264,7 @@ export const fetchCodexResponses = async (
       return routingErrorResponse(
         429,
         "All configured Codex accounts are temporarily quota blocked.",
-        "codex_quota_blocked",
+        CODEX_QUOTA_BLOCKED_ERROR_CODE,
       );
     }
     await waitForCodexRetry(
@@ -2347,7 +2277,7 @@ export const fetchCodexResponses = async (
       return routingErrorResponse(
         429,
         "All configured Codex accounts are temporarily quota blocked.",
-        "codex_quota_blocked",
+        CODEX_QUOTA_BLOCKED_ERROR_CODE,
       );
     }
     let retryAuth = retryCandidate.auth;
@@ -2363,7 +2293,7 @@ export const fetchCodexResponses = async (
         return routingErrorResponse(
           429,
           "All configured Codex accounts are temporarily quota blocked.",
-          "codex_quota_blocked",
+          CODEX_QUOTA_BLOCKED_ERROR_CODE,
         );
       }
       retryRouting = claimed;
@@ -2374,7 +2304,7 @@ export const fetchCodexResponses = async (
       return routingErrorResponse(
         429,
         "All configured Codex accounts are temporarily quota blocked.",
-        "codex_quota_blocked",
+        CODEX_QUOTA_BLOCKED_ERROR_CODE,
       );
     }
     logCodexRouting("codex_two_second_retry", {
@@ -2454,7 +2384,7 @@ export const fetchCodexResponses = async (
     return routingErrorResponse(
       429,
       "All configured Codex accounts are temporarily quota blocked.",
-      "codex_quota_blocked",
+      CODEX_QUOTA_BLOCKED_ERROR_CODE,
     );
   }
   throw lastError ?? new CodexError("Codex auth pool is empty.", "codex_auth_missing", 503);

@@ -1169,11 +1169,11 @@ const renderProviderCapacity = (snapshot) => {
 };
 
 const loadProviderCapacity = async ({ live = true } = {}) => {
-  if (providerCapacityLoading) return;
+  if (providerCapacityLoading) return false;
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !token) {
     setBadge(providerCapacityBadge, "bad", "Sign in required");
-    return;
+    return false;
   }
   providerCapacityLoading = true;
   setBadge(providerCapacityBadge, "unknown", "Loading capacity");
@@ -1186,12 +1186,14 @@ const loadProviderCapacity = async ({ live = true } = {}) => {
     if (!response.ok || !payload) {
       setBadge(providerCapacityBadge, "bad", payload?.error?.message ?? "Capacity unavailable");
       providerCapacityUpdated.textContent = "Snapshot unavailable";
-      return;
+      return false;
     }
     renderProviderCapacity(payload);
+    return true;
   } catch {
     setBadge(providerCapacityBadge, "bad", "Offline");
     providerCapacityUpdated.textContent = "Snapshot unavailable";
+    return false;
   } finally {
     providerCapacityLoading = false;
   }
@@ -5077,7 +5079,9 @@ const loadAdminView = (view) => {
     void loadProviders();
     if (!providerCapacityLoadedForOpen) {
       providerCapacityLoadedForOpen = true;
-      void loadProviderCapacity({ live: true });
+      void loadProviderCapacity({ live: true }).then((loaded) => {
+        if (!loaded) providerCapacityLoadedForOpen = false;
+      });
     }
   } else {
     providerCapacityLoadedForOpen = false;
@@ -6208,6 +6212,10 @@ viewTabKernel.addEventListener("click", () => setAdminView("kernel", { hashMode:
 viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys", { hashMode: "push", focusAuth: true }));
 viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashMode: "push", focusAuth: true }));
 viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
+
+globalThis.setInterval(() => {
+  if (currentAdminView === "providers" && document.visibilityState === "visible") void loadProviders();
+}, 30_000);
 
 createKeyBtn.addEventListener("click", () => {
   void createKey();

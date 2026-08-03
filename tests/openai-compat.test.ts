@@ -2454,7 +2454,7 @@ Deno.test("openai: upstream fetch logs redact provider error payloads", async ()
   }
 });
 
-Deno.test("openai: a gateway all-blocked Codex response never becomes a paid YunWu fallback", async () => {
+Deno.test("openai: an all-blocked Codex response continues through paid YunWu fallback", async () => {
   const authKey = keyToString(["ubq_ai", "codex_auth"]);
   const previousAuth = kvStore.get(authKey);
   const previousYunwuKey = Deno.env.get("YUNWU_API_KEY");
@@ -2485,10 +2485,7 @@ Deno.test("openai: a gateway all-blocked Codex response never becomes a paid Yun
       (url) => {
         if (url === "https://yunwu.ai/v1/responses") {
           yunwuCalls += 1;
-          return new Response(JSON.stringify({ detail: "YunWu must not receive a gateway routing error." }), {
-            status: 403,
-            headers: { "Content-Type": "application/json" },
-          });
+          return sseResponse(baseSseChunks());
         }
         throw new Error(`Unexpected upstream dispatch in all-blocked routing test: ${url}`);
       },
@@ -2518,7 +2515,7 @@ Deno.test("openai: a gateway all-blocked Codex response never becomes a paid Yun
           new Request("https://ai.ubq.fi/v1/responses", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "do not spend fallback" }),
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "use fallback after all Codex circuits open" }),
           }),
           {
             keyId,
@@ -2529,15 +2526,14 @@ Deno.test("openai: a gateway all-blocked Codex response never becomes a paid Yun
           },
         );
 
-        assert.equal(response.status, 429);
-        assert.equal(response.headers.get("x-uos-codex-routing-error"), "codex_quota_blocked");
-        assert.equal(yunwuCalls, 0);
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("x-uos-codex-routing-error"), null);
+        assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+        assert.equal(yunwuCalls, 1);
         assert.equal(
           kvStore.has(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, requestId])),
-          false,
+          true,
         );
-        const payload = await response.json() as { error?: { code?: unknown } };
-        assert.equal(payload.error?.code, "codex_quota_blocked");
       },
     );
   } finally {
