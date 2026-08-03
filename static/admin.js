@@ -966,48 +966,57 @@ const capacityChartWindow = (window) => {
   return { startAtMs, resetAtMs, durationMs };
 };
 
-const capacityChartPoint = (sample, series, activeInterval = null) => {
+const capacityChartPoint = (sample, series, activeInterval = null, chartWindow = null) => {
   const source = Array.isArray(sample?.sources)
     ? sample.sources.find((candidate) => candidate?.source === "codex" && candidate.slot === series.slot)
     : null;
   const window = source?.windows?.[series.windowKey];
   const interval = activeInterval ?? capacityChartWindow(window);
+  const displayInterval = chartWindow ?? interval;
   const usedPercent = window?.used_percent;
   const sampledAtMs = sample?.sampled_at_ms;
   if (
     source?.state === "unavailable" ||
     !interval ||
+    !displayInterval ||
     typeof usedPercent !== "number" ||
     !Number.isFinite(usedPercent) ||
     typeof sampledAtMs !== "number" ||
     !Number.isFinite(sampledAtMs) ||
     sampledAtMs < interval.startAtMs ||
-    sampledAtMs > interval.resetAtMs
+    sampledAtMs > interval.resetAtMs ||
+    sampledAtMs < displayInterval.startAtMs ||
+    sampledAtMs > displayInterval.resetAtMs
   ) return null;
   return {
-    elapsedPercent: clampCapacityChartPercent(((sampledAtMs - interval.startAtMs) / interval.durationMs) * 100),
+    elapsedPercent: clampCapacityChartPercent(
+      ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100,
+    ),
     remainingPercent: clampCapacityChartPercent(100 - usedPercent),
   };
 };
 
 const capacityChartPath = (points, plot) => {
   const left = plot.left;
-  const right = plot.left + plot.width;
   const top = plot.top;
   let path = "";
   let cursorX = left;
-  let hasPoint = false;
+  let connected = false;
   for (const point of points) {
-    if (!point) continue;
+    if (!point) {
+      connected = false;
+      cursorX = left;
+      continue;
+    }
     const x = plot.left + (point.elapsedPercent / 100) * plot.width;
     const y = plot.top + ((100 - point.remainingPercent) / 100) * plot.height;
     if (x < cursorX) continue;
-    if (!hasPoint) path = `M${left.toFixed(2)} ${top.toFixed(2)}`;
+    if (!connected) path += `M${left.toFixed(2)} ${top.toFixed(2)}`;
     path += ` H${x.toFixed(2)} V${y.toFixed(2)}`;
     cursorX = x;
-    hasPoint = true;
+    connected = true;
   }
-  return hasPoint ? `${path} H${right.toFixed(2)}` : "";
+  return path;
 };
 
 const capacityChartReferenceWindow = (sources, nowMs) => {
@@ -1080,7 +1089,8 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     y: height - 8,
     "text-anchor": "middle",
   });
-  xAxisTitle.textContent = "Reset interval · 7 days";
+  const chartWindowDays = Math.round(chartWindow.durationMs / CAPACITY_CHART_DAY_MS);
+  xAxisTitle.textContent = `Reset interval · ${chartWindowDays} day${chartWindowDays === 1 ? "" : "s"}`;
   xAxisTitle.dataset.capacityChartAxisTitle = "x";
   svg.appendChild(xAxisTitle);
   const yAxisTitle = capacityChartSvgElement("text", {
@@ -1107,8 +1117,10 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   for (const series of CAPACITY_CHART_SERIES) {
     const source = sources.find((candidate) => candidate?.source === "codex" && candidate.slot === series.slot);
     const activeInterval = capacityChartWindow(source?.windows?.[series.windowKey]);
-    const points = activeInterval ? history.map((sample) => capacityChartPoint(sample, series, activeInterval)) : [];
-    const currentPoint = activeInterval ? capacityChartPoint(currentSample, series, activeInterval) : null;
+    const points = activeInterval
+      ? history.map((sample) => capacityChartPoint(sample, series, activeInterval, chartWindow))
+      : [];
+    const currentPoint = activeInterval ? capacityChartPoint(currentSample, series, activeInterval, chartWindow) : null;
     const chartPoints = currentPoint ? [...points, currentPoint] : points;
     const path = capacityChartSvgElement("path", {
       d: capacityChartPath(chartPoints, plot),
@@ -1121,6 +1133,20 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   }
 
   figure.appendChild(svg);
+  const legend = document.createElement("div");
+  legend.dataset.capacityLegend = "";
+  for (const series of CAPACITY_CHART_SERIES) {
+    const item = document.createElement("span");
+    item.dataset.capacityLegendItem = series.key;
+    const swatch = document.createElement("span");
+    swatch.dataset.capacityLegendSwatch = series.key;
+    swatch.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = series.label;
+    item.append(swatch, label);
+    legend.appendChild(item);
+  }
+  figure.appendChild(legend);
   const caption = document.createElement("figcaption");
   caption.dataset.capacityChartMeta = "";
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
