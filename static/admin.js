@@ -1075,23 +1075,41 @@ const capacityChartPoint = (sample, series, activeInterval = null, chartWindow =
 };
 
 const capacityChartPath = (points, plot) => {
-  let path = "";
-  let cursorX = Number.NEGATIVE_INFINITY;
-  let connected = false;
+  const runs = [];
+  let run = [];
   for (const point of points) {
     if (!point) {
-      connected = false;
-      cursorX = Number.NEGATIVE_INFINITY;
+      if (run.length) runs.push(run);
+      run = [];
       continue;
     }
-    const x = plot.left + (point.elapsedPercent / 100) * plot.width;
-    const y = plot.top + ((100 - point.remainingPercent) / 100) * plot.height;
-    if (x < cursorX) continue;
-    if (!connected) path += `M${x.toFixed(2)} ${y.toFixed(2)}`;
-    path += ` H${x.toFixed(2)} V${y.toFixed(2)}`;
-    cursorX = x;
-    connected = true;
+    run.push(point);
   }
+  if (run.length) runs.push(run);
+  if (!runs.length) return "";
+
+  let path = "";
+  runs.forEach((runPoints, runIndex) => {
+    const anchored = [];
+    if (runIndex === 0) anchored.push({ elapsedPercent: 0, remainingPercent: 100 });
+    anchored.push(...runPoints);
+    if (runIndex === runs.length - 1) {
+      const last = runPoints[runPoints.length - 1];
+      anchored.push({ elapsedPercent: 100, remainingPercent: last.remainingPercent });
+    }
+
+    let cursorX = Number.NEGATIVE_INFINITY;
+    let connected = false;
+    for (const point of anchored) {
+      const x = plot.left + (point.elapsedPercent / 100) * plot.width;
+      const y = plot.top + ((100 - point.remainingPercent) / 100) * plot.height;
+      if (x < cursorX) continue;
+      if (!connected) path += `M${x.toFixed(2)} ${y.toFixed(2)}`;
+      path += ` H${x.toFixed(2)} V${y.toFixed(2)}`;
+      cursorX = x;
+      connected = true;
+    }
+  });
   return path;
 };
 
@@ -1191,14 +1209,18 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   yAxisTitle.dataset.capacityChartAxisTitle = "y";
   svg.appendChild(yAxisTitle);
 
+  const currentElapsedPercent = chartWindow.durationMs > 0
+    ? clampCapacityChartPercent(((nowMs - chartWindow.startAtMs) / chartWindow.durationMs) * 100)
+    : 0;
+  const currentX = plot.left + (currentElapsedPercent / 100) * plot.width;
   const reticule = capacityChartSvgElement("line", {
-    x1: plot.left,
+    x1: currentX,
     y1: plot.top,
-    x2: plot.left + plot.width,
+    x2: currentX,
     y2: plot.top + plot.height,
   });
-  reticule.dataset.capacityReticule = "stay-on-track";
-  reticule.setAttribute("aria-label", "Stay-on-track capacity guide");
+  reticule.dataset.capacityReticule = "current-time";
+  reticule.setAttribute("aria-label", "Current time in usage period");
   svg.appendChild(reticule);
 
   const currentSample = { sampled_at_ms: nowMs, sources };
