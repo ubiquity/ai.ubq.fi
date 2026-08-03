@@ -730,10 +730,11 @@ export const readCodex429 = async (
   };
 };
 
-export const markCodexQuotaBlocked = async (
+const markCodexQuotaBlockedWithMode = async (
   account: RoutingAccount,
   response: Response,
   now = Date.now(),
+  recoveryProbe = false,
 ): Promise<Codex429Classification> => {
   const parsed = await readCodex429(response, now);
   const retryAtMs = parsed.retryAtMs;
@@ -773,7 +774,15 @@ export const markCodexQuotaBlocked = async (
       (current.generation !== account.probeGeneration || current.probe_lease?.token !== account.probeToken)
     ) return null;
     const priorDeadline = current.quota_blocked_until_ms ?? 0;
-    const deadline = Math.max(priorDeadline, retryAtMs);
+    const boundedRecoveryProbe = recoveryProbe ||
+      (current.banked_reset_generation_ambiguous && account.probeGeneration !== null);
+    // A verified reset can take a short time to propagate to the inference
+    // endpoint. A failed recovery probe must not turn that transient 429 into
+    // the old, week-long circuit. Keep the account fenced and retry a bounded
+    // probe after the normal half-open lease interval. The verified redemption
+    // record prevents this path from spending another reset for the same quota
+    // episode.
+    const deadline = boundedRecoveryProbe ? now + CODEX_HALF_OPEN_LEASE_MS : Math.max(priorDeadline, retryAtMs);
     const hasStableObservation = current.observed_reset_at_ms !== null && current.observed_reset_at_is_stable;
     // A stable absolute deadline is not by itself a provider-proven new
     // quota-window generation.
@@ -782,7 +791,8 @@ export const markCodexQuotaBlocked = async (
     // stable observation lookup-only and fence claims until a successful
     // half-open probe clears it. Expiry and administrative rechecks are not
     // proof that the provider advanced the quota generation.
-    const generationAmbiguous = current.banked_reset_generation_ambiguous || parsed.resetDeadlineConflict ||
+    const generationAmbiguous = boundedRecoveryProbe || current.banked_reset_generation_ambiguous ||
+      parsed.resetDeadlineConflict ||
       (hasStableObservation &&
         (!parsed.resetDeadlineIsStable || retryAtMs !== current.observed_reset_at_ms));
     const preserveStableObservation = hasStableObservation && generationAmbiguous;
@@ -818,6 +828,23 @@ export const markCodexQuotaBlocked = async (
   });
   return parsed;
 };
+
+export const markCodexQuotaBlocked = async (
+  account: RoutingAccount,
+  response: Response,
+  now = Date.now(),
+): Promise<Codex429Classification> => await markCodexQuotaBlockedWithMode(account, response, now, false);
+
+/**
+ * Record a failed probe immediately after a verified banked reset. Keep the
+ * account fenced, but schedule a short half-open retry because reset
+ * propagation can lag the provider's terminal consume response.
+ */
+export const markCodexRecoveryProbeQuotaBlocked = async (
+  account: RoutingAccount,
+  response: Response,
+  now = Date.now(),
+): Promise<Codex429Classification> => await markCodexQuotaBlockedWithMode(account, response, now, true);
 
 export const markCodexCredentialInvalid = async (account: RoutingAccount): Promise<void> => {
   await updateRoutingState((state) => {
@@ -1083,6 +1110,84 @@ export const reconcileCodexQuotaAfterVerifiedReset = async (
         // independently proves the circuit healthy.
         observed_reset_at_ms: current.observed_reset_at_ms,
         observed_reset_at_is_stable: current.observed_reset_at_is_stable,
+        banked_reset_generation_ambiguous: true,
+        generation: nextGeneration,
+        probe_lease: recoveryLease,
+      });
+      const committed = await withReconciliationFences(kv.atomic().check(entry), fenceEntries)
+        .set(CODEX_ACCOUNT_ROUTING_KV_KEY, next)
+        .commit();
+      if (!committed.ok) continue;
+      cachedState = next;
+      cachedVersionstamp = committed.versionstamp;
+      cachedStateLoadedAtMs = Date.now();
+      return {
+        ...account,
+        quotaHeadroom: quotaHeadroomFor(next.slots[account.slot]!),
+        probeRequired: false,
+        probeGeneration: recoveryLease.generation,
+        probeToken: recoveryLease.token,
+      };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+/**
+ * Recover an account whose verified reset record predates later routing
+ * transitions. The ledger proves the reset was already spent, so this path
+ * only fences a new inference probe; it never submits another reset.
+ */
+export const reconcileCodexQuotaAfterStaleVerifiedReset = async (
+  account: RoutingAccount,
+  input: Readonly<{
+    quotaResetAtMs: number;
+    routingGeneration: number;
+    fences?: readonly CodexQuotaResetReconciliationFence[];
+  }>,
+): Promise<RoutingAccount | null> => {
+  if (
+    !isSafeMs(input.quotaResetAtMs) || !Number.isSafeInteger(input.routingGeneration) || input.routingGeneration < 0
+  ) return null;
+  let kv: Deno.Kv | null;
+  try {
+    kv = await getKv();
+  } catch {
+    return null;
+  }
+  if (!kv) return null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const entry = await kv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" });
+      const state = parseCodexAccountRoutingState(entry.value);
+      const current = state?.slots[account.slot];
+      const nowMs = Date.now();
+      if (
+        !state || state.banked_reset_legacy_identity_unresolved || !current ||
+        !slotMatchesRoutingAccount(current, account) || current.account_id_hash !== account.accountIdHash ||
+        current.credential_version !== account.credentialVersion || current.generation !== input.routingGeneration ||
+        current.invalid_credential_version === account.credentialVersion ||
+        current.quota_blocked_until_ms === null || current.quota_blocked_until_ms < input.quotaResetAtMs ||
+        current.observed_reset_at_ms !== input.quotaResetAtMs || !current.observed_reset_at_is_stable ||
+        (current.quota_block_source !== "body_resets_at" && current.quota_block_source !== "header_retry_after") ||
+        (current.probe_lease?.expires_at_ms ?? 0) > nowMs
+      ) return null;
+      const fenceEntries = input.fences === undefined ? [] : await readCurrentReconciliationFences(kv, input.fences);
+      if (!fenceEntries) return null;
+      const nextGeneration = current.generation + 1;
+      const probeExpiresAtMs = nowMs + CODEX_HALF_OPEN_LEASE_MS;
+      if (!Number.isSafeInteger(nextGeneration) || !isSafeMs(nowMs) || !isSafeMs(probeExpiresAtMs)) return null;
+      const recoveryLease = {
+        token: crypto.randomUUID(),
+        expires_at_ms: probeExpiresAtMs,
+        generation: nextGeneration,
+      };
+      const next = withSlot(state, account.slot, {
+        ...current,
+        quota_blocked_until_ms: null,
+        quota_block_source: null,
         banked_reset_generation_ambiguous: true,
         generation: nextGeneration,
         probe_lease: recoveryLease,

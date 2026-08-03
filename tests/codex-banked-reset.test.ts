@@ -561,6 +561,30 @@ Deno.test("banked reset live happy path commits exactly once with a stable durab
   assert.equal(provider.commitCount, 1);
 });
 
+Deno.test("a verified reset from an older routing generation is not reusable", async () => {
+  const kv = new MemoryKv();
+  const provider = new FakeCodexUsageResetProvider();
+  const clock = new TestClock();
+  const firstCandidate = candidate();
+  await seedFences(kv, firstCandidate);
+  const first = await attemptCodexBankedReset(firstCandidate, dependencies(kv, provider, clock));
+  assert.equal(first.kind, "verified");
+
+  const laterCandidate = candidate({
+    routingGeneration: firstCandidate.routingGeneration + 1,
+  });
+  await kv.set(routingFenceKey(laterCandidate.accountId), {
+    kind: "routing",
+    routing_generation: laterCandidate.routingGeneration,
+  });
+  const later = await attemptCodexBankedReset(laterCandidate, dependencies(kv, provider, clock));
+
+  assert.equal(later.kind, "skipped");
+  assert.equal(later.reason, "verified_routing_generation_stale");
+  assert.equal(provider.redeemInputs.length, 1);
+  assert.equal(provider.commitCount, 1);
+});
+
 Deno.test("banked reset production owner token generator is called with its Crypto receiver", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();

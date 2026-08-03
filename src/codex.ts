@@ -6,8 +6,10 @@ import {
   isCodexQuotaBlockFenceCurrent,
   markCodexCredentialInvalid,
   markCodexQuotaBlocked,
+  markCodexRecoveryProbeQuotaBlocked,
   markCodexSuccess,
   parseCodexAccountRoutingState,
+  reconcileCodexQuotaAfterStaleVerifiedReset,
   reconcileCodexQuotaAfterVerifiedReset,
   reconcileCodexRoutingAccount,
   releaseCodexRoutingProbe,
@@ -55,6 +57,7 @@ const CODEX_REFRESH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_CLIENT_VERSION = "0.100.0";
+export const CODEX_ROUTING_ERROR_HEADER = "x-uos-codex-routing-error";
 
 const parseSemverTriplet = (value: string): [number, number, number] | null => {
   const parts = value.trim().split(".");
@@ -1301,6 +1304,7 @@ const routingErrorResponse = (
   retryAtMs: number | null = null,
 ): Response => {
   const headers = new Headers({ "Content-Type": "application/json" });
+  if (code === "codex_quota_blocked") headers.set(CODEX_ROUTING_ERROR_HEADER, code);
   if (status === 429 && retryAtMs !== null) {
     headers.set("Retry-After", String(Math.max(1, Math.ceil((retryAtMs - Date.now()) / 1000))));
   }
@@ -1735,7 +1739,11 @@ export const fetchCodexResponses = async (
   const evaluateBlockedCohortBankedReset = async (
     requireFullPool: boolean,
   ): Promise<
-    | Readonly<{ candidate: CodexBankedResetCandidate; reset: Awaited<ReturnType<typeof reconcileCodexBankedReset>> }>
+    | Readonly<{
+      candidate: CodexBankedResetCandidate;
+      reset: Awaited<ReturnType<typeof reconcileCodexBankedReset>>;
+      recoveryProbe: RoutingAccount | null;
+    }>
     | null
   > => {
     if (probeUnavailable) return null;
@@ -1802,7 +1810,16 @@ export const fetchCodexResponses = async (
         resetInput(candidate, candidate.routingGeneration, partialCohort),
         resetDependenciesForCandidate(candidate),
       );
-      if (reset.kind === "verified") return { candidate, reset };
+      if (reset.kind === "verified") return { candidate, reset, recoveryProbe: null };
+      if (reset.reason === "verified_routing_generation_stale") {
+        const recoveryProbe = await reconcileCodexQuotaAfterStaleVerifiedReset(candidate.routing, {
+          quotaResetAtMs: candidate.quotaResetAtMs,
+          routingGeneration: candidate.routingGeneration,
+          fences: [authPoolFence(candidate)],
+        });
+        if (!recoveryProbe) return null;
+        return { candidate, reset, recoveryProbe };
+      }
       if (reset.reason !== "no_existing_transaction") return null;
     }
 
@@ -1822,7 +1839,7 @@ export const fetchCodexResponses = async (
     });
     if (!evaluated.selected || !evaluated.reset) return null;
     const candidate = localCandidates.find((item) => item.routing.slot === evaluated.selected!.slot);
-    return candidate ? { candidate, reset: evaluated.reset } : null;
+    return candidate ? { candidate, reset: evaluated.reset, recoveryProbe: null } : null;
   };
 
   const fetchAttempt = async (
@@ -1976,14 +1993,15 @@ export const fetchCodexResponses = async (
     // a reset that was inferred only from a sibling's 429.
     if (probeUnavailable) return normalResponse;
     const evaluated = await evaluateBlockedCohortBankedReset(true);
-    if (!evaluated || evaluated.reset.kind !== "verified" || !evaluated.reset.record) return normalResponse;
+    if (!evaluated || !evaluated.reset.record) return normalResponse;
+    if (evaluated.reset.kind !== "verified" && !evaluated.recoveryProbe) return normalResponse;
     const { candidate, reset } = evaluated;
     const resetRecord = reset.record!;
 
     // The transaction can be verified yet still be fenced off by a credential
     // rotation or later 429. In that case preserve the normal upstream
     // response; a stale worker must not dispatch an inference retry.
-    const reconciled = await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
+    const reconciled = evaluated.recoveryProbe ?? await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
       quotaResetAtMs: candidate.quotaResetAtMs,
       routingGeneration: resetRecord.routing_generation,
       fences: [authPoolFence(candidate)],
@@ -2039,7 +2057,7 @@ export const fetchCodexResponses = async (
     if (retried.status === 429) {
       // This is the one permitted post-reset inference attempt. Preserve a
       // replayable normal 429 and never feed it back into reset selection.
-      retried = (await markCodexQuotaBlocked(retryCandidate.routing, retried)).response;
+      retried = (await markCodexRecoveryProbeQuotaBlocked(retryCandidate.routing, retried)).response;
     } else if (!retried.ok) {
       await releaseCodexRoutingProbe(retryCandidate.routing);
     }
@@ -2072,10 +2090,11 @@ export const fetchCodexResponses = async (
 
   const recoverBlockedReset = async (requireFullPool: boolean): Promise<Response | null> => {
     const evaluated = await evaluateBlockedCohortBankedReset(requireFullPool);
-    if (!evaluated || evaluated.reset.kind !== "verified" || !evaluated.reset.record) return null;
+    if (!evaluated || !evaluated.reset.record) return null;
+    if (evaluated.reset.kind !== "verified" && !evaluated.recoveryProbe) return null;
     const { candidate, reset } = evaluated;
     const resetRecord = reset.record!;
-    const reconciled = await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
+    const reconciled = evaluated.recoveryProbe ?? await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
       quotaResetAtMs: candidate.quotaResetAtMs,
       routingGeneration: resetRecord.routing_generation,
       fences: [authPoolFence(candidate)],
@@ -2127,7 +2146,7 @@ export const fetchCodexResponses = async (
     }
     if (retried.status === 401) await markCodexCredentialInvalid(retryCandidate.routing);
     if (retried.status === 429) {
-      retried = (await markCodexQuotaBlocked(retryCandidate.routing, retried)).response;
+      retried = (await markCodexRecoveryProbeQuotaBlocked(retryCandidate.routing, retried)).response;
     } else if (!retried.ok) {
       await releaseCodexRoutingProbe(retryCandidate.routing);
     }

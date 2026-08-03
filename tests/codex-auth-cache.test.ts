@@ -137,6 +137,7 @@ const {
 const {
   claimCodexRoutingProbe,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
+  CODEX_HALF_OPEN_LEASE_MS,
   markCodexQuotaBlocked,
   parseCodexAccountRoutingState,
   resetCodexAccountRoutingForTest,
@@ -3016,6 +3017,164 @@ Deno.test("post-reset inference may return one normal 429 but never triggers a s
     assert.equal(response.status, 429);
     assert.equal(inferenceCalls, 2);
     assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a failed banked-reset probe gets a bounded retry and eventually reopens the account", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const reset = scriptedResetProvider();
+  const inferenceAccounts: string[] = [];
+  const delayedPropagationRetryAfter = new Date(fixedStartMs + 7 * 24 * 60 * 60_000).toUTCString();
+  const delayedPropagationResetAtMs = fixedStartMs + 7 * 24 * 60 * 60_000;
+  let now = fixedStartMs;
+  Date.now = () => now;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    const accountId = request.headers.get("chatgpt-account-id") ?? "";
+    inferenceAccounts.push(accountId);
+    if (inferenceAccounts.length > 5) {
+      return Promise.resolve(new Response(JSON.stringify({ id: "recovered-after-propagation" }), { status: 200 }));
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": delayedPropagationRetryAfter },
+      }),
+    );
+  };
+
+  const bankedReset = {
+    config: liveBankedResetConfig(),
+    provider: reset.provider,
+    kv: kv as unknown as Deno.Kv,
+    now: () => now,
+    newOwnerToken: () => "owner-failed-probe",
+  };
+  try {
+    const first = await fetchCodexResponses({ input: "banked-reset-probe-fails" }, { bankedReset });
+    assert.equal(first.status, 429);
+    assert.deepEqual(inferenceAccounts, ["account-one", "account-two", "account-one"]);
+    assert.equal(reset.calls.filter((call) => call === "redeem").length, 1);
+    assert.equal(reset.calls.filter((call) => call === "verify").length, 1);
+
+    const inferenceCountAfterFirst = inferenceAccounts.length;
+    const resetCallsAfterFirst = [...reset.calls];
+    const second = await fetchCodexResponses({ input: "after-failed-bank-reset-probe" }, { bankedReset });
+    assert.equal(second.status, 429);
+    assert.equal(inferenceAccounts.length, inferenceCountAfterFirst);
+    assert.deepEqual(reset.calls, resetCallsAfterFirst);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      now += CODEX_HALF_OPEN_LEASE_MS + 1;
+      const stillBlocked = await fetchCodexResponses({ input: `during-reset-propagation-${attempt}` }, { bankedReset });
+      assert.equal(stillBlocked.status, 429);
+      assert.equal(inferenceAccounts.at(-1), "account-one");
+      const routingAfterProbe = parseCodexAccountRoutingState(
+        (await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value,
+      );
+      assert.equal(routingAfterProbe?.slots[0]?.quota_blocked_until_ms, now + CODEX_HALF_OPEN_LEASE_MS);
+      assert.equal(routingAfterProbe?.slots[0]?.banked_reset_generation_ambiguous, true);
+      assert.deepEqual(reset.calls, resetCallsAfterFirst);
+    }
+
+    now += CODEX_HALF_OPEN_LEASE_MS + 1;
+    const recovered = await fetchCodexResponses({ input: "after-reset-propagation" }, { bankedReset });
+    assert.equal(recovered.status, 200);
+    assert.deepEqual(inferenceAccounts, [
+      "account-one",
+      "account-two",
+      "account-one",
+      "account-one",
+      "account-one",
+      "account-one",
+    ]);
+    await markCodexResponseCompleted(recovered);
+    const routing = parseCodexAccountRoutingState(
+      (await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value,
+    );
+    assert.equal(routing?.slots[0]?.quota_blocked_until_ms, null);
+    assert.equal(routing?.slots[0]?.banked_reset_generation_ambiguous, false);
+    assert.equal(routing?.slots[1]?.quota_blocked_until_ms, delayedPropagationResetAtMs);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a stale verified reset recovers the existing account without another reset", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const reset = scriptedResetProvider();
+  const delayedResetAtMs = fixedStartMs + 7 * 24 * 60 * 60_000;
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    return Promise.resolve(
+      inferenceCalls <= 2
+        ? new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+        })
+        : new Response(JSON.stringify({ id: "recovered-stale-reset" }), { status: 200 }),
+    );
+  };
+
+  const bankedReset = {
+    config: liveBankedResetConfig(),
+    provider: reset.provider,
+    kv: kv as unknown as Deno.Kv,
+    now: () => fixedStartMs,
+    newOwnerToken: () => "owner-stale-verified-reset",
+  };
+  try {
+    const first = await fetchCodexResponses({ input: "seed-stale-verified-reset" }, { bankedReset });
+    assert.equal(first.status, 429);
+    assert.equal(inferenceCalls, 2);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+
+    const routingKey = JSON.stringify(CODEX_ACCOUNT_ROUTING_KV_KEY);
+    const current = parseCodexAccountRoutingState(kv.extra.get(routingKey)?.value);
+    assert.ok(current);
+    await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
+      ...current,
+      slots: [{
+        ...current!.slots[0]!,
+        quota_blocked_until_ms: delayedResetAtMs,
+        generation: current!.slots[0]!.generation + 1,
+        probe_lease: null,
+        banked_reset_generation_ambiguous: true,
+      }],
+    });
+    resetCodexAccountRoutingForTest();
+
+    const recovered = await fetchCodexResponses({ input: "recover-stale-verified-reset" }, { bankedReset });
+    assert.equal(recovered.status, 200);
+    assert.equal(inferenceCalls, 3);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+    await markCodexResponseCompleted(recovered);
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();

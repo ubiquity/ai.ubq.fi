@@ -1592,6 +1592,23 @@ const attemptInternal = async (
     return outcome("skipped", "redemption_record_context_mismatch", context, existing.record);
   }
   if (existing.record?.state === "verified") {
+    if (existing.record.routing_generation !== candidate.routingGeneration) {
+      // The provider reset was verified for an older routing observation. The
+      // old credit is already spent, and the post-reset probe may already have
+      // re-blocked the account. Never present that old verification as a
+      // recovery candidate for a newer quota circuit.
+      emit(
+        telemetry,
+        "codex_reset_duplicate_prevented",
+        telemetryFields(context, candidate, {
+          state: "verified",
+          fence: existing.record.fence,
+          reason: "routing_generation_stale",
+        }),
+      );
+      metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
+      return outcome("skipped", "verified_routing_generation_stale", context, existing.record);
+    }
     emit(
       telemetry,
       "codex_reset_duplicate_prevented",
