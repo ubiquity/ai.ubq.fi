@@ -481,35 +481,10 @@ body[data-page="admin"] [data-capacity-series] {
   fill: none;
 }
 
-body[data-page="admin"] [data-capacity-series="account-1-primary"] {
+body[data-page="admin"] [data-capacity-series="available-capacity"] {
   stroke: #ffffff;
   fill: #ffffff;
   background: #ffffff;
-}
-
-body[data-page="admin"] [data-capacity-series="account-1-secondary"] {
-  stroke: #a8b0bc;
-  fill: #a8b0bc;
-  background: #a8b0bc;
-}
-
-body[data-page="admin"] [data-capacity-series="account-2-primary"] {
-  stroke: #8eb7ff;
-  fill: #8eb7ff;
-  background: #8eb7ff;
-}
-
-body[data-page="admin"] [data-capacity-series="account-2-secondary"] {
-  stroke: #c5a6ff;
-  fill: #c5a6ff;
-  background: #c5a6ff;
-}
-
-body[data-page="admin"] [data-capacity-series="yunwu"] {
-  stroke: #66d9a8;
-  fill: #66d9a8;
-  background: #66d9a8;
-  stroke-dasharray: 5 3;
 }
 
 body[data-page="admin"] [data-capacity-trend="optimal-spend"] {

@@ -980,16 +980,7 @@ const CAPACITY_CHART_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 const CAPACITY_CHART_SERIES = [
-  { key: "account-1-primary", label: "Account 1 primary", source: "codex", slot: 1, windowKey: "primary" },
-  { key: "account-1-secondary", label: "Account 1 secondary", source: "codex", slot: 1, windowKey: "secondary" },
-  { key: "account-2-primary", label: "Account 2 primary", source: "codex", slot: 2, windowKey: "primary" },
-  { key: "account-2-secondary", label: "Account 2 secondary", source: "codex", slot: 2, windowKey: "secondary" },
-  {
-    key: "yunwu",
-    label: "YunWu refill",
-    source: "yunwu",
-    valueKey: "refill_cycle_remaining_percent",
-  },
+  { key: "available-capacity", label: "Available capacity", source: "aggregate" },
 ];
 
 const capacityChartSvgElement = (name, attributes = {}) => {
@@ -1039,7 +1030,45 @@ const capacityChartWindow = (window) => {
   return { startAtMs, resetAtMs, durationMs };
 };
 
+const capacityChartAggregateRemainingPercent = (sample) => {
+  const sources = Array.isArray(sample?.sources) ? sample.sources : [];
+  const remaining = [];
+  for (const source of sources) {
+    if (source?.state === "unavailable") continue;
+    if (source?.source === "codex") {
+      const usedPercent = source.windows?.primary?.used_percent;
+      if (typeof usedPercent === "number" && Number.isFinite(usedPercent)) {
+        remaining.push(capacityRemainingPercent(usedPercent));
+      }
+    } else if (source?.source === "yunwu") {
+      const refillRemaining = source.wallet?.refill_cycle_remaining_percent;
+      if (typeof refillRemaining === "number" && Number.isFinite(refillRemaining)) {
+        remaining.push(clampCapacityChartPercent(refillRemaining));
+      }
+    }
+  }
+  const reported = remaining.filter((value) => typeof value === "number" && Number.isFinite(value));
+  return reported.length ? Math.max(...reported) : null;
+};
+
 const capacityChartPoint = (sample, series, activeInterval = null, chartWindow = null) => {
+  if (series.source === "aggregate") {
+    const displayInterval = chartWindow ?? activeInterval;
+    const sampledAtMs = sample?.sampled_at_ms;
+    const remainingPercent = capacityChartAggregateRemainingPercent(sample);
+    if (
+      !displayInterval ||
+      typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs) ||
+      sampledAtMs < displayInterval.startAtMs || sampledAtMs > displayInterval.resetAtMs ||
+      typeof remainingPercent !== "number" || !Number.isFinite(remainingPercent)
+    ) return null;
+    return {
+      elapsedPercent: clampCapacityChartPercent(
+        ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100,
+      ),
+      remainingPercent: clampCapacityChartPercent(remainingPercent),
+    };
+  }
   const source = Array.isArray(sample?.sources)
     ? sample.sources.find((candidate) =>
       candidate?.source === series.source && (series.source === "yunwu" || candidate.slot === series.slot)
@@ -1075,7 +1104,7 @@ const capacityChartPoint = (sample, series, activeInterval = null, chartWindow =
 };
 
 const capacityChartResetPoint = (event, series, activeInterval = null, chartWindow = null) => {
-  if (series.source !== "codex" || event?.slot !== series.slot) return null;
+  if (series.source !== "aggregate") return null;
   const interval = activeInterval ?? chartWindow;
   const displayInterval = chartWindow ?? interval;
   const sampledAtMs = event?.observed_at_ms;
@@ -1226,13 +1255,13 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const figure = document.createElement("figure");
   figure.dataset.capacityChartFigure = "";
   const title = document.createElement("h3");
-  title.textContent = "Provider capacity history";
+  title.textContent = "Available capacity history";
   figure.appendChild(title);
 
   const svg = capacityChartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
     role: "img",
-    "aria-label": "Provider capacity history across the active Codex usage period",
+    "aria-label": "Available provider capacity history across the active usage period",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
@@ -1281,7 +1310,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     transform: `rotate(-90 12 ${plot.top + plot.height / 2})`,
     "text-anchor": "middle",
   });
-  yAxisTitle.textContent = "Percentage remaining";
+  yAxisTitle.textContent = "Available capacity remaining";
   yAxisTitle.dataset.capacityChartAxisTitle = "y";
   svg.appendChild(yAxisTitle);
 
@@ -1311,11 +1340,8 @@ const renderProviderCapacityChart = (snapshot, sources) => {
 
   const currentSample = { sampled_at_ms: nowMs, sources };
   for (const series of CAPACITY_CHART_SERIES) {
-    const source = sources.find((candidate) =>
-      candidate?.source === series.source && (series.source === "yunwu" || candidate.slot === series.slot)
-    );
-    const activeInterval = series.source === "codex" ? capacityChartWindow(source?.windows?.[series.windowKey]) : null;
-    const shouldRender = series.source === "yunwu" || activeInterval;
+    const activeInterval = chartWindow;
+    const shouldRender = true;
     const currentPoint = shouldRender ? capacityChartPoint(currentSample, series, activeInterval, chartWindow) : null;
     const chartPoints = shouldRender
       ? capacityChartSeriesPoints(
