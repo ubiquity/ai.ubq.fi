@@ -1048,7 +1048,7 @@ const capacityChartAggregateRemainingPercent = (sample) => {
     }
   }
   const reported = remaining.filter((value) => typeof value === "number" && Number.isFinite(value));
-  return reported.length ? Math.max(...reported) : null;
+  return reported.length ? reported.reduce((total, value) => total + value, 0) / reported.length : null;
 };
 
 const capacityChartPoint = (sample, series, activeInterval = null, chartWindow = null) => {
