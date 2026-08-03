@@ -2,22 +2,27 @@
 
 ## Objective
 
-Implement automatic redemption of exactly one banked Codex usage-limit reset when a configured ChatGPT Codex account has genuinely exhausted its quota and no healthy account in the existing auth pool can serve the request.
+Implement automatic redemption of exactly one banked Codex usage-limit reset when a configured ChatGPT Codex account has
+genuinely exhausted its quota and no healthy account in the existing auth pool can serve the request.
 
-A banked reset is an expensive, externally visible mutation. Treat it as a durable transaction, not as an ordinary HTTP retry. Development and automated tests must never call the live redemption endpoint or consume a real reset.
+A banked reset is an expensive, externally visible mutation. Treat it as a durable transaction, not as an ordinary HTTP
+retry. Development and automated tests must never call the live redemption endpoint or consume a real reset.
 
 ## Non-negotiable safety rules
 
 1. The feature must be disabled by default.
 2. It must require an explicit account allowlist in addition to the global feature flag.
-3. Only a fully parsed upstream `429` whose OpenAI error type is exactly `usage_limit_reached` may make an account eligible.
+3. Only a fully parsed upstream `429` whose OpenAI error type is exactly `usage_limit_reached` may make an account
+   eligible.
 4. A malformed, truncated, ambiguous, or ordinary rate-limit response must never redeem a reset.
-5. Try every healthy configured Codex account before considering redemption. Do not spend a reset if an existing account can serve the request.
+5. Try every healthy configured Codex account before considering redemption. Do not spend a reset if an existing account
+   can serve the request.
 6. At most one reset may be redeemed for one account and one observed quota generation/window.
 7. A timeout or ambiguous provider result must never cause a blind second redemption.
 8. Inference may be retried only after the reset is independently verified as applied.
 9. Retry the original inference request at most once after a verified redemption.
-10. KV unavailability, CAS exhaustion, missing configuration, unsupported provider behavior, or failed verification must fail closed without redeeming.
+10. KV unavailability, CAS exhaustion, missing configuration, unsupported provider behavior, or failed verification must
+    fail closed without redeeming.
 11. Never log access tokens, refresh tokens, raw auth JSON, provider credentials, or raw idempotency keys.
 12. No production redemption is permitted while implementing or testing this feature.
 
@@ -27,8 +32,10 @@ The gateway is a Deno TypeScript service. Its OpenAI-compatible public contract 
 
 Relevant existing code:
 
-- `src/codex.ts`: auth refresh, upstream `/responses` dispatch, account iteration, 401 handling, 429 classification integration, bounded retry, and streaming behavior.
-- `src/codex_account_routing.ts`: durable per-slot quota circuits, KV CAS updates, credential-version fencing, half-open probe leases, and strict parsing of `Retry-After`.
+- `src/codex.ts`: auth refresh, upstream `/responses` dispatch, account iteration, 401 handling, 429 classification
+  integration, bounded retry, and streaming behavior.
+- `src/codex_account_routing.ts`: durable per-slot quota circuits, KV CAS updates, credential-version fencing, half-open
+  probe leases, and strict parsing of `Retry-After`.
 - `src/codex_quota.ts`: downstream quota-header normalization.
 - `src/types.ts`: durable record types.
 - `tests/codex-account-routing.test.ts`: quota classification, routing, CAS, probe, and response preservation tests.
@@ -90,7 +97,8 @@ Redemption must occur before any downstream response headers or streaming bytes 
 
 ## Provider boundary
 
-Create a small provider interface in a separate module. Do not embed undocumented redemption HTTP calls directly in `src/codex.ts`.
+Create a small provider interface in a separate module. Do not embed undocumented redemption HTTP calls directly in
+`src/codex.ts`.
 
 The interface should separate:
 
@@ -149,11 +157,13 @@ Before enabling live redemption, establish and document the exact upstream contr
 
 Do not infer that HTTP `200` proves the reset was applied.
 
-If the provider supports neither idempotency nor status lookup, automatic production redemption cannot provide the required at-most-once safety. Leave the feature disabled and document the blocker.
+If the provider supports neither idempotency nor status lookup, automatic production redemption cannot provide the
+required at-most-once safety. Leave the feature disabled and document the blocker.
 
 ## Durable transaction model
 
-Use a separate KV record from the existing routing state. Routing state represents account availability; the new record represents an expensive external transaction.
+Use a separate KV record from the existing routing state. Routing state represents account availability; the new record
+represents an expensive external transaction.
 
 Suggested key:
 
@@ -161,7 +171,10 @@ Suggested key:
 ["uos_ai", "codex_reset_redemption", "v1", account_id_hash, quota_generation]
 ```
 
-The quota generation must be stable for the observed exhaustion event. Derive it from provider-supported quota-window/reset identity when possible. Do not use a random request ID. If the provider exposes no stable generation, define a conservative generation from the credential version and observed reset deadline, and explain collision/rotation behavior in tests and documentation.
+The quota generation must be stable for the observed exhaustion event. Derive it from provider-supported
+quota-window/reset identity when possible. Do not use a random request ID. If the provider exposes no stable generation,
+define a conservative generation from the credential version and observed reset deadline, and explain collision/rotation
+behavior in tests and documentation.
 
 Suggested state:
 
@@ -191,39 +204,49 @@ type CodexResetRedemptionRecord = Readonly<{
 }>;
 ```
 
-The raw deterministic idempotency key may be recreated from stable inputs or stored encrypted if necessary. Logs and admin responses should expose only its hash.
+The raw deterministic idempotency key may be recreated from stable inputs or stored encrypted if necessary. Logs and
+admin responses should expose only its hash.
 
 ## State-machine rules
 
 ### Claim
 
-Use KV compare-and-set to create or transition the record to `claimed`. Only one owner token may submit the provider call.
+Use KV compare-and-set to create or transition the record to `claimed`. Only one owner token may submit the provider
+call.
 
 ### Submission
 
-Transition to `submitted` immediately around the side-effect boundary as permitted by the provider protocol. Persist any receipt as soon as it is available.
+Transition to `submitted` immediately around the side-effect boundary as permitted by the provider protocol. Persist any
+receipt as soon as it is available.
 
 ### Timeout or crash
 
-If it is possible that the provider committed the reset, transition to `unknown`. A recovery worker or later request may call `lookup()` and `verifyApplied()`, but must reuse the same logical idempotency key and must not submit a second logical redemption.
+If it is possible that the provider committed the reset, transition to `unknown`. A recovery worker or later request may
+call `lookup()` and `verifyApplied()`, but must reuse the same logical idempotency key and must not submit a second
+logical redemption.
 
 ### Lease expiry
 
-A new worker may take over reconciliation after lease expiry. Lease takeover does not authorize a fresh redemption with a new idempotency key.
+A new worker may take over reconciliation after lease expiry. Lease takeover does not authorize a fresh redemption with
+a new idempotency key.
 
 ### Verification
 
-Only a fenced owner may transition to `verified`. Verification should reconcile the existing routing slot without allowing a stale worker to clear a newer quota generation or credential version.
+Only a fenced owner may transition to `verified`. Verification should reconcile the existing routing slot without
+allowing a stale worker to clear a newer quota generation or credential version.
 
 ### Rejection
 
-A definitive no-inventory, unsupported reset type, or provider rejection becomes `rejected`. Preserve an audit record; do not loop.
+A definitive no-inventory, unsupported reset type, or provider rejection becomes `rejected`. Preserve an audit record;
+do not loop.
 
 ## Integration with account routing
 
-Keep ordinary account failover first. Redemption should be considered only after the current request determines that no healthy account can serve it.
+Keep ordinary account failover first. Redemption should be considered only after the current request determines that no
+healthy account can serve it.
 
-The reset belongs to the exhausted account that produced the qualifying response. After verification, retry on that same account rather than randomizing the pool.
+The reset belongs to the exhausted account that produced the qualifying response. After verification, retry on that same
+account rather than randomizing the pool.
 
 Credential rotation must fence the transaction:
 
@@ -231,7 +254,8 @@ Credential rotation must fence the transaction:
 - Define whether reconciliation may still verify a reset at the account/subscription level after credential rotation.
 - Never let credential refresh create a new idempotency key for the same quota generation.
 
-Do not reuse the existing short 429 retry candidate as the redemption transaction. The existing retry is transient request handling; redemption has independent persistence, ownership, recovery, and audit requirements.
+Do not reuse the existing short 429 retry candidate as the redemption transaction. The existing retry is transient
+request handling; redemption has independent persistence, ownership, recovery, and audit requirements.
 
 ## Configuration and rollout controls
 
@@ -251,8 +275,10 @@ Recommended rollout:
 
 1. **Offline:** provider fake only; all tests pass.
 2. **Shadow:** production detects candidates and records what it would do, but provider redemption is impossible.
-3. **Canary:** one explicitly allowlisted account, a global limit of one, active operator observation, and a prewritten rollback command.
-4. **Controlled expansion:** increase allowlist and limits only after auditing the canary receipt, verification, retry, and reset inventory.
+3. **Canary:** one explicitly allowlisted account, a global limit of one, active operator observation, and a prewritten
+   rollback command.
+4. **Controlled expansion:** increase allowlist and limits only after auditing the canary receipt, verification, retry,
+   and reset inventory.
 
 Rollback disables new claims and submissions while preserving `submitted` and `unknown` records for reconciliation.
 
@@ -351,11 +377,13 @@ original request retries once on A
 retry succeeds
 ```
 
-Assert one provider commit, one stable idempotency key, one inference retry, correct routing reconciliation, and OpenAI-compatible output.
+Assert one provider commit, one stable idempotency key, one inference retry, correct routing reconciliation, and
+OpenAI-compatible output.
 
 ### Already redeemed
 
-The provider returns an existing receipt for the same idempotency key. Verify state, then retry inference once without creating another logical redemption.
+The provider returns an existing receipt for the same idempotency key. Verify state, then retry inference once without
+creating another logical redemption.
 
 ### Timeout matrix
 
@@ -365,7 +393,8 @@ The provider returns an existing receipt for the same idempotency key. Verify st
 - Receipt is persisted, then the isolate crashes.
 - Verification times out after a confirmed submission.
 
-For every ambiguous case, assert no new idempotency key and no blind second submission. Recovery must use lookup/verification.
+For every ambiguous case, assert no new idempotency key and no blind second submission. Recovery must use
+lookup/verification.
 
 ### Rejection matrix
 
@@ -487,4 +516,9 @@ Immediately disable live mode after the first canary and audit all records befor
 
 ## Implementation-agent instruction
 
-Start by inspecting the current working tree and preserving unrelated user changes. Produce a short implementation plan, then implement the feature in small reviewable layers: provider interface and fake, durable state machine, policy/configuration, routing integration, observability, tests, and documentation. Do not call, probe, or infer the live redemption endpoint from production credentials. If the exact provider contract is unavailable or lacks the required idempotency/reconciliation guarantees, complete the safe abstractions, mocks, shadow mode, and tests, leave live mode disabled, and report the precise blocker.
+Start by inspecting the current working tree and preserving unrelated user changes. Produce a short implementation plan,
+then implement the feature in small reviewable layers: provider interface and fake, durable state machine,
+policy/configuration, routing integration, observability, tests, and documentation. Do not call, probe, or infer the
+live redemption endpoint from production credentials. If the exact provider contract is unavailable or lacks the
+required idempotency/reconciliation guarantees, complete the safe abstractions, mocks, shadow mode, and tests, leave
+live mode disabled, and report the precise blocker.
