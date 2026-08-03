@@ -18,7 +18,7 @@ export const isLocalDevelopmentOrigin = () => {
   const location = globalThis.location;
   if (!location || String(location.protocol ?? "").toLowerCase() !== "http:") return false;
   const hostname = String(location.hostname ?? "").toLowerCase();
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  return hostname === "localhost" || hostname === "127.0.0.1";
 };
 
 const normalizeBaseChoice = (value) => {

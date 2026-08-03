@@ -581,7 +581,7 @@
           <article data-card data-span="half" aria-labelledby="card-yunwu-provider">
             <header>
               <h2 id="card-yunwu-provider">YunWu</h2>
-              <p>Inference health is passive. Wallet data comes from the cached account snapshot, not a model request.</p>
+              <p>Inference health is passive. Wallet data is refreshed by the capacity sampler, not a model request.</p>
             </header>
             <div data-card-body>
               <span id="yunwu-provider-badge" data-badge data-state="unknown">Not observed</span>
@@ -621,7 +621,7 @@
           <article data-card aria-labelledby="card-provider-capacity">
             <header>
               <h2 id="card-provider-capacity">Capacity</h2>
-              <p>Live account windows and the cached YunWu refill cycle. Accounts stay separate; no combined percentage is shown.</p>
+              <p>Live account windows and the sampled YunWu refill cycle. Each provider keeps its own percentage; nothing is combined.</p>
             </header>
             <div data-card-body>
               <div data-provider-heading>
@@ -629,7 +629,7 @@
                 <span id="provider-capacity-updated" data-muted>Waiting for snapshot</span>
               </div>
               <div id="provider-capacity-chart" data-capacity-chart role="group"
-                aria-label="Codex capacity history"></div>
+                aria-label="Provider capacity history"></div>
               <div id="provider-capacity-list" data-capacity-list role="list"></div>
             </div>
           </article>
@@ -749,6 +749,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=reasoning-select-20260510"></script>
+    <script type="module" src="/admin.js?v=provider-capacity-20260803"></script>
   </body>
 </html>

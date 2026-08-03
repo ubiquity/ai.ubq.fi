@@ -110,6 +110,10 @@ Deno.test("local development auth is restricted to loopback HTTP origins", () =>
   const restoreLoopbackTls = setGlobal("location", { protocol: "https:", hostname: "127.0.0.1" });
   assert.equal(isLocalDevelopmentOrigin(), false);
   restoreLoopbackTls();
+
+  const restoreIpv6Loopback = setGlobal("location", { protocol: "http:", hostname: "::1" });
+  assert.equal(isLocalDevelopmentOrigin(), false);
+  restoreIpv6Loopback();
 });
 
 const captureRegisterStartBody = async (

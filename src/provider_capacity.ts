@@ -2,7 +2,7 @@ import { config } from "./config.ts";
 import { type CodexCapacityAccount, getCodexCapacityAccounts } from "./codex.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
-import { getCachedConfiguredYunwuQuotaSnapshot, YUNWU_QUOTA_FRESH_MS, type YunwuQuotaSnapshot } from "./yunwu_quota.ts";
+import { getConfiguredYunwuQuotaSnapshot, YUNWU_QUOTA_FRESH_MS, type YunwuQuotaSnapshot } from "./yunwu_quota.ts";
 import { isRecord } from "./utils.ts";
 
 export const PROVIDER_CAPACITY_SNAPSHOT_KEY = ["uos_ai", "provider_capacity", "v1", "snapshot"] as const;
@@ -59,6 +59,7 @@ export type ProviderCapacitySource =
   }>;
 
 export type ProviderCapacityCodexSource = Extract<ProviderCapacitySource, { source: "codex" }>;
+export type ProviderCapacityYunwuSource = Extract<ProviderCapacitySource, { source: "yunwu" }>;
 
 export type ProviderCapacitySnapshot = Readonly<{
   snapshot_at_ms: number;
@@ -69,7 +70,7 @@ export type ProviderCapacitySnapshot = Readonly<{
 export type ProviderCapacityHistoryPoint = Readonly<{
   bucket_start_at_ms: number;
   sampled_at_ms: number;
-  sources: readonly [ProviderCapacityCodexSource, ProviderCapacityCodexSource];
+  sources: readonly [ProviderCapacityCodexSource, ProviderCapacityCodexSource, ProviderCapacityYunwuSource];
 }>;
 
 export type ProviderCapacityView = Readonly<
@@ -165,7 +166,7 @@ const unavailableCodexSource = (slot: 1 | 2, snapshotAtMs: number): ProviderCapa
   windows: emptyWindows(),
 });
 
-const unavailableYunwuSource = (snapshotAtMs: number): ProviderCapacitySource => ({
+const unavailableYunwuSource = (snapshotAtMs: number): ProviderCapacityYunwuSource => ({
   source: "yunwu",
   label: "YunWu fallback",
   state: "unavailable",
@@ -287,7 +288,14 @@ const captureProviderCapacitySnapshot = async (
       ? await fetchCodexCapacitySource(account, snapshotAtMs, fetcher, signal)
       : unavailableCodexSource(slot, snapshotAtMs);
   }));
-  const yunwuPromise = getCachedConfiguredYunwuQuotaSnapshot({ kv }).catch(() => null);
+  const yunwuPromise = getConfiguredYunwuQuotaSnapshot({
+    kv,
+    fetcher,
+    now: () => snapshotAtMs,
+    signal,
+    forceRefresh: true,
+    createLeaseOwner: options.createLeaseOwner,
+  }).catch(() => null);
   const [codexSources, yunwuSnapshot] = await Promise.all([codexPromise, yunwuPromise]);
 
   return {
@@ -341,7 +349,7 @@ const readStoredCodexSource = (
 const readStoredYunwuSource = (
   value: unknown,
   snapshotAtMs: number,
-): ProviderCapacitySource | null => {
+): ProviderCapacityYunwuSource | null => {
   if (!isRecord(value) || value.source !== "yunwu") return null;
   const state = capacityState(value.state);
   const observed = value.source_observed_at_ms;
@@ -416,15 +424,16 @@ const readStoredHistoryPoint = (value: unknown): StoredHistoryPoint | null => {
   if (!Array.isArray(value.sources)) return null;
   const sourceOne = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 1);
   const sourceTwo = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 2);
-  const sources = [
-    readStoredCodexSource(sourceOne, value.sampled_at_ms),
-    readStoredCodexSource(sourceTwo, value.sampled_at_ms),
-  ];
-  if (!sources[0] || !sources[1]) return null;
+  const sourceYunwu = value.sources.find((source) => isRecord(source) && source.source === "yunwu");
+  const codexSourceOne = readStoredCodexSource(sourceOne, value.sampled_at_ms);
+  const codexSourceTwo = readStoredCodexSource(sourceTwo, value.sampled_at_ms);
+  if (!codexSourceOne || !codexSourceTwo) return null;
+  const yunwuSource = readStoredYunwuSource(sourceYunwu, value.sampled_at_ms) ??
+    unavailableYunwuSource(value.sampled_at_ms);
   return {
     bucket_start_at_ms: value.bucket_start_at_ms,
     sampled_at_ms: value.sampled_at_ms,
-    sources: [sources[0], sources[1]],
+    sources: [codexSourceOne, codexSourceTwo, yunwuSource],
   };
 };
 
@@ -433,18 +442,27 @@ export const providerCapacityHistoryKey = (bucketStartAtMs: number): Deno.KvKey 
   bucketStartAtMs,
 ];
 
+// A live refresh can observe a banked reset inside the same 15-minute bucket
+// as the exhausted sample. Keep that earlier point under a sibling key so the
+// chart can show the zero-to-refill transition without turning every refresh
+// into an unbounded history stream.
+const providerCapacityHistoryTransitionKey = (
+  bucketStartAtMs: number,
+  previousSampledAtMs: number,
+): Deno.KvKey => [
+  ...PROVIDER_CAPACITY_HISTORY_KEY_PREFIX,
+  bucketStartAtMs,
+  "transition",
+  previousSampledAtMs,
+];
+
 const readCapacityHistory = async (kv: Deno.Kv, nowMs: number): Promise<ProviderCapacityHistoryPoint[]> => {
   const cutoffMs = Math.max(0, nowMs - PROVIDER_CAPACITY_HISTORY_RETENTION_MS);
   const newestBucketMs = Math.floor(nowMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
   const points: ProviderCapacityHistoryPoint[] = [];
   try {
-    for await (
-      const entry of kv.list<unknown>({
-        start: providerCapacityHistoryKey(cutoffMs),
-        end: providerCapacityHistoryKey(newestBucketMs + 1),
-      })
-    ) {
-      const keyBucket = entry.key[entry.key.length - 1];
+    for await (const entry of kv.list<unknown>({ prefix: PROVIDER_CAPACITY_HISTORY_KEY_PREFIX })) {
+      const keyBucket = entry.key[PROVIDER_CAPACITY_HISTORY_KEY_PREFIX.length];
       if (typeof keyBucket !== "number" || keyBucket < cutoffMs || keyBucket > newestBucketMs) continue;
       const point = readStoredHistoryPoint(entry.value);
       if (!point || point.bucket_start_at_ms !== keyBucket) continue;
@@ -453,7 +471,9 @@ const readCapacityHistory = async (kv: Deno.Kv, nowMs: number): Promise<Provider
   } catch {
     return [];
   }
-  return points.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
+  return points.sort((left, right) =>
+    left.bucket_start_at_ms - right.bucket_start_at_ms || left.sampled_at_ms - right.sampled_at_ms
+  );
 };
 
 const historyBucketStartAtMs = (snapshotAtMs: number): number =>
@@ -464,10 +484,14 @@ const historyPointForSnapshot = (snapshot: ProviderCapacitySnapshot): ProviderCa
     const source = snapshot.sources.find((candidate) => candidate.source === "codex" && candidate.slot === slot);
     return source?.source === "codex" ? source : unavailableCodexSource(slot, snapshot.snapshot_at_ms);
   };
+  const sourceForYunwu = (): ProviderCapacityYunwuSource => {
+    const source = snapshot.sources.find((candidate) => candidate.source === "yunwu");
+    return source?.source === "yunwu" ? source : unavailableYunwuSource(snapshot.snapshot_at_ms);
+  };
   return {
     bucket_start_at_ms: historyBucketStartAtMs(snapshot.snapshot_at_ms),
     sampled_at_ms: snapshot.snapshot_at_ms,
-    sources: [sourceForSlot(1), sourceForSlot(2)],
+    sources: [sourceForSlot(1), sourceForSlot(2), sourceForYunwu()],
   };
 };
 
@@ -475,10 +499,12 @@ const mergeHistoryPoints = (
   points: readonly ProviderCapacityHistoryPoint[],
   addition: ProviderCapacityHistoryPoint,
 ): ProviderCapacityHistoryPoint[] => {
-  const byBucket = new Map<number, ProviderCapacityHistoryPoint>();
-  for (const point of points) byBucket.set(point.bucket_start_at_ms, point);
-  byBucket.set(addition.bucket_start_at_ms, addition);
-  return [...byBucket.values()].sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
+  const bySample = new Map<string, ProviderCapacityHistoryPoint>();
+  for (const point of points) bySample.set(`${point.bucket_start_at_ms}:${point.sampled_at_ms}`, point);
+  bySample.set(`${addition.bucket_start_at_ms}:${addition.sampled_at_ms}`, addition);
+  return [...bySample.values()].sort((left, right) =>
+    left.bucket_start_at_ms - right.bucket_start_at_ms || left.sampled_at_ms - right.sampled_at_ms
+  );
 };
 
 const staleProviderSnapshot = (snapshot: ProviderCapacitySnapshot, nowMs: number): ProviderCapacitySnapshot => {
@@ -562,15 +588,64 @@ const releaseCapacityLease = async (kv: Deno.Kv, owner: string): Promise<void> =
   }
 };
 
+const codexResetTransitionObserved = (
+  previous: ProviderCapacityHistoryPoint | null,
+  current: ProviderCapacityHistoryPoint,
+): boolean => {
+  if (!previous || previous.sampled_at_ms >= current.sampled_at_ms) return false;
+  for (const slot of [1, 2] as const) {
+    const previousSource = previous.sources.find(
+      (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot,
+    );
+    const currentSource = current.sources.find(
+      (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot,
+    );
+    if (
+      !previousSource || !currentSource || previousSource.state === "unavailable" ||
+      currentSource.state === "unavailable"
+    ) {
+      continue;
+    }
+    for (const windowKey of ["primary", "secondary"] as const) {
+      const previousWindow = previousSource.windows[windowKey];
+      const currentWindow = currentSource.windows[windowKey];
+      if (
+        previousWindow?.used_percent !== null && currentWindow?.used_percent !== null &&
+        typeof previousWindow?.used_percent === "number" && typeof currentWindow?.used_percent === "number" &&
+        previousWindow.used_percent >= 90 && currentWindow.used_percent <= 20 &&
+        previousWindow.reset_at_ms === currentWindow.reset_at_ms
+      ) return true;
+    }
+  }
+  return false;
+};
+
 const persistCapacitySnapshot = async (
   kv: Deno.Kv,
   leaseEntry: Deno.KvEntryMaybe<CapacityLease>,
   snapshot: ProviderCapacitySnapshot,
 ): Promise<boolean> => {
   const history = historyPointForSnapshot(snapshot);
-  const committed = await kv.atomic()
+  let previousHistory: ProviderCapacityHistoryPoint | null = null;
+  try {
+    previousHistory = readStoredHistoryPoint(
+      (await kv.get<unknown>(providerCapacityHistoryKey(history.bucket_start_at_ms))).value,
+    );
+  } catch {
+    // A missing prior point should not prevent the live snapshot from being stored.
+  }
+  const preserveTransition = codexResetTransitionObserved(previousHistory, history);
+  let operation = kv.atomic()
     .check(leaseEntry)
-    .set(PROVIDER_CAPACITY_SNAPSHOT_KEY, snapshot, { expireIn: PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS })
+    .set(PROVIDER_CAPACITY_SNAPSHOT_KEY, snapshot, { expireIn: PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS });
+  if (preserveTransition && previousHistory) {
+    operation = operation.set(
+      providerCapacityHistoryTransitionKey(history.bucket_start_at_ms, previousHistory.sampled_at_ms),
+      previousHistory,
+      { expireIn: PROVIDER_CAPACITY_HISTORY_RETENTION_MS },
+    );
+  }
+  const committed = await operation
     .set(providerCapacityHistoryKey(history.bucket_start_at_ms), history, {
       expireIn: PROVIDER_CAPACITY_HISTORY_RETENTION_MS,
     })

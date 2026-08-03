@@ -381,6 +381,22 @@ Deno.test("YunWu quota cache serves fresh state without an upstream request", as
   assert.equal(snapshot?.remaining_percent, 100);
 });
 
+Deno.test("YunWu quota forced refresh bypasses a fresh cached state", async () => {
+  const kv = new MemoryKv();
+  const now = 11_000_000;
+  kv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now - 1_000 }));
+  const calls: Array<{ url: string; headers: Headers }> = [];
+  const snapshot = await getYunwuQuotaSnapshot(credentials, {
+    kv: kv as unknown as Deno.Kv,
+    now: () => now,
+    fetcher: yunwuFetcher(calls),
+    forceRefresh: true,
+    createLeaseOwner: () => "forced-refresh-owner",
+  });
+  assert.equal(snapshot?.cache_state, "refreshed");
+  assert.equal(calls.length, 3);
+});
+
 Deno.test("YunWu quota cache marks an invalidated observation stale", async () => {
   const kv = new MemoryKv();
   const now = 15_000_000;

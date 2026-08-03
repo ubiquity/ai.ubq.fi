@@ -92,6 +92,7 @@ export type GetYunwuQuotaSnapshotOptions = Readonly<{
   fetcher?: YunwuFetch;
   now?: () => number;
   signal?: AbortSignal;
+  forceRefresh?: boolean;
   createLeaseOwner?: () => string;
 }>;
 
@@ -363,7 +364,7 @@ const loadRetainedState = async (
 };
 
 const loadInvalidation = (kv: Deno.Kv): Promise<Deno.KvEntryMaybe<unknown>> =>
-  kv.get<unknown>(YUNWU_QUOTA_INVALIDATION_KEY);
+  Promise.resolve(kv.get<unknown>(YUNWU_QUOTA_INVALIDATION_KEY));
 
 const quotaInvalidationValue = (value: unknown): QuotaInvalidation | null => isQuotaInvalidation(value) ? value : null;
 
@@ -427,7 +428,12 @@ export const getYunwuQuotaSnapshot = async (
   const cachedInvalidated = cached
     ? isInvalidated(cached, quotaInvalidationValue(cachedInvalidationEntry?.value))
     : false;
-  if (cached && !cachedInvalidated && nowMs - cached.observed_at_ms < YUNWU_QUOTA_FRESH_MS) {
+  if (
+    cached &&
+    !options.forceRefresh &&
+    !cachedInvalidated &&
+    nowMs - cached.observed_at_ms < YUNWU_QUOTA_FRESH_MS
+  ) {
     return toSnapshot(cached, "fresh");
   }
 

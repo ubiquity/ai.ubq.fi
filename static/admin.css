@@ -505,6 +505,13 @@ body[data-page="admin"] [data-capacity-series="account-2-secondary"] {
   background: #c5a6ff;
 }
 
+body[data-page="admin"] [data-capacity-series="yunwu"] {
+  stroke: #66d9a8;
+  fill: #66d9a8;
+  background: #66d9a8;
+  stroke-dasharray: 5 3;
+}
+
 body[data-page="admin"] [data-capacity-reticule] {
   stroke: rgba(255, 255, 255, 0.42);
   stroke-dasharray: 5 5;

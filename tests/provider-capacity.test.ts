@@ -157,13 +157,66 @@ const codexUsageBody = (primaryUsed: number, secondaryUsed: number) => ({
 const createFetcher = (
   calls: Array<{ account: string | null; authorization: string | null; url: string }>,
   failureAccount: string | null = null,
+  yunwu: Readonly<{
+    balance_quota?: number;
+    used_quota?: number;
+    quota_per_unit?: number;
+    refill_id?: string;
+    refill_amount?: number;
+    refill_completed_at?: number;
+  }> = {},
+  codexUsage: ((account: string | null) => readonly [number, number]) | null = null,
 ) =>
 (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const headers = new Headers(init?.headers);
+  const url = String(input);
   const account = headers.get("ChatGPT-Account-ID");
-  calls.push({ account, authorization: headers.get("Authorization"), url: String(input) });
+  calls.push({ account, authorization: headers.get("Authorization"), url });
+  if (url === "https://yunwu.ai/api/user/self") {
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            quota: yunwu.balance_quota ?? 750,
+            used_quota: yunwu.used_quota ?? 250,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  }
+  if (url === "https://yunwu.ai/api/user/topuprecords?page=1&page_size=10") {
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            records: [{
+              id: yunwu.refill_id ?? "refill-one",
+              amount: yunwu.refill_amount ?? 10,
+              complete_time: yunwu.refill_completed_at ?? (nowMs - 5_000) / 1_000,
+              status: "success",
+            }],
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  }
+  if (url === "https://yunwu.ai/api/status") {
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: { quota_per_unit: yunwu.quota_per_unit ?? 100 },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  }
   if (account === failureAccount) return Promise.resolve(new Response("upstream-secret-body", { status: 503 }));
-  const used = account === "account-one" ? [12.5, 38] : [67, 81.25];
+  const used = codexUsage?.(account) ?? (account === "account-one" ? [12.5, 38] : [67, 81.25]);
   return Promise.resolve(
     new Response(JSON.stringify(codexUsageBody(used[0], used[1])), {
       status: 200,
@@ -210,16 +263,19 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   const calls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
   const live = await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher(calls), now: () => nowMs });
   assert.equal(live.cache_state, "live");
-  assert.equal(calls.length, 2);
-  assert.deepEqual(calls.map((call) => call.account).sort(), ["account-one", "account-two"]);
-  assert.deepEqual(calls.map((call) => call.authorization).sort(), ["Bearer token-one", "Bearer token-two"]);
-  assert.ok(calls.every((call) => call.url.endsWith("/backend-api/wham/usage")));
+  assert.equal(calls.length, 5);
+  const codexCalls = calls.filter((call) => call.url.endsWith("/backend-api/wham/usage"));
+  const yunwuCalls = calls.filter((call) => call.url.startsWith("https://yunwu.ai/api/"));
+  assert.equal(codexCalls.length, 2);
+  assert.equal(yunwuCalls.length, 3);
+  assert.deepEqual(codexCalls.map((call) => call.account).sort(), ["account-one", "account-two"]);
+  assert.deepEqual(codexCalls.map((call) => call.authorization).sort(), ["Bearer token-one", "Bearer token-two"]);
   assert.equal(live.history.length, 1);
   assert.equal(
     live.history[0]?.bucket_start_at_ms,
     Math.floor(nowMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
   );
-  assert.equal(live.history[0]?.sources.length, 2);
+  assert.equal(live.history[0]?.sources.length, 3);
   assert.equal(live.history[0]?.sources[0]?.windows.primary?.limit_window_seconds, 10_800);
   assert.equal(live.history[0]?.sources[0]?.windows.primary?.used_percent, 12.5);
   assert.equal(live.history[0]?.sources[1]?.windows.secondary?.reset_at_ms, 1_800_020_000_000);
@@ -231,7 +287,7 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
     fetcher: createFetcher(callsInSameBucket),
     now: () => nowMs + 1_000,
   });
-  assert.equal(callsInSameBucket.length, 2);
+  assert.equal(callsInSameBucket.length, 5);
   assert.equal(second.history.length, 1);
   const historyKeyCount = [...kvStore.keys()]
     .map((key) => JSON.parse(key) as Deno.KvKey)
@@ -245,6 +301,56 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   for (const secret of ["account-one", "account-two", "token-one", "token-two", "refresh-one", "must-not-escape"]) {
     assert.equal(serialized.includes(secret), false, secret);
   }
+});
+
+Deno.test("sampler refresh observes a YunWu top-up and raises its refill series", async () => {
+  seed();
+  const initial = await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher: createFetcher([]),
+    now: () => nowMs,
+  });
+  assert.equal(initial.history[0]?.sources[2]?.wallet.refill_cycle_remaining_percent, 75);
+
+  const topupCalls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
+  const topup = await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher: createFetcher(topupCalls, null, {
+      balance_quota: 1_750,
+      used_quota: 250,
+      refill_id: "refill-two",
+      refill_amount: 10,
+      refill_completed_at: (nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS - 1_000) / 1_000,
+    }),
+    now: () => nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
+  });
+  const current = topup.sources.find((source) => source.source === "yunwu");
+  assert.equal(current?.state, "available");
+  assert.equal(current?.wallet.refill_cycle_remaining_percent, 100);
+  assert.equal(topup.history.length, 2);
+  assert.equal(topup.history[0]?.sources[2]?.wallet.refill_cycle_remaining_percent, 75);
+  assert.equal(topup.history[1]?.sources[2]?.wallet.refill_cycle_remaining_percent, 100);
+  assert.equal(topupCalls.length, 5);
+});
+
+Deno.test("sampler preserves an exhaustion point when a reset refills the same bucket", async () => {
+  seed();
+  let phase = 0;
+  const calls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
+  const fetcher = createFetcher(calls, null, {}, () => phase === 0 ? [100, 100] : [0, 0]);
+  const exhausted = await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs });
+  phase = 1;
+  const refilled = await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher,
+    now: () => nowMs + 1_000,
+  });
+  assert.equal(exhausted.history.length, 1);
+  assert.equal(refilled.history.length, 2);
+  assert.equal(refilled.history[0]?.sampled_at_ms, nowMs);
+  assert.equal(refilled.history[0]?.sources[0]?.windows.primary?.used_percent, 100);
+  assert.equal(refilled.history[1]?.sampled_at_ms, nowMs + 1_000);
+  assert.equal(refilled.history[1]?.sources[0]?.windows.primary?.used_percent, 0);
 });
 
 Deno.test("persisted history keeps seven days and filters older buckets", async () => {
@@ -284,7 +390,7 @@ Deno.test("capacity endpoint reads persisted state by default and probes only fo
   );
   assert.equal(live.status, 200);
   assert.equal((await live.json() as { cache_state?: string }).cache_state, "live");
-  assert.equal(calls, 2);
+  assert.equal(calls, 5);
 
   const persisted = await handleProviderCapacity(
     new Request("https://ai.ubq.fi/admin/providers/capacity"),
@@ -297,7 +403,7 @@ Deno.test("capacity endpoint reads persisted state by default and probes only fo
   const persistedBody = await persisted.json() as { cache_state?: string; history?: unknown[] };
   assert.equal(persistedBody.cache_state, "persisted");
   assert.equal(persistedBody.history?.length, 1);
-  assert.equal(calls, 2);
+  assert.equal(calls, 5);
 });
 
 Deno.test("concurrent live refreshes coalesce through the durable lease", async () => {
@@ -307,15 +413,11 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
   const fetchReleased = new Promise<void>((resolve) => {
     releaseFetch = () => resolve();
   });
+  const baseFetcher = createFetcher(calls);
   const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const headers = new Headers(init?.headers);
-    calls.push({
-      account: headers.get("ChatGPT-Account-ID"),
-      authorization: headers.get("Authorization"),
-      url: String(input),
-    });
+    const response = await baseFetcher(input, init);
     await fetchReleased;
-    return new Response(JSON.stringify(codexUsageBody(10, 20)), { status: 200 });
+    return response;
   };
 
   const firstPromise = refreshProviderCapacity({
@@ -325,8 +427,8 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
     createLeaseOwner: () => "sampler",
   });
   const waitDeadline = Date.now() + 2_000;
-  while (calls.length < 2) {
-    assert.ok(Date.now() < waitDeadline, "first refresh did not issue two upstream calls");
+  while (calls.length < 5) {
+    assert.ok(Date.now() < waitDeadline, "first refresh did not issue all provider calls");
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   const secondPromise = refreshProviderCapacity({
@@ -337,7 +439,7 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
   });
   releaseFetch();
   const [first, second] = await Promise.all([firstPromise, secondPromise]);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 5);
   assert.equal(first.history.length, 1);
   assert.equal(second.history.length, 1);
   assert.equal(kvStore.get(keyToString(PROVIDER_CAPACITY_LEASE_KEY)), undefined);
