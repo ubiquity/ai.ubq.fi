@@ -3,14 +3,17 @@ import { setKvForTest } from "../src/kv.ts";
 import {
   claimCodexRoutingProbe,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
+  CODEX_HALF_OPEN_LEASE_MS,
   codexCredentialVersion,
   getCodexQuotaBlockFence,
   markCodexCredentialInvalid,
   markCodexQuotaBlocked,
+  markCodexRecoveryProbeQuotaBlocked,
   markCodexSuccess,
   parseCodexAccountRoutingState,
   readCodex429,
   recheckCodexRoutingSlot,
+  reconcileCodexQuotaAfterStaleVerifiedReset,
   reconcileCodexQuotaAfterVerifiedReset,
   reconcileCodexRoutingAccount,
   resetCodexAccountRoutingForTest,
@@ -304,6 +307,206 @@ Deno.test("exact future body resets_at durably identifies the Codex quota window
       })),
       [{ quotaResetAtMs: resetAtMs, routingGeneration: state!.slots[0]!.generation }],
     );
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("an ordinary ambiguous deadline does not use the bounded recovery-probe lease", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const firstResetAtMs = now + 60_000;
+    const conflictingResetAtMs = now + 120_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(
+        JSON.stringify({
+          error: { type: "usage_limit_reached", resets_at: Math.floor(firstResetAtMs / 1_000) },
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": new Date(conflictingResetAtMs).toUTCString(),
+          },
+        },
+      ),
+      now,
+    );
+    const conflicted = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(conflicted?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(conflicted?.slots[0]?.banked_reset_recovery_probe_pending, false);
+
+    const halfOpen = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, conflictingResetAtMs + 1);
+    assert.equal(halfOpen.kind, "eligible");
+    if (halfOpen.kind !== "eligible") return;
+    const claimed = await claimCodexRoutingProbe(singlePool, halfOpen.accounts[0]!, conflictingResetAtMs + 1);
+    assert.ok(claimed);
+    if (!claimed) return;
+    const longResetAtMs = conflictingResetAtMs + 120_000;
+    await markCodexQuotaBlocked(
+      claimed,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(longResetAtMs).toUTCString() },
+      }),
+      conflictingResetAtMs + 1,
+    );
+    const afterProbe = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(afterProbe?.slots[0]?.quota_blocked_until_ms, longResetAtMs);
+    assert.equal(afterProbe?.slots[0]?.banked_reset_recovery_probe_pending, false);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("a failed verified-reset probe uses a bounded retry instead of the old quota deadline", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const resetAtMs = now + 60_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
+      }),
+      now,
+    );
+    const beforeReset = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    const routingGeneration = beforeReset?.slots[0]?.generation;
+    assert.equal(typeof routingGeneration, "number");
+
+    const recovery = await reconcileCodexQuotaAfterVerifiedReset(initial.accounts[0]!, {
+      quotaResetAtMs: resetAtMs,
+      routingGeneration: routingGeneration as number,
+    });
+    assert.ok(recovery);
+
+    const failedProbe = await markCodexRecoveryProbeQuotaBlocked(
+      recovery!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
+      }),
+      now,
+    );
+    assert.equal(failedProbe.retryAtMs, resetAtMs);
+    const afterProbe = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(afterProbe?.slots[0]?.quota_blocked_until_ms, now + CODEX_HALF_OPEN_LEASE_MS);
+    assert.equal(afterProbe?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(afterProbe?.slots[0]?.banked_reset_recovery_probe_pending, true);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("a non-quota verified-reset probe clears recovery-pending evidence", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const resetAtMs = now + 60_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
+      }),
+      now,
+    );
+    const beforeReset = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    const routingGeneration = beforeReset?.slots[0]?.generation;
+    assert.equal(typeof routingGeneration, "number");
+
+    const recovery = await reconcileCodexQuotaAfterVerifiedReset(initial.accounts[0]!, {
+      quotaResetAtMs: resetAtMs,
+      routingGeneration: routingGeneration as number,
+    });
+    assert.ok(recovery);
+
+    const released = await markCodexRecoveryProbeQuotaBlocked(
+      recovery!,
+      new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+      now,
+    );
+    assert.equal(released.usageLimitReached, false);
+    const afterProbe = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(afterProbe?.slots[0]?.quota_blocked_until_ms, null);
+    assert.equal(afterProbe?.slots[0]?.banked_reset_recovery_probe_pending, false);
+    assert.equal(afterProbe?.slots[0]?.probe_lease, null);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("a stale verified reset opens a fenced probe without spending another reset", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const resetAtMs = now + 60_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
+      }),
+      now,
+    );
+    const beforeStaleRecovery = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.ok(beforeStaleRecovery);
+    const staleGeneration = beforeStaleRecovery!.slots[0]!.generation + 1;
+    await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
+      ...beforeStaleRecovery,
+      slots: [{
+        ...beforeStaleRecovery!.slots[0]!,
+        generation: staleGeneration,
+        banked_reset_generation_ambiguous: true,
+      }],
+    });
+    resetCodexAccountRoutingForTest();
+
+    const recovery = await reconcileCodexQuotaAfterStaleVerifiedReset(initial.accounts[0]!, {
+      quotaResetAtMs: resetAtMs,
+      routingGeneration: staleGeneration,
+    });
+    assert.ok(recovery);
+    assert.equal(recovery?.probeGeneration, staleGeneration + 1);
+    const afterRecovery = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(afterRecovery?.slots[0]?.quota_blocked_until_ms, null);
+    assert.equal(afterRecovery?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.ok(afterRecovery?.slots[0]?.probe_lease);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();

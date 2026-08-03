@@ -2454,6 +2454,99 @@ Deno.test("openai: upstream fetch logs redact provider error payloads", async ()
   }
 });
 
+Deno.test("openai: an all-blocked Codex response continues through paid YunWu fallback", async () => {
+  const authKey = keyToString(["ubq_ai", "codex_auth"]);
+  const previousAuth = kvStore.get(authKey);
+  const previousYunwuKey = Deno.env.get("YUNWU_API_KEY");
+  const keyId = "fallback-gateway-codex-quota";
+  const requestId = "request-gateway-codex-quota";
+  const now = Date.now();
+  const expectedRetryAtMs = Math.floor((now + 60_000) / 1_000) * 1_000;
+  const authPool: CodexAuthPoolState = {
+    accounts: [{
+      access_token: "access-one",
+      refresh_token: "refresh-one",
+      account_id: "account-one",
+      updated_at_ms: now,
+    }, {
+      access_token: "access-two",
+      refresh_token: "refresh-two",
+      account_id: "account-two",
+      updated_at_ms: now,
+    }],
+    updated_at_ms: now,
+  };
+  let yunwuCalls = 0;
+  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  seedPaidFallbackKey(keyId);
+
+  try {
+    await withFetchMock(
+      (url) => {
+        if (url === "https://yunwu.ai/v1/responses") {
+          yunwuCalls += 1;
+          return sseResponse(baseSseChunks());
+        }
+        throw new Error(`Unexpected upstream dispatch in all-blocked routing test: ${url}`);
+      },
+      async () => {
+        kvStore.set(authKey, authPool);
+        resetCodexAuthCacheForTest();
+        const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+        assert.equal(selection.kind, "eligible");
+        if (selection.kind !== "eligible") return;
+        for (const account of selection.accounts) {
+          const blocked = await markCodexQuotaBlocked(
+            account,
+            new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": new Date(now + 60_000).toUTCString(),
+              },
+            }),
+            now,
+          );
+          assert.equal(blocked.usageLimitReached, true);
+          assert.equal(blocked.retryAtMs, expectedRetryAtMs);
+        }
+
+        const response = await handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "use fallback after all Codex circuits open" }),
+          }),
+          {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            requestId,
+            startedAtMs: now,
+          },
+        );
+
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("x-uos-codex-routing-error"), null);
+        assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+        assert.equal(yunwuCalls, 1);
+        assert.equal(
+          kvStore.has(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, requestId])),
+          true,
+        );
+      },
+    );
+  } finally {
+    if (previousAuth === undefined) kvStore.delete(authKey);
+    else kvStore.set(authKey, previousAuth);
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    resetCodexAuthCacheForTest();
+    if (previousYunwuKey === undefined) Deno.env.delete("YUNWU_API_KEY");
+    else Deno.env.set("YUNWU_API_KEY", previousYunwuKey);
+  }
+});
+
 Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
   const originalApiKey = Deno.env.get("YUNWU_API_KEY");
   Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");

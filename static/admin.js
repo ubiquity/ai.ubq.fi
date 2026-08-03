@@ -143,6 +143,7 @@ const yunwuProviderQuotaObserved = mustGet("yunwu-provider-quota-observed");
 const yunwuProviderCache = mustGet("yunwu-provider-cache");
 const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
+const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
 
 let currentKeyView = "active";
@@ -159,6 +160,7 @@ let keysLoadedAt = 0;
 let providersLoading = false;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
+let providerCapacityLoadedForOpen = false;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
 const API_KEY_REQUEST_LOG_STATUS_OK = "OK";
@@ -923,6 +925,241 @@ const unavailableCapacitySource = (source, slot = null) =>
       windows: { primary: null, secondary: null },
     };
 
+const CAPACITY_CHART_SVG_NS = "http://www.w3.org/2000/svg";
+const CAPACITY_CHART_DAYS = 7;
+const CAPACITY_CHART_DAY_MS = 24 * 60 * 60 * 1_000;
+const CAPACITY_CHART_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+});
+const CAPACITY_CHART_SERIES = [
+  { key: "account-1-primary", label: "Account 1 primary", slot: 1, windowKey: "primary" },
+  { key: "account-1-secondary", label: "Account 1 secondary", slot: 1, windowKey: "secondary" },
+  { key: "account-2-primary", label: "Account 2 primary", slot: 2, windowKey: "primary" },
+  { key: "account-2-secondary", label: "Account 2 secondary", slot: 2, windowKey: "secondary" },
+];
+
+const capacityChartSvgElement = (name, attributes = {}) => {
+  const element = document.createElementNS(CAPACITY_CHART_SVG_NS, name);
+  for (const [attribute, value] of Object.entries(attributes)) element.setAttribute(attribute, String(value));
+  return element;
+};
+
+const clampCapacityChartPercent = (value) => Math.max(0, Math.min(100, value));
+
+const capacityChartDayLabel = (timestamp) => CAPACITY_CHART_DAY_FORMATTER.format(new Date(timestamp));
+
+const capacityChartWindow = (window) => {
+  const durationSeconds = window?.limit_window_seconds;
+  const resetAtMs = window?.reset_at_ms;
+  if (
+    typeof durationSeconds !== "number" ||
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds <= 0 ||
+    typeof resetAtMs !== "number" ||
+    !Number.isFinite(resetAtMs)
+  ) return null;
+  const durationMs = durationSeconds * 1_000;
+  const startAtMs = resetAtMs - durationMs;
+  if (!Number.isFinite(durationMs) || !Number.isFinite(startAtMs)) return null;
+  return { startAtMs, resetAtMs, durationMs };
+};
+
+const capacityChartPoint = (sample, series, activeInterval = null, chartWindow = null) => {
+  const source = Array.isArray(sample?.sources)
+    ? sample.sources.find((candidate) => candidate?.source === "codex" && candidate.slot === series.slot)
+    : null;
+  const window = source?.windows?.[series.windowKey];
+  const interval = activeInterval ?? capacityChartWindow(window);
+  const displayInterval = chartWindow ?? interval;
+  const usedPercent = window?.used_percent;
+  const sampledAtMs = sample?.sampled_at_ms;
+  if (
+    source?.state === "unavailable" ||
+    !interval ||
+    !displayInterval ||
+    typeof usedPercent !== "number" ||
+    !Number.isFinite(usedPercent) ||
+    typeof sampledAtMs !== "number" ||
+    !Number.isFinite(sampledAtMs) ||
+    sampledAtMs < interval.startAtMs ||
+    sampledAtMs > interval.resetAtMs ||
+    sampledAtMs < displayInterval.startAtMs ||
+    sampledAtMs > displayInterval.resetAtMs
+  ) return null;
+  return {
+    elapsedPercent: clampCapacityChartPercent(
+      ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100,
+    ),
+    remainingPercent: clampCapacityChartPercent(100 - usedPercent),
+  };
+};
+
+const capacityChartPath = (points, plot) => {
+  const left = plot.left;
+  const top = plot.top;
+  let path = "";
+  let cursorX = left;
+  let connected = false;
+  for (const point of points) {
+    if (!point) {
+      connected = false;
+      cursorX = left;
+      continue;
+    }
+    const x = plot.left + (point.elapsedPercent / 100) * plot.width;
+    const y = plot.top + ((100 - point.remainingPercent) / 100) * plot.height;
+    if (x < cursorX) continue;
+    if (!connected) path += `M${left.toFixed(2)} ${top.toFixed(2)}`;
+    path += ` H${x.toFixed(2)} V${y.toFixed(2)}`;
+    cursorX = x;
+    connected = true;
+  }
+  return path;
+};
+
+const capacityChartReferenceWindow = (sources, nowMs) => {
+  const weeklyWindow = sources
+    .filter((source) => source?.source === "codex")
+    .map((source) => capacityChartWindow(source.windows?.secondary))
+    .find((interval) => interval && interval.durationMs >= CAPACITY_CHART_DAYS * CAPACITY_CHART_DAY_MS);
+  if (weeklyWindow) return weeklyWindow;
+  return {
+    startAtMs: nowMs - CAPACITY_CHART_DAYS * CAPACITY_CHART_DAY_MS,
+    resetAtMs: nowMs,
+    durationMs: CAPACITY_CHART_DAYS * CAPACITY_CHART_DAY_MS,
+  };
+};
+
+const renderProviderCapacityChart = (snapshot, sources) => {
+  const history = Array.isArray(snapshot?.history) ? snapshot.history : [];
+  const width = 760;
+  const height = 330;
+  const plot = { left: 48, top: 24, width: 680, height: 248 };
+  const nowMs = Date.now();
+  const chartWindow = capacityChartReferenceWindow(sources, nowMs);
+  const chartSectionMs = chartWindow.durationMs / CAPACITY_CHART_DAYS;
+  const figure = document.createElement("figure");
+  figure.dataset.capacityChartFigure = "";
+  const title = document.createElement("h3");
+  title.textContent = "Codex capacity history";
+  figure.appendChild(title);
+
+  const svg = capacityChartSvgElement("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    role: "img",
+    "aria-label": "Codex account capacity history across the active reset interval",
+    focusable: "false",
+  });
+  svg.dataset.capacityChartSvg = "";
+
+  for (const remaining of [100, 75, 50, 25, 0]) {
+    const y = plot.top + ((100 - remaining) / 100) * plot.height;
+    const grid = capacityChartSvgElement("line", {
+      x1: plot.left,
+      y1: y,
+      x2: plot.left + plot.width,
+      y2: y,
+    });
+    grid.dataset.capacityChartGrid = "";
+    svg.appendChild(grid);
+    const label = capacityChartSvgElement("text", { x: plot.left - 8, y: y + 4, "text-anchor": "end" });
+    label.textContent = `${remaining}%`;
+    label.dataset.capacityChartAxisLabel = "y";
+    svg.appendChild(label);
+  }
+  for (let day = 0; day <= CAPACITY_CHART_DAYS; day += 1) {
+    const x = plot.left + (day / CAPACITY_CHART_DAYS) * plot.width;
+    const tick = capacityChartSvgElement("line", { x1: x, y1: plot.top, x2: x, y2: plot.top + plot.height });
+    tick.dataset.capacityChartGrid = "";
+    svg.appendChild(tick);
+    const label = capacityChartSvgElement("text", {
+      x,
+      y: plot.top + plot.height + 22,
+      "text-anchor": day === 0 ? "start" : day === CAPACITY_CHART_DAYS ? "end" : "middle",
+    });
+    label.textContent = capacityChartDayLabel(chartWindow.startAtMs + day * chartSectionMs);
+    label.dataset.capacityChartAxisLabel = "x";
+    svg.appendChild(label);
+  }
+
+  const xAxisTitle = capacityChartSvgElement("text", {
+    x: plot.left + plot.width / 2,
+    y: height - 8,
+    "text-anchor": "middle",
+  });
+  const chartWindowDays = Math.round(chartWindow.durationMs / CAPACITY_CHART_DAY_MS);
+  xAxisTitle.textContent = `Reset interval · ${chartWindowDays} day${chartWindowDays === 1 ? "" : "s"}`;
+  xAxisTitle.dataset.capacityChartAxisTitle = "x";
+  svg.appendChild(xAxisTitle);
+  const yAxisTitle = capacityChartSvgElement("text", {
+    x: 12,
+    y: plot.top + plot.height / 2,
+    transform: `rotate(-90 12 ${plot.top + plot.height / 2})`,
+    "text-anchor": "middle",
+  });
+  yAxisTitle.textContent = "Percentage remaining";
+  yAxisTitle.dataset.capacityChartAxisTitle = "y";
+  svg.appendChild(yAxisTitle);
+
+  const reticule = capacityChartSvgElement("line", {
+    x1: plot.left,
+    y1: plot.top,
+    x2: plot.left + plot.width,
+    y2: plot.top + plot.height,
+  });
+  reticule.dataset.capacityReticule = "stay-on-track";
+  reticule.setAttribute("aria-label", "Stay-on-track capacity guide");
+  svg.appendChild(reticule);
+
+  const currentSample = { sampled_at_ms: nowMs, sources };
+  for (const series of CAPACITY_CHART_SERIES) {
+    const source = sources.find((candidate) => candidate?.source === "codex" && candidate.slot === series.slot);
+    const activeInterval = capacityChartWindow(source?.windows?.[series.windowKey]);
+    const points = activeInterval
+      ? history.map((sample) => capacityChartPoint(sample, series, activeInterval, chartWindow))
+      : [];
+    const currentPoint = activeInterval ? capacityChartPoint(currentSample, series, activeInterval, chartWindow) : null;
+    const chartPoints = currentPoint ? [...points, currentPoint] : points;
+    const path = capacityChartSvgElement("path", {
+      d: capacityChartPath(chartPoints, plot),
+      fill: "none",
+    });
+    path.style.fill = "none";
+    path.dataset.capacitySeries = series.key;
+    path.setAttribute("aria-label", series.label);
+    svg.appendChild(path);
+  }
+
+  figure.appendChild(svg);
+  const legend = document.createElement("div");
+  legend.dataset.capacityLegend = "";
+  for (const series of CAPACITY_CHART_SERIES) {
+    const item = document.createElement("span");
+    item.dataset.capacityLegendItem = series.key;
+    const swatch = document.createElement("span");
+    swatch.dataset.capacityLegendSwatch = series.key;
+    swatch.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = series.label;
+    item.append(swatch, label);
+    legend.appendChild(item);
+  }
+  figure.appendChild(legend);
+  const caption = document.createElement("figcaption");
+  caption.dataset.capacityChartMeta = "";
+  const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
+  const stale = sources.some((source) => source?.source === "codex" && source?.state === "stale");
+  caption.textContent = samples.length
+    ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
+      formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
+    } · ${samples.length} sample${samples.length === 1 ? "" : "s"}${stale ? " · Codex samples stale" : ""}`
+    : `No retained samples yet · current reset window${stale ? " · Codex samples stale" : ""}`;
+  figure.appendChild(caption);
+  providerCapacityChart.replaceChildren(figure);
+};
+
 const renderProviderCapacity = (snapshot) => {
   const rawSources = Array.isArray(snapshot?.sources) ? snapshot.sources : [];
   const sourceForSlot = (slot) =>
@@ -933,6 +1170,7 @@ const renderProviderCapacity = (snapshot) => {
     sourceForSlot(2),
     rawSources.find((source) => source?.source === "yunwu") ?? unavailableCapacitySource("yunwu"),
   ];
+  renderProviderCapacityChart(snapshot, sources);
   providerCapacityList.replaceChildren();
   for (const source of sources) {
     providerCapacityList.appendChild(
@@ -956,17 +1194,17 @@ const renderProviderCapacity = (snapshot) => {
   providerCapacityUpdated.textContent = `Snapshot ${formatCapacityTimestamp(snapshotAt)} · ${cacheState}`;
 };
 
-const loadProviderCapacity = async () => {
-  if (providerCapacityLoading) return;
+const loadProviderCapacity = async ({ live = true } = {}) => {
+  if (providerCapacityLoading) return false;
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !token) {
     setBadge(providerCapacityBadge, "bad", "Sign in required");
-    return;
+    return false;
   }
   providerCapacityLoading = true;
   setBadge(providerCapacityBadge, "unknown", "Loading capacity");
   try {
-    const response = await fetch(apiUrl("/admin/providers/capacity"), {
+    const response = await fetch(apiUrl(`/admin/providers/capacity${live ? "?refresh=live" : ""}`), {
       cache: "no-store",
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -974,19 +1212,20 @@ const loadProviderCapacity = async () => {
     if (!response.ok || !payload) {
       setBadge(providerCapacityBadge, "bad", payload?.error?.message ?? "Capacity unavailable");
       providerCapacityUpdated.textContent = "Snapshot unavailable";
-      return;
+      return false;
     }
     renderProviderCapacity(payload);
+    return true;
   } catch {
     setBadge(providerCapacityBadge, "bad", "Offline");
     providerCapacityUpdated.textContent = "Snapshot unavailable";
+    return false;
   } finally {
     providerCapacityLoading = false;
   }
 };
 
 const loadProviders = async () => {
-  if (currentAdminView === "providers") void loadProviderCapacity();
   if (providersLoading) return;
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !token) {
@@ -4864,6 +5103,14 @@ const loadAdminView = (view) => {
   }
   if (view === "providers") {
     void loadProviders();
+    if (!providerCapacityLoadedForOpen) {
+      providerCapacityLoadedForOpen = true;
+      void loadProviderCapacity({ live: true }).then((loaded) => {
+        if (!loaded) providerCapacityLoadedForOpen = false;
+      });
+    }
+  } else {
+    providerCapacityLoadedForOpen = false;
   }
 };
 
@@ -5730,6 +5977,8 @@ tokenInput.addEventListener("input", () => {
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
   providersLoadedAt = 0;
+  providerCapacityLoadedForOpen = false;
+  providerCapacityChart.replaceChildren();
   clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
@@ -5774,9 +6023,6 @@ tokenInput.addEventListener("input", () => {
   }
   if (currentAdminView === "pubkeys") {
     void ensureKernelPubKeysLoaded();
-  }
-  if (currentAdminView === "providers") {
-    void loadProviders();
   }
 });
 
@@ -5942,6 +6188,8 @@ baseSelect.addEventListener("change", () => {
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
   providersLoadedAt = 0;
+  providerCapacityLoadedForOpen = false;
+  providerCapacityChart.replaceChildren();
   resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
