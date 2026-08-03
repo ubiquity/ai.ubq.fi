@@ -470,7 +470,7 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method === "GET" && path === "/admin/providers/capacity") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
-    return withCors(await handleProviderCapacity());
+    return withCors(await handleProviderCapacity(req));
   }
 
   if (req.method === "POST" && path === "/admin/api-keys") {

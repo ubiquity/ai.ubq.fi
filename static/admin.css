@@ -433,6 +433,133 @@ body[data-page="admin"] [data-capacity-list] {
   gap: 8px;
 }
 
+body[data-page="admin"] [data-capacity-chart] {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+body[data-page="admin"] [data-capacity-chart] h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+body[data-page="admin"] [data-capacity-chart-figure] {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+body[data-page="admin"] [data-capacity-chart-svg] {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 230px;
+  overflow: visible;
+}
+
+body[data-page="admin"] [data-capacity-chart-grid] {
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+}
+
+body[data-page="admin"] [data-capacity-chart-axis-label],
+body[data-page="admin"] [data-capacity-chart-axis-title],
+body[data-page="admin"] [data-capacity-target-label] {
+  fill: var(--muted-2);
+  font-size: 10px;
+}
+
+body[data-page="admin"] [data-capacity-target] {
+  stroke: rgba(255, 255, 255, 0.46);
+  stroke-dasharray: 5 5;
+  stroke-width: 1.5;
+}
+
+body[data-page="admin"] [data-capacity-series] {
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+body[data-page="admin"] [data-capacity-series="account-1-primary"],
+body[data-page="admin"] [data-capacity-sample="account-1-primary"],
+body[data-page="admin"] [data-capacity-legend-swatch="account-1-primary"] {
+  stroke: #ffffff;
+  fill: #ffffff;
+  background: #ffffff;
+}
+
+body[data-page="admin"] [data-capacity-series="account-1-secondary"],
+body[data-page="admin"] [data-capacity-sample="account-1-secondary"],
+body[data-page="admin"] [data-capacity-legend-swatch="account-1-secondary"] {
+  stroke: #a8b0bc;
+  fill: #a8b0bc;
+  background: #a8b0bc;
+}
+
+body[data-page="admin"] [data-capacity-series="account-2-primary"],
+body[data-page="admin"] [data-capacity-sample="account-2-primary"],
+body[data-page="admin"] [data-capacity-legend-swatch="account-2-primary"] {
+  stroke: #8eb7ff;
+  fill: #8eb7ff;
+  background: #8eb7ff;
+}
+
+body[data-page="admin"] [data-capacity-series="account-2-secondary"],
+body[data-page="admin"] [data-capacity-sample="account-2-secondary"],
+body[data-page="admin"] [data-capacity-legend-swatch="account-2-secondary"] {
+  stroke: #c5a6ff;
+  fill: #c5a6ff;
+  background: #c5a6ff;
+}
+
+body[data-page="admin"] [data-capacity-sample] {
+  stroke-width: 0;
+}
+
+body[data-page="admin"] [data-capacity-caret-line] {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-dasharray: 2 4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+body[data-page="admin"] [data-capacity-caret] {
+  fill: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+body[data-page="admin"] [data-capacity-legend] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+body[data-page="admin"] [data-capacity-legend-item] {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+body[data-page="admin"] [data-capacity-legend-swatch] {
+  display: inline-block;
+  width: 18px;
+  height: 2px;
+  border-radius: 999px;
+}
+
+body[data-page="admin"] [data-capacity-chart-meta] {
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 body[data-page="admin"] [data-capacity-source] {
   min-width: 0;
   display: grid;
@@ -556,6 +683,10 @@ body[data-page="admin"] [data-capacity-meta] {
 }
 
 @media (max-width: 900px) {
+  body[data-page="admin"] [data-capacity-chart] {
+    padding: 10px;
+  }
+
   body[data-page="admin"] [data-capacity-list] {
     grid-template-columns: 1fr;
   }

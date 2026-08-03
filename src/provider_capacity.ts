@@ -7,15 +7,18 @@ import { isRecord } from "./utils.ts";
 
 export const PROVIDER_CAPACITY_SNAPSHOT_KEY = ["uos_ai", "provider_capacity", "v1", "snapshot"] as const;
 export const PROVIDER_CAPACITY_LEASE_KEY = ["uos_ai", "provider_capacity", "v1", "lease"] as const;
-export const PROVIDER_CAPACITY_SNAPSHOT_TTL_MS = 25_000;
-export const PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS = 10 * 60_000;
+export const PROVIDER_CAPACITY_HISTORY_KEY_PREFIX = ["uos_ai", "provider_capacity", "v1", "history"] as const;
+export const PROVIDER_CAPACITY_HISTORY_BUCKET_MS = 15 * 60_000;
+export const PROVIDER_CAPACITY_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60_000;
+// Keep this name for callers that used the old snapshot retention constant.
+export const PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS = PROVIDER_CAPACITY_HISTORY_RETENTION_MS;
 export const PROVIDER_CAPACITY_LEASE_MS = 10_000;
 export const PROVIDER_CAPACITY_COLD_WAIT_MS = 2_000;
-export const PROVIDER_CAPACITY_SOURCE_STALE_MS = 5 * 60_000;
+export const PROVIDER_CAPACITY_SOURCE_STALE_MS = 30 * 60_000;
 export const PROVIDER_CAPACITY_CODEX_TIMEOUT_MS = 8_000;
 
 type CapacityState = "available" | "stale" | "unavailable";
-type CapacityCacheState = "fresh" | "refreshed" | "stale";
+export type ProviderCapacityViewState = "live" | "persisted" | "stale" | "unavailable";
 
 export type ProviderCapacityWindow = Readonly<{
   limit_window_seconds: number | null;
@@ -55,12 +58,26 @@ export type ProviderCapacitySource =
     }>;
   }>;
 
+export type ProviderCapacityCodexSource = Extract<ProviderCapacitySource, { source: "codex" }>;
+
 export type ProviderCapacitySnapshot = Readonly<{
   snapshot_at_ms: number;
   stale_after_ms: number;
-  cache_state: CapacityCacheState;
   sources: readonly [ProviderCapacitySource, ProviderCapacitySource, ProviderCapacitySource];
 }>;
+
+export type ProviderCapacityHistoryPoint = Readonly<{
+  bucket_start_at_ms: number;
+  sampled_at_ms: number;
+  sources: readonly [ProviderCapacityCodexSource, ProviderCapacityCodexSource];
+}>;
+
+export type ProviderCapacityView = Readonly<
+  ProviderCapacitySnapshot & {
+    cache_state: ProviderCapacityViewState;
+    history: readonly ProviderCapacityHistoryPoint[];
+  }
+>;
 
 export type ProviderCapacityFetch = (
   input: RequestInfo | URL,
@@ -80,16 +97,22 @@ type CapacityLease = Readonly<{
   lease_until_ms: number;
 }>;
 
+type StoredHistoryPoint = Readonly<{
+  bucket_start_at_ms: number;
+  sampled_at_ms: number;
+  sources: readonly [ProviderCapacityCodexSource, ProviderCapacityCodexSource];
+}>;
+
 const capacityState = (value: unknown): CapacityState | null =>
   value === "available" || value === "stale" || value === "unavailable" ? value : null;
-
-const capacityCacheState = (value: unknown): CapacityCacheState | null =>
-  value === "fresh" || value === "refreshed" || value === "stale" ? value : null;
 
 const safeNow = (now: () => number): number => {
   const value = Math.trunc(now());
   return Number.isSafeInteger(value) && value >= 0 ? value : Date.now();
 };
+
+const isSafeTimestamp = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 const codexUsageUrl = (): string => new URL("/backend-api/wham/usage", config.codexBaseUrl).toString();
 
@@ -136,7 +159,7 @@ const emptyWindows = (): Readonly<{
   secondary: null;
 }> => ({ primary: null, secondary: null });
 
-const unavailableCodexSource = (slot: 1 | 2, snapshotAtMs: number): ProviderCapacitySource => ({
+const unavailableCodexSource = (slot: 1 | 2, snapshotAtMs: number): ProviderCapacityCodexSource => ({
   source: "codex",
   label: "Codex account " + slot,
   slot,
@@ -179,7 +202,7 @@ const fetchCodexCapacitySource = async (
   snapshotAtMs: number,
   fetcher: ProviderCapacityFetch,
   signal: AbortSignal,
-): Promise<ProviderCapacitySource> => {
+): Promise<ProviderCapacityCodexSource> => {
   const headers = new Headers({
     Accept: "application/json",
     Authorization: "Bearer " + account.access_token,
@@ -222,11 +245,10 @@ const fetchCodexCapacitySource = async (
 const yunwuCapacitySource = (
   snapshot: YunwuQuotaSnapshot | null,
   snapshotAtMs: number,
-  nowMs: number,
 ): ProviderCapacitySource => {
   if (!snapshot) return unavailableYunwuSource(snapshotAtMs);
   const sourceObservedAtMs = snapshot.state.observed_at_ms;
-  const stale = snapshot.cache_state === "stale" || nowMs - sourceObservedAtMs >= YUNWU_QUOTA_FRESH_MS;
+  const stale = snapshot.cache_state === "stale" || snapshotAtMs - sourceObservedAtMs >= YUNWU_QUOTA_FRESH_MS;
   return {
     source: "yunwu",
     label: "YunWu fallback",
@@ -260,7 +282,6 @@ const captureProviderCapacitySnapshot = async (
     // Missing or malformed auth is represented by redacted unavailable slots.
   }
 
-  const now = options.now ?? Date.now;
   const fetcher = options.fetcher ?? ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init));
   const timeout = AbortSignal.timeout(PROVIDER_CAPACITY_CODEX_TIMEOUT_MS);
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
@@ -276,8 +297,7 @@ const captureProviderCapacitySnapshot = async (
   return {
     snapshot_at_ms: snapshotAtMs,
     stale_after_ms: PROVIDER_CAPACITY_SOURCE_STALE_MS,
-    cache_state: "refreshed",
-    sources: [codexSources[0], codexSources[1], yunwuCapacitySource(yunwuSnapshot, snapshotAtMs, safeNow(now))],
+    sources: [codexSources[0], codexSources[1], yunwuCapacitySource(yunwuSnapshot, snapshotAtMs)],
   };
 };
 
@@ -285,8 +305,7 @@ const isStoredWindow = (value: unknown): value is ProviderCapacityWindow => {
   if (!isRecord(value)) return false;
   return (value.limit_window_seconds === null || parseWindowSeconds(value.limit_window_seconds) !== null) &&
     (value.used_percent === null || parsePercent(value.used_percent) !== null) &&
-    (value.reset_at_ms === null ||
-      (typeof value.reset_at_ms === "number" && Number.isSafeInteger(value.reset_at_ms) && value.reset_at_ms >= 0));
+    (value.reset_at_ms === null || isSafeTimestamp(value.reset_at_ms));
 };
 
 const readStoredWindow = (value: unknown): ProviderCapacityWindow | null =>
@@ -300,16 +319,13 @@ const readStoredWindow = (value: unknown): ProviderCapacityWindow | null =>
 
 const readStoredCodexSource = (
   value: unknown,
-  snapshotAtMs: number,
-): ProviderCapacitySource | null => {
+  fallbackSnapshotAtMs: number,
+): ProviderCapacityCodexSource | null => {
   if (!isRecord(value) || value.source !== "codex" || (value.slot !== 1 && value.slot !== 2)) return null;
   const state = capacityState(value.state);
   const observed = value.source_observed_at_ms;
-  if (
-    !state || !(observed === null || (typeof observed === "number" && Number.isSafeInteger(observed) && observed >= 0))
-  ) {
-    return null;
-  }
+  const snapshotAtMs = value.snapshot_at_ms === undefined ? fallbackSnapshotAtMs : value.snapshot_at_ms;
+  if (!state || !(observed === null || isSafeTimestamp(observed)) || !isSafeTimestamp(snapshotAtMs)) return null;
   const windows = isRecord(value.windows) ? value.windows : null;
   if (!windows) return null;
   return {
@@ -334,18 +350,11 @@ const readStoredYunwuSource = (
   const state = capacityState(value.state);
   const observed = value.source_observed_at_ms;
   const wallet = isRecord(value.wallet) ? value.wallet : null;
-  if (
-    !state || !wallet ||
-    !(observed === null || (typeof observed === "number" && Number.isSafeInteger(observed) && observed >= 0))
-  ) return null;
+  if (!state || !wallet || !(observed === null || isSafeTimestamp(observed))) return null;
   const optionalNumber = (candidate: unknown): number | null =>
     candidate === null ? null : typeof candidate === "number" && Number.isFinite(candidate) ? candidate : null;
   const optionalTimestamp = (candidate: unknown): number | null =>
-    candidate === null
-      ? null
-      : typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0
-      ? candidate
-      : null;
+    candidate === null ? null : isSafeTimestamp(candidate) ? candidate : null;
   const confidence = wallet.confidence === null || wallet.confidence === "provisional" ||
       wallet.confidence === "refill_observed" || wallet.confidence === "inferred_adjustment"
     ? wallet.confidence
@@ -376,15 +385,8 @@ const readStoredYunwuSource = (
 };
 
 const readStoredSnapshot = (value: unknown): ProviderCapacitySnapshot | null => {
-  if (!isRecord(value)) return null;
+  if (!isRecord(value) || !isSafeTimestamp(value.snapshot_at_ms) || !Array.isArray(value.sources)) return null;
   const snapshotAtMs = value.snapshot_at_ms;
-  const staleAfterMs = value.stale_after_ms;
-  const cacheState = capacityCacheState(value.cache_state);
-  if (
-    !cacheState || typeof snapshotAtMs !== "number" || !Number.isSafeInteger(snapshotAtMs) || snapshotAtMs < 0 ||
-    typeof staleAfterMs !== "number" || !Number.isSafeInteger(staleAfterMs) || staleAfterMs < 0 ||
-    !Array.isArray(value.sources)
-  ) return null;
   const codexOne = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 1);
   const codexTwo = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 2);
   const yunwu = value.sources.find((source) => isRecord(source) && source.source === "yunwu");
@@ -396,8 +398,9 @@ const readStoredSnapshot = (value: unknown): ProviderCapacitySnapshot | null => 
   if (!sources[0] || !sources[1] || !sources[2]) return null;
   return {
     snapshot_at_ms: snapshotAtMs,
-    stale_after_ms: staleAfterMs,
-    cache_state: cacheState,
+    // Old records used a shorter value. All records now follow the sampler
+    // freshness boundary so a missed 15-minute run is tolerated once.
+    stale_after_ms: PROVIDER_CAPACITY_SOURCE_STALE_MS,
     sources: [sources[0], sources[1], sources[2]],
   };
 };
@@ -410,14 +413,117 @@ const readCapacitySnapshot = async (kv: Deno.Kv): Promise<ProviderCapacitySnapsh
   }
 };
 
-const markSnapshotStale = (snapshot: ProviderCapacitySnapshot): ProviderCapacitySnapshot => ({
-  ...snapshot,
-  cache_state: "stale",
-  sources: snapshot.sources.map((source) => source.state === "available" ? { ...source, state: "stale" } : source) as [
-    ProviderCapacitySource,
-    ProviderCapacitySource,
-    ProviderCapacitySource,
+const readStoredHistoryPoint = (value: unknown): StoredHistoryPoint | null => {
+  if (!isRecord(value) || !isSafeTimestamp(value.bucket_start_at_ms) || !isSafeTimestamp(value.sampled_at_ms)) {
+    return null;
+  }
+  if (!Array.isArray(value.sources)) return null;
+  const sourceOne = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 1);
+  const sourceTwo = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 2);
+  const sources = [
+    readStoredCodexSource(sourceOne, value.sampled_at_ms),
+    readStoredCodexSource(sourceTwo, value.sampled_at_ms),
+  ];
+  if (!sources[0] || !sources[1]) return null;
+  return {
+    bucket_start_at_ms: value.bucket_start_at_ms,
+    sampled_at_ms: value.sampled_at_ms,
+    sources: [sources[0], sources[1]],
+  };
+};
+
+const readCapacityHistory = async (kv: Deno.Kv, nowMs: number): Promise<ProviderCapacityHistoryPoint[]> => {
+  const cutoffMs = Math.max(0, nowMs - PROVIDER_CAPACITY_HISTORY_RETENTION_MS);
+  const newestBucketMs = Math.floor(nowMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+  const points: ProviderCapacityHistoryPoint[] = [];
+  try {
+    for await (const entry of kv.list<unknown>({ prefix: PROVIDER_CAPACITY_HISTORY_KEY_PREFIX })) {
+      const keyBucket = entry.key[entry.key.length - 1];
+      if (typeof keyBucket !== "number" || keyBucket < cutoffMs || keyBucket > newestBucketMs) continue;
+      const point = readStoredHistoryPoint(entry.value);
+      if (!point || point.bucket_start_at_ms !== keyBucket) continue;
+      points.push(point);
+    }
+  } catch {
+    return [];
+  }
+  const unique = new Map<number, ProviderCapacityHistoryPoint>();
+  for (const point of points) unique.set(point.bucket_start_at_ms, point);
+  return [...unique.values()].sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
+};
+
+export const providerCapacityHistoryKey = (bucketStartAtMs: number): Deno.KvKey => [
+  ...PROVIDER_CAPACITY_HISTORY_KEY_PREFIX,
+  bucketStartAtMs,
+];
+
+const historyBucketStartAtMs = (snapshotAtMs: number): number =>
+  Math.floor(snapshotAtMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+
+const historyPointForSnapshot = (snapshot: ProviderCapacitySnapshot): ProviderCapacityHistoryPoint => {
+  const sourceForSlot = (slot: 1 | 2): ProviderCapacityCodexSource => {
+    const source = snapshot.sources.find((candidate) => candidate.source === "codex" && candidate.slot === slot);
+    return source?.source === "codex" ? source : unavailableCodexSource(slot, snapshot.snapshot_at_ms);
+  };
+  return {
+    bucket_start_at_ms: historyBucketStartAtMs(snapshot.snapshot_at_ms),
+    sampled_at_ms: snapshot.snapshot_at_ms,
+    sources: [sourceForSlot(1), sourceForSlot(2)],
+  };
+};
+
+const mergeHistoryPoints = (
+  points: readonly ProviderCapacityHistoryPoint[],
+  addition: ProviderCapacityHistoryPoint,
+): ProviderCapacityHistoryPoint[] => {
+  const byBucket = new Map<number, ProviderCapacityHistoryPoint>();
+  for (const point of points) byBucket.set(point.bucket_start_at_ms, point);
+  byBucket.set(addition.bucket_start_at_ms, addition);
+  return [...byBucket.values()].sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
+};
+
+const staleCodexSnapshot = (snapshot: ProviderCapacitySnapshot, nowMs: number): ProviderCapacitySnapshot => {
+  if (nowMs < snapshot.snapshot_at_ms + snapshot.stale_after_ms) return snapshot;
+  return {
+    ...snapshot,
+    sources: snapshot.sources.map((source) =>
+      source.source === "codex" && source.state === "available" ? { ...source, state: "stale" as const } : source
+    ) as [ProviderCapacitySource, ProviderCapacitySource, ProviderCapacitySource],
+  };
+};
+
+const toCapacityView = (
+  snapshot: ProviderCapacitySnapshot,
+  requestedState: Exclude<ProviderCapacityViewState, "unavailable">,
+  history: readonly ProviderCapacityHistoryPoint[],
+  nowMs: number,
+): ProviderCapacityView => {
+  const current = staleCodexSnapshot(snapshot, nowMs);
+  const stale = current.sources.some((source) => source.source === "codex" && source.state === "stale");
+  return {
+    ...current,
+    cache_state: stale ? "stale" : requestedState,
+    history,
+  };
+};
+
+const unavailableSnapshot = (snapshotAtMs: number): ProviderCapacitySnapshot => ({
+  snapshot_at_ms: snapshotAtMs,
+  stale_after_ms: PROVIDER_CAPACITY_SOURCE_STALE_MS,
+  sources: [
+    unavailableCodexSource(1, snapshotAtMs),
+    unavailableCodexSource(2, snapshotAtMs),
+    unavailableYunwuSource(snapshotAtMs),
   ],
+});
+
+const unavailableView = (
+  snapshotAtMs: number,
+  history: readonly ProviderCapacityHistoryPoint[],
+): ProviderCapacityView => ({
+  ...unavailableSnapshot(snapshotAtMs),
+  cache_state: "unavailable",
+  history,
 });
 
 const acquireCapacityLease = async (
@@ -434,7 +540,10 @@ const acquireCapacityLease = async (
     .commit();
   if (!committed.ok) return { acquired: false, entry };
   const acquiredEntry = await kv.get<CapacityLease>(PROVIDER_CAPACITY_LEASE_KEY);
-  return { acquired: true, entry: acquiredEntry };
+  return acquiredEntry.value?.owner === owner ? { acquired: true, entry: acquiredEntry } : {
+    acquired: false,
+    entry: acquiredEntry,
+  };
 };
 
 const releaseCapacityLease = async (kv: Deno.Kv, owner: string): Promise<void> => {
@@ -452,73 +561,109 @@ const persistCapacitySnapshot = async (
   leaseEntry: Deno.KvEntryMaybe<CapacityLease>,
   snapshot: ProviderCapacitySnapshot,
 ): Promise<boolean> => {
-  const stored = { ...snapshot, cache_state: "refreshed" as const };
-  return (await kv.atomic()
+  const history = historyPointForSnapshot(snapshot);
+  const committed = await kv.atomic()
     .check(leaseEntry)
-    .set(PROVIDER_CAPACITY_SNAPSHOT_KEY, stored, { expireIn: PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS })
+    .set(PROVIDER_CAPACITY_SNAPSHOT_KEY, snapshot, { expireIn: PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS })
+    .set(providerCapacityHistoryKey(history.bucket_start_at_ms), history, {
+      expireIn: PROVIDER_CAPACITY_HISTORY_RETENTION_MS,
+    })
     .delete(PROVIDER_CAPACITY_LEASE_KEY)
-    .commit()).ok;
+    .commit();
+  return committed.ok;
 };
 
-const waitForCapacitySnapshot = async (kv: Deno.Kv): Promise<ProviderCapacitySnapshot | null> => {
+const waitForCapacitySnapshot = async (
+  kv: Deno.Kv,
+  previousSnapshotAtMs: number | null,
+): Promise<ProviderCapacitySnapshot | null> => {
   const deadline = Date.now() + PROVIDER_CAPACITY_COLD_WAIT_MS;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const snapshot = await readCapacitySnapshot(kv);
-    if (snapshot) return snapshot;
+    const [snapshot, lease] = await Promise.all([
+      readCapacitySnapshot(kv),
+      kv.get<CapacityLease>(PROVIDER_CAPACITY_LEASE_KEY).catch(() => null),
+    ]);
+    const leaseFinished = !lease?.value || lease.value.lease_until_ms <= Date.now();
+    if (
+      snapshot && (previousSnapshotAtMs === null || snapshot.snapshot_at_ms !== previousSnapshotAtMs || leaseFinished)
+    ) {
+      return snapshot;
+    }
+    if (!snapshot && leaseFinished) return null;
   }
   return null;
 };
 
-const unavailableSnapshot = (snapshotAtMs: number): ProviderCapacitySnapshot => ({
-  snapshot_at_ms: snapshotAtMs,
-  stale_after_ms: PROVIDER_CAPACITY_SOURCE_STALE_MS,
-  cache_state: "stale",
-  sources: [
-    unavailableCodexSource(1, snapshotAtMs),
-    unavailableCodexSource(2, snapshotAtMs),
-    unavailableYunwuSource(snapshotAtMs),
-  ],
-});
-
-export const getProviderCapacitySnapshot = async (
-  options: ProviderCapacitySnapshotOptions = {},
-): Promise<ProviderCapacitySnapshot> => {
-  const now = options.now ?? Date.now;
-  const nowMs = safeNow(now);
+export const getPersistedProviderCapacityView = async (
+  options: Pick<ProviderCapacitySnapshotOptions, "kv" | "now"> = {},
+): Promise<ProviderCapacityView> => {
+  const nowMs = safeNow(options.now ?? Date.now);
   const kv = options.kv === undefined ? await getKv() : options.kv;
-  if (!kv) return await captureProviderCapacitySnapshot(options, nowMs, null);
+  if (!kv) return unavailableView(nowMs, []);
+  const [snapshot, history] = await Promise.all([
+    readCapacitySnapshot(kv),
+    readCapacityHistory(kv, nowMs),
+  ]);
+  return snapshot ? toCapacityView(snapshot, "persisted", history, nowMs) : unavailableView(nowMs, history);
+};
 
-  const cached = await readCapacitySnapshot(kv);
-  if (cached && nowMs - cached.snapshot_at_ms < PROVIDER_CAPACITY_SNAPSHOT_TTL_MS) {
-    return { ...cached, cache_state: "fresh" };
+export const refreshProviderCapacity = async (
+  options: ProviderCapacitySnapshotOptions = {},
+): Promise<ProviderCapacityView> => {
+  const nowMs = safeNow(options.now ?? Date.now);
+  const kv = options.kv === undefined ? await getKv() : options.kv;
+  if (!kv) {
+    const snapshot = await captureProviderCapacitySnapshot(options, nowMs, null);
+    return toCapacityView(snapshot, "live", [historyPointForSnapshot(snapshot)], nowMs);
   }
 
+  const [cached, historyBefore] = await Promise.all([
+    readCapacitySnapshot(kv),
+    readCapacityHistory(kv, nowMs),
+  ]);
   const owner = (options.createLeaseOwner ?? (() => crypto.randomUUID()))();
   const lease = await acquireCapacityLease(kv, owner, nowMs).catch(() => ({
     acquired: false,
     entry: { key: PROVIDER_CAPACITY_LEASE_KEY, value: null, versionstamp: null },
   } as { acquired: boolean; entry: Deno.KvEntryMaybe<CapacityLease> }));
   if (!lease.acquired) {
-    const waited = await waitForCapacitySnapshot(kv).catch(() => null);
-    return waited ? markSnapshotStale(waited) : cached ? markSnapshotStale(cached) : unavailableSnapshot(nowMs);
+    const coalesced = await waitForCapacitySnapshot(kv, cached?.snapshot_at_ms ?? null).catch(() => null);
+    const snapshot = coalesced ?? cached;
+    const history = await readCapacityHistory(kv, nowMs).catch(() => historyBefore);
+    return snapshot ? toCapacityView(snapshot, "persisted", history, nowMs) : unavailableView(nowMs, history);
   }
 
   try {
     const snapshot = await captureProviderCapacitySnapshot(options, nowMs, kv);
     const persisted = await persistCapacitySnapshot(kv, lease.entry, snapshot).catch(() => false);
-    if (persisted) return snapshot;
-    return snapshot;
+    const history = await readCapacityHistory(kv, nowMs).catch(() => historyBefore);
+    return toCapacityView(
+      snapshot,
+      "live",
+      persisted ? history : mergeHistoryPoints(history, historyPointForSnapshot(snapshot)),
+      nowMs,
+    );
   } finally {
     await releaseCapacityLease(kv, owner);
   }
 };
 
-export const handleProviderCapacity = async (): Promise<Response> => {
+// Preserve the old direct helper as an explicit live refresh. HTTP callers use
+// getPersistedProviderCapacityView unless they ask for refresh=live.
+export const getProviderCapacitySnapshot = async (
+  options: ProviderCapacitySnapshotOptions = {},
+): Promise<ProviderCapacityView> => await refreshProviderCapacity(options);
+
+export const handleProviderCapacity = async (
+  request: Request = new Request("https://ai.ubq.fi/admin/providers/capacity"),
+  options: ProviderCapacitySnapshotOptions = {},
+): Promise<Response> => {
   try {
-    const snapshot = await getProviderCapacitySnapshot();
-    return json(200, snapshot, { "Cache-Control": "no-store" });
+    const live = new URL(request.url).searchParams.get("refresh") === "live";
+    const view = live ? await refreshProviderCapacity(options) : await getPersistedProviderCapacityView(options);
+    return json(200, view, { "Cache-Control": "no-store" });
   } catch {
-    return json(200, unavailableSnapshot(Date.now()), { "Cache-Control": "no-store" });
+    return json(200, unavailableView(Date.now(), []), { "Cache-Control": "no-store" });
   }
 };

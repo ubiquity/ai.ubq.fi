@@ -143,6 +143,7 @@ const yunwuProviderQuotaObserved = mustGet("yunwu-provider-quota-observed");
 const yunwuProviderCache = mustGet("yunwu-provider-cache");
 const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
+const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
 
 let currentKeyView = "active";
@@ -159,6 +160,7 @@ let keysLoadedAt = 0;
 let providersLoading = false;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
+let providerCapacityLoadedForOpen = false;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
 const API_KEY_REQUEST_LOG_STATUS_OK = "OK";
@@ -923,6 +925,215 @@ const unavailableCapacitySource = (source, slot = null) =>
       windows: { primary: null, secondary: null },
     };
 
+const CAPACITY_CHART_SVG_NS = "http://www.w3.org/2000/svg";
+const CAPACITY_CHART_SERIES = [
+  { key: "account-1-primary", label: "Account 1 primary", slot: 1, windowKey: "primary" },
+  { key: "account-1-secondary", label: "Account 1 secondary", slot: 1, windowKey: "secondary" },
+  { key: "account-2-primary", label: "Account 2 primary", slot: 2, windowKey: "primary" },
+  { key: "account-2-secondary", label: "Account 2 secondary", slot: 2, windowKey: "secondary" },
+];
+
+const capacityChartSvgElement = (name, attributes = {}) => {
+  const element = document.createElementNS(CAPACITY_CHART_SVG_NS, name);
+  for (const [attribute, value] of Object.entries(attributes)) element.setAttribute(attribute, String(value));
+  return element;
+};
+
+const clampCapacityChartPercent = (value) => Math.max(0, Math.min(100, value));
+
+const capacityChartPoint = (sample, series) => {
+  const source = Array.isArray(sample?.sources)
+    ? sample.sources.find((candidate) => candidate?.source === "codex" && candidate.slot === series.slot)
+    : null;
+  const window = source?.windows?.[series.windowKey];
+  const durationSeconds = window?.limit_window_seconds;
+  const usedPercent = window?.used_percent;
+  const resetAtMs = window?.reset_at_ms;
+  const sampledAtMs = sample?.sampled_at_ms;
+  if (
+    source?.state === "unavailable" ||
+    typeof durationSeconds !== "number" ||
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds <= 0 ||
+    typeof usedPercent !== "number" ||
+    !Number.isFinite(usedPercent) ||
+    typeof resetAtMs !== "number" ||
+    !Number.isFinite(resetAtMs) ||
+    typeof sampledAtMs !== "number" ||
+    !Number.isFinite(sampledAtMs)
+  ) return null;
+  const durationMs = durationSeconds * 1000;
+  const windowStartMs = resetAtMs - durationMs;
+  if (!Number.isFinite(durationMs) || !Number.isFinite(windowStartMs)) return null;
+  return {
+    elapsedPercent: clampCapacityChartPercent(((sampledAtMs - windowStartMs) / durationMs) * 100),
+    remainingPercent: clampCapacityChartPercent(100 - usedPercent),
+  };
+};
+
+const capacityChartPath = (points, plot) => {
+  let path = "";
+  let connected = false;
+  for (const point of points) {
+    if (!point) {
+      connected = false;
+      continue;
+    }
+    const x = plot.left + (point.elapsedPercent / 100) * plot.width;
+    const y = plot.top + ((100 - point.remainingPercent) / 100) * plot.height;
+    path += `${connected ? " L" : " M"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    connected = true;
+  }
+  return path.trim();
+};
+
+const renderProviderCapacityChart = (snapshot, sources) => {
+  const history = Array.isArray(snapshot?.history) ? snapshot.history : [];
+  const width = 760;
+  const height = 330;
+  const plot = { left: 48, top: 24, width: 680, height: 248 };
+  const nowMs = Date.now();
+  const figure = document.createElement("figure");
+  figure.dataset.capacityChartFigure = "";
+  const title = document.createElement("h3");
+  title.textContent = "Codex capacity history";
+  figure.appendChild(title);
+
+  const svg = capacityChartSvgElement("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    role: "img",
+    "aria-label": "Codex account capacity history by elapsed reset-window percentage",
+    focusable: "false",
+  });
+  svg.dataset.capacityChartSvg = "";
+
+  for (const remaining of [100, 50, 0]) {
+    const y = plot.top + ((100 - remaining) / 100) * plot.height;
+    const grid = capacityChartSvgElement("line", {
+      x1: plot.left,
+      y1: y,
+      x2: plot.left + plot.width,
+      y2: y,
+    });
+    grid.dataset.capacityChartGrid = "";
+    svg.appendChild(grid);
+    const label = capacityChartSvgElement("text", { x: plot.left - 8, y: y + 4, "text-anchor": "end" });
+    label.textContent = `${remaining}%`;
+    label.dataset.capacityChartAxisLabel = "y";
+    svg.appendChild(label);
+  }
+  for (const elapsed of [0, 50, 100]) {
+    const x = plot.left + (elapsed / 100) * plot.width;
+    const tick = capacityChartSvgElement("line", { x1: x, y1: plot.top, x2: x, y2: plot.top + plot.height });
+    tick.dataset.capacityChartGrid = "";
+    svg.appendChild(tick);
+    const label = capacityChartSvgElement("text", {
+      x,
+      y: plot.top + plot.height + 22,
+      "text-anchor": elapsed === 0 ? "start" : elapsed === 100 ? "end" : "middle",
+    });
+    label.textContent = `${elapsed}%`;
+    label.dataset.capacityChartAxisLabel = "x";
+    svg.appendChild(label);
+  }
+
+  const xAxisTitle = capacityChartSvgElement("text", {
+    x: plot.left + plot.width / 2,
+    y: height - 8,
+    "text-anchor": "middle",
+  });
+  xAxisTitle.textContent = "Elapsed percentage of active reset window";
+  xAxisTitle.dataset.capacityChartAxisTitle = "x";
+  svg.appendChild(xAxisTitle);
+  const yAxisTitle = capacityChartSvgElement("text", {
+    x: 12,
+    y: plot.top + plot.height / 2,
+    transform: `rotate(-90 12 ${plot.top + plot.height / 2})`,
+    "text-anchor": "middle",
+  });
+  yAxisTitle.textContent = "Percentage remaining";
+  yAxisTitle.dataset.capacityChartAxisTitle = "y";
+  svg.appendChild(yAxisTitle);
+
+  const target = capacityChartSvgElement("line", {
+    x1: plot.left,
+    y1: plot.top,
+    x2: plot.left + plot.width,
+    y2: plot.top + plot.height,
+  });
+  target.dataset.capacityTarget = "optimal-spend";
+  svg.appendChild(target);
+  const targetLabel = capacityChartSvgElement("text", {
+    x: plot.left + plot.width - 4,
+    y: plot.top + plot.height - 8,
+    "text-anchor": "end",
+  });
+  targetLabel.textContent = "Optimal spend · 100% → 0%";
+  targetLabel.dataset.capacityTargetLabel = "";
+  svg.appendChild(targetLabel);
+
+  const currentSample = { sampled_at_ms: nowMs, sources };
+  for (const series of CAPACITY_CHART_SERIES) {
+    const points = history.map((sample) => capacityChartPoint(sample, series));
+    const path = capacityChartSvgElement("path", { d: capacityChartPath(points, plot), fill: "none" });
+    path.style.fill = "none";
+    path.dataset.capacitySeries = series.key;
+    path.setAttribute("aria-label", series.label);
+    svg.appendChild(path);
+    for (const point of points) {
+      if (!point) continue;
+      const x = plot.left + (point.elapsedPercent / 100) * plot.width;
+      const y = plot.top + ((100 - point.remainingPercent) / 100) * plot.height;
+      const marker = capacityChartSvgElement("circle", { cx: x, cy: y, r: 2.4 });
+      marker.dataset.capacitySample = series.key;
+      svg.appendChild(marker);
+    }
+    const currentPoint = capacityChartPoint(currentSample, series);
+    if (!currentPoint) continue;
+    const x = plot.left + (currentPoint.elapsedPercent / 100) * plot.width;
+    const caretLine = capacityChartSvgElement("line", {
+      x1: x,
+      y1: plot.top - 2,
+      x2: x,
+      y2: plot.top + plot.height,
+    });
+    caretLine.dataset.capacityCaretLine = series.key;
+    svg.appendChild(caretLine);
+    const caret = capacityChartSvgElement("text", { x, y: plot.top - 7, "text-anchor": "middle" });
+    caret.textContent = "^";
+    caret.dataset.capacityCaret = series.key;
+    caret.setAttribute("aria-label", `${series.label} current cycle position`);
+    svg.appendChild(caret);
+  }
+
+  figure.appendChild(svg);
+  const legend = document.createElement("div");
+  legend.dataset.capacityLegend = "";
+  for (const series of CAPACITY_CHART_SERIES) {
+    const item = document.createElement("span");
+    item.dataset.capacityLegendItem = series.key;
+    const swatch = document.createElement("span");
+    swatch.dataset.capacityLegendSwatch = series.key;
+    swatch.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = series.label;
+    item.append(swatch, label);
+    legend.appendChild(item);
+  }
+  figure.appendChild(legend);
+  const caption = document.createElement("figcaption");
+  caption.dataset.capacityChartMeta = "";
+  const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
+  const stale = snapshot?.cache_state === "stale" || sources.some((source) => source?.state === "stale");
+  caption.textContent = samples.length
+    ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
+      formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
+    } · ${samples.length} sample${samples.length === 1 ? "" : "s"}${stale ? " · Codex samples stale" : ""}`
+    : `No retained samples yet · current cycle markers${stale ? " · Codex samples stale" : ""}`;
+  figure.appendChild(caption);
+  providerCapacityChart.replaceChildren(figure);
+};
+
 const renderProviderCapacity = (snapshot) => {
   const rawSources = Array.isArray(snapshot?.sources) ? snapshot.sources : [];
   const sourceForSlot = (slot) =>
@@ -933,6 +1144,7 @@ const renderProviderCapacity = (snapshot) => {
     sourceForSlot(2),
     rawSources.find((source) => source?.source === "yunwu") ?? unavailableCapacitySource("yunwu"),
   ];
+  renderProviderCapacityChart(snapshot, sources);
   providerCapacityList.replaceChildren();
   for (const source of sources) {
     providerCapacityList.appendChild(
@@ -956,7 +1168,7 @@ const renderProviderCapacity = (snapshot) => {
   providerCapacityUpdated.textContent = `Snapshot ${formatCapacityTimestamp(snapshotAt)} · ${cacheState}`;
 };
 
-const loadProviderCapacity = async () => {
+const loadProviderCapacity = async ({ live = true } = {}) => {
   if (providerCapacityLoading) return;
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !token) {
@@ -966,7 +1178,7 @@ const loadProviderCapacity = async () => {
   providerCapacityLoading = true;
   setBadge(providerCapacityBadge, "unknown", "Loading capacity");
   try {
-    const response = await fetch(apiUrl("/admin/providers/capacity"), {
+    const response = await fetch(apiUrl(`/admin/providers/capacity${live ? "?refresh=live" : ""}`), {
       cache: "no-store",
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -986,7 +1198,6 @@ const loadProviderCapacity = async () => {
 };
 
 const loadProviders = async () => {
-  if (currentAdminView === "providers") void loadProviderCapacity();
   if (providersLoading) return;
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !token) {
@@ -4864,6 +5075,12 @@ const loadAdminView = (view) => {
   }
   if (view === "providers") {
     void loadProviders();
+    if (!providerCapacityLoadedForOpen) {
+      providerCapacityLoadedForOpen = true;
+      void loadProviderCapacity({ live: true });
+    }
+  } else {
+    providerCapacityLoadedForOpen = false;
   }
 };
 
@@ -5730,6 +5947,8 @@ tokenInput.addEventListener("input", () => {
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
   providersLoadedAt = 0;
+  providerCapacityLoadedForOpen = false;
+  providerCapacityChart.replaceChildren();
   clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
@@ -5774,9 +5993,6 @@ tokenInput.addEventListener("input", () => {
   }
   if (currentAdminView === "pubkeys") {
     void ensureKernelPubKeysLoaded();
-  }
-  if (currentAdminView === "providers") {
-    void loadProviders();
   }
 });
 
@@ -5942,6 +6158,8 @@ baseSelect.addEventListener("change", () => {
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
   providersLoadedAt = 0;
+  providerCapacityLoadedForOpen = false;
+  providerCapacityChart.replaceChildren();
   resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
@@ -5990,10 +6208,6 @@ viewTabKernel.addEventListener("click", () => setAdminView("kernel", { hashMode:
 viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys", { hashMode: "push", focusAuth: true }));
 viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashMode: "push", focusAuth: true }));
 viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
-
-globalThis.setInterval(() => {
-  if (currentAdminView === "providers" && document.visibilityState === "visible") void loadProviders();
-}, 30_000);
 
 createKeyBtn.addEventListener("click", () => {
   void createKey();

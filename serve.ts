@@ -4,6 +4,7 @@ import handler from "./src/handler.ts";
 import { config } from "./src/config.ts";
 import { getKv } from "./src/kv.ts";
 import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
+import { refreshProviderCapacity } from "./src/provider_capacity.ts";
 
 if (config.isDeploy) {
   Deno.cron("reconcile pending Yunwu billing", "* * * * *", async () => {
@@ -19,6 +20,16 @@ if (config.isDeploy) {
         "[ai.ubq.fi] Scheduled paid fallback reconciliation failed:",
         error instanceof Error ? error.message : String(error),
       );
+    }
+  });
+
+  Deno.cron("sample Codex provider capacity", "*/15 * * * *", async () => {
+    try {
+      const kv = await getKv();
+      if (!kv) throw new Error("Deno KV unavailable");
+      await refreshProviderCapacity({ kv });
+    } catch {
+      console.error("[ai.ubq.fi] Provider capacity sampler failed.");
     }
   });
 }
