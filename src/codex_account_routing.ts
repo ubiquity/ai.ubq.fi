@@ -763,6 +763,7 @@ const markCodexQuotaBlockedWithMode = async (
           account_id_hash: account.accountIdHash,
           quota_blocked_until_ms: null,
           quota_block_source: null,
+          banked_reset_recovery_probe_pending: false,
           probe_lease: null,
         });
       });

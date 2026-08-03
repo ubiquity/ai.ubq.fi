@@ -417,6 +417,54 @@ Deno.test("a failed verified-reset probe uses a bounded retry instead of the old
   }
 });
 
+Deno.test("a non-quota verified-reset probe clears recovery-pending evidence", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const resetAtMs = now + 60_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
+      }),
+      now,
+    );
+    const beforeReset = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    const routingGeneration = beforeReset?.slots[0]?.generation;
+    assert.equal(typeof routingGeneration, "number");
+
+    const recovery = await reconcileCodexQuotaAfterVerifiedReset(initial.accounts[0]!, {
+      quotaResetAtMs: resetAtMs,
+      routingGeneration: routingGeneration as number,
+    });
+    assert.ok(recovery);
+
+    const released = await markCodexRecoveryProbeQuotaBlocked(
+      recovery!,
+      new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+      now,
+    );
+    assert.equal(released.usageLimitReached, false);
+    const afterProbe = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(afterProbe?.slots[0]?.quota_blocked_until_ms, null);
+    assert.equal(afterProbe?.slots[0]?.banked_reset_recovery_probe_pending, false);
+    assert.equal(afterProbe?.slots[0]?.probe_lease, null);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("a stale verified reset opens a fenced probe without spending another reset", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);

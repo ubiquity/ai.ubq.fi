@@ -1150,7 +1150,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const caption = document.createElement("figcaption");
   caption.dataset.capacityChartMeta = "";
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
-  const stale = snapshot?.cache_state === "stale" || sources.some((source) => source?.state === "stale");
+  const stale = sources.some((source) => source?.source === "codex" && source?.state === "stale");
   caption.textContent = samples.length
     ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
       formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
