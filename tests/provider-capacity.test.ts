@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { setKvForTest } from "../src/kv.ts";
+import { codexResetRedemptionKey, codexResetShadowDecisionKey } from "../src/codex_banked_reset.ts";
 import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex.ts";
 import {
   getPersistedProviderCapacityView,
@@ -14,6 +15,7 @@ import {
   providerCapacityHistoryKey,
   refreshProviderCapacity,
 } from "../src/provider_capacity.ts";
+import { PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX } from "../src/provider_capacity_events.ts";
 import { YUNWU_QUOTA_STATE_KEY } from "../src/yunwu_quota.ts";
 
 type StoredValue = {
@@ -366,6 +368,69 @@ Deno.test("persisted history keeps seven days and filters older buckets", async 
   assert.equal(view.cache_state, "unavailable");
   assert.deepEqual(view.history.map((point) => point.bucket_start_at_ms), [retainedBucket, currentBucket]);
   assert.equal(view.history[0]?.sources[1]?.windows.secondary?.limit_window_seconds, 86_400);
+});
+
+Deno.test("capacity view backfills recent verified reset events from the redacted redemption ledger", async () => {
+  seed();
+  const accountIdHash = "account-hash-one";
+  const quotaGeneration = "v1:quota-generation-one";
+  const verifiedAtMs = nowMs - 10_000;
+  kvStore.put(codexResetShadowDecisionKey("episode-one"), {
+    v: 1,
+    episode_hash: "episode-one",
+    created_at_ms: verifiedAtMs - 1_000,
+    expires_at_ms: verifiedAtMs + 60_000,
+    decision_reason: "selected",
+    selected_account_id_hash: accountIdHash,
+    selected_credit_id_hash: "credit-hash-one",
+    selected_credit_expires_at_ms: null,
+    fences: [
+      {
+        slot: 1,
+        account_id_hash: accountIdHash,
+        quota_generation: quotaGeneration,
+        routing_generation: 3,
+        quota_reset_at_ms: verifiedAtMs + 60_000,
+      },
+      {
+        slot: 2,
+        account_id_hash: "account-hash-two",
+        quota_generation: "v1:quota-generation-two",
+        routing_generation: 4,
+        quota_reset_at_ms: verifiedAtMs + 60_000,
+      },
+    ],
+  });
+  kvStore.put(codexResetRedemptionKey(accountIdHash, quotaGeneration), {
+    v: 1,
+    account_id_hash: accountIdHash,
+    credential_version: "credential-version-one",
+    quota_generation: quotaGeneration,
+    routing_generation: 3,
+    idempotency_key_hash: "idempotency-hash-one",
+    state: "verified",
+    owner_token: "owner-one",
+    fence: 1,
+    lease_expires_at_ms: verifiedAtMs + 30_000,
+    provider_receipt_id: null,
+    created_at_ms: verifiedAtMs - 5_000,
+    updated_at_ms: verifiedAtMs,
+    submitted_at_ms: verifiedAtMs - 1_000,
+    verified_at_ms: verifiedAtMs,
+    last_error_code: null,
+  });
+
+  const view = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs });
+  assert.deepEqual(view.reset_events, [{
+    v: 1,
+    event_id: "idempotency-hash-one",
+    slot: 1,
+    observed_at_ms: verifiedAtMs,
+  }]);
+  const storedEventKeys = [...kvStore.keys()]
+    .map((key) => JSON.parse(key) as Deno.KvKey)
+    .filter((key) => PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX.every((part, index) => key[index] === part));
+  assert.equal(storedEventKeys.length, 1);
 });
 
 Deno.test("capacity endpoint reads persisted state by default and probes only for refresh=live", async () => {

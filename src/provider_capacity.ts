@@ -2,6 +2,7 @@ import { config } from "./config.ts";
 import { type CodexCapacityAccount, getCodexCapacityAccounts } from "./codex.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
+import { listProviderCapacityResetEvents, type ProviderCapacityResetEvent } from "./provider_capacity_events.ts";
 import { getConfiguredYunwuQuotaSnapshot, YUNWU_QUOTA_FRESH_MS, type YunwuQuotaSnapshot } from "./yunwu_quota.ts";
 import { isRecord } from "./utils.ts";
 
@@ -12,6 +13,7 @@ export const PROVIDER_CAPACITY_HISTORY_BUCKET_MS = 15 * 60_000;
 export const PROVIDER_CAPACITY_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60_000;
 // Keep this name for callers that used the old snapshot retention constant.
 export const PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS = PROVIDER_CAPACITY_HISTORY_RETENTION_MS;
+export { PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS } from "./provider_capacity_events.ts";
 export const PROVIDER_CAPACITY_LEASE_MS = 10_000;
 export const PROVIDER_CAPACITY_COLD_WAIT_MS = 2_000;
 export const PROVIDER_CAPACITY_SOURCE_STALE_MS = 30 * 60_000;
@@ -77,6 +79,7 @@ export type ProviderCapacityView = Readonly<
   ProviderCapacitySnapshot & {
     cache_state: ProviderCapacityViewState;
     history: readonly ProviderCapacityHistoryPoint[];
+    reset_events: readonly ProviderCapacityResetEvent[];
   }
 >;
 
@@ -528,6 +531,7 @@ const toCapacityView = (
   snapshot: ProviderCapacitySnapshot,
   requestedState: Exclude<ProviderCapacityViewState, "unavailable">,
   history: readonly ProviderCapacityHistoryPoint[],
+  resetEvents: readonly ProviderCapacityResetEvent[],
   nowMs: number,
 ): ProviderCapacityView => {
   const current = staleProviderSnapshot(snapshot, nowMs);
@@ -536,6 +540,7 @@ const toCapacityView = (
     ...current,
     cache_state: stale ? "stale" : requestedState,
     history,
+    reset_events: resetEvents,
   };
 };
 
@@ -552,10 +557,12 @@ const unavailableSnapshot = (snapshotAtMs: number): ProviderCapacitySnapshot => 
 const unavailableView = (
   snapshotAtMs: number,
   history: readonly ProviderCapacityHistoryPoint[],
+  resetEvents: readonly ProviderCapacityResetEvent[],
 ): ProviderCapacityView => ({
   ...unavailableSnapshot(snapshotAtMs),
   cache_state: "unavailable",
   history,
+  reset_events: resetEvents,
 });
 
 const acquireCapacityLease = async (
@@ -681,12 +688,15 @@ export const getPersistedProviderCapacityView = async (
 ): Promise<ProviderCapacityView> => {
   const nowMs = safeNow(options.now ?? Date.now);
   const kv = options.kv === undefined ? await getKv() : options.kv;
-  if (!kv) return unavailableView(nowMs, []);
-  const [snapshot, history] = await Promise.all([
+  if (!kv) return unavailableView(nowMs, [], []);
+  const [snapshot, history, resetEvents] = await Promise.all([
     readCapacitySnapshot(kv),
     readCapacityHistory(kv, nowMs),
+    listProviderCapacityResetEvents({ kv, now: () => nowMs }),
   ]);
-  return snapshot ? toCapacityView(snapshot, "persisted", history, nowMs) : unavailableView(nowMs, history);
+  return snapshot
+    ? toCapacityView(snapshot, "persisted", history, resetEvents, nowMs)
+    : unavailableView(nowMs, history, resetEvents);
 };
 
 export const refreshProviderCapacity = async (
@@ -696,12 +706,13 @@ export const refreshProviderCapacity = async (
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) {
     const snapshot = await captureProviderCapacitySnapshot(options, nowMs, null);
-    return toCapacityView(snapshot, "live", [historyPointForSnapshot(snapshot)], nowMs);
+    return toCapacityView(snapshot, "live", [historyPointForSnapshot(snapshot)], [], nowMs);
   }
 
-  const [cached, historyBefore] = await Promise.all([
+  const [cached, historyBefore, resetEventsBefore] = await Promise.all([
     readCapacitySnapshot(kv),
     readCapacityHistory(kv, nowMs),
+    listProviderCapacityResetEvents({ kv, now: () => nowMs }),
   ]);
   const owner = (options.createLeaseOwner ?? (() => crypto.randomUUID()))();
   const lease = await acquireCapacityLease(kv, owner, nowMs).catch(() => ({
@@ -712,17 +723,22 @@ export const refreshProviderCapacity = async (
     const coalesced = await waitForCapacitySnapshot(kv, cached?.snapshot_at_ms ?? null).catch(() => null);
     const snapshot = coalesced ?? cached;
     const history = await readCapacityHistory(kv, nowMs).catch(() => historyBefore);
-    return snapshot ? toCapacityView(snapshot, "persisted", history, nowMs) : unavailableView(nowMs, history);
+    const resetEvents = await listProviderCapacityResetEvents({ kv, now: () => nowMs }).catch(() => resetEventsBefore);
+    return snapshot
+      ? toCapacityView(snapshot, "persisted", history, resetEvents, nowMs)
+      : unavailableView(nowMs, history, resetEvents);
   }
 
   try {
     const snapshot = await captureProviderCapacitySnapshot(options, nowMs, kv);
     const persisted = await persistCapacitySnapshot(kv, lease.entry, snapshot).catch(() => false);
     const history = await readCapacityHistory(kv, nowMs).catch(() => historyBefore);
+    const resetEvents = await listProviderCapacityResetEvents({ kv, now: () => nowMs }).catch(() => resetEventsBefore);
     return toCapacityView(
       snapshot,
       "live",
       persisted ? history : mergeHistoryPoints(history, historyPointForSnapshot(snapshot)),
+      resetEvents,
       nowMs,
     );
   } finally {
@@ -745,6 +761,6 @@ export const handleProviderCapacity = async (
     const view = live ? await refreshProviderCapacity(options) : await getPersistedProviderCapacityView(options);
     return json(200, view, { "Cache-Control": "no-store" });
   } catch {
-    return json(200, unavailableView(Date.now(), []), { "Cache-Control": "no-store" });
+    return json(200, unavailableView(Date.now(), [], []), { "Cache-Control": "no-store" });
   }
 };

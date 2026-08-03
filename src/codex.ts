@@ -50,6 +50,7 @@ import {
   normalizeRuntimeConfig,
   RUNTIME_CONFIG_V2_KEY,
 } from "./runtime_config.ts";
+import { recordProviderCapacityResetEvent } from "./provider_capacity_events.ts";
 import { decodeBase64ToString, getString, isRecord, sha256Hex } from "./utils.ts";
 import type { CodexAuthPoolState, CodexAuthState, ResponseInputItem } from "./types.ts";
 
@@ -1996,6 +1997,27 @@ export const fetchCodexResponses = async (
 
   type EvaluatedBlockedReset = NonNullable<Awaited<ReturnType<typeof evaluateBlockedCohortBankedReset>>>;
 
+  const persistVerifiedCapacityReset = async (
+    candidate: CodexBankedResetCandidate,
+    record: NonNullable<Awaited<ReturnType<typeof reconcileCodexBankedReset>>>["record"],
+  ): Promise<void> => {
+    if (record?.state !== "verified" || record.verified_at_ms === null) return;
+    const slot = candidate.routing.slot + 1;
+    if (slot !== 1 && slot !== 2) return;
+    try {
+      const kv = bankedResetDependencies.kv ?? await getKv();
+      if (!kv) return;
+      await recordProviderCapacityResetEvent({
+        v: 1,
+        event_id: record.idempotency_key_hash,
+        slot,
+        observed_at_ms: record.verified_at_ms,
+      }, kv);
+    } catch {
+      // Capacity telemetry is best effort and must never change inference.
+    }
+  };
+
   const runPostResetRetry = async (
     evaluated: EvaluatedBlockedReset,
     normalResponse: Response | null,
@@ -2005,6 +2027,7 @@ export const fetchCodexResponses = async (
     }
     const { candidate, reset } = evaluated;
     const resetRecord = reset.record!;
+    await persistVerifiedCapacityReset(candidate, resetRecord);
     const reconciled = evaluated.recoveryProbe ?? await reconcileCodexQuotaAfterVerifiedReset(candidate.routing, {
       quotaResetAtMs: candidate.quotaResetAtMs,
       routingGeneration: resetRecord.routing_generation,

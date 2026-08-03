@@ -1074,6 +1074,82 @@ const capacityChartPoint = (sample, series, activeInterval = null, chartWindow =
   };
 };
 
+const capacityChartResetPoint = (event, series, activeInterval = null, chartWindow = null) => {
+  if (series.source !== "codex" || event?.slot !== series.slot) return null;
+  const interval = activeInterval ?? chartWindow;
+  const displayInterval = chartWindow ?? interval;
+  const sampledAtMs = event?.observed_at_ms;
+  if (
+    !interval || !displayInterval ||
+    typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs) ||
+    sampledAtMs < interval.startAtMs || sampledAtMs > interval.resetAtMs ||
+    sampledAtMs < displayInterval.startAtMs || sampledAtMs > displayInterval.resetAtMs
+  ) return null;
+  return {
+    elapsedPercent: clampCapacityChartPercent(
+      ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100,
+    ),
+    remainingPercent: 0,
+  };
+};
+
+const capacityChartSeriesPoints = (
+  history,
+  series,
+  activeInterval,
+  chartWindow,
+  currentPoint,
+  nowMs,
+  resetEvents,
+) => {
+  const runs = [];
+  let run = [];
+  const pushRun = () => {
+    if (run.length) runs.push(run);
+    run = [];
+  };
+  for (const sample of history) {
+    const point = capacityChartPoint(sample, series, activeInterval, chartWindow);
+    if (!point) {
+      pushRun();
+      continue;
+    }
+    run.push({ sampledAtMs: sample.sampled_at_ms, point, synthetic: false });
+  }
+  if (currentPoint) run.push({ sampledAtMs: nowMs, point: currentPoint, synthetic: false });
+  pushRun();
+
+  for (const event of Array.isArray(resetEvents) ? resetEvents : []) {
+    const point = capacityChartResetPoint(event, series, activeInterval, chartWindow);
+    if (!point) continue;
+    const sampledAtMs = event.observed_at_ms;
+    let target = runs.find((candidate) =>
+      sampledAtMs >= candidate[0].sampledAtMs && sampledAtMs <= candidate[candidate.length - 1].sampledAtMs
+    );
+    if (!target && runs.length) {
+      target = sampledAtMs >= runs[runs.length - 1][runs[runs.length - 1].length - 1].sampledAtMs
+        ? runs[runs.length - 1]
+        : runs[0];
+    }
+    if (!target) {
+      target = [];
+      runs.push(target);
+    }
+    target.push({ sampledAtMs, point, synthetic: true });
+  }
+
+  for (const candidate of runs) {
+    candidate.sort((left, right) =>
+      left.sampledAtMs - right.sampledAtMs || Number(left.synthetic) - Number(right.synthetic)
+    );
+  }
+  runs.sort((left, right) => left[0].sampledAtMs - right[0].sampledAtMs);
+  return runs.flatMap((candidate, index) => [
+    ...(index === 0 ? [] : [null]),
+    ...candidate.map(({ point }) => point),
+  ]);
+};
+
 const capacityChartPath = (points, plot) => {
   const runs = [];
   let run = [];
@@ -1209,6 +1285,16 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   yAxisTitle.dataset.capacityChartAxisTitle = "y";
   svg.appendChild(yAxisTitle);
 
+  const optimalSpendTrend = capacityChartSvgElement("line", {
+    x1: plot.left,
+    y1: plot.top,
+    x2: plot.left + plot.width,
+    y2: plot.top + plot.height,
+  });
+  optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
+  optimalSpendTrend.setAttribute("aria-label", "Optimal spend trend");
+  svg.appendChild(optimalSpendTrend);
+
   const currentElapsedPercent = chartWindow.durationMs > 0
     ? clampCapacityChartPercent(((nowMs - chartWindow.startAtMs) / chartWindow.durationMs) * 100)
     : 0;
@@ -1230,11 +1316,18 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     );
     const activeInterval = series.source === "codex" ? capacityChartWindow(source?.windows?.[series.windowKey]) : null;
     const shouldRender = series.source === "yunwu" || activeInterval;
-    const points = shouldRender
-      ? history.map((sample) => capacityChartPoint(sample, series, activeInterval, chartWindow))
-      : [];
     const currentPoint = shouldRender ? capacityChartPoint(currentSample, series, activeInterval, chartWindow) : null;
-    const chartPoints = currentPoint ? [...points, currentPoint] : points;
+    const chartPoints = shouldRender
+      ? capacityChartSeriesPoints(
+        history,
+        series,
+        activeInterval,
+        chartWindow,
+        currentPoint,
+        nowMs,
+        snapshot?.reset_events,
+      )
+      : [];
     const path = capacityChartSvgElement("path", {
       d: capacityChartPath(chartPoints, plot),
       fill: "none",
@@ -1254,11 +1347,15 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     sources.some((source) => source?.source === "yunwu" && source?.state === "stale") ? "YunWu sample stale" : null,
   ].filter((note) => note !== null);
   const staleSuffix = staleNotes.length ? ` · ${staleNotes.join(" · ")}` : "";
+  const resetEvents = Array.isArray(snapshot?.reset_events) ? snapshot.reset_events : [];
+  const resetSuffix = resetEvents.length
+    ? ` · ${resetEvents.length} verified reset${resetEvents.length === 1 ? "" : "s"}`
+    : "";
   caption.textContent = samples.length
     ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
       formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
-    } · ${samples.length} sample${samples.length === 1 ? "" : "s"}${staleSuffix}`
-    : `No retained samples yet · current Codex usage period${staleSuffix}`;
+    } · ${samples.length} sample${samples.length === 1 ? "" : "s"}${resetSuffix}${staleSuffix}`
+    : `No retained samples yet · current Codex usage period${resetSuffix}${staleSuffix}`;
   figure.appendChild(caption);
   providerCapacityChart.replaceChildren(figure);
 };

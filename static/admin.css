@@ -512,6 +512,14 @@ body[data-page="admin"] [data-capacity-series="yunwu"] {
   stroke-dasharray: 5 3;
 }
 
+body[data-page="admin"] [data-capacity-trend="optimal-spend"] {
+  stroke: rgba(255, 255, 255, 0.32);
+  stroke-dasharray: 4 5;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
 body[data-page="admin"] [data-capacity-reticule] {
   stroke: rgba(255, 255, 255, 0.42);
   stroke-dasharray: 5 5;
