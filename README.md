@@ -540,9 +540,9 @@ deno task dev
 ```
 
 `deno task dev` binds to loopback and supplies a local-only `local-dev-admin` token when `DENO_DEPLOY_TOKEN` is not
-already exported. The `/admin` page fills that token automatically on `http://localhost` or `http://127.0.0.1`; it
-never auto-fills it for `https://ai.ubq.fi`. Export `DENO_DEPLOY_TOKEN` before starting the task when
-you need a different credential, then paste that credential into the fallback-token field.
+already exported. The `/admin` page fills that token automatically on `http://localhost` or `http://127.0.0.1`; it never
+auto-fills it for `https://ai.ubq.fi`. Export `DENO_DEPLOY_TOKEN` before starting the task when you need a different
+credential, then paste that credential into the fallback-token field.
 
 ## Deno KV migration
 
