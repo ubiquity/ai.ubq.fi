@@ -6,6 +6,7 @@
     "jsr:@cliffy/flags@1.0.0": "1.0.0",
     "jsr:@cliffy/internal@1.0.0": "1.0.0",
     "jsr:@cliffy/table@1.0.0": "1.0.0",
+    "jsr:@deno/deploy@*": "0.0.91",
     "jsr:@deno/deploy@0.0.91": "0.0.91",
     "jsr:@deno/framework-detect@0.3": "0.3.0",
     "jsr:@deno/kv-utils@*": "0.1.4",

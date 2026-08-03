@@ -1,3 +1,6 @@
 .env
 .codex-worktrees/
 .kv-migration/
+.swn
+.swo
+.swp
