@@ -9,6 +9,18 @@ export const STORAGE_KEYS = {
 const LOCAL_BACKEND_BASE = () => globalThis.location?.origin ?? "http://localhost";
 const REMOTE_BACKEND_BASE = "https://ai.ubq.fi";
 
+// The dev task injects this token only for its loopback-bound server. Keep the
+// browser convenience scoped to HTTP loopback origins so it can never be sent
+// automatically to the hosted gateway.
+export const LOCAL_DEVELOPMENT_ADMIN_TOKEN = "local-dev-admin";
+
+export const isLocalDevelopmentOrigin = () => {
+  const location = globalThis.location;
+  if (!location || String(location.protocol ?? "").toLowerCase() !== "http:") return false;
+  const hostname = String(location.hostname ?? "").toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+};
+
 const normalizeBaseChoice = (value) => {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "local";

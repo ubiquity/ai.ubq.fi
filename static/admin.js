@@ -4,6 +4,8 @@ import {
   formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   hasStoredPasskeyCredentials,
+  isLocalDevelopmentOrigin,
+  LOCAL_DEVELOPMENT_ADMIN_TOKEN,
   registerPasskey,
   resolveBackendBase,
   signInWithPasskey,
@@ -150,6 +152,7 @@ let currentKeyView = "active";
 let currentAdminView = "loading";
 let pendingAdminView = null;
 let adminAccessState = { checked: false, isAdmin: false, isSuperAdmin: false };
+let localDevelopmentAutoAuth = false;
 let adminPrefetchRunId = 0;
 let adminPrefetchSignature = "";
 let adminPrefetchPromise = null;
@@ -392,6 +395,22 @@ const isCrossOriginTarget = () => new URL(resolveBaseUrl()).origin !== globalThi
 
 const getAdminToken = () => tokenInput.value.trim();
 
+const canUseLocalDevelopmentAuth = () => isLocalDevelopmentOrigin() && getBaseChoice() === "local";
+
+const applyLocalDevelopmentAuth = () => {
+  if (!canUseLocalDevelopmentAuth() || getAdminToken()) return false;
+  tokenInput.value = LOCAL_DEVELOPMENT_ADMIN_TOKEN;
+  localDevelopmentAutoAuth = true;
+  return true;
+};
+
+const clearLocalDevelopmentAuth = () => {
+  if (!localDevelopmentAutoAuth) return false;
+  tokenInput.value = "";
+  localDevelopmentAutoAuth = false;
+  return true;
+};
+
 const isAdminAuthCheckPending = () => Boolean(getAdminToken()) && !adminAccessState.checked;
 
 const openAuthWidgetForAuth = (options = {}) => setAuthWidgetOpen(true, { ...options, auto: true });
@@ -550,6 +569,7 @@ const restoreSettings = () => {
   passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
   baseSelect.value = storage.get(STORAGE_KEYS.base) ?? "local";
+  applyLocalDevelopmentAuth();
   updateBasePreview();
 };
 
@@ -1020,11 +1040,16 @@ const capacityChartPath = (points, plot) => {
 };
 
 const capacityChartReferenceWindow = (sources, nowMs) => {
-  const weeklyWindow = sources
-    .filter((source) => source?.source === "codex")
-    .map((source) => capacityChartWindow(source.windows?.secondary))
-    .find((interval) => interval && interval.durationMs >= CAPACITY_CHART_DAYS * CAPACITY_CHART_DAY_MS);
-  if (weeklyWindow) return weeklyWindow;
+  const usageWindows = sources
+    .filter((source) => source?.source === "codex" && source.state !== "unavailable")
+    .flatMap((source) => [source.windows?.primary, source.windows?.secondary])
+    .map((window) => capacityChartWindow(window))
+    .filter((interval) => interval !== null);
+  if (usageWindows.length > 0) {
+    const startAtMs = Math.min(...usageWindows.map((interval) => interval.startAtMs));
+    const resetAtMs = Math.max(...usageWindows.map((interval) => interval.resetAtMs));
+    return { startAtMs, resetAtMs, durationMs: resetAtMs - startAtMs };
+  }
   return {
     startAtMs: nowMs - CAPACITY_CHART_DAYS * CAPACITY_CHART_DAY_MS,
     resetAtMs: nowMs,
@@ -1133,20 +1158,6 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   }
 
   figure.appendChild(svg);
-  const legend = document.createElement("div");
-  legend.dataset.capacityLegend = "";
-  for (const series of CAPACITY_CHART_SERIES) {
-    const item = document.createElement("span");
-    item.dataset.capacityLegendItem = series.key;
-    const swatch = document.createElement("span");
-    swatch.dataset.capacityLegendSwatch = series.key;
-    swatch.setAttribute("aria-hidden", "true");
-    const label = document.createElement("span");
-    label.textContent = series.label;
-    item.append(swatch, label);
-    legend.appendChild(item);
-  }
-  figure.appendChild(legend);
   const caption = document.createElement("figcaption");
   caption.dataset.capacityChartMeta = "";
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
@@ -5968,6 +5979,9 @@ showTokenInput.addEventListener("change", () => {
 });
 
 tokenInput.addEventListener("input", () => {
+  if (localDevelopmentAutoAuth && tokenInput.value.trim() !== LOCAL_DEVELOPMENT_ADMIN_TOKEN) {
+    localDevelopmentAutoAuth = false;
+  }
   persistTokenIfEnabled();
   keysLoadedAt = 0;
   passkeyUsersLoadedAt = 0;
@@ -6153,6 +6167,8 @@ globalThis.addEventListener("hashchange", () => {
 
 baseSelect.addEventListener("change", () => {
   storage.set(STORAGE_KEYS.base, getBaseChoice());
+  if (canUseLocalDevelopmentAuth()) applyLocalDevelopmentAuth();
+  else clearLocalDevelopmentAuth();
   updateBasePreview();
   setAuthBadge("unknown", "Not checked");
   setAdminAccessState({ checked: false, isAdmin: false, isSuperAdmin: false });

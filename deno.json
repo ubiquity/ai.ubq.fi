@@ -7,7 +7,7 @@
   },
   "tasks": {
     "build": "deno check serve.ts scripts/setup-instance.ts",
-    "dev": "deno serve --watch --env --allow-env --allow-net --allow-read --unstable-kv serve.ts",
+    "dev": "sh -c 'export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN:-local-dev-admin}\"; exec deno serve --watch --env --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts'",
     "dev:play": "deno task dev:local",
     "dev:local": "sh -c 'if [ -z \"${CODEX_AUTH_JSON_B64:-}\" ]; then if [ -f \"$HOME/.codex/auth.json\" ]; then export CODEX_AUTH_JSON_B64=\"$(base64 < \"$HOME/.codex/auth.json\" | tr -d \"\\n\")\"; echo \"Loaded CODEX_AUTH_JSON_B64 from ~/.codex/auth.json\"; else echo \"No CODEX_AUTH_JSON_B64 and no ~/.codex/auth.json found. /v1/models will stay empty until a model snapshot is initialized.\"; fi; fi; if [ -f .env ]; then source .env; fi; deno serve --watch --allow-env --allow-net --allow-read --unstable-kv serve.ts'",
     "ubq-ai": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts",

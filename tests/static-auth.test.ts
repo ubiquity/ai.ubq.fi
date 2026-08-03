@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 
-const { STORAGE_KEYS, formatAuthSessionLabel, hasAuthPasskeyCredential, signInWithPasskey, registerPasskey } =
-  await import(
-    "../static/auth.js"
-  );
+const {
+  LOCAL_DEVELOPMENT_ADMIN_TOKEN,
+  STORAGE_KEYS,
+  formatAuthSessionLabel,
+  hasAuthPasskeyCredential,
+  isLocalDevelopmentOrigin,
+  signInWithPasskey,
+  registerPasskey,
+} = await import(
+  "../static/auth.js"
+);
 
 type Restore = () => void;
 
@@ -87,6 +94,22 @@ Deno.test("formatAuthSessionLabel distinguishes fallback token and passkey auth"
   assert.equal(formatAuthSessionLabel({ method: { kind: "deno_deploy_token" } }), "Deno token active");
   assert.equal(formatAuthSessionLabel({ method: { kind: "kv_api_key" } }), "API key active");
   assert.equal(formatAuthSessionLabel({}), "Token active");
+});
+
+Deno.test("local development auth is restricted to loopback HTTP origins", () => {
+  assert.equal(LOCAL_DEVELOPMENT_ADMIN_TOKEN, "local-dev-admin");
+
+  const restoreLocal = setGlobal("location", { protocol: "http:", hostname: "localhost" });
+  assert.equal(isLocalDevelopmentOrigin(), true);
+  restoreLocal();
+
+  const restoreRemote = setGlobal("location", { protocol: "https:", hostname: "ai.ubq.fi" });
+  assert.equal(isLocalDevelopmentOrigin(), false);
+  restoreRemote();
+
+  const restoreLoopbackTls = setGlobal("location", { protocol: "https:", hostname: "127.0.0.1" });
+  assert.equal(isLocalDevelopmentOrigin(), false);
+  restoreLoopbackTls();
 });
 
 const captureRegisterStartBody = async (
