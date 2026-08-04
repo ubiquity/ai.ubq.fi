@@ -1837,12 +1837,12 @@ Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering 
         owned_by: "cerebras",
         display_name: "GPT-OSS 120B",
         upstream_provider: "cerebras",
-        supported_endpoints: ["/v1/chat/completions"],
-        supported_reasoning_levels: ["medium"],
+        supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
+        supported_reasoning_levels: ["low", "medium", "high"],
         default_reasoning_effort: "medium",
         reasoning_effort_wire_map: {},
-        context_window_tokens: null,
-        max_context_window_tokens: null,
+        context_window_tokens: 131072,
+        max_context_window_tokens: 131072,
         auto_compact_token_limit_tokens: null,
       },
     );
@@ -7242,7 +7242,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(upstreamBody.stream, false);
     });
 
-    await t.step("downgrades Chat Completions streaming while keeping Responses unavailable", async () => {
+    await t.step("downgrades provider streaming and bridges Responses", async () => {
       let cerebrasCalls = 0;
       const upstreamBodies: Record<string, unknown>[] = [];
       const streamResponse = await withFetchMock(
@@ -7284,23 +7284,54 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(upstreamBody.stream_options, undefined);
       assert.equal(cerebrasCalls, 1);
 
+      const responsesUpstreamBodies: Record<string, unknown>[] = [];
       const responsesResponse = await withFetchMock(
-        (url) => {
-          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
-          return sseResponse(baseSseChunks());
+        (url, bodyText) => {
+          if (url !== "https://api.cerebras.ai/v1/chat/completions") throw new Error(`unexpected URL: ${url}`);
+          cerebrasCalls += 1;
+          if (bodyText) responsesUpstreamBodies.push(JSON.parse(bodyText) as Record<string, unknown>);
+          return new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_responses_bridge",
+              object: "chat.completion",
+              created: 1_728_000_005,
+              model: "gpt-oss-120b",
+              choices: [{
+                index: 0,
+                message: { role: "assistant", content: "Ready from Responses" },
+                finish_reason: "stop",
+              }],
+              usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", "X-Request-Id": "cerebras-response-bridge" },
+            },
+          );
         },
         () =>
           handleResponses(
             new Request("https://ai.ubq.fi/v1/responses", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model: "gpt-oss-120b", input: "ping" }),
+              body: JSON.stringify({ model: "gpt-oss-120b", input: "ping", stream: true }),
             }),
           ),
       );
-      assert.equal(responsesResponse.status, 400);
-      assert.equal((await responsesResponse.json() as { error?: { param?: string } }).error?.param, "model");
-      assert.equal(cerebrasCalls, 1);
+      assert.equal(responsesResponse.status, 200);
+      assert.equal(responsesResponse.headers.get("Content-Type"), "text/event-stream");
+      assert.equal(responsesResponse.headers.get("x-uos-upstream"), "cerebras");
+      assert.equal(responsesResponse.headers.get("x-uos-provider-request-id"), "cerebras-response-bridge");
+      assert.equal(responsesResponse.headers.get("x-uos-warning"), "gpt_oss_stream_downgraded");
+      const responsesText = await responsesResponse.text();
+      assert.match(responsesText, /response\.output_text\.delta/);
+      assert.match(responsesText, /Ready from Responses/);
+      assert.match(responsesText, /response\.completed/);
+      assert.match(responsesText, /data: \[DONE\]/);
+      assert.deepEqual(responsesUpstreamBodies[0]?.messages, [{ role: "user", content: "ping" }]);
+      assert.equal(responsesUpstreamBodies[0]?.stream, false);
+      assert.equal(responsesUpstreamBodies[0]?.reasoning_effort, "low");
+      assert.equal(cerebrasCalls, 2);
     });
 
     await t.step("rejects a missing server credential without provider dispatch", async () => {

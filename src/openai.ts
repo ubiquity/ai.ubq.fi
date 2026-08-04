@@ -21,6 +21,11 @@ import {
   normalizeCerebrasProviderRequestId,
   readCerebrasApiKey,
 } from "./cerebras.ts";
+import {
+  buildCerebrasResponsesTranslation,
+  cerebrasResponseSse,
+  chatCompletionToCerebrasResponse,
+} from "./cerebras_responses.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import {
   CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
@@ -1305,6 +1310,15 @@ const getCodexModelMetadata = async (model: string): Promise<CodexModelMetadata>
   const snapshot = await loadCodexModelsSnapshot();
   const record = findSnapshotModelRecord(snapshot, model);
   return { snapshot, record, reasoning: getCodexModelReasoning(record) };
+};
+
+const getCerebrasModelMetadata = (): CodexModelMetadata => {
+  const record: Record<string, unknown> = {
+    slug: CEREBRAS_GPT_OSS_120B_MODEL,
+    default_reasoning_level: "medium",
+    supported_reasoning_levels: ["low", "medium", "high"],
+  };
+  return { snapshot: null, record, reasoning: getCodexModelReasoning(record) };
 };
 
 const validateCodexModelAvailable = (model: string, metadata: CodexModelMetadata): Response | null => {
@@ -3543,12 +3557,12 @@ const configuredCerebrasModelCapabilities = (): Record<string, unknown> | null =
       owned_by: "cerebras",
       display_name: "GPT-OSS 120B",
       upstream_provider: "cerebras",
-      supported_endpoints: ["/v1/chat/completions"],
-      supported_reasoning_levels: ["medium"],
+      supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
+      supported_reasoning_levels: ["low", "medium", "high"],
       default_reasoning_effort: "medium",
       reasoning_effort_wire_map: {},
-      context_window_tokens: null,
-      max_context_window_tokens: null,
+      context_window_tokens: 131072,
+      max_context_window_tokens: 131072,
       auto_compact_token_limit_tokens: null,
     }
     : null;
@@ -5904,6 +5918,242 @@ const handleCerebrasChatCompletions = async (
   return json(200, normalized.value, responseHeaders);
 };
 
+/**
+ * Codex sends Responses requests, while Cerebras GPT-OSS currently exposes
+ * Chat Completions. The preview bridge buffers the provider response (the
+ * existing GPT-OSS adapter already does this) and synthesizes a valid
+ * Responses body or SSE sequence for Codex.
+ */
+const handleCerebrasResponses = async (
+  req: Request,
+  rawRecord: Record<string, unknown>,
+  modelRaw: string,
+  input: readonly ResponseInputItem[],
+  instructions: string | undefined,
+  reasoning: ReasoningEffort,
+  clientWantsStream: boolean,
+  usageContext?: UsageContext,
+): Promise<Response> => {
+  const supportedReasoning = new Set(["low", "medium", "high"]);
+  if (!supportedReasoning.has(reasoning)) {
+    return openaiError(
+      400,
+      `reasoning.effort '${reasoning}' is not supported by gpt-oss-120b; use low, medium, or high`,
+      "invalid_request_error",
+      { param: "reasoning.effort" },
+    );
+  }
+
+  const translation = buildCerebrasResponsesTranslation(input, instructions, rawRecord);
+  if (!translation.ok) {
+    return openaiError(400, translation.message, "invalid_request_error", {
+      param: translation.param ?? "input",
+    });
+  }
+
+  if (
+    rawRecord.parallel_tool_calls !== undefined &&
+    typeof rawRecord.parallel_tool_calls !== "boolean"
+  ) {
+    return openaiError(400, "parallel_tool_calls must be a boolean", "invalid_request_error", {
+      param: "parallel_tool_calls",
+    });
+  }
+
+  let maxOutputTokens: number | undefined;
+  if (rawRecord.max_output_tokens !== undefined) {
+    if (
+      typeof rawRecord.max_output_tokens !== "number" ||
+      !Number.isSafeInteger(rawRecord.max_output_tokens) ||
+      rawRecord.max_output_tokens <= 0
+    ) {
+      return openaiError(
+        400,
+        "max_output_tokens must be a positive integer",
+        "invalid_request_error",
+        { param: "max_output_tokens" },
+      );
+    }
+    maxOutputTokens = rawRecord.max_output_tokens;
+  }
+
+  const cerebrasBody: Record<string, unknown> = {
+    model: CEREBRAS_GPT_OSS_120B_MODEL,
+    messages: translation.value.messages,
+    reasoning_effort: reasoning,
+    stream: false,
+    ...(translation.value.tools ? { tools: translation.value.tools } : {}),
+    ...(translation.value.toolChoice !== undefined ? { tool_choice: translation.value.toolChoice } : {}),
+    ...(rawRecord.parallel_tool_calls === undefined ? {} : { parallel_tool_calls: rawRecord.parallel_tool_calls }),
+    ...(maxOutputTokens === undefined ? {} : { max_completion_tokens: maxOutputTokens }),
+    ...(typeof rawRecord.temperature === "number" ? { temperature: rawRecord.temperature } : {}),
+    ...(typeof rawRecord.top_p === "number" ? { top_p: rawRecord.top_p } : {}),
+  };
+
+  const warnings = buildIgnoredWarnings(
+    rawRecord,
+    new Set([
+      "model",
+      "input",
+      "instructions",
+      "reasoning",
+      "stream",
+      "tools",
+      "tool_choice",
+      "parallel_tool_calls",
+      "max_output_tokens",
+      "temperature",
+      "top_p",
+    ]),
+  );
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.provider = "cerebras";
+    usageContext.responseTelemetry.reasoning = reasoning;
+  }
+  await recordRequestUsage(usageContext, {
+    model: modelRaw,
+    route: "responses",
+    stream: clientWantsStream,
+    reasoning,
+    promptCacheKeyPresent: promptCacheKeyPresent(rawRecord),
+    promptCacheMode: promptCacheModeFor(rawRecord),
+    explicitBreakpointCount: countExplicitPromptCacheBreakpoints(input),
+  });
+
+  const requestSignal = inferenceSignal(req);
+  let upstream: Response;
+  try {
+    upstream = await fetchCerebrasChatCompletions(cerebrasBody, {
+      signal: requestSignal,
+      beforeDispatch: () => usageContext?.beforeProviderDispatch?.("cerebras") ?? Promise.resolve(),
+      onDispatch: () => recordFirstProviderDispatch(usageContext),
+      onHeaders: () => recordFirstProviderHeaders(usageContext),
+    });
+  } catch (error) {
+    const terminalType = cerebrasTerminalTypeForError(error, req.signal);
+    recordStreamTerminalType(usageContext, terminalType);
+    if (terminalType !== "cancelled") void recordCerebrasProviderHealth("upstream_error", null);
+    await recordErrorUsage(usageContext);
+    return withUosWarning(toCerebrasErrorResponse(error), warnings);
+  }
+
+  let providerRequestId = getCerebrasProviderRequestId(upstream);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
+  if (!upstream.ok) {
+    recordCerebrasResponseHealth(upstream.status);
+    recordStreamTerminalType(usageContext, "response.failed");
+    await recordErrorUsage(usageContext);
+    return withUosWarning(toCerebrasUpstreamErrorResponse(upstream), warnings);
+  }
+
+  const captured = await readBoundedResponseBody(upstream, {
+    signal: requestSignal,
+    maxBytes: 128 * 1024,
+    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
+    cancellationReason: "Cerebras Responses bridge body was incomplete",
+  });
+  if (!captured.complete) {
+    const terminalType = req.signal.aborted ? "cancelled" : requestSignal.aborted ? "deadline" : "error";
+    recordStreamTerminalType(usageContext, terminalType);
+    if (terminalType !== "cancelled") void recordCerebrasProviderHealth("upstream_error", null);
+    await recordErrorUsage(usageContext);
+    const response = terminalType === "cancelled"
+      ? openaiError(499, "Request was cancelled.", "request_cancelled", {
+        type: "server_error",
+        headers: cerebrasResponseHeaders(providerRequestId),
+      })
+      : openaiError(
+        terminalType === "deadline" ? 504 : 502,
+        terminalType === "deadline"
+          ? "Upstream request exceeded the gateway deadline."
+          : "Upstream returned an incomplete response.",
+        terminalType === "deadline" ? "gateway_timeout" : "cerebras_upstream_invalid_response",
+        { type: "server_error", headers: cerebrasResponseHeaders(providerRequestId) },
+      );
+    return withUosWarning(response, warnings);
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(captured.bytes)) as unknown;
+  } catch {
+    recordStreamTerminalType(usageContext, "error");
+    void recordCerebrasProviderHealth("upstream_error", upstream.status);
+    await recordErrorUsage(usageContext);
+    return withUosWarning(
+      openaiError(
+        502,
+        "Upstream returned an invalid Chat Completions response.",
+        "cerebras_upstream_invalid_response",
+        {
+          type: "server_error",
+          headers: cerebrasResponseHeaders(providerRequestId),
+        },
+      ),
+      warnings,
+    );
+  }
+  const normalized = normalizeCerebrasChatCompletion(payload, CEREBRAS_GPT_OSS_120B_MODEL);
+  if (!normalized.ok) {
+    recordStreamTerminalType(usageContext, "error");
+    void recordCerebrasProviderHealth("upstream_error", upstream.status);
+    await recordErrorUsage(usageContext);
+    return withUosWarning(
+      openaiError(
+        502,
+        "Upstream returned an invalid Chat Completions response.",
+        "cerebras_upstream_invalid_response",
+        {
+          type: "server_error",
+          headers: cerebrasResponseHeaders(providerRequestId),
+        },
+      ),
+      warnings,
+    );
+  }
+
+  providerRequestId ??= normalizeCerebrasProviderRequestId(normalized.value.id);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
+  const usage = extractChatUsageTokens(normalized.value.usage);
+  const translated = chatCompletionToCerebrasResponse(normalized.value, CEREBRAS_GPT_OSS_120B_MODEL);
+  if (!translated.ok) {
+    recordStreamTerminalType(usageContext, "error");
+    void recordCerebrasProviderHealth("upstream_error", upstream.status);
+    await recordErrorUsage(usageContext);
+    return withUosWarning(
+      openaiError(
+        502,
+        "Upstream returned an invalid Chat Completions response.",
+        "cerebras_upstream_invalid_response",
+        {
+          type: "server_error",
+          headers: cerebrasResponseHeaders(providerRequestId),
+        },
+      ),
+      warnings,
+    );
+  }
+  await recordCompletionUsage(usageContext, usage);
+  recordStreamTerminalType(usageContext, "response.completed");
+  recordCerebrasResponseHealth(upstream.status);
+  const headers = cerebrasResponseHeaders(
+    providerRequestId,
+    clientWantsStream ? GPT_OSS_STREAM_DOWNGRADED_WARNING : undefined,
+  );
+  if (clientWantsStream) {
+    recordFirstSseEvent(usageContext);
+    recordStreamTerminal(usageContext);
+    const responseHeaders = new Headers(headers);
+    responseHeaders.set("Content-Type", "text/event-stream");
+    responseHeaders.set("Cache-Control", "no-cache");
+    return withUosWarning(
+      new Response(cerebrasResponseSse(translated.value), { status: 200, headers: responseHeaders }),
+      warnings,
+    );
+  }
+  return withUosWarning(json(200, translated.value, headers), warnings);
+};
+
 const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;
   if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
@@ -6239,16 +6489,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
   const model = normalizeModelForCodex(modelRaw);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.model = modelRaw;
-  if (model === CEREBRAS_GPT_OSS_120B_MODEL) {
-    return openaiError(
-      400,
-      "gpt-oss-120b is available only on /v1/chat/completions.",
-      "unsupported_model",
-      { param: "model" },
-    );
-  }
-  const modelMetadata = await getCodexModelMetadata(model);
-  const modelAvailabilityError = validateCodexModelAvailable(modelRaw, modelMetadata);
+  const isCerebrasModel = model === CEREBRAS_GPT_OSS_120B_MODEL;
+  const modelMetadata = isCerebrasModel ? getCerebrasModelMetadata() : await getCodexModelMetadata(model);
+  const modelAvailabilityError = isCerebrasModel ? null : validateCodexModelAvailable(modelRaw, modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
 
   const inputRaw = rawBody.input;
@@ -6384,6 +6627,19 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.reasoning = reasoningLabel;
+
+  if (isCerebrasModel) {
+    return await handleCerebrasResponses(
+      req,
+      rawRecord,
+      modelRaw,
+      input,
+      instructions,
+      reasoningLabel,
+      clientWantsStream,
+      usageContext,
+    );
+  }
 
   let reasoningValue = normalizeReasoningParamForCodex(reasoning.value, modelReasoning);
   if (reasoningValue === undefined && reasoning.value === undefined) {
