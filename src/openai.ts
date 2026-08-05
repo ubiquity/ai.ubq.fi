@@ -14,6 +14,7 @@ import {
 } from "./codex.ts";
 import {
   CEREBRAS_GPT_OSS_120B_MODEL,
+  CEREBRAS_RATE_LIMIT_HEADERS,
   CerebrasError,
   fetchCerebrasChatCompletions,
   getCerebrasProviderRequestId,
@@ -734,24 +735,6 @@ const cerebrasResponseHeaders = (
   ...(providerRequestId ? { "x-uos-provider-request-id": providerRequestId } : {}),
   ...(warning ? { "x-uos-warning": warning } : {}),
 });
-
-// Cerebras exposes shared API-key capacity through these headers. Keep the
-// allowlist explicit: provider responses may contain other sensitive or
-// provider-specific metadata that must not cross the gateway boundary.
-const CEREBRAS_RATE_LIMIT_HEADERS = [
-  "x-ratelimit-limit-requests-minute",
-  "x-ratelimit-remaining-requests-minute",
-  "x-ratelimit-reset-requests-minute",
-  "x-ratelimit-limit-tokens-minute",
-  "x-ratelimit-remaining-tokens-minute",
-  "x-ratelimit-reset-tokens-minute",
-  "x-ratelimit-limit-requests-day",
-  "x-ratelimit-remaining-requests-day",
-  "x-ratelimit-reset-requests-day",
-  "x-ratelimit-limit-tokens-day",
-  "x-ratelimit-remaining-tokens-day",
-  "x-ratelimit-reset-tokens-day",
-] as const;
 
 const GPT_OSS_STREAM_DOWNGRADED_WARNING = "gpt_oss_stream_downgraded";
 

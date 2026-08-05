@@ -4,6 +4,20 @@ import { getString, isRecord } from "./utils.ts";
 
 export const CEREBRAS_GPT_OSS_120B_MODEL = "gpt-oss-120b";
 export const CEREBRAS_CHAT_COMPLETIONS_URL = "https://api.cerebras.ai/v1/chat/completions";
+export const CEREBRAS_RATE_LIMIT_HEADERS = [
+  "x-ratelimit-limit-requests-minute",
+  "x-ratelimit-remaining-requests-minute",
+  "x-ratelimit-reset-requests-minute",
+  "x-ratelimit-limit-tokens-minute",
+  "x-ratelimit-remaining-tokens-minute",
+  "x-ratelimit-reset-tokens-minute",
+  "x-ratelimit-limit-requests-day",
+  "x-ratelimit-remaining-requests-day",
+  "x-ratelimit-reset-requests-day",
+  "x-ratelimit-limit-tokens-day",
+  "x-ratelimit-remaining-tokens-day",
+  "x-ratelimit-reset-tokens-day",
+] as const;
 
 const CEREBRAS_API_KEY_ENV = "CEREBRAS_API_KEY";
 const MAX_CEREBRAS_PROVIDER_REQUEST_ID_LENGTH = 256;
