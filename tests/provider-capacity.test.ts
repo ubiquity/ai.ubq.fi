@@ -12,6 +12,7 @@ import {
   PROVIDER_CAPACITY_LEASE_KEY,
   PROVIDER_CAPACITY_SNAPSHOT_KEY,
   PROVIDER_CAPACITY_SOURCE_STALE_MS,
+  type ProviderCapacityCodexSource,
   providerCapacityHistoryKey,
   refreshProviderCapacity,
 } from "../src/provider_capacity.ts";
@@ -156,6 +157,34 @@ const codexUsageBody = (primaryUsed: number, secondaryUsed: number) => ({
   private_account_field: "must-not-escape",
 });
 
+const codexSparkUsageBody = (
+  primaryUsed: number,
+  sparkUsed: number,
+  sparkResetAt = 1_800_011_000,
+) => ({
+  rate_limit: {
+    primary_window: {
+      limit_window_seconds: 604_800,
+      used_percent: primaryUsed,
+      reset_at: 1_800_010_000,
+    },
+    secondary_window: null,
+  },
+  additional_rate_limits: [{
+    limit_name: "GPT-5.3-Codex-Spark",
+    metered_feature: "codex_bengalfox",
+    rate_limit: {
+      primary_window: {
+        limit_window_seconds: 18_000,
+        used_percent: sparkUsed,
+        reset_at: sparkResetAt,
+      },
+      secondary_window: null,
+    },
+  }],
+  private_account_field: "must-not-escape",
+});
+
 const createFetcher = (
   calls: Array<{ account: string | null; authorization: string | null; url: string }>,
   failureAccount: string | null = null,
@@ -168,6 +197,8 @@ const createFetcher = (
     refill_completed_at?: number;
   }> = {},
   codexUsage: ((account: string | null) => readonly [number, number]) | null = null,
+  codexSpark = false,
+  codexSparkResetAt = 1_800_011_000,
 ) =>
 (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const headers = new Headers(init?.headers);
@@ -220,12 +251,62 @@ const createFetcher = (
   if (account === failureAccount) return Promise.resolve(new Response("upstream-secret-body", { status: 503 }));
   const used = codexUsage?.(account) ?? (account === "account-one" ? [12.5, 38] : [67, 81.25]);
   return Promise.resolve(
-    new Response(JSON.stringify(codexUsageBody(used[0], used[1])), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }),
+    new Response(
+      JSON.stringify(
+        codexSpark ? codexSparkUsageBody(used[0], used[1], codexSparkResetAt) : codexUsageBody(used[0], used[1]),
+      ),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    ),
   );
 };
+
+Deno.test("sampler carries named Codex model limits alongside null secondary windows", async () => {
+  seed();
+  const live = await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher: createFetcher([], null, {}, null, true),
+    now: () => nowMs,
+  });
+  const accountOne = live.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
+  );
+  assert.equal(accountOne?.windows.secondary, null);
+  assert.deepEqual(accountOne?.additional_rate_limits, [{
+    limit_name: "GPT-5.3-Codex-Spark",
+    metered_feature: "codex_bengalfox",
+    windows: {
+      primary: {
+        limit_window_seconds: 18_000,
+        used_percent: 38,
+        reset_at_ms: 1_800_011_000_000,
+      },
+      secondary: null,
+    },
+  }]);
+
+  const persisted = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs });
+  const persistedAccount = persisted.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
+  );
+  assert.deepEqual(persistedAccount?.additional_rate_limits, accountOne?.additional_rate_limits);
+  assert.equal(JSON.stringify(live).includes("must-not-escape"), false);
+});
+
+Deno.test("sampler defers unused additional limits with full-window resets", async () => {
+  seed();
+  const live = await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher: createFetcher([], null, {}, () => [12.5, 0], true, nowMs / 1_000 + 18_000),
+    now: () => nowMs,
+  });
+  const accountOne = live.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
+  );
+  assert.deepEqual(accountOne?.additional_rate_limits, []);
+});
 
 const historySource = (slot: 1 | 2, sampledAtMs: number, state: "available" | "unavailable" = "available") => ({
   source: "codex" as const,

@@ -528,6 +528,7 @@ body[data-page="admin"] [data-capacity-source] > header {
 body[data-page="admin"] [data-capacity-source] h3,
 body[data-page="admin"] [data-capacity-window] h4 {
   margin: 0;
+  overflow-wrap: anywhere;
   font-size: 14px;
 }
 
