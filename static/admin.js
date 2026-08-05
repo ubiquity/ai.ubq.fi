@@ -869,6 +869,21 @@ const renderCapacityWindow = (container, label, window) => {
   container.appendChild(card);
 };
 
+const capacityAdditionalLimitLabel = (limit) => {
+  const name = typeof limit?.limit_name === "string" ? limit.limit_name.trim() : "";
+  if (name) return name;
+  const feature = typeof limit?.metered_feature === "string" ? limit.metered_feature.trim() : "";
+  return feature ? `Additional limit · ${feature}` : "Additional limit";
+};
+
+const renderCapacityAdditionalLimit = (container, limit) => {
+  const label = capacityAdditionalLimitLabel(limit);
+  const primary = limit?.windows?.primary;
+  const secondary = limit?.windows?.secondary;
+  if (primary) renderCapacityWindow(container, `${label} · primary window`, primary);
+  if (secondary) renderCapacityWindow(container, `${label} · secondary window`, secondary);
+};
+
 const appendCapacitySourceMeta = (row, source) => {
   const facts = document.createElement("dl");
   facts.dataset.capacityMeta = "";
@@ -894,7 +909,9 @@ const renderCodexCapacitySource = (source) => {
   const windows = document.createElement("div");
   windows.dataset.capacityWindows = "";
   renderCapacityWindow(windows, "Primary window", source.windows?.primary);
-  renderCapacityWindow(windows, "Secondary window", source.windows?.secondary);
+  if (source.windows?.secondary) renderCapacityWindow(windows, "Secondary window", source.windows.secondary);
+  const additionalLimits = Array.isArray(source.additional_rate_limits) ? source.additional_rate_limits : [];
+  for (const limit of additionalLimits) renderCapacityAdditionalLimit(windows, limit);
   row.append(header, windows);
   appendCapacitySourceMeta(row, source);
   return row;
