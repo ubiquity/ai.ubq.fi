@@ -12,7 +12,7 @@ import {
   signOut,
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
-} from "./auth.js?v=provider-capacity-20260803";
+} from "./auth.js?v=provider-capacity-20260805-consolidated";
 import { AUTH_RELAY_MESSAGE_TYPE, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "./auth-relay.js";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
@@ -133,16 +133,6 @@ const viewPubkeys = mustGet("view-pubkeys");
 const viewDefaults = mustGet("view-defaults");
 const viewProviders = mustGet("view-providers");
 
-const codexProvidersBadge = mustGet("codex-providers-badge");
-const codexProviderList = mustGet("codex-provider-list");
-const providersUpdated = mustGet("providers-updated");
-const yunwuProviderBadge = mustGet("yunwu-provider-badge");
-const yunwuProviderState = mustGet("yunwu-provider-state");
-const yunwuProviderObserved = mustGet("yunwu-provider-observed");
-const yunwuProviderBalance = mustGet("yunwu-provider-balance");
-const yunwuProviderRemaining = mustGet("yunwu-provider-remaining");
-const yunwuProviderQuotaObserved = mustGet("yunwu-provider-quota-observed");
-const yunwuProviderCache = mustGet("yunwu-provider-cache");
 const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
@@ -164,7 +154,9 @@ let providersLoading = false;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
-let latestYunwuCapacitySource = null;
+let latestProviderCapacityChartState = null;
+let capacityChartResizeFrame = 0;
+let latestProviderHealth = null;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
 const API_KEY_REQUEST_LOG_STATUS_OK = "OK";
@@ -709,93 +701,6 @@ const appendProviderFact = (list, label, value) => {
   list.appendChild(item);
 };
 
-const renderCodexProviders = (codex) => {
-  codexProviderList.replaceChildren();
-  const accounts = Array.isArray(codex?.accounts) ? codex.accounts : [];
-  if (accounts.length === 0) {
-    const empty = document.createElement("p");
-    empty.dataset.providerEmpty = "";
-    empty.textContent = codex?.configured === false
-      ? "No Codex accounts configured."
-      : "No account metadata available.";
-    codexProviderList.appendChild(empty);
-  }
-  for (const account of accounts) {
-    const card = document.createElement("article");
-    card.dataset.providerAccount = "";
-    card.setAttribute("role", "listitem");
-
-    const header = document.createElement("header");
-    const title = document.createElement("h3");
-    title.textContent = `Account ${account.slot ?? "—"}`;
-    const badge = document.createElement("span");
-    badge.dataset.badge = "";
-    const health = account.health ?? {};
-    setBadge(badge, providerBadgeState(health.state), providerStateLabel(health));
-    header.append(title, badge);
-
-    const facts = document.createElement("dl");
-    facts.dataset.providerDiagnostics = "";
-    appendProviderFact(facts, "Last response", formatDate(health.last_observed_at_ms));
-    appendProviderFact(
-      facts,
-      "HTTP status",
-      typeof health.last_status === "number" ? String(health.last_status) : "Not observed",
-    );
-    appendProviderFact(facts, "Token expires", formatDate(account.access_token_exp_ms));
-    appendProviderFact(
-      facts,
-      "Refresh",
-      health.last_refresh_succeeded === true
-        ? `Succeeded · ${formatDate(health.last_refresh_at_ms)}`
-        : health.last_refresh_succeeded === false
-        ? `Failed · ${formatDate(health.last_refresh_at_ms)}`
-        : "Not observed",
-    );
-    card.append(header, facts);
-    codexProviderList.appendChild(card);
-  }
-
-  const state = codex?.state ?? "unknown";
-  setBadge(
-    codexProvidersBadge,
-    providerBadgeState(state),
-    `${accounts.length} account${accounts.length === 1 ? "" : "s"} · ${state}`,
-  );
-};
-
-const applyYunwuCapacitySummary = (source) => {
-  if (source?.source !== "yunwu" || source.state === "unavailable") return;
-  const wallet = source.wallet ?? {};
-  if (typeof wallet.balance_credits === "number" && Number.isFinite(wallet.balance_credits)) {
-    yunwuProviderBalance.textContent = formatCredits(wallet.balance_credits);
-  }
-  if (
-    typeof wallet.refill_cycle_remaining_percent === "number" &&
-    Number.isFinite(wallet.refill_cycle_remaining_percent)
-  ) {
-    yunwuProviderRemaining.textContent = `${quotaPercentFormatter.format(wallet.refill_cycle_remaining_percent)}%`;
-  }
-  yunwuProviderQuotaObserved.textContent = formatDate(source.source_observed_at_ms);
-  yunwuProviderCache.textContent = wallet.cache_state ?? (source.state === "stale" ? "stale" : "Unavailable");
-};
-
-const renderYunwuProvider = (yunwu) => {
-  const health = yunwu?.health ?? {};
-  const quota = yunwu?.quota ?? {};
-  const state = yunwu?.configured === false ? "unconfigured" : health.state ?? "unknown";
-  setBadge(yunwuProviderBadge, providerBadgeState(state), providerStateLabel({ ...health, state }));
-  yunwuProviderState.textContent = providerStateLabel({ ...health, state });
-  yunwuProviderObserved.textContent = formatDate(health.last_observed_at_ms);
-  yunwuProviderBalance.textContent = quota.available ? formatCredits(quota.balance_credits) : "Not cached";
-  yunwuProviderRemaining.textContent = typeof quota.remaining_percent === "number"
-    ? `${quotaPercentFormatter.format(quota.remaining_percent)}%`
-    : "Unknown";
-  yunwuProviderQuotaObserved.textContent = formatDate(quota.observed_at_ms);
-  yunwuProviderCache.textContent = quota.cache_state ?? "Unavailable";
-  applyYunwuCapacitySummary(latestYunwuCapacitySource);
-};
-
 const capacityBadgeState = (state) => state === "available" ? "ok" : state === "stale" ? "unknown" : "bad";
 
 const capacityStateLabel = (state) => {
@@ -884,15 +789,62 @@ const renderCapacityAdditionalLimit = (container, limit) => {
   if (secondary) renderCapacityWindow(container, `${label} · secondary window`, secondary);
 };
 
-const appendCapacitySourceMeta = (row, source) => {
+const capacityProviderStatus = (source, provider) => {
+  const health = provider?.health ?? provider ?? null;
+  const state = provider?.configured === false ? "unconfigured" : health?.state;
+  const hasState = typeof state === "string" && state.trim().length > 0;
+  let badgeState = capacityBadgeState(source.state);
+  if (source.state !== "unavailable" && hasState) {
+    badgeState = providerBadgeState(state);
+    if (source.state === "stale" && badgeState === "ok") badgeState = "unknown";
+  }
+  const healthLabel = hasState ? providerStateLabel({ ...health, state }) : "";
+  return {
+    badgeState,
+    label: healthLabel && healthLabel !== "unknown"
+      ? `${healthLabel} · ${capacityStateLabel(source.state)}`
+      : capacityStateLabel(source.state),
+    health,
+  };
+};
+
+const appendCapacitySourceMeta = (row, source, provider = null) => {
   const facts = document.createElement("dl");
   facts.dataset.capacityMeta = "";
   appendProviderFact(facts, "Observed", formatCapacityTimestamp(source.source_observed_at_ms));
   appendProviderFact(facts, "Snapshot", formatCapacityTimestamp(source.snapshot_at_ms));
+  if (source.source === "codex") {
+    const health = provider?.health ?? {};
+    appendProviderFact(facts, "Last response", formatDate(health.last_observed_at_ms));
+    appendProviderFact(
+      facts,
+      "HTTP status",
+      typeof health.last_status === "number" ? String(health.last_status) : "Not observed",
+    );
+    appendProviderFact(facts, "Token expires", formatDate(provider?.access_token_exp_ms));
+    appendProviderFact(
+      facts,
+      "Refresh",
+      health.last_refresh_succeeded === true
+        ? `Succeeded · ${formatDate(health.last_refresh_at_ms)}`
+        : health.last_refresh_succeeded === false
+        ? `Failed · ${formatDate(health.last_refresh_at_ms)}`
+        : "Not observed",
+    );
+  } else if (source.source === "yunwu") {
+    const status = capacityProviderStatus(source, provider);
+    appendProviderFact(facts, "Inference", status.health ? providerStateLabel(status.health) : "Not observed");
+    appendProviderFact(facts, "Last response", formatDate(status.health?.last_observed_at_ms));
+    appendProviderFact(
+      facts,
+      "Cache",
+      source.wallet?.cache_state ?? provider?.quota?.cache_state ?? "Unavailable",
+    );
+  }
   row.appendChild(facts);
 };
 
-const renderCodexCapacitySource = (source) => {
+const renderCodexCapacitySource = (source, provider = null) => {
   const row = document.createElement("article");
   row.dataset.capacitySource = "codex";
   row.dataset.state = source.state;
@@ -903,7 +855,8 @@ const renderCodexCapacitySource = (source) => {
   title.textContent = `Codex account ${source.slot}`;
   const badge = document.createElement("span");
   badge.dataset.badge = "";
-  setBadge(badge, capacityBadgeState(source.state), capacityStateLabel(source.state));
+  const status = capacityProviderStatus(source, provider);
+  setBadge(badge, status.badgeState, status.label);
   header.append(title, badge);
 
   const windows = document.createElement("div");
@@ -913,11 +866,11 @@ const renderCodexCapacitySource = (source) => {
   const additionalLimits = Array.isArray(source.additional_rate_limits) ? source.additional_rate_limits : [];
   for (const limit of additionalLimits) renderCapacityAdditionalLimit(windows, limit);
   row.append(header, windows);
-  appendCapacitySourceMeta(row, source);
+  appendCapacitySourceMeta(row, source, provider);
   return row;
 };
 
-const renderYunwuCapacitySource = (source) => {
+const renderYunwuCapacitySource = (source, provider = null) => {
   const row = document.createElement("article");
   row.dataset.capacitySource = "yunwu";
   row.dataset.state = source.state;
@@ -928,7 +881,8 @@ const renderYunwuCapacitySource = (source) => {
   title.textContent = "YunWu fallback";
   const badge = document.createElement("span");
   badge.dataset.badge = "";
-  setBadge(badge, capacityBadgeState(source.state), capacityStateLabel(source.state));
+  const status = capacityProviderStatus(source, provider);
+  setBadge(badge, status.badgeState, status.label);
   header.append(title, badge);
 
   const facts = document.createElement("dl");
@@ -949,8 +903,24 @@ const renderYunwuCapacitySource = (source) => {
   appendProviderFact(facts, "Cycle started", formatCapacityTimestamp(wallet.cycle_started_at_ms));
   appendProviderFact(facts, "Reset", "Not provided for refill cycle");
   row.append(header, facts);
-  appendCapacitySourceMeta(row, source);
+  appendCapacitySourceMeta(row, source, provider);
   return row;
+};
+
+const providerForCodexSlot = (slot) => {
+  const accounts = Array.isArray(latestProviderHealth?.codex?.accounts) ? latestProviderHealth.codex.accounts : [];
+  return accounts.find((account) => String(account?.slot) === String(slot)) ?? null;
+};
+
+const renderProviderCapacityList = (sources) => {
+  providerCapacityList.replaceChildren();
+  for (const source of sources) {
+    providerCapacityList.appendChild(
+      source.source === "yunwu"
+        ? renderYunwuCapacitySource(source, latestProviderHealth?.yunwu)
+        : renderCodexCapacitySource(source, providerForCodexSlot(source.slot)),
+    );
+  }
 };
 
 const unavailableCapacitySource = (source, slot = null) =>
@@ -981,10 +951,21 @@ const unavailableCapacitySource = (source, slot = null) =>
     };
 
 const CAPACITY_CHART_SVG_NS = "http://www.w3.org/2000/svg";
-const CAPACITY_CHART_DAYS = 7;
+const CAPACITY_CHART_MIN_DAYS = 7;
+const CAPACITY_CHART_MAX_DAYS = 14;
 const CAPACITY_CHART_DAY_MS = 24 * 60 * 60 * 1_000;
 const CAPACITY_CHART_HOUR_MS = 60 * 60 * 1_000;
 const CAPACITY_CHART_MINUTE_MS = 60 * 1_000;
+const CAPACITY_CHART_PLOT_HEIGHT = 100;
+const CAPACITY_CHART_PLOT_LEFT = 48;
+const CAPACITY_CHART_PLOT_TOP = 24;
+const CAPACITY_CHART_PLOT_RIGHT = 12;
+const CAPACITY_CHART_PLOT_BOTTOM = 56;
+const CAPACITY_CHART_MAX_PIXELS_PER_PERCENT = 4;
+const CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT = 2;
+const CAPACITY_CHART_MIN_PIXELS_PER_PERCENT = 1;
+const CAPACITY_CHART_VIEWPORT_GAP_PX = 16;
+const CAPACITY_CHART_FIGURE_OVERHEAD_PX = 48;
 const CAPACITY_CHART_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
   month: "short",
@@ -1008,16 +989,22 @@ const capacityChartSvgElement = (name, attributes = {}) => {
 
 const clampCapacityChartPercent = (value) => Math.max(0, Math.min(100, value));
 
-const capacityChartTickConfig = (chartWindow) => {
+const capacityChartTickConfig = (chartWindow, plotWidth = Number.POSITIVE_INFINITY) => {
+  const maxTickCount = Number.isFinite(plotWidth) && plotWidth > 0
+    ? Math.max(1, Math.floor(plotWidth / 96))
+    : CAPACITY_CHART_MAX_DAYS;
   const durationDays = chartWindow.durationMs / CAPACITY_CHART_DAY_MS;
   if (durationDays < 1) {
     return {
-      count: Math.max(1, Math.min(8, Math.ceil(chartWindow.durationMs / (3 * CAPACITY_CHART_HOUR_MS)))),
+      count: Math.max(
+        1,
+        Math.min(8, maxTickCount, Math.ceil(chartWindow.durationMs / (3 * CAPACITY_CHART_HOUR_MS))),
+      ),
       formatter: CAPACITY_CHART_DATE_TIME_FORMATTER,
     };
   }
   return {
-    count: Math.max(1, Math.min(CAPACITY_CHART_DAYS, Math.ceil(durationDays))),
+    count: Math.max(1, Math.min(CAPACITY_CHART_MAX_DAYS, maxTickCount, Math.ceil(durationDays))),
     formatter: CAPACITY_CHART_DAY_FORMATTER,
   };
 };
@@ -1045,6 +1032,30 @@ const capacityChartWindow = (window) => {
   const startAtMs = resetAtMs - durationMs;
   if (!Number.isFinite(durationMs) || !Number.isFinite(startAtMs)) return null;
   return { startAtMs, resetAtMs, durationMs };
+};
+
+const capacityChartContentWidth = () => {
+  const chartStyles = getComputedStyle(providerCapacityChart);
+  const horizontalPadding = Number.parseFloat(chartStyles.paddingLeft) + Number.parseFloat(chartStyles.paddingRight);
+  const width = providerCapacityChart.getBoundingClientRect().width - horizontalPadding;
+  return Number.isFinite(width) && width > 0
+    ? Math.max(CAPACITY_CHART_PLOT_LEFT + CAPACITY_CHART_PLOT_RIGHT + 1, width)
+    : 740;
+};
+
+const capacityChartPlotHeight = () => {
+  const viewportHeight = Number.isFinite(globalThis.innerHeight) ? globalThis.innerHeight : 0;
+  const availableHeight = Math.max(
+    0,
+    viewportHeight - CAPACITY_CHART_VIEWPORT_GAP_PX - CAPACITY_CHART_FIGURE_OVERHEAD_PX,
+  );
+  const plotChromeHeight = CAPACITY_CHART_PLOT_TOP + CAPACITY_CHART_PLOT_BOTTOM;
+  const pixelsPerPercent = availableHeight >= plotChromeHeight + CAPACITY_CHART_MAX_PIXELS_PER_PERCENT * 100
+    ? CAPACITY_CHART_MAX_PIXELS_PER_PERCENT
+    : availableHeight >= plotChromeHeight + CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT * 100
+    ? CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT
+    : CAPACITY_CHART_MIN_PIXELS_PER_PERCENT;
+  return CAPACITY_CHART_PLOT_HEIGHT * pixelsPerPercent;
 };
 
 const capacityChartAggregateRemainingPercent = (sample) => {
@@ -1250,33 +1261,41 @@ const capacityChartReferenceWindow = (sources, nowMs) => {
   const usageWindows = primaryWindows.length > 0 ? primaryWindows : codexWindows;
   if (usageWindows.length > 0) {
     const startAtMs = Math.min(...usageWindows.map((interval) => interval.startAtMs));
-    const resetAtMs = Math.max(...usageWindows.map((interval) => interval.resetAtMs));
-    return { startAtMs, resetAtMs, durationMs: resetAtMs - startAtMs };
+    const latestResetAtMs = Math.max(...usageWindows.map((interval) => interval.resetAtMs));
+    const durationMs = latestResetAtMs - startAtMs;
+    return { startAtMs, resetAtMs: startAtMs + durationMs, durationMs };
   }
   return {
-    startAtMs: nowMs - CAPACITY_CHART_DAYS * CAPACITY_CHART_DAY_MS,
+    startAtMs: nowMs - CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS,
     resetAtMs: nowMs,
-    durationMs: CAPACITY_CHART_DAYS * CAPACITY_CHART_DAY_MS,
+    durationMs: CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS,
   };
 };
 
 const renderProviderCapacityChart = (snapshot, sources) => {
   const history = Array.isArray(snapshot?.history) ? snapshot.history : [];
-  const width = 760;
-  const height = 330;
-  const plot = { left: 48, top: 24, width: 680, height: 248 };
   const nowMs = Date.now();
   const chartWindow = capacityChartReferenceWindow(sources, nowMs);
-  const chartTicks = capacityChartTickConfig(chartWindow);
+  const width = capacityChartContentWidth();
+  const plot = {
+    left: CAPACITY_CHART_PLOT_LEFT,
+    top: CAPACITY_CHART_PLOT_TOP,
+    width: Math.max(1, width - CAPACITY_CHART_PLOT_LEFT - CAPACITY_CHART_PLOT_RIGHT),
+    height: capacityChartPlotHeight(),
+  };
+  const height = plot.top + plot.height + CAPACITY_CHART_PLOT_BOTTOM;
+  const chartTicks = capacityChartTickConfig(chartWindow, plot.width);
   const chartSectionMs = chartWindow.durationMs / chartTicks.count;
   const figure = document.createElement("figure");
   figure.dataset.capacityChartFigure = "";
+  figure.style.setProperty("--capacity-chart-height-px", `${height}px`);
   const title = document.createElement("h3");
   title.textContent = "Available capacity history";
   figure.appendChild(title);
 
   const svg = capacityChartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
+    preserveAspectRatio: "xMidYMid meet",
     role: "img",
     "aria-label": "Available provider capacity history across the active usage period",
     focusable: "false",
@@ -1413,15 +1432,9 @@ const renderProviderCapacity = (snapshot) => {
     sourceForSlot(2),
     rawSources.find((source) => source?.source === "yunwu") ?? unavailableCapacitySource("yunwu"),
   ];
-  latestYunwuCapacitySource = sources[2];
-  applyYunwuCapacitySummary(latestYunwuCapacitySource);
+  latestProviderCapacityChartState = { snapshot, sources };
   renderProviderCapacityChart(snapshot, sources);
-  providerCapacityList.replaceChildren();
-  for (const source of sources) {
-    providerCapacityList.appendChild(
-      source.source === "yunwu" ? renderYunwuCapacitySource(source) : renderCodexCapacitySource(source),
-    );
-  }
+  renderProviderCapacityList(sources);
 
   const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
   const staleCount = sources.filter((source) => source.state === "stale").length;
@@ -1470,17 +1483,27 @@ const loadProviderCapacity = async ({ live = true } = {}) => {
   }
 };
 
+const scheduleProviderCapacityChartResize = () => {
+  if (capacityChartResizeFrame) return;
+  capacityChartResizeFrame = globalThis.requestAnimationFrame(() => {
+    capacityChartResizeFrame = 0;
+    if (currentAdminView !== "providers" || !latestProviderCapacityChartState) return;
+    renderProviderCapacityChart(
+      latestProviderCapacityChartState.snapshot,
+      latestProviderCapacityChartState.sources,
+    );
+  });
+};
+
+globalThis.addEventListener("resize", scheduleProviderCapacityChartResize);
+
 const loadProviders = async () => {
   if (providersLoading) return;
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !token) {
-    setBadge(codexProvidersBadge, "bad", "Sign in required");
-    setBadge(yunwuProviderBadge, "bad", "Sign in required");
     return;
   }
   providersLoading = true;
-  setBadge(codexProvidersBadge, "unknown", "Loading cached state");
-  setBadge(yunwuProviderBadge, "unknown", "Loading cached state");
   try {
     const response = await fetch(apiUrl("/admin/providers"), {
       cache: "no-store",
@@ -1488,18 +1511,18 @@ const loadProviders = async () => {
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload) {
-      const message = payload?.error?.message ?? "Provider state unavailable";
-      setBadge(codexProvidersBadge, "bad", message);
-      setBadge(yunwuProviderBadge, "bad", message);
+      latestProviderHealth = null;
+      if (latestProviderCapacityChartState?.sources) {
+        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+      }
       return;
     }
-    renderCodexProviders(payload.codex);
-    renderYunwuProvider(payload.yunwu);
+    latestProviderHealth = payload;
+    if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
     providersLoadedAt = Date.now();
-    providersUpdated.textContent = `Cached view updated ${formatDate(payload.generated_at_ms)}`;
   } catch {
-    setBadge(codexProvidersBadge, "bad", "Offline");
-    setBadge(yunwuProviderBadge, "bad", "Offline");
+    latestProviderHealth = null;
+    if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
   } finally {
     providersLoading = false;
   }
@@ -6226,7 +6249,8 @@ tokenInput.addEventListener("input", () => {
   accessUpstreamLoadedAt = 0;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
-  latestYunwuCapacitySource = null;
+  latestProviderCapacityChartState = null;
+  latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
   clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
@@ -6440,7 +6464,8 @@ baseSelect.addEventListener("change", () => {
   accessUpstreamLoadedAt = 0;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
-  latestYunwuCapacitySource = null;
+  latestProviderCapacityChartState = null;
+  latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
   resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();

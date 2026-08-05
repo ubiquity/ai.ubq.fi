@@ -2,11 +2,16 @@ import { config } from "./config.ts";
 import { type CodexCapacityAccount, getCodexCapacityAccounts } from "./codex.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
+import {
+  type CodexCapacityRoutingObservationInput,
+  recordCodexCapacityRoutingObservations,
+} from "./codex_account_routing.ts";
 import { listProviderCapacityResetEvents, type ProviderCapacityResetEvent } from "./provider_capacity_events.ts";
+import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
 import { getConfiguredYunwuQuotaSnapshot, YUNWU_QUOTA_FRESH_MS, type YunwuQuotaSnapshot } from "./yunwu_quota.ts";
 import { isRecord } from "./utils.ts";
 
-export const PROVIDER_CAPACITY_SNAPSHOT_KEY = ["uos_ai", "provider_capacity", "v1", "snapshot"] as const;
+export { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
 export const PROVIDER_CAPACITY_LEASE_KEY = ["uos_ai", "provider_capacity", "v1", "lease"] as const;
 export const PROVIDER_CAPACITY_HISTORY_KEY_PREFIX = ["uos_ai", "provider_capacity", "v1", "history"] as const;
 export const PROVIDER_CAPACITY_HISTORY_BUCKET_MS = 15 * 60_000;
@@ -363,6 +368,22 @@ const captureProviderCapacitySnapshot = async (
     createLeaseOwner: options.createLeaseOwner,
   }).catch(() => null);
   const [codexSources, yunwuSnapshot] = await Promise.all([codexPromise, yunwuPromise]);
+
+  const routingObservations: CodexCapacityRoutingObservationInput[] = [];
+  for (const account of accounts) {
+    const source = codexSources.find((candidate) => candidate.slot === account.slot);
+    if (!source) continue;
+    routingObservations.push({
+      slot: account.slot - 1,
+      account_id: account.account_id,
+      state: source.state,
+      source_observed_at_ms: source.source_observed_at_ms,
+      snapshot_at_ms: source.snapshot_at_ms,
+      windows: source.windows,
+      additional_rate_limits: source.additional_rate_limits,
+    });
+  }
+  await recordCodexCapacityRoutingObservations(routingObservations, snapshotAtMs);
 
   return {
     snapshot_at_ms: snapshotAtMs,

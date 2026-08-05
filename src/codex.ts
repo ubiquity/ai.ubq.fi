@@ -1554,10 +1554,13 @@ export const fetchCodexResponses = async (
   if (codexProbeTransitionsInFlight.size) {
     await Promise.allSettled([...codexProbeTransitionsInFlight]);
   }
+  const requestedModel = isRecord(body) ? getString(body.model) : null;
   let poolEntry = await getAuthPoolEntry();
   let selected = await selectCodexRoutingAccounts(
     poolEntry.pool,
     poolEntry.pool.accounts,
+    Date.now(),
+    requestedModel,
   );
   if (selected.kind === "credentials_invalid") {
     return withCodexAuthWarning(
@@ -1880,7 +1883,12 @@ export const fetchCodexResponses = async (
     } catch {
       return null;
     }
-    const routedPool = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts);
+    const routedPool = await selectCodexRoutingAccountsStrong(
+      currentPoolEntry.pool,
+      currentPoolEntry.pool.accounts,
+      Date.now(),
+      requestedModel,
+    );
     if (routedPool.kind === "routing_unavailable") {
       logCodexRouting("codex_banked_reset_preflight", {
         request_id: options.requestId ?? null,
@@ -2279,7 +2287,12 @@ export const fetchCodexResponses = async (
     // captured before those operations: a sibling may now be blocked, rotated,
     // invalid, reordered, or probing.
     poolEntry = await getAuthPoolEntry(true, true);
-    const refreshedSelection = await selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts);
+    const refreshedSelection = await selectCodexRoutingAccountsStrong(
+      poolEntry.pool,
+      poolEntry.pool.accounts,
+      Date.now(),
+      requestedModel,
+    );
     if (refreshedSelection.kind === "routing_unavailable") {
       if (definitiveCanaryFailure) return definitiveCanaryFailure;
       throw new CodexError(

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { CODEX_BANKED_RESET_LEASE_MS, type CodexBankedResetConfig } from "../src/codex_banked_reset.ts";
+import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../src/provider_capacity_contract.ts";
 import type { CodexUsageResetProvider } from "../src/codex_banked_reset_provider.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
@@ -180,6 +181,75 @@ Deno.test("Codex responses retry the other account after an account-level 429", 
     assert.equal(getCodexResponseSlot(response), 2);
   } finally {
     resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("Codex responses dispatch the fresh positive dashboard account first", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    const accountTwo = initial.accounts.find((account) => account.auth.account_id === "account-two");
+    assert.ok(accountTwo);
+    if (!accountTwo) return;
+    const blockedUntil = fixedStartMs + 60_000;
+    await markCodexQuotaBlocked(
+      accountTwo,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(blockedUntil).toUTCString() },
+      }),
+      fixedStartMs - 1,
+    );
+    await kv.set(PROVIDER_CAPACITY_SNAPSHOT_KEY, {
+      snapshot_at_ms: fixedStartMs,
+      sources: [{
+        source: "codex",
+        slot: 2,
+        state: "available",
+        source_observed_at_ms: fixedStartMs,
+        snapshot_at_ms: fixedStartMs,
+        windows: {
+          primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: fixedStartMs + 604_800_000 },
+          secondary: null,
+        },
+        additional_rate_limits: [{
+          limit_name: "GPT-5.3-Codex-Spark",
+          metered_feature: "codex_bengalfox",
+          windows: {
+            primary: { limit_window_seconds: 18_000, used_percent: 50, reset_at_ms: fixedStartMs + 18_000_000 },
+            secondary: null,
+          },
+        }],
+      }],
+    });
+    resetCodexAccountRoutingForTest();
+
+    const response = await fetchCodexResponses({ model: "gpt-5.3-codex-spark", input: "dashboard-positive" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(accountIds, ["account-two"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
     globalThis.fetch = originalFetch;
     Date.now = originalNow;
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
