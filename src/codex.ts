@@ -42,6 +42,7 @@ import {
 } from "./codex_models.ts";
 import { getKv } from "./kv.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
+import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { recordCodexProviderHealth } from "./provider_health.ts";
 import {
   buildRuntimeConfig,
@@ -59,12 +60,17 @@ const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_CLIENT_VERSION = "0.100.0";
 export const CODEX_QUOTA_BLOCKED_ERROR_CODE = "codex_quota_blocked";
+export const CODEX_AUTH_REAUTH_WARNING = "codex_auth_reauthentication_required";
+export const CODEX_AUTH_REAUTH_MESSAGE =
+  "The gateway's Codex auth.json needs re-authentication. Upload a fresh auth.json and retry.";
 
 // Routing errors need to remain distinguishable to the gateway's fallback
 // adapter without adding gateway-only headers to OpenAI-compatible responses.
 const codexRoutingErrors = new WeakMap<Response, string>();
+const codexAuthWarnings = new WeakMap<Response, string>();
 
 export const getCodexRoutingError = (response: Response): string | null => codexRoutingErrors.get(response) ?? null;
+export const getCodexAuthWarning = (response: Response): string | null => codexAuthWarnings.get(response) ?? null;
 
 const parseSemverTriplet = (value: string): [number, number, number] | null => {
   const parts = value.trim().split(".");
@@ -101,6 +107,7 @@ export type CodexErrorCode =
   | "codex_auth_missing"
   | "codex_auth_invalid"
   | "codex_auth_refresh_failed"
+  | "refresh_token_reused"
   | "codex_auth_refresh_unreachable"
   | "codex_upstream_unreachable"
   | "gateway_timeout";
@@ -215,6 +222,18 @@ const needsRefresh = (auth: CodexAuthState): boolean => {
   return now - auth.updated_at_ms > 7 * 60_000;
 };
 
+const accessTokenExpired = (auth: CodexAuthState): boolean => {
+  const expMs = getJwtExpMs(auth.access_token);
+  return expMs !== null && expMs <= Date.now();
+};
+
+const codexAuthWarningForError = (error: unknown): string | null =>
+  error instanceof CodexError &&
+    (error.code === "codex_auth_invalid" || error.code === "codex_auth_refresh_failed" ||
+      error.code === "refresh_token_reused")
+    ? CODEX_AUTH_REAUTH_WARNING
+    : null;
+
 type CodexAuthPoolEntry = {
   kv: Deno.Kv | null;
   entry: Deno.KvEntryMaybe<CodexAuthPoolState> | null;
@@ -239,6 +258,26 @@ const refreshesInFlight = new Map<string, Promise<CodexAuthState>>();
 const codexProbeByResponse = new WeakMap<Response, RoutingAccount>();
 const codexSlotByResponse = new WeakMap<Response, number>();
 const codexProbeTransitionsInFlight = new Set<Promise<void>>();
+
+const withCodexAuthWarning = (response: Response, warning: string): Response => {
+  const headers = new Headers(response.headers);
+  const existing = headers.get("x-uos-warning")?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+  if (!existing.includes(warning)) existing.push(warning);
+  headers.set("x-uos-warning", existing.join(", "));
+  const decorated = new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+  const routingError = codexRoutingErrors.get(response);
+  if (routingError) codexRoutingErrors.set(decorated, routingError);
+  const probe = codexProbeByResponse.get(response);
+  if (probe) codexProbeByResponse.set(decorated, probe);
+  const slot = codexSlotByResponse.get(response);
+  if (slot !== undefined) codexSlotByResponse.set(decorated, slot);
+  codexAuthWarnings.set(decorated, warning);
+  return decorated;
+};
 
 /** The metadata stays isolate-local and never becomes a response header or durable credential record. */
 export const getCodexRoutingProbe = (response: Response): RoutingAccount | null =>
@@ -728,7 +767,7 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
       throw error;
     }
     codexSlotByResponse.set(response, options.slot);
-    void recordCodexResponseHealth(routing.auth.account_id, response);
+    void recordCodexResponseHealth(routing.auth.account_id, response, routing.auth);
     logCodexRouting("codex_attempt", {
       request_id: null,
       attempt: 1,
@@ -775,17 +814,68 @@ const getCurrentAccountEntry = async (
   return { ...poolEntry, auth };
 };
 
-const buildRefreshFailureMessage = (response: Response): string => {
-  try {
-    const cancellation = response.body?.cancel();
-    if (cancellation) void cancellation.catch(() => {});
-  } catch {
-    // A refresh error body is deliberately discarded and never logged.
-  }
-  return `Codex auth refresh failed (status ${response.status}).`;
-};
-
 const refreshFailureStatus = (status: number): number => status === 400 || status === 401 || status === 403 ? 401 : 503;
+
+type CodexRefreshFailure = Readonly<{
+  message: string;
+  code: Extract<CodexErrorCode, "codex_auth_refresh_failed" | "refresh_token_reused">;
+  status: number;
+}>;
+
+const classifyCodexRefreshFailure = async (response: Response): Promise<CodexRefreshFailure> => {
+  const bounded = await readBoundedResponseBody(response, {
+    maxBytes: 16 * 1024,
+    timeoutMs: 1_000,
+    cancellationReason: "Codex auth refresh error body discarded",
+  });
+  const values: string[] = [];
+  if (bounded.complete && bounded.bytes.byteLength) {
+    try {
+      const parsed = JSON.parse(new TextDecoder().decode(bounded.bytes)) as unknown;
+      if (isRecord(parsed)) {
+        const error = parsed.error;
+        if (typeof error === "string") values.push(error);
+        if (isRecord(error)) {
+          for (const key of ["code", "message", "type"] as const) {
+            const value = getString(error[key]);
+            if (value) values.push(value);
+          }
+        }
+        for (const key of ["error_description", "detail", "message", "code", "type"] as const) {
+          const value = getString(parsed[key]);
+          if (value) values.push(value);
+        }
+      }
+    } catch {
+      // OAuth error bodies are advisory only; the status remains authoritative.
+    }
+  }
+  const detail = values.join(" ").toLowerCase();
+  const refreshTokenReused = values.some((value) => value.trim().toLowerCase() === "refresh_token_reused") ||
+    /refresh token.{0,80}(already|previously) used|token.{0,40}reused/.test(detail);
+  const invalidGrant = values.some((value) => value.trim().toLowerCase() === "invalid_grant") ||
+    /refresh token.{0,80}(expired|invalid|revoked)|authorization grant.{0,80}(expired|invalid|revoked)/.test(detail);
+  if (refreshTokenReused) {
+    return {
+      message:
+        "The gateway's Codex refresh token was already used. Sign in again or upload a fresh auth.json and retry.",
+      code: "refresh_token_reused",
+      status: refreshFailureStatus(response.status),
+    };
+  }
+  if (invalidGrant || response.status === 400 || response.status === 401 || response.status === 403) {
+    return {
+      message: `${CODEX_AUTH_REAUTH_MESSAGE} The provider rejected the configured refresh token.`,
+      code: "codex_auth_refresh_failed",
+      status: refreshFailureStatus(response.status),
+    };
+  }
+  return {
+    message: `Codex auth refresh failed (status ${response.status}).`,
+    code: "codex_auth_refresh_failed",
+    status: 503,
+  };
+};
 
 const refreshAuth = async (
   current: CodexAuthAccountEntry,
@@ -817,10 +907,11 @@ const refreshAuth = async (
   }
 
   if (!response.ok) {
+    const failure = await classifyCodexRefreshFailure(response);
     throw new CodexError(
-      await buildRefreshFailureMessage(response),
-      "codex_auth_refresh_failed",
-      refreshFailureStatus(response.status),
+      failure.message,
+      failure.code,
+      failure.status,
     );
   }
 
@@ -1079,10 +1170,11 @@ const refreshAuthStateless = async (auth: CodexAuthState): Promise<CodexAuthStat
   }
 
   if (!response.ok) {
+    const failure = await classifyCodexRefreshFailure(response);
     throw new CodexError(
-      await buildRefreshFailureMessage(response),
-      "codex_auth_refresh_failed",
-      refreshFailureStatus(response.status),
+      failure.message,
+      failure.code,
+      failure.status,
     );
   }
 
@@ -1209,8 +1301,12 @@ const cancelResponseBody = (response: Response): void => {
   }
 };
 
-const recordCodexResponseHealth = async (accountId: string, response: Response): Promise<void> => {
-  if (response.status === 401) {
+const recordCodexResponseHealth = async (
+  accountId: string,
+  response: Response,
+  auth?: CodexAuthState,
+): Promise<void> => {
+  if (response.status === 401 || (response.status === 403 && auth !== undefined && accessTokenExpired(auth))) {
     await recordCodexProviderHealth(accountId, "auth_invalid", response.status);
   } else if (response.status === 429) {
     await recordCodexProviderHealth(accountId, "quota_exhausted", response.status);
@@ -1224,7 +1320,8 @@ const recordCodexResponseHealth = async (accountId: string, response: Response):
 const recordCodexThrownHealth = async (accountId: string, error: unknown): Promise<void> => {
   if (
     error instanceof CodexError &&
-    (error.code === "codex_auth_refresh_failed" || error.code === "codex_auth_refresh_unreachable")
+    (error.code === "codex_auth_refresh_failed" || error.code === "refresh_token_reused" ||
+      error.code === "codex_auth_refresh_unreachable")
   ) {
     return;
   }
@@ -1305,7 +1402,7 @@ const fetchCodexResponseWithAuth = async (
 };
 
 const routingErrorResponse = (
-  status: 401 | 429,
+  status: 401 | 429 | 503,
   message: string,
   code: string,
   retryAtMs: number | null = null,
@@ -1318,7 +1415,7 @@ const routingErrorResponse = (
     JSON.stringify({
       error: {
         message,
-        type: status === 429 ? "rate_limit_error" : "invalid_request_error",
+        type: status === 429 ? "rate_limit_error" : status >= 500 ? "server_error" : "invalid_request_error",
         code,
         param: null,
       },
@@ -1463,10 +1560,13 @@ export const fetchCodexResponses = async (
     poolEntry.pool.accounts,
   );
   if (selected.kind === "credentials_invalid") {
-    return routingErrorResponse(
-      401,
-      "All configured Codex credentials are invalid.",
-      "codex_auth_invalid",
+    return withCodexAuthWarning(
+      routingErrorResponse(
+        401,
+        `${CODEX_AUTH_REAUTH_MESSAGE} All configured Codex credentials are invalid.`,
+        "codex_auth_invalid",
+      ),
+      CODEX_AUTH_REAUTH_WARNING,
     );
   }
   let accountEntries = selected.kind === "eligible"
@@ -1499,6 +1599,8 @@ export const fetchCodexResponses = async (
   };
   let lastResponse: Response | null = null;
   let lastError: unknown = null;
+  let authWarning: string | null = null;
+  let authFailure: CodexError | null = null;
   let probeUnavailable = false;
   let attemptNumber = 0;
   const refreshedSlots = new Set<number>();
@@ -1515,6 +1617,23 @@ export const fetchCodexResponses = async (
       | null;
   } = { candidate: null };
   const bankedResetCandidates = new Map<number, CodexBankedResetCandidate>();
+
+  const noteCodexAuthFailure = (error: unknown): void => {
+    authWarning ??= codexAuthWarningForError(error) ?? CODEX_AUTH_REAUTH_WARNING;
+    if (error instanceof CodexError && error.status === 401) authFailure ??= error;
+  };
+
+  const decorateAuthWarning = (response: Response): Response =>
+    authWarning ? withCodexAuthWarning(response, authWarning) : response;
+
+  const authFailureResponse = (error: CodexError | null): Response => {
+    const response = routingErrorResponse(
+      401,
+      error?.message ?? CODEX_AUTH_REAUTH_MESSAGE,
+      error?.code === "refresh_token_reused" ? error.code : "codex_auth_invalid",
+    );
+    return decorateAuthWarning(response);
+  };
 
   const refreshBankedResetCandidate = async (
     candidate: CodexBankedResetCandidate,
@@ -1881,7 +2000,7 @@ export const fetchCodexResponses = async (
       );
       codexSlotByResponse.set(response, routing.slot + 1);
       reportCodexResponseTiming(options.timing?.onHeaders);
-      void recordCodexResponseHealth(auth.account_id, response);
+      void recordCodexResponseHealth(auth.account_id, response, auth);
       logCodexRouting("codex_attempt", {
         request_id: options.requestId ?? null,
         attempt: attemptNumber,
@@ -2018,6 +2137,11 @@ export const fetchCodexResponses = async (
     }
   };
 
+  // Codex can report an expired bearer as a quota-shaped 403. Only classify
+  // that status as auth when the locally decoded JWT is already expired.
+  const responseIsCodexAuthFailure = (auth: CodexAuthState, response: Response): boolean =>
+    response.status === 401 || (response.status === 403 && accessTokenExpired(auth));
+
   const runPostResetRetry = async (
     evaluated: EvaluatedBlockedReset,
     normalResponse: Response | null,
@@ -2080,7 +2204,10 @@ export const fetchCodexResponses = async (
       throw error;
     }
     if (normalResponse) cancelResponseBody(normalResponse);
-    if (retried.status === 401) await markCodexCredentialInvalid(retryCandidate.routing);
+    if (responseIsCodexAuthFailure(retryCandidate.auth, retried)) {
+      await markCodexCredentialInvalid(retryCandidate.routing);
+      authWarning ??= CODEX_AUTH_REAUTH_WARNING;
+    }
     if (retried.status === 429) {
       // This is the one permitted post-reset inference attempt. Preserve a
       // replayable normal 429 and never feed it back into reset selection.
@@ -2112,7 +2239,7 @@ export const fetchCodexResponses = async (
         status: retried.status,
       },
     );
-    return retried;
+    return decorateAuthWarning(retried);
   };
 
   const redeemAndRetryOnce = async (normalResponse: Response): Promise<Response> => {
@@ -2164,10 +2291,13 @@ export const fetchCodexResponses = async (
     selected = refreshedSelection;
     if (selected.kind === "credentials_invalid") {
       if (definitiveCanaryFailure) cancelResponseBody(definitiveCanaryFailure);
-      return routingErrorResponse(
-        401,
-        "All configured Codex credentials are invalid.",
-        "codex_auth_invalid",
+      return withCodexAuthWarning(
+        routingErrorResponse(
+          401,
+          `${CODEX_AUTH_REAUTH_MESSAGE} All configured Codex credentials are invalid.`,
+          "codex_auth_invalid",
+        ),
+        CODEX_AUTH_REAUTH_WARNING,
       );
     }
     if (selected.kind === "quota_blocked") {
@@ -2224,18 +2354,23 @@ export const fetchCodexResponses = async (
         auth = accountEntry.auth;
       }
       let response = await fetchAttempt(accountEntry, auth, routing, "initial");
-      if (response.status === 401) {
+      if (responseIsCodexAuthFailure(auth, response)) {
         if (refreshedSlots.has(routing.slot)) {
           await markCodexCredentialInvalid(routing);
+          authWarning ??= CODEX_AUTH_REAUTH_WARNING;
         } else {
           cancelResponseBody(response);
           try {
             ({ auth, routing } = await refreshAfter401(routing, auth, "401"));
             response = await fetchAttempt(accountEntry, auth, routing, "post_refresh");
-            if (response.status === 401) await markCodexCredentialInvalid(routing);
+            if (responseIsCodexAuthFailure(auth, response)) {
+              await markCodexCredentialInvalid(routing);
+              authWarning ??= CODEX_AUTH_REAUTH_WARNING;
+            }
           } catch (error) {
             if (error instanceof CodexError && error.status === 401) {
               await markCodexCredentialInvalid(routing);
+              noteCodexAuthFailure(error);
               lastError = error;
               continue;
             }
@@ -2257,7 +2392,7 @@ export const fetchCodexResponses = async (
       }
       if (lastResponse) cancelResponseBody(lastResponse);
       if (response.ok) await reportHealthyFallback();
-      return response;
+      return decorateAuthWarning(response);
     } catch (error) {
       lastError = error;
       // A deterministic OAuth rejection is attributable to this credential
@@ -2266,6 +2401,7 @@ export const fetchCodexResponses = async (
       // outages deliberately stay on this path and never trigger a switch.
       if (error instanceof CodexError && error.status === 401) {
         await markCodexCredentialInvalid(routing);
+        noteCodexAuthFailure(error);
         continue;
       }
       await releaseCodexRoutingProbe(routing);
@@ -2348,9 +2484,10 @@ export const fetchCodexResponses = async (
       await releaseCodexRoutingProbe(retryRouting);
       throw error;
     }
-    if (response.status === 401) {
+    if (responseIsCodexAuthFailure(retryAuth, response)) {
       if (refreshedSlots.has(retryRouting.slot)) {
         await markCodexCredentialInvalid(retryRouting);
+        authWarning ??= CODEX_AUTH_REAUTH_WARNING;
       } else {
         cancelResponseBody(response);
         try {
@@ -2364,12 +2501,16 @@ export const fetchCodexResponses = async (
         } catch (error) {
           if (error instanceof CodexError && error.status === 401) {
             await markCodexCredentialInvalid(retryRouting);
-            return routingErrorResponse(401, "All configured Codex credentials are invalid.", "codex_auth_invalid");
+            noteCodexAuthFailure(error);
+            return authFailureResponse(error);
           }
           await releaseCodexRoutingProbe(retryRouting);
           throw error;
         }
-        if (response.status === 401) await markCodexCredentialInvalid(retryRouting);
+        if (responseIsCodexAuthFailure(retryAuth, response)) {
+          await markCodexCredentialInvalid(retryRouting);
+          authWarning ??= CODEX_AUTH_REAUTH_WARNING;
+        }
       }
     }
     if (response.status === 429) {
@@ -2396,13 +2537,12 @@ export const fetchCodexResponses = async (
     // A successful ordinary bounded retry has already served the original
     // inference request. A captured exhaustion observation from before that
     // retry is no longer a reason to spend a reset or issue another request.
-    if (response.ok) return response;
-    return await redeemAndRetryOnce(response);
+    if (response.ok) return decorateAuthWarning(response);
+    return decorateAuthWarning(await redeemAndRetryOnce(response));
   }
-  if (lastResponse) return await redeemAndRetryOnce(lastResponse);
-  if (lastError instanceof CodexError && lastError.status === 401) {
-    return routingErrorResponse(401, "All configured Codex credentials are invalid.", "codex_auth_invalid");
-  }
+  if (lastResponse) return decorateAuthWarning(await redeemAndRetryOnce(lastResponse));
+  if (authFailure) return authFailureResponse(authFailure);
+  if (lastError instanceof CodexError && lastError.status === 401) return authFailureResponse(lastError);
   if (probeUnavailable) {
     return routingErrorResponse(
       429,
@@ -2434,7 +2574,7 @@ export const fetchCodexModels = async (
       try {
         auth = await awaitWithoutCancellingSharedWork(getValidAuth(accountEntry), options.signal);
         res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch, options.signal);
-        await recordCodexResponseHealth(auth.account_id, res);
+        await recordCodexResponseHealth(auth.account_id, res, auth);
         if (res.status === 401) {
           cancelResponseBody(res);
           auth = await awaitWithoutCancellingSharedWork(
@@ -2442,7 +2582,7 @@ export const fetchCodexModels = async (
             options.signal,
           );
           res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch, options.signal);
-          await recordCodexResponseHealth(auth.account_id, res);
+          await recordCodexResponseHealth(auth.account_id, res, auth);
         }
       } catch (error) {
         await recordCodexThrownHealth(accountEntry.auth.account_id, error);

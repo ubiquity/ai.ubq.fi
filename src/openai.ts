@@ -1,9 +1,12 @@
 import {
   buildCodexRequest,
+  CODEX_AUTH_REAUTH_MESSAGE,
+  CODEX_AUTH_REAUTH_WARNING,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
   CodexError,
   type CodexModelsSnapshot,
   fetchCodexResponses,
+  getCodexAuthWarning,
   getCodexModelsSnapshotDefaultModel,
   getCodexResponseSlot,
   getCodexRoutingError,
@@ -568,24 +571,48 @@ const classifyStreamFailure = (
   return "error";
 };
 
+const streamErrorResponse = (
+  status: number,
+  message: string,
+  code: string,
+  provider: UpstreamProvider,
+  warnings: readonly string[],
+  type?: string,
+): Response => {
+  const mergedWarnings = Array.from(new Set(warnings));
+  const hasAuthWarning = mergedWarnings.includes(CODEX_AUTH_REAUTH_WARNING);
+  const headers: Record<string, string> = { "x-uos-upstream": provider };
+  if (mergedWarnings.length) headers["x-uos-warning"] = mergedWarnings.join(", ");
+  return openaiError(
+    status,
+    hasAuthWarning ? message + " " + CODEX_AUTH_REAUTH_MESSAGE : message,
+    code,
+    { ...(type ? { type } : {}), headers },
+  );
+};
+
 const streamPreflightFailureResponse = (
   terminalType: ResponseStreamTerminalType,
   provider: UpstreamProvider,
+  warnings: readonly string[] = [],
 ): Response => {
   if (terminalType === "deadline") {
-    return openaiError(
+    return streamErrorResponse(
       504,
       "Upstream stream exceeded the gateway deadline before its first SSE event.",
       "gateway_timeout",
-      {
-        type: "server_error",
-        headers: { "x-uos-upstream": provider },
-      },
+      provider,
+      warnings,
+      "server_error",
     );
   }
-  return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
-    headers: { "x-uos-upstream": provider },
-  });
+  return streamErrorResponse(
+    502,
+    "Codex upstream stream ended unexpectedly.",
+    "codex_upstream_stream_error",
+    provider,
+    warnings,
+  );
 };
 
 const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
@@ -617,6 +644,7 @@ const REDACTED_UPSTREAM_DIAGNOSTIC_CODES = new Set<string>([
   "codex_auth_missing",
   "codex_auth_invalid",
   "codex_auth_refresh_failed",
+  "refresh_token_reused",
   "codex_auth_refresh_unreachable",
   "codex_upstream_unreachable",
   "gateway_timeout",
@@ -690,8 +718,21 @@ const toCodexErrorResponse = (error: unknown, provider?: string | null): Respons
       ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {}),
     });
   } else if (error instanceof CodexError) {
-    const options = error.code === "gateway_timeout" ? { type: "server_error" } : undefined;
-    response = openaiError(error.status, error.message, error.code, options);
+    const authReauthenticationFailure = error.code === "codex_auth_invalid" ||
+      error.code === "codex_auth_refresh_failed" || error.code === "refresh_token_reused";
+    const options = {
+      ...(error.code === "gateway_timeout" || error.code === "codex_auth_refresh_failed" ||
+          error.code === "refresh_token_reused"
+        ? { type: "server_error" }
+        : {}),
+      ...(authReauthenticationFailure ? { headers: { "x-uos-warning": CODEX_AUTH_REAUTH_WARNING } } : {}),
+    };
+    response = openaiError(
+      error.code === "codex_auth_refresh_failed" || error.code === "refresh_token_reused" ? 503 : error.status,
+      error.message,
+      error.code,
+      options,
+    );
   } else {
     const detail = formatErrorSnippet(error);
     const message = detail ? `Codex upstream request failed: ${detail}` : "Codex upstream request failed.";
@@ -873,14 +914,22 @@ const toOpenAiUpstreamErrorResponse = async (
     ? parseUpstreamErrorDetails(captured.text, upstream.statusText)
     : { message: "Upstream returned an oversized or incomplete error response." };
   const headers: Record<string, string> = { "x-uos-upstream": provider };
+  const warning = upstream.headers.get("x-uos-warning");
+  const hasAuthWarning = warning?.split(",").map((value) => value.trim()).includes(CODEX_AUTH_REAUTH_WARNING) === true;
+  if (warning) headers["x-uos-warning"] = warning;
   const retryAfter = upstream.headers.get("Retry-After");
   if (retryAfter) headers["Retry-After"] = retryAfter;
+  const message = hasAuthWarning && !captured.text.includes(CODEX_AUTH_REAUTH_MESSAGE)
+    ? `${details.message} ${CODEX_AUTH_REAUTH_MESSAGE}`
+    : details.message;
   const options: { type?: string; param?: string | null; headers: HeadersInit } = {
-    type: upstreamStatusToErrorType(upstream.status, details.type),
+    type: hasAuthWarning && upstream.status >= 500
+      ? "server_error"
+      : upstreamStatusToErrorType(upstream.status, details.type),
     headers,
   };
   if (Object.prototype.hasOwnProperty.call(details, "param")) options.param = details.param ?? null;
-  return openaiError(upstream.status, details.message, details.code ?? "upstream_error", options);
+  return openaiError(upstream.status, message, details.code ?? "upstream_error", options);
 };
 
 const cancelResponseBody = (response: Response): void => {
@@ -1036,16 +1085,33 @@ const fetchResponsesWithPaidFallback = async (
     if (!(error instanceof CodexError) || error.status !== 401) throw error;
     primary = openaiError(error.status, error.message, error.code);
   }
+  const primaryStatus = primary.status;
+  const authReauthenticationPrimary = primaryStatus === 401 &&
+    responseWarnings(primary).includes(CODEX_AUTH_REAUTH_WARNING);
+  const primaryWarnings = Array.from(
+    new Set([
+      ...responseWarnings(primary),
+      ...(getCodexAuthWarning(primary) ? [getCodexAuthWarning(primary)!] : []),
+    ]),
+  );
+  const preservePrimaryWarnings = (response: Response): Response => withUosWarning(response, primaryWarnings);
   if (telemetry) telemetry.accountSlot = getCodexResponseSlot(primary);
   const gatewayResponse = getCodexRoutingError(primary) === CODEX_QUOTA_BLOCKED_ERROR_CODE;
+  if (authReauthenticationPrimary) {
+    primary = new Response(primary.body, {
+      status: 503,
+      statusText: primary.statusText,
+      headers: primary.headers,
+    });
+  }
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  const fallbackReason: InferenceFallbackReason | null = primary.status === 401
+  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 401
     ? "primary_401"
-    : primary.status === 403
+    : primaryStatus === 403
     ? "primary_403"
-    : primary.status === 429
+    : primaryStatus === 429
     ? "primary_429"
     : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
@@ -1185,7 +1251,7 @@ const fetchResponsesWithPaidFallback = async (
       (error instanceof Error && error.name === "TimeoutError")
     ) {
       return {
-        response: openaiError(
+        response: preservePrimaryWarnings(openaiError(
           504,
           "YunWu upstream exceeded the gateway deadline before response headers were received.",
           "gateway_timeout",
@@ -1193,7 +1259,7 @@ const fetchResponsesWithPaidFallback = async (
             type: "server_error",
             headers: { "x-uos-upstream": "yunwu" },
           },
-        ),
+        )),
         provider: "yunwu",
         paidFallback: decision.reservation,
         gatewayResponse: true,
@@ -1202,10 +1268,10 @@ const fetchResponsesWithPaidFallback = async (
     }
     if (error instanceof YunwuError) {
       return {
-        response: openaiError(error.status, error.message, error.code, {
+        response: preservePrimaryWarnings(openaiError(error.status, error.message, error.code, {
           type: "server_error",
           headers: { "x-uos-upstream": "yunwu" },
-        }),
+        })),
         provider: "yunwu",
         paidFallback: decision.reservation,
         gatewayResponse: true,
@@ -1213,7 +1279,7 @@ const fetchResponsesWithPaidFallback = async (
       };
     }
     return {
-      response: openaiError(
+      response: preservePrimaryWarnings(openaiError(
         502,
         "YunWu upstream request failed before response headers were received.",
         "upstream_error",
@@ -1221,7 +1287,7 @@ const fetchResponsesWithPaidFallback = async (
           type: "server_error",
           headers: { "x-uos-upstream": "yunwu" },
         },
-      ),
+      )),
       provider: "yunwu",
       paidFallback: decision.reservation,
       gatewayResponse: true,
@@ -1233,7 +1299,7 @@ const fetchResponsesWithPaidFallback = async (
     () => recordYunwuUpstreamResponse(decision.reservation, result.response, result.request_id),
   );
   return {
-    response: result.response,
+    response: preservePrimaryWarnings(result.response),
     provider: "yunwu",
     paidFallback: decision.reservation,
     gatewayResponse: false,
@@ -1561,6 +1627,12 @@ const buildIgnoredWarnings = (record: Record<string, unknown>, usedKeys: Readonl
   return Array.from(warnings);
 };
 
+const responseWarnings = (response: Response): string[] =>
+  (response.headers.get(UOS_WARNING_HEADER) ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
 type PassthroughToolSchemaKey =
   | "tools"
   | "tool_choice"
@@ -1635,9 +1707,10 @@ const applyPassthroughToCodexRequest = (
 };
 
 const withUosWarning = (response: Response, warnings: string[]): Response => {
-  if (!warnings.length) return response;
+  const merged = Array.from(new Set([...responseWarnings(response), ...warnings]));
+  if (!merged.length) return response;
   const headers = new Headers(response.headers);
-  headers.set(UOS_WARNING_HEADER, warnings.join(", "));
+  headers.set(UOS_WARNING_HEADER, merged.join(", "));
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -4544,6 +4617,7 @@ const completeChatCompletions = async (
   lifecycle: YunwuTransportLifecycle,
   signal: AbortSignal,
   downstreamSignal: AbortSignal,
+  warnings: readonly string[] = [],
   onResponseTerminal?: (completed: boolean) => void,
 ): Promise<Response> => {
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -4637,9 +4711,13 @@ const completeChatCompletions = async (
   }
   if (!completed) {
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Upstream stream ended without response.completed.", "upstream_stream_error", {
-      headers: { "x-uos-upstream": provider },
-    });
+    return streamErrorResponse(
+      502,
+      "Upstream stream ended without response.completed.",
+      "upstream_stream_error",
+      provider,
+      warnings,
+    );
   }
 
   const message: Record<string, unknown> = {
@@ -6094,6 +6172,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }
   const upstream = routed.response;
+  const providerWarnings = responseWarnings(upstream);
   const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
   const resolveCodexProbe = (completed = false): void => {
     if (routed.provider !== "chatgpt_codex") return;
@@ -6125,9 +6204,13 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     lifecycle.ambiguous();
     recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return streamErrorResponse(
+      502,
+      "Codex upstream response missing body.",
+      "codex_upstream_missing_body",
+      routed.provider,
+      [...warnings, ...providerWarnings],
+    );
   }
 
   let preflight: PreflightedResponsesStream;
@@ -6142,7 +6225,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     if (terminalType === "cancelled") lifecycle.cancelled();
     else lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
-    return streamPreflightFailureResponse(terminalType, routed.provider);
+    return streamPreflightFailureResponse(terminalType, routed.provider, [...warnings, ...providerWarnings]);
   }
   recordFirstSseEvent(usageContext);
   if (preflight.first.terminal) recordStreamTerminal(usageContext);
@@ -6166,9 +6249,10 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       lifecycle,
       requestInferenceSignal,
       req.signal,
+      [...warnings, ...providerWarnings],
       resolveCodexProbe,
     );
-  return withUosWarning(response, warnings);
+  return withUosWarning(response, [...warnings, ...providerWarnings]);
 };
 
 export const handleChatCompletions = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
@@ -6446,6 +6530,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
   }
   const upstream = routed.response;
+  const providerWarnings = responseWarnings(upstream);
   const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
   const resolveCodexProbe = (completed = false): void => {
     if (routed.provider !== "chatgpt_codex") return;
@@ -6478,9 +6563,13 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       lifecycle.ambiguous();
       recordStreamTerminalType(usageContext, "error");
       await recordErrorUsage(usageContext);
-      return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
-        headers: { "x-uos-upstream": routed.provider },
-      });
+      return streamErrorResponse(
+        502,
+        "Codex upstream response missing body.",
+        "codex_upstream_missing_body",
+        routed.provider,
+        [...warnings, ...providerWarnings],
+      );
     }
     let preflight: PreflightedResponsesStream;
     try {
@@ -6494,7 +6583,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       if (terminalType === "cancelled") lifecycle.cancelled();
       else lifecycle.ambiguous();
       await recordErrorUsage(usageContext);
-      return streamPreflightFailureResponse(terminalType, routed.provider);
+      return streamPreflightFailureResponse(terminalType, routed.provider, [...warnings, ...providerWarnings]);
     }
     recordFirstSseEvent(usageContext);
     if (preflight.first.terminal) recordStreamTerminal(usageContext);
@@ -6538,7 +6627,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       statusText: upstream.statusText,
       headers,
     });
-    return withUosWarning(response, warnings);
+    return withUosWarning(response, [...warnings, ...providerWarnings]);
   }
 
   if (!upstream.body) {
@@ -6546,9 +6635,13 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     lifecycle.ambiguous();
     recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return streamErrorResponse(
+      502,
+      "Codex upstream response missing body.",
+      "codex_upstream_missing_body",
+      routed.provider,
+      [...warnings, ...providerWarnings],
+    );
   }
 
   let finalResponse: Record<string, unknown> | null = null;
@@ -6594,9 +6687,13 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     resolveCodexProbe();
     lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return streamErrorResponse(
+      502,
+      "Codex upstream stream ended unexpectedly.",
+      "codex_upstream_stream_error",
+      routed.provider,
+      [...warnings, ...providerWarnings],
+    );
   }
   finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
   finalResponse = withAccumulatedResponseText(finalResponse, outputText);
@@ -6606,7 +6703,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     recordTerminalUsage(usageContext, usageTokens, false);
   } else await recordCompletionUsage(usageContext, usageTokens);
   const response = json(200, finalResponse, { "x-uos-upstream": routed.provider });
-  return withUosWarning(response, warnings);
+  return withUosWarning(response, [...warnings, ...providerWarnings]);
 };
 
 export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
