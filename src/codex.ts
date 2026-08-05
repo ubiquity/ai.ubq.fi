@@ -767,7 +767,7 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
       throw error;
     }
     codexSlotByResponse.set(response, options.slot);
-    void recordCodexResponseHealth(routing.auth.account_id, response);
+    void recordCodexResponseHealth(routing.auth.account_id, response, routing.auth);
     logCodexRouting("codex_attempt", {
       request_id: null,
       attempt: 1,
@@ -1301,8 +1301,12 @@ const cancelResponseBody = (response: Response): void => {
   }
 };
 
-const recordCodexResponseHealth = async (accountId: string, response: Response): Promise<void> => {
-  if (response.status === 401) {
+const recordCodexResponseHealth = async (
+  accountId: string,
+  response: Response,
+  auth?: CodexAuthState,
+): Promise<void> => {
+  if (response.status === 401 || (response.status === 403 && auth !== undefined && accessTokenExpired(auth))) {
     await recordCodexProviderHealth(accountId, "auth_invalid", response.status);
   } else if (response.status === 429) {
     await recordCodexProviderHealth(accountId, "quota_exhausted", response.status);
@@ -1996,7 +2000,7 @@ export const fetchCodexResponses = async (
       );
       codexSlotByResponse.set(response, routing.slot + 1);
       reportCodexResponseTiming(options.timing?.onHeaders);
-      void recordCodexResponseHealth(auth.account_id, response);
+      void recordCodexResponseHealth(auth.account_id, response, auth);
       logCodexRouting("codex_attempt", {
         request_id: options.requestId ?? null,
         attempt: attemptNumber,
@@ -2133,6 +2137,11 @@ export const fetchCodexResponses = async (
     }
   };
 
+  // Codex can report an expired bearer as a quota-shaped 403. Only classify
+  // that status as auth when the locally decoded JWT is already expired.
+  const responseIsCodexAuthFailure = (auth: CodexAuthState, response: Response): boolean =>
+    response.status === 401 || (response.status === 403 && accessTokenExpired(auth));
+
   const runPostResetRetry = async (
     evaluated: EvaluatedBlockedReset,
     normalResponse: Response | null,
@@ -2195,7 +2204,7 @@ export const fetchCodexResponses = async (
       throw error;
     }
     if (normalResponse) cancelResponseBody(normalResponse);
-    if (retried.status === 401) {
+    if (responseIsCodexAuthFailure(retryCandidate.auth, retried)) {
       await markCodexCredentialInvalid(retryCandidate.routing);
       authWarning ??= CODEX_AUTH_REAUTH_WARNING;
     }
@@ -2230,7 +2239,7 @@ export const fetchCodexResponses = async (
         status: retried.status,
       },
     );
-    return retried;
+    return decorateAuthWarning(retried);
   };
 
   const redeemAndRetryOnce = async (normalResponse: Response): Promise<Response> => {
@@ -2247,11 +2256,6 @@ export const fetchCodexResponses = async (
     const evaluated = await evaluateBlockedCohortBankedReset(requireFullPool);
     return evaluated ? await runPostResetRetry(evaluated, null) : null;
   };
-
-  // Codex can report an expired bearer as a quota-shaped 403. Only classify
-  // that status as auth when the locally decoded JWT is already expired.
-  const responseIsCodexAuthFailure = (auth: CodexAuthState, response: Response): boolean =>
-    response.status === 401 || (response.status === 403 && accessTokenExpired(auth));
 
   if (selected.kind === "eligible" && selected.blockedAccounts.length) {
     const fallbackAccountIds = new Set(selected.accounts.map((account) => account.auth.account_id));
@@ -2570,7 +2574,7 @@ export const fetchCodexModels = async (
       try {
         auth = await awaitWithoutCancellingSharedWork(getValidAuth(accountEntry), options.signal);
         res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch, options.signal);
-        await recordCodexResponseHealth(auth.account_id, res);
+        await recordCodexResponseHealth(auth.account_id, res, auth);
         if (res.status === 401) {
           cancelResponseBody(res);
           auth = await awaitWithoutCancellingSharedWork(
@@ -2578,7 +2582,7 @@ export const fetchCodexModels = async (
             options.signal,
           );
           res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch, options.signal);
-          await recordCodexResponseHealth(auth.account_id, res);
+          await recordCodexResponseHealth(auth.account_id, res, auth);
         }
       } catch (error) {
         await recordCodexThrownHealth(accountEntry.auth.account_id, error);

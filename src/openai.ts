@@ -570,24 +570,48 @@ const classifyStreamFailure = (
   return "error";
 };
 
+const streamErrorResponse = (
+  status: number,
+  message: string,
+  code: string,
+  provider: UpstreamProvider,
+  warnings: readonly string[],
+  type?: string,
+): Response => {
+  const mergedWarnings = Array.from(new Set(warnings));
+  const hasAuthWarning = mergedWarnings.includes(CODEX_AUTH_REAUTH_WARNING);
+  const headers: Record<string, string> = { "x-uos-upstream": provider };
+  if (mergedWarnings.length) headers["x-uos-warning"] = mergedWarnings.join(", ");
+  return openaiError(
+    status,
+    hasAuthWarning ? message + " " + CODEX_AUTH_REAUTH_MESSAGE : message,
+    code,
+    { ...(type ? { type } : {}), headers },
+  );
+};
+
 const streamPreflightFailureResponse = (
   terminalType: ResponseStreamTerminalType,
   provider: UpstreamProvider,
+  warnings: readonly string[] = [],
 ): Response => {
   if (terminalType === "deadline") {
-    return openaiError(
+    return streamErrorResponse(
       504,
       "Upstream stream exceeded the gateway deadline before its first SSE event.",
       "gateway_timeout",
-      {
-        type: "server_error",
-        headers: { "x-uos-upstream": provider },
-      },
+      provider,
+      warnings,
+      "server_error",
     );
   }
-  return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
-    headers: { "x-uos-upstream": provider },
-  });
+  return streamErrorResponse(
+    502,
+    "Codex upstream stream ended unexpectedly.",
+    "codex_upstream_stream_error",
+    provider,
+    warnings,
+  );
 };
 
 const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
@@ -6168,9 +6192,13 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     lifecycle.ambiguous();
     recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return streamErrorResponse(
+      502,
+      "Codex upstream response missing body.",
+      "codex_upstream_missing_body",
+      routed.provider,
+      [...warnings, ...providerWarnings],
+    );
   }
 
   let preflight: PreflightedResponsesStream;
@@ -6185,7 +6213,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     if (terminalType === "cancelled") lifecycle.cancelled();
     else lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
-    return streamPreflightFailureResponse(terminalType, routed.provider);
+    return streamPreflightFailureResponse(terminalType, routed.provider, [...warnings, ...providerWarnings]);
   }
   recordFirstSseEvent(usageContext);
   if (preflight.first.terminal) recordStreamTerminal(usageContext);
@@ -6522,9 +6550,13 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       lifecycle.ambiguous();
       recordStreamTerminalType(usageContext, "error");
       await recordErrorUsage(usageContext);
-      return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
-        headers: { "x-uos-upstream": routed.provider },
-      });
+      return streamErrorResponse(
+        502,
+        "Codex upstream response missing body.",
+        "codex_upstream_missing_body",
+        routed.provider,
+        [...warnings, ...providerWarnings],
+      );
     }
     let preflight: PreflightedResponsesStream;
     try {
@@ -6538,7 +6570,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       if (terminalType === "cancelled") lifecycle.cancelled();
       else lifecycle.ambiguous();
       await recordErrorUsage(usageContext);
-      return streamPreflightFailureResponse(terminalType, routed.provider);
+      return streamPreflightFailureResponse(terminalType, routed.provider, [...warnings, ...providerWarnings]);
     }
     recordFirstSseEvent(usageContext);
     if (preflight.first.terminal) recordStreamTerminal(usageContext);
@@ -6590,9 +6622,13 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     lifecycle.ambiguous();
     recordStreamTerminalType(usageContext, "error");
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream response missing body.", "codex_upstream_missing_body", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return streamErrorResponse(
+      502,
+      "Codex upstream response missing body.",
+      "codex_upstream_missing_body",
+      routed.provider,
+      [...warnings, ...providerWarnings],
+    );
   }
 
   let finalResponse: Record<string, unknown> | null = null;
@@ -6638,9 +6674,13 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     resolveCodexProbe();
     lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
-      headers: { "x-uos-upstream": routed.provider },
-    });
+    return streamErrorResponse(
+      502,
+      "Codex upstream stream ended unexpectedly.",
+      "codex_upstream_stream_error",
+      routed.provider,
+      [...warnings, ...providerWarnings],
+    );
   }
   finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
   finalResponse = withAccumulatedResponseText(finalResponse, outputText);
