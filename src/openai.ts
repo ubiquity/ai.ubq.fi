@@ -14,7 +14,6 @@ import {
 } from "./codex.ts";
 import {
   CEREBRAS_GPT_OSS_120B_MODEL,
-  CEREBRAS_RATE_LIMIT_HEADERS,
   CerebrasError,
   fetchCerebrasChatCompletions,
   getCerebrasProviderRequestId,
@@ -22,6 +21,7 @@ import {
   normalizeCerebrasProviderRequestId,
   readCerebrasApiKey,
 } from "./cerebras.ts";
+import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras_rate_limits.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import {
   CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,

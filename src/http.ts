@@ -1,5 +1,5 @@
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
-import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras.ts";
+import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras_rate_limits.ts";
 
 const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-warning",
