@@ -21,6 +21,7 @@ import {
   normalizeCerebrasProviderRequestId,
   readCerebrasApiKey,
 } from "./cerebras.ts";
+import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras_rate_limits.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import {
   CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
@@ -899,6 +900,12 @@ const toCerebrasUpstreamErrorResponse = (upstream: Response): Response => {
   const headers = cerebrasResponseHeaders(getCerebrasProviderRequestId(upstream));
   const retryAfter = upstream.headers.get("Retry-After");
   if (retryAfter) headers["Retry-After"] = retryAfter;
+  if (upstream.status === 429) {
+    for (const header of CEREBRAS_RATE_LIMIT_HEADERS) {
+      const value = upstream.headers.get(header);
+      if (value !== null) headers[header] = value;
+    }
+  }
   return openaiError(
     upstream.status,
     "Cerebras upstream returned an error.",

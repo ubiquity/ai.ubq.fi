@@ -4050,6 +4050,7 @@ Deno.test("http: CORS wrapper exposes a gateway request id", () => {
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-request-id/);
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-provider-request-id/);
   assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-uos-upstream/);
+  assert.match(response.headers.get("Access-Control-Expose-Headers") ?? "", /x-ratelimit-remaining-tokens-minute/);
 });
 
 Deno.test("http: CORS wrapper exposes baked source identity and deployment headers", () => {
@@ -7331,6 +7332,20 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         { status: 429, expectedType: "rate_limit_error" },
         { status: 503, expectedType: "server_error" },
       ] as const;
+      const cerebrasRateLimitHeaders = {
+        "x-ratelimit-limit-requests-minute": "5",
+        "x-ratelimit-remaining-requests-minute": "0",
+        "x-ratelimit-reset-requests-minute": "42",
+        "x-ratelimit-limit-tokens-minute": "30000",
+        "x-ratelimit-remaining-tokens-minute": "29999",
+        "x-ratelimit-reset-tokens-minute": "42",
+        "x-ratelimit-limit-requests-day": "1000",
+        "x-ratelimit-remaining-requests-day": "999",
+        "x-ratelimit-reset-requests-day": "86400",
+        "x-ratelimit-limit-tokens-day": "1000000",
+        "x-ratelimit-remaining-tokens-day": "999999",
+        "x-ratelimit-reset-tokens-day": "86400",
+      };
       for (const testCase of cases) {
         const logs: unknown[][] = [];
         const originalError = console.error;
@@ -7352,6 +7367,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
                     "Content-Type": "application/json",
                     "X-Request-Id": `cerebras-error-${testCase.status}`,
                     ...(testCase.status === 429 ? { "Retry-After": "17" } : {}),
+                    ...cerebrasRateLimitHeaders,
                   },
                 },
               );
@@ -7362,6 +7378,13 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
           assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
           assert.equal(response.headers.get("x-uos-provider-request-id"), `cerebras-error-${testCase.status}`);
           assert.equal(response.headers.get("Retry-After"), testCase.status === 429 ? "17" : null);
+          for (const [header, value] of Object.entries(cerebrasRateLimitHeaders)) {
+            assert.equal(
+              response.headers.get(header),
+              testCase.status === 429 ? value : null,
+              `${header} on ${testCase.status}`,
+            );
+          }
           const payload = await response.json() as { error?: { message?: string; type?: string; code?: string } };
           assert.equal(payload.error?.type, testCase.expectedType);
           assert.equal(payload.error?.code, "cerebras_upstream_error");
