@@ -157,7 +157,11 @@ const codexUsageBody = (primaryUsed: number, secondaryUsed: number) => ({
   private_account_field: "must-not-escape",
 });
 
-const codexSparkUsageBody = (primaryUsed: number, sparkUsed: number) => ({
+const codexSparkUsageBody = (
+  primaryUsed: number,
+  sparkUsed: number,
+  sparkResetAt = 1_800_011_000,
+) => ({
   rate_limit: {
     primary_window: {
       limit_window_seconds: 604_800,
@@ -173,7 +177,7 @@ const codexSparkUsageBody = (primaryUsed: number, sparkUsed: number) => ({
       primary_window: {
         limit_window_seconds: 18_000,
         used_percent: sparkUsed,
-        reset_at: 1_800_011_000,
+        reset_at: sparkResetAt,
       },
       secondary_window: null,
     },
@@ -194,6 +198,7 @@ const createFetcher = (
   }> = {},
   codexUsage: ((account: string | null) => readonly [number, number]) | null = null,
   codexSpark = false,
+  codexSparkResetAt = 1_800_011_000,
 ) =>
 (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const headers = new Headers(init?.headers);
@@ -247,7 +252,9 @@ const createFetcher = (
   const used = codexUsage?.(account) ?? (account === "account-one" ? [12.5, 38] : [67, 81.25]);
   return Promise.resolve(
     new Response(
-      JSON.stringify(codexSpark ? codexSparkUsageBody(used[0], used[1]) : codexUsageBody(used[0], used[1])),
+      JSON.stringify(
+        codexSpark ? codexSparkUsageBody(used[0], used[1], codexSparkResetAt) : codexUsageBody(used[0], used[1]),
+      ),
       {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -286,6 +293,19 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
   );
   assert.deepEqual(persistedAccount?.additional_rate_limits, accountOne?.additional_rate_limits);
   assert.equal(JSON.stringify(live).includes("must-not-escape"), false);
+});
+
+Deno.test("sampler defers unused additional limits with full-window resets", async () => {
+  seed();
+  const live = await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher: createFetcher([], null, {}, () => [12.5, 0], true, nowMs / 1_000 + 18_000),
+    now: () => nowMs,
+  });
+  const accountOne = live.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
+  );
+  assert.deepEqual(accountOne?.additional_rate_limits, []);
 });
 
 const historySource = (slot: 1 | 2, sampledAtMs: number, state: "available" | "unavailable" = "available") => ({

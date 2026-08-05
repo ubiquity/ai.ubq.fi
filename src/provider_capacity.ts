@@ -19,6 +19,8 @@ export const PROVIDER_CAPACITY_COLD_WAIT_MS = 2_000;
 export const PROVIDER_CAPACITY_SOURCE_STALE_MS = 30 * 60_000;
 export const PROVIDER_CAPACITY_CODEX_TIMEOUT_MS = 8_000;
 
+const ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS = 60_000;
+
 type CapacityState = "available" | "stale" | "unavailable";
 export type ProviderCapacityViewState = "live" | "persisted" | "stale" | "unavailable";
 
@@ -151,23 +153,45 @@ const parseCodexWindow = (value: unknown): ProviderCapacityWindow | null => {
   };
 };
 
-const parseCodexAdditionalRateLimit = (value: unknown): ProviderCapacityAdditionalRateLimit | null => {
+const isUnanchoredAdditionalWindow = (window: ProviderCapacityWindow | null, snapshotAtMs: number): boolean => {
+  if (
+    !window ||
+    window.used_percent !== 0 ||
+    window.limit_window_seconds === null ||
+    window.reset_at_ms === null
+  ) return false;
+  const fullWindowMs = window.limit_window_seconds * 1_000;
+  if (!Number.isSafeInteger(fullWindowMs)) return false;
+  const expectedResetAtMs = snapshotAtMs + fullWindowMs;
+  return Number.isSafeInteger(expectedResetAtMs) &&
+    Math.abs(window.reset_at_ms - expectedResetAtMs) <= ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS;
+};
+
+const parseCodexAdditionalRateLimit = (
+  value: unknown,
+  snapshotAtMs: number,
+): ProviderCapacityAdditionalRateLimit | null => {
   if (!isRecord(value)) return null;
   const limitName = typeof value.limit_name === "string" ? value.limit_name.trim() : "";
   if (!limitName) return null;
   const meteredFeature = typeof value.metered_feature === "string" ? value.metered_feature.trim() || null : null;
   const rateLimit = isRecord(value.rate_limit) ? value.rate_limit : null;
+  const parsedPrimary = parseCodexWindow(rateLimit?.primary_window);
+  const parsedSecondary = parseCodexWindow(rateLimit?.secondary_window);
+  const primary = isUnanchoredAdditionalWindow(parsedPrimary, snapshotAtMs) ? null : parsedPrimary;
+  const secondary = isUnanchoredAdditionalWindow(parsedSecondary, snapshotAtMs) ? null : parsedSecondary;
+  if (!primary && !secondary) return null;
   return {
     limit_name: limitName,
     metered_feature: meteredFeature,
     windows: {
-      primary: parseCodexWindow(rateLimit?.primary_window),
-      secondary: parseCodexWindow(rateLimit?.secondary_window),
+      primary,
+      secondary,
     },
   };
 };
 
-const parseCodexUsage = (value: unknown):
+const parseCodexUsage = (value: unknown, snapshotAtMs: number):
   | Readonly<{
     primary: ProviderCapacityWindow | null;
     secondary: ProviderCapacityWindow | null;
@@ -177,7 +201,7 @@ const parseCodexUsage = (value: unknown):
   if (!isRecord(value) || !isRecord(value.rate_limit)) return null;
   const additionalRateLimits = Array.isArray(value.additional_rate_limits)
     ? value.additional_rate_limits.flatMap((candidate) => {
-      const parsed = parseCodexAdditionalRateLimit(candidate);
+      const parsed = parseCodexAdditionalRateLimit(candidate, snapshotAtMs);
       return parsed ? [parsed] : [];
     })
     : [];
@@ -261,7 +285,7 @@ const fetchCodexCapacitySource = async (
     } catch {
       return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs);
     }
-    const windows = parseCodexUsage(payload);
+    const windows = parseCodexUsage(payload, snapshotAtMs);
     if (!windows) return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs);
     return {
       source: "codex",
