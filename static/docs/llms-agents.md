@@ -560,12 +560,17 @@ Common status codes:
 - `429` rate limit exceeded for KV API keys
 - `5xx` upstream or server errors
 
-If chat returns `503` with `refresh_token_reused`, the client token may be fine. Repair the gateway's upstream Codex
-auth and retry.
+When a Codex account's server-side access or refresh token expires, the gateway adds
+`x-uos-warning: codex_auth_reauthentication_required` and includes an actionable re-authentication message in the OpenAI
+error body. A refresh rejection normally returns `503`; an upstream quota-shaped `403` may retain `403` when the access
+token is expired. In either case, this warning identifies gateway Codex auth, not the client's remaining quota, as the
+repair target. Upload a fresh `auth.json` through the admin flow and retry. The `refresh_token_reused` error code means
+the configured refresh token was already consumed, so sign in again or upload fresh auth credentials.
 
 Useful response headers for debugging:
 
 - `x-deno-trace-id`
+- `x-uos-warning`
 - `x-uos-request-id`
 - `x-uos-upstream`
 - `x-uos-router-revision`

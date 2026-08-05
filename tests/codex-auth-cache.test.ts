@@ -125,6 +125,7 @@ const { config } = await import("../src/config.ts");
 const {
   cacheCodexAuthPool,
   CODEX_AUTH_CACHE_TTL_MS,
+  CODEX_AUTH_REAUTH_WARNING,
   CodexError,
   fetchCodexResponses,
   getCodexResponseSlot,
@@ -728,9 +729,95 @@ Deno.test("a deterministic proactive refresh rejection quarantines the credentia
     const second = await fetchCodexResponses({ input: "expired-auth-again" });
     assert.equal(first.status, 401);
     assert.equal(second.status, 401);
+    assert.equal(first.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
+    assert.equal(second.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
     assert.equal(refreshCalls, 1);
     assert.equal(inferenceCalls, 0);
     assert.equal((await first.json() as { error?: { code?: string } }).error?.code, "codex_auth_invalid");
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("refresh-token reuse returns an actionable re-auth warning without exposing the OAuth body", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(staleAuth("reused"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("auth.openai.com/oauth/token")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "refresh_token_reused",
+              message: "provider secret must not escape",
+            },
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    inferenceCalls += 1;
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "reused-refresh-token" });
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
+    const payload = await response.json() as { error?: { message?: string; code?: string } };
+    assert.equal(payload.error?.code, "refresh_token_reused");
+    assert.match(payload.error?.message ?? "", /already used/i);
+    assert.equal((payload.error?.message ?? "").includes("provider secret"), false);
+    assert.equal(inferenceCalls, 0);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a refresh failure warning survives a later quota-shaped 403 from another account", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(staleAuth("expired"), auth("quota"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    if (request.url.includes("auth.openai.com/oauth/token")) {
+      return Promise.resolve(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 401 }));
+    }
+    const accountId = request.headers.get("chatgpt-account-id") ?? "";
+    accountIds.push(accountId);
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { message: "user quota is not enough" } }), {
+        status: accountId === "account-quota" ? 403 : 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "expired-auth-with-quota-shaped-403" });
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
+    assert.deepEqual(accountIds, ["account-quota"]);
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;

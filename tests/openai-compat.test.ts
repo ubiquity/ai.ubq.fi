@@ -113,7 +113,11 @@ const {
 } = await import("../src/openai.ts");
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
-const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const {
+  CODEX_AUTH_REAUTH_MESSAGE,
+  CODEX_AUTH_REAUTH_WARNING,
+  resetCodexAuthCacheForTest,
+} = await import("../src/codex.ts");
 const { attemptCodexBankedReset } = await import("../src/codex_banked_reset.ts");
 const {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
@@ -1303,6 +1307,127 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     const recorded = recordedBody as Record<string, unknown>;
     assert.deepEqual(recorded["context_management"], contextManagement);
   });
+});
+
+Deno.test("openai: expired Codex auth returns a 503 re-auth warning through Responses", async () => {
+  const authKey = keyToString(["ubq_ai", "codex_auth"]);
+  const previousAuth = kvStore.get(authKey);
+  const now = Date.now();
+  let refreshCalls = 0;
+  kvStore.set(
+    authKey,
+    {
+      accounts: [{
+        access_token: "expired-access-token",
+        refresh_token: "expired-refresh-token",
+        account_id: "expired-account",
+        updated_at_ms: now - 10 * 60_000,
+      }],
+      updated_at_ms: now - 10 * 60_000,
+    } satisfies CodexAuthPoolState,
+  );
+
+  try {
+    const response = await withFetchMock(
+      (url) => {
+        if (url === "https://auth.openai.com/oauth/token") {
+          refreshCalls += 1;
+          return new Response(JSON.stringify({ error: "invalid_grant" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`Inference must not run with expired auth: ${url}`);
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+          }),
+        ),
+    );
+
+    const payload = await response.json() as { error?: { code?: string; message?: string; type?: string } };
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
+    assert.equal(payload.error?.code, "codex_auth_invalid");
+    assert.equal(payload.error?.type, "server_error");
+    assert.ok(payload.error?.message?.includes(CODEX_AUTH_REAUTH_MESSAGE));
+    assert.match(payload.error?.message ?? "", /upload a fresh auth\.json/i);
+    assert.equal(refreshCalls, 1);
+  } finally {
+    if (previousAuth === undefined) kvStore.delete(authKey);
+    else kvStore.set(authKey, previousAuth);
+    resetCodexAuthCacheForTest();
+  }
+});
+
+Deno.test("openai: an expired access token makes a quota-shaped 403 actionable", async () => {
+  const authKey = keyToString(["ubq_ai", "codex_auth"]);
+  const previousAuth = kvStore.get(authKey);
+  const now = Date.now();
+  const expiredToken = `${encodeJsonBase64Url({ alg: "none" })}.${
+    encodeJsonBase64Url({
+      exp: Math.floor((now - 60_000) / 1000),
+    })
+  }.expired`;
+  let inferenceCalls = 0;
+  kvStore.set(
+    authKey,
+    {
+      accounts: [{
+        access_token: expiredToken,
+        refresh_token: "expired-refresh-token",
+        account_id: "expired-account",
+        updated_at_ms: now,
+      }],
+      updated_at_ms: now,
+    } satisfies CodexAuthPoolState,
+  );
+
+  try {
+    const response = await withFetchMock(
+      (url) => {
+        if (url === "https://auth.openai.com/oauth/token") {
+          return new Response(
+            JSON.stringify({
+              access_token: expiredToken,
+              refresh_token: "rotated-refresh-token",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        inferenceCalls += 1;
+        return new Response(JSON.stringify({ error: { message: "user quota is not enough" } }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+          }),
+        ),
+    );
+
+    const payload = await response.json() as { error?: { message?: string } };
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
+    assert.ok(payload.error?.message?.includes(CODEX_AUTH_REAUTH_MESSAGE));
+    assert.equal(inferenceCalls, 1);
+  } finally {
+    if (previousAuth === undefined) kvStore.delete(authKey);
+    else kvStore.set(authKey, previousAuth);
+    resetCodexAuthCacheForTest();
+  }
 });
 
 Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly ignores temperature", async () => {

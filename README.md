@@ -20,6 +20,13 @@ LLM and app integration notes live in [`static/docs/llms-agents.md`](static/docs
   - The OAuth `client_id` used for refresh-token rotation is **public** (not a secret); the secrets are the tokens in
     `CODEX_AUTH_JSON_B64` and your client/admin tokens.
 
+If a server-side Codex access or refresh token expires, `/v1/responses` and `/v1/chat/completions` return the
+`x-uos-warning: codex_auth_reauthentication_required` header and an actionable message instead of silently presenting
+the failure as a quota problem. A refresh rejection is returned as `503`; an upstream quota-shaped `403` can retain that
+status when the access token is expired. Upload a fresh `auth.json` through the admin flow and retry. When the response
+error code is `refresh_token_reused`, the configured refresh token was already consumed and a new sign-in or fresh
+`auth.json` is required.
+
 ## Quickstart (curl)
 
 Set a gateway token:
