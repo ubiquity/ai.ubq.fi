@@ -1,5 +1,6 @@
 import { getKv } from "./kv.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
+import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "./types.ts";
 
@@ -10,7 +11,15 @@ import type { CodexAuthPoolState, CodexAuthState } from "./types.ts";
  * account inherit it.
  */
 export const CODEX_ACCOUNT_ROUTING_KV_KEY = ["uos_ai", "codex_account_routing", "v2"] as const;
+export const CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY = [
+  "uos_ai",
+  "codex_capacity_routing",
+  "v1",
+  "observations",
+] as const;
 export const CODEX_HALF_OPEN_LEASE_MS = 30_000;
+/** Capacity observations older than this cannot reopen a quota circuit. */
+export const CODEX_CAPACITY_ROUTING_MAX_AGE_MS = 30 * 60_000;
 // A warm isolate avoids per-request routing reads, but it must eventually
 // observe circuits opened by another isolate. This bounded revalidation keeps
 // normal traffic off KV while limiting cross-isolate stale routing decisions.
@@ -27,6 +36,10 @@ export type CodexRoutingSlot = Readonly<{
   invalid_credential_version: string | null;
   primary_used_percent: number | null;
   secondary_used_percent: number | null;
+  /** Timestamp of the newest provider quota signal written by inference. */
+  quota_signal_observed_at_ms: number | null;
+  /** Timestamp of the newest capacity sampler observation applied to this slot. */
+  capacity_observed_at_ms: number | null;
   observed_reset_at_ms: number | null;
   /** True only when the upstream supplied a canonical absolute reset deadline. */
   observed_reset_at_is_stable: boolean;
@@ -61,6 +74,52 @@ export type RoutingAccount = Readonly<{
   probeRequired: boolean;
   probeGeneration: number | null;
   probeToken: string | null;
+}>;
+
+export type CodexCapacityRoutingWindow = Readonly<{
+  limit_window_seconds: number | null;
+  used_percent: number | null;
+  reset_at_ms: number | null;
+}>;
+
+export type CodexCapacityRoutingAdditionalRateLimit = Readonly<{
+  limit_name: string;
+  metered_feature: string | null;
+  windows: Readonly<{
+    primary: CodexCapacityRoutingWindow | null;
+    secondary: CodexCapacityRoutingWindow | null;
+  }>;
+}>;
+
+/**
+ * Control-plane input only. `account_id` is hashed before it enters durable
+ * routing state; the dashboard and observation record never contain it.
+ * `slot` is zero-based, matching the routing state slot index.
+ */
+export type CodexCapacityRoutingObservationInput = Readonly<{
+  slot: number;
+  account_id: string;
+  state: "available" | "stale" | "unavailable";
+  source_observed_at_ms: number | null;
+  snapshot_at_ms: number;
+  windows: Readonly<{
+    primary: CodexCapacityRoutingWindow | null;
+    secondary: CodexCapacityRoutingWindow | null;
+  }>;
+  additional_rate_limits: readonly CodexCapacityRoutingAdditionalRateLimit[];
+}>;
+
+type CodexCapacityRoutingObservation = Readonly<{
+  slot: number;
+  account_id_hash: string;
+  state: "available" | "stale" | "unavailable";
+  source_observed_at_ms: number | null;
+  snapshot_at_ms: number;
+  windows: Readonly<{
+    primary: CodexCapacityRoutingWindow | null;
+    secondary: CodexCapacityRoutingWindow | null;
+  }>;
+  additional_rate_limits: readonly CodexCapacityRoutingAdditionalRateLimit[];
 }>;
 
 /** A durable provider-deadline circuit that may have an existing reset record to reconcile. */
@@ -125,6 +184,13 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
   const observedResetAtMs = value.observed_reset_at_ms === null || isSafeMs(value.observed_reset_at_ms)
     ? value.observed_reset_at_ms as number | null
     : null;
+  const quotaSignalObservedAtMs =
+    value.quota_signal_observed_at_ms === null || isSafeMs(value.quota_signal_observed_at_ms)
+      ? value.quota_signal_observed_at_ms as number | null
+      : null;
+  const capacityObservedAtMs = value.capacity_observed_at_ms === null || isSafeMs(value.capacity_observed_at_ms)
+    ? value.capacity_observed_at_ms as number | null
+    : null;
   const observedResetAtIsStable = value.observed_reset_at_is_stable === true;
   const generation =
     typeof value.generation === "number" && Number.isSafeInteger(value.generation) && value.generation >= 0
@@ -173,6 +239,8 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
       typeof value.secondary_used_percent === "number" && Number.isFinite(value.secondary_used_percent)
         ? value.secondary_used_percent
         : null,
+    quota_signal_observed_at_ms: quotaSignalObservedAtMs,
+    capacity_observed_at_ms: capacityObservedAtMs,
     observed_reset_at_ms: observedResetAtMs,
     // Older routing records did not carry this flag. Treat their header
     // deadline as unsuitable for an expensive reset rather than guessing its
@@ -207,8 +275,11 @@ export const parseCodexAccountRoutingState = (value: unknown): CodexAccountRouti
 export const codexCredentialVersion = async (auth: CodexAuthState): Promise<string> =>
   await sha256Hex(`${auth.account_id}\u0000${auth.access_token}\u0000${auth.refresh_token}`);
 
+const codexRoutingAccountIdHashForId = async (accountId: string): Promise<string> =>
+  await sha256Hex(`uos_ai\u0000codex_routing_account\u0000${accountId}`);
+
 const codexRoutingAccountIdHash = async (auth: CodexAuthState): Promise<string> =>
-  await sha256Hex(`uos_ai\u0000codex_routing_account\u0000${auth.account_id}`);
+  await codexRoutingAccountIdHashForId(auth.account_id);
 
 type CodexRoutingAccountIdentity = Readonly<{
   accountIdHash: string;
@@ -231,6 +302,8 @@ const neutralSlot = (credentialVersion: string, accountIdHash: string | null): C
   invalid_credential_version: null,
   primary_used_percent: null,
   secondary_used_percent: null,
+  quota_signal_observed_at_ms: null,
+  capacity_observed_at_ms: null,
   observed_reset_at_ms: null,
   observed_reset_at_is_stable: false,
   banked_reset_generation_ambiguous: false,
@@ -261,6 +334,8 @@ const rotateCredentialForSameAccount = (
   invalid_credential_version: null,
   primary_used_percent: null,
   secondary_used_percent: null,
+  quota_signal_observed_at_ms: null,
+  capacity_observed_at_ms: null,
   banked_reset_generation_ambiguous: preservesStableResetIdentity(slot),
   banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending,
   generation: slot.generation + 1,
@@ -334,11 +409,15 @@ let cachedState: CodexAccountRoutingState | null = null;
 // KV versionstamp for an absent routing record and is safe to check directly.
 let cachedVersionstamp: string | null | undefined = undefined;
 let cachedStateLoadedAtMs = 0;
+let cachedCapacityObservations: readonly CodexCapacityRoutingObservation[] = [];
+let cachedCapacityObservationsLoadedAtMs = 0;
 
 export const resetCodexAccountRoutingForTest = (): void => {
   cachedState = null;
   cachedVersionstamp = undefined;
   cachedStateLoadedAtMs = 0;
+  cachedCapacityObservations = [];
+  cachedCapacityObservationsLoadedAtMs = 0;
 };
 
 /** Loads routing alongside a cold auth read.  KV failure deliberately fails open. */
@@ -490,6 +569,408 @@ const quotaHeadroomFor = (slot: CodexRoutingSlot): number | null => {
   const used = [slot.primary_used_percent, slot.secondary_used_percent]
     .filter((value): value is number => value !== null);
   return used.length ? Math.max(0, Math.min(...used.map((value) => 100 - value))) : null;
+};
+
+const capacityState = (value: unknown): CodexCapacityRoutingObservation["state"] | null =>
+  value === "available" || value === "stale" || value === "unavailable" ? value : null;
+
+const capacityPercent = (value: unknown): number | null =>
+  value === null || value === undefined
+    ? null
+    : typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100
+    ? value
+    : null;
+
+const capacityWindowSeconds = (value: unknown): number | null =>
+  value === null || value === undefined
+    ? null
+    : typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
+
+const capacityResetAtMs = (value: unknown): number | null =>
+  value === null || value === undefined ? null : isSafeMs(value) ? value : null;
+
+const normalizeCapacityWindow = (value: unknown): CodexCapacityRoutingWindow | null => {
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value)) return null;
+  return {
+    limit_window_seconds: capacityWindowSeconds(value.limit_window_seconds),
+    used_percent: capacityPercent(value.used_percent),
+    reset_at_ms: capacityResetAtMs(value.reset_at_ms),
+  };
+};
+
+const normalizeCapacityAdditionalRateLimit = (
+  value: unknown,
+): CodexCapacityRoutingAdditionalRateLimit | null => {
+  if (!isRecord(value)) return null;
+  const limitName = typeof value.limit_name === "string" ? value.limit_name.trim() : "";
+  if (!limitName) return null;
+  const windows = isRecord(value.windows) ? value.windows : null;
+  if (!windows) return null;
+  const meteredFeature = value.metered_feature;
+  if (meteredFeature !== null && meteredFeature !== undefined && typeof meteredFeature !== "string") return null;
+  return {
+    limit_name: limitName,
+    metered_feature: typeof meteredFeature === "string" ? meteredFeature.trim() || null : null,
+    windows: {
+      primary: normalizeCapacityWindow(windows.primary),
+      secondary: normalizeCapacityWindow(windows.secondary),
+    },
+  };
+};
+
+const normalizeCapacityAdditionalRateLimits = (
+  value: unknown,
+): readonly CodexCapacityRoutingAdditionalRateLimit[] =>
+  Array.isArray(value)
+    ? value.flatMap((candidate) => {
+      const parsed = normalizeCapacityAdditionalRateLimit(candidate);
+      return parsed ? [parsed] : [];
+    })
+    : [];
+
+const capacityHeadroomForWindows = (
+  windows: Readonly<{ primary: CodexCapacityRoutingWindow | null; secondary: CodexCapacityRoutingWindow | null }>,
+): number | null => {
+  const used = [windows.primary?.used_percent ?? null, windows.secondary?.used_percent ?? null]
+    .filter((value): value is number => value !== null);
+  return used.length ? Math.max(0, Math.min(...used.map((value) => 100 - value))) : null;
+};
+
+const normalizeQuotaLabel = (value: string | null | undefined): string =>
+  typeof value === "string" ? value.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+
+const capacityHeadroomForObservation = (
+  observation: CodexCapacityRoutingObservation,
+  model: string | null,
+): number | null => {
+  const baseHeadroom = capacityHeadroomForWindows(observation.windows);
+  const modelKey = normalizeQuotaLabel(model);
+  if (!modelKey) return baseHeadroom;
+  const modelLimits = observation.additional_rate_limits.filter((limit) =>
+    normalizeQuotaLabel(limit.limit_name) === modelKey
+  );
+  if (modelLimits.length) {
+    const modelHeadrooms = modelLimits
+      .map((limit) => capacityHeadroomForWindows(limit.windows))
+      .filter((value): value is number => value !== null);
+    return modelHeadrooms.length ? Math.max(...modelHeadrooms) : null;
+  }
+  return baseHeadroom;
+};
+
+const capacityHasAnyPositiveHeadroom = (
+  observation: CodexCapacityRoutingObservation,
+  model: string | null,
+): boolean => {
+  const headroom = capacityHeadroomForObservation(observation, model);
+  return observation.state === "available" && headroom !== null && headroom > 0;
+};
+
+const capacityObservationIsFresh = (
+  observation: CodexCapacityRoutingObservation,
+  now: number,
+): boolean =>
+  observation.state === "available" && isSafeMs(observation.snapshot_at_ms) &&
+  observation.snapshot_at_ms <= now && now - observation.snapshot_at_ms <= CODEX_CAPACITY_ROUTING_MAX_AGE_MS;
+
+const parseStoredCapacityObservation = (value: unknown): CodexCapacityRoutingObservation | null => {
+  const slot = isRecord(value) && typeof value.slot === "number" && Number.isInteger(value.slot) && value.slot >= 0 &&
+      value.slot <= 1
+    ? value.slot
+    : null;
+  if (!isRecord(value) || slot === null) return null;
+  if (typeof value.account_id_hash !== "string" || !value.account_id_hash) return null;
+  const state = capacityState(value.state);
+  const snapshotAtMs = isSafeMs(value.snapshot_at_ms) ? value.snapshot_at_ms : null;
+  const sourceObservedAtMs = value.source_observed_at_ms === null || isSafeMs(value.source_observed_at_ms)
+    ? value.source_observed_at_ms as number | null
+    : null;
+  const windows = isRecord(value.windows) ? value.windows : null;
+  if (!state || snapshotAtMs === null || !windows) return null;
+  return {
+    slot,
+    account_id_hash: value.account_id_hash,
+    state,
+    source_observed_at_ms: sourceObservedAtMs,
+    snapshot_at_ms: snapshotAtMs,
+    windows: {
+      primary: normalizeCapacityWindow(windows.primary),
+      secondary: normalizeCapacityWindow(windows.secondary),
+    },
+    additional_rate_limits: normalizeCapacityAdditionalRateLimits(value.additional_rate_limits),
+  };
+};
+
+const parseStoredCapacityObservationStore = (
+  value: unknown,
+): readonly CodexCapacityRoutingObservation[] => {
+  if (!isRecord(value) || value.v !== 1 || !Array.isArray(value.observations)) return [];
+  return value.observations.flatMap((candidate) => {
+    const parsed = parseStoredCapacityObservation(candidate);
+    return parsed ? [parsed] : [];
+  });
+};
+
+const capacityObservationFromInput = async (
+  input: CodexCapacityRoutingObservationInput,
+): Promise<CodexCapacityRoutingObservation | null> => {
+  if (
+    !Number.isInteger(input.slot) || input.slot < 0 || input.slot > 1 || typeof input.account_id !== "string" ||
+    !input.account_id.trim() || !isSafeMs(input.snapshot_at_ms)
+  ) return null;
+  const state = capacityState(input.state);
+  if (!state) return null;
+  const sourceObservedAtMs = input.source_observed_at_ms === null || isSafeMs(input.source_observed_at_ms)
+    ? input.source_observed_at_ms
+    : null;
+  const accountIdHash = await codexRoutingAccountIdHashForId(input.account_id.trim());
+  return {
+    slot: input.slot,
+    account_id_hash: accountIdHash,
+    state,
+    source_observed_at_ms: sourceObservedAtMs,
+    snapshot_at_ms: input.snapshot_at_ms,
+    windows: {
+      primary: normalizeCapacityWindow(input.windows?.primary),
+      secondary: normalizeCapacityWindow(input.windows?.secondary),
+    },
+    additional_rate_limits: normalizeCapacityAdditionalRateLimits(input.additional_rate_limits),
+  };
+};
+
+const mergeCapacityObservations = (
+  ...sets: readonly (readonly CodexCapacityRoutingObservation[])[]
+): readonly CodexCapacityRoutingObservation[] => {
+  const byAccount = new Map<string, CodexCapacityRoutingObservation>();
+  for (const set of sets) {
+    for (const observation of set) {
+      const prior = byAccount.get(observation.account_id_hash);
+      if (!prior || observation.snapshot_at_ms >= prior.snapshot_at_ms) {
+        byAccount.set(observation.account_id_hash, observation);
+      }
+    }
+  }
+  return [...byAccount.values()].sort((left, right) => left.slot - right.slot);
+};
+
+const retainRecentCapacityObservations = (
+  observations: readonly CodexCapacityRoutingObservation[],
+  now: number,
+): readonly CodexCapacityRoutingObservation[] => {
+  const oldestRetainedAtMs = Math.max(0, now - CODEX_CAPACITY_ROUTING_MAX_AGE_MS);
+  return observations.filter((observation) =>
+    observation.snapshot_at_ms >= oldestRetainedAtMs && observation.snapshot_at_ms <= now
+  );
+};
+
+const readLegacyProviderCapacityObservations = async (
+  pool: CodexAuthPoolState,
+  kv: Deno.Kv,
+): Promise<readonly CodexCapacityRoutingObservation[]> => {
+  try {
+    const entry = await kv.get<unknown>(PROVIDER_CAPACITY_SNAPSHOT_KEY, { consistency: "strong" });
+    const value = entry.value;
+    if (!isRecord(value) || !isSafeMs(value.snapshot_at_ms) || !Array.isArray(value.sources)) return [];
+    // A slot-only snapshot is safe to reuse only when the auth pool existed no
+    // later than the sample. New observations are account-hash bound; this
+    // guard is the migration boundary for snapshots written before that key.
+    if (!isSafeMs(pool.updated_at_ms) || pool.updated_at_ms > value.snapshot_at_ms) return [];
+    const snapshotAtMs = value.snapshot_at_ms;
+    const observations: CodexCapacityRoutingObservation[] = [];
+    for (let slot = 0; slot < Math.min(2, pool.accounts.length); slot += 1) {
+      const source = value.sources.find((candidate) =>
+        isRecord(candidate) && candidate.source === "codex" && candidate.slot === slot + 1
+      );
+      if (!isRecord(source)) continue;
+      const state = capacityState(source.state);
+      const sourceSnapshotAtMs = isSafeMs(source.snapshot_at_ms) ? source.snapshot_at_ms : snapshotAtMs;
+      const sourceObservedAtMs = source.source_observed_at_ms === null || isSafeMs(source.source_observed_at_ms)
+        ? source.source_observed_at_ms as number | null
+        : null;
+      const windows = isRecord(source.windows) ? source.windows : null;
+      if (!state || !windows || !isSafeMs(sourceSnapshotAtMs)) continue;
+      observations.push({
+        slot,
+        account_id_hash: await codexRoutingAccountIdHashForId(pool.accounts[slot]!.account_id),
+        state,
+        source_observed_at_ms: sourceObservedAtMs,
+        snapshot_at_ms: sourceSnapshotAtMs,
+        windows: {
+          primary: normalizeCapacityWindow(windows.primary),
+          secondary: normalizeCapacityWindow(windows.secondary),
+        },
+        additional_rate_limits: normalizeCapacityAdditionalRateLimits(source.additional_rate_limits),
+      });
+    }
+    return observations;
+  } catch {
+    return [];
+  }
+};
+
+const loadCodexCapacityRoutingObservations = async (
+  pool: CodexAuthPoolState,
+  forceKv = false,
+): Promise<readonly CodexCapacityRoutingObservation[]> => {
+  const now = Date.now();
+  if (!forceKv && now - cachedCapacityObservationsLoadedAtMs < ROUTING_CACHE_REVALIDATE_MS) {
+    return cachedCapacityObservations;
+  }
+  try {
+    const kv = await getKv();
+    if (!kv) {
+      cachedCapacityObservationsLoadedAtMs = now;
+      return cachedCapacityObservations;
+    }
+    const [observationEntry, legacy] = await Promise.all([
+      kv.get<unknown>(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY, { consistency: "strong" }),
+      readLegacyProviderCapacityObservations(pool, kv),
+    ]);
+    const durable = parseStoredCapacityObservationStore(observationEntry.value);
+    cachedCapacityObservations = mergeCapacityObservations(durable, legacy);
+    cachedCapacityObservationsLoadedAtMs = now;
+    return cachedCapacityObservations;
+  } catch {
+    cachedCapacityObservationsLoadedAtMs = now;
+    return cachedCapacityObservations;
+  }
+};
+
+const applyCapacityObservation = (
+  state: CodexAccountRoutingState,
+  observation: CodexCapacityRoutingObservation,
+  now: number,
+  model: string | null,
+): CodexAccountRoutingState | null => {
+  if (observation.snapshot_at_ms > now) return null;
+  const current = state.slots[observation.slot];
+  if (!current || current.account_id_hash !== observation.account_id_hash) return null;
+  if (
+    current.capacity_observed_at_ms !== null &&
+    observation.snapshot_at_ms < current.capacity_observed_at_ms
+  ) return null;
+  const fresh = capacityObservationIsFresh(observation, now);
+  const capacityPositive = fresh && capacityHasAnyPositiveHeadroom(observation, model);
+  const newerQuotaSignal = current.quota_signal_observed_at_ms !== null &&
+    current.quota_signal_observed_at_ms >= observation.snapshot_at_ms;
+  const clearCircuit = capacityPositive && !newerQuotaSignal;
+  const preserveResetSafety = current.banked_reset_generation_ambiguous ||
+    current.banked_reset_recovery_probe_pending || current.probe_lease !== null;
+  const nextSlot: CodexRoutingSlot = {
+    ...current,
+    primary_used_percent: observation.windows.primary?.used_percent ?? null,
+    secondary_used_percent: observation.windows.secondary?.used_percent ?? null,
+    capacity_observed_at_ms: observation.snapshot_at_ms,
+    ...(clearCircuit
+      ? {
+        account_id_hash: observation.account_id_hash,
+        quota_blocked_until_ms: null,
+        quota_block_source: null,
+        invalid_credential_version: null,
+        ...(preserveResetSafety ? {} : {
+          observed_reset_at_ms: null,
+          observed_reset_at_is_stable: false,
+          banked_reset_generation_ambiguous: false,
+          banked_reset_recovery_probe_pending: false,
+          generation: current.generation + 1,
+          probe_lease: null,
+        }),
+      }
+      : {}),
+  };
+  const changed = Object.keys(nextSlot).some((key) =>
+    nextSlot[key as keyof CodexRoutingSlot] !== current[key as keyof CodexRoutingSlot]
+  );
+  return changed ? withSlot(state, observation.slot, nextSlot) : null;
+};
+
+const reconcileCapacityRoutingState = async (
+  state: CodexAccountRoutingState,
+  observations: readonly CodexCapacityRoutingObservation[],
+  now: number,
+  model: string | null,
+): Promise<CodexAccountRoutingState> => {
+  const next = await updateRoutingState((base) => {
+    let changed = false;
+    let result = base;
+    for (const observation of observations) {
+      const applied = applyCapacityObservation(result, observation, now, model);
+      if (applied) {
+        result = applied;
+        changed = true;
+      }
+    }
+    return changed ? result : null;
+  });
+  return next ?? state;
+};
+
+/**
+ * Persist the redacted, account-hash-bound sampler result and immediately
+ * reconcile any matching routing slot. A positive observation clears only an
+ * older quota signal; a newer inference 429 remains authoritative.
+ */
+export const recordCodexCapacityRoutingObservations = async (
+  inputs: readonly CodexCapacityRoutingObservationInput[],
+  now = Date.now(),
+): Promise<void> => {
+  const observations = (await Promise.all(inputs.map(capacityObservationFromInput))).filter(
+    (observation): observation is CodexCapacityRoutingObservation => observation !== null,
+  );
+  if (!observations.length) return;
+  const observationNow = isSafeMs(now) ? now : Date.now();
+  let merged = retainRecentCapacityObservations(
+    mergeCapacityObservations(cachedCapacityObservations, observations),
+    observationNow,
+  );
+  let kv: Deno.Kv | null = null;
+  try {
+    kv = await getKv();
+  } catch {
+    kv = null;
+  }
+  if (kv) {
+    let persisted = false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const entry = await kv.get<unknown>(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY, { consistency: "strong" });
+        const durable = parseStoredCapacityObservationStore(entry.value);
+        merged = retainRecentCapacityObservations(
+          mergeCapacityObservations(durable, observations),
+          observationNow,
+        );
+        const next = {
+          v: 1,
+          updated_at_ms: observationNow,
+          observations: merged,
+        };
+        const committed = await kv.atomic()
+          .check(entry)
+          .set(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY, next)
+          .commit();
+        if (committed.ok) {
+          cachedCapacityObservations = merged;
+          cachedCapacityObservationsLoadedAtMs = Date.now();
+          persisted = true;
+          break;
+        }
+      } catch {
+        break;
+      }
+    }
+    if (!persisted) return;
+  } else {
+    cachedCapacityObservations = merged;
+    cachedCapacityObservationsLoadedAtMs = Date.now();
+  }
+
+  // The direct transition is useful for a dashboard refresh that runs before
+  // the next inference request. Selection repeats this reconciliation and can
+  // still override a stale local circuit if a concurrent CAS loses a race.
+  if (cachedState) await reconcileCapacityRoutingState(cachedState, merged, observationNow, null);
 };
 
 const IMF_FIXDATE_PATTERN =
@@ -821,6 +1302,7 @@ const markCodexQuotaBlockedWithMode = async (
       account_id_hash: account.accountIdHash,
       quota_blocked_until_ms: deadline,
       quota_block_source: quotaBlockSource,
+      quota_signal_observed_at_ms: now,
       primary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-primary-used-percent")) ??
         current.primary_used_percent,
       secondary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-secondary-used-percent")) ??
@@ -855,6 +1337,7 @@ export const markCodexRecoveryProbeQuotaBlocked = async (
 ): Promise<Codex429Classification> => await markCodexQuotaBlockedWithMode(account, response, now, true);
 
 export const markCodexCredentialInvalid = async (account: RoutingAccount): Promise<void> => {
+  const now = Date.now();
   await updateRoutingState((state) => {
     const current = slotFor(state, account);
     if (!slotMatchesRoutingAccount(current, account)) return null;
@@ -868,6 +1351,7 @@ export const markCodexCredentialInvalid = async (account: RoutingAccount): Promi
       quota_blocked_until_ms: null,
       quota_block_source: null,
       invalid_credential_version: account.credentialVersion,
+      quota_signal_observed_at_ms: now,
       probe_lease: null,
     });
   });
@@ -1290,10 +1774,15 @@ const selectCodexRoutingAccountsFromState = async (
   pool: CodexAuthPoolState,
   orderedAccounts: readonly CodexAuthState[],
   now: number,
+  model: string | null,
+  capacityObservations: readonly CodexCapacityRoutingObservation[],
 ): Promise<RouteSelection> => {
   const identities = await Promise.all(pool.accounts.map(routingAccountIdentity));
   const byId = new Map(
     pool.accounts.map((auth, slot) => [auth.account_id, { slot, ...identities[slot]! }]),
+  );
+  const observationsByAccount = new Map(
+    capacityObservations.map((observation) => [observation.account_id_hash, observation]),
   );
   const available: RoutingAccount[] = [];
   const blockedAccounts: CodexBlockedRoutingAccount[] = [];
@@ -1317,12 +1806,24 @@ const selectCodexRoutingAccountsFromState = async (
     const slot = slotMatchesRoutingAccount(storedSlot, account)
       ? storedSlot
       : neutralSlot(account.credentialVersion, account.accountIdHash);
-    const routedAccount = { ...account, quotaHeadroom: quotaHeadroomFor(slot) };
-    if (slot.invalid_credential_version === account.credentialVersion) {
+    const capacityObservation = observationsByAccount.get(account.accountIdHash);
+    const freshCapacity = capacityObservation !== undefined && capacityObservationIsFresh(capacityObservation, now);
+    const observedCapacityHeadroom = freshCapacity ? capacityHeadroomForObservation(capacityObservation!, model) : null;
+    const quotaHeadroom = freshCapacity ? observedCapacityHeadroom : quotaHeadroomFor(slot);
+    const quotaSignalNewer = capacityObservation?.snapshot_at_ms !== undefined &&
+      slot.quota_signal_observed_at_ms !== null &&
+      slot.quota_signal_observed_at_ms >= capacityObservation.snapshot_at_ms;
+    // This is the last in-memory guard after the durable reconciliation CAS.
+    // It prevents a stale local circuit from suppressing a fresh, positive
+    // account observation that lost a concurrent write race.
+    const capacityOverride = freshCapacity && observedCapacityHeadroom !== null && observedCapacityHeadroom > 0 &&
+      !quotaSignalNewer;
+    const routedAccount = { ...account, quotaHeadroom };
+    if (slot.invalid_credential_version === account.credentialVersion && !capacityOverride) {
       skipped.push(mapped.slot + 1);
       continue;
     }
-    if (slot.quota_blocked_until_ms && slot.quota_blocked_until_ms > now) {
+    if (slot.quota_blocked_until_ms && slot.quota_blocked_until_ms > now && !capacityOverride) {
       skipped.push(mapped.slot + 1);
       hasQuotaBlock = true;
       retryAt = retryAt === null ? slot.quota_blocked_until_ms : Math.min(retryAt, slot.quota_blocked_until_ms);
@@ -1352,11 +1853,24 @@ const selectCodexRoutingAccountsFromState = async (
       // Claim the half-open lease only if request execution actually reaches
       // this slot. This preserves first/second order without abandoning a
       // secondary lease when the healthy first account returns directly.
-      available.push({ ...routedAccount, probeRequired: true });
+      available.push({ ...routedAccount, probeRequired: !capacityOverride });
       continue;
     }
     available.push(routedAccount);
   }
+  available.sort((left, right) => {
+    const leftHeadroom = left.quotaHeadroom;
+    const rightHeadroom = right.quotaHeadroom;
+    const leftPositive = leftHeadroom !== null && leftHeadroom > 0;
+    const rightPositive = rightHeadroom !== null && rightHeadroom > 0;
+    if (leftPositive !== rightPositive) return rightPositive ? 1 : -1;
+    if (
+      leftPositive && rightPositive && leftHeadroom !== null && rightHeadroom !== null && leftHeadroom !== rightHeadroom
+    ) {
+      return rightHeadroom - leftHeadroom;
+    }
+    return 0;
+  });
   if (available.length) return { kind: "eligible", accounts: available, skippedSlots: skipped, blockedAccounts };
   if (hasQuotaBlock) return { kind: "quota_blocked", skippedSlots: skipped, retryAtMs: retryAt, blockedAccounts };
   return { kind: "credentials_invalid", skippedSlots: skipped };
@@ -1366,13 +1880,21 @@ export const selectCodexRoutingAccounts = async (
   pool: CodexAuthPoolState,
   orderedAccounts: readonly CodexAuthState[],
   now = Date.now(),
+  model: string | null = null,
 ): Promise<RouteSelection> =>
-  await selectCodexRoutingAccountsFromState(
-    await loadCodexAccountRouting(pool),
-    pool,
-    orderedAccounts,
-    now,
-  );
+  await (async () => {
+    const state = await loadCodexAccountRouting(pool);
+    const observations = await loadCodexCapacityRoutingObservations(pool);
+    const reconciled = await reconcileCapacityRoutingState(state, observations, now, model);
+    return await selectCodexRoutingAccountsFromState(
+      reconciled,
+      pool,
+      orderedAccounts,
+      now,
+      model,
+      observations,
+    );
+  })();
 
 /**
  * Re-selects accounts from a fresh durable routing record. Unlike ordinary
@@ -1384,6 +1906,7 @@ export const selectCodexRoutingAccountsStrong = async (
   pool: CodexAuthPoolState,
   orderedAccounts: readonly CodexAuthState[],
   now = Date.now(),
+  model: string | null = null,
 ): Promise<StrongRouteSelection> => {
   try {
     const kv = await getKv();
@@ -1397,7 +1920,16 @@ export const selectCodexRoutingAccountsStrong = async (
     cachedState = normalized;
     cachedVersionstamp = entry.versionstamp;
     cachedStateLoadedAtMs = Date.now();
-    return await selectCodexRoutingAccountsFromState(normalized, pool, orderedAccounts, now);
+    const observations = await loadCodexCapacityRoutingObservations(pool, true);
+    const reconciled = await reconcileCapacityRoutingState(normalized, observations, now, model);
+    return await selectCodexRoutingAccountsFromState(
+      reconciled,
+      pool,
+      orderedAccounts,
+      now,
+      model,
+      observations,
+    );
   } catch {
     return { kind: "routing_unavailable" };
   }
@@ -1410,6 +1942,7 @@ export const selectCodexRoutingAccountsStrong = async (
  */
 export const recheckCodexRoutingSlot = async (slotNumber: number): Promise<boolean> => {
   if (!Number.isInteger(slotNumber) || slotNumber < 1) return false;
+  const recheckAtMs = Date.now();
 
   // Rechecks are rare, administrative transitions. Always use a strong read
   // when available so a cold isolate can release a persisted circuit and a
@@ -1435,7 +1968,8 @@ export const recheckCodexRoutingSlot = async (slotNumber: number): Promise<boole
       }
       const next = withSlot(state, index, {
         ...current,
-        quota_blocked_until_ms: Date.now(),
+        quota_blocked_until_ms: recheckAtMs,
+        quota_signal_observed_at_ms: recheckAtMs,
         // An administrative deadline mutation is not provider proof of the
         // same quota generation. A later recovery probe is required before a
         // stable identity may authorize a banked claim again.
@@ -1462,7 +1996,8 @@ export const recheckCodexRoutingSlot = async (slotNumber: number): Promise<boole
   if (!current.quota_blocked_until_ms) return true;
   cachedState = withSlot(state, index, {
     ...current,
-    quota_blocked_until_ms: Date.now(),
+    quota_blocked_until_ms: recheckAtMs,
+    quota_signal_observed_at_ms: recheckAtMs,
     banked_reset_generation_ambiguous: current.banked_reset_generation_ambiguous ||
       (current.observed_reset_at_ms !== null && current.observed_reset_at_is_stable),
     generation: current.generation + 1,

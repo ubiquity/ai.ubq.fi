@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 
 import { setKvForTest } from "../src/kv.ts";
 import { codexResetRedemptionKey, codexResetShadowDecisionKey } from "../src/codex_banked_reset.ts";
+import {
+  CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
+  resetCodexAccountRoutingForTest,
+} from "../src/codex_account_routing.ts";
 import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex.ts";
 import {
   getPersistedProviderCapacityView,
@@ -33,6 +37,7 @@ class CapacityKvStore extends Map<string, StoredValue> {
     super.clear();
     this.nextVersion = 0;
     resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
   }
 
   put(key: Deno.KvKey, value: unknown): void {
@@ -293,6 +298,10 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
   );
   assert.deepEqual(persistedAccount?.additional_rate_limits, accountOne?.additional_rate_limits);
   assert.equal(JSON.stringify(live).includes("must-not-escape"), false);
+  const routingObservation = JSON.stringify(kvStore.get(keyToString(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)));
+  assert.equal(routingObservation.includes("account-one"), false);
+  assert.equal(routingObservation.includes("account-two"), false);
+  assert.equal(routingObservation.includes("GPT-5.3-Codex-Spark"), true);
 });
 
 Deno.test("sampler defers unused additional limits with full-window resets", async () => {
