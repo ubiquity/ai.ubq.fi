@@ -4610,6 +4610,7 @@ const completeChatCompletions = async (
   lifecycle: YunwuTransportLifecycle,
   signal: AbortSignal,
   downstreamSignal: AbortSignal,
+  warnings: readonly string[] = [],
   onResponseTerminal?: (completed: boolean) => void,
 ): Promise<Response> => {
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -4703,9 +4704,13 @@ const completeChatCompletions = async (
   }
   if (!completed) {
     await recordErrorUsage(usageContext);
-    return openaiError(502, "Upstream stream ended without response.completed.", "upstream_stream_error", {
-      headers: { "x-uos-upstream": provider },
-    });
+    return streamErrorResponse(
+      502,
+      "Upstream stream ended without response.completed.",
+      "upstream_stream_error",
+      provider,
+      warnings,
+    );
   }
 
   const message: Record<string, unknown> = {
@@ -6237,6 +6242,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       lifecycle,
       requestInferenceSignal,
       req.signal,
+      [...warnings, ...providerWarnings],
       resolveCodexProbe,
     );
   return withUosWarning(response, [...warnings, ...providerWarnings]);
