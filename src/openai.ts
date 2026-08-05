@@ -735,6 +735,24 @@ const cerebrasResponseHeaders = (
   ...(warning ? { "x-uos-warning": warning } : {}),
 });
 
+// Cerebras exposes shared API-key capacity through these headers. Keep the
+// allowlist explicit: provider responses may contain other sensitive or
+// provider-specific metadata that must not cross the gateway boundary.
+const CEREBRAS_RATE_LIMIT_HEADERS = [
+  "x-ratelimit-limit-requests-minute",
+  "x-ratelimit-remaining-requests-minute",
+  "x-ratelimit-reset-requests-minute",
+  "x-ratelimit-limit-tokens-minute",
+  "x-ratelimit-remaining-tokens-minute",
+  "x-ratelimit-reset-tokens-minute",
+  "x-ratelimit-limit-requests-day",
+  "x-ratelimit-remaining-requests-day",
+  "x-ratelimit-reset-requests-day",
+  "x-ratelimit-limit-tokens-day",
+  "x-ratelimit-remaining-tokens-day",
+  "x-ratelimit-reset-tokens-day",
+] as const;
+
 const GPT_OSS_STREAM_DOWNGRADED_WARNING = "gpt_oss_stream_downgraded";
 
 const streamCerebrasChatCompletion = (
@@ -899,6 +917,12 @@ const toCerebrasUpstreamErrorResponse = (upstream: Response): Response => {
   const headers = cerebrasResponseHeaders(getCerebrasProviderRequestId(upstream));
   const retryAfter = upstream.headers.get("Retry-After");
   if (retryAfter) headers["Retry-After"] = retryAfter;
+  if (upstream.status === 429) {
+    for (const header of CEREBRAS_RATE_LIMIT_HEADERS) {
+      const value = upstream.headers.get(header);
+      if (value !== null) headers[header] = value;
+    }
+  }
   return openaiError(
     upstream.status,
     "Cerebras upstream returned an error.",

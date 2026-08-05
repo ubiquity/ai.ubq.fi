@@ -355,6 +355,10 @@ When a provider supplies an opaque request ID, the gateway preserves its bounded
 `x-uos-provider-request-id` and in terminal response telemetry as `providerRequestId` / `provider_request_id`. It is a
 support-correlation value only, never a credential or provider response body.
 
+On a Cerebras `429`, the gateway also forwards Cerebras' documented `x-ratelimit-*` capacity headers. These values
+describe the shared server-side `CEREBRAS_API_KEY` capacity, not a per-user UOS quota, and are not forwarded for other
+upstream statuses.
+
 ## Admin: upload/validate Codex auth.json
 
 This validates a posted `auth.json` against the upstream Codex endpoint and stores it in a two-account Deno KV pool.
