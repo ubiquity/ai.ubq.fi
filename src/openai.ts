@@ -1054,13 +1054,9 @@ const fetchResponsesWithPaidFallback = async (
     if (!(error instanceof CodexError) || error.status !== 401) throw error;
     primary = openaiError(error.status, error.message, error.code);
   }
-  if (primary.status === 401 && responseWarnings(primary).includes(CODEX_AUTH_REAUTH_WARNING)) {
-    primary = new Response(primary.body, {
-      status: 503,
-      statusText: primary.statusText,
-      headers: primary.headers,
-    });
-  }
+  const primaryStatus = primary.status;
+  const authReauthenticationPrimary = primaryStatus === 401 &&
+    responseWarnings(primary).includes(CODEX_AUTH_REAUTH_WARNING);
   const primaryWarnings = Array.from(
     new Set([
       ...responseWarnings(primary),
@@ -1070,14 +1066,21 @@ const fetchResponsesWithPaidFallback = async (
   const preservePrimaryWarnings = (response: Response): Response => withUosWarning(response, primaryWarnings);
   if (telemetry) telemetry.accountSlot = getCodexResponseSlot(primary);
   const gatewayResponse = getCodexRoutingError(primary) === CODEX_QUOTA_BLOCKED_ERROR_CODE;
+  if (authReauthenticationPrimary) {
+    primary = new Response(primary.body, {
+      status: 503,
+      statusText: primary.statusText,
+      headers: primary.headers,
+    });
+  }
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  const fallbackReason: InferenceFallbackReason | null = primary.status === 401
+  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 401
     ? "primary_401"
-    : primary.status === 403
+    : primaryStatus === 403
     ? "primary_403"
-    : primary.status === 429
+    : primaryStatus === 429
     ? "primary_429"
     : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
