@@ -12,7 +12,7 @@ import {
   signOut,
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
-} from "./auth.js?v=provider-capacity-20260805-consolidated";
+} from "./auth.js?v=provider-capacity-20260807-yunwu-overlay";
 import { AUTH_RELAY_MESSAGE_TYPE, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "./auth-relay.js";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
@@ -978,7 +978,8 @@ const CAPACITY_CHART_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 const CAPACITY_CHART_SERIES = [
-  { key: "available-capacity", label: "Available capacity", source: "aggregate" },
+  { key: "available-capacity", label: "Codex capacity", source: "aggregate" },
+  { key: "yunwu-refill", label: "YunWu refill", source: "yunwu", valueKey: "refill_cycle_remaining_percent" },
 ];
 
 const capacityChartSvgElement = (name, attributes = {}) => {
@@ -1058,21 +1059,16 @@ const capacityChartPlotHeight = () => {
   return CAPACITY_CHART_PLOT_HEIGHT * pixelsPerPercent;
 };
 
-const capacityChartAggregateRemainingPercent = (sample) => {
+// Keep the Codex pool and YunWu's wallet on separate series. Their percentages
+// use different quota systems and must not be averaged into one value.
+const capacityChartCodexAggregateRemainingPercent = (sample) => {
   const sources = Array.isArray(sample?.sources) ? sample.sources : [];
   const remaining = [];
   for (const source of sources) {
-    if (source?.state === "unavailable") continue;
-    if (source?.source === "codex") {
-      const usedPercent = source.windows?.primary?.used_percent;
-      if (typeof usedPercent === "number" && Number.isFinite(usedPercent)) {
-        remaining.push(capacityRemainingPercent(usedPercent));
-      }
-    } else if (source?.source === "yunwu") {
-      const refillRemaining = source.wallet?.refill_cycle_remaining_percent;
-      if (typeof refillRemaining === "number" && Number.isFinite(refillRemaining)) {
-        remaining.push(clampCapacityChartPercent(refillRemaining));
-      }
+    if (source?.source !== "codex" || source?.state === "unavailable") continue;
+    const usedPercent = source.windows?.primary?.used_percent;
+    if (typeof usedPercent === "number" && Number.isFinite(usedPercent)) {
+      remaining.push(capacityRemainingPercent(usedPercent));
     }
   }
   const reported = remaining.filter((value) => typeof value === "number" && Number.isFinite(value));
@@ -1083,7 +1079,7 @@ const capacityChartPoint = (sample, series, activeInterval = null, chartWindow =
   if (series.source === "aggregate") {
     const displayInterval = chartWindow ?? activeInterval;
     const sampledAtMs = sample?.sampled_at_ms;
-    const remainingPercent = capacityChartAggregateRemainingPercent(sample);
+    const remainingPercent = capacityChartCodexAggregateRemainingPercent(sample);
     if (
       !displayInterval ||
       typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs) ||
@@ -1207,7 +1203,9 @@ const capacityChartSeriesPoints = (
   ]);
 };
 
-const capacityChartPath = (points, plot) => {
+const capacityChartPath = (points, plot, options = {}) => {
+  const anchorStart = options.anchorStart !== false;
+  const anchorEnd = options.anchorEnd !== false;
   const runs = [];
   let run = [];
   for (const point of points) {
@@ -1224,9 +1222,9 @@ const capacityChartPath = (points, plot) => {
   let path = "";
   runs.forEach((runPoints, runIndex) => {
     const anchored = [];
-    if (runIndex === 0) anchored.push({ elapsedPercent: 0, remainingPercent: 100 });
+    if (runIndex === 0 && anchorStart) anchored.push({ elapsedPercent: 0, remainingPercent: 100 });
     anchored.push(...runPoints);
-    if (runIndex === runs.length - 1) {
+    if (runIndex === runs.length - 1 && anchorEnd) {
       const last = runPoints[runPoints.length - 1];
       anchored.push({ elapsedPercent: 100, remainingPercent: last.remainingPercent });
     }
@@ -1293,11 +1291,28 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   title.textContent = "Available capacity history";
   figure.appendChild(title);
 
+  const legend = document.createElement("div");
+  legend.dataset.capacityChartLegend = "";
+  legend.setAttribute("role", "list");
+  for (const series of CAPACITY_CHART_SERIES) {
+    const item = document.createElement("span");
+    item.dataset.capacityLegendItem = series.key;
+    item.setAttribute("role", "listitem");
+    const swatch = document.createElement("span");
+    swatch.dataset.capacityLegendSwatch = "";
+    swatch.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = series.label;
+    item.append(swatch, label);
+    legend.appendChild(item);
+  }
+  figure.appendChild(legend);
+
   const svg = capacityChartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
     preserveAspectRatio: "xMidYMid meet",
     role: "img",
-    "aria-label": "Available provider capacity history across the active usage period",
+    "aria-label": "Codex and YunWu available capacity history across the active usage period",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
@@ -1391,7 +1406,10 @@ const renderProviderCapacityChart = (snapshot, sources) => {
       )
       : [];
     const path = capacityChartSvgElement("path", {
-      d: capacityChartPath(chartPoints, plot),
+      d: capacityChartPath(chartPoints, plot, {
+        anchorStart: series.source === "aggregate",
+        anchorEnd: series.source === "aggregate",
+      }),
       fill: "none",
     });
     path.style.fill = "none";

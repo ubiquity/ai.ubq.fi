@@ -402,6 +402,34 @@ body[data-page="admin"] [data-capacity-chart-figure] {
   min-width: 0;
 }
 
+body[data-page="admin"] [data-capacity-chart-legend] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+body[data-page="admin"] [data-capacity-legend-item] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body[data-page="admin"] [data-capacity-legend-swatch] {
+  display: inline-block;
+  width: 20px;
+  height: 0;
+  border-top: 2px solid #ffffff;
+}
+
+body[data-page="admin"] [data-capacity-legend-item="yunwu-refill"] [data-capacity-legend-swatch] {
+  border-top-color: rgba(133, 216, 201, 0.92);
+  border-top-style: dashed;
+}
+
 body[data-page="admin"] [data-capacity-chart-svg] {
   display: block;
   width: 100%;
@@ -431,6 +459,12 @@ body[data-page="admin"] [data-capacity-series="available-capacity"] {
   stroke: #ffffff;
   fill: #ffffff;
   background: #ffffff;
+}
+
+body[data-page="admin"] [data-capacity-series="yunwu-refill"] {
+  stroke: rgba(133, 216, 201, 0.92);
+  stroke-dasharray: 6 4;
+  stroke-width: 1.5;
 }
 
 body[data-page="admin"] [data-capacity-trend="optimal-spend"] {
