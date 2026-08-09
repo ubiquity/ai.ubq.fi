@@ -1075,6 +1075,98 @@ const capacityChartCodexAggregateRemainingPercent = (sample) => {
   return reported.length ? reported.reduce((total, value) => total + value, 0) / reported.length : null;
 };
 
+const capacityChartSpendPacing = (chartWindow, sources, nowMs) => {
+  if (
+    !chartWindow ||
+    typeof chartWindow.startAtMs !== "number" ||
+    !Number.isFinite(chartWindow.startAtMs) ||
+    typeof chartWindow.durationMs !== "number" ||
+    !Number.isFinite(chartWindow.durationMs) ||
+    chartWindow.durationMs <= 0 ||
+    typeof nowMs !== "number" ||
+    !Number.isFinite(nowMs)
+  ) {
+    return {
+      elapsedPercent: null,
+      targetSpendPercent: null,
+      targetRemainingPercent: null,
+      currentSpendPercent: null,
+      currentRemainingPercent: null,
+      spendVariancePercent: null,
+    };
+  }
+
+  const elapsedPercent = clampCapacityChartPercent(
+    ((nowMs - chartWindow.startAtMs) / chartWindow.durationMs) * 100,
+  );
+  const targetRemainingPercent = clampCapacityChartPercent(100 - elapsedPercent);
+  const currentRemainingPercent = capacityChartCodexAggregateRemainingPercent({ sources });
+  const currentSpendPercent = currentRemainingPercent === null
+    ? null
+    : clampCapacityChartPercent(100 - currentRemainingPercent);
+  return {
+    elapsedPercent,
+    targetSpendPercent: elapsedPercent,
+    targetRemainingPercent,
+    currentSpendPercent,
+    currentRemainingPercent,
+    spendVariancePercent: currentSpendPercent === null ? null : currentSpendPercent - elapsedPercent,
+  };
+};
+
+const formatCapacitySpendDelta = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "Not reported";
+  if (Math.abs(value) < 0.01) return "On target";
+  const direction = value > 0 ? "over target" : "under target";
+  const sign = value > 0 ? "+" : "-";
+  return `${sign}${quotaPercentFormatter.format(Math.abs(value))} pp ${direction}`;
+};
+
+const renderCapacitySpendSummary = (pacing, chartWindow) => {
+  const summary = document.createElement("aside");
+  summary.dataset.capacitySpendSummary = "";
+  summary.setAttribute("aria-label", "Optimal token spend pacing");
+
+  const title = document.createElement("h4");
+  title.textContent = "Optimal token spend";
+  const description = document.createElement("p");
+  description.textContent = "Linear pacing across the active usage period.";
+
+  const metrics = document.createElement("dl");
+  metrics.dataset.capacitySpendMetrics = "";
+  const appendMetric = (label, value, detail) => {
+    const item = document.createElement("div");
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const definition = document.createElement("dd");
+    const primary = document.createElement("strong");
+    primary.textContent = value;
+    const secondary = document.createElement("small");
+    secondary.textContent = detail;
+    definition.append(primary, secondary);
+    item.append(term, definition);
+    metrics.appendChild(item);
+  };
+
+  appendMetric(
+    "Target spend now",
+    formatCapacityPercent(pacing.targetSpendPercent),
+    `${formatCapacityPercent(pacing.targetRemainingPercent)} remaining on plan`,
+  );
+  appendMetric(
+    "Current spend",
+    formatCapacityPercent(pacing.currentSpendPercent),
+    `${formatCapacityPercent(pacing.currentRemainingPercent)} remaining across Codex`,
+  );
+  appendMetric("Pacing", formatCapacitySpendDelta(pacing.spendVariancePercent), "Actual spend minus target");
+
+  const note = document.createElement("small");
+  note.dataset.capacitySpendNote = "";
+  note.textContent = `100% → 0% remaining · ${capacityChartIntervalLabel(chartWindow?.durationMs)}`;
+  summary.append(title, description, metrics, note);
+  return summary;
+};
+
 const capacityChartPoint = (sample, series, activeInterval = null, chartWindow = null) => {
   if (series.source === "aggregate") {
     const displayInterval = chartWindow ?? activeInterval;
@@ -1294,7 +1386,12 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const legend = document.createElement("div");
   legend.dataset.capacityChartLegend = "";
   legend.setAttribute("role", "list");
-  for (const series of CAPACITY_CHART_SERIES) {
+  for (
+    const series of [
+      ...CAPACITY_CHART_SERIES,
+      { key: "optimal-spend", label: "Optimal token spend" },
+    ]
+  ) {
     const item = document.createElement("span");
     item.dataset.capacityLegendItem = series.key;
     item.setAttribute("role", "listitem");
@@ -1372,12 +1469,11 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     y2: plot.top + plot.height,
   });
   optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
-  optimalSpendTrend.setAttribute("aria-label", "Optimal spend trend");
+  optimalSpendTrend.setAttribute("aria-label", "Optimal token spend trend, 100 percent to 0 percent remaining");
   svg.appendChild(optimalSpendTrend);
 
-  const currentElapsedPercent = chartWindow.durationMs > 0
-    ? clampCapacityChartPercent(((nowMs - chartWindow.startAtMs) / chartWindow.durationMs) * 100)
-    : 0;
+  const pacing = capacityChartSpendPacing(chartWindow, sources, nowMs);
+  const currentElapsedPercent = pacing.elapsedPercent ?? 0;
   const currentX = plot.left + (currentElapsedPercent / 100) * plot.width;
   const reticule = capacityChartSvgElement("line", {
     x1: currentX,
@@ -1418,7 +1514,10 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     svg.appendChild(path);
   }
 
-  figure.appendChild(svg);
+  const chartBody = document.createElement("div");
+  chartBody.dataset.capacityChartBody = "";
+  chartBody.append(svg, renderCapacitySpendSummary(pacing, chartWindow));
+  figure.appendChild(chartBody);
   const caption = document.createElement("figcaption");
   caption.dataset.capacityChartMeta = "";
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");

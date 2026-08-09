@@ -430,6 +430,19 @@ body[data-page="admin"] [data-capacity-legend-item="yunwu-refill"] [data-capacit
   border-top-style: dashed;
 }
 
+body[data-page="admin"] [data-capacity-legend-item="optimal-spend"] [data-capacity-legend-swatch] {
+  border-top-color: rgba(255, 255, 255, 0.32);
+  border-top-style: dashed;
+}
+
+body[data-page="admin"] [data-capacity-chart-body] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+}
+
 body[data-page="admin"] [data-capacity-chart-svg] {
   display: block;
   width: 100%;
@@ -473,6 +486,69 @@ body[data-page="admin"] [data-capacity-trend="optimal-spend"] {
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
+}
+
+body[data-page="admin"] [data-capacity-spend-summary] {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+body[data-page="admin"] [data-capacity-spend-summary] h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+body[data-page="admin"] [data-capacity-spend-summary] p {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+body[data-page="admin"] [data-capacity-spend-metrics] {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+body[data-page="admin"] [data-capacity-spend-metrics] > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+body[data-page="admin"] [data-capacity-spend-metrics] dt {
+  color: var(--muted-2);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+body[data-page="admin"] [data-capacity-spend-metrics] dd {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+body[data-page="admin"] [data-capacity-spend-metrics] strong {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+body[data-page="admin"] [data-capacity-spend-metrics] small,
+body[data-page="admin"] [data-capacity-spend-note] {
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 body[data-page="admin"] [data-capacity-reticule] {
@@ -620,6 +696,10 @@ body[data-page="admin"] [data-capacity-meta] {
 @media (max-width: 900px) {
   body[data-page="admin"] [data-capacity-chart] {
     padding: 10px;
+  }
+
+  body[data-page="admin"] [data-capacity-chart-body] {
+    grid-template-columns: 1fr;
   }
 
   body[data-page="admin"] [data-capacity-list] {
