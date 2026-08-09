@@ -316,6 +316,42 @@ curl -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" https://ai.ubq.fi/health/prov
 curl -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" https://ai.ubq.fi/health/upstream
 ```
 
+### Manual Deno Deploy usage monitoring and rollback record
+
+This is an operator-run monitoring procedure. It does not add a gateway metric, an environment variable, a cron job, or
+an automated alert. Use the Deno Deploy organization **Billing** and **Metrics** dashboards for usage data; the gateway
+health endpoints report release identity and provider state, not billed Deno KV or egress use.
+
+For the current billing cycle, create a manual warning record when any organization total reaches one of these
+early-warning thresholds:
+
+| Resource       | Warning threshold | Console handling                                                                                                           |
+| -------------- | ----------------: | -------------------------------------------------------------------------------------------------------------------------- |
+| Egress         |            150 GB | The console displays GiB. Treat 139 GiB displayed as a conservative warning; 140 GiB is already slightly more than 150 GB. |
+| Deno KV reads  |              1.0M | Use the organization total, not a per-app value.                                                                           |
+| Deno KV writes |              0.7M | Use the organization total, not a per-app value.                                                                           |
+
+After every accepted production optimization, choose one UTC end timestamp and sample the same fixed-end custom ranges
+for 7, 14, 21, and 28 days. Record both the organization total and the `ai-ubq-fi` overlay: the organization total is
+the billing decision, while the overlay is only attribution. Preserve the dashboard's raw units and source time. Do not
+compare GiB console values to GB allowances as though they were equal.
+
+Keep these estimates separate in the observation record:
+
+- Current-cycle Pro: the actual Billing dashboard value and current invoice context.
+- Smoothed Pro: a 28-day fixed-end projection with its explicit rate and unit conversion.
+- Hot-week Pro: a stress case only, not a forecast, unless the hot workload persists.
+- Free feasibility: a separate pass/fail comparison against every Free limit; it is never proof that the next bill or a
+  local test will fit Free.
+
+Before and after a production change, record the observation UTC time, the full `release.git_sha` and
+`release.deployment_id` from `/health`, and the matching `x-uos-git-sha` and `x-uos-deployment-id` headers. Cross-check
+them against the deployment workflow's **Deployment attestation** summary. For each change, also record the prior
+known-good SHA/deployment ID, a rollback trigger, the owner-approved revert target through the normal deployment
+workflow, and the post-rollback `/health` identity. Do not delete KV data or use a health response as evidence of usage,
+streaming, or billing acceptance. Append the filled record to
+[the Deno usage audit](docs/deno-free-tier-audit-2026-08-09.md).
+
 Admin examples (uses `DENO_DEPLOY_TOKEN`):
 
 ```bash

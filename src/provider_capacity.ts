@@ -855,6 +855,46 @@ export const refreshProviderCapacity = async (
   }
 };
 
+/**
+ * Persist one scheduled capacity sample without building the admin projection.
+ *
+ * The deploy cron does not consume a ProviderCapacityView, so scanning the
+ * seven-day history and reset-event ledgers before and after every sample only
+ * pays to construct a discarded response. Keep the capture, routing
+ * observations, lease, snapshot/history write, and same-bucket reset
+ * transition exactly on the durable sampler path. Admin callers continue to
+ * use refreshProviderCapacity() when they need the full projection.
+ */
+export const sampleProviderCapacityForCron = async (
+  options: ProviderCapacitySnapshotOptions = {},
+): Promise<void> => {
+  const nowMs = safeNow(options.now ?? Date.now);
+  const kv = options.kv === undefined ? await getKv() : options.kv;
+  // A scheduled sample without durable storage would only create provider
+  // traffic while leaving routing and history state stale.
+  if (!kv) return;
+
+  const owner = (options.createLeaseOwner ?? (() => crypto.randomUUID()))();
+  const lease = await acquireCapacityLease(kv, owner, nowMs).catch(() => ({
+    acquired: false,
+    entry: { key: PROVIDER_CAPACITY_LEASE_KEY, value: null, versionstamp: null },
+  } as { acquired: boolean; entry: Deno.KvEntryMaybe<CapacityLease> }));
+  // The scheduled caller has no view to return. A competing live refresh or
+  // cron owns the only probe, so avoid both a duplicate probe and the old
+  // coalesced-view polling loop.
+  if (!lease.acquired) return;
+
+  let persisted = false;
+  try {
+    const snapshot = await captureProviderCapacitySnapshot(options, nowMs, kv);
+    persisted = await persistCapacitySnapshot(kv, lease.entry, snapshot).catch(() => false);
+  } finally {
+    // A successful atomic persist deletes the checked lease. Only failed or
+    // interrupted persistence needs the conservative owner-checked release.
+    if (!persisted) await releaseCapacityLease(kv, owner);
+  }
+};
+
 // Preserve the old direct helper as an explicit live refresh. HTTP callers use
 // getPersistedProviderCapacityView unless they ask for refresh=live.
 export const getProviderCapacitySnapshot = async (

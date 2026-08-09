@@ -97,6 +97,7 @@ class AuthKv {
 }
 
 const fixedStartMs = 1_000_000;
+const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).byteLength;
 const encodeBase64Url = (value: unknown): string =>
   btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 const accessToken = (label: string): string =>
@@ -289,6 +290,7 @@ Deno.test("Codex responses make one bounded final retry after both accounts retu
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
   const accountIds: string[] = [];
+  const serializedBodies: string[] = [];
   const retryDelays: number[] = [];
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
@@ -297,6 +299,9 @@ Deno.test("Codex responses make one bounded final retry after both accounts retu
   resetCodexAuthCacheForTest();
   globalThis.fetch = (input, init) => {
     const request = new Request(input, init);
+    const serializedBody = init?.body;
+    if (typeof serializedBody !== "string") throw new Error("Expected Codex request body to be a serialized string.");
+    serializedBodies.push(serializedBody);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     if (accountIds.length === 3) return Promise.resolve(new Response("{}", { status: 200 }));
     return Promise.resolve(
@@ -321,6 +326,11 @@ Deno.test("Codex responses make one bounded final retry after both accounts retu
     assert.equal(response.status, 200);
     assert.deepEqual(accountIds, ["account-one", "account-two", "account-one"]);
     assert.deepEqual(retryDelays, [1_000]);
+    const expectedSerializedBody = JSON.stringify({ input: "bounded-retry" });
+    assert.equal(utf8ByteLength(expectedSerializedBody), 25);
+    assert.deepEqual(serializedBodies, [expectedSerializedBody, expectedSerializedBody, expectedSerializedBody]);
+    assert.deepEqual(serializedBodies.map(utf8ByteLength), [25, 25, 25]);
+    assert.equal(serializedBodies.reduce((total, body) => total + utf8ByteLength(body), 0), 75);
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
@@ -654,6 +664,7 @@ Deno.test("a credential replacement landing after 401 is retried without an OAut
     updated_at_ms: fixedStartMs + 1,
   };
   const authorizationHeaders: string[] = [];
+  const serializedBodies: string[] = [];
   let oauthCalls = 0;
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
@@ -667,6 +678,9 @@ Deno.test("a credential replacement landing after 401 is retried without an OAut
       oauthCalls += 1;
       return Promise.resolve(new Response('{"error":"must_not_refresh_replacement"}', { status: 401 }));
     }
+    const serializedBody = init?.body;
+    if (typeof serializedBody !== "string") throw new Error("Expected Codex request body to be a serialized string.");
+    serializedBodies.push(serializedBody);
     authorizationHeaders.push(request.headers.get("Authorization") ?? "");
     if (authorizationHeaders.length === 1) {
       kv.auth = pool(replacement);
@@ -684,6 +698,11 @@ Deno.test("a credential replacement landing after 401 is retried without an OAut
       `Bearer ${attempted.access_token}`,
       `Bearer ${replacement.access_token}`,
     ]);
+    const expectedSerializedBody = JSON.stringify({ input: "rotation-between-401-and-refresh" });
+    assert.equal(utf8ByteLength(expectedSerializedBody), 44);
+    assert.deepEqual(serializedBodies, [expectedSerializedBody, expectedSerializedBody]);
+    assert.deepEqual(serializedBodies.map(utf8ByteLength), [44, 44]);
+    assert.equal(serializedBodies.reduce((total, body) => total + utf8ByteLength(body), 0), 88);
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;

@@ -129,6 +129,7 @@ const {
 const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
 
 const TEXT_ENCODER = new TextEncoder();
+const utf8ByteLength = (value: string): number => TEXT_ENCODER.encode(value).byteLength;
 
 class Deferred<T> {
   readonly promise: Promise<T>;
@@ -1307,6 +1308,104 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     const recorded = recordedBody as Record<string, unknown>;
     assert.deepEqual(recorded["context_management"], contextManagement);
   });
+
+  await t.step("responses keeps previous_response_id as an explicit ignored warning", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              input: "The full input remains part of this request.",
+              previous_response_id: "resp_prior_context_is_not_used",
+              stream: true,
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(parseWarnings(response.headers.get("x-uos-warning")).includes("previous_response_id_ignored"));
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    assert.equal("previous_response_id" in recorded, false);
+    assert.deepEqual(recorded["input"], [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "The full input remains part of this request." }],
+    }]);
+    await response.text();
+  });
+});
+
+Deno.test("openai: Responses byte baseline keeps request and stream directions separate", async () => {
+  const contextManagement = [{ type: "compaction", compact_threshold: 2000 }];
+  const clientRequestBody = JSON.stringify({
+    model: DEFAULT_TEST_MODEL,
+    input: "ping",
+    stream: true,
+    context_management: contextManagement,
+  });
+  const upstreamChunks = baseSseChunks();
+  const upstreamStreamBody = upstreamChunks.join("");
+  let serializedCodexRequest: string | null = null;
+
+  const response = await withFetchMock(
+    (_url, bodyText, init) => {
+      const headers = new Headers(init?.headers);
+      assert.equal(headers.get("Content-Type"), "application/json");
+      assert.equal(headers.get("Content-Encoding"), null);
+      assert.ok(bodyText);
+      serializedCodexRequest = bodyText;
+      return sseResponse(upstreamChunks);
+    },
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: clientRequestBody,
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  const downstreamStreamBody = await response.text();
+  assert.ok(serializedCodexRequest);
+  assert.deepEqual(JSON.parse(serializedCodexRequest), {
+    model: DEFAULT_TEST_MODEL,
+    input: [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "ping" }],
+    }],
+    store: false,
+    stream: true,
+    reasoning: { effort: "low" },
+    context_management: contextManagement,
+  });
+  assert.deepEqual(
+    {
+      inboundClientRequestBodyBytes: utf8ByteLength(clientRequestBody),
+      outboundCodexRequestBodyBytes: utf8ByteLength(serializedCodexRequest),
+      inboundCodexStreamBodyBytes: utf8ByteLength(upstreamStreamBody),
+      outboundClientStreamBodyBytes: utf8ByteLength(downstreamStreamBody),
+    },
+    {
+      inboundClientRequestBodyBytes: 132,
+      outboundCodexRequestBodyBytes: 251,
+      inboundCodexStreamBodyBytes: 296,
+      outboundClientStreamBodyBytes: 296,
+    },
+  );
+  assert.equal(downstreamStreamBody, upstreamStreamBody);
 });
 
 Deno.test("openai: expired Codex auth returns a 503 re-auth warning through Responses", async () => {

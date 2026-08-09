@@ -139,6 +139,7 @@ const logTerminalRequest = async (
     startedAtMonotonicMs: number;
     downstreamDrainedAtMonotonicMs?: number;
     requestId: string;
+    recordTelemetry?: typeof recordPromptCacheTelemetry;
   }>,
 ): Promise<void> => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
@@ -186,7 +187,7 @@ const logTerminalRequest = async (
     router_revision: input.response.headers.get("x-uos-router-revision"),
   };
   console.info("[ai.ubq.fi] request_terminal", JSON.stringify(terminal));
-  await recordPromptCacheTelemetry({
+  await (input.recordTelemetry ?? recordPromptCacheTelemetry)({
     provider: terminal.provider,
     model: terminal.model,
     route: terminal.route,
@@ -217,7 +218,7 @@ const warnQuotaAccountingFailure = (
   }
 };
 
-const withTerminalRequestLog = (
+export const withTerminalRequestLog = (
   response: Response,
   input: Readonly<{
     route: string;
@@ -225,6 +226,8 @@ const withTerminalRequestLog = (
     startedAtMonotonicMs: number;
     requestId: string;
     onCompleted?: () => Promise<void>;
+    /** Test seam for proving terminal telemetry remains best effort. */
+    recordTelemetry?: typeof recordPromptCacheTelemetry;
   }>,
 ): Promise<Response> => {
   let terminalLog: Promise<void> | null = null;
