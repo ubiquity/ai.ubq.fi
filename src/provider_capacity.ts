@@ -44,11 +44,23 @@ export type ProviderCapacityAdditionalRateLimit = Readonly<{
   }>;
 }>;
 
+/**
+ * Provider capacity observations from Codex. Historically the Codex provider was
+ * limited to **two** hard‑coded authentication slots (`slot: 1 | 2`). The
+ * marketplace hand‑off removes that limit in favor of a dynamic, unbounded set
+ * of auth accounts. The `slot` field now represents the **1‑based index** of the
+ * auth account within the current pool and can be any positive integer.
+ */
 export type ProviderCapacitySource =
   | Readonly<{
     source: "codex";
     label: string;
-    slot: 1 | 2;
+    /**
+     * The 1‑based slot index of the auth account. Previously constrained to
+     * `1 | 2`; now expressed as a `number` to support an arbitrary number of
+     * accounts in the marketplace model.
+     */
+    slot: number;
     state: CapacityState;
     source_observed_at_ms: number | null;
     snapshot_at_ms: number;
