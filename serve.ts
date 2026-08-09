@@ -4,7 +4,7 @@ import handler from "./src/handler.ts";
 import { config } from "./src/config.ts";
 import { getKv } from "./src/kv.ts";
 import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
-import { refreshProviderCapacity } from "./src/provider_capacity.ts";
+import { sampleProviderCapacityForCron } from "./src/provider_capacity.ts";
 
 if (config.isDeploy) {
   Deno.cron("reconcile pending Yunwu billing", "* * * * *", async () => {
@@ -27,7 +27,7 @@ if (config.isDeploy) {
     try {
       const kv = await getKv();
       if (!kv) return;
-      await refreshProviderCapacity({ kv });
+      await sampleProviderCapacityForCron({ kv });
     } catch (error) {
       console.error(
         "[ai.ubq.fi] Provider capacity sampler failed:",

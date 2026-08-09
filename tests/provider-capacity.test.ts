@@ -19,9 +19,11 @@ import {
   type ProviderCapacityCodexSource,
   providerCapacityHistoryKey,
   refreshProviderCapacity,
+  sampleProviderCapacityForCron,
 } from "../src/provider_capacity.ts";
 import { PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX } from "../src/provider_capacity_events.ts";
 import { YUNWU_QUOTA_STATE_KEY } from "../src/yunwu_quota.ts";
+import { CountingKv } from "./helpers/counting_kv.ts";
 
 type StoredValue = {
   value: unknown;
@@ -638,4 +640,202 @@ Deno.test("capacity route requires admin authentication", async () => {
   const { default: handler } = await import("../src/handler.ts");
   const response = await handler(new Request("https://ai.ubq.fi/admin/providers/capacity"));
   assert.equal(response.status, 401);
+});
+
+const seedCountingCapacityKv = (kv: CountingKv): void => {
+  kv.clearData();
+  kv.clearMeasurements();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  kv.seed(CODEX_AUTH_POOL_KV_KEY, {
+    accounts: [
+      { access_token: "token-one", refresh_token: "refresh-one", account_id: "account-one", updated_at_ms: nowMs },
+      { access_token: "token-two", refresh_token: "refresh-two", account_id: "account-two", updated_at_ms: nowMs },
+    ],
+    updated_at_ms: nowMs,
+  });
+  kv.seed(YUNWU_QUOTA_STATE_KEY, {
+    current_balance_quota: 750,
+    post_refill_baseline_quota: 1_000,
+    last_observed_used_quota: 250,
+    quota_per_credit: 100,
+    observed_at_ms: nowMs - 1_000,
+    cycle_started_at_ms: nowMs - 5_000,
+    confidence: "refill_observed",
+    last_known_debits_quota: 0,
+    last_inferred_credit_quota: 1_000,
+    last_credit_at_ms: nowMs - 5_000,
+    latest_refill_id: "refill-one",
+    latest_refill_amount_credits: 10,
+    latest_refill_completed_at_ms: nowMs - 5_000,
+  });
+};
+
+const withCountingCapacityEnvironment = async (run: () => Promise<void>): Promise<void> => {
+  const originalSystemToken = Deno.env.get("YUNWU_SYSTEM_TOKEN");
+  const originalUserId = Deno.env.get("YUNWU_USER_ID");
+  Deno.env.set("YUNWU_SYSTEM_TOKEN", "test-system-token");
+  Deno.env.set("YUNWU_USER_ID", "123456");
+  try {
+    await run();
+  } finally {
+    setKvForTest(kvStub);
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    if (originalSystemToken === undefined) Deno.env.delete("YUNWU_SYSTEM_TOKEN");
+    else Deno.env.set("YUNWU_SYSTEM_TOKEN", originalSystemToken);
+    if (originalUserId === undefined) Deno.env.delete("YUNWU_USER_ID");
+    else Deno.env.set("YUNWU_USER_ID", originalUserId);
+  }
+};
+
+Deno.test("cron sampler persists capacity without building the discarded admin projection", async () => {
+  await withCountingCapacityEnvironment(async () => {
+    const samplerKv = new CountingKv();
+    seedCountingCapacityKv(samplerKv);
+    setKvForTest(samplerKv as unknown as Deno.Kv);
+    const samplerCalls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
+    const finishSamplerBudget = samplerKv.beginMeasurement({ authKind: "background", outcome: "capacity_sampler" });
+    await sampleProviderCapacityForCron({
+      kv: samplerKv as unknown as Deno.Kv,
+      fetcher: createFetcher(samplerCalls),
+      now: () => nowMs,
+      createLeaseOwner: () => "cron-sampler",
+    });
+    finishSamplerBudget();
+
+    const samplerBudget = samplerKv.budgets()[0];
+    assert.ok(samplerBudget);
+    assert.equal(samplerCalls.length, 5);
+    assert.equal(
+      samplerKv.commands.filter((command) =>
+        command.scenario === "background:capacity_sampler" && command.command === "list"
+      )
+        .length,
+      0,
+      "the cron sampler must not enumerate history or reset-event projection prefixes",
+    );
+    assert.ok(
+      samplerBudget.commands <= 20,
+      `cron sampler budget unexpectedly grew to ${samplerBudget.commands} KV commands`,
+    );
+    assert.notEqual((await samplerKv.get(PROVIDER_CAPACITY_SNAPSHOT_KEY)).value, null);
+    assert.notEqual((await samplerKv.get(providerCapacityHistoryKey(nowMs))).value, null);
+    assert.notEqual((await samplerKv.get(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)).value, null);
+    assert.equal((await samplerKv.get(PROVIDER_CAPACITY_LEASE_KEY)).value, null);
+
+    const stale = await getPersistedProviderCapacityView({
+      kv: samplerKv as unknown as Deno.Kv,
+      now: () => nowMs + PROVIDER_CAPACITY_SOURCE_STALE_MS,
+    });
+    assert.equal(stale.cache_state, "stale");
+
+    const liveRefreshKv = new CountingKv();
+    seedCountingCapacityKv(liveRefreshKv);
+    setKvForTest(liveRefreshKv as unknown as Deno.Kv);
+    const liveRefreshCalls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
+    const finishLiveRefreshBudget = liveRefreshKv.beginMeasurement({
+      authKind: "background",
+      outcome: "capacity_view",
+    });
+    await refreshProviderCapacity({
+      kv: liveRefreshKv as unknown as Deno.Kv,
+      fetcher: createFetcher(liveRefreshCalls),
+      now: () => nowMs,
+      createLeaseOwner: () => "live-refresh",
+    });
+    finishLiveRefreshBudget();
+
+    const liveRefreshBudget = liveRefreshKv.budgets()[0];
+    assert.ok(liveRefreshBudget);
+    assert.equal(liveRefreshCalls.length, 5);
+    assert.ok(
+      liveRefreshKv.commands.filter((command) =>
+        command.scenario === "background:capacity_view" && command.command === "list"
+      )
+        .length >= 8,
+      "the full admin view should retain its history and reset-event projections",
+    );
+    assert.ok(
+      liveRefreshBudget.commands - samplerBudget.commands >= 10,
+      "the cron-only path must retain the measured projection reduction",
+    );
+  });
+});
+
+Deno.test("cron sampler preserves a same-bucket reset transition", async () => {
+  await withCountingCapacityEnvironment(async () => {
+    const countingKv = new CountingKv();
+    seedCountingCapacityKv(countingKv);
+    setKvForTest(countingKv as unknown as Deno.Kv);
+    let phase = 0;
+    const calls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
+    const fetcher = createFetcher(calls, null, {}, () => phase === 0 ? [100, 100] : [0, 0]);
+
+    await sampleProviderCapacityForCron({
+      kv: countingKv as unknown as Deno.Kv,
+      fetcher,
+      now: () => nowMs,
+      createLeaseOwner: () => "exhausted",
+    });
+    phase = 1;
+    await sampleProviderCapacityForCron({
+      kv: countingKv as unknown as Deno.Kv,
+      fetcher,
+      now: () => nowMs + 1_000,
+      createLeaseOwner: () => "refilled",
+    });
+
+    const view = await getPersistedProviderCapacityView({
+      kv: countingKv as unknown as Deno.Kv,
+      now: () => nowMs + 1_000,
+    });
+    assert.equal(calls.length, 10);
+    assert.deepEqual(view.history.map((point) => point.sampled_at_ms), [nowMs, nowMs + 1_000]);
+    assert.equal(view.history[0]?.sources[0]?.windows.primary?.used_percent, 100);
+    assert.equal(view.history[1]?.sources[0]?.windows.primary?.used_percent, 0);
+  });
+});
+
+Deno.test("concurrent cron samplers keep one provider probe under the durable lease", async () => {
+  await withCountingCapacityEnvironment(async () => {
+    const countingKv = new CountingKv();
+    seedCountingCapacityKv(countingKv);
+    setKvForTest(countingKv as unknown as Deno.Kv);
+    const calls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
+    let releaseFetch = (): void => {};
+    const fetchReleased = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const baseFetcher = createFetcher(calls);
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const response = await baseFetcher(input, init);
+      await fetchReleased;
+      return response;
+    };
+
+    const first = sampleProviderCapacityForCron({
+      kv: countingKv as unknown as Deno.Kv,
+      fetcher,
+      now: () => nowMs,
+      createLeaseOwner: () => "first-cron",
+    });
+    const waitDeadline = Date.now() + 2_000;
+    while (calls.length < 5) {
+      assert.ok(Date.now() < waitDeadline, "first cron sampler did not issue all provider calls");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const second = sampleProviderCapacityForCron({
+      kv: countingKv as unknown as Deno.Kv,
+      fetcher,
+      now: () => nowMs,
+      createLeaseOwner: () => "second-cron",
+    });
+    releaseFetch();
+    await Promise.all([first, second]);
+
+    assert.equal(calls.length, 5);
+    assert.equal((await countingKv.get(PROVIDER_CAPACITY_LEASE_KEY)).value, null);
+    assert.equal(countingKv.commands.filter((command) => command.command === "list").length, 0);
+  });
 });
