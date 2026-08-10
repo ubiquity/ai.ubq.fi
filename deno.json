@@ -34,5 +34,12 @@
   "fmt": {
     "lineWidth": 120,
     "semiColons": true
+  },
+  "deploy": {
+    "org": "ubiquity-dao",
+    "app": "ai-ubq-fi"
   }
 }
+
+
+
