@@ -15,7 +15,7 @@ const promptCacheEvidence = {
         implicit: true,
         explicit_breakpoints: true,
         modes: ["implicit", "explicit"],
-        ttls: ["5m", "1h"],
+        ttls: ["30m"],
         legacy_retentions: ["24h"],
         breakpoint_block_types: {
           responses: ["input_text", "input_image", "input_file"],
@@ -34,6 +34,7 @@ const promptCacheEvidence = {
         verified_at_ms: 1_001,
       },
       scope: {
+        probe_profile: "responses_explicit_input_text_keyed_30m",
         account_slots: "unknown",
         token_refresh: "unknown",
         conversation_id: "independent",
@@ -91,12 +92,49 @@ Deno.test("prompt-cache metadata rejects unknown shape and duplicate provider id
   );
 });
 
+Deno.test("prompt-cache metadata exposes only gateway-supported cache controls", () => {
+  const normalized = normalizePromptCacheCapabilities({
+    version: 1,
+    providers: [{
+      id: "codex_chatgpt",
+      controls: {
+        ttls: ["5m", "30m", "1h"],
+        legacy_retentions: ["24h", "unsupported"],
+        breakpoint_block_types: {
+          responses: ["input_text", "input_audio"],
+          chat_completions: ["text", "input_audio", "refusal"],
+        },
+        source: "catalog",
+        verified_at_ms: 1_010,
+      },
+    }],
+  });
+
+  assert.deepEqual(normalized, {
+    version: 1,
+    providers: [{
+      id: "codex_chatgpt",
+      controls: {
+        ttls: ["30m"],
+        legacy_retentions: ["24h"],
+        breakpoint_block_types: {
+          responses: ["input_text"],
+          chat_completions: ["text"],
+        },
+        source: "catalog",
+        verified_at_ms: 1_010,
+      },
+    }],
+  });
+});
+
 Deno.test("prompt-cache scope requires three reproducible cycles before publication", () => {
   const earlyScope = {
     version: 1,
     providers: [{
       id: "codex_chatgpt",
       scope: {
+        probe_profile: "responses_explicit_input_text_keyed_30m",
         account_slots: "shared",
         token_refresh: "preserved",
         conversation_id: "independent",
@@ -130,6 +168,30 @@ Deno.test("prompt-cache scope requires three reproducible cycles before publicat
     }],
   };
   assert.deepEqual(normalizePromptCacheCapabilities(verifiedScope), verifiedScope);
+
+  const missingProfile = {
+    ...verifiedScope,
+    providers: [{
+      ...verifiedScope.providers[0],
+      scope: {
+        ...verifiedScope.providers[0].scope,
+        probe_profile: undefined,
+      },
+    }],
+  };
+  assert.equal(normalizePromptCacheCapabilities(missingProfile), null);
+
+  const wrongProfile = {
+    ...verifiedScope,
+    providers: [{
+      ...verifiedScope.providers[0],
+      scope: {
+        ...verifiedScope.providers[0].scope,
+        probe_profile: "responses_implicit_input_text_keyed_30m",
+      },
+    }],
+  };
+  assert.equal(normalizePromptCacheCapabilities(wrongProfile), null);
 });
 
 Deno.test("catalog prompt-cache merges retain same-slug provider evidence without cross-provider collapse", () => {

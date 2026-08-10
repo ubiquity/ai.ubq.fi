@@ -12,9 +12,20 @@ type PromptCacheControlSource = "catalog" | "live_probe" | "inferred";
 type PromptCacheScopeSource = "live_probe";
 type PromptCacheMode = "implicit" | "explicit";
 type PromptCacheUsageField = "cached_tokens" | "cache_write_tokens";
-type PromptCacheAccountSlots = "shared" | "account_scoped" | "unknown";
-type PromptCacheTokenRefresh = "preserved" | "changed" | "unknown";
-type PromptCacheConversationId = "independent" | "scoped" | "unknown";
+export type PromptCacheAccountSlots = "shared" | "account_scoped" | "unknown";
+export type PromptCacheTokenRefresh = "preserved" | "changed" | "unknown";
+export type PromptCacheConversationId = "independent" | "scoped" | "unknown";
+
+/**
+ * Scope evidence is valid only for the fixed experiment request shape. Keep
+ * this literal immutable so an explicit Responses observation cannot be read
+ * as implicit-mode or provider-wide evidence.
+ */
+export const PROMPT_CACHE_SCOPE_PROBE_PROFILE = "responses_explicit_input_text_keyed_30m" as const;
+export type PromptCacheScopeProbeProfile = typeof PROMPT_CACHE_SCOPE_PROBE_PROFILE;
+
+/** The capability-catalog identity for the ChatGPT Codex transport. */
+export const CODEX_CHATGPT_PROMPT_CACHE_PROVIDER = "codex_chatgpt" as const;
 
 export type PromptCacheControls = Readonly<{
   key?: boolean;
@@ -33,6 +44,7 @@ export type PromptCacheControls = Readonly<{
 }>;
 
 export type PromptCacheScope = Readonly<{
+  probe_profile: PromptCacheScopeProbeProfile;
   account_slots: PromptCacheAccountSlots;
   token_refresh: PromptCacheTokenRefresh;
   conversation_id: PromptCacheConversationId;
@@ -76,6 +88,17 @@ const PROMPT_CACHE_CONTROL_SOURCES = new Set<PromptCacheControlSource>(["catalog
 const PROMPT_CACHE_SCOPE_SOURCES = new Set<PromptCacheScopeSource>(["live_probe"]);
 const PROMPT_CACHE_MODES = new Set<PromptCacheMode>(["implicit", "explicit"]);
 const PROMPT_CACHE_USAGE_FIELDS = new Set<PromptCacheUsageField>(["cached_tokens", "cache_write_tokens"]);
+// These are the public controls that the gateway accepts in openai.ts. Cache
+// capability metadata is a gateway-compatibility projection, so it must not
+// publish a value that the public request validator will reject.
+const PROMPT_CACHE_TTLS = new Set(["30m"]);
+const PROMPT_CACHE_LEGACY_RETENTIONS = new Set(["in_memory", "24h"]);
+// The official Chat contract permits additional marked blocks, but the
+// Chat-to-Responses adapter currently has no lossless upstream representation
+// for them. Keep published/enforced capabilities aligned with the subset this
+// gateway can preserve rather than advertising a marker it will fail closed.
+const PROMPT_CACHE_RESPONSE_BREAKPOINT_BLOCK_TYPES = new Set(["input_text", "input_image", "input_file"]);
+const PROMPT_CACHE_CHAT_BREAKPOINT_BLOCK_TYPES = new Set(["text", "image_url", "file"]);
 const PROMPT_CACHE_ACCOUNT_SLOTS = new Set<PromptCacheAccountSlots>(["shared", "account_scoped", "unknown"]);
 const PROMPT_CACHE_TOKEN_REFRESH = new Set<PromptCacheTokenRefresh>(["preserved", "changed", "unknown"]);
 const PROMPT_CACHE_CONVERSATION_ID = new Set<PromptCacheConversationId>(["independent", "scoped", "unknown"]);
@@ -110,6 +133,18 @@ const normalizePromptCacheStringList = (value: unknown): string[] | null => {
   return normalized;
 };
 
+/**
+ * Drop catalog values the public gateway cannot accept while retaining the
+ * rest of otherwise valid capability evidence. An empty result is either
+ * omitted as an unknown scalar control or invalidates an exhaustive block-type
+ * declaration, depending on the caller's compatibility semantics.
+ */
+const normalizeGatewayPromptCacheStringList = (value: unknown, allowed: ReadonlySet<string>): string[] | null => {
+  const normalized = normalizePromptCacheStringList(value);
+  if (normalized === null) return null;
+  return normalized.filter((entry) => allowed.has(entry));
+};
+
 const normalizePromptCacheEnumList = <T extends string>(value: unknown, allowed: ReadonlySet<T>): T[] | null => {
   if (!Array.isArray(value)) return null;
   const normalized: T[] = [];
@@ -135,17 +170,21 @@ const normalizePromptCacheBreakpointBlockTypes = (
   value: unknown,
 ): PromptCacheControls["breakpoint_block_types"] | null => {
   if (!isObjectRecord(value) || !hasOnlyKeys(value, ["responses", "chat_completions"])) return null;
-  const responses = hasOwn(value, "responses") ? normalizePromptCacheStringList(value.responses) : undefined;
+  const responses = hasOwn(value, "responses")
+    ? normalizeGatewayPromptCacheStringList(value.responses, PROMPT_CACHE_RESPONSE_BREAKPOINT_BLOCK_TYPES)
+    : undefined;
   const chatCompletions = hasOwn(value, "chat_completions")
-    ? normalizePromptCacheStringList(value.chat_completions)
+    ? normalizeGatewayPromptCacheStringList(value.chat_completions, PROMPT_CACHE_CHAT_BREAKPOINT_BLOCK_TYPES)
     : undefined;
   if ((hasOwn(value, "responses") && !responses) || (hasOwn(value, "chat_completions") && !chatCompletions)) {
     return null;
   }
-  if (!responses && !chatCompletions) return null;
+  const supportedResponses = responses?.length ? responses : undefined;
+  const supportedChatCompletions = chatCompletions?.length ? chatCompletions : undefined;
+  if (!supportedResponses && !supportedChatCompletions) return null;
   return {
-    ...(responses ? { responses } : {}),
-    ...(chatCompletions ? { chat_completions: chatCompletions } : {}),
+    ...(supportedResponses ? { responses: supportedResponses } : {}),
+    ...(supportedChatCompletions ? { chat_completions: supportedChatCompletions } : {}),
   };
 };
 
@@ -175,9 +214,9 @@ const normalizePromptCacheControls = (value: unknown): PromptCacheControls | nul
   }
 
   const modes = hasOwn(value, "modes") ? normalizePromptCacheEnumList(value.modes, PROMPT_CACHE_MODES) : undefined;
-  const ttls = hasOwn(value, "ttls") ? normalizePromptCacheStringList(value.ttls) : undefined;
+  const ttls = hasOwn(value, "ttls") ? normalizeGatewayPromptCacheStringList(value.ttls, PROMPT_CACHE_TTLS) : undefined;
   const legacyRetentions = hasOwn(value, "legacy_retentions")
-    ? normalizePromptCacheStringList(value.legacy_retentions)
+    ? normalizeGatewayPromptCacheStringList(value.legacy_retentions, PROMPT_CACHE_LEGACY_RETENTIONS)
     : undefined;
   const breakpointBlockTypes = hasOwn(value, "breakpoint_block_types")
     ? normalizePromptCacheBreakpointBlockTypes(value.breakpoint_block_types)
@@ -198,8 +237,8 @@ const normalizePromptCacheControls = (value: unknown): PromptCacheControls | nul
     ...(hasOwn(value, "implicit") ? { implicit: value.implicit as boolean } : {}),
     ...(hasOwn(value, "explicit_breakpoints") ? { explicit_breakpoints: value.explicit_breakpoints as boolean } : {}),
     ...(modes ? { modes } : {}),
-    ...(ttls ? { ttls } : {}),
-    ...(legacyRetentions ? { legacy_retentions: legacyRetentions } : {}),
+    ...(ttls?.length ? { ttls } : {}),
+    ...(legacyRetentions?.length ? { legacy_retentions: legacyRetentions } : {}),
     ...(breakpointBlockTypes ? { breakpoint_block_types: breakpointBlockTypes } : {}),
     ...(expectedUsageFields ? { expected_usage_fields: expectedUsageFields } : {}),
     source: value.source as PromptCacheControlSource,
@@ -211,6 +250,7 @@ const normalizePromptCacheScope = (value: unknown): PromptCacheScope | null => {
   if (
     !isObjectRecord(value) ||
     !hasOnlyKeys(value, [
+      "probe_profile",
       "account_slots",
       "token_refresh",
       "conversation_id",
@@ -220,6 +260,7 @@ const normalizePromptCacheScope = (value: unknown): PromptCacheScope | null => {
       "verified_at_ms",
     ])
   ) return null;
+  if (value.probe_profile !== PROMPT_CACHE_SCOPE_PROBE_PROFILE) return null;
   if (!PROMPT_CACHE_ACCOUNT_SLOTS.has(value.account_slots as PromptCacheAccountSlots)) return null;
   if (!PROMPT_CACHE_TOKEN_REFRESH.has(value.token_refresh as PromptCacheTokenRefresh)) return null;
   if (!PROMPT_CACHE_CONVERSATION_ID.has(value.conversation_id as PromptCacheConversationId)) return null;
@@ -237,6 +278,7 @@ const normalizePromptCacheScope = (value: unknown): PromptCacheScope | null => {
     : undefined;
   if (hasOwn(value, "effective_model") && !effectiveModel) return null;
   return {
+    probe_profile: PROMPT_CACHE_SCOPE_PROBE_PROFILE,
     account_slots: value.account_slots as PromptCacheAccountSlots,
     token_refresh: value.token_refresh as PromptCacheTokenRefresh,
     conversation_id: value.conversation_id as PromptCacheConversationId,
@@ -293,6 +335,98 @@ export const compactPromptCacheCapabilities = (value: unknown): RuntimePromptCac
 const modelSlug = (model: Record<string, unknown>): string | null => {
   const slug = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
   return slug?.trim() || null;
+};
+
+/**
+ * Snapshot writers use this exact-slug lookup before publishing probe
+ * evidence. A duplicate or renamed entry is intentionally indistinguishable
+ * from absence: neither is safe to update from a prior live observation.
+ */
+export const getUniqueCodexModelBySlug = (
+  snapshot: CodexModelsSnapshot,
+  slug: string,
+): Record<string, unknown> | null => {
+  const target = slug.trim();
+  if (!target || !Array.isArray(snapshot.models)) return null;
+  const matches = snapshot.models.filter((model) => isObjectRecord(model) && modelSlug(model) === target);
+  return matches.length === 1 ? matches[0]! : null;
+};
+
+export const getCodexModelPromptCacheProvider = (
+  snapshot: CodexModelsSnapshot,
+  slug: string,
+  providerId: string,
+): PromptCacheProvider | null => {
+  const model = getUniqueCodexModelBySlug(snapshot, slug);
+  if (!model) return null;
+  const promptCache = normalizePromptCacheCapabilities(model.prompt_cache);
+  if (promptCache === null || promptCache === false) return null;
+  return promptCache.providers.find((provider) => provider.id === providerId) ?? null;
+};
+
+/** Exact controls required before the fixed live scope matrix may dispatch. */
+export const isCodexModelPromptCacheScopeExperimentEligible = (
+  snapshot: CodexModelsSnapshot,
+  slug: string,
+): boolean => {
+  const controls = getCodexModelPromptCacheProvider(snapshot, slug, CODEX_CHATGPT_PROMPT_CACHE_PROVIDER)?.controls;
+  return Boolean(
+    controls?.key === true &&
+      controls.explicit_breakpoints === true &&
+      controls.modes?.includes("explicit") &&
+      controls.ttls?.includes("30m") &&
+      controls.expected_usage_fields?.includes("cached_tokens") &&
+      controls.expected_usage_fields?.includes("cache_write_tokens"),
+  );
+};
+
+/** A scope may be schema-valid but still unsafe to publish from a live probe. */
+export const isConcretePromptCacheScope = (
+  scope: PromptCacheScope,
+  reproducibleCycles = 3,
+): boolean =>
+  scope.probe_profile === PROMPT_CACHE_SCOPE_PROBE_PROFILE &&
+  scope.account_slots !== "unknown" &&
+  scope.token_refresh !== "unknown" &&
+  scope.conversation_id !== "unknown" &&
+  scope.reproducible_cycles === reproducibleCycles &&
+  scope.source === "live_probe" &&
+  Boolean(scope.effective_model?.trim());
+
+/**
+ * Return a copy with scope evidence attached to one already-present provider.
+ * Controls and all other provider records remain byte-for-byte catalog-owned.
+ */
+export const withCodexModelPromptCacheScope = (
+  snapshot: CodexModelsSnapshot,
+  slug: string,
+  providerId: string,
+  scope: PromptCacheScope,
+): CodexModelsSnapshot | null => {
+  const target = slug.trim();
+  const model = getUniqueCodexModelBySlug(snapshot, target);
+  const normalizedScope = normalizePromptCacheScope(scope);
+  if (!model || !normalizedScope) return null;
+  const promptCache = normalizePromptCacheCapabilities(model.prompt_cache);
+  if (promptCache === null || promptCache === false) return null;
+
+  let foundProvider = false;
+  const providers = promptCache.providers.map((provider) => {
+    if (provider.id !== providerId) return provider;
+    foundProvider = true;
+    return { ...provider, scope: normalizedScope };
+  });
+  if (!foundProvider) return null;
+  const nextPromptCache = normalizePromptCacheCapabilities({ version: 1, providers });
+  if (nextPromptCache === null || nextPromptCache === false) return null;
+
+  let updated = false;
+  const models = snapshot.models.map((candidate) => {
+    if (!isObjectRecord(candidate) || modelSlug(candidate) !== target) return candidate;
+    updated = true;
+    return { ...candidate, prompt_cache: nextPromptCache };
+  });
+  return updated ? { ...snapshot, models } : null;
 };
 
 const mergePromptCacheProvider = (

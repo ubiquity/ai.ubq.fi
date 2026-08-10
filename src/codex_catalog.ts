@@ -1,9 +1,21 @@
-import { CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, fetchCodexModels, preserveCodexDefaultModel } from "./codex.ts";
 import {
+  CODEX_AUTH_POOL_KV_KEY,
+  CODEX_MODELS_KV_KEY,
+  type CodexModelsSnapshot,
+  fetchCodexModels,
+  preserveCodexDefaultModel,
+} from "./codex.ts";
+import {
+  CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
   compareCodexClientVersions,
+  getUniqueCodexModelBySlug,
+  isCodexModelPromptCacheScopeExperimentEligible,
+  isConcretePromptCacheScope,
   mergeCodexModelPromptCacheCapabilities,
   normalizeCodexModelsPayload,
   parseCodexClientVersion,
+  type PromptCacheScope,
+  withCodexModelPromptCacheScope,
 } from "./codex_models.ts";
 import { openaiError } from "./http.ts";
 import { getKv } from "./kv.ts";
@@ -22,6 +34,7 @@ export const CODEX_CATALOG_REFRESH_LEASE_MS = 15_000;
 export const CODEX_CATALOG_COLD_WAIT_MS = 5_000;
 export const CODEX_CATALOG_CHUNK_BYTES = 55_000;
 export const CODEX_CATALOG_MAX_VERSIONS = 32;
+const PROMPT_CACHE_SCOPE_PROMOTION_LEASE_MS = 120_000;
 
 export const CODEX_CATALOG_AUTH_GENERATION_KEY = ["ubq_ai", "codex_catalog_auth_generation"] as const;
 export const CODEX_CATALOG_PREFIX = ["ubq_ai", "codex_catalog"] as const;
@@ -49,6 +62,28 @@ type LoadedCodexCatalog = Readonly<{
 
 type RefreshLease = Readonly<{ owner: string; lease_until_ms: number }>;
 const catalogMemo = new Map<string, LoadedCodexCatalog>();
+
+export type PromptCacheScopePromotionLease = Readonly<{
+  key: Deno.KvKey;
+  owner: string;
+}>;
+
+export type PromptCacheScopePromotionResult =
+  | Readonly<{ status: "promoted" }>
+  | Readonly<{
+    status: "inconclusive";
+    reason:
+      | "invalid_scope"
+      | "lease_lost"
+      | "snapshot_unavailable"
+      | "runtime_unavailable"
+      | "model_drift"
+      | "auth_pool_drift"
+      | "capability_changed"
+      | "catalog_drift"
+      | "runtime_drift"
+      | "cas_conflict";
+  }>;
 
 const catalogMemoKey = (metadata: CodexCatalogMetadata): string =>
   `${metadata.client_version}:${metadata.auth_generation}:${metadata.body_generation}`;
@@ -376,6 +411,123 @@ const waitForColdCatalog = async (kv: Deno.Kv, version: string): Promise<LoadedC
     if (catalog) return catalog;
   }
   return null;
+};
+
+const ownsPromptCacheScopePromotionLease = (value: unknown, owner: string): boolean =>
+  isRecord(value) && value.owner === owner && typeof value.lease_until_ms === "number" &&
+  Number.isFinite(value.lease_until_ms) && value.lease_until_ms > Date.now();
+
+/**
+ * Publish a concrete live scope observation without replacing catalog-owned
+ * controls or another model's evidence. The catalog and compact runtime view
+ * are committed together, and the warm runtime cache changes only after that
+ * compare-and-swap succeeds.
+ */
+export const promoteCodexPromptCacheScope = async (
+  kv: Deno.Kv,
+  input: Readonly<{
+    model: string;
+    scope: PromptCacheScope;
+    lease: PromptCacheScopePromotionLease;
+    authPoolVersionstamp: string;
+    /**
+     * The scope runner binds a campaign to one exact full-catalog revision.
+     * A model may be non-default, but it may never publish against a catalog
+     * revision other than the one whose controls it actually probed.
+     */
+    catalogVersionstamp: string;
+    /** The same fence for the compact runtime/default-model configuration. */
+    runtimeVersionstamp: string;
+  }>,
+): Promise<PromptCacheScopePromotionResult> => {
+  const model = input.model.trim();
+  if (
+    !model || !input.authPoolVersionstamp.trim() || !input.catalogVersionstamp.trim() ||
+    !input.runtimeVersionstamp.trim() || input.scope.effective_model?.trim() !== model ||
+    !isConcretePromptCacheScope(input.scope, 3)
+  ) {
+    return { status: "inconclusive", reason: "invalid_scope" };
+  }
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const [snapshotEntry, runtimeEntry, leaseEntry, authPoolEntry] = await Promise.all([
+      kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY, { consistency: "strong" }),
+      kv.get<RuntimeConfigV2>(RUNTIME_CONFIG_V2_KEY, { consistency: "strong" }),
+      kv.get(input.lease.key, { consistency: "strong" }),
+      kv.get(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" }),
+    ]);
+    if (!ownsPromptCacheScopePromotionLease(leaseEntry.value, input.lease.owner)) {
+      return { status: "inconclusive", reason: "lease_lost" };
+    }
+    if (authPoolEntry.versionstamp !== input.authPoolVersionstamp) {
+      return { status: "inconclusive", reason: "auth_pool_drift" };
+    }
+
+    const snapshot = snapshotEntry.value;
+    if (
+      !snapshot || !Array.isArray(snapshot.models) || !getString(snapshot.source)?.trim() ||
+      !Number.isSafeInteger(snapshot.updated_at_ms) || snapshot.updated_at_ms <= 0
+    ) {
+      return { status: "inconclusive", reason: "snapshot_unavailable" };
+    }
+    if (snapshotEntry.versionstamp !== input.catalogVersionstamp) {
+      return { status: "inconclusive", reason: "catalog_drift" };
+    }
+    if (!getUniqueCodexModelBySlug(snapshot, model)) {
+      return { status: "inconclusive", reason: "model_drift" };
+    }
+    if (!isCodexModelPromptCacheScopeExperimentEligible(snapshot, model)) {
+      return { status: "inconclusive", reason: "capability_changed" };
+    }
+
+    const currentRuntime = normalizeRuntimeConfig(runtimeEntry.value);
+    if (!currentRuntime) return { status: "inconclusive", reason: "runtime_unavailable" };
+    if (runtimeEntry.versionstamp !== input.runtimeVersionstamp) {
+      return { status: "inconclusive", reason: "runtime_drift" };
+    }
+    // Scope evidence belongs to a catalog model, not necessarily the active
+    // default. Rebuilding the compact view must retain the configured default
+    // verbatim when the probed model is non-default.
+    const defaultModel = preserveCodexDefaultModel(snapshot, currentRuntime.default_model);
+    if (!defaultModel) return { status: "inconclusive", reason: "runtime_unavailable" };
+
+    const nextSnapshot = withCodexModelPromptCacheScope(
+      snapshot,
+      model,
+      CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
+      input.scope,
+    );
+    if (!nextSnapshot) return { status: "inconclusive", reason: "model_drift" };
+
+    let nextRuntime: RuntimeConfigV2;
+    try {
+      nextRuntime = buildRuntimeConfig(nextSnapshot, {
+        defaultModel,
+        defaultReasoningEffort: currentRuntime.default_reasoning_effort,
+        nowMs: input.scope.verified_at_ms,
+      });
+    } catch {
+      return { status: "inconclusive", reason: "runtime_unavailable" };
+    }
+    const renewedLease: RefreshLease = {
+      owner: input.lease.owner,
+      lease_until_ms: Date.now() + PROMPT_CACHE_SCOPE_PROMOTION_LEASE_MS,
+    };
+
+    const commit = await kv.atomic()
+      .check(snapshotEntry)
+      .check(runtimeEntry)
+      .check(leaseEntry)
+      .check(authPoolEntry)
+      .set(CODEX_MODELS_KV_KEY, nextSnapshot)
+      .set(RUNTIME_CONFIG_V2_KEY, nextRuntime)
+      .set(input.lease.key, renewedLease, { expireIn: PROMPT_CACHE_SCOPE_PROMOTION_LEASE_MS * 2 })
+      .commit();
+    if (!commit.ok) continue;
+    cacheRuntimeConfig(nextRuntime);
+    return { status: "promoted" };
+  }
+  return { status: "inconclusive", reason: "cas_conflict" };
 };
 
 const maybeUpdateNormalizedSnapshot = async (

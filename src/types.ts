@@ -306,6 +306,7 @@ export type MessageContentItem = Readonly<
     file_data?: string;
     file_url?: string;
     filename?: string | null;
+    detail?: "auto" | "low" | "high";
     prompt_cache_breakpoint?: PromptCacheBreakpoint;
   }
 >;
