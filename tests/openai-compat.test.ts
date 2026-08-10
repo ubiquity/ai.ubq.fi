@@ -1302,6 +1302,95 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       },
     );
 
+    await t.step("streaming Responses reports premature YunWu EOF as a terminal error", async () => {
+      const keyId = "fallback-responses-premature-eof";
+      seedPaidFallbackKey(keyId);
+      const responseText = await withFetchMock(
+        (url) => {
+          if (url === "https://yunwu.ai/v1/responses") {
+            return sseResponse(baseSseChunks().slice(0, -1));
+          }
+          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        async () => {
+          const response = await handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "request-fallback-responses-premature-eof",
+              startedAtMs: Date.now(),
+            },
+          );
+          assert.equal(response.status, 200);
+          assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+          return await response.text();
+        },
+      );
+
+      assert.match(responseText, /"type":"error"/);
+      assert.match(responseText, /"code":"upstream_stream_terminated"/);
+      assert.doesNotMatch(responseText, /"type":"response.completed"/);
+    });
+
+    await t.step("streaming Responses converts a thrown YunWu read into a terminal error", async () => {
+      const keyId = "fallback-responses-thrown-read";
+      seedPaidFallbackKey(keyId);
+      const responseText = await withFetchMock(
+        (url) => {
+          if (url === "https://yunwu.ai/v1/responses") {
+            let read = 0;
+            const body = new ReadableStream<Uint8Array>({
+              pull(controller) {
+                if (read++ === 0) {
+                  controller.enqueue(TEXT_ENCODER.encode(baseSseChunks()[0]));
+                  return;
+                }
+                controller.error(new Error("socket reset"));
+              },
+            });
+            return new Response(body, {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          }
+          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        async () => {
+          const response = await handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "request-fallback-responses-thrown-read",
+              startedAtMs: Date.now(),
+            },
+          );
+          return await response.text();
+        },
+      );
+
+      assert.match(responseText, /"type":"error"/);
+      assert.match(responseText, /"code":"upstream_stream_terminated"/);
+      assert.doesNotMatch(responseText, /"type":"response.completed"/);
+    });
+
     await t.step("Chat Completions also falls back through YunWu Responses once", async () => {
       const keyId = "fallback-chat-success";
       seedPaidFallbackKey(keyId);
@@ -1348,6 +1437,80 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         "https://chatgpt.com/backend-api/codex/responses",
         "https://yunwu.ai/v1/responses",
       ]);
+    });
+
+    await t.step("streaming Chat Completions never emits DONE after premature YunWu EOF", async () => {
+      const keyId = "fallback-chat-premature-eof";
+      seedPaidFallbackKey(keyId);
+      const responseText = await withFetchMock(
+        (url) => {
+          if (url === "https://yunwu.ai/v1/responses") return sseResponse(baseSseChunks().slice(0, -1));
+          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        async () => {
+          const response = await handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                messages: [{ role: "user", content: "ping" }],
+                stream: true,
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "request-fallback-chat-premature-eof",
+              startedAtMs: Date.now(),
+            },
+          );
+          return await response.text();
+        },
+      );
+
+      assert.match(responseText, /"code":"upstream_stream_terminated"/);
+      assert.doesNotMatch(responseText, /\[DONE\]/);
+    });
+
+    await t.step("buffered Chat Completions rejects partial YunWu output", async () => {
+      const keyId = "fallback-chat-buffered-premature-eof";
+      seedPaidFallbackKey(keyId);
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://yunwu.ai/v1/responses") return sseResponse(baseSseChunks().slice(0, -1));
+          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                messages: [{ role: "user", content: "ping" }],
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "request-fallback-chat-buffered-premature-eof",
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get("x-ubq-upstream"), "yunwu");
+      assert.equal((await response.json()).error.code, "codex_upstream_stream_error");
     });
 
     await t.step("a YunWu error is attempted once and remains pending when it has a provider request id", async () => {

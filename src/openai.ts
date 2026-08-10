@@ -2551,7 +2551,19 @@ const findSseEventBoundary = (buffer: string, streamEnded = false): number | nul
   return end;
 };
 
-const closeResponsesStreamAfterTerminalEvent = (
+const responsesStreamErrorEvent = (message: string): Uint8Array =>
+  new TextEncoder().encode(`data: ${
+    JSON.stringify({
+      type: "error",
+      error: {
+        type: "server_error",
+        code: "upstream_stream_terminated",
+        message,
+      },
+    })
+  }\n\n`);
+
+const enforceResponsesStreamTerminalEvent = (
   stream: ReadableStream<Uint8Array>,
 ): ReadableStream<Uint8Array> => {
   const reader = stream.getReader();
@@ -2593,7 +2605,7 @@ const closeResponsesStreamAfterTerminalEvent = (
             buffer += decoder.decode();
             if (forwardCompleteEvents(controller, true) === "terminal") return;
             if (buffer) controller.enqueue(encoder.encode(buffer));
-            buffer = "";
+            controller.enqueue(responsesStreamErrorEvent("Upstream stream ended before a terminal event."));
             finished = true;
             controller.close();
             return;
@@ -2603,8 +2615,11 @@ const closeResponsesStreamAfterTerminalEvent = (
           if (forwardCompleteEvents(controller) !== "pending") return;
         }
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[ai.ubq.fi] Responses upstream stream failed before a terminal event:", message);
+        controller.enqueue(responsesStreamErrorEvent("Upstream stream failed before a terminal event."));
         finished = true;
-        controller.error(error);
+        controller.close();
       }
     },
     async cancel(reason) {
@@ -2622,6 +2637,7 @@ const observeResponsesStreamUsage = (
   const decoder = new TextDecoder();
   let buffer = "";
   let completed = false;
+  let failed = false;
 
   const observe = async (chunk?: Uint8Array): Promise<void> => {
     buffer += chunk ? decoder.decode(chunk, { stream: true }) : decoder.decode();
@@ -2645,7 +2661,18 @@ const observeResponsesStreamUsage = (
         );
         continue;
       }
-      if (completed || !isRecord(event) || getString(event.type) !== "response.completed") continue;
+      if (completed || failed || !isRecord(event)) continue;
+      const eventType = getString(event.type);
+      if (eventType && TERMINAL_RESPONSES_EVENT_TYPES.has(eventType) && eventType !== "response.completed") {
+        failed = true;
+        try {
+          await recordErrorUsage(usageContext);
+        } catch (error) {
+          console.warn("[ai.ubq.fi] Failed to record responses stream error:", error);
+        }
+        continue;
+      }
+      if (eventType !== "response.completed") continue;
       completed = true;
       const usageTokens = isRecord(event.response) ? extractUsageTokens(event.response.usage) : null;
       try {
@@ -2730,6 +2757,16 @@ const streamChatCompletions = (
   }
 
   const encoder = new TextEncoder();
+  const chatStreamError = () =>
+    encoder.encode(`data: ${
+      JSON.stringify({
+        error: {
+          type: "server_error",
+          code: "upstream_stream_terminated",
+          message: "Upstream stream ended before a terminal event.",
+        },
+      })
+    }\n\n`);
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -2795,12 +2832,25 @@ const streamChatCompletions = (
             controller.close();
             return;
           }
+          if (type && TERMINAL_RESPONSES_EVENT_TYPES.has(type)) {
+            await recordErrorUsage(usageContext);
+            controller.enqueue(chatStreamError());
+            controller.close();
+            return;
+          }
         }
 
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        await recordErrorUsage(usageContext);
+        controller.enqueue(chatStreamError());
         controller.close();
       } catch (error) {
-        controller.error(error);
+        console.warn(
+          "[ai.ubq.fi] Chat Completions upstream stream failed before a terminal event:",
+          error instanceof Error ? error.message : String(error),
+        );
+        await recordErrorUsage(usageContext);
+        controller.enqueue(chatStreamError());
+        controller.close();
       }
     },
   });
@@ -2828,39 +2878,54 @@ const completeChatCompletions = async (
   let created = Math.floor(Date.now() / 1000);
   let content = "";
   let usage: Record<string, unknown> | null = null;
+  let completed = false;
 
-  for await (const ev of parseSseEvents(upstream.body)) {
-    if (!isRecord(ev)) continue;
-    const type = getString(ev.type);
-    if (type === "response.created" && isRecord(ev.response)) {
-      const upstreamId = getString(ev.response.id);
-      const createdAt = typeof ev.response.created_at === "number" ? ev.response.created_at : null;
-      if (upstreamId) id = upstreamId;
-      if (createdAt) created = createdAt;
-      continue;
-    }
-    if (type === "response.output_text.delta") {
-      content += getString(ev.delta) ?? "";
-      continue;
-    }
-    if (type === "response.completed" && isRecord(ev.response)) {
-      const usageTokens = extractUsageTokens(ev.response.usage);
-      if (usageTokens) {
-        usage = {
-          prompt_tokens: usageTokens.inputTokens,
-          completion_tokens: usageTokens.outputTokens,
-          total_tokens: usageTokens.totalTokens,
-        };
+  try {
+    for await (const ev of parseSseEvents(upstream.body)) {
+      if (!isRecord(ev)) continue;
+      const type = getString(ev.type);
+      if (type === "response.created" && isRecord(ev.response)) {
+        const upstreamId = getString(ev.response.id);
+        const createdAt = typeof ev.response.created_at === "number" ? ev.response.created_at : null;
+        if (upstreamId) id = upstreamId;
+        if (createdAt) created = createdAt;
+        continue;
       }
-      await recordCompletionUsage(usageContext, usageTokens);
-      if (paidFallback) {
-        await bestEffortPaidFallbackBookkeeping(
-          "chat completion reconciliation",
-          () => reconcileApiKeyPaidFallbacks(paidFallback.key_id),
-        );
+      if (type === "response.output_text.delta") {
+        content += getString(ev.delta) ?? "";
+        continue;
       }
-      break;
+      if (type === "response.completed" && isRecord(ev.response)) {
+        const usageTokens = extractUsageTokens(ev.response.usage);
+        if (usageTokens) {
+          usage = {
+            prompt_tokens: usageTokens.inputTokens,
+            completion_tokens: usageTokens.outputTokens,
+            total_tokens: usageTokens.totalTokens,
+          };
+        }
+        await recordCompletionUsage(usageContext, usageTokens);
+        if (paidFallback) {
+          await bestEffortPaidFallbackBookkeeping(
+            "chat completion reconciliation",
+            () => reconcileApiKeyPaidFallbacks(paidFallback.key_id),
+          );
+        }
+        completed = true;
+        break;
+      }
     }
+  } catch (error) {
+    console.warn(
+      "[ai.ubq.fi] Chat Completions upstream stream failed before a terminal event:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  if (!completed) {
+    await recordErrorUsage(usageContext);
+    return openaiError(502, "Codex upstream stream ended unexpectedly.", "codex_upstream_stream_error", {
+      headers: { "x-ubq-upstream": provider },
+    });
   }
 
   const body: Record<string, unknown> = {
@@ -4278,9 +4343,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         headers: { "x-ubq-upstream": routed.provider },
       });
     }
-    const responseBody = routed.provider === "yunwu"
-      ? closeResponsesStreamAfterTerminalEvent(upstream.body)
-      : upstream.body;
+    const responseBody = enforceResponsesStreamTerminalEvent(upstream.body);
     const headers = new Headers(upstream.headers);
     headers.set("x-ubq-upstream", routed.provider);
     const response = new Response(observeResponsesStreamUsage(responseBody, usageContext, routed.paidFallback), {
