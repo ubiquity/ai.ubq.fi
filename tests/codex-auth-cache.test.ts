@@ -116,11 +116,16 @@ const { config } = await import("../src/config.ts");
 
 const {
   cacheCodexAuthPool,
+  beginCodexCacheScopeExperiment,
   CODEX_AUTH_CACHE_TTL_MS,
+  CodexCacheScopeExperimentError,
   CodexError,
+  fetchCodexResponsesForCacheScopeExperiment,
   fetchCodexResponses,
   getCodexResponseSlot,
   orderCodexAuthAccounts,
+  refreshCodexCacheScopeExperimentSlot,
+  releaseCodexResponseProbe,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
 const {
@@ -1076,5 +1081,247 @@ Deno.test("a valid persisted Codex pool is not overlaid by a local configured se
     Date.now = originalNow;
     (config as { isDeploy: boolean; codexAuthJsonB64: string }).isDeploy = originalDeployFlag;
     (config as { isDeploy: boolean; codexAuthJsonB64: string }).codexAuthJsonB64 = originalSeed;
+  }
+});
+
+Deno.test("cache scope transport pins one strong-read slot with the supplied conversation id and never fails over", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const requests: Array<{ accountId: string | null; conversationId: string | null }> = [];
+  Date.now = () => fixedStartMs;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    requests.push({
+      accountId: request.headers.get("chatgpt-account-id"),
+      conversationId: request.headers.get("conversation_id"),
+    });
+    return Promise.resolve(new Response("too many requests", { status: 429 }));
+  };
+
+  try {
+    const session = await beginCodexCacheScopeExperiment();
+    const response = await fetchCodexResponsesForCacheScopeExperiment(
+      { model: "gpt-5.6", input: "cache scope", stream: false },
+      { session, slot: 1, conversationId: "fixed-conversation-id" },
+    );
+    assert.equal(response.status, 429);
+    assert.equal(getCodexResponseSlot(response), 1);
+    assert.deepEqual(requests, [{ accountId: "account-one", conversationId: "fixed-conversation-id" }]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  }
+});
+
+Deno.test("cache scope transport makes one inference attempt for 401, 403, and 429", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  Date.now = () => fixedStartMs;
+
+  try {
+    for (const status of [401, 403, 429]) {
+      const requests: string[] = [];
+      kv.auth = pool(auth("one"), auth("two"));
+      kv.extra.clear();
+      resetCodexAuthCacheForTest();
+      globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request.headers.get("chatgpt-account-id") ?? "");
+        return Promise.resolve(
+          status === 429
+            ? new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), {
+              status,
+              headers: { "Content-Type": "application/json" },
+            })
+            : new Response("terminal account response", { status }),
+        );
+      };
+
+      const session = await beginCodexCacheScopeExperiment();
+      const response = await fetchCodexResponsesForCacheScopeExperiment(
+        { model: "gpt-5.6", input: "cache scope", stream: true },
+        { session, slot: 1, conversationId: "fixed-conversation-id" },
+      );
+      assert.equal(response.status, status);
+      assert.deepEqual(requests, ["account-one"], `status ${status} must not retry or fail over`);
+      if (status === 401) {
+        const after401 = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]!]);
+        assert.equal(after401.kind, "eligible", "an unrefreshed experimental 401 must not quarantine the slot");
+      }
+    }
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  }
+});
+
+Deno.test("cache scope transport rejects an ineligible requested slot without taking a healthy sibling", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const requests: string[] = [];
+  Date.now = () => fixedStartMs;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  const initial = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]!]);
+  assert.equal(initial.kind, "eligible");
+  if (initial.kind !== "eligible") throw new Error("expected requested slot to be initially eligible");
+  await markCodexQuotaBlocked(
+    initial.accounts[0]!,
+    new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": "60" },
+    }),
+    fixedStartMs,
+  );
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    requests.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(new Response("unexpected inference", { status: 200 }));
+  };
+
+  try {
+    const session = await beginCodexCacheScopeExperiment();
+    await assert.rejects(
+      () =>
+        fetchCodexResponsesForCacheScopeExperiment(
+          { model: "gpt-5.6", input: "cache scope", stream: true },
+          { session, slot: 1, conversationId: "fixed-conversation-id" },
+        ),
+      CodexCacheScopeExperimentError,
+    );
+    assert.deepEqual(requests, []);
+
+    const normal = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts);
+    assert.equal(normal.kind, "eligible");
+    if (normal.kind !== "eligible") throw new Error("expected healthy sibling to remain eligible");
+    assert.deepEqual(normal.accounts.map((account) => account.slot + 1), [2]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  }
+});
+
+Deno.test("cache scope transport releases a claimed half-open probe after its response is consumed", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  let now = fixedStartMs;
+  Date.now = () => now;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  const initial = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]!]);
+  assert.equal(initial.kind, "eligible");
+  if (initial.kind !== "eligible") throw new Error("expected requested slot to be initially eligible");
+  await markCodexQuotaBlocked(
+    initial.accounts[0]!,
+    new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": "1" },
+    }),
+    now,
+  );
+  now += 2_000;
+  globalThis.fetch = () => Promise.resolve(new Response("response body", { status: 200 }));
+
+  try {
+    const session = await beginCodexCacheScopeExperiment();
+    const response = await fetchCodexResponsesForCacheScopeExperiment(
+      { model: "gpt-5.6", input: "cache scope", stream: true },
+      { session, slot: 1, conversationId: "fixed-conversation-id" },
+    );
+    assert.equal(getCodexResponseSlot(response), 1);
+    await releaseCodexResponseProbe(response);
+
+    const after = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]!]);
+    assert.equal(after.kind, "eligible");
+    if (after.kind !== "eligible") throw new Error("expected released probe to make slot eligible");
+    assert.equal(after.accounts[0]?.probeRequired, false);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  }
+});
+
+Deno.test("cache scope refresh stays on the selected account and detects later slot drift", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  Date.now = () => fixedStartMs;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    if (request.url === "https://auth.openai.com/oauth/token") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: accessToken("one-refreshed"), refresh_token: "refresh-one-refreshed" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+    }
+    return Promise.resolve(new Response("unexpected inference", { status: 200 }));
+  };
+
+  try {
+    const session = await beginCodexCacheScopeExperiment();
+    const refresh = await refreshCodexCacheScopeExperimentSlot(session, 1);
+    assert.equal(refresh.tokenChanged, true);
+    assert.deepEqual(kv.auth.accounts.map((account) => account.account_id), ["account-one", "account-two"]);
+    assert.equal(kv.auth.accounts[0]?.access_token, accessToken("one-refreshed"));
+
+    kv.auth = pool(auth("replacement"), auth("two"));
+    await assert.rejects(
+      () =>
+        fetchCodexResponsesForCacheScopeExperiment(
+          { model: "gpt-5.6", input: "cache scope", stream: false },
+          { session, slot: 1, conversationId: "fixed-conversation-id" },
+        ),
+      CodexCacheScopeExperimentError,
+    );
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  }
+});
+
+Deno.test("cache scope transport aborts when its pinned slot changes after dispatch", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  Date.now = () => fixedStartMs;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = () => {
+    kv.auth = pool(auth("replacement"), auth("two"));
+    kv.authVersion += 1;
+    return Promise.resolve(new Response("response body", { status: 200 }));
+  };
+
+  try {
+    const session = await beginCodexCacheScopeExperiment();
+    await assert.rejects(
+      () =>
+        fetchCodexResponsesForCacheScopeExperiment(
+          { model: "gpt-5.6", input: "cache scope", stream: true },
+          { session, slot: 1, conversationId: "fixed-conversation-id" },
+        ),
+      CodexCacheScopeExperimentError,
+    );
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
   }
 });

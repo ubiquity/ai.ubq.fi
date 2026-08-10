@@ -183,6 +183,22 @@ type CodexAuthAccountEntry = CodexAuthPoolEntry & {
   routing?: RoutingAccount;
 };
 
+/**
+ * Private control-plane state for the prompt-cache scope experiment. Account
+ * identifiers remain inside the Codex transport and must never be persisted
+ * or returned by the admin endpoint.
+ */
+export type CodexCacheScopeExperimentSession = Readonly<{
+  expectedAccountIds: readonly [string, string];
+}>;
+
+export class CodexCacheScopeExperimentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CodexCacheScopeExperimentError";
+  }
+}
+
 type CodexRefreshLease = Readonly<{
   owner: string;
   lease_until_ms: number;
@@ -410,6 +426,222 @@ const getAuthPoolEntry = async (forceKv = false): Promise<CodexAuthPoolEntry> =>
     authPoolEntryInFlight = null;
   });
   return await authPoolEntryInFlight;
+};
+
+/**
+ * The cache-scope experiment is intentionally stricter than normal request
+ * routing: it must observe the persisted pool directly before and after every
+ * dispatch so an account replacement or slot reorder makes the result
+ * inconclusive instead of looking like cache behavior.
+ */
+const getStrongAuthPoolEntryForCacheScopeExperiment = async (): Promise<CodexAuthPoolEntry> => {
+  const kv = await getKv();
+  if (!kv) {
+    throw new CodexCacheScopeExperimentError("Prompt-cache scope experiments require Deno KV-backed Codex auth.");
+  }
+  const entry = await kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" });
+  const pool = parseCodexAuthPool(entry.value);
+  if (!pool) {
+    throw new CodexCacheScopeExperimentError("Codex auth pool is unavailable for the prompt-cache scope experiment.");
+  }
+  cacheCodexAuthPool(pool);
+  return { kv, entry, pool };
+};
+
+const cacheScopeExperimentAccount = (
+  session: CodexCacheScopeExperimentSession,
+  poolEntry: CodexAuthPoolEntry,
+  slot: number,
+): CodexAuthState => {
+  if (!Number.isInteger(slot) || slot < 1 || slot > 2) {
+    throw new CodexCacheScopeExperimentError("Prompt-cache scope experiment slot is invalid.");
+  }
+  const auth = poolEntry.pool.accounts[slot - 1];
+  const expectedAccountId = session.expectedAccountIds[slot - 1];
+  if (!auth || auth.account_id !== expectedAccountId) {
+    throw new CodexCacheScopeExperimentError("Codex auth pool changed during the prompt-cache scope experiment.");
+  }
+  return auth;
+};
+
+export const beginCodexCacheScopeExperiment = async (): Promise<CodexCacheScopeExperimentSession> => {
+  const poolEntry = await getStrongAuthPoolEntryForCacheScopeExperiment();
+  const first = poolEntry.pool.accounts[0];
+  const second = poolEntry.pool.accounts[1];
+  if (!first || !second) {
+    throw new CodexCacheScopeExperimentError(
+      "Prompt-cache scope experiments require exactly two configured Codex slots.",
+    );
+  }
+  return { expectedAccountIds: [first.account_id, second.account_id] };
+};
+
+/**
+ * Force a coordinated OAuth refresh for one fixed slot. A concurrent pool
+ * change is checked after refresh and turns the experiment inconclusive; the
+ * refreshed credentials and account id never leave this module.
+ */
+export const refreshCodexCacheScopeExperimentSlot = async (
+  session: CodexCacheScopeExperimentSession,
+  slot: number,
+  signal?: AbortSignal,
+): Promise<Readonly<{ tokenChanged: boolean }>> => {
+  const current = await getStrongAuthPoolEntryForCacheScopeExperiment();
+  const auth = cacheScopeExperimentAccount(session, current, slot);
+  const selected = await selectCodexRoutingAccounts(current.pool, [auth]);
+  if (selected.kind !== "eligible" || selected.accounts.length !== 1 || selected.accounts[0]?.slot !== slot - 1) {
+    throw new CodexCacheScopeExperimentError(
+      "The requested Codex slot is not eligible for OAuth refresh during the prompt-cache scope experiment.",
+    );
+  }
+  const refreshed = await awaitWithoutCancellingSharedWork(
+    refreshAuthCoordinated({ ...current, auth }),
+    signal,
+  );
+  if (refreshed.account_id !== auth.account_id) {
+    throw new CodexCacheScopeExperimentError(
+      "Codex OAuth refresh changed account identity during the prompt-cache scope experiment.",
+    );
+  }
+  await reconcileCodexRoutingAccount(selected.accounts[0]!, refreshed);
+  const after = await getStrongAuthPoolEntryForCacheScopeExperiment();
+  const persisted = cacheScopeExperimentAccount(session, after, slot);
+  if (persisted.account_id !== refreshed.account_id || !sameCodexCredentials(persisted, refreshed)) {
+    throw new CodexCacheScopeExperimentError(
+      "Codex auth slot drifted after OAuth refresh during the prompt-cache scope experiment.",
+    );
+  }
+  return {
+    tokenChanged: persisted.access_token !== auth.access_token || persisted.refresh_token !== auth.refresh_token,
+  };
+};
+
+/**
+ * Slot-pinned internal transport for the cache-scope experiment. It uses the
+ * normal eligibility and half-open-probe machinery for exactly the requested
+ * slot, but deliberately never tries a sibling or retries an inference
+ * request. `conversationId` only controls the upstream header and is never
+ * accepted by a public endpoint or stored in durable state.
+ */
+export const fetchCodexResponsesForCacheScopeExperiment = async (
+  body: unknown,
+  options: Readonly<{
+    session: CodexCacheScopeExperimentSession;
+    slot: number;
+    conversationId: string;
+    clientVersion?: string | null;
+    signal?: AbortSignal;
+  }>,
+): Promise<Response> => {
+  const conversationId = options.conversationId.trim();
+  if (!conversationId) {
+    throw new CodexCacheScopeExperimentError("Prompt-cache scope experiment conversation id is invalid.");
+  }
+  if (codexProbeTransitionsInFlight.size) {
+    await Promise.allSettled([...codexProbeTransitionsInFlight]);
+  }
+  const current = await getStrongAuthPoolEntryForCacheScopeExperiment();
+  const auth = cacheScopeExperimentAccount(options.session, current, options.slot);
+  const selected = await selectCodexRoutingAccounts(current.pool, [auth]);
+  if (selected.kind !== "eligible" || selected.accounts.length !== 1) {
+    throw new CodexCacheScopeExperimentError(
+      "The requested Codex slot is not eligible for the prompt-cache scope experiment.",
+    );
+  }
+  let routing = selected.accounts[0]!;
+  if (routing.slot !== options.slot - 1 || routing.auth.account_id !== auth.account_id) {
+    throw new CodexCacheScopeExperimentError(
+      "Prompt-cache scope experiment routing did not preserve the requested slot.",
+    );
+  }
+  if (routing.probeRequired) {
+    const claimed = await claimCodexRoutingProbe(current.pool, routing);
+    if (!claimed) {
+      throw new CodexCacheScopeExperimentError(
+        "The requested Codex slot could not be claimed for the prompt-cache scope experiment.",
+      );
+    }
+    routing = claimed;
+  }
+
+  let response: Response | null = null;
+  const url = `${config.codexBaseUrl}/responses`;
+  const headers = new Headers({
+    "originator": CODEX_ORIGINATOR,
+    "user-agent": codexUserAgent(options.clientVersion),
+    "Content-Type": "application/json",
+    "Accept": "text/event-stream",
+    "conversation_id": conversationId,
+  });
+
+  try {
+    // A strong read immediately before dispatch prevents a pool replacement or
+    // concurrent credential rotation from being mistaken for cache behavior.
+    const beforeDispatch = await getStrongAuthPoolEntryForCacheScopeExperiment();
+    const persistedBeforeDispatch = cacheScopeExperimentAccount(options.session, beforeDispatch, options.slot);
+    if (!sameCodexCredentials(persistedBeforeDispatch, routing.auth)) {
+      throw new CodexCacheScopeExperimentError(
+        "Codex credentials changed before dispatch during the prompt-cache scope experiment.",
+      );
+    }
+
+    try {
+      response = await fetchCodexResponseWithAuth(
+        routing.auth,
+        url,
+        JSON.stringify(body),
+        headers,
+        options.signal,
+      );
+    } catch (error) {
+      void recordCodexThrownHealth(routing.auth.account_id, error);
+      logCodexRouting("codex_attempt", {
+        request_id: null,
+        attempt: 1,
+        slot: routing.slot + 1,
+        phase: "initial",
+        status: error instanceof CodexError ? error.status : null,
+        status_class: codexErrorClass(error),
+      });
+      throw error;
+    }
+    codexSlotByResponse.set(response, options.slot);
+    void recordCodexResponseHealth(routing.auth.account_id, response);
+    logCodexRouting("codex_attempt", {
+      request_id: null,
+      attempt: 1,
+      slot: routing.slot + 1,
+      phase: "initial",
+      status: response.status,
+      status_class: codexStatusClass(response.status),
+    });
+
+    if (response.status === 429) {
+      response = (await markCodexQuotaBlocked(routing, response)).response;
+      codexSlotByResponse.set(response, options.slot);
+    }
+    // This harness deliberately does not retry a 401 through OAuth. Without
+    // that controlled refresh-and-retry, one response is insufficient to
+    // quarantine a credential globally; provider health still records it.
+    if (!response.ok) {
+      await releaseCodexRoutingProbe(routing);
+    } else if (routing.probeGeneration !== null) {
+      codexProbeByResponse.set(response, routing);
+    }
+
+    const after = await getStrongAuthPoolEntryForCacheScopeExperiment();
+    const persistedAfter = cacheScopeExperimentAccount(options.session, after, options.slot);
+    if (!sameCodexCredentials(persistedAfter, routing.auth)) {
+      throw new CodexCacheScopeExperimentError(
+        "Codex credentials changed after dispatch during the prompt-cache scope experiment.",
+      );
+    }
+  } catch (error) {
+    if (response) cancelResponseBody(response);
+    await releaseCodexRoutingProbe(routing);
+    throw error;
+  }
+  return response!;
 };
 
 const getCurrentAccountEntry = async (

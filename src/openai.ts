@@ -277,7 +277,7 @@ type RoutedResponsesUpstream = Readonly<{
   fallbackReason: InferenceFallbackReason | null;
 }>;
 
-type UsageTokens = Readonly<{
+export type UsageTokens = Readonly<{
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -303,7 +303,12 @@ const parseUsageToken = (value: unknown, present: boolean): ParsedUsageToken => 
   return { value, invalid: false };
 };
 
-const extractUsageTokens = (value: unknown): UsageTokens | null => {
+/**
+ * Normalizes terminal Responses usage for gateway telemetry. Internal control
+ * plane diagnostics reuse this parser so a cache experiment cannot quietly
+ * apply a different interpretation of upstream token fields.
+ */
+export const extractUsageTokens = (value: unknown): UsageTokens | null => {
   if (value === undefined) return null;
   if (!isRecord(value) || Array.isArray(value)) {
     return {

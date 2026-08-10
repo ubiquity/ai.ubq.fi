@@ -100,6 +100,12 @@ import {
 } from "./kv_migration.ts";
 import { getKv } from "./kv.ts";
 import {
+  PromptCacheScopeExperimentBusyError,
+  PromptCacheScopeExperimentFailedError,
+  PromptCacheScopeExperimentUnavailableError,
+  runPromptCacheScopeExperiment,
+} from "./prompt_cache_scope_experiment.ts";
+import {
   buildRuntimeConfig,
   cacheRuntimeConfig,
   loadRuntimeConfig,
@@ -141,6 +147,43 @@ export const handleAdminCodexRecheck = async (slot: number): Promise<Response> =
   const accepted = await recheckCodexRoutingSlot(slot);
   if (!accepted) return openaiError(404, "Codex account slot is not configured", "not_found");
   return new Response(null, { status: 204 });
+};
+
+/**
+ * Deliberately has no request fields: the runner owns the fixed matrix and
+ * accepts no model, account, cache-key, or conversation controls from callers.
+ */
+export const handleAdminCodexCacheScopeExperiment = async (req: Request): Promise<Response> => {
+  if ((await req.text()).trim()) {
+    return openaiError(400, "Prompt-cache scope experiment does not accept request fields", "invalid_request_error");
+  }
+  try {
+    return json(200, await runPromptCacheScopeExperiment());
+  } catch (error) {
+    if (error instanceof PromptCacheScopeExperimentBusyError) {
+      return openaiError(409, error.message, "prompt_cache_scope_experiment_busy");
+    }
+    if (error instanceof PromptCacheScopeExperimentFailedError) {
+      return openaiError(
+        503,
+        error.message,
+        `prompt_cache_scope_experiment_${error.failureCode}`,
+        { type: "server_error" },
+      );
+    }
+    if (error instanceof PromptCacheScopeExperimentUnavailableError) {
+      return openaiError(503, error.message, "prompt_cache_scope_experiment_unavailable", { type: "server_error" });
+    }
+    console.error("[ai.ubq.fi] Prompt-cache scope experiment could not start:", error);
+    return openaiError(
+      503,
+      "Prompt-cache scope experiment could not start.",
+      "prompt_cache_scope_experiment_unavailable",
+      {
+        type: "server_error",
+      },
+    );
+  }
 };
 
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
