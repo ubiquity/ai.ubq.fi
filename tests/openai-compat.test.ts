@@ -124,6 +124,7 @@ const {
   getCodexQuotaBlockFence,
   isCodexQuotaBlockFenceCurrent,
   markCodexQuotaBlocked,
+  markCodexUpstreamTimeout,
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
 const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
@@ -753,6 +754,39 @@ Deno.test("openai: an unknown banked reset returns an ordinary error with no suc
       });
     }
   }
+});
+
+Deno.test("openai: timeout-circuit short circuits remain gateway-generated", async () => {
+  const response = await withFetchMock(
+    () => {
+      throw new Error("a timeout circuit response must not dispatch to Codex");
+    },
+    async () => {
+      const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+      const selected = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+      assert.equal(selected.kind, "eligible");
+      if (selected.kind !== "eligible") throw new Error("expected an eligible timeout fixture account");
+      await markCodexUpstreamTimeout(selected.accounts[0]!);
+      return await handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "timeout circuit" }),
+        }),
+      );
+    },
+  );
+
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("x-uos-upstream"), null);
+  assert.deepEqual(await response.json(), {
+    error: {
+      message: "Codex upstream is temporarily unavailable after response-header timeouts; retry later.",
+      type: "server_error",
+      code: "codex_upstream_degraded",
+      param: null,
+    },
+  });
 });
 
 Deno.test("openai: a post-reset 429 is returned once without a successful stream", async (t) => {

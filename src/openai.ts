@@ -3,6 +3,7 @@ import {
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
+  CODEX_UPSTREAM_DEGRADED_ERROR_CODE,
   CodexError,
   type CodexModelsSnapshot,
   fetchCodexResponses,
@@ -1096,7 +1097,9 @@ const fetchResponsesWithPaidFallback = async (
   );
   const preservePrimaryWarnings = (response: Response): Response => withUosWarning(response, primaryWarnings);
   if (telemetry) telemetry.accountSlot = getCodexResponseSlot(primary);
-  const gatewayResponse = getCodexRoutingError(primary) === CODEX_QUOTA_BLOCKED_ERROR_CODE;
+  const routingError = getCodexRoutingError(primary);
+  const gatewayResponse = routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
+    routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {
       status: 503,
