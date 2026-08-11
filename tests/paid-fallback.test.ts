@@ -951,6 +951,37 @@ Deno.test("V3 terminal delivery expedites a request deferred before provider bil
   }
 });
 
+Deno.test("V3 expedite versions an already-due gate against stale recomputation", async () => {
+  memoryKv.clear();
+  const keyId = "v3-expedite-gate-version";
+  const requestId = "expedite-gate-version";
+  const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
+  assert.equal(decision.kind, "reserved");
+  if (decision.kind !== "reserved") throw new Error("expected reservation");
+
+  const gateKey = paidFallbackReconciliationGateV3Key();
+  const pendingKey = paidFallbackPendingV3Key(keyId, requestId);
+  const now = Date.now();
+  await memoryKv.set(gateKey, { next_due_at_ms: now });
+  await memoryKv.set(pendingKey, {
+    created_at_ms: now,
+    next_reconciliation_at_ms: now + 60_000,
+  });
+  const before = memoryKv.versionstamp(gateKey);
+
+  await markPaidFallbackTerminalV3(decision.reservation, "completed");
+
+  assert.notEqual(memoryKv.versionstamp(gateKey), before);
+  assert.equal(
+    Number((await memoryKv.get<Record<string, unknown>>(gateKey)).value?.next_due_at_ms) <= Date.now(),
+    true,
+  );
+  assert.equal(
+    Number((await memoryKv.get<Record<string, unknown>>(pendingKey)).value?.next_reconciliation_at_ms) <= Date.now(),
+    true,
+  );
+});
+
 Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and retain final-call overshoot", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;

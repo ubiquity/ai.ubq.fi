@@ -521,10 +521,10 @@ export const admitPaidFallbackV3 = async (
       } satisfies PaidFallbackPendingV3,
     );
     if (gateEntry) {
-      atomic = atomic.check(gateEntry);
-      if (paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
-        atomic = atomic.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
-      }
+      // A dispatch-intent admission creates a new billable marker. Always
+      // advance the gate version with it so a concurrent recompute cannot
+      // publish a scan that predates this marker.
+      atomic = atomic.check(gateEntry).set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
     }
     if (!unlimited) {
       atomic = atomic.check(windowEntry).set(windowKey, {
@@ -603,7 +603,9 @@ export const updatePaidFallbackRequestV3 = async (
       reconciliationAttempts === current.reconciliation_attempts &&
       lastReconciliationAtMs === current.last_reconciliation_at_ms
     ) return;
-    const shouldArmReconciliationGate = (current.dispatch_state !== "dispatched" && dispatchState === "dispatched") ||
+    const dispatchBoundary = current.dispatch_state !== "dispatched" &&
+      (dispatchState === "dispatched" || providerRequestId !== null);
+    const shouldArmReconciliationGate = dispatchBoundary ||
       (current.provider_request_id === null && providerRequestId !== null);
     const gateKey = paidFallbackReconciliationGateV3Key();
     const gateEntry = shouldArmReconciliationGate
@@ -624,7 +626,7 @@ export const updatePaidFallbackRequestV3 = async (
     });
     if (gateEntry) {
       atomic = atomic.check(gateEntry);
-      if (paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
+      if (dispatchBoundary || paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
         atomic = atomic.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
       }
     }
@@ -670,9 +672,10 @@ const releasePaidFallbackBeforeDispatchV3 = async (
       updated_at_ms: now,
     }).delete(pendingKey);
     atomic = atomic.check(gateEntry);
-    if (paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
-      atomic = atomic.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
-    }
+    // Deleting a pending marker must version-bump the gate even when it is
+    // already due; otherwise an overlapping recompute can publish a stale
+    // future timestamp for this row.
+    atomic = atomic.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
     if (windowEntry.value) {
       atomic = atomic.check(windowEntry).set(windowKey, {
         ...windowEntry.value,
@@ -747,17 +750,23 @@ const _expeditePaidFallbackReconciliationV3 = async (
       kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" }),
     ]);
     if (!pending.value) return;
-    let atomic = kv.atomic().check(pending).set(
-      pendingKey,
-      {
-        ...pending.value,
-        next_reconciliation_at_ms: Math.min(pending.value.next_reconciliation_at_ms, now),
-      } satisfies PaidFallbackPendingV3,
-    );
-    atomic = atomic.check(gateEntry);
-    if (paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
-      atomic = atomic.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
+    const markerNeedsExpedite = pending.value.next_reconciliation_at_ms > now;
+    const gateNeedsArm = paidFallbackReconciliationGateNeedsArm(gateEntry, now);
+    if (!markerNeedsExpedite && !gateNeedsArm) return;
+    let atomic = kv.atomic().check(pending).check(gateEntry);
+    if (markerNeedsExpedite) {
+      atomic = atomic.set(
+        pendingKey,
+        {
+          ...pending.value,
+          next_reconciliation_at_ms: now,
+        } satisfies PaidFallbackPendingV3,
+      );
     }
+    // A real expedite must version-bump the gate even when it is already due;
+    // otherwise an overlapping recompute can overwrite the new marker with a
+    // stale future timestamp.
+    atomic = atomic.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
     if ((await atomic.commit()).ok) {
       return;
     }
@@ -785,9 +794,7 @@ const deferPaidFallbackReconciliationV3 = async (
       const gateEntry = await kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" });
       let cleanup = kv.atomic().check(pendingEntry).delete(pendingKey);
       cleanup = cleanup.check(gateEntry);
-      if (paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
-        cleanup = cleanup.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
-      }
+      cleanup = cleanup.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
       const cleanupResult = await cleanup.commit();
       if (cleanupResult.ok) return null;
       continue;
@@ -838,9 +845,7 @@ const settlePaidFallbackRequestV3 = async (
       if (pendingEntry.value) {
         let cleanup = kv.atomic().check(pendingEntry).delete(pendingKey);
         cleanup = cleanup.check(gateEntry);
-        if (paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
-          cleanup = cleanup.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
-        }
+        cleanup = cleanup.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
         const cleanupResult = await cleanup.commit();
         if (!cleanupResult.ok) continue;
       }
@@ -878,9 +883,9 @@ const settlePaidFallbackRequestV3 = async (
       updated_at_ms: now,
     }).delete(pendingKey);
     atomic = atomic.check(gateEntry);
-    if (paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
-      atomic = atomic.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
-    }
+    // Settlement removes billable work. Keep the gate due and version it so a
+    // concurrent recompute cannot resurrect this marker's stale future time.
+    atomic = atomic.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
     if (windowEntry.value) {
       atomic = atomic.check(windowEntry).set(windowKey, {
         ...windowEntry.value,
@@ -924,7 +929,14 @@ export const reconcilePaidFallbackV3 = async (
       const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
       const request = requestEntry.value;
       if (!request || request.billing_state === "settled" || request.billing_state === "not_billed") {
-        await kv.atomic().check(pending).delete(pending.key).commit();
+        const gateKey = paidFallbackReconciliationGateV3Key();
+        const gateEntry = await kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" });
+        await kv.atomic()
+          .check(pending)
+          .check(gateEntry)
+          .delete(pending.key)
+          .set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now))
+          .commit();
         continue;
       }
       candidates.push(requestEntry as Deno.KvEntry<PaidFallbackRequestV3>);
