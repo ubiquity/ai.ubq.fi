@@ -2,6 +2,7 @@ import { config } from "./config.ts";
 import {
   claimCodexRoutingProbe,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
+  type CodexProbeCircuit,
   getCodexQuotaBlockFence,
   isCodexQuotaBlockFenceCurrent,
   markCodexCredentialInvalid,
@@ -732,6 +733,7 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
   }
 
   let response: Response | null = null;
+  let transportStarted = false;
   const headers = new Headers({
     originator: CODEX_ORIGINATOR,
     "user-agent": codexUserAgent(options.clientVersion),
@@ -755,6 +757,10 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
         JSON.stringify(body),
         headers,
         options.signal,
+        undefined,
+        () => {
+          transportStarted = true;
+        },
       );
     } catch (error) {
       void recordCodexThrownHealth(routing.auth.account_id, error);
@@ -798,7 +804,11 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
     }
   } catch (error) {
     if (response) cancelResponseBody(response);
-    await releaseCodexRoutingProbe(routing);
+    if (transportStarted && error instanceof CodexError && error.code === "gateway_timeout") {
+      await markCodexUpstreamTimeout(routing);
+    } else {
+      await releaseCodexRoutingProbe(routing);
+    }
     throw error;
   }
   return response!;
@@ -1618,6 +1628,7 @@ export const fetchCodexResponses = async (
   let authWarning: string | null = null;
   let authFailure: CodexError | null = null;
   let probeUnavailable = false;
+  let probeUnavailableCircuit: CodexProbeCircuit | null = null;
   let attemptNumber = 0;
   const refreshedSlots = new Set<number>();
   const retryState: {
@@ -2138,6 +2149,7 @@ export const fetchCodexResponses = async (
           probeRequired: disposition.usageLimitReached && disposition.retryAtMs !== null,
           probeGeneration: null,
           probeToken: null,
+          probeCircuit: disposition.usageLimitReached && disposition.retryAtMs !== null ? "quota" as const : null,
         },
         delayMs: Math.min(retryAfterDelay, CODEX_ADDITIONAL_429_RETRY_MAX_DELAY_MS),
         readyAtMs: disposition.retryAtMs ?? classifiedAtMs,
@@ -2386,6 +2398,7 @@ export const fetchCodexResponses = async (
       const claimed = await claimCodexRoutingProbe(poolEntry.pool, routing);
       if (!claimed) {
         probeUnavailable = true;
+        if (routing.probeCircuit === "upstream_timeout") probeUnavailableCircuit = "upstream_timeout";
         continue;
       }
       routing = claimed;
@@ -2456,6 +2469,25 @@ export const fetchCodexResponses = async (
       if (lastResponse) cancelResponseBody(lastResponse);
       throw error;
     }
+  }
+
+  if (probeUnavailableCircuit === "upstream_timeout") {
+    if (lastResponse) cancelResponseBody(lastResponse);
+    let retryAtMs: number | null = null;
+    try {
+      const currentPoolEntry = await getAuthPoolEntry(true, true);
+      const currentSelection = await selectCodexRoutingAccountsStrong(
+        currentPoolEntry.pool,
+        currentPoolEntry.pool.accounts,
+        Date.now(),
+        requestedModel,
+      );
+      if (currentSelection.kind === "upstream_blocked") retryAtMs = currentSelection.retryAtMs;
+    } catch {
+      // The failed claim already proves a competing timeout probe. Preserve its
+      // 503 classification if a fresh routing read is unavailable.
+    }
+    return upstreamTimeoutCircuitResponse(retryAtMs);
   }
 
   const retryCandidate = retryState.candidate;

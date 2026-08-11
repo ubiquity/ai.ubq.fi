@@ -10,6 +10,7 @@ class AuthKv {
   auth: CodexAuthPoolState;
   reads = 0;
   routingReads = 0;
+  routingCommitFailures = 0;
   nextReadGate: Promise<void> | null = null;
   onRoutingRead: ((read: number) => void | Promise<void>) | null = null;
   authVersion = 1;
@@ -69,6 +70,13 @@ class AuthKv {
         return chain;
       },
       commit: () => {
+        if (
+          this.routingCommitFailures > 0 &&
+          writes.some((write) => JSON.stringify(write.key) !== JSON.stringify(AUTH_KEY))
+        ) {
+          this.routingCommitFailures -= 1;
+          return Promise.resolve({ ok: false } as const);
+        }
         for (const check of checks) {
           const isAuth = JSON.stringify(check.key) === JSON.stringify(AUTH_KEY);
           const version = isAuth
@@ -129,7 +137,9 @@ const {
   CODEX_AUTH_CACHE_TTL_MS,
   CODEX_AUTH_REAUTH_WARNING,
   CodexError,
+  beginCodexCacheScopeExperiment,
   fetchCodexResponses,
+  fetchCodexResponsesForCacheScopeExperiment,
   getCodexResponseSlot,
   getCodexRoutingProbe,
   markCodexResponseCompleted,
@@ -143,6 +153,7 @@ const {
   CODEX_HALF_OPEN_LEASE_MS,
   CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
   markCodexQuotaBlocked,
+  markCodexUpstreamTimeout,
   parseCodexAccountRoutingState,
   resetCodexAccountRoutingForTest,
   selectCodexRoutingAccounts,
@@ -1049,6 +1060,148 @@ Deno.test("direct half-open probes release quota leases and timeouts open a boun
     }
   } finally {
     resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("cache-scope dispatch timeouts open the upstream timeout circuit", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const controller = new AbortController();
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  const session = await beginCodexCacheScopeExperiment();
+  globalThis.fetch = (_input, init) => {
+    inferenceCalls += 1;
+    controller.abort(new DOMException("cache-scope timeout", "TimeoutError"));
+    return Promise.reject(init?.signal?.reason ?? controller.signal.reason);
+  };
+
+  try {
+    await assert.rejects(
+      () =>
+        fetchCodexResponsesForCacheScopeExperiment(
+          { input: "cache-scope-timeout" },
+          {
+            session,
+            slot: 1,
+            conversationId: "cache-scope-timeout-conversation",
+            signal: controller.signal,
+          },
+        ),
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+    );
+    resetCodexAccountRoutingForTest();
+    const selected = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]!], fixedStartMs);
+    assert.equal(selected.kind, "upstream_blocked");
+    if (selected.kind === "upstream_blocked") {
+      assert.equal(selected.retryAtMs, fixedStartMs + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS);
+    }
+    assert.equal(inferenceCalls, 1);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a losing timeout-probe claim keeps the response upstream-blocked", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
+  assert.equal(initial.kind, "eligible");
+  if (initial.kind !== "eligible") return;
+  await markCodexUpstreamTimeout(
+    initial.accounts[0]!,
+    fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1,
+  );
+  kv.routingCommitFailures = 3;
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    return Promise.resolve(new Response("transport should not start", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "timeout-probe-race" });
+    assert.equal(response.status, 503);
+    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "codex_upstream_degraded");
+    assert.equal(inferenceCalls, 0);
+  } finally {
+    kv.routingCommitFailures = 0;
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a timeout probe that returns quota retags its bounded retry as quota", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  let inferenceCalls = 0;
+  let concurrentStatus: number | null = null;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
+  assert.equal(initial.kind, "eligible");
+  if (initial.kind !== "eligible") return;
+  await markCodexUpstreamTimeout(
+    initial.accounts[0]!,
+    fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1,
+  );
+  globalThis.fetch = async () => {
+    inferenceCalls += 1;
+    if (inferenceCalls === 1) {
+      return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "1" },
+      });
+    }
+    if (inferenceCalls === 2) {
+      concurrentStatus = (await fetchCodexResponses({ input: "timeout-probe-race-concurrent" })).status;
+      return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "60" },
+      });
+    }
+    return new Response("unexpected extra transport", { status: 200 });
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "timeout-probe-quota-retry" },
+      { retrySleep: () => Promise.resolve() },
+    );
+    assert.equal(response.status, 429);
+    assert.equal(concurrentStatus, 429);
+    assert.equal(inferenceCalls, 2);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
     globalThis.fetch = originalFetch;
     Date.now = originalNow;
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;

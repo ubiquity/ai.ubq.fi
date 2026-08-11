@@ -1613,6 +1613,46 @@ Deno.test("same-account credential rotation retains an active upstream timeout c
   }
 });
 
+Deno.test("credential refresh transfers an owned upstream-timeout probe", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    await markCodexUpstreamTimeout(initial.accounts[0]!, now - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
+    const halfOpen = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(halfOpen.kind, "eligible");
+    if (halfOpen.kind !== "eligible") return;
+    const probe = await claimCodexRoutingProbe(singlePool, halfOpen.accounts[0]!, now);
+    assert.ok(probe);
+    if (!probe) return;
+
+    const rotated = {
+      ...singlePool.accounts[0]!,
+      access_token: "rotated-access",
+      updated_at_ms: now + 1,
+    };
+    const reconciled = await reconcileCodexRoutingAccount(probe, rotated);
+    assert.equal(reconciled.probeCircuit, "upstream_timeout");
+    assert.equal(reconciled.probeToken, probe.probeToken);
+    assert.notEqual(reconciled.probeGeneration, probe.probeGeneration);
+    const transferred = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(transferred?.slots[0]?.probe_lease?.circuit, "upstream_timeout");
+    assert.equal(transferred?.slots[0]?.probe_lease?.generation, reconciled.probeGeneration);
+
+    await markCodexSuccess(reconciled);
+    const recovered = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(recovered?.slots[0]?.upstream_timeout_blocked_until_ms, null);
+    assert.equal(recovered?.slots[0]?.probe_lease, null);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("a stale refresh reconciliation cannot overwrite a newer credential version", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
