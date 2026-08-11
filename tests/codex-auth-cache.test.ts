@@ -141,6 +141,7 @@ const {
   claimCodexRoutingProbe,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_HALF_OPEN_LEASE_MS,
+  CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
   markCodexQuotaBlocked,
   parseCodexAccountRoutingState,
   resetCodexAccountRoutingForTest,
@@ -970,7 +971,7 @@ Deno.test("a malformed successful refresh is transient and does not quarantine t
   }
 });
 
-Deno.test("every direct half-open probe outcome releases its expired quota lease", async (t) => {
+Deno.test("direct half-open probes release quota leases and timeouts open a bounded circuit", async (t) => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1006,21 +1007,23 @@ Deno.test("every direct half-open probe outcome releases its expired quota lease
 
         now += 1_001;
         let codexCalls = 0;
+        let timeoutController: AbortController | null = null;
         globalThis.fetch = (_input, init) => {
           codexCalls += 1;
           if (codexCalls > 1) return Promise.resolve(new Response("{}", { status: 200 }));
           if (testCase.timeout) {
-            return Promise.reject(init?.signal?.reason ?? new DOMException("timed out", "TimeoutError"));
+            const reason = new DOMException("timed out", "TimeoutError");
+            timeoutController?.abort(reason);
+            return Promise.reject(init?.signal?.reason ?? reason);
           }
           if (testCase.status === null) return Promise.reject(new TypeError("network fixture"));
           return Promise.resolve(new Response("{}", { status: testCase.status }));
         };
 
         if (testCase.timeout) {
-          const controller = new AbortController();
-          controller.abort(new DOMException("timed out", "TimeoutError"));
+          timeoutController = new AbortController();
           await assert.rejects(
-            () => fetchCodexResponses({ input: testCase.name }, { signal: controller.signal }),
+            () => fetchCodexResponses({ input: testCase.name }, { signal: timeoutController!.signal }),
             (error: unknown) => error instanceof Error && "status" in error && error.status === 504,
           );
         } else if (testCase.status === null) {
@@ -1034,12 +1037,118 @@ Deno.test("every direct half-open probe outcome releases its expired quota lease
         }
 
         const second = await fetchCodexResponses({ input: `${testCase.name}-second` });
-        assert.equal(second.status, 200);
-        assert.equal(codexCalls, 2);
+        if (testCase.timeout) {
+          assert.equal(second.status, 503);
+          assert.equal(second.headers.get("Retry-After"), "60");
+          assert.equal(codexCalls, 1);
+        } else {
+          assert.equal(second.status, 200);
+          assert.equal(codexCalls, 2);
+        }
       });
     }
   } finally {
     resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a timeout during bounded retry refresh keeps the timeout circuit held", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const controller = new AbortController();
+  let inferenceCalls = 0;
+  let refreshCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("auth.openai.com/oauth/token")) {
+      refreshCalls += 1;
+      return Promise.resolve(
+        new Response(JSON.stringify({ access_token: accessToken("one"), refresh_token: "refresh-one" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }
+    inferenceCalls += 1;
+    if (inferenceCalls === 1) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "1" },
+        }),
+      );
+    }
+    if (inferenceCalls === 2) return Promise.resolve(new Response("{}", { status: 401 }));
+    controller.abort(new DOMException("bounded retry timeout", "TimeoutError"));
+    return Promise.reject(init?.signal?.reason ?? controller.signal.reason);
+  };
+
+  try {
+    await assert.rejects(
+      () =>
+        fetchCodexResponses({ input: "bounded-retry-refresh-timeout" }, {
+          signal: controller.signal,
+          retrySleep: () => Promise.resolve(),
+        }),
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+    );
+    resetCodexAccountRoutingForTest();
+    const selected = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
+    assert.equal(selected.kind, "upstream_blocked");
+    if (selected.kind === "upstream_blocked") {
+      assert.equal(selected.retryAtMs, fixedStartMs + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS);
+    }
+    assert.equal(inferenceCalls, 3);
+    assert.equal(refreshCalls, 1);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("an already-aborted timeout signal does not open or dispatch an account circuit", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const controller = new AbortController();
+  let inferenceCalls = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  controller.abort(new DOMException("deadline elapsed before dispatch", "TimeoutError"));
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    return Promise.reject(new DOMException("transport should not start", "TimeoutError"));
+  };
+
+  try {
+    await assert.rejects(
+      () => fetchCodexResponses({ input: "pre-dispatch-timeout" }, { signal: controller.signal }),
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+    );
+    resetCodexAccountRoutingForTest();
+    const selected = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
+    assert.equal(selected.kind, "eligible");
+    assert.equal(inferenceCalls, 0);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
     globalThis.fetch = originalFetch;
     Date.now = originalNow;
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;

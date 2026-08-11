@@ -8,6 +8,7 @@ import {
   markCodexQuotaBlocked,
   markCodexRecoveryProbeQuotaBlocked,
   markCodexSuccess,
+  markCodexUpstreamTimeout,
   parseCodexAccountRoutingState,
   reconcileCodexQuotaAfterStaleVerifiedReset,
   reconcileCodexQuotaAfterVerifiedReset,
@@ -60,6 +61,7 @@ const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_CLIENT_VERSION = "0.100.0";
 export const CODEX_QUOTA_BLOCKED_ERROR_CODE = "codex_quota_blocked";
+export const CODEX_UPSTREAM_DEGRADED_ERROR_CODE = "codex_upstream_degraded";
 export const CODEX_AUTH_REAUTH_WARNING = "codex_auth_reauthentication_required";
 export const CODEX_AUTH_REAUTH_MESSAGE =
   "The gateway's Codex auth.json needs re-authentication. Upload a fresh auth.json and retry.";
@@ -1363,7 +1365,7 @@ const fetchCodexResponseWithAuth = async (
     // transport: request-quota reservations commit on dispatch, not on
     // validation, routing, or a later retry outcome.
     const dispatch = beforeDispatch ? await beforeDispatch() : undefined;
-    if (dispatch && transportSignal.aborted) {
+    if (transportSignal.aborted) {
       await dispatch?.cancelBeforeTransport();
       throw transportSignal.reason ?? new DOMException("The request was aborted.", "AbortError");
     }
@@ -1408,7 +1410,7 @@ const routingErrorResponse = (
   retryAtMs: number | null = null,
 ): Response => {
   const headers = new Headers({ "Content-Type": "application/json" });
-  if (status === 429 && retryAtMs !== null) {
+  if ((status === 429 || status === 503) && retryAtMs !== null) {
     headers.set("Retry-After", String(Math.max(1, Math.ceil((retryAtMs - Date.now()) / 1000))));
   }
   const response = new Response(
@@ -1425,6 +1427,14 @@ const routingErrorResponse = (
   if (code === CODEX_QUOTA_BLOCKED_ERROR_CODE) codexRoutingErrors.set(response, code);
   return response;
 };
+
+const upstreamTimeoutCircuitResponse = (retryAtMs: number | null): Response =>
+  routingErrorResponse(
+    503,
+    "Codex upstream is temporarily unavailable after response-header timeouts; retry later.",
+    CODEX_UPSTREAM_DEGRADED_ERROR_CODE,
+    retryAtMs,
+  );
 
 type CodexResponseTimingHooks = Readonly<{
   onDispatch?: () => void;
@@ -1572,6 +1582,7 @@ export const fetchCodexResponses = async (
       CODEX_AUTH_REAUTH_WARNING,
     );
   }
+  if (selected.kind === "upstream_blocked") return upstreamTimeoutCircuitResponse(selected.retryAtMs);
   let accountEntries = selected.kind === "eligible"
     ? selected.accounts.map((routing) => ({ ...poolEntry, auth: routing.auth, routing }))
     : [];
@@ -1898,7 +1909,9 @@ export const fetchCodexResponses = async (
       });
       return null;
     }
-    const blockedAccounts = routedPool.kind === "credentials_invalid" ? [] : routedPool.blockedAccounts;
+    const blockedAccounts = routedPool.kind === "eligible" || routedPool.kind === "quota_blocked"
+      ? routedPool.blockedAccounts
+      : [];
     if (!blockedAccounts.length) return null;
     let partialCohort: PartialBankedResetCohortFence | null = null;
     if (requireFullPool) {
@@ -1985,6 +1998,7 @@ export const fetchCodexResponses = async (
     beforeTransport?: () => Promise<void>,
   ): Promise<Response> => {
     attemptNumber += 1;
+    let transportStarted = false;
     try {
       const response = await fetchCodexResponseWithAuth(
         auth,
@@ -2004,7 +2018,10 @@ export const fetchCodexResponses = async (
             return dispatch;
           }
           : options.beforeDispatch,
-        () => reportCodexResponseTiming(options.timing?.onDispatch),
+        () => {
+          transportStarted = true;
+          reportCodexResponseTiming(options.timing?.onDispatch);
+        },
       );
       codexSlotByResponse.set(response, routing.slot + 1);
       reportCodexResponseTiming(options.timing?.onHeaders);
@@ -2021,6 +2038,12 @@ export const fetchCodexResponses = async (
     } catch (error) {
       if (!(error instanceof CodexBankedResetRetryFenceError)) {
         void recordCodexThrownHealth(accountEntry.auth.account_id, error);
+      }
+      if (transportStarted && error instanceof CodexError && error.code === "gateway_timeout") {
+        // The transport may already have reached Codex. Fence only future
+        // requests; every inference attempt, including bounded and reset
+        // retries, must preserve the no-replay circuit.
+        await markCodexUpstreamTimeout(routing);
       }
       logCodexRouting("codex_attempt", {
         request_id: options.requestId ?? null,
@@ -2302,6 +2325,10 @@ export const fetchCodexResponses = async (
       );
     }
     selected = refreshedSelection;
+    if (selected.kind === "upstream_blocked") {
+      if (definitiveCanaryFailure) return definitiveCanaryFailure;
+      return upstreamTimeoutCircuitResponse(selected.retryAtMs);
+    }
     if (selected.kind === "credentials_invalid") {
       if (definitiveCanaryFailure) cancelResponseBody(definitiveCanaryFailure);
       return withCodexAuthWarning(
@@ -2347,7 +2374,6 @@ export const fetchCodexResponses = async (
       selected.retryAtMs,
     );
   }
-
   for (let index = 0; index < accountEntries.length; index += 1) {
     const accountEntry = accountEntries[index];
     let routing = accountEntry.routing!;
@@ -2417,8 +2443,11 @@ export const fetchCodexResponses = async (
         noteCodexAuthFailure(error);
         continue;
       }
-      await releaseCodexRoutingProbe(routing);
-      // Fetch failures, aborts, and deadlines are account-independent.
+      if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
+        await releaseCodexRoutingProbe(routing);
+      }
+      // Other transport failures, aborts, and deadlines remain account-independent;
+      // only the explicit upstream response-header timeout opens this circuit.
       if (lastResponse) cancelResponseBody(lastResponse);
       throw error;
     }
@@ -2494,7 +2523,9 @@ export const fetchCodexResponses = async (
         "two_second_retry",
       );
     } catch (error) {
-      await releaseCodexRoutingProbe(retryRouting);
+      if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
+        await releaseCodexRoutingProbe(retryRouting);
+      }
       throw error;
     }
     if (responseIsCodexAuthFailure(retryAuth, response)) {
@@ -2517,7 +2548,9 @@ export const fetchCodexResponses = async (
             noteCodexAuthFailure(error);
             return authFailureResponse(error);
           }
-          await releaseCodexRoutingProbe(retryRouting);
+          if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
+            await releaseCodexRoutingProbe(retryRouting);
+          }
           throw error;
         }
         if (responseIsCodexAuthFailure(retryAuth, response)) {
