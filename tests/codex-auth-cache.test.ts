@@ -2386,6 +2386,79 @@ Deno.test("a sibling blocked during partial preflight is not dispatched from the
   }
 });
 
+Deno.test("a sibling timeout during partial preflight invalidates the reset cohort", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  await seedStableBankedResetBlock();
+  const warmed = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
+  assert.equal(warmed.kind, "eligible");
+  const reset = scriptedResetProvider({
+    onInventory: () => {
+      const routingKey = JSON.stringify(CODEX_ACCOUNT_ROUTING_KV_KEY);
+      const entry = kv.extra.get(routingKey);
+      assert.ok(entry);
+      const state = structuredClone(parseCodexAccountRoutingState(entry.value));
+      assert.ok(state);
+      if (!state) throw new Error("expected durable routing state");
+      const sibling = state.slots[1];
+      assert.ok(sibling);
+      if (!sibling) throw new Error("expected sibling routing slot");
+      const slots = [...state.slots];
+      slots[1] = {
+        ...sibling,
+        upstream_timeout_blocked_until_ms: fixedStartMs + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
+        generation: sibling.generation + 1,
+        probe_lease: null,
+      };
+      kv.extra.set(routingKey, {
+        value: { ...state, updated_at_ms: fixedStartMs, slots },
+        version: entry.version + 1,
+      });
+    },
+  });
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.resolve(new Response(JSON.stringify({ id: "stale-timeout-fallback" }), { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "partial-preflight-sibling-timeout" },
+      {
+        requestId: "partial-preflight-sibling-timeout",
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-partial-preflight-sibling-timeout",
+        },
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).error.code, "codex_upstream_degraded");
+    assert.deepEqual(reset.inventoryAccountIds, ["account-one"]);
+    assert.deepEqual(reset.redeemAccountIds, []);
+    assert.deepEqual(reset.calls, ["inventory"]);
+    assert.deepEqual(accountIds, []);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
 Deno.test("a routing KV outage after partial preflight never dispatches a cached fallback", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;

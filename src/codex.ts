@@ -1424,7 +1424,9 @@ const routingErrorResponse = (
     }),
     { status, headers },
   );
-  if (code === CODEX_QUOTA_BLOCKED_ERROR_CODE) codexRoutingErrors.set(response, code);
+  if (code === CODEX_QUOTA_BLOCKED_ERROR_CODE || code === CODEX_UPSTREAM_DEGRADED_ERROR_CODE) {
+    codexRoutingErrors.set(response, code);
+  }
   return response;
 };
 
@@ -1725,8 +1727,11 @@ export const fetchCodexResponses = async (
       const slot = current.slots[account.slot];
       return slot?.account_id_hash === account.accountIdHash &&
         slot.credential_version === account.credentialVersion &&
+        typeof account.routingGeneration === "number" &&
+        slot.generation === account.routingGeneration &&
         slot.invalid_credential_version !== account.credentialVersion &&
         slot.quota_blocked_until_ms === null &&
+        (slot.upstream_timeout_blocked_until_ms ?? 0) <= cohort.observedAtMs &&
         (slot.probe_lease?.expires_at_ms ?? 0) <= cohort.observedAtMs;
     });
   };

@@ -213,7 +213,12 @@ Deno.test("an expired quota timestamp does not misclassify a held timeout probe"
             quota_blocked_until_ms: now - 1,
             quota_block_source: "header_retry_after",
             upstream_timeout_blocked_until_ms: now - 1,
-            probe_lease: { token: "held-timeout-probe", expires_at_ms: probeExpiresAtMs, generation: slot.generation },
+            probe_lease: {
+              token: "held-timeout-probe",
+              expires_at_ms: probeExpiresAtMs,
+              generation: slot.generation,
+              circuit: "upstream_timeout",
+            },
           }
           : slot
       ),
@@ -224,6 +229,87 @@ Deno.test("an expired quota timestamp does not misclassify a held timeout probe"
     assert.equal(selected.kind, "upstream_blocked");
     if (selected.kind !== "upstream_blocked") return;
     assert.equal(selected.retryAtMs, probeExpiresAtMs);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("a held quota probe does not misclassify a stale timeout as upstream blocked", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    const account = initial.accounts[0]!;
+    await markCodexUpstreamTimeout(account, now - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
+    const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.ok(state);
+    if (!state) return;
+    const probeExpiresAtMs = now + 1_000;
+    await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
+      ...state,
+      updated_at_ms: now,
+      slots: state.slots.map((slot, index) =>
+        index === account.slot
+          ? {
+            ...slot,
+            quota_blocked_until_ms: now - 1,
+            quota_block_source: "header_retry_after",
+            upstream_timeout_blocked_until_ms: now - 1,
+            probe_lease: {
+              token: "held-quota-probe",
+              expires_at_ms: probeExpiresAtMs,
+              generation: slot.generation,
+              circuit: "quota",
+            },
+          }
+          : slot
+      ),
+    });
+    resetCodexAccountRoutingForTest();
+
+    const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
+    assert.equal(selected.kind, "quota_blocked");
+    if (selected.kind !== "quota_blocked") return;
+    assert.equal(selected.retryAtMs, probeExpiresAtMs);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("timeout blocks take precedence over quota blocks in a mixed unavailable pool", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    await markCodexQuotaBlocked(
+      initial.accounts.find((account) => account.auth.account_id === "one")!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "60" },
+      }),
+      now,
+    );
+    await markCodexUpstreamTimeout(
+      initial.accounts.find((account) => account.auth.account_id === "two")!,
+      now,
+    );
+
+    resetCodexAccountRoutingForTest();
+    const selected = await selectCodexRoutingAccounts(pool, pool.accounts, now + 1);
+    assert.equal(selected.kind, "upstream_blocked");
+    if (selected.kind === "upstream_blocked") {
+      assert.equal(selected.retryAtMs, now + 60_000);
+    }
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
