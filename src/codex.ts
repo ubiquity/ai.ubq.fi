@@ -51,7 +51,7 @@ import {
   normalizeRuntimeConfig,
   RUNTIME_CONFIG_V2_KEY,
 } from "./runtime_config.ts";
-import { recordProviderCapacityResetEvent } from "./provider_capacity_events.ts";
+import { recordProviderCapacityDowntimeEvent, recordProviderCapacityResetEvent } from "./provider_capacity_events.ts";
 import { decodeBase64ToString, getString, isRecord, sha256Hex } from "./utils.ts";
 import type { CodexAuthPoolState, CodexAuthState, ResponseInputItem } from "./types.ts";
 
@@ -1311,6 +1311,11 @@ const recordCodexResponseHealth = async (
   } else if (response.status === 429) {
     await recordCodexProviderHealth(accountId, "quota_exhausted", response.status);
   } else if (response.status >= 500) {
+    void recordProviderCapacityDowntimeEvent({
+      failure_kind: "upstream_error",
+      status: response.status,
+      observed_at_ms: Date.now(),
+    });
     await recordCodexProviderHealth(accountId, "upstream_error", response.status);
   } else {
     await recordCodexProviderHealth(accountId, response.ok ? "success" : "reachable", response.status);
@@ -1325,7 +1330,16 @@ const recordCodexThrownHealth = async (accountId: string, error: unknown): Promi
   ) {
     return;
   }
+  const isProviderTransportFailure = error instanceof CodexError &&
+    (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable");
   await recordCodexProviderHealth(accountId, "upstream_error", null);
+  if (isProviderTransportFailure) {
+    void recordProviderCapacityDowntimeEvent({
+      failure_kind: "unreachable",
+      status: error instanceof CodexError && error.status >= 500 && error.status <= 599 ? error.status : null,
+      observed_at_ms: Date.now(),
+    });
+  }
 };
 
 /**

@@ -21,7 +21,12 @@ import {
   refreshProviderCapacity,
   sampleProviderCapacityForCron,
 } from "../src/provider_capacity.ts";
-import { PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX } from "../src/provider_capacity_events.ts";
+import {
+  listProviderCapacityDowntimeEvents,
+  PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX,
+  PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX,
+  recordProviderCapacityDowntimeEvent,
+} from "../src/provider_capacity_events.ts";
 import { YUNWU_QUOTA_STATE_KEY } from "../src/yunwu_quota.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
 
@@ -206,6 +211,7 @@ const createFetcher = (
   codexUsage: ((account: string | null) => readonly [number, number]) | null = null,
   codexSpark = false,
   codexSparkResetAt = 1_800_011_000,
+  failureStatus = 503,
 ) =>
 (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const headers = new Headers(init?.headers);
@@ -255,7 +261,9 @@ const createFetcher = (
       ),
     );
   }
-  if (account === failureAccount) return Promise.resolve(new Response("upstream-secret-body", { status: 503 }));
+  if (account === failureAccount) {
+    return Promise.resolve(new Response("upstream-secret-body", { status: failureStatus }));
+  }
   const used = codexUsage?.(account) ?? (account === "account-one" ? [12.5, 38] : [67, 81.25]);
   return Promise.resolve(
     new Response(
@@ -602,14 +610,14 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
   assert.equal(kvStore.get(keyToString(PROVIDER_CAPACITY_LEASE_KEY)), undefined);
 });
 
-Deno.test("partial sampler failures stay unavailable and produce graph gaps", async () => {
+Deno.test("partial sampler failures retain redacted downtime evidence for graph bridges", async () => {
   seed();
   const firstCalls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
   await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher(firstCalls), now: () => nowMs });
   const secondCalls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
   const partial = await refreshProviderCapacity({
     kv: kvStub,
-    fetcher: createFetcher(secondCalls, "account-one"),
+    fetcher: createFetcher(secondCalls, "account-one", {}, null, false, 1_800_011_000, 504),
     now: () => nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
   });
   const accountOne = partial.sources.find((source) => source.source === "codex" && source.slot === 1);
@@ -618,9 +626,47 @@ Deno.test("partial sampler failures stay unavailable and produce graph gaps", as
   assert.equal(accountTwo?.state, "available");
   assert.equal(partial.history.length, 2);
   assert.equal(partial.history[1]?.sources[0]?.state, "unavailable");
+  assert.equal(partial.history[1]?.sources[0]?.failure_kind, "upstream_error");
+  assert.equal(partial.history[1]?.sources[0]?.failure_status, 504);
+  assert.equal(partial.history[1]?.sources[0]?.source_observed_at_ms, nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS);
   assert.equal(partial.history[1]?.sources[0]?.windows.primary, null);
   assert.equal(partial.history[1]?.sources[1]?.windows.secondary?.used_percent, 81.25);
   assert.equal(JSON.stringify(partial).includes("upstream-secret-body"), false);
+});
+
+Deno.test("downtime evidence is redacted, deduplicated per chart bucket, and retained in the view", async () => {
+  seed();
+  const firstObservedAtMs = nowMs + 1_000;
+  assert.equal(
+    await recordProviderCapacityDowntimeEvent({
+      failure_kind: "upstream_error",
+      status: 504,
+      observed_at_ms: firstObservedAtMs,
+    }, kvStub),
+    true,
+  );
+  assert.equal(
+    await recordProviderCapacityDowntimeEvent({
+      failure_kind: "unreachable",
+      status: null,
+      observed_at_ms: firstObservedAtMs + 1_000,
+    }, kvStub),
+    true,
+  );
+  const events = await listProviderCapacityDowntimeEvents({ kv: kvStub, now: () => firstObservedAtMs + 1_000 });
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.provider, "openai");
+  assert.equal(events[0]?.status, 504);
+  assert.equal([...kvStore.keys()].some((key) => key.includes("upstream-secret-body")), false);
+  assert.equal(
+    [...kvStore.keys()].filter((key) => {
+      const parsed = JSON.parse(key) as Deno.KvKey;
+      return PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX.every((part, index) => parsed[index] === part);
+    }).length,
+    1,
+  );
+  const view = await getPersistedProviderCapacityView({ kv: kvStub, now: () => firstObservedAtMs + 1_000 });
+  assert.deepEqual(view.downtime_events, events);
 });
 
 Deno.test("persisted Codex data becomes stale after the missed-run allowance", async () => {
