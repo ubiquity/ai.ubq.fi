@@ -212,6 +212,7 @@ const createFetcher = (
   codexSpark = false,
   codexSparkResetAt = 1_800_011_000,
   failureStatus = 503,
+  codexSparkForAccount: ((account: string | null) => boolean) | null = null,
 ) =>
 (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const headers = new Headers(init?.headers);
@@ -265,10 +266,11 @@ const createFetcher = (
     return Promise.resolve(new Response("upstream-secret-body", { status: failureStatus }));
   }
   const used = codexUsage?.(account) ?? (account === "account-one" ? [12.5, 38] : [67, 81.25]);
+  const includeCodexSpark = codexSparkForAccount ? codexSparkForAccount(account) : codexSpark;
   return Promise.resolve(
     new Response(
       JSON.stringify(
-        codexSpark ? codexSparkUsageBody(used[0], used[1], codexSparkResetAt) : codexUsageBody(used[0], used[1]),
+        includeCodexSpark ? codexSparkUsageBody(used[0], used[1], codexSparkResetAt) : codexUsageBody(used[0], used[1]),
       ),
       {
         status: 200,
@@ -288,6 +290,9 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
   const accountOne = live.sources.find(
     (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
   );
+  const accountTwo = live.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2,
+  );
   assert.equal(accountOne?.windows.secondary, null);
   assert.deepEqual(accountOne?.additional_rate_limits, [{
     limit_name: "GPT-5.3-Codex-Spark",
@@ -301,12 +306,28 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
       secondary: null,
     },
   }]);
+  assert.deepEqual(accountTwo?.additional_rate_limits, [{
+    limit_name: "GPT-5.3-Codex-Spark",
+    metered_feature: "codex_bengalfox",
+    windows: {
+      primary: {
+        limit_window_seconds: 18_000,
+        used_percent: 81.25,
+        reset_at_ms: 1_800_011_000_000,
+      },
+      secondary: null,
+    },
+  }]);
 
   const persisted = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs });
   const persistedAccount = persisted.sources.find(
     (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
   );
+  const persistedAccountTwo = persisted.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2,
+  );
   assert.deepEqual(persistedAccount?.additional_rate_limits, accountOne?.additional_rate_limits);
+  assert.deepEqual(persistedAccountTwo?.additional_rate_limits, accountTwo?.additional_rate_limits);
   assert.equal(JSON.stringify(live).includes("must-not-escape"), false);
   const routingObservation = JSON.stringify(kvStore.get(keyToString(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)));
   assert.equal(routingObservation.includes("account-one"), false);
@@ -314,7 +335,7 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
   assert.equal(routingObservation.includes("GPT-5.3-Codex-Spark"), true);
 });
 
-Deno.test("sampler defers unused additional limits with full-window resets", async () => {
+Deno.test("sampler keeps unused additional limits visible while deferring them from routing", async () => {
   seed();
   const live = await refreshProviderCapacity({
     kv: kvStub,
@@ -324,7 +345,59 @@ Deno.test("sampler defers unused additional limits with full-window resets", asy
   const accountOne = live.sources.find(
     (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
   );
-  assert.deepEqual(accountOne?.additional_rate_limits, []);
+  assert.deepEqual(accountOne?.additional_rate_limits, [{
+    limit_name: "GPT-5.3-Codex-Spark",
+    metered_feature: "codex_bengalfox",
+    windows: {
+      primary: {
+        limit_window_seconds: 18_000,
+        used_percent: 0,
+        reset_at_ms: nowMs + 18_000_000,
+      },
+      secondary: null,
+    },
+  }]);
+  const routingObservation = JSON.stringify(kvStore.get(keyToString(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)));
+  assert.equal(routingObservation.includes("GPT-5.3-Codex-Spark"), false);
+});
+
+Deno.test("sampler mirrors a reported Spark limit to an available sibling for the admin view", async () => {
+  seed();
+  const live = await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher: createFetcher([], null, {}, null, true, 1_800_011_000, 503, (account) => account === "account-one"),
+    now: () => nowMs,
+  });
+  const accountOne = live.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
+  );
+  const accountTwo = live.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2,
+  );
+  assert.equal(accountOne?.additional_rate_limits.length, 1);
+  assert.deepEqual(accountTwo?.additional_rate_limits, accountOne?.additional_rate_limits);
+
+  const storedSnapshot = kvStore.get(keyToString(PROVIDER_CAPACITY_SNAPSHOT_KEY))?.value as {
+    sources?: readonly { source: string; slot?: number; additional_rate_limits?: readonly unknown[] }[];
+  } | undefined;
+  assert.deepEqual(
+    storedSnapshot?.sources?.find((source) => source.source === "codex" && source.slot === 2)
+      ?.additional_rate_limits,
+    [],
+  );
+
+  const persisted = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs });
+  const persistedAccountTwo = persisted.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2,
+  );
+  assert.deepEqual(persistedAccountTwo?.additional_rate_limits, accountTwo?.additional_rate_limits);
+  const routingStore = kvStore.get(keyToString(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY))?.value as {
+    observations?: readonly { slot: number; additional_rate_limits: readonly unknown[] }[];
+  } | undefined;
+  assert.deepEqual(
+    routingStore?.observations?.map((observation) => [observation.slot, observation.additional_rate_limits.length]),
+    [[0, 1], [1, 0]],
+  );
 });
 
 const historySource = (slot: 1 | 2, sampledAtMs: number, state: "available" | "unavailable" = "available") => ({

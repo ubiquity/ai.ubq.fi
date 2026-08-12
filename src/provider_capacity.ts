@@ -30,6 +30,7 @@ export const PROVIDER_CAPACITY_SOURCE_STALE_MS = 30 * 60_000;
 export const PROVIDER_CAPACITY_CODEX_TIMEOUT_MS = 8_000;
 
 const ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS = 60_000;
+const CODEX_SPARK_LIMIT_NAME = "GPT-5.3-Codex-Spark";
 
 type CapacityState = "available" | "stale" | "unavailable";
 export type ProviderCapacityViewState = "live" | "persisted" | "stale" | "unavailable";
@@ -186,10 +187,7 @@ const isUnanchoredAdditionalWindow = (window: ProviderCapacityWindow | null, sna
     Math.abs(window.reset_at_ms - expectedResetAtMs) <= ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS;
 };
 
-const parseCodexAdditionalRateLimit = (
-  value: unknown,
-  snapshotAtMs: number,
-): ProviderCapacityAdditionalRateLimit | null => {
+const parseCodexAdditionalRateLimit = (value: unknown): ProviderCapacityAdditionalRateLimit | null => {
   if (!isRecord(value)) return null;
   const limitName = typeof value.limit_name === "string" ? value.limit_name.trim() : "";
   if (!limitName) return null;
@@ -197,20 +195,67 @@ const parseCodexAdditionalRateLimit = (
   const rateLimit = isRecord(value.rate_limit) ? value.rate_limit : null;
   const parsedPrimary = parseCodexWindow(rateLimit?.primary_window);
   const parsedSecondary = parseCodexWindow(rateLimit?.secondary_window);
-  const primary = isUnanchoredAdditionalWindow(parsedPrimary, snapshotAtMs) ? null : parsedPrimary;
-  const secondary = isUnanchoredAdditionalWindow(parsedSecondary, snapshotAtMs) ? null : parsedSecondary;
-  if (!primary && !secondary) return null;
+  if (!parsedPrimary && !parsedSecondary) return null;
   return {
     limit_name: limitName,
     metered_feature: meteredFeature,
     windows: {
-      primary,
-      secondary,
+      // Keep OpenAI's unused model window for the admin card. Routing filters
+      // this unanchored value separately because its reset is not evidence of
+      // a shared quota cycle.
+      primary: parsedPrimary,
+      secondary: parsedSecondary,
     },
   };
 };
 
-const parseCodexUsage = (value: unknown, snapshotAtMs: number):
+const additionalRateLimitsForRouting = (
+  limits: readonly ProviderCapacityAdditionalRateLimit[],
+  snapshotAtMs: number,
+): readonly ProviderCapacityAdditionalRateLimit[] =>
+  limits.flatMap((limit) => {
+    const primary = isUnanchoredAdditionalWindow(limit.windows.primary, snapshotAtMs) ? null : limit.windows.primary;
+    const secondary = isUnanchoredAdditionalWindow(limit.windows.secondary, snapshotAtMs)
+      ? null
+      : limit.windows.secondary;
+    if (!primary && !secondary) return [];
+    return [{
+      ...limit,
+      windows: { primary, secondary },
+    }];
+  });
+
+const isCodexSparkLimit = (limit: ProviderCapacityAdditionalRateLimit): boolean =>
+  limit.limit_name.trim().toLowerCase() === CODEX_SPARK_LIMIT_NAME.toLowerCase();
+
+/**
+ * OpenAI can omit the named Spark window from one account in a pool even when
+ * a reachable sibling reports it. Keep the admin snapshot's model rows
+ * aligned for the account pool. Routing continues to use only the account's
+ * own upstream observation, so this display projection cannot change model
+ * selection or quota admission.
+ */
+const fillMissingCodexSparkLimitForAdmin = (
+  sources: readonly ProviderCapacityCodexSource[],
+): readonly ProviderCapacityCodexSource[] => {
+  const sharedSparkLimit = sources
+    .filter((source) => source.state !== "unavailable")
+    .flatMap((source) => source.additional_rate_limits)
+    .find(isCodexSparkLimit);
+  if (!sharedSparkLimit) return sources;
+  return sources.map((source) => {
+    if (
+      source.state === "unavailable" ||
+      source.additional_rate_limits.some(isCodexSparkLimit)
+    ) return source;
+    return {
+      ...source,
+      additional_rate_limits: [...source.additional_rate_limits, sharedSparkLimit],
+    };
+  });
+};
+
+const parseCodexUsage = (value: unknown):
   | Readonly<{
     primary: ProviderCapacityWindow | null;
     secondary: ProviderCapacityWindow | null;
@@ -220,7 +265,7 @@ const parseCodexUsage = (value: unknown, snapshotAtMs: number):
   if (!isRecord(value) || !isRecord(value.rate_limit)) return null;
   const additionalRateLimits = Array.isArray(value.additional_rate_limits)
     ? value.additional_rate_limits.flatMap((candidate) => {
-      const parsed = parseCodexAdditionalRateLimit(candidate, snapshotAtMs);
+      const parsed = parseCodexAdditionalRateLimit(candidate);
       return parsed ? [parsed] : [];
     })
     : [];
@@ -318,7 +363,7 @@ const fetchCodexCapacitySource = async (
     } catch {
       return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs, "invalid_response", response.status, true);
     }
-    const windows = parseCodexUsage(payload, snapshotAtMs);
+    const windows = parseCodexUsage(payload);
     if (!windows) {
       return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs, "invalid_response", response.status, true);
     }
@@ -412,7 +457,7 @@ const captureProviderCapacitySnapshot = async (
       source_observed_at_ms: source.source_observed_at_ms,
       snapshot_at_ms: source.snapshot_at_ms,
       windows: source.windows,
-      additional_rate_limits: source.additional_rate_limits,
+      additional_rate_limits: additionalRateLimitsForRouting(source.additional_rate_limits, snapshotAtMs),
     });
   }
   await recordCodexCapacityRoutingObservations(routingObservations, snapshotAtMs);
@@ -693,9 +738,16 @@ const toCapacityView = (
   nowMs: number,
 ): ProviderCapacityView => {
   const current = staleProviderSnapshot(snapshot, nowMs);
-  const stale = current.sources.some((source) => source.state === "stale");
-  return {
+  const codexSources = fillMissingCodexSparkLimitForAdmin(
+    current.sources.filter((source): source is ProviderCapacityCodexSource => source.source === "codex"),
+  );
+  const projected = {
     ...current,
+    sources: [codexSources[0] ?? current.sources[0], codexSources[1] ?? current.sources[1], current.sources[2]],
+  } as ProviderCapacitySnapshot;
+  const stale = projected.sources.some((source) => source.state === "stale");
+  return {
+    ...projected,
     cache_state: stale ? "stale" : requestedState,
     history,
     reset_events: resetEvents,
