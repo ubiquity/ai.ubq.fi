@@ -1112,15 +1112,17 @@ const finalizeAbandonedPrimaryAttempt = (
 };
 
 const markPrimarySemanticRecovery = (
-  _routed: RoutedResponsesUpstream,
+  routed: RoutedResponsesUpstream,
   circuitProbe: OpenRouterCircuitProbe | null,
   usageContext?: UsageContext,
 ): void => {
-  if (circuitProbe) {
-    void closeOpenRouterCircuit(circuitProbe).then((transition) => {
-      if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
-    }).catch(() => {});
-  }
+  if (!circuitProbe) return;
+  const transition = routed.provider === "chatgpt_codex"
+    ? closeOpenRouterCircuit(circuitProbe)
+    : releaseGlobalOpenRouterProbe(circuitProbe);
+  void transition.then((value) => {
+    if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+  }).catch(() => {});
 };
 
 const collectBufferedResponses = async (
@@ -7215,7 +7217,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       });
       if (recovery.kind === "failed") {
         finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle);
-        const transition = await recordOpenRouterEligibleFailure(recoveryProbe);
+        const transition = isEligibleResponsesAttemptStatus(recovery.value.failed.response)
+          ? await recordOpenRouterEligibleFailure(recoveryProbe)
+          : await releaseGlobalOpenRouterProbe(recoveryProbe);
         if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
         if (usageContext?.responseTelemetry) usageContext.responseTelemetry.provider = "openrouter";
         return openRouter.attempt.response;

@@ -20,6 +20,7 @@ Deno.test("OpenRouter request translation applies the fixed Auto policy and stri
     tool_choice: "auto",
     parallel_tool_calls: true,
     max_output_tokens: 512,
+    context_management: [{ type: "compaction", compact_threshold: 1000 }],
     prompt_cache_key: "gateway-only",
     store: false,
     stream: true,
@@ -34,11 +35,22 @@ Deno.test("OpenRouter request translation applies the fixed Auto policy and stri
   assert.deepEqual(translated.reasoning, { effort: "max", summary: "auto" });
   assert.equal(translated.session_id, sessionId);
   assert.equal("prompt_cache_key" in translated, false);
+  assert.equal("context_management" in translated, false);
   assert.equal("store" in translated, false);
   assert.ok(typeof sessionId === "string");
   assert.doesNotMatch(sessionId, /raw-session|key-1/);
   assert.equal(await deriveOpenRouterSessionId(null, { session_id: "raw-session" }), null);
   assert.equal(await deriveOpenRouterSessionId("api-key:key-1", {}), null);
+});
+
+Deno.test("OpenRouter request translation accepts a null output-token limit", () => {
+  const translated = buildOpenRouterResponsesRequest({
+    input: "hello",
+    max_output_tokens: null,
+    stream: true,
+  });
+
+  assert.equal(translated.max_output_tokens, null);
 });
 
 Deno.test("OpenRouter selected-model validation rejects disallowed publishers and token families", () => {

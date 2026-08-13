@@ -196,7 +196,7 @@ export const buildFailoverWarningEvents = (
 ): Readonly<{ item: Record<string, unknown>; events: ResponsesStreamEvent[] }> => {
   const itemId = `msg_failover_${crypto.randomUUID().replace(/-/g, "")}`;
   const text =
-    `⚠ Failover active: this response is from openrouter:${actualModel} because the Codex upstream was unavailable.`;
+    `⚠ Failover active: this response is from \`openrouter:${actualModel}\` because the Codex upstream was unavailable.`;
   const content = { type: "output_text", text, annotations: [] };
   const item: Record<string, unknown> = {
     id: itemId,

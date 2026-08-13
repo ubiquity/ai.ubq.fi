@@ -8127,7 +8127,7 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   );
   assert.equal(
     warning?.delta,
-    "⚠ Failover active: this response is from openrouter:google/gemini-2.5-pro because the Codex upstream was unavailable.",
+    "⚠ Failover active: this response is from `openrouter:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
   );
   const providerDelta = events.find((event) => event.delta === "pong");
   assert.equal(providerDelta?.output_index, 1);
@@ -8646,6 +8646,53 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
     assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
   });
 
+  await t.step("half-open YunWu semantic output releases rather than closes the Codex circuit", async () => {
+    const keyId = "openrouter-half-open-yunwu";
+    const requestId = "request-openrouter-half-open-yunwu";
+    const previousYunwuKey = Deno.env.get("YUNWU_API_KEY");
+    Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+    seedPaidFallbackKey(keyId);
+    const urls: string[] = [];
+    try {
+      const response = await withFetchMock(
+        (url) => {
+          urls.push(url);
+          if (url === "https://yunwu.ai/v1/responses") return sseResponse(baseSseChunks());
+          return new Response(JSON.stringify({ error: { message: "Codex limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        async () => {
+          seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+          const response = await handleResponses(openRouterResponsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            requestId,
+            startedAtMs: Date.now(),
+          });
+          await response.text();
+          return response;
+        },
+        { openRouterApiKey: "or-test-key" },
+      );
+
+      const state = await waitForOpenRouterCircuit((candidate) =>
+        candidate.phase === "open" && candidate.probe === null
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+      assert.equal(urls.includes("https://yunwu.ai/v1/responses"), true);
+      assert.equal(urls.includes("https://openrouter.ai/api/v1/responses"), false);
+      assert.ok((state.open_until_ms ?? Number.MAX_SAFE_INTEGER) <= Date.now());
+      assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "released");
+    } finally {
+      if (previousYunwuKey === undefined) Deno.env.delete("YUNWU_API_KEY");
+      else Deno.env.set("YUNWU_API_KEY", previousYunwuKey);
+    }
+  });
+
   await t.step("direct OpenRouter failure claims one successful early Codex recovery", async () => {
     const urls: string[] = [];
     const response = await withFetchMock(
@@ -8719,6 +8766,45 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
     assert.ok((state.open_until_ms ?? 0) <= Date.now() + 120_000);
     assert.equal(getResponseTelemetry(response)?.provider, "openrouter");
     assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "reopened");
+  });
+
+  await t.step("noneligible early Codex recovery restores the OpenRouter error and releases", async () => {
+    const urls: string[] = [];
+    const response = await withFetchMock(
+      (url) => {
+        urls.push(url);
+        if (url === "https://openrouter.ai/api/v1/responses") {
+          return new Response(JSON.stringify({ error: { message: "OpenRouter unavailable", code: "or_fixture" } }), {
+            status: 502,
+            headers: { "Content-Type": "application/json", "Retry-After": "23" },
+          });
+        }
+        return new Response(JSON.stringify({ error: { message: "Codex request invalid", code: "codex_fixture" } }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+      async () => {
+        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+        return await handleResponses(openRouterResponsesRequest());
+      },
+      { openRouterApiKey: "or-test-key" },
+    );
+
+    const payload = await response.json() as { error?: { message?: string; code?: string } };
+    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "open" && candidate.probe === null);
+    assert.equal(response.status, 502);
+    assert.equal(response.headers.get("x-uos-upstream"), "openrouter");
+    assert.equal(response.headers.get("Retry-After"), "23");
+    assert.equal(payload.error?.message, "OpenRouter unavailable");
+    assert.equal(payload.error?.code, "or_fixture");
+    assert.deepEqual(urls, [
+      "https://openrouter.ai/api/v1/responses",
+      "https://chatgpt.com/backend-api/codex/responses",
+    ]);
+    assert.ok((state.open_until_ms ?? Number.MAX_SAFE_INTEGER) <= Date.now());
+    assert.equal(getResponseTelemetry(response)?.provider, "openrouter");
+    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "released");
   });
 
   await t.step("request cancellation releases a claimed half-open probe", async () => {

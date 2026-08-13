@@ -53,7 +53,6 @@ export const readOpenRouterApiKey = (): string | null =>
   openRouterApiKeyForTest === undefined ? getEnv(OPENROUTER_API_KEY_ENV) : openRouterApiKeyForTest;
 
 const OPENROUTER_REQUEST_KEYS = new Set([
-  "context_management",
   "include",
   "input",
   "instructions",
@@ -99,6 +98,7 @@ const validateRequestValue = (key: string, value: unknown): void => {
     return;
   }
   if (key === "max_output_tokens") {
+    if (value === null) return;
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
       throw new OpenRouterError("OpenRouter output-token limit is invalid.", "openrouter_translation_invalid", 400);
     }
