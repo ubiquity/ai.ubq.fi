@@ -3936,7 +3936,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
               const expectedStatus = routeCase.stream && failureCase.name === "eof" ? 200 : 502;
               assert.equal(response.status, expectedStatus, suffix);
               if (routeCase.stream) {
-                assert.match(responseText, /server_error/, suffix);
+                assert.match(
+                  responseText,
+                  routeCase.route === "responses" ? /server_error/ : /upstream_stream_error/,
+                  suffix,
+                );
                 if (routeCase.route === "chat" && failureCase.name === "eof") {
                   assert.match(responseText, /"error":\s*\{/, suffix);
                   assert.doesNotMatch(responseText, /\[DONE\]/, suffix);
