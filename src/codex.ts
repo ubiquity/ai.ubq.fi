@@ -54,7 +54,7 @@ import {
   RUNTIME_CONFIG_V2_KEY,
 } from "./runtime_config.ts";
 import { recordProviderCapacityDowntimeEvent, recordProviderCapacityResetEvent } from "./provider_capacity_events.ts";
-import { decodeBase64ToString, getString, isRecord, sha256Hex } from "./utils.ts";
+import { base64UrlDecode, decodeBase64ToString, getString, isRecord, sha256Hex } from "./utils.ts";
 import type { CodexAuthPoolState, CodexAuthState, ResponseInputItem } from "./types.ts";
 
 const CODEX_REFRESH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -216,6 +216,37 @@ export const getJwtExpMs = (token: string): number | null => {
   } catch {
     return null;
   }
+};
+
+const normalizeCodexAccountEmail = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const email = value.trim();
+  if (
+    email.length === 0 || email.length > 320 ||
+    [...email].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+  ) return null;
+  return email.includes("@") ? email : null;
+};
+
+const jwtPayload = (token: string): Record<string, unknown> | null => {
+  const payload = token.split(".")[1];
+  if (!payload) return null;
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(base64UrlDecode(payload)));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Returns the provider email claim without retaining or exposing the token. */
+export const getCodexAccountEmail = (accessToken: string): string | null => {
+  const payload = jwtPayload(accessToken);
+  if (!payload) return null;
+  const profile = isRecord(payload["https://api.openai.com/profile"])
+    ? payload["https://api.openai.com/profile"]
+    : null;
+  return normalizeCodexAccountEmail(profile?.email) ?? normalizeCodexAccountEmail(payload.email);
 };
 
 const needsRefresh = (auth: CodexAuthState): boolean => {
@@ -534,6 +565,7 @@ export type CodexCapacityAccount = Readonly<{
   slot: number;
   account_id: string;
   access_token: string;
+  email: string | null;
 }>;
 
 export const getCodexCapacityAccounts = async (): Promise<readonly CodexCapacityAccount[]> => {
@@ -542,6 +574,7 @@ export const getCodexCapacityAccounts = async (): Promise<readonly CodexCapacity
     slot: index + 1,
     account_id: account.account_id,
     access_token: account.access_token,
+    email: getCodexAccountEmail(account.access_token),
   }));
 };
 

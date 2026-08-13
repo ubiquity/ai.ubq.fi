@@ -852,7 +852,9 @@ const renderCodexCapacitySource = (source, provider = null) => {
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
-  title.textContent = `Codex account ${source.slot}`;
+  title.textContent = typeof source.label === "string" && source.label.trim()
+    ? source.label.trim()
+    : `Codex account ${source.slot}`;
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   const status = capacityProviderStatus(source, provider);

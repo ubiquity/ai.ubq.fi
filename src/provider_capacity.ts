@@ -32,6 +32,9 @@ export const PROVIDER_CAPACITY_CODEX_TIMEOUT_MS = 8_000;
 const ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS = 60_000;
 const CODEX_SPARK_LIMIT_NAME = "GPT-5.3-Codex-Spark";
 
+const codexAccountLabel = (slot: number, email: string | null = null): string =>
+  email?.trim() || `Codex account ${slot}`;
+
 type CapacityState = "available" | "stale" | "unavailable";
 export type ProviderCapacityViewState = "live" | "persisted" | "stale" | "unavailable";
 export type ProviderCapacityFailureKind =
@@ -287,9 +290,10 @@ const unavailableCodexSource = (
   failureKind: ProviderCapacityFailureKind = "not_configured",
   failureStatus: number | null = null,
   observed = false,
+  label = codexAccountLabel(slot),
 ): ProviderCapacityCodexSource => ({
   source: "codex",
-  label: "Codex account " + slot,
+  label,
   slot,
   state: "unavailable",
   source_observed_at_ms: observed ? snapshotAtMs : null,
@@ -355,21 +359,36 @@ const fetchCodexCapacitySource = async (
         response.status >= 500 ? "upstream_error" : "http_error",
         response.status,
         true,
+        codexAccountLabel(account.slot, account.email),
       );
     }
     let payload: unknown;
     try {
       payload = await response.json();
     } catch {
-      return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs, "invalid_response", response.status, true);
+      return unavailableCodexSource(
+        account.slot as 1 | 2,
+        snapshotAtMs,
+        "invalid_response",
+        response.status,
+        true,
+        codexAccountLabel(account.slot, account.email),
+      );
     }
     const windows = parseCodexUsage(payload);
     if (!windows) {
-      return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs, "invalid_response", response.status, true);
+      return unavailableCodexSource(
+        account.slot as 1 | 2,
+        snapshotAtMs,
+        "invalid_response",
+        response.status,
+        true,
+        codexAccountLabel(account.slot, account.email),
+      );
     }
     return {
       source: "codex",
-      label: "Codex account " + account.slot,
+      label: codexAccountLabel(account.slot, account.email),
       slot: account.slot as 1 | 2,
       state: "available",
       source_observed_at_ms: snapshotAtMs,
@@ -383,7 +402,14 @@ const fetchCodexCapacitySource = async (
       additional_rate_limits: windows.additional_rate_limits,
     };
   } catch {
-    return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs, "unreachable", null, true);
+    return unavailableCodexSource(
+      account.slot as 1 | 2,
+      snapshotAtMs,
+      "unreachable",
+      null,
+      true,
+      codexAccountLabel(account.slot, account.email),
+    );
   }
 };
 
@@ -536,7 +562,7 @@ const readStoredCodexSource = (
   if (!windows) return null;
   return {
     source: "codex",
-    label: "Codex account " + value.slot,
+    label: typeof value.label === "string" && value.label.trim() ? value.label.trim() : codexAccountLabel(value.slot),
     slot: value.slot,
     state,
     source_observed_at_ms: observed,
