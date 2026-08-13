@@ -3936,7 +3936,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
               const expectedStatus = routeCase.stream && failureCase.name === "eof" ? 200 : 502;
               assert.equal(response.status, expectedStatus, suffix);
               if (routeCase.stream) {
-                assert.match(responseText, /upstream_stream_error/, suffix);
+                assert.match(responseText, /server_error/, suffix);
                 if (routeCase.route === "chat" && failureCase.name === "eof") {
                   assert.match(responseText, /"error":\s*\{/, suffix);
                   assert.doesNotMatch(responseText, /\[DONE\]/, suffix);
@@ -8439,7 +8439,7 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
     assert.equal(openRouterCalls, 0);
     assert.equal(values.filter((event) => event.type === "response.failed").length, 0);
     const error = values.find((event) => event.type === "error");
-    assert.equal(error?.code, "upstream_stream_error");
+    assert.equal(error?.code, "server_error");
     assert.equal(error?.param, null);
     assert.equal(Object.prototype.hasOwnProperty.call(error ?? {}, "response"), false);
   });
