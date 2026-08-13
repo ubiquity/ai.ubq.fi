@@ -944,7 +944,7 @@ const prepareResponsesAttempt = async (
     deadline.clear();
     if (options.requireEligibleModel && (!selectedModel || !isEligibleOpenRouterModel(selectedModel))) {
       await iterator.return("invalid selected model").catch(() => {});
-      return fail("invalid_model");
+      return fail(prepared.semantic ? "terminal_failure" : "invalid_model");
     }
     const sanitizedBuffered = options.requireEligibleModel
       ? prepared.buffered.map((event) => {
@@ -1249,10 +1249,12 @@ const collectBufferedResponses = async (
       if (event.type === "response.output_item.done" && isRecord(ev.item)) outputItems.push(ev.item);
       if (event.type === "error") {
         options.onTerminal?.(event);
+        const code = getString(ev.code) ?? "server_error";
+        const message = getString(ev.message) ?? "Upstream Responses stream ended unexpectedly.";
         return streamErrorResponse(
           502,
-          "Upstream Responses stream ended unexpectedly.",
-          "upstream_stream_error",
+          message,
+          code,
           attempt.provider,
           [],
         );
@@ -7314,12 +7316,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         });
       } else {
         await persistFailedOpenRouterAttempt(usageContext, fallbackStartedAt, openRouter.attempt.trigger);
-        if (primaryFailureResponse) {
+        if (primaryFailureResponse || openRouter.attempt.trigger === "terminal_failure") {
           if (usageContext?.responseTelemetry) {
-            usageContext.responseTelemetry.provider = primaryFailureResponse.headers.get("x-uos-upstream") ||
-              "chatgpt_codex";
+            usageContext.responseTelemetry.provider = primaryFailureResponse?.headers.get("x-uos-upstream") ||
+              (primaryFailureResponse ? "chatgpt_codex" : "openrouter");
           }
-          return primaryFailureResponse;
+          return primaryFailureResponse ?? openRouter.attempt.response;
         }
         let recoveryProbe = await claimOpenRouterEarlyRecoveryProbe();
         if (!recoveryProbe) {
@@ -7406,9 +7408,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       recordStreamTerminalType(usageContext, terminalType);
     }
     if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
-    if (globalProbe && routed?.provider === "chatgpt_codex") {
+    if (routed?.provider === "chatgpt_codex") {
       const transition = terminalType === "cancelled"
-        ? releaseGlobalOpenRouterProbe(globalProbe)
+        ? globalProbe ? releaseGlobalOpenRouterProbe(globalProbe) : Promise.resolve("none" as const)
         : recordOpenRouterEligibleFailure(globalProbe);
       void transition.then((value) => {
         if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });

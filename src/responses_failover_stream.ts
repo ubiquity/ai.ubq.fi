@@ -472,9 +472,23 @@ export const createOwnedResponsesStream = (
       responseTemplate = { ...responseTemplate, ...valueResponse };
     }
     rememberText(event);
-    if (event.type !== "response.output_item.done" || isWarningEvent(event)) return;
-    if (!isRecord(event.value.item) || Array.isArray(event.value.item)) return;
-    const item = { ...event.value.item };
+    if (isWarningEvent(event)) return;
+    let item: Record<string, unknown> | null = null;
+    if (
+      (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
+      isRecord(event.value.item) && !Array.isArray(event.value.item)
+    ) {
+      item = { ...event.value.item };
+      if (event.type === "response.output_item.added") item.status = "incomplete";
+    } else if (hostedToolCompletedEventTypes.has(event.type)) {
+      const type = event.type.slice("response.".length, -".completed".length);
+      item = {
+        id: eventItemId(event) ?? `tool_recovered_${completedOutputItems.length}`,
+        type,
+        status: "completed",
+      };
+    }
+    if (!item) return;
     const id = getString(item.id)?.trim();
     if (id && completedOutputItemIds.has(id)) {
       completedOutputItems[completedOutputItemIds.get(id)!] = item;
