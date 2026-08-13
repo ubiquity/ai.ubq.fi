@@ -705,8 +705,8 @@ const capacityBadgeState = (state) => state === "available" ? "ok" : state === "
 
 const capacityStateLabel = (state) => {
   if (state === "available") return "Live";
-  if (state === "stale") return "Stale";
-  return "Unavailable";
+  if (state === "stale") return "Quota stale";
+  return "Quota unavailable";
 };
 
 const formatCapacityTimestamp = (value, unavailable = "Not reported") =>
@@ -794,9 +794,9 @@ const capacityProviderStatus = (source, provider) => {
   const state = provider?.configured === false ? "unconfigured" : health?.state;
   const hasState = typeof state === "string" && state.trim().length > 0;
   let badgeState = capacityBadgeState(source.state);
-  if (source.state !== "unavailable" && hasState) {
+  if (hasState) {
     badgeState = providerBadgeState(state);
-    if (source.state === "stale" && badgeState === "ok") badgeState = "unknown";
+    if (source.state !== "available" && badgeState === "ok") badgeState = "unknown";
   }
   const healthLabel = hasState ? providerStateLabel({ ...health, state }) : "";
   return {
@@ -1748,11 +1748,11 @@ const renderProviderCapacity = (snapshot) => {
   const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
   const staleCount = sources.filter((source) => source.state === "stale").length;
   if (unavailableCount === sources.length) {
-    setBadge(providerCapacityBadge, "bad", "Unavailable");
+    setBadge(providerCapacityBadge, "unknown", "Quota unavailable");
   } else if (unavailableCount > 0) {
-    setBadge(providerCapacityBadge, "unknown", `Partial · ${unavailableCount} unavailable`);
+    setBadge(providerCapacityBadge, "unknown", `Partial quota · ${unavailableCount} unavailable`);
   } else if (staleCount > 0) {
-    setBadge(providerCapacityBadge, "unknown", `Stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
+    setBadge(providerCapacityBadge, "unknown", `Quota stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
   } else {
     setBadge(providerCapacityBadge, "ok", "Live");
   }
