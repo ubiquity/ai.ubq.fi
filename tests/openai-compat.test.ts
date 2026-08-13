@@ -7341,6 +7341,28 @@ Deno.test("openai: both endpoints reject every non-boolean stream shape before d
   }
 });
 
+Deno.test("openai: buffered Responses preserve nested response.output items", async () => {
+  const item = {
+    id: "call_nested_output",
+    type: "function_call",
+    call_id: "call_nested_output",
+    name: "lookup",
+    arguments: "{}",
+    status: "completed",
+  };
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${JSON.stringify({ type: "response.output", response: { output: [item] } })}\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ]),
+    () => handleResponses(openRouterResponsesRequest({ stream: false })),
+  );
+  const payload = await response.json() as { output?: unknown[] };
+  assert.equal(response.status, 200);
+  assert.deepEqual(payload.output, [item]);
+});
+
 Deno.test("openai: native Responses reject malformed known content fields and unsupported content types", async (t) => {
   const cases = [
     {
