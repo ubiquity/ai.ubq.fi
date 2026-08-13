@@ -29,6 +29,7 @@ const hostedToolTypes = new Set([
   "web_search_call",
 ]);
 const hostedToolCompletedEventTypes = new Set([...hostedToolTypes].map((type) => `response.${type}.completed`));
+const imagePartialEventType = "response.image_generation_call.partial_image";
 
 const nonEmptyText = (value: Record<string, unknown>): boolean =>
   [value.delta, value.text].some((item) => typeof item === "string" && item.length > 0);
@@ -86,6 +87,12 @@ export const responsesEventSemanticKind = (event: ResponsesStreamEvent): Respons
   }
   if (reasoningTypes.has(event.type)) return nonEmptyText(event.value) ? "reasoning" : null;
   if (hostedToolCompletedEventTypes.has(event.type)) return "tool_call";
+  if (event.type === imagePartialEventType) {
+    return [event.value.partial_image_b64, event.value.partial_image, event.value.result]
+        .some((value) => typeof value === "string" && value.length > 0)
+      ? "tool_call"
+      : null;
+  }
   if (event.type === "response.output_item.done" && isRecord(event.value.item)) {
     const item = event.value.item;
     const itemType = getString(item.type) ?? "";
@@ -482,7 +489,10 @@ export const createOwnedResponsesStream = (
       if (event.type === "response.output_item.added") item.status = "incomplete";
     } else if (hostedToolCompletedEventTypes.has(event.type)) {
       const type = event.type.slice("response.".length, -".completed".length);
+      const existingId = eventItemId(event);
+      const existing = existingId ? completedOutputItems[completedOutputItemIds.get(existingId) ?? -1] : undefined;
       item = {
+        ...(existing ?? {}),
         id: eventItemId(event) ?? `tool_recovered_${completedOutputItems.length}`,
         type,
         status: "completed",

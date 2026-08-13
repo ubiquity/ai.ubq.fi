@@ -72,6 +72,7 @@ import {
   type OpenRouterCircuitProbe,
   recordOpenRouterEligibleFailure,
   releaseOpenRouterCircuitProbe as releaseGlobalOpenRouterProbe,
+  renewOpenRouterCircuitProbe,
   selectOpenRouterCircuitRoute,
 } from "./openrouter_circuit.ts";
 import { recordOpenRouterTelemetry } from "./openrouter_telemetry.ts";
@@ -7403,12 +7404,23 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const structuredTextOutput = isRecord(rawRecord.text) && isRecord(rawRecord.text.format) &&
     (rawRecord.text.format.type === "json_schema" || rawRecord.text.format.type === "json_object");
   const warningModel = openRouterAttempt && !structuredTextOutput ? selectedModel : null;
+  const probeRenewal = globalProbe && ready.prepared.semantic
+    ? setInterval(() => void renewOpenRouterCircuitProbe(globalProbe!).catch(() => {}), 60_000)
+    : null;
+  const clearProbeRenewal = (): void => {
+    if (probeRenewal !== null) clearInterval(probeRenewal);
+  };
   const reconcileCommittedFailure = (terminalType: ResponseStreamTerminalType): void => {
+    clearProbeRenewal();
     if (usageContext?.responseTelemetry?.streamTerminalType === null) {
       recordStreamTerminalType(usageContext, terminalType);
     }
     if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
-    if (routed?.provider === "chatgpt_codex") {
+    if (globalProbe && routed?.provider === "yunwu") {
+      void releaseGlobalOpenRouterProbe(globalProbe).then((value) => {
+        if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+      }).catch(() => {});
+    } else if (routed?.provider === "chatgpt_codex") {
       const transition = terminalType === "cancelled"
         ? globalProbe ? releaseGlobalOpenRouterProbe(globalProbe) : Promise.resolve("none" as const)
         : recordOpenRouterEligibleFailure(globalProbe);
@@ -7437,6 +7449,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   };
   const onTerminal = (event: ResponsesStreamEvent): void => {
     if (!event.terminal) return;
+    clearProbeRenewal();
     const syntheticFailure = isSyntheticResponsesFailureEvent(event);
     if (routed && !syntheticFailure) {
       lifecycle.terminal(event.type);

@@ -246,6 +246,30 @@ export const closeOpenRouterCircuit = async (
   return "none";
 };
 
+export const renewOpenRouterCircuitProbe = async (
+  probe: OpenRouterCircuitProbe,
+  nowMs = Date.now(),
+): Promise<boolean> => {
+  const kv = await getKv();
+  if (!kv) return false;
+  try {
+    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+      const entry = await readCircuit(kv);
+      const state = parseOpenRouterCircuitState(entry.value);
+      if (!state || !probeMatches(state, probe)) return false;
+      const next = {
+        ...state,
+        probe: { ...probe, lease_until_ms: nowMs + OPENROUTER_PROBE_LEASE_MS },
+        updated_at_ms: nowMs,
+      };
+      if ((await setCircuit(kv, entry, next)).ok) return true;
+    }
+  } catch {
+    // Best-effort routing state only.
+  }
+  return false;
+};
+
 export const releaseOpenRouterCircuitProbe = async (
   probe: OpenRouterCircuitProbe,
   nowMs = Date.now(),
