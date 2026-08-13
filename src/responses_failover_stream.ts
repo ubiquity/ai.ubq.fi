@@ -116,6 +116,8 @@ export const responsesEventSemanticKind = (event: ResponsesStreamEvent): Respons
   if (isRecord(event.value.response) && !Array.isArray(event.value.response)) {
     return semanticKindFromOutput(event.value.response.output);
   }
+  const topLevelOutputKind = semanticKindFromOutput(event.value.output);
+  if (topLevelOutputKind) return topLevelOutputKind;
   return null;
 };
 

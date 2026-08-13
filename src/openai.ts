@@ -988,7 +988,10 @@ const prepareResponsesAttempt = async (
   } catch (error) {
     await preparedStream?.iterator.return(error).catch(() => {});
     deadline.clear();
-    if (requestSignal.aborted) throw requestSignal.reason ?? error;
+    if (
+      requestSignal.aborted &&
+      !(requestSignal.reason instanceof Error && requestSignal.reason.name === "TimeoutError")
+    ) throw requestSignal.reason ?? error;
     return fail(preparedStream?.semantic ? "terminal_failure" : triggerForResponsesError(error, deadline.signal));
   }
 };
@@ -1141,7 +1144,10 @@ const fetchAndPrepareOpenRouterResponses = async (
   } catch (error) {
     deadline.clear();
     if (error instanceof ApiKeyQuotaDispatchError) throw error;
-    if (options.requestSignal.aborted) throw options.requestSignal.reason ?? error;
+    if (
+      options.requestSignal.aborted &&
+      !(options.requestSignal.reason instanceof Error && options.requestSignal.reason.name === "TimeoutError")
+    ) throw options.requestSignal.reason ?? error;
     return {
       kind: "failed",
       attempt: {
@@ -1149,7 +1155,7 @@ const fetchAndPrepareOpenRouterResponses = async (
         response: streamErrorResponse(
           502,
           "OpenRouter request failed before response headers were received.",
-          "openrouter_upstream_unreachable",
+          "server_error",
           "openrouter",
           [],
         ),
