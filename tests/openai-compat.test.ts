@@ -9438,6 +9438,20 @@ Deno.test("openai: buffered Responses observe each real or synthetic terminal on
   });
 });
 
+Deno.test("openai: buffered committed Responses failures use the official server_error code", async () => {
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        ...baseSseChunks().slice(0, -1),
+        'data: {"type":\n\n',
+      ]),
+    () => handleResponses(openRouterResponsesRequest({ stream: false })),
+  );
+  assert.equal(response.status, 502);
+  const payload = await response.json() as { error?: { code?: string } };
+  assert.equal(payload.error?.code, "server_error");
+});
+
 Deno.test("openai: missing OpenRouter key leaves the global circuit untouched", async () => {
   const circuitKey = keyToString(["uos_ai", "openrouter_failover", "circuit", "v1"]);
   for (let request = 0; request < 2; request += 1) {

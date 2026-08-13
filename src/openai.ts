@@ -1275,7 +1275,7 @@ const collectBufferedResponses = async (
     return streamErrorResponse(
       502,
       "Upstream Responses stream ended unexpectedly.",
-      "upstream_stream_error",
+      "server_error",
       attempt.provider,
       [],
     );
@@ -1284,7 +1284,7 @@ const collectBufferedResponses = async (
     return streamErrorResponse(
       502,
       "Upstream Responses stream ended unexpectedly.",
-      "upstream_stream_error",
+      "server_error",
       attempt.provider,
       [],
     );
@@ -7404,8 +7404,11 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const structuredTextOutput = isRecord(rawRecord.text) && isRecord(rawRecord.text.format) &&
     (rawRecord.text.format.type === "json_schema" || rawRecord.text.format.type === "json_object");
   const warningModel = openRouterAttempt && !structuredTextOutput ? selectedModel : null;
+  if (globalProbe && ready.prepared.semantic) {
+    void renewOpenRouterCircuitProbe(globalProbe).catch(() => {});
+  }
   const probeRenewal = globalProbe && ready.prepared.semantic
-    ? setInterval(() => void renewOpenRouterCircuitProbe(globalProbe!).catch(() => {}), 60_000)
+    ? setInterval(() => void renewOpenRouterCircuitProbe(globalProbe).catch(() => {}), 60_000)
     : null;
   const clearProbeRenewal = (): void => {
     if (probeRenewal !== null) clearInterval(probeRenewal);

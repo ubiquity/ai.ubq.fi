@@ -29,6 +29,10 @@ const hostedToolTypes = new Set([
   "web_search_call",
 ]);
 const hostedToolCompletedEventTypes = new Set([...hostedToolTypes].map((type) => `response.${type}.completed`));
+const hostedToolTerminalEventTypes = new Set([
+  ...hostedToolCompletedEventTypes,
+  ...[...hostedToolTypes].map((type) => `response.${type}.failed`),
+]);
 const imagePartialEventType = "response.image_generation_call.partial_image";
 
 const nonEmptyText = (value: Record<string, unknown>): boolean =>
@@ -86,7 +90,7 @@ export const responsesEventSemanticKind = (event: ResponsesStreamEvent): Respons
       : null;
   }
   if (reasoningTypes.has(event.type)) return nonEmptyText(event.value) ? "reasoning" : null;
-  if (hostedToolCompletedEventTypes.has(event.type)) return "tool_call";
+  if (hostedToolTerminalEventTypes.has(event.type)) return "tool_call";
   if (event.type === imagePartialEventType) {
     return [event.value.partial_image_b64, event.value.partial_image, event.value.result]
         .some((value) => typeof value === "string" && value.length > 0)
