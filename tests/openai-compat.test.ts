@@ -8967,6 +8967,53 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
     assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
   });
 
+  await t.step("semantic failed half-open Codex probe reopens the circuit", async () => {
+    const response = await withFetchMock(
+      (url) => {
+        assert.equal(url, "https://chatgpt.com/backend-api/codex/responses");
+        return sseResponse([
+          `data: ${
+            JSON.stringify({
+              type: "response.created",
+              response: { id: "resp_failed_probe", object: "response", status: "in_progress", output: [] },
+            })
+          }\n\n`,
+          `data: ${
+            JSON.stringify({
+              type: "response.failed",
+              response: {
+                id: "resp_failed_probe",
+                object: "response",
+                status: "failed",
+                error: { code: "server_error", message: "Probe failed." },
+                output: [{
+                  id: "msg_failed_probe",
+                  type: "message",
+                  status: "incomplete",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "partial", annotations: [] }],
+                }],
+              },
+            })
+          }\n\n`,
+        ]);
+      },
+      async () => {
+        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+        const response = await handleResponses(openRouterResponsesRequest());
+        await response.text();
+        return response;
+      },
+      { openRouterApiKey: "or-test-key" },
+    );
+
+    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "open" && candidate.probe === null);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    assert.ok((state.open_until_ms ?? 0) > Date.now());
+    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "reopened");
+  });
+
   await t.step("expired open circuit closes on an empty Codex completion", async () => {
     const response = await withFetchMock(
       (url) => {

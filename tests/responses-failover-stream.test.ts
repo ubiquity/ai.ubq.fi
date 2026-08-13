@@ -58,6 +58,7 @@ Deno.test("Responses semantic detector commits on text, reasoning, and completed
     })),
     "tool_call",
   );
+  assert.equal(responsesEventSemanticKind(event({ type: "response.mcp_call.completed" })), "tool_call");
   assert.equal(
     responsesEventSemanticKind(event({
       type: "response.failed",
@@ -371,6 +372,31 @@ Deno.test("Owned stream closes its iterator after a post-commit validation failu
   const text = await new Response(body).text();
   assert.match(text, /response.failed/);
   assert.equal(returned, true);
+});
+
+Deno.test("Owned stream preserves refusal text in synthetic failure output", async () => {
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({
+        type: "response.created",
+        response: { id: "resp_refusal", object: "response", status: "in_progress", output: [] },
+      }),
+      event({
+        type: "response.refusal.done",
+        response_id: "resp_refusal",
+        item_id: "msg_refusal",
+        output_index: 0,
+        content_index: 0,
+        refusal: "I cannot help with that.",
+      }),
+    ],
+    iterator: iterator([]),
+    responseId: "resp_refusal",
+  });
+  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  assert.match(JSON.stringify(values.at(-1)?.response), /"type":"refusal"/);
+  assert.match(JSON.stringify(values.at(-1)?.response), /I cannot help with that/);
 });
 
 Deno.test("Owned stream marks recovered text completed only after a done event", async () => {

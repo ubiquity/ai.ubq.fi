@@ -1188,10 +1188,13 @@ const markPrimarySemanticRecovery = (
   routed: RoutedResponsesUpstream,
   circuitProbe: OpenRouterCircuitProbe | null,
   usageContext?: UsageContext,
+  terminalType?: string | null,
 ): void => {
   if (!circuitProbe) return;
   const transition = routed.provider === "chatgpt_codex"
-    ? closeOpenRouterCircuit(circuitProbe)
+    ? terminalType === "response.failed"
+      ? recordOpenRouterEligibleFailure(circuitProbe)
+      : closeOpenRouterCircuit(circuitProbe)
     : releaseGlobalOpenRouterProbe(circuitProbe);
   void transition.then((value) => {
     if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
@@ -7248,7 +7251,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         if (result.kind === "ready") {
           primaryResult = result.value;
           if (result.value.prepared.prepared.semantic) {
-            markPrimarySemanticRecovery(result.value.routed, globalProbe, usageContext);
+            markPrimarySemanticRecovery(
+              result.value.routed,
+              globalProbe,
+              usageContext,
+              result.value.prepared.prepared.terminal?.type,
+            );
           }
         } else {
           const { routed, failed, lifecycle } = result.value;
@@ -7355,7 +7363,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         }
         primaryResult = recovery.value;
         if (recovery.value.prepared.prepared.semantic) {
-          markPrimarySemanticRecovery(recovery.value.routed, recoveryProbe, usageContext);
+          markPrimarySemanticRecovery(
+            recovery.value.routed,
+            recoveryProbe,
+            usageContext,
+            recovery.value.prepared.prepared.terminal?.type,
+          );
         }
       }
     }

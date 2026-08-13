@@ -28,6 +28,7 @@ const hostedToolTypes = new Set([
   "mcp_call",
   "web_search_call",
 ]);
+const hostedToolCompletedEventTypes = new Set([...hostedToolTypes].map((type) => `response.${type}.completed`));
 
 const nonEmptyText = (value: Record<string, unknown>): boolean =>
   [value.delta, value.text].some((item) => typeof item === "string" && item.length > 0);
@@ -84,6 +85,7 @@ export const responsesEventSemanticKind = (event: ResponsesStreamEvent): Respons
       : null;
   }
   if (reasoningTypes.has(event.type)) return nonEmptyText(event.value) ? "reasoning" : null;
+  if (hostedToolCompletedEventTypes.has(event.type)) return "tool_call";
   if (event.type === "response.output_item.done" && isRecord(event.value.item)) {
     const item = event.value.item;
     const itemType = getString(item.type) ?? "";
@@ -388,7 +390,7 @@ export const createOwnedResponsesStream = (
   let responseTemplate: Record<string, unknown> = {};
   const completedOutputItems: Record<string, unknown>[] = [];
   const completedOutputItemIds = new Map<string, number>();
-  const accumulatedText = new Map<string, { id: string; text: string; completed: boolean }>();
+  const accumulatedText = new Map<string, { id: string; text: string; completed: boolean; refusal: boolean }>();
 
   if (options.warning) {
     if (!responseId) {
@@ -440,19 +442,27 @@ export const createOwnedResponsesStream = (
     );
   const rememberText = (event: ResponsesStreamEvent): void => {
     if (isWarningEvent(event)) return;
-    const text = event.type === "response.output_text.delta"
+    const refusal = refusalTypes.has(event.type);
+    const text = event.type === "response.output_text.delta" || event.type === "response.refusal.delta"
       ? getString(event.value.delta)
       : event.type === "response.output_text.done"
       ? getString(event.value.text)
+      : event.type === "response.refusal.done"
+      ? getString(event.value.refusal)
       : null;
     if (!text) return;
     const id = eventItemId(event) ?? `msg_recovered_${getString(event.value.output_index) ?? accumulatedText.size}`;
     const current = accumulatedText.get(id);
-    if (event.type === "response.output_text.done") {
-      if (!current || text.startsWith(current.text)) accumulatedText.set(id, { id, text, completed: true });
+    if (event.type === "response.output_text.done" || event.type === "response.refusal.done") {
+      if (!current || text.startsWith(current.text)) accumulatedText.set(id, { id, text, completed: true, refusal });
       return;
     }
-    accumulatedText.set(id, { id, text: `${current?.text ?? ""}${text}`, completed: current?.completed ?? false });
+    accumulatedText.set(id, {
+      id,
+      text: `${current?.text ?? ""}${text}`,
+      completed: current?.completed ?? false,
+      refusal,
+    });
   };
   const observeVisibleEvent = (event: ResponsesStreamEvent): void => {
     if (event.type === "response.created") responseCreatedObserved = true;
@@ -491,7 +501,9 @@ export const createOwnedResponsesStream = (
         type: "message",
         status: recovered.completed ? "completed" : "incomplete",
         role: "assistant",
-        content: [{ type: "output_text", text: recovered.text, annotations: [] }],
+        content: recovered.refusal
+          ? [{ type: "refusal", refusal: recovered.text }]
+          : [{ type: "output_text", text: recovered.text, annotations: [] }],
       };
       if (existingIndex === undefined) {
         outputById.set(recovered.id, output.length);
