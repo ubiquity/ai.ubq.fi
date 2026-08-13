@@ -41,7 +41,7 @@ export const parseOpenRouterTelemetryRecord = (value: unknown): OpenRouterTeleme
     attempted_provider: value.attempted_provider === null ? null : boundedString(value.attempted_provider),
     trigger_class: value.trigger_class === null ? null : boundedString(value.trigger_class),
     circuit_transition: value.circuit_transition === null ? null : boundedString(value.circuit_transition),
-    selected_model: value.selected_model === null ? null : boundedString(value.selected_model),
+    selected_model: value.selected_model === null ? null : boundedString(value.selected_model, 256),
     task_type: value.task_type === null ? null : boundedString(value.task_type),
     latency_ms: latency,
     terminal_status: value.terminal_status === null ? null : boundedString(value.terminal_status),

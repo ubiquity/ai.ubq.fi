@@ -16,6 +16,7 @@ export const BUFFERED_INFERENCE_DEADLINE_MS = OPENAI_FLEX_REQUEST_TIMEOUT_MS;
  * streams to remain quiet for almost the full 400-second client idle window.
  */
 export const STREAM_FIRST_EVENT_DEADLINE_MS = 120_000;
+export const STREAM_FAILOVER_RESERVE_MS = 15_000;
 export const STREAM_INACTIVITY_DEADLINE_MS = 390_000;
 
 let streamFirstEventDeadlineMs = STREAM_FIRST_EVENT_DEADLINE_MS;
@@ -33,8 +34,9 @@ export const createInferenceSignal = (
 export const createStreamFirstEventDeadline = (
   requestSignal: AbortSignal,
   timeoutMs = streamFirstEventDeadlineMs,
-): Readonly<{ signal: AbortSignal; clear: () => void }> => {
+): StreamDeadline => {
   const deadline = new AbortController();
+  const deadlineAtMs = performance.now() + timeoutMs;
   let active = true;
   const timer = setTimeout(() => {
     if (!active) return;
@@ -47,8 +49,15 @@ export const createStreamFirstEventDeadline = (
       active = false;
       clearTimeout(timer);
     },
+    remainingMs: () => Math.max(0, deadlineAtMs - performance.now()),
   };
 };
+
+export type StreamDeadline = Readonly<{
+  signal: AbortSignal;
+  clear: () => void;
+  remainingMs: () => number;
+}>;
 
 /**
  * Bounds one provider attempt until semantic Responses output or a valid
@@ -57,8 +66,9 @@ export const createStreamFirstEventDeadline = (
 export const createStreamSemanticDeadline = (
   requestSignal: AbortSignal,
   timeoutMs = streamFirstEventDeadlineMs,
-): Readonly<{ signal: AbortSignal; clear: () => void }> => {
+): StreamDeadline => {
   const deadline = new AbortController();
+  const deadlineAtMs = performance.now() + timeoutMs;
   let active = true;
   const timer = setTimeout(() => {
     if (!active) return;
@@ -71,6 +81,7 @@ export const createStreamSemanticDeadline = (
       active = false;
       clearTimeout(timer);
     },
+    remainingMs: () => Math.max(0, deadlineAtMs - performance.now()),
   };
 };
 

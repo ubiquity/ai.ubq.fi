@@ -85,12 +85,13 @@ export const responsesEventSemanticKind = (event: ResponsesStreamEvent): Respons
 export type PreparedResponsesStream = Readonly<{
   iterator: ResponsesStreamIterator;
   buffered: ResponsesStreamEvent[];
+  bufferedChars: number;
   semantic: ResponsesStreamEvent | null;
   semanticKind: ResponsesSemanticKind | null;
   terminal: ResponsesStreamEvent | null;
 }>;
 
-const appendBounded = (
+export const appendResponsesPrecommitEvent = (
   buffered: ResponsesStreamEvent[],
   event: ResponsesStreamEvent,
   bufferedChars: number,
@@ -119,19 +120,20 @@ export const prepareResponsesStreamForCommit = async (
           kind: "premature_eof",
         });
       }
-      bufferedChars = appendBounded(buffered, next.value, bufferedChars);
+      bufferedChars = appendResponsesPrecommitEvent(buffered, next.value, bufferedChars);
       const semanticKind = responsesEventSemanticKind(next.value);
       if (semanticKind) {
         return {
           iterator,
           buffered,
+          bufferedChars,
           semantic: next.value,
           semanticKind,
           terminal: next.value.terminal ? next.value : null,
         };
       }
       if (next.value.terminal) {
-        return { iterator, buffered, semantic: null, semanticKind: null, terminal: next.value };
+        return { iterator, buffered, bufferedChars, semantic: null, semanticKind: null, terminal: next.value };
       }
     }
   } catch (error) {
@@ -286,13 +288,15 @@ export const failureEventAfterCommit = (
   responseId: string,
   sequenceNumber: number,
   output: readonly Record<string, unknown>[] = [],
+  responseTemplate: Readonly<Record<string, unknown>> = {},
 ): ResponsesStreamEvent => {
   const event = responseEventFromValue({
     type: "response.failed",
     sequence_number: sequenceNumber,
     response: {
+      ...responseTemplate,
       id: responseId,
-      object: "response",
+      object: getString(responseTemplate.object) ?? "response",
       status: "failed",
       error: {
         type: "server_error",
@@ -349,6 +353,10 @@ export const createOwnedResponsesStream = (
   let closed = false;
   let terminalEmitted = false;
   const queue: ResponsesStreamEvent[] = [];
+  let responseTemplate: Record<string, unknown> = {};
+  const completedOutputItems: Record<string, unknown>[] = [];
+  const completedOutputItemIds = new Map<string, number>();
+  const accumulatedText = new Map<string, { id: string; text: string }>();
 
   if (options.warning) {
     if (!responseId) {
@@ -379,6 +387,102 @@ export const createOwnedResponsesStream = (
     queue.push(...initial);
   }
 
+  const warningItemId = (): string | null => warningItem ? getString(warningItem.id)?.trim() ?? null : null;
+  const eventItemId = (event: ResponsesStreamEvent): string | null => {
+    const direct = getString(event.value.item_id)?.trim();
+    if (direct) return direct;
+    if (isRecord(event.value.item) && !Array.isArray(event.value.item)) {
+      return getString(event.value.item.id)?.trim() ?? null;
+    }
+    return null;
+  };
+  const isWarningEvent = (event: ResponsesStreamEvent): boolean => {
+    const warningId = warningItemId();
+    return warningId !== null && eventItemId(event) === warningId;
+  };
+  const itemHasOutputText = (item: Record<string, unknown>): boolean =>
+    Array.isArray(item.content) && item.content.some((part) =>
+      isRecord(part) && !Array.isArray(part) &&
+      (part.type === "output_text" || part.type === "text") &&
+      typeof part.text === "string" && part.text.length > 0
+    );
+  const rememberText = (event: ResponsesStreamEvent): void => {
+    if (isWarningEvent(event)) return;
+    const text = event.type === "response.output_text.delta"
+      ? getString(event.value.delta)
+      : event.type === "response.output_text.done"
+      ? getString(event.value.text)
+      : null;
+    if (!text) return;
+    const id = eventItemId(event) ?? `msg_recovered_${getString(event.value.output_index) ?? accumulatedText.size}`;
+    const current = accumulatedText.get(id);
+    if (event.type === "response.output_text.done") {
+      if (!current || text.startsWith(current.text)) accumulatedText.set(id, { id, text });
+      return;
+    }
+    accumulatedText.set(id, { id, text: `${current?.text ?? ""}${text}` });
+  };
+  const observeVisibleEvent = (event: ResponsesStreamEvent): void => {
+    const valueResponse = event.value.response;
+    if (isRecord(valueResponse) && !Array.isArray(valueResponse)) {
+      responseTemplate = { ...responseTemplate, ...valueResponse };
+    }
+    rememberText(event);
+    if (event.type !== "response.output_item.done" || isWarningEvent(event)) return;
+    if (!isRecord(event.value.item) || Array.isArray(event.value.item)) return;
+    const item = { ...event.value.item };
+    const id = getString(item.id)?.trim();
+    if (id && completedOutputItemIds.has(id)) {
+      completedOutputItems[completedOutputItemIds.get(id)!] = item;
+      return;
+    }
+    if (id) completedOutputItemIds.set(id, completedOutputItems.length);
+    completedOutputItems.push(item);
+  };
+  const failureOutput = (): Record<string, unknown>[] => {
+    const output = warningItem ? [{ ...warningItem }] : [];
+    const outputById = new Map<string, number>();
+    const warningId = warningItemId();
+    if (warningId) outputById.set(warningId, 0);
+    for (const item of completedOutputItems) {
+      const id = getString(item.id)?.trim();
+      if (id && outputById.has(id)) continue;
+      if (id) outputById.set(id, output.length);
+      output.push({ ...item });
+    }
+    for (const recovered of accumulatedText.values()) {
+      const existingIndex = outputById.get(recovered.id);
+      if (existingIndex !== undefined && itemHasOutputText(output[existingIndex]!)) continue;
+      const message = {
+        id: recovered.id,
+        type: "message",
+        status: "completed",
+        role: "assistant",
+        content: [{ type: "output_text", text: recovered.text, annotations: [] }],
+      };
+      if (existingIndex === undefined) {
+        outputById.set(recovered.id, output.length);
+        output.push(message);
+      } else {
+        output[existingIndex] = { ...output[existingIndex], ...message };
+      }
+    }
+    return output;
+  };
+  const syntheticFailure = (): ResponsesStreamEvent =>
+    failureEventAfterCommit(
+      responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
+      sequenceNumber++,
+      failureOutput(),
+      responseTemplate,
+    );
+  const advanceSequence = (event: ResponsesStreamEvent): void => {
+    const value = event.value.sequence_number;
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= sequenceNumber) {
+      sequenceNumber = value + 1;
+    }
+  };
+
   const nextVisible = async (): Promise<ResponsesStreamEvent | null> => {
     if (queue.length) return queue.shift()!;
     const next = await options.iterator.next();
@@ -391,14 +495,10 @@ export const createOwnedResponsesStream = (
       });
     }
     responseId ??= candidate;
-    if (
-      next.value.type === "error" || next.value.type === "response.incomplete"
-    ) {
-      return failureEventAfterCommit(
-        responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
-        sequenceNumber++,
-        warningItem ? [warningItem] : [],
-      );
+    if (next.value.type === "error") {
+      throw new ResponsesStreamError("Upstream Responses stream emitted an error event after commitment.", {
+        kind: "malformed_event",
+      });
     }
     if (!warningItem) return next.value;
     return rewriteResponsesEventForWarning(next.value, warningItem, sequenceNumber++);
@@ -411,11 +511,7 @@ export const createOwnedResponsesStream = (
         const event = await nextVisible();
         if (closed) return;
         if (!event) {
-          const failure = failureEventAfterCommit(
-            responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
-            sequenceNumber++,
-            warningItem ? [warningItem] : [],
-          );
+          const failure = syntheticFailure();
           terminalEmitted = true;
           closed = true;
           controller.enqueue(encoder.encode(failure.raw));
@@ -431,6 +527,8 @@ export const createOwnedResponsesStream = (
           return;
         }
         if (terminalEmitted) return;
+        observeVisibleEvent(event);
+        advanceSequence(event);
         terminalEmitted = event.terminal;
         controller.enqueue(encoder.encode(event.raw));
         invoke(() => options.onEvent?.(event));
@@ -447,11 +545,7 @@ export const createOwnedResponsesStream = (
           invoke(() => options.onFailure?.(error));
           return;
         }
-        const failure = failureEventAfterCommit(
-          responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
-          sequenceNumber++,
-          warningItem ? [warningItem] : [],
-        );
+        const failure = syntheticFailure();
         terminalEmitted = true;
         closed = true;
         controller.enqueue(encoder.encode(failure.raw));

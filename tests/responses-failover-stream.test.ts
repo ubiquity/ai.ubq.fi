@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import {
+  appendResponsesPrecommitEvent,
   buildFailoverWarningEvents,
   createOwnedResponsesStream,
   failureEventAfterCommit,
+  MAX_RESPONSES_PRECOMMIT_CHARS,
+  MAX_RESPONSES_PRECOMMIT_EVENTS,
   prepareResponsesStreamForCommit,
   responseEventFromValue,
   responsesEventSemanticKind,
@@ -57,6 +60,26 @@ Deno.test("Responses precommit preparation holds setup until semantic output", a
   ]);
   assert.equal(prepared.semantic, semantic);
   assert.equal(prepared.semanticKind, "text");
+});
+
+Deno.test("Responses precommit bounds cover delayed discovery events and characters", () => {
+  const buffered = Array.from(
+    { length: MAX_RESPONSES_PRECOMMIT_EVENTS },
+    (_, index) => event({ type: "response.in_progress", sequence_number: index }),
+  );
+  assert.throws(
+    () => appendResponsesPrecommitEvent(buffered, event({ type: "response.in_progress" }), 0),
+    /precommit buffer exceeded/,
+  );
+  assert.throws(
+    () =>
+      appendResponsesPrecommitEvent(
+        [],
+        event({ type: "response.in_progress" }),
+        MAX_RESPONSES_PRECOMMIT_CHARS,
+      ),
+    /precommit buffer exceeded/,
+  );
 });
 
 Deno.test("Failover warning is a valid assistant item at zero and shifts later output indices", () => {
@@ -146,4 +169,104 @@ Deno.test("Owned failover stream emits warning first, shifts output, and emits o
   assert.deepEqual(values.map((value) => value.sequence_number), values.map((_, index) => index));
   assert.equal(values.filter((value) => value.type === "response.completed").length, 1);
   assert.equal(values.filter((value) => value.type === "response.failed").length, 0);
+});
+
+Deno.test("Owned failover stream preserves a legitimate incomplete terminal", async () => {
+  const responseTemplate = {
+    id: "resp_incomplete",
+    object: "response",
+    created_at: 17,
+    model: "google/gemini",
+    status: "in_progress",
+    output: [],
+  };
+  const incomplete = {
+    ...responseTemplate,
+    status: "incomplete",
+    incomplete_details: { reason: "max_output_tokens" },
+    output: [{
+      id: "msg_partial",
+      type: "message",
+      status: "incomplete",
+      role: "assistant",
+      content: [{ type: "output_text", text: "partial", annotations: [] }],
+    }],
+    usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+  };
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({ type: "response.created", sequence_number: 0, response: responseTemplate }),
+      event({
+        type: "response.output_text.delta",
+        sequence_number: 1,
+        response_id: "resp_incomplete",
+        item_id: "msg_partial",
+        output_index: 0,
+        delta: "partial",
+      }),
+    ],
+    iterator: iterator([event({ type: "response.incomplete", sequence_number: 2, response: incomplete })]),
+    responseId: "resp_incomplete",
+  });
+  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  assert.equal(values.filter((value) => value.type === "response.incomplete").length, 1);
+  assert.equal(values.filter((value) => value.type === "response.failed").length, 0);
+  const terminal = values.at(-1)?.response as Record<string, unknown>;
+  assert.deepEqual(terminal.incomplete_details, { reason: "max_output_tokens" });
+  assert.deepEqual(terminal.usage, { input_tokens: 2, output_tokens: 3, total_tokens: 5 });
+});
+
+Deno.test("Owned stream synthetic failure preserves template, text, tools, and sequence order", async () => {
+  const responseTemplate = {
+    id: "resp_broken",
+    object: "response",
+    created_at: 42,
+    model: "google/gemini",
+    service_tier: "default",
+    status: "in_progress",
+    output: [],
+  };
+  const toolItem = {
+    id: "ctc_broken",
+    type: "custom_tool_call",
+    status: "completed",
+    call_id: "call_broken",
+    name: "exec",
+    input: "pwd",
+  };
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({ type: "response.created", sequence_number: 4, response: responseTemplate }),
+      event({
+        type: "response.output_text.delta",
+        sequence_number: 5,
+        response_id: "resp_broken",
+        item_id: "msg_broken",
+        output_index: 0,
+        delta: "kept text",
+      }),
+      event({
+        type: "response.output_item.done",
+        sequence_number: 6,
+        response_id: "resp_broken",
+        output_index: 1,
+        item: toolItem,
+      }),
+    ],
+    iterator: iterator([]),
+    responseId: "resp_broken",
+  });
+  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  assert.deepEqual(values.map((value) => value.sequence_number), [4, 5, 6, 7]);
+  const terminal = values.at(-1)!;
+  assert.equal(terminal.type, "response.failed");
+  const response = terminal.response as Record<string, unknown>;
+  assert.equal(response.created_at, 42);
+  assert.equal(response.model, "google/gemini");
+  assert.equal(response.service_tier, "default");
+  assert.equal(response.status, "failed");
+  assert.match(JSON.stringify(response.output), /kept text/);
+  assert.match(JSON.stringify(response.output), /ctc_broken/);
 });

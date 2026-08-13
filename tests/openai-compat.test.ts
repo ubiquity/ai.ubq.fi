@@ -131,6 +131,7 @@ const {
 const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
 const { OPENROUTER_CIRCUIT_KEY, parseOpenRouterCircuitState } = await import("../src/openrouter_circuit.ts");
 const {
+  ApiKeyQuotaDispatchError,
   apiKeyPolicyFromHashRecord,
   apiKeyUsageV3RequestKey,
   apiKeyUsageV3WindowKey,
@@ -8394,11 +8395,115 @@ Deno.test("openai: OpenRouter post-release failures own one synthetic terminal",
       assert.equal(values.filter((event) => event.type === "response.completed").length, 0);
       assert.equal(values.filter((event) => event.type === "error").length, 0);
       assert.equal(values.some((event) => JSON.stringify(event).includes("Failover active")), true);
+      const terminal = values.find((event) => event.type === "response.failed")!;
+      const terminalResponse = terminal.response as Record<string, unknown>;
+      assert.equal(terminalResponse.model, "google/gemini-2.5-pro");
+      assert.match(JSON.stringify(terminalResponse.output), /pong/);
+      assert.deepEqual(
+        values.map((event) => event.sequence_number),
+        values.map((_, index) => index),
+      );
       assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.failed");
       assert.equal(getResponseTelemetry(response)?.openRouterTerminalStatus, "response.failed");
       assert.equal(getResponseTelemetry(response)?.completed, false);
     });
   }
+});
+
+Deno.test("openai: buffered fallback keeps provider deltas when terminal output is empty", async () => {
+  const chunks = openRouterTextSseChunks();
+  const terminal = JSON.parse(chunks.at(-1)!.match(/^data: (.+)\n\n$/)![1]!) as Record<string, unknown>;
+  (terminal.response as Record<string, unknown>).output = [];
+  chunks[chunks.length - 1] = `data: ${JSON.stringify(terminal)}\n\n`;
+  const response = await withFetchMock(
+    (url) =>
+      url === "https://openrouter.ai/api/v1/responses"
+        ? sseResponse(chunks)
+        : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+    () => handleResponses(openRouterResponsesRequest({ stream: false })),
+    { openRouterApiKey: "or-test-key" },
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json() as Record<string, unknown>;
+  const output = payload.output as Array<Record<string, unknown>>;
+  assert.equal(output.length, 2);
+  assert.match(JSON.stringify(output[0]), /Failover active/);
+  assert.match(JSON.stringify(output[1]), /pong/);
+});
+
+Deno.test("openai: invalid route-dependent Responses fields fail before dispatch", async (t) => {
+  const cases = [
+    { param: "max_output_tokens", value: 0 },
+    { param: "max_output_tokens", value: 1.5 },
+    { param: "max_output_tokens", value: "12" },
+    { param: "parallel_tool_calls", value: null },
+    { param: "parallel_tool_calls", value: "true" },
+    { param: "parallel_tool_calls", value: 1 },
+  ] as const;
+  for (const circuit of ["closed", "open"] as const) {
+    for (const scenario of cases) {
+      await t.step(`${circuit} ${scenario.param}=${String(scenario.value)}`, async () => {
+        let fetches = 0;
+        const response = await withFetchMock(
+          () => {
+            fetches += 1;
+            return sseResponse(baseSseChunks());
+          },
+          async () => {
+            if (circuit === "open") seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+            return await handleResponses(openRouterResponsesRequest({ [scenario.param]: scenario.value }));
+          },
+          { openRouterApiKey: "or-test-key" },
+        );
+        assert.equal(response.status, 400);
+        assert.equal((await response.json() as { error?: { param?: unknown } }).error?.param, scenario.param);
+        assert.equal(fetches, 0);
+      });
+    }
+  }
+});
+
+Deno.test("openai: OpenRouter quota dispatch errors propagate for outer status conversion", async () => {
+  let fetches = 0;
+  await assert.rejects(
+    () =>
+      withFetchMock(
+        () => {
+          fetches += 1;
+          return sseResponse(openRouterTextSseChunks());
+        },
+        async () => {
+          seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+          return await handleResponses(openRouterResponsesRequest(), {
+            keyId: "quota-fixture",
+            kernelRepo: null,
+            kernelOrg: null,
+            beforeProviderDispatch: () =>
+              Promise.reject(
+                new ApiKeyQuotaDispatchError("Fixture quota exhausted", {
+                  status: 429,
+                  code: "rate_limit_exceeded",
+                  errorType: "rate_limit_error",
+                  retryAfter: "17",
+                }),
+              ),
+          });
+        },
+        { openRouterApiKey: "or-test-key" },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiKeyQuotaDispatchError);
+      assert.equal(error.status, 429);
+      assert.equal(error.code, "rate_limit_exceeded");
+      assert.equal(error.errorType, "rate_limit_error");
+      assert.equal(error.retryAfter, "17");
+      return true;
+    },
+  );
+  assert.equal(fetches, 0);
 });
 
 Deno.test("openai: OpenRouter keeps native custom-tool events and identities", async () => {

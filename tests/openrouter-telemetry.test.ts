@@ -66,6 +66,11 @@ Deno.test("OpenRouter telemetry stores only bounded aggregate fields", async () 
       parseOpenRouterTelemetryRecord({ ...entry.value, selected_model: secret.repeat(20) })?.selected_model,
       null,
     );
+    const maxLengthModel = `vendor/${"x".repeat(249)}`;
+    assert.equal(
+      parseOpenRouterTelemetryRecord({ ...entry.value, selected_model: maxLengthModel })?.selected_model,
+      maxLengthModel,
+    );
   } finally {
     setKvForTest(null);
   }
