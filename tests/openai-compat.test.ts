@@ -2894,6 +2894,41 @@ Deno.test("openai: buffered Responses stop after the overall gateway deadline", 
   }
 });
 
+Deno.test("openai: buffered OpenRouter recovery preserves the overall gateway deadline", async () => {
+  setStreamFirstEventDeadlineMsForTest(20);
+  try {
+    const urls: string[] = [];
+    const response = await withFetchMock(
+      (url, _bodyText, init) => {
+        urls.push(url);
+        if (url === "https://openrouter.ai/api/v1/responses") throw new TypeError("OpenRouter unavailable");
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return reject(new Error("recovery did not receive a gateway deadline signal"));
+          const rejectWithAbortReason = () => reject(signal.reason);
+          if (signal.aborted) rejectWithAbortReason();
+          else signal.addEventListener("abort", rejectWithAbortReason, { once: true });
+        });
+      },
+      () => {
+        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+        return handleResponses(openRouterResponsesRequest({ stream: false }));
+      },
+      { openRouterApiKey: "or-test-key" },
+    );
+    const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
+    assert.equal(response.status, 504);
+    assert.equal(payload.error?.type, "server_error");
+    assert.equal(payload.error?.code, "gateway_timeout");
+    assert.deepEqual(urls, [
+      "https://openrouter.ai/api/v1/responses",
+      "https://chatgpt.com/backend-api/codex/responses",
+    ]);
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+  }
+});
+
 Deno.test("openai: upstream fetch logs redact provider error payloads", async () => {
   const secret = "prompt-or-credential-must-not-reach-server-logs";
   const logs: unknown[][] = [];
