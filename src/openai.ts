@@ -871,7 +871,7 @@ const prepareResponsesAttempt = async (
       prepared.terminal &&
       ((options.rejectFailedTerminal &&
         prepared.terminal.type !== "response.completed" &&
-        !(prepared.terminal.type === "response.incomplete" && prepared.semantic !== null)) ||
+        prepared.semantic === null) ||
         (options.rejectPresemanticFailureTerminal && prepared.semantic === null &&
           (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error")))
     ) {
@@ -927,7 +927,7 @@ const prepareResponsesAttempt = async (
     if (
       options.rejectFailedTerminal && discoveredTerminal &&
       discoveredTerminal.type !== "response.completed" &&
-      !(discoveredTerminal.type === "response.incomplete" && prepared.semantic !== null)
+      prepared.semantic === null
     ) {
       await iterator.return("failed terminal before release").catch(() => {});
       return fail("read_error");

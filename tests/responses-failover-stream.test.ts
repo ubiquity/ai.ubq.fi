@@ -54,6 +54,18 @@ Deno.test("Responses semantic detector commits on text, reasoning, and completed
     })),
     "tool_call",
   );
+  assert.equal(
+    responsesEventSemanticKind(event({
+      type: "response.failed",
+      response: {
+        output: [{
+          type: "message",
+          content: [{ type: "refusal", refusal: "I cannot help with that." }],
+        }],
+      },
+    })),
+    "text",
+  );
 });
 
 Deno.test("Responses precommit preparation holds setup until semantic output", async () => {

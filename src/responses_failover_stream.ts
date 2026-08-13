@@ -65,8 +65,11 @@ const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null =
     if (!Array.isArray(item.content)) continue;
     if (
       item.content.some((part) =>
-        isRecord(part) && (part.type === "output_text" || part.type === "text") &&
-        typeof part.text === "string" && part.text.length > 0
+        isRecord(part) && (
+          ((part.type === "output_text" || part.type === "text") &&
+            typeof part.text === "string" && part.text.length > 0) ||
+          (part.type === "refusal" && typeof part.refusal === "string" && part.refusal.length > 0)
+        )
       )
     ) return "text";
   }
