@@ -988,10 +988,7 @@ const prepareResponsesAttempt = async (
   } catch (error) {
     await preparedStream?.iterator.return(error).catch(() => {});
     deadline.clear();
-    if (
-      requestSignal.aborted &&
-      !(requestSignal.reason instanceof Error && requestSignal.reason.name === "TimeoutError")
-    ) throw requestSignal.reason ?? error;
+    if (requestSignal.aborted) throw requestSignal.reason ?? error;
     return fail(preparedStream?.semantic ? "terminal_failure" : triggerForResponsesError(error, deadline.signal));
   }
 };
@@ -1144,10 +1141,7 @@ const fetchAndPrepareOpenRouterResponses = async (
   } catch (error) {
     deadline.clear();
     if (error instanceof ApiKeyQuotaDispatchError) throw error;
-    if (
-      options.requestSignal.aborted &&
-      !(options.requestSignal.reason instanceof Error && options.requestSignal.reason.name === "TimeoutError")
-    ) throw options.requestSignal.reason ?? error;
+    if (options.requestSignal.aborted) throw options.requestSignal.reason ?? error;
     return {
       kind: "failed",
       attempt: {
@@ -7617,5 +7611,20 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
 export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
   await runWithResponseTelemetry(
     usageContext,
-    (context) => handleResponsesInternal(req, context),
+    async (context) => {
+      try {
+        return await handleResponsesInternal(req, context);
+      } catch (error) {
+        if (req.signal.aborted || !(error instanceof Error && error.name === "TimeoutError")) throw error;
+        await recordErrorUsage(context);
+        return streamErrorResponse(
+          504,
+          "Upstream request exceeded the gateway deadline.",
+          "gateway_timeout",
+          "chatgpt_codex",
+          [],
+          "server_error",
+        );
+      }
+    },
   );

@@ -2866,6 +2866,34 @@ Deno.test("openai: Codex pre-header gateway deadlines use server_error on both s
   }
 });
 
+Deno.test("openai: buffered Responses stop after the overall gateway deadline", async () => {
+  setStreamFirstEventDeadlineMsForTest(10);
+  try {
+    let openRouterCalls = 0;
+    const response = await withFetchMock(
+      (url, _bodyText, init) => {
+        if (url === "https://openrouter.ai/api/v1/responses") openRouterCalls += 1;
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return reject(new Error("provider request did not receive a gateway deadline signal"));
+          const rejectWithAbortReason = () => reject(signal.reason);
+          if (signal.aborted) rejectWithAbortReason();
+          else signal.addEventListener("abort", rejectWithAbortReason, { once: true });
+        });
+      },
+      () => handleResponses(openRouterResponsesRequest({ stream: false })),
+      { openRouterApiKey: "or-test-key" },
+    );
+    const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
+    assert.equal(response.status, 504);
+    assert.equal(payload.error?.type, "server_error");
+    assert.equal(payload.error?.code, "gateway_timeout");
+    assert.equal(openRouterCalls, 1);
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+  }
+});
+
 Deno.test("openai: upstream fetch logs redact provider error payloads", async () => {
   const secret = "prompt-or-credential-must-not-reach-server-logs";
   const logs: unknown[][] = [];
