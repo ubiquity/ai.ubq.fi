@@ -7288,9 +7288,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   try {
     if (route === "codex") {
       try {
-        const primaryBudgetMs = apiKey
-          ? Math.max(0, preHeaderDeadline.remainingMs() - STREAM_FAILOVER_RESERVE_MS)
-          : preHeaderDeadline.remainingMs();
+        const remainingMs = preHeaderDeadline.remainingMs();
+        const failoverReserveMs = Math.min(STREAM_FAILOVER_RESERVE_MS, remainingMs / 2);
+        const primaryBudgetMs = apiKey ? Math.max(0, remainingMs - failoverReserveMs) : remainingMs;
         const result = await fetchAndPreparePrimaryResponses(codexBody, {
           model,
           reasoning: reasoningLabel,
