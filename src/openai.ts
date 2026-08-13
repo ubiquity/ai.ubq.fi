@@ -813,7 +813,7 @@ const safeFailedAttemptResponse = (
     return streamErrorResponse(
       502,
       "Upstream response missing body.",
-      "upstream_missing_body",
+      "server_error",
       provider,
       warnings,
     );
@@ -895,7 +895,7 @@ const prepareResponsesAttempt = async (
       if (candidate) {
         if (selectedModel && selectedModel !== candidate) {
           await iterator.return("inconsistent model identity").catch(() => {});
-          return fail("invalid_model");
+          return fail(prepared.semantic ? "terminal_failure" : "invalid_model");
         }
         selectedModel = candidate;
       }
@@ -1259,6 +1259,9 @@ const collectBufferedResponses = async (
       if (event.type === "response.refusal.delta") refusalText += getString(ev.delta) ?? "";
       if (event.type === "response.refusal.done" && !refusalText) refusalText = getString(ev.refusal) ?? "";
       if (event.type === "response.output_item.done" && isRecord(ev.item)) outputItems.push(ev.item);
+      if (event.type === "response.output" && Array.isArray(ev.output)) {
+        outputItems.push(...ev.output.filter(isRecord));
+      }
       if (event.type === "error") {
         options.onTerminal?.(event);
         const code = getString(ev.code) ?? "server_error";
@@ -7011,6 +7014,15 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       param: "parallel_tool_calls",
     });
   }
+  const maxToolCalls = rawRecord.max_tool_calls;
+  if (
+    maxToolCalls !== undefined && maxToolCalls !== null &&
+    (typeof maxToolCalls !== "number" || !Number.isSafeInteger(maxToolCalls) || maxToolCalls <= 0)
+  ) {
+    return openaiError(400, "max_tool_calls must be a positive integer", "invalid_request_error", {
+      param: "max_tool_calls",
+    });
+  }
   const promptCacheControls = validatePromptCacheControls(rawRecord);
   if (!promptCacheControls.ok) {
     return openaiError(400, promptCacheControls.message, "invalid_request_error", { param: promptCacheControls.param });
@@ -7368,7 +7380,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
             (openRouter.attempt.prepared.terminal?.type === "response.completed" ? "terminal_completed" : null),
         });
       } else {
-        await persistFailedOpenRouterAttempt(usageContext, fallbackStartedAt, openRouter.attempt.trigger);
+        void persistFailedOpenRouterAttempt(usageContext, fallbackStartedAt, openRouter.attempt.trigger);
         if (primaryFailureResponse || openRouter.attempt.trigger === "terminal_failure") {
           if (usageContext?.responseTelemetry) {
             usageContext.responseTelemetry.provider = primaryFailureResponse?.headers.get("x-uos-upstream") ||
