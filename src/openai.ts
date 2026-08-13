@@ -1238,15 +1238,24 @@ const collectBufferedResponses = async (
     })();
   let finalResponse: Record<string, unknown> | null = null;
   let outputText = "";
+  let refusalText = "";
   const outputItems: Record<string, unknown>[] = [];
   try {
     for await (const event of initial) {
       recordFirstSseEvent(options.usageContext);
       const ev = event.value;
+      const eventResponseId = responseIdFromEvents([event]);
+      if (eventResponseId && eventResponseId !== attempt.responseId) {
+        throw new ResponsesStreamError("Upstream Responses stream changed response identifiers.", {
+          kind: "malformed_event",
+        });
+      }
       if (
         event.type === "response.output_text.delta" &&
         !(options.warningModel && ev.output_index === 0)
       ) outputText += getString(ev.delta) ?? "";
+      if (event.type === "response.refusal.delta") refusalText += getString(ev.delta) ?? "";
+      if (event.type === "response.refusal.done" && !refusalText) refusalText = getString(ev.refusal) ?? "";
       if (event.type === "response.output_item.done" && isRecord(ev.item)) outputItems.push(ev.item);
       if (event.type === "error") {
         options.onTerminal?.(event);
@@ -1291,6 +1300,7 @@ const collectBufferedResponses = async (
   }
   finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
   finalResponse = withAccumulatedResponseText(finalResponse, outputText, options.warningModel ? 1 : 0);
+  finalResponse = withAccumulatedResponseRefusal(finalResponse, refusalText, options.warningModel ? 1 : 0);
   // The terminal callback owns usage and terminal telemetry for buffered and
   // streamed Responses alike. Do not record it a second time here.
   return json(200, finalResponse, { "x-uos-upstream": attempt.provider });
@@ -4737,6 +4747,14 @@ const responseHasOutputText = (output: unknown, startIndex = 0): boolean => {
   return false;
 };
 
+const responseHasRefusal = (output: unknown, startIndex = 0): boolean => {
+  if (!Array.isArray(output)) return false;
+  return output.slice(startIndex).some((item) =>
+    isRecord(item) && Array.isArray(item.content) &&
+    item.content.some((part) => isRecord(part) && part.type === "refusal" && Boolean(getString(part.refusal)))
+  );
+};
+
 /**
  * Buffered and streamed Responses transports normally emit output_text.delta
  * events.  Some compatible upstreams only provide the completed output item,
@@ -4779,6 +4797,23 @@ const withAccumulatedResponseText = (
     status: "completed",
     role: "assistant",
     content: [{ type: "output_text", text, annotations: [] }],
+  });
+  return { ...response, output };
+};
+
+const withAccumulatedResponseRefusal = (
+  response: Record<string, unknown>,
+  refusal: string,
+  ignoredOutputPrefix = 0,
+): Record<string, unknown> => {
+  if (!refusal || responseHasRefusal(response.output, ignoredOutputPrefix)) return response;
+  const output = Array.isArray(response.output) ? [...response.output] : [];
+  output.push({
+    id: `msg_${crypto.randomUUID().replace(/-/g, "")}`,
+    type: "message",
+    status: "completed",
+    role: "assistant",
+    content: [{ type: "refusal", refusal }],
   });
   return { ...response, output };
 };
@@ -7203,10 +7238,22 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   codexBody.stream = true;
   codexBody.store = false;
   const openRouterBody = { ...codexBody };
-  // Codex ignores this official control today, but the emergency OpenRouter
-  // route preserves it because that upstream supports the official field.
-  if (Object.prototype.hasOwnProperty.call(rawRecord, "max_output_tokens")) {
-    openRouterBody.max_output_tokens = rawRecord.max_output_tokens;
+  // Preserve official controls supported by OpenRouter even when Codex does
+  // not currently accept them on its compatibility transport.
+  for (
+    const key of [
+      "max_output_tokens",
+      "max_tool_calls",
+      "metadata",
+      "safety_identifier",
+      "service_tier",
+      "temperature",
+      "top_p",
+      "truncation",
+      "user",
+    ]
+  ) {
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) openRouterBody[key] = rawRecord[key];
   }
 
   await recordRequestUsage(usageContext, {
@@ -7471,6 +7518,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
             : releaseGlobalOpenRouterProbe(globalProbe)
           : releaseGlobalOpenRouterProbe(globalProbe);
         void transition.then((value) => {
+          if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+        }).catch(() => {});
+      } else if (
+        routed.provider === "chatgpt_codex" && (event.type === "response.failed" || event.type === "error")
+      ) {
+        void recordOpenRouterEligibleFailure(null).then((value) => {
           if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
         }).catch(() => {});
       }

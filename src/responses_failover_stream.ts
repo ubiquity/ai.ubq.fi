@@ -31,6 +31,7 @@ const hostedToolTypes = new Set([
 const hostedToolCompletedEventTypes = new Set([...hostedToolTypes].map((type) => `response.${type}.completed`));
 const hostedToolTerminalEventTypes = new Set([
   ...hostedToolCompletedEventTypes,
+  ...[...hostedToolTypes].map((type) => `response.${type}.in_progress`),
   ...[...hostedToolTypes].map((type) => `response.${type}.failed`),
 ]);
 const imagePartialEventType = "response.image_generation_call.partial_image";
@@ -491,15 +492,16 @@ export const createOwnedResponsesStream = (
     ) {
       item = { ...event.value.item };
       if (event.type === "response.output_item.added") item.status = "incomplete";
-    } else if (hostedToolCompletedEventTypes.has(event.type)) {
-      const type = event.type.slice("response.".length, -".completed".length);
+    } else if (hostedToolTerminalEventTypes.has(event.type)) {
+      const lifecycle = event.type.split(".").at(-1)!;
+      const type = event.type.slice("response.".length, -(lifecycle.length + 1));
       const existingId = eventItemId(event);
       const existing = existingId ? completedOutputItems[completedOutputItemIds.get(existingId) ?? -1] : undefined;
       item = {
         ...(existing ?? {}),
         id: eventItemId(event) ?? `tool_recovered_${completedOutputItems.length}`,
         type,
-        status: "completed",
+        status: lifecycle === "completed" ? "completed" : lifecycle === "failed" ? "failed" : "in_progress",
       };
     }
     if (!item) return;
