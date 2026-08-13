@@ -55,7 +55,10 @@ const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null =
         item.name.trim() && typeof item.input === "string"
       ) return "tool_call";
     }
-    if (typeof item.type === "string" && hostedToolTypes.has(item.type) && item.status === "completed") {
+    if (
+      typeof item.type === "string" && hostedToolTypes.has(item.type) &&
+      (item.status === "in_progress" || item.status === "completed" || item.status === "failed")
+    ) {
       return "tool_call";
     }
     if (item.type === "reasoning") {

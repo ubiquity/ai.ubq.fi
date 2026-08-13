@@ -114,6 +114,7 @@ const validateRequestValue = (key: string, value: unknown): void => {
     return;
   }
   if (key === "metadata") {
+    if (value === null) return;
     if (!isRecord(value) || Array.isArray(value)) {
       throw new OpenRouterError("OpenRouter metadata is invalid.", "openrouter_translation_invalid", 400);
     }

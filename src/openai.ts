@@ -989,7 +989,7 @@ const prepareResponsesAttempt = async (
     await preparedStream?.iterator.return(error).catch(() => {});
     deadline.clear();
     if (requestSignal.aborted) throw requestSignal.reason ?? error;
-    return fail(triggerForResponsesError(error, deadline.signal));
+    return fail(preparedStream?.semantic ? "terminal_failure" : triggerForResponsesError(error, deadline.signal));
   }
 };
 
@@ -1237,6 +1237,7 @@ const collectBufferedResponses = async (
       }
     })();
   let finalResponse: Record<string, unknown> | null = null;
+  let responseId = attempt.responseId;
   let outputText = "";
   let refusalText = "";
   const outputItems: Record<string, unknown>[] = [];
@@ -1245,11 +1246,12 @@ const collectBufferedResponses = async (
       recordFirstSseEvent(options.usageContext);
       const ev = event.value;
       const eventResponseId = responseIdFromEvents([event]);
-      if (eventResponseId && eventResponseId !== attempt.responseId) {
+      if (eventResponseId && responseId && eventResponseId !== responseId) {
         throw new ResponsesStreamError("Upstream Responses stream changed response identifiers.", {
           kind: "malformed_event",
         });
       }
+      responseId ??= eventResponseId;
       if (
         event.type === "response.output_text.delta" &&
         !(options.warningModel && ev.output_index === 0)

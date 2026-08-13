@@ -64,6 +64,13 @@ Deno.test("Responses semantic detector commits on text, reasoning, and completed
   assert.equal(
     responsesEventSemanticKind(event({
       type: "response.failed",
+      response: { output: [{ type: "mcp_call", status: "failed", id: "mcp_1" }] },
+    })),
+    "tool_call",
+  );
+  assert.equal(
+    responsesEventSemanticKind(event({
+      type: "response.failed",
       response: {
         output: [{
           type: "message",
