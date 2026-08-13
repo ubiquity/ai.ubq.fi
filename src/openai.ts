@@ -7410,7 +7410,11 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle, {
             failureTrigger: recovery.value.failed.trigger,
           });
-          if (recovery.value.failed.trigger === "semantic_timeout") return recovery.value.failed.response;
+          if (recovery.value.failed.trigger === "semantic_timeout") {
+            const transition = recoveryProbe ? await releaseGlobalOpenRouterProbe(recoveryProbe) : "none";
+            if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
+            return recovery.value.failed.response;
+          }
           const transition = isEligibleResponsesAttemptStatus(recovery.value.failed.response)
             ? await recordOpenRouterEligibleFailure(recoveryProbe)
             : recoveryProbe

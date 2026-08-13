@@ -2924,6 +2924,7 @@ Deno.test("openai: buffered OpenRouter recovery preserves the overall gateway de
       "https://openrouter.ai/api/v1/responses",
       "https://chatgpt.com/backend-api/codex/responses",
     ]);
+    assert.equal(openRouterCircuitState()?.probe, null);
   } finally {
     setStreamFirstEventDeadlineMsForTest(null);
   }
