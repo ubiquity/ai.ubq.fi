@@ -761,6 +761,7 @@ type PreparedResponsesAttempt = Readonly<{
   selectedModel: string | null;
   taskType: string | null;
   signal: AbortSignal;
+  abort: (reason?: unknown) => void;
   clearDeadline: () => void;
 }>;
 
@@ -979,6 +980,7 @@ const prepareResponsesAttempt = async (
         selectedModel,
         taskType,
         signal: deadline.signal,
+        abort: deadline.abort,
         clearDeadline: deadline.clear,
       },
     };
@@ -7250,7 +7252,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         });
         if (result.kind === "ready") {
           primaryResult = result.value;
-          if (result.value.prepared.prepared.semantic) {
+          if (result.value.prepared.prepared.semantic && result.value.prepared.prepared.terminal) {
             markPrimarySemanticRecovery(
               result.value.routed,
               globalProbe,
@@ -7362,7 +7364,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           return openRouter.attempt.response;
         }
         primaryResult = recovery.value;
-        if (recovery.value.prepared.prepared.semantic) {
+        if (recovery.value.prepared.prepared.semantic && recovery.value.prepared.prepared.terminal) {
           markPrimarySemanticRecovery(
             recovery.value.routed,
             recoveryProbe,
@@ -7396,6 +7398,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     !(openRouterAttempt && Object.prototype.hasOwnProperty.call(rawRecord, "max_output_tokens") &&
       warning === MAX_OUTPUT_TOKENS_IGNORED_WARNING)
   );
+  const structuredTextOutput = isRecord(rawRecord.text) && isRecord(rawRecord.text.format) &&
+    (rawRecord.text.format.type === "json_schema" || rawRecord.text.format.type === "json_object");
+  const warningModel = openRouterAttempt && !structuredTextOutput ? selectedModel : null;
   const validateOpenRouterEvent = (event: ResponsesStreamEvent): void => {
     if (!openRouterAttempt || !selectedModel) return;
     const candidate = openRouterModelFromEvent(event.value);
@@ -7417,10 +7422,13 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           : releaseCodexResponseProbe(routed.response);
         void transition.catch(() => {});
       }
-      if (globalProbe && !ready.prepared.semantic) {
-        const transition = routed.provider === "chatgpt_codex" &&
-            (event.type === "response.completed" || event.type === "response.incomplete")
-          ? closeOpenRouterCircuit(globalProbe)
+      if (globalProbe) {
+        const transition = routed.provider === "chatgpt_codex"
+          ? event.type === "response.completed" || event.type === "response.incomplete"
+            ? closeOpenRouterCircuit(globalProbe)
+            : event.type === "response.failed" || event.type === "error"
+            ? recordOpenRouterEligibleFailure(globalProbe)
+            : releaseGlobalOpenRouterProbe(globalProbe)
           : releaseGlobalOpenRouterProbe(globalProbe);
         void transition.then((value) => {
           if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
@@ -7447,7 +7455,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
 
   if (!clientWantsStream) {
     const response = await collectBufferedResponses(ready, {
-      warningModel: openRouterAttempt ? selectedModel : null,
+      warningModel,
       usageContext,
       onTerminal,
       validateEvent: validateOpenRouterEvent,
@@ -7467,9 +7475,10 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     initial: ready.prepared.buffered,
     iterator: ready.prepared.iterator,
     responseId: ready.responseId,
-    ...(openRouterAttempt && selectedModel ? { warning: { model: selectedModel } } : {}),
+    ...(warningModel ? { warning: { model: warningModel } } : {}),
     signal: ready.signal,
     downstreamSignal: req.signal,
+    abortUpstream: ready.abort,
     onEvent: onTerminal,
     validateEvent: validateOpenRouterEvent,
     onFailure: (error) => {
@@ -7478,6 +7487,11 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         recordStreamTerminalType(usageContext, terminalType);
       }
       if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
+      if (globalProbe && routed?.provider === "chatgpt_codex" && terminalType !== "cancelled") {
+        void recordOpenRouterEligibleFailure(globalProbe).then((value) => {
+          if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+        }).catch(() => {});
+      }
       if (openRouterAttempt) {
         if (usageContext?.responseTelemetry?.openRouterTerminalStatus !== "response.failed") {
           recordOpenRouterFields(usageContext, {

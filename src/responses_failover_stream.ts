@@ -335,7 +335,7 @@ const errorEventAfterCommit = (sequenceNumber: number): ResponsesStreamEvent => 
   const event = responseEventFromValue({
     type: "error",
     sequence_number: sequenceNumber,
-    code: "upstream_stream_error",
+    code: "server_error",
     message: "The upstream stream ended unexpectedly.",
     param: null,
   });
@@ -353,6 +353,7 @@ type OwnedResponsesStreamOptions = Readonly<{
   warning?: Readonly<{ model: string }>;
   signal?: AbortSignal;
   downstreamSignal?: AbortSignal;
+  abortUpstream?: (reason?: unknown) => void;
   onEvent?: (event: ResponsesStreamEvent) => void | Promise<void>;
   validateEvent?: (event: ResponsesStreamEvent) => void;
   onFailure?: (error: unknown) => void | Promise<void>;
@@ -603,6 +604,7 @@ export const createOwnedResponsesStream = (
       if (closed) return;
       closed = true;
       localAbort.abort(reason);
+      options.abortUpstream?.(reason);
       invoke(() => options.onCancel?.(reason));
       void options.iterator.return(reason).catch(() => {});
     },

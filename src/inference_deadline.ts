@@ -40,6 +40,7 @@ export const createStreamFirstEventDeadline = (
   }, timeoutMs);
   return {
     signal: AbortSignal.any([requestSignal, deadline.signal]),
+    abort: (reason) => deadline.abort(reason),
     clear: () => {
       if (!active) return;
       active = false;
@@ -51,6 +52,7 @@ export const createStreamFirstEventDeadline = (
 
 export type StreamDeadline = Readonly<{
   signal: AbortSignal;
+  abort: (reason?: unknown) => void;
   clear: () => void;
   remainingMs: () => number;
 }>;
@@ -72,6 +74,7 @@ export const createStreamSemanticDeadline = (
   }, timeoutMs);
   return {
     signal: AbortSignal.any([requestSignal, deadline.signal]),
+    abort: (reason) => deadline.abort(reason),
     clear: () => {
       if (!active) return;
       active = false;
