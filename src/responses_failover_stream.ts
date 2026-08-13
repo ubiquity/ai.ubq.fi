@@ -78,7 +78,11 @@ const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null =
 
 export const responsesEventSemanticKind = (event: ResponsesStreamEvent): ResponsesSemanticKind | null => {
   if (textTypes.has(event.type)) return nonEmptyText(event.value) ? "text" : null;
-  if (refusalTypes.has(event.type)) return nonEmptyText(event.value) ? "text" : null;
+  if (refusalTypes.has(event.type)) {
+    return (nonEmptyText(event.value) || (typeof event.value.refusal === "string" && event.value.refusal.length > 0))
+      ? "text"
+      : null;
+  }
   if (reasoningTypes.has(event.type)) return nonEmptyText(event.value) ? "reasoning" : null;
   if (event.type === "response.output_item.done" && isRecord(event.value.item)) {
     const item = event.value.item;

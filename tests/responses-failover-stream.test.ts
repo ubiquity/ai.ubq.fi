@@ -48,6 +48,10 @@ Deno.test("Responses semantic detector commits on text, reasoning, and completed
   );
   assert.equal(responsesEventSemanticKind(event({ type: "response.refusal.delta", delta: "blocked" })), "text");
   assert.equal(
+    responsesEventSemanticKind(event({ type: "response.refusal.done", refusal: "I cannot help with that." })),
+    "text",
+  );
+  assert.equal(
     responsesEventSemanticKind(event({
       type: "response.output_item.done",
       item: { type: "web_search_call", status: "completed", id: "ws_1" },
