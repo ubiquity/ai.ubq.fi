@@ -8199,6 +8199,10 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   assert.deepEqual(events.map((event) => event.sequence_number), events.map((_, index) => index));
   assert.equal(events.filter((event) => event.type === "response.completed").length, 1);
   assert.equal(events.filter((event) => event.type === "response.failed").length, 0);
+  assert.equal(
+    parseWarnings(response.headers.get("x-uos-warning")).includes("max_output_tokens_ignored"),
+    false,
+  );
   const terminal = events.find((event) => event.type === "response.completed");
   const terminalOutput = (terminal?.response as { output?: unknown[] } | undefined)?.output ?? [];
   assert.equal(terminalOutput.length, 2);
@@ -8226,6 +8230,38 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
           `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_primary_setup" } })}\n\n`,
         ]),
       trigger: "premature_eof",
+    },
+    {
+      name: "response.failed terminal",
+      primary: () =>
+        sseResponse([
+          `data: ${
+            JSON.stringify({
+              type: "response.failed",
+              response: {
+                id: "resp_primary_failed",
+                object: "response",
+                status: "failed",
+                error: { type: "server_error", code: "provider_error", message: "primary failed" },
+                output: [],
+              },
+            })
+          }\n\n`,
+        ]),
+      trigger: "terminal_failure",
+    },
+    {
+      name: "error terminal",
+      primary: () =>
+        sseResponse([
+          `data: ${
+            JSON.stringify({
+              type: "error",
+              error: { type: "server_error", code: "provider_error", message: "primary failed" },
+            })
+          }\n\n`,
+        ]),
+      trigger: "terminal_failure",
     },
   ] as const;
   for (const scenario of scenarios) {
@@ -8838,7 +8874,7 @@ Deno.test("openai: Codex and YunWu remain ahead of one OpenRouter rescue", async
     ]);
     assert.equal(urls.filter((url) => url === "https://yunwu.ai/v1/responses").length, 1);
     assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["chatgpt_codex", "yunwu", "openrouter"]);
-    const stored = await waitForPaidFallbackTerminal(keyId, requestId, "ambiguous");
+    const stored = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
     assert.equal(stored.dispatch_state, "dispatched");
     assert.equal(stored.billing_state, "pending");
     assert.equal(stored.provider_request_id, "yunwu-openrouter-order-fixture");

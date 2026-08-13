@@ -746,6 +746,7 @@ type ResponsesAttemptTrigger =
   | "malformed_event"
   | "premature_eof"
   | "semantic_timeout"
+  | "terminal_failure"
   | "read_error"
   | "invalid_model";
 
@@ -827,7 +828,11 @@ const prepareResponsesAttempt = async (
   deadline: StreamDeadline,
   requestSignal: AbortSignal,
   warnings: readonly string[],
-  options: Readonly<{ requireEligibleModel?: boolean; rejectFailedTerminal?: boolean }> = {},
+  options: Readonly<{
+    requireEligibleModel?: boolean;
+    rejectFailedTerminal?: boolean;
+    rejectPresemanticFailureTerminal?: boolean;
+  }> = {},
 ): Promise<ResponsesAttemptResult> => {
   const fail = (trigger: ResponsesAttemptTrigger, failedResponse = response): ResponsesAttemptResult => {
     deadline.clear();
@@ -860,12 +865,20 @@ const prepareResponsesAttempt = async (
     const prepared = await prepareResponsesStreamForCommit(iterator);
     preparedStream = prepared;
     if (
-      options.rejectFailedTerminal && prepared.terminal &&
-      prepared.terminal.type !== "response.completed" &&
-      !(prepared.terminal.type === "response.incomplete" && prepared.semantic !== null)
+      prepared.terminal &&
+      ((options.rejectFailedTerminal &&
+        prepared.terminal.type !== "response.completed" &&
+        !(prepared.terminal.type === "response.incomplete" && prepared.semantic !== null)) ||
+        (options.rejectPresemanticFailureTerminal && prepared.semantic === null &&
+          (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error")))
     ) {
       deadline.clear();
-      return fail("read_error");
+      return fail(
+        options.rejectPresemanticFailureTerminal && prepared.semantic === null &&
+          (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error")
+          ? "terminal_failure"
+          : "read_error",
+      );
     }
     let responseId = responseIdFromEvents(prepared.buffered);
     let bufferedChars = prepared.bufferedChars;
@@ -970,6 +983,7 @@ const responseFailureTerminalType = (
   if (downstreamSignal.aborted) return "cancelled";
   if (trigger === "semantic_timeout" || signal.aborted) return "deadline";
   if (trigger === "premature_eof") return "eof";
+  if (trigger === "terminal_failure") return "response.failed";
   return "error";
 };
 
@@ -984,6 +998,7 @@ const fetchAndPreparePrimaryResponses = async (
     requestSignal: AbortSignal;
     warnings: readonly string[];
     attemptDeadline: StreamDeadline;
+    rejectPresemanticFailureTerminal?: boolean;
   }>,
 ): Promise<{ kind: "ready"; value: ResponsesRouteAttempt } | { kind: "failed"; value: ResponsesRouteFailure }> => {
   const deadline = options.attemptDeadline;
@@ -1060,6 +1075,7 @@ const fetchAndPreparePrimaryResponses = async (
     deadline,
     options.requestSignal,
     [...options.warnings, ...responseWarnings(routed.response)],
+    { rejectPresemanticFailureTerminal: options.rejectPresemanticFailureTerminal },
   );
   return prepared.kind === "ready"
     ? { kind: "ready", value: { routed, prepared: prepared.attempt, lifecycle } }
@@ -1126,13 +1142,18 @@ const fetchAndPrepareOpenRouterResponses = async (
 const finalizeAbandonedPrimaryAttempt = (
   routed: RoutedResponsesUpstream,
   lifecycle: YunwuTransportLifecycle,
-  cancelled = false,
+  options: Readonly<{
+    cancelled?: boolean;
+    failureTrigger?: ResponsesAttemptTrigger;
+  }> = {},
 ): void => {
   if (routed.provider === "chatgpt_codex") {
     void releaseCodexResponseProbe(routed.response).catch(() => {});
   } else if (routed.provider === "yunwu" && !routed.gatewayResponse) {
-    if (cancelled) lifecycle.cancelled();
-    else lifecycle.ambiguous();
+    if (options.cancelled) lifecycle.cancelled();
+    else if (options.failureTrigger === "http_5xx" || options.failureTrigger === "terminal_failure") {
+      lifecycle.terminal("response.failed");
+    } else lifecycle.ambiguous();
   }
 };
 
@@ -7195,6 +7216,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           requestSignal: requestInferenceSignal,
           warnings,
           attemptDeadline: createStreamSemanticDeadline(preHeaderDeadline.signal, Math.ceil(primaryBudgetMs)),
+          rejectPresemanticFailureTerminal: apiKey !== null,
         });
         if (result.kind === "ready") {
           primaryResult = result.value;
@@ -7215,7 +7237,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
             lifecycle.terminal("response.failed");
             return failed.response;
           }
-          if (!routed.gatewayResponse) finalizeAbandonedPrimaryAttempt(routed, lifecycle);
+          if (!routed.gatewayResponse) {
+            finalizeAbandonedPrimaryAttempt(routed, lifecycle, { failureTrigger: failed.trigger });
+          }
           if (!apiKey) return failed.response;
           const transition = await recordOpenRouterEligibleFailure(globalProbe);
           if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
@@ -7277,6 +7301,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
               preHeaderDeadline.signal,
               Math.ceil(preHeaderDeadline.remainingMs()),
             ),
+            rejectPresemanticFailureTerminal: true,
           });
         } catch {
           const transition = await releaseGlobalOpenRouterProbe(recoveryProbe);
@@ -7285,7 +7310,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           return openRouter.attempt.response;
         }
         if (recovery.kind === "failed") {
-          finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle);
+          finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle, {
+            failureTrigger: recovery.value.failed.trigger,
+          });
           const transition = isEligibleResponsesAttemptStatus(recovery.value.failed.response)
             ? await recordOpenRouterEligibleFailure(recoveryProbe)
             : await releaseGlobalOpenRouterProbe(recoveryProbe);
@@ -7319,7 +7346,10 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     ...warnings,
     ...(primaryFailureResponse ? responseWarnings(primaryFailureResponse) : []),
     ...responseWarnings(ready.response),
-  ];
+  ].filter((warning) =>
+    !(openRouterAttempt && Object.prototype.hasOwnProperty.call(rawRecord, "max_output_tokens") &&
+      warning === MAX_OUTPUT_TOKENS_IGNORED_WARNING)
+  );
   const validateOpenRouterEvent = (event: ResponsesStreamEvent): void => {
     if (!openRouterAttempt || !selectedModel) return;
     const candidate = openRouterModelFromEvent(event.value);
@@ -7374,7 +7404,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         if (usageContext?.responseTelemetry?.streamTerminalType === null) {
           recordStreamTerminalType(usageContext, terminalType);
         }
-        if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, terminalType === "cancelled");
+        if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
       },
     });
     return withUosWarning(response, clientWarnings);
@@ -7395,7 +7425,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       if (usageContext?.responseTelemetry?.streamTerminalType === null) {
         recordStreamTerminalType(usageContext, terminalType);
       }
-      if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, terminalType === "cancelled");
+      if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
       if (openRouterAttempt) {
         if (usageContext?.responseTelemetry?.openRouterTerminalStatus !== "response.failed") {
           recordOpenRouterFields(usageContext, {
@@ -7409,7 +7439,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     },
     onCancel: () => {
       recordStreamTerminalType(usageContext, "cancelled");
-      if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, true);
+      if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: true });
       if (openRouterAttempt) {
         recordOpenRouterFields(usageContext, {
           latencyMs: Math.max(0, Math.round(performance.now() - fallbackStartedAt)),

@@ -186,6 +186,11 @@ export const recordOpenRouterEligibleFailure = async (
       const entry = await readCircuit(kv);
       const state = parseOpenRouterCircuitState(entry.value) ?? closedState(nowMs);
       if (probe && !probeMatches(state, probe)) return "none";
+      if (!probe && state.phase === "half_open" && state.probe && nowMs < state.probe.lease_until_ms) {
+        // An older ordinary request may fail after another request claims the
+        // recovery probe. Only that probe owner may close or reopen its lease.
+        return "none";
+      }
       if (probe) {
         const next: OpenRouterCircuitState = {
           ...state,

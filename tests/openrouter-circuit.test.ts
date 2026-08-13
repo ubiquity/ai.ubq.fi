@@ -75,6 +75,27 @@ Deno.test("OpenRouter failed probe reopens for two minutes", async () => {
   });
 });
 
+Deno.test("OpenRouter circuit preserves a live half-open probe when an older ordinary request fails", async () => {
+  await withKv(async () => {
+    await recordOpenRouterEligibleFailure(null, 100);
+    await recordOpenRouterEligibleFailure(null, 101);
+    const now = 101 + OPENROUTER_OPEN_MS;
+    const owner = await selectOpenRouterCircuitRoute(now, () => "probe-owner");
+    assert.ok(owner.probe);
+
+    assert.equal(await recordOpenRouterEligibleFailure(null, now + 1), "none");
+    assert.deepEqual(await getOpenRouterCircuitView(now + 1), {
+      available: true,
+      state: "half_open",
+      open_until_ms: 101 + OPENROUTER_OPEN_MS,
+      recent_failures: 0,
+      probe_active: true,
+    });
+    assert.equal(await closeOpenRouterCircuit(owner.probe, now + 2), "closed");
+    assert.equal((await selectOpenRouterCircuitRoute(now + 3)).route, "codex");
+  });
+});
+
 Deno.test("OpenRouter early recovery claim is atomic and uses the same recovery transitions", async () => {
   await withKv(async () => {
     await recordOpenRouterEligibleFailure(null, 100);
