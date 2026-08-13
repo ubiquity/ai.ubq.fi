@@ -821,7 +821,7 @@ const safeFailedAttemptResponse = (
   return streamErrorResponse(
     502,
     "Upstream Responses stream ended unexpectedly.",
-    "upstream_stream_error",
+    "server_error",
     provider,
     warnings,
   );
@@ -872,7 +872,7 @@ const prepareResponsesAttempt = async (
     if (
       prepared.terminal &&
       ((options.rejectFailedTerminal &&
-        prepared.terminal.type !== "response.completed" &&
+        (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error") &&
         prepared.semantic === null) ||
         (options.rejectPresemanticFailureTerminal && prepared.semantic === null &&
           (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error")))
@@ -7442,14 +7442,28 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
   const lifecycle = primaryResult?.lifecycle ?? createYunwuTransportLifecycle(null);
   const routed = primaryResult?.routed ?? null;
+  const forwardedOpenRouterControls = new Set([
+    "max_output_tokens",
+    "max_tool_calls",
+    "metadata",
+    "safety_identifier",
+    "service_tier",
+    "temperature",
+    "top_p",
+    "truncation",
+    "user",
+  ]);
   const clientWarnings = [
     ...warnings,
     ...(primaryFailureResponse ? responseWarnings(primaryFailureResponse) : []),
     ...responseWarnings(ready.response),
-  ].filter((warning) =>
-    !(openRouterAttempt && Object.prototype.hasOwnProperty.call(rawRecord, "max_output_tokens") &&
-      warning === MAX_OUTPUT_TOKENS_IGNORED_WARNING)
-  );
+  ].filter((warning) => {
+    if (!openRouterAttempt) return true;
+    return ![...forwardedOpenRouterControls].some((key) =>
+      Object.prototype.hasOwnProperty.call(rawRecord, key) &&
+      warning === (WARNING_KEY_MAP.get(key) ?? `${key}_ignored`)
+    );
+  });
   const structuredTextOutput = isRecord(rawRecord.text) && isRecord(rawRecord.text.format) &&
     (rawRecord.text.format.type === "json_schema" || rawRecord.text.format.type === "json_object");
   const warningModel = openRouterAttempt && !structuredTextOutput ? selectedModel : null;
