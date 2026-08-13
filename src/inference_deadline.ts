@@ -1,10 +1,22 @@
-// Stay below both the unchanged 120-second router timeout and the runtime
-// eviction window observed for queued provider requests. This leaves enough
-// time to cancel upstream and return an attributed gateway error.
-export const INFERENCE_DEADLINE_MS = 85_000;
-export const STREAM_FIRST_EVENT_DEADLINE_MS = 85_000;
-export const STREAM_INACTIVITY_DEADLINE_MS = 85_000;
-export const BUFFERED_INFERENCE_DEADLINE_MS = 85_000;
+/**
+ * OpenAI's official SDK defaults to ten minutes. Its Flex guidance shows a
+ * fifteen-minute request timeout for deliberately slow work, so the gateway
+ * accepts that documented upper bound as well.
+ */
+export const OPENAI_DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60_000;
+export const OPENAI_FLEX_REQUEST_TIMEOUT_MS = 15 * 60_000;
+
+/** Maximum buffered/provider request window supported by this gateway. */
+export const INFERENCE_DEADLINE_MS = OPENAI_FLEX_REQUEST_TIMEOUT_MS;
+export const BUFFERED_INFERENCE_DEADLINE_MS = OPENAI_FLEX_REQUEST_TIMEOUT_MS;
+
+/**
+ * Cloudflare's default proxy-read timeout is 125 seconds. Return stream
+ * headers and the first SSE event before that edge limit, then allow normal
+ * streams to remain quiet for almost the full 400-second client idle window.
+ */
+export const STREAM_FIRST_EVENT_DEADLINE_MS = 120_000;
+export const STREAM_INACTIVITY_DEADLINE_MS = 390_000;
 
 let streamFirstEventDeadlineMs = STREAM_FIRST_EVENT_DEADLINE_MS;
 
@@ -27,6 +39,30 @@ export const createStreamFirstEventDeadline = (
   const timer = setTimeout(() => {
     if (!active) return;
     deadline.abort(new DOMException("Upstream response headers or first SSE event timed out.", "TimeoutError"));
+  }, timeoutMs);
+  return {
+    signal: AbortSignal.any([requestSignal, deadline.signal]),
+    clear: () => {
+      if (!active) return;
+      active = false;
+      clearTimeout(timer);
+    },
+  };
+};
+
+/**
+ * Bounds one provider attempt until semantic Responses output or a valid
+ * terminal event. Each failover attempt gets its own controller and timer.
+ */
+export const createStreamSemanticDeadline = (
+  requestSignal: AbortSignal,
+  timeoutMs = streamFirstEventDeadlineMs,
+): Readonly<{ signal: AbortSignal; clear: () => void }> => {
+  const deadline = new AbortController();
+  let active = true;
+  const timer = setTimeout(() => {
+    if (!active) return;
+    deadline.abort(new DOMException("Upstream response timed out before semantic output.", "TimeoutError"));
   }, timeoutMs);
   return {
     signal: AbortSignal.any([requestSignal, deadline.signal]),

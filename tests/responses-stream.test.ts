@@ -5,6 +5,7 @@ import {
   proxyResponsesStream,
   readResponsesStream,
   ResponsesStreamError,
+  withSseKeepalive,
 } from "../src/responses_stream.ts";
 
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
@@ -271,6 +272,35 @@ Deno.test("Responses proxy emits an official error event after premature EOF", a
   assert.match(output, /response.output_text.delta/);
   assert.match(output, /event: error/);
   assert.doesNotMatch(output, /response.completed/);
+});
+
+Deno.test("SSE keepalive emits short comment bursts while the provider is quiet", async () => {
+  const encoder = new TextEncoder();
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      void gate.then(() => {
+        controller.enqueue(encoder.encode('data: {"type":"response.completed","response":{"status":"completed"}}\n\n'));
+        controller.close();
+      });
+    },
+  });
+  const reader = withSseKeepalive(source, { intervalMs: 5 }).getReader();
+  const heartbeat = await Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("keepalive was delayed")), 100)),
+  ]);
+  assert.equal(heartbeat.done, false);
+  assert.equal(new TextDecoder().decode(heartbeat.value), ": keepalive\n\n");
+
+  release();
+  const terminal = await reader.read();
+  assert.equal(terminal.done, false);
+  assert.match(new TextDecoder().decode(terminal.value), /response.completed/);
+  assert.equal((await reader.read()).done, true);
 });
 
 Deno.test("Responses proxy does not wait for lifecycle callbacks before terminal delivery", async () => {
