@@ -1,14 +1,6 @@
-/**
- * OpenAI's official SDK defaults to ten minutes. Its Flex guidance shows a
- * fifteen-minute request timeout for deliberately slow work, so the gateway
- * accepts that documented upper bound as well.
- */
+/** Reference timeout guidance for direct OpenAI clients. */
 export const OPENAI_DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60_000;
 export const OPENAI_FLEX_REQUEST_TIMEOUT_MS = 15 * 60_000;
-
-/** Maximum buffered/provider request window supported by this gateway. */
-export const INFERENCE_DEADLINE_MS = OPENAI_FLEX_REQUEST_TIMEOUT_MS;
-export const BUFFERED_INFERENCE_DEADLINE_MS = OPENAI_FLEX_REQUEST_TIMEOUT_MS;
 
 /**
  * Cloudflare's default proxy-read timeout is 125 seconds. Return stream
@@ -18,6 +10,10 @@ export const BUFFERED_INFERENCE_DEADLINE_MS = OPENAI_FLEX_REQUEST_TIMEOUT_MS;
 export const STREAM_FIRST_EVENT_DEADLINE_MS = 120_000;
 export const STREAM_FAILOVER_RESERVE_MS = 15_000;
 export const STREAM_INACTIVITY_DEADLINE_MS = 390_000;
+
+/** Buffered responses must finish before Cloudflare's 125-second read limit. */
+export const INFERENCE_DEADLINE_MS = STREAM_FIRST_EVENT_DEADLINE_MS;
+export const BUFFERED_INFERENCE_DEADLINE_MS = INFERENCE_DEADLINE_MS;
 
 let streamFirstEventDeadlineMs = STREAM_FIRST_EVENT_DEADLINE_MS;
 

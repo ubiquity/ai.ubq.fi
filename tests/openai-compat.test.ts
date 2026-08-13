@@ -8012,6 +8012,10 @@ Deno.test("openai: streamed Responses force the SSE content type", async () => {
     () =>
       new Response(sseResponse(baseSseChunks()).body, {
         status: 200,
+        headers: {
+          "Content-Encoding": "gzip",
+          "Content-Length": "12345",
+        },
         // Deliberately omit Content-Type to model a compatible upstream that
         // returns valid SSE bytes with an incomplete header set.
       }),
@@ -8031,6 +8035,8 @@ Deno.test("openai: streamed Responses force the SSE content type", async () => {
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("Content-Type"), "text/event-stream");
+  assert.equal(response.headers.get("Content-Encoding"), null);
+  assert.equal(response.headers.get("Content-Length"), null);
   assert.match(await response.text(), /response.completed/);
 });
 
@@ -8432,6 +8438,89 @@ Deno.test("openai: buffered fallback keeps provider deltas when terminal output 
   assert.equal(output.length, 2);
   assert.match(JSON.stringify(output[0]), /Failover active/);
   assert.match(JSON.stringify(output[1]), /pong/);
+});
+
+Deno.test("openai: OpenRouter preserves a first-semantic incomplete terminal", async () => {
+  const responseId = "resp_openrouter_incomplete";
+  const response = await withFetchMock(
+    (url) => {
+      if (url !== "https://openrouter.ai/api/v1/responses") {
+        return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return sseResponse([
+        `data: ${
+          JSON.stringify({
+            type: "response.created",
+            sequence_number: 0,
+            response: {
+              id: responseId,
+              object: "response",
+              status: "in_progress",
+              model: "google/gemini-2.5-pro",
+              output: [],
+            },
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.incomplete",
+            sequence_number: 1,
+            response: {
+              id: responseId,
+              object: "response",
+              status: "incomplete",
+              model: "google/gemini-2.5-pro",
+              incomplete_details: { reason: "max_output_tokens" },
+              output: [{
+                id: "msg_openrouter_incomplete",
+                type: "message",
+                status: "incomplete",
+                role: "assistant",
+                content: [{ type: "output_text", text: "partial", annotations: [] }],
+              }],
+              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+            },
+          })
+        }\n\n`,
+      ]);
+    },
+    () => handleResponses(openRouterResponsesRequest()),
+    { openRouterApiKey: "or-test-key" },
+  );
+  assert.equal(response.status, 200);
+  const values = parseResponsesSseValues(await response.text());
+  const terminal = values.find((event) => event.type === "response.incomplete");
+  assert.ok(terminal);
+  assert.match(JSON.stringify(terminal), /partial/);
+  assert.match(JSON.stringify(terminal), /max_output_tokens/);
+  assert.equal(values.filter((event) => event.type === "response.failed").length, 0);
+});
+
+Deno.test("openai: successful OpenRouter failover preserves primary remediation warnings", async (t) => {
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        (url) =>
+          url === "https://openrouter.ai/api/v1/responses"
+            ? sseResponse(openRouterTextSseChunks())
+            : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
+              status: 503,
+              headers: {
+                "Content-Type": "application/json",
+                "x-uos-warning": CODEX_AUTH_REAUTH_WARNING,
+              },
+            }),
+        () => handleResponses(openRouterResponsesRequest({ stream })),
+        { openRouterApiKey: "or-test-key" },
+      );
+      assert.equal(response.status, 200);
+      assert.ok(parseWarnings(response.headers.get("x-uos-warning")).includes(CODEX_AUTH_REAUTH_WARNING));
+      await response.body?.cancel();
+    });
+  }
 });
 
 Deno.test("openai: invalid route-dependent Responses fields fail before dispatch", async (t) => {

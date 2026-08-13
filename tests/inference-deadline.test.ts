@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  BUFFERED_INFERENCE_DEADLINE_MS,
   createInferenceSignal,
   createStreamFirstEventDeadline,
   createStreamSemanticDeadline,
@@ -10,10 +11,12 @@ import {
   STREAM_INACTIVITY_DEADLINE_MS,
 } from "../src/inference_deadline.ts";
 
-Deno.test("inference deadlines cover the OpenAI SDK and Flex timeout guidance", () => {
+Deno.test("inference deadlines retain guidance while buffered work stays inside the edge limit", () => {
   assert.equal(OPENAI_DEFAULT_REQUEST_TIMEOUT_MS, 10 * 60_000);
   assert.equal(OPENAI_FLEX_REQUEST_TIMEOUT_MS, 15 * 60_000);
-  assert.equal(INFERENCE_DEADLINE_MS, OPENAI_FLEX_REQUEST_TIMEOUT_MS);
+  assert.equal(INFERENCE_DEADLINE_MS, STREAM_FIRST_EVENT_DEADLINE_MS);
+  assert.equal(BUFFERED_INFERENCE_DEADLINE_MS, STREAM_FIRST_EVENT_DEADLINE_MS);
+  assert.ok(BUFFERED_INFERENCE_DEADLINE_MS < 125_000);
   assert.ok(STREAM_FIRST_EVENT_DEADLINE_MS < 125_000);
   assert.ok(STREAM_INACTIVITY_DEADLINE_MS < 400_000);
 });

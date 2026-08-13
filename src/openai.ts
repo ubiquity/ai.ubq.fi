@@ -861,7 +861,8 @@ const prepareResponsesAttempt = async (
     preparedStream = prepared;
     if (
       options.rejectFailedTerminal && prepared.terminal &&
-      prepared.terminal.type !== "response.completed"
+      prepared.terminal.type !== "response.completed" &&
+      !(prepared.terminal.type === "response.incomplete" && prepared.semantic !== null)
     ) {
       deadline.clear();
       return fail("read_error");
@@ -909,7 +910,8 @@ const prepareResponsesAttempt = async (
     }
     if (
       options.rejectFailedTerminal && discoveredTerminal &&
-      discoveredTerminal.type !== "response.completed"
+      discoveredTerminal.type !== "response.completed" &&
+      !(discoveredTerminal.type === "response.incomplete" && prepared.semantic !== null)
     ) {
       await iterator.return("failed terminal before release").catch(() => {});
       return fail("read_error");
@@ -6546,7 +6548,7 @@ const handleCerebrasChatCompletions = async (
   const captured = await readBoundedResponseBody(upstream, {
     signal: requestSignal,
     maxBytes: 128 * 1024,
-    // Successful buffered inference uses the request-level 85s deadline, not
+    // Successful buffered inference uses the request-level edge deadline, not
     // the one-second error-body default. `requestSignal` still caps the whole
     // request from dispatch through body completion.
     timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
@@ -6780,7 +6782,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   });
   // One timer covers both provider dispatch/headers and the first SSE event.
   // It is cleared immediately after preflight so active streams get their own
-  // renewable inactivity deadline rather than an 85-second absolute cutoff.
+  // renewable inactivity deadline rather than an absolute buffered cutoff.
   const streamFirstEventDeadline = stream ? createStreamFirstEventDeadline(req.signal) : null;
   const requestInferenceSignal = streamFirstEventDeadline?.signal ?? inferenceSignal(req);
   const clearStreamFirstEventDeadline = (): void => streamFirstEventDeadline?.clear();
@@ -7313,6 +7315,11 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
   const lifecycle = primaryResult?.lifecycle ?? createYunwuTransportLifecycle(null);
   const routed = primaryResult?.routed ?? null;
+  const clientWarnings = [
+    ...warnings,
+    ...(primaryFailureResponse ? responseWarnings(primaryFailureResponse) : []),
+    ...responseWarnings(ready.response),
+  ];
   const validateOpenRouterEvent = (event: ResponsesStreamEvent): void => {
     if (!openRouterAttempt || !selectedModel) return;
     const candidate = openRouterModelFromEvent(event.value);
@@ -7370,7 +7377,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, terminalType === "cancelled");
       },
     });
-    return withUosWarning(response, warnings);
+    return withUosWarning(response, clientWarnings);
   }
 
   recordFirstSseEvent(usageContext);
@@ -7414,9 +7421,11 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     },
   });
   const headers = new Headers(ready.response.headers);
+  headers.delete("Content-Encoding");
+  headers.delete("Content-Length");
   headers.set("Content-Type", "text/event-stream");
   headers.set("x-uos-upstream", ready.provider);
-  return withUosWarning(new Response(withSseKeepalive(body), { status: 200, headers }), warnings);
+  return withUosWarning(new Response(withSseKeepalive(body), { status: 200, headers }), clientWarnings);
 };
 
 export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
