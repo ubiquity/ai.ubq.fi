@@ -55,8 +55,18 @@ Deno.test("OpenRouter request translation accepts a null output-token limit", ()
 });
 
 Deno.test("OpenRouter request translation accepts nullable metadata", () => {
-  const translated = buildOpenRouterResponsesRequest({ input: "hello", metadata: null, stream: true });
+  const translated = buildOpenRouterResponsesRequest({
+    input: "hello",
+    metadata: null,
+    max_tool_calls: null,
+    temperature: null,
+    top_p: null,
+    stream: true,
+  });
   assert.equal(translated.metadata, null);
+  assert.equal(translated.max_tool_calls, null);
+  assert.equal(translated.temperature, null);
+  assert.equal(translated.top_p, null);
 });
 
 Deno.test("OpenRouter selected-model validation rejects disallowed publishers and token families", () => {

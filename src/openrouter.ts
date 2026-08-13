@@ -108,6 +108,7 @@ const validateRequestValue = (key: string, value: unknown): void => {
     throw new OpenRouterError("OpenRouter parallel-tool setting is invalid.", "openrouter_translation_invalid", 400);
   }
   if (key === "max_tool_calls") {
+    if (value === null) return;
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
       throw new OpenRouterError("OpenRouter max-tool-call limit is invalid.", "openrouter_translation_invalid", 400);
     }
@@ -127,12 +128,14 @@ const validateRequestValue = (key: string, value: unknown): void => {
     return;
   }
   if (key === "temperature") {
+    if (value === null) return;
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 2) {
       throw new OpenRouterError("OpenRouter temperature is invalid.", "openrouter_translation_invalid", 400);
     }
     return;
   }
   if (key === "top_p") {
+    if (value === null) return;
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
       throw new OpenRouterError("OpenRouter top-p value is invalid.", "openrouter_translation_invalid", 400);
     }

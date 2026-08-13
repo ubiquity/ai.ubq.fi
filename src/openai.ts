@@ -928,7 +928,7 @@ const prepareResponsesAttempt = async (
     }
     if (
       options.rejectFailedTerminal && discoveredTerminal &&
-      discoveredTerminal.type !== "response.completed" &&
+      (discoveredTerminal.type === "response.failed" || discoveredTerminal.type === "error") &&
       prepared.semantic === null
     ) {
       await iterator.return("failed terminal before release").catch(() => {});
@@ -936,7 +936,7 @@ const prepareResponsesAttempt = async (
     }
     if (options.requireEligibleModel && !prepared.buffered.some((event) => event.type === "response.created")) {
       await iterator.return("missing response.created").catch(() => {});
-      return fail("malformed_event");
+      return fail(prepared.semantic ? "terminal_failure" : "malformed_event");
     }
     if (options.requireEligibleModel && !responseId) {
       await iterator.return("missing response id").catch(() => {});
@@ -7304,7 +7304,10 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         });
         if (result.kind === "ready") {
           primaryResult = result.value;
-          if (result.value.prepared.prepared.semantic && result.value.prepared.prepared.terminal) {
+          if (
+            result.value.prepared.prepared.terminal?.type === "response.completed" ||
+            result.value.prepared.prepared.terminal?.type === "response.incomplete"
+          ) {
             markPrimarySemanticRecovery(
               result.value.routed,
               globalProbe,
@@ -7416,7 +7419,10 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           return openRouter.attempt.response;
         }
         primaryResult = recovery.value;
-        if (recovery.value.prepared.prepared.semantic && recovery.value.prepared.prepared.terminal) {
+        if (
+          recovery.value.prepared.prepared.terminal?.type === "response.completed" ||
+          recovery.value.prepared.prepared.terminal?.type === "response.incomplete"
+        ) {
           markPrimarySemanticRecovery(
             recovery.value.routed,
             recoveryProbe,
