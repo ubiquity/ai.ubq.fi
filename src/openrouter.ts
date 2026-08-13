@@ -219,6 +219,14 @@ export const openRouterTaskTypeFromResponse = (value: unknown): string | null =>
   return null;
 };
 
+export const stripOpenRouterMetadata = (value: Record<string, unknown>): Record<string, unknown> => {
+  if (!isRecord(value.response) || Array.isArray(value.response)) return value;
+  if (!Object.prototype.hasOwnProperty.call(value.response, "openrouter_metadata")) return value;
+  const response = { ...value.response };
+  delete response.openrouter_metadata;
+  return { ...value, response };
+};
+
 export const fetchOpenRouterResponses = async (
   canonical: Record<string, unknown>,
   options: Readonly<{

@@ -3,6 +3,7 @@ import { isRecord } from "./utils.ts";
 
 export const OPENROUTER_TELEMETRY_KEY = ["uos_ai", "openrouter_failover", "telemetry", "v1"] as const;
 export const OPENROUTER_TELEMETRY_TTL_MS = 30 * 24 * 60 * 60_000;
+const MAX_TELEMETRY_CAS_ATTEMPTS = 5;
 
 export type OpenRouterTelemetryRecord = Readonly<{
   v: 1;
@@ -79,7 +80,7 @@ export const recordOpenRouterTelemetry = async (input: OpenRouterTelemetryInput)
   const kv = await getKv();
   if (!kv) return;
   const value = normalizeTelemetry(input);
-  while (true) {
+  for (let attempt = 0; attempt < MAX_TELEMETRY_CAS_ATTEMPTS; attempt += 1) {
     const current = await kv.get<OpenRouterTelemetryRecord>(OPENROUTER_TELEMETRY_KEY);
     const parsed = parseOpenRouterTelemetryRecord(current.value);
     if (parsed && parsed.observed_at_ms >= value.observed_at_ms) return;

@@ -90,6 +90,30 @@ Deno.test("OpenRouter telemetry does not replace a newer observation with an old
   }
 });
 
+Deno.test("OpenRouter telemetry abandons an observation after bounded CAS conflicts", async () => {
+  let commits = 0;
+  setKvForTest({
+    get: () => Promise.resolve({ key: OPENROUTER_TELEMETRY_KEY, value: null, versionstamp: null }),
+    atomic: () => {
+      const operation = {
+        check: () => operation,
+        set: () => operation,
+        commit: () => {
+          commits += 1;
+          return Promise.resolve({ ok: false });
+        },
+      };
+      return operation;
+    },
+  } as unknown as Deno.Kv);
+  try {
+    await recordOpenRouterTelemetry({ observed_at_ms: 1_000 });
+    assert.equal(commits, 5);
+  } finally {
+    setKvForTest(null);
+  }
+});
+
 Deno.test("OpenRouter telemetry reports unavailable KV without inventing an observation", async () => {
   setKvForTest(null);
   assert.deepEqual(await getOpenRouterTelemetryView(), {

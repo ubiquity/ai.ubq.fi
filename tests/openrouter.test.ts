@@ -7,6 +7,7 @@ import {
   OPENROUTER_EXCLUDED_MODELS,
   OPENROUTER_RESPONSES_URL,
   openRouterTaskTypeFromResponse,
+  stripOpenRouterMetadata,
 } from "../src/openrouter.ts";
 
 Deno.test("OpenRouter request translation applies the fixed Auto policy and strips gateway fields", async () => {
@@ -117,4 +118,14 @@ Deno.test("OpenRouter metadata parsing extracts only bounded aggregate task type
     "coding",
   );
   assert.equal(openRouterTaskTypeFromResponse({ openrouter_metadata: { pipeline: [] } }), null);
+});
+
+Deno.test("OpenRouter metadata is removed from client-visible response events", () => {
+  assert.deepEqual(
+    stripOpenRouterMetadata({
+      type: "response.created",
+      response: { id: "resp_1", model: "google/gemini", openrouter_metadata: { pipeline: [] } },
+    }),
+    { type: "response.created", response: { id: "resp_1", model: "google/gemini" } },
+  );
 });

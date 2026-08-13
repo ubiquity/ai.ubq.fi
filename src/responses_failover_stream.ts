@@ -12,6 +12,7 @@ export const MAX_RESPONSES_PRECOMMIT_EVENTS = 10_000;
 export const MAX_RESPONSES_PRECOMMIT_CHARS = 32 * 1024 * 1024;
 
 const textTypes = new Set(["response.output_text.delta", "response.output_text.done"]);
+const refusalTypes = new Set(["response.refusal.delta", "response.refusal.done"]);
 const reasoningTypes = new Set([
   "response.reasoning_summary_text.delta",
   "response.reasoning_summary_text.done",
@@ -19,6 +20,14 @@ const reasoningTypes = new Set([
   "response.reasoning_text.done",
 ]);
 const executableToolTypes = new Set(["function_call", "custom_tool_call"]);
+const hostedToolTypes = new Set([
+  "code_interpreter_call",
+  "computer_call",
+  "file_search_call",
+  "image_generation_call",
+  "mcp_call",
+  "web_search_call",
+]);
 
 const nonEmptyText = (value: Record<string, unknown>): boolean =>
   [value.delta, value.text].some((item) => typeof item === "string" && item.length > 0);
@@ -38,6 +47,9 @@ const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null =
         typeof item.call_id === "string" && item.call_id.trim() && typeof item.name === "string" &&
         item.name.trim() && typeof item.input === "string"
       ) return "tool_call";
+    }
+    if (typeof item.type === "string" && hostedToolTypes.has(item.type) && item.status === "completed") {
+      return "tool_call";
     }
     if (item.type === "reasoning") {
       const values = [item.content, item.summary];
@@ -63,6 +75,7 @@ const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null =
 
 export const responsesEventSemanticKind = (event: ResponsesStreamEvent): ResponsesSemanticKind | null => {
   if (textTypes.has(event.type)) return nonEmptyText(event.value) ? "text" : null;
+  if (refusalTypes.has(event.type)) return nonEmptyText(event.value) ? "text" : null;
   if (reasoningTypes.has(event.type)) return nonEmptyText(event.value) ? "reasoning" : null;
   if (event.type === "response.output_item.done" && isRecord(event.value.item)) {
     const item = event.value.item;

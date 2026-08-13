@@ -54,6 +54,7 @@ import {
   readResponsesStream,
   ResponsesStreamError,
   type ResponsesStreamEvent,
+  type ResponsesStreamIterator,
   withSseKeepalive,
 } from "./responses_stream.ts";
 import {
@@ -63,6 +64,7 @@ import {
   openRouterModelFromEvent,
   openRouterTaskTypeFromResponse,
   readOpenRouterApiKey,
+  stripOpenRouterMetadata,
 } from "./openrouter.ts";
 import {
   claimOpenRouterEarlyRecoveryProbe,
@@ -79,6 +81,7 @@ import {
   isSyntheticResponsesFailureEvent,
   type PreparedResponsesStream,
   prepareResponsesStreamForCommit,
+  responseEventFromValue,
   responseIdFromEvents,
 } from "./responses_failover_stream.ts";
 import {
@@ -942,12 +945,36 @@ const prepareResponsesAttempt = async (
       await iterator.return("invalid selected model").catch(() => {});
       return fail("invalid_model");
     }
+    const sanitizedBuffered = options.requireEligibleModel
+      ? prepared.buffered.map((event) => {
+        const value = stripOpenRouterMetadata(event.value);
+        return value === event.value ? event : responseEventFromValue(value);
+      })
+      : prepared.buffered;
+    const sanitizedTerminal = discoveredTerminal
+      ? sanitizedBuffered[prepared.buffered.indexOf(discoveredTerminal)] ?? discoveredTerminal
+      : null;
+    const sanitizedIterator = options.requireEligibleModel
+      ? (async function* (): ResponsesStreamIterator {
+        for await (const event of iterator) {
+          const value = stripOpenRouterMetadata(event.value);
+          yield value === event.value ? event : responseEventFromValue(value);
+        }
+        return undefined;
+      })()
+      : iterator;
     return {
       kind: "ready",
       attempt: {
         provider,
         response,
-        prepared: { ...prepared, bufferedChars, terminal: discoveredTerminal },
+        prepared: {
+          ...prepared,
+          iterator: sanitizedIterator,
+          buffered: sanitizedBuffered,
+          bufferedChars,
+          terminal: sanitizedTerminal,
+        },
         responseId,
         selectedModel,
         taskType,

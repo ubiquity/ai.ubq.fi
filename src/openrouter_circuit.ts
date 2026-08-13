@@ -167,9 +167,12 @@ export const selectOpenRouterCircuitRoute = async (
       return { route: "openrouter", reason: "concurrent_probe", probe: null, transition: "none" };
     }
     const probe = await claimProbe(kv, "expiry", nowMs, newToken);
-    return probe
-      ? { route: "codex", reason: "probe", probe, transition: "probe_claimed" }
-      : { route: "openrouter", reason: "concurrent_probe", probe: null, transition: "none" };
+    if (probe) return { route: "codex", reason: "probe", probe, transition: "probe_claimed" };
+    const current = parseOpenRouterCircuitState((await readCircuit(kv)).value);
+    if (!current || current.phase === "closed" || current.open_until_ms === null) {
+      return { route: "codex", reason: "closed", probe: null, transition: "none" };
+    }
+    return { route: "openrouter", reason: "concurrent_probe", probe: null, transition: "none" };
   } catch {
     return unavailableDecision();
   }
