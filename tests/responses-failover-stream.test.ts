@@ -323,11 +323,50 @@ Deno.test("Owned stream synthetic failure preserves template, text, tools, and s
   assert.equal(response.model, "google/gemini");
   assert.equal(response.service_tier, "default");
   assert.equal(response.status, "failed");
+  assert.deepEqual(response.error, {
+    code: "server_error",
+    message: "The upstream stream ended unexpectedly.",
+  });
   assert.match(JSON.stringify(response.output), /kept text/);
   assert.match(JSON.stringify(response.output), /ctc_broken/);
   const output = response.output as Record<string, unknown>[];
   assert.equal(output.find((item) => item.id === "msg_broken")?.status, "incomplete");
   assert.equal(output.find((item) => item.id === "ctc_broken")?.status, "completed");
+});
+
+Deno.test("Owned stream closes its iterator after a post-commit validation failure", async () => {
+  let returned = false;
+  const rest = (async function* (): ResponsesStreamIterator {
+    try {
+      yield event({
+        type: "response.output_text.delta",
+        response_id: "resp_validation",
+        delta: "invalid",
+      });
+    } finally {
+      returned = true;
+    }
+    return undefined;
+  })();
+  let validations = 0;
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({
+        type: "response.created",
+        response: { id: "resp_validation", object: "response", status: "in_progress", output: [] },
+      }),
+      event({ type: "response.output_text.delta", response_id: "resp_validation", delta: "kept" }),
+    ],
+    iterator: rest,
+    responseId: "resp_validation",
+    validateEvent: () => {
+      validations += 1;
+      if (validations > 2) throw new Error("invalid provider event");
+    },
+  });
+  const text = await new Response(body).text();
+  assert.match(text, /response.failed/);
+  assert.equal(returned, true);
 });
 
 Deno.test("Owned stream marks recovered text completed only after a done event", async () => {

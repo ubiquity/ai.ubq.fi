@@ -111,6 +111,21 @@ Deno.test("Responses parser accepts an official flat error terminal", async () =
   assert.equal(events[0]?.value.code, "provider_error");
 });
 
+Deno.test("Responses parser accepts a nullable code in an official flat error terminal", async () => {
+  const events = [];
+  for await (
+    const event of readResponsesStream(
+      chunked(
+        'data: {"type":"error","code":null,"message":"Provider stopped.","param":"input"}\n\n',
+        [],
+      ),
+    )
+  ) events.push(event);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.value.code, null);
+  assert.equal(events[0]?.value.param, "input");
+});
+
 Deno.test("Responses preflight surfaces immediate failures before a stream response is created", async () => {
   const malformed = await captureError(async () => {
     await preflightResponsesStream(chunked("data: nope\n\n", []));

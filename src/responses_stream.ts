@@ -78,7 +78,7 @@ const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
   }
   if (
     (type === "error" && !isRecord(value.error) && !(
-      typeof value.code === "string" && value.code.trim() &&
+      (value.code === null || (typeof value.code === "string" && value.code.trim())) &&
       typeof value.message === "string" && value.message.trim() &&
       (value.param === null || typeof value.param === "string")
     )) ||

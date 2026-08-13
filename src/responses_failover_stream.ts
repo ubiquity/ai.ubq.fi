@@ -315,8 +315,7 @@ export const failureEventAfterCommit = (
       object: getString(responseTemplate.object) ?? "response",
       status: "failed",
       error: {
-        type: "server_error",
-        code: "upstream_stream_error",
+        code: "server_error",
         message: "The upstream stream ended unexpectedly.",
       },
       output: [...output],
@@ -570,6 +569,7 @@ export const createOwnedResponsesStream = (
         if (options.downstreamSignal?.aborted || options.signal?.aborted || localAbort.signal.aborted) {
           closed = true;
           controller.close();
+          await options.iterator.return(error).catch(() => {});
           invoke(() => options.onFailure?.(error));
           return;
         }
@@ -578,6 +578,7 @@ export const createOwnedResponsesStream = (
         closed = true;
         controller.enqueue(encoder.encode(failure.raw));
         controller.close();
+        await options.iterator.return(error).catch(() => {});
         invoke(() => options.onEvent?.(failure));
         invoke(() => options.onFailure?.(error));
       }
