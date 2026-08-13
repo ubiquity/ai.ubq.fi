@@ -7162,7 +7162,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     promptCacheMode: promptCacheModeFor(rawRecord),
     explicitBreakpointCount: countExplicitPromptCacheBreakpoints(input),
   });
-  const requestInferenceSignal = inferenceSignal(req);
+  const requestInferenceSignal = clientWantsStream ? req.signal : inferenceSignal(req);
   const preHeaderDeadline = createStreamFirstEventDeadline(requestInferenceSignal);
   const apiKey = readOpenRouterApiKey();
   const circuit = apiKey ? await selectOpenRouterCircuitRoute() : null;

@@ -2760,6 +2760,64 @@ Deno.test("openai: gateway first-event deadlines return 504 on both streaming ro
   }
 });
 
+Deno.test("openai: streaming Responses clear their absolute deadline after semantic output", async () => {
+  setStreamFirstEventDeadlineMsForTest(30);
+  try {
+    const response = await withFetchMock(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(TEXT_ENCODER.encode(
+                `data: ${
+                  JSON.stringify({
+                    type: "response.created",
+                    response: { id: "resp_stream_absolute", object: "response", status: "in_progress", output: [] },
+                  })
+                }\n\n`,
+              ));
+              controller.enqueue(TEXT_ENCODER.encode(
+                `data: ${
+                  JSON.stringify({
+                    type: "response.output_text.delta",
+                    response_id: "resp_stream_absolute",
+                    item_id: "msg_stream_absolute",
+                    output_index: 0,
+                    content_index: 0,
+                    delta: "still streaming",
+                  })
+                }\n\n`,
+              ));
+              setTimeout(() =>
+                controller.enqueue(TEXT_ENCODER.encode(
+                  `data: ${
+                    JSON.stringify({
+                      type: "response.completed",
+                      response: {
+                        id: "resp_stream_absolute",
+                        object: "response",
+                        status: "completed",
+                        output: [],
+                        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                      },
+                    })
+                  }\n\n`,
+                )), 60);
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      () => handleResponses(openRouterResponsesRequest()),
+    );
+    assert.equal(response.status, 200);
+    const values = parseResponsesSseValues(await response.text());
+    assert.equal(values.filter((event) => event.type === "response.completed").length, 1);
+    assert.equal(values.filter((event) => event.type === "response.failed").length, 0);
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+  }
+});
+
 Deno.test("openai: Codex pre-header gateway deadlines use server_error on both streaming routes", async () => {
   setStreamFirstEventDeadlineMsForTest(10);
   try {
