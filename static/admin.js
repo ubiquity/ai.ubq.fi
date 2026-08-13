@@ -165,6 +165,7 @@ let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
 let latestProviderCapacityChartState = null;
 let capacityChartResizeFrame = 0;
+let capacityChartScrollState = null;
 let latestProviderHealth = null;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
@@ -1045,6 +1046,8 @@ const unavailableCapacitySource = (source, slot = null) =>
 const CAPACITY_CHART_SVG_NS = "http://www.w3.org/2000/svg";
 const CAPACITY_CHART_MIN_DAYS = 7;
 const CAPACITY_CHART_MAX_DAYS = 14;
+const CAPACITY_CHART_MIN_WIDTH_PX = 1280;
+const CAPACITY_CHART_PIXELS_PER_DAY = 180;
 const CAPACITY_CHART_DAY_MS = 24 * 60 * 60 * 1_000;
 const CAPACITY_CHART_HOUR_MS = 60 * 60 * 1_000;
 const CAPACITY_CHART_MINUTE_MS = 60 * 1_000;
@@ -1059,6 +1062,9 @@ const CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT = 2;
 const CAPACITY_CHART_MIN_PIXELS_PER_PERCENT = 1;
 const CAPACITY_CHART_VIEWPORT_GAP_PX = 16;
 const CAPACITY_CHART_FIGURE_OVERHEAD_PX = 48;
+const CAPACITY_CHART_RESET_BAND_WIDTH_PX = 18;
+const CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS = 25;
+const CAPACITY_CHART_OPTIMAL_WEEK_MS = 7 * CAPACITY_CHART_DAY_MS;
 const CAPACITY_CHART_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
   month: "short",
@@ -1187,14 +1193,25 @@ const capacityChartWindow = (window) => {
   return { startAtMs, resetAtMs, durationMs };
 };
 
-const capacityChartContentWidth = () => {
+const capacityChartViewportWidth = () => {
   const chartStyles = getComputedStyle(providerCapacityChart);
-  const horizontalPadding = Number.parseFloat(chartStyles.paddingLeft) + Number.parseFloat(chartStyles.paddingRight);
+  const horizontalPadding = (Number.parseFloat(chartStyles.paddingLeft) || 0) +
+    (Number.parseFloat(chartStyles.paddingRight) || 0);
   const width = providerCapacityChart.getBoundingClientRect().width - horizontalPadding;
   return Number.isFinite(width) && width > 0
     ? Math.max(CAPACITY_CHART_PLOT_LEFT + CAPACITY_CHART_PLOT_RIGHT + 1, width)
     : 740;
 };
+
+const capacityChartIntrinsicWidth = (displayWindow) =>
+  Math.max(
+    capacityChartViewportWidth(),
+    CAPACITY_CHART_MIN_WIDTH_PX,
+    Math.ceil(
+      ((displayWindow?.durationMs ?? CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS) /
+        CAPACITY_CHART_DAY_MS) * CAPACITY_CHART_PIXELS_PER_DAY,
+    ),
+  );
 
 const capacityChartPlotHeight = () => {
   const viewportHeight = Number.isFinite(globalThis.innerHeight) ? globalThis.innerHeight : 0;
@@ -1274,7 +1291,7 @@ const formatCapacitySpendDelta = (value) => {
   return `${sign}${quotaPercentFormatter.format(Math.abs(value))} pp ${direction}`;
 };
 
-const renderCapacitySpendSummary = (pacing, chartWindow) => {
+const renderCapacitySpendSummary = (pacing, activeCycleWindow) => {
   const summary = document.createElement("aside");
   summary.dataset.capacitySpendSummary = "";
   summary.setAttribute("aria-label", "Optimal token spend pacing");
@@ -1314,7 +1331,7 @@ const renderCapacitySpendSummary = (pacing, chartWindow) => {
 
   const note = document.createElement("small");
   note.dataset.capacitySpendNote = "";
-  note.textContent = `100% → 0% remaining · ${capacityChartIntervalLabel(chartWindow?.durationMs)}`;
+  note.textContent = `100% → 0% remaining · ${capacityChartIntervalLabel(activeCycleWindow?.durationMs)}`;
   summary.append(title, description, metrics, note);
   return summary;
 };
@@ -1365,7 +1382,6 @@ const capacityChartPoint = (
     !Number.isFinite(remainingPercent) ||
     typeof sampledAtMs !== "number" ||
     !Number.isFinite(sampledAtMs) ||
-    (series.source === "codex" && (sampledAtMs < interval.startAtMs || sampledAtMs > interval.resetAtMs)) ||
     sampledAtMs < displayInterval.startAtMs ||
     sampledAtMs > displayInterval.resetAtMs
   ) return null;
@@ -1385,7 +1401,6 @@ const capacityChartResetPoint = (event, series, activeInterval = null, chartWind
   if (
     !interval || !displayInterval ||
     typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs) ||
-    sampledAtMs < interval.startAtMs || sampledAtMs > interval.resetAtMs ||
     sampledAtMs < displayInterval.startAtMs || sampledAtMs > displayInterval.resetAtMs
   ) return null;
   return {
@@ -1595,7 +1610,7 @@ const capacityChartPath = (points, plot, options = {}) => {
   return path;
 };
 
-const capacityChartReferenceWindow = (sources, nowMs) => {
+const capacityChartActiveUsageWindow = (sources, nowMs) => {
   const codexWindows = sources
     .filter((source) => source?.source === "codex" && source.state !== "unavailable")
     .flatMap((source) => [source.windows?.primary, source.windows?.secondary])
@@ -1621,11 +1636,216 @@ const capacityChartReferenceWindow = (sources, nowMs) => {
   };
 };
 
+const capacityChartHistoryWindow = (nowMs) => ({
+  startAtMs: nowMs - CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS,
+  resetAtMs: nowMs,
+  durationMs: CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS,
+});
+
+const capacityChartInferredRateLimitResetMarkers = (history, displayWindow, downtimeEvents = []) => {
+  if (!displayWindow) return [];
+  const downtimeTimes = capacityChartDowntimeEventTimes(downtimeEvents, displayWindow);
+  const samples = (Array.isArray(history) ? history : [])
+    .filter((sample) => typeof sample?.sampled_at_ms === "number" && Number.isFinite(sample.sampled_at_ms))
+    .sort((left, right) => left.sampled_at_ms - right.sampled_at_ms);
+  const markers = [];
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    if (
+      current.sampled_at_ms <= previous.sampled_at_ms || capacityChartSampleGapBetween(previous, current) ||
+      capacityChartDowntimeEventBetween(downtimeTimes, previous.sampled_at_ms, current.sampled_at_ms)
+    ) continue;
+    for (const slot of [1, 2]) {
+      const previousSource = previous.sources?.find((source) => source?.source === "codex" && source.slot === slot);
+      const currentSource = current.sources?.find((source) => source?.source === "codex" && source.slot === slot);
+      if (
+        !previousSource || !currentSource || previousSource.state === "unavailable" ||
+        currentSource.state === "unavailable"
+      ) continue;
+      for (const window of ["primary", "secondary"]) {
+        const previousWindow = previousSource.windows?.[window];
+        const currentWindow = currentSource.windows?.[window];
+        const previousUsedPercent = previousWindow?.used_percent;
+        const currentUsedPercent = currentWindow?.used_percent;
+        const previousResetAtMs = previousWindow?.reset_at_ms;
+        const resetAtMs = currentWindow?.reset_at_ms;
+        if (
+          typeof previousUsedPercent !== "number" || !Number.isFinite(previousUsedPercent) ||
+          typeof currentUsedPercent !== "number" || !Number.isFinite(currentUsedPercent) ||
+          typeof previousResetAtMs !== "number" || !Number.isFinite(previousResetAtMs) ||
+          typeof resetAtMs !== "number" || !Number.isFinite(resetAtMs) || resetAtMs <= previousResetAtMs
+        ) continue;
+        const capacityGain = previousUsedPercent - currentUsedPercent;
+        if (
+          capacityGain < CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS ||
+          current.sampled_at_ms < displayWindow.startAtMs || current.sampled_at_ms > displayWindow.resetAtMs
+        ) continue;
+        markers.push({
+          v: 1,
+          event_id: `history-openai-${slot}-${window}-${previous.sampled_at_ms}-${current.sampled_at_ms}`,
+          provider: "openai",
+          slot,
+          window,
+          observed_at_ms: current.sampled_at_ms,
+          previous_sampled_at_ms: previous.sampled_at_ms,
+          previous_reset_at_ms: previousResetAtMs,
+          reset_at_ms: resetAtMs,
+          previous_used_percent: previousUsedPercent,
+          current_used_percent: currentUsedPercent,
+          capacity_gain_percentage_points: capacityGain,
+          inferred_from_history: true,
+        });
+      }
+    }
+  }
+  return markers;
+};
+
+const capacityChartRateLimitResetMarkers = (events, history, displayWindow, downtimeEvents = []) => {
+  if (!displayWindow) return [];
+  const inferredEvents = capacityChartInferredRateLimitResetMarkers(history, displayWindow, downtimeEvents);
+  const recordedEvents = (Array.isArray(events) ? events : []).filter((event) => {
+    const observedAtMs = event?.observed_at_ms;
+    const previousSampledAtMs = event?.previous_sampled_at_ms;
+    const previousResetAtMs = event?.previous_reset_at_ms;
+    const resetAtMs = event?.reset_at_ms;
+    const previousUsedPercent = event?.previous_used_percent;
+    const currentUsedPercent = event?.current_used_percent;
+    const capacityGain = event?.capacity_gain_percentage_points;
+    return event?.provider === "openai" &&
+      (event.slot === 1 || event.slot === 2) &&
+      (event.window === "primary" || event.window === "secondary") &&
+      typeof observedAtMs === "number" && Number.isFinite(observedAtMs) &&
+      typeof previousSampledAtMs === "number" && Number.isFinite(previousSampledAtMs) &&
+      previousSampledAtMs < observedAtMs &&
+      typeof previousResetAtMs === "number" && Number.isFinite(previousResetAtMs) &&
+      typeof resetAtMs === "number" && Number.isFinite(resetAtMs) &&
+      resetAtMs > previousResetAtMs &&
+      typeof previousUsedPercent === "number" && Number.isFinite(previousUsedPercent) &&
+      previousUsedPercent >= 0 && previousUsedPercent <= 100 &&
+      typeof currentUsedPercent === "number" && Number.isFinite(currentUsedPercent) &&
+      currentUsedPercent >= 0 && currentUsedPercent <= 100 &&
+      typeof capacityGain === "number" && Number.isFinite(capacityGain) &&
+      Math.abs(previousUsedPercent - currentUsedPercent - capacityGain) <= 0.001 &&
+      capacityGain >= CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS &&
+      observedAtMs >= displayWindow.startAtMs && observedAtMs <= displayWindow.resetAtMs;
+  });
+  const markers = new Map();
+  const candidates = [
+    ...inferredEvents.filter((inferred) =>
+      !recordedEvents.some((recorded) =>
+        recorded?.slot === inferred.slot && recorded?.window === inferred.window &&
+        typeof recorded?.observed_at_ms === "number" &&
+        recorded.observed_at_ms > inferred.previous_sampled_at_ms &&
+        recorded.observed_at_ms <= inferred.observed_at_ms
+      )
+    ),
+    ...recordedEvents,
+  ];
+  for (const event of candidates) {
+    const observedAtMs = event?.observed_at_ms;
+    if (
+      event?.provider !== "openai" ||
+      (event.slot !== 1 && event.slot !== 2) ||
+      (event.window !== "primary" && event.window !== "secondary") ||
+      typeof observedAtMs !== "number" || !Number.isFinite(observedAtMs) ||
+      typeof event.capacity_gain_percentage_points !== "number" ||
+      !Number.isFinite(event.capacity_gain_percentage_points) ||
+      event.capacity_gain_percentage_points < CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS ||
+      observedAtMs < displayWindow.startAtMs || observedAtMs > displayWindow.resetAtMs
+    ) continue;
+    const key = `${event.slot}:${event.window}:${observedAtMs}`;
+    markers.set(key, event);
+  }
+  return [...markers.values()].sort((left, right) =>
+    left.observed_at_ms - right.observed_at_ms ||
+    String(left.event_id ?? "").localeCompare(String(right.event_id ?? ""))
+  );
+};
+
+const capacityChartMarkerX = (observedAtMs, chartWindow, plot) =>
+  plot.left + ((observedAtMs - chartWindow.startAtMs) / chartWindow.durationMs) * plot.width;
+
+const capacityChartScrollBehavior = () =>
+  globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth";
+
+const rememberCapacityChartScroll = () => {
+  const current = providerCapacityChart.querySelector("[data-capacity-chart-scroll]");
+  const svg = current?.querySelector("[data-capacity-chart-svg]");
+  if (!current || !svg) return;
+  const maximum = Math.max(0, current.scrollWidth - current.clientWidth);
+  const scrollLeft = Number.isFinite(current.scrollLeft) ? current.scrollLeft : 0;
+  const clientWidth = Number.isFinite(current.clientWidth) ? current.clientWidth : 0;
+  const startAtMs = Number(svg.dataset.capacityChartStartAtMs);
+  const durationMs = Number(svg.dataset.capacityChartDurationMs);
+  const plotLeft = Number(svg.dataset.capacityChartPlotLeft);
+  const plotWidth = Number(svg.dataset.capacityChartPlotWidth);
+  const atEnd = maximum <= 1 || maximum - scrollLeft <= 2;
+  capacityChartScrollState = {
+    atEnd,
+    anchorAtMs: !atEnd && clientWidth > 0 && Number.isFinite(startAtMs) && Number.isFinite(durationMs) &&
+        durationMs > 0 && Number.isFinite(plotLeft) && Number.isFinite(plotWidth) && plotWidth > 0
+      ? startAtMs + ((scrollLeft + clientWidth / 2 - plotLeft) / plotWidth) * durationMs
+      : null,
+  };
+};
+
+const restoreCapacityChartScroll = (scroll, displayWindow, plot) => {
+  const maximum = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
+  const state = capacityChartScrollState;
+  let nextScrollLeft = maximum;
+  if (!state?.atEnd && typeof state?.anchorAtMs === "number" && Number.isFinite(state.anchorAtMs)) {
+    const markerX = capacityChartMarkerX(state.anchorAtMs, displayWindow, plot);
+    nextScrollLeft = markerX - scroll.clientWidth / 2;
+  }
+  scroll.scrollLeft = Math.max(0, Math.min(maximum, nextScrollLeft));
+  rememberCapacityChartScroll();
+};
+
+const capacityChartOptimalSpendCoordinates = (activeWindow, resetMarkers, displayWindow, plot, nowMs) => {
+  if (!displayWindow) return [];
+  const segments = [];
+  const seenStarts = new Set();
+  const resetStarts = [
+    ...new Set(
+      (Array.isArray(resetMarkers) ? resetMarkers : [])
+        .map((event) => event?.observed_at_ms)
+        .filter((timestamp) => typeof timestamp === "number" && Number.isFinite(timestamp)),
+    ),
+  ].sort((left, right) => left - right);
+  const addWeeklySegment = (startAtMs, nextResetAtMs = Number.POSITIVE_INFINITY) => {
+    if (!Number.isFinite(startAtMs) || seenStarts.has(startAtMs)) return;
+    const endAtMs = Math.min(startAtMs + CAPACITY_CHART_OPTIMAL_WEEK_MS, nextResetAtMs);
+    const visibleStartAtMs = Math.max(startAtMs, displayWindow.startAtMs);
+    const visibleEndAtMs = Math.min(endAtMs, displayWindow.resetAtMs, nowMs);
+    if (!Number.isFinite(visibleStartAtMs) || !Number.isFinite(visibleEndAtMs) || visibleEndAtMs <= visibleStartAtMs) {
+      return;
+    }
+    const point = (timestamp) => ({
+      x: capacityChartMarkerX(timestamp, displayWindow, plot),
+      y: plot.top + clampCapacityChartPercent(
+            ((timestamp - startAtMs) / CAPACITY_CHART_OPTIMAL_WEEK_MS) * 100,
+          ) / 100 * plot.height,
+    });
+    seenStarts.add(startAtMs);
+    segments.push({ start: point(visibleStartAtMs), end: point(visibleEndAtMs) });
+  };
+
+  for (const [index, startAtMs] of resetStarts.entries()) {
+    addWeeklySegment(startAtMs, resetStarts[index + 1]);
+  }
+  if (!resetStarts.length) addWeeklySegment(activeWindow?.startAtMs);
+  return segments;
+};
+
 const renderProviderCapacityChart = (snapshot, sources) => {
+  rememberCapacityChartScroll();
   const history = Array.isArray(snapshot?.history) ? snapshot.history : [];
   const nowMs = Date.now();
-  const chartWindow = capacityChartReferenceWindow(sources, nowMs);
-  const width = capacityChartContentWidth();
+  const chartWindow = capacityChartHistoryWindow(nowMs);
+  const activeUsageWindow = capacityChartActiveUsageWindow(sources, nowMs);
+  const width = capacityChartIntrinsicWidth(chartWindow);
   const plot = {
     left: CAPACITY_CHART_PLOT_LEFT,
     top: CAPACITY_CHART_PLOT_TOP,
@@ -1648,6 +1868,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   for (
     const series of [
       ...CAPACITY_CHART_SERIES,
+      { key: "rate-limit-reset", label: "OpenAI rate-limit reset" },
       { key: "openai-downtime", label: "OpenAI downtime" },
       { key: "optimal-spend", label: "Optimal token spend" },
     ]
@@ -1667,12 +1888,130 @@ const renderProviderCapacityChart = (snapshot, sources) => {
 
   const svg = capacityChartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
-    preserveAspectRatio: "xMidYMid meet",
+    preserveAspectRatio: "none",
     role: "img",
-    "aria-label": "Codex and YunWu available capacity history across the active usage period",
+    "aria-label": "Codex and YunWu available capacity over the trailing seven days, including rate-limit resets",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
+  svg.dataset.capacityChartStartAtMs = String(chartWindow.startAtMs);
+  svg.dataset.capacityChartDurationMs = String(chartWindow.durationMs);
+  svg.dataset.capacityChartPlotLeft = String(plot.left);
+  svg.dataset.capacityChartPlotWidth = String(plot.width);
+  svg.style.width = `${width}px`;
+
+  const currentSample = { sampled_at_ms: nowMs, sources };
+  const aggregateDowntimeBridges = capacityChartDowntimeBridges(
+    history,
+    CAPACITY_CHART_SERIES[0],
+    chartWindow,
+    chartWindow,
+    capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
+    nowMs,
+    snapshot?.downtime_events,
+  );
+  const defs = capacityChartSvgElement("defs");
+  const downtimePattern = capacityChartSvgElement("pattern", {
+    id: "capacity-chart-downtime-stripes",
+    width: 12,
+    height: 12,
+    patternUnits: "userSpaceOnUse",
+  });
+  const downtimeStripe = capacityChartSvgElement("path", {
+    d: "M-3 -3L15 15 M-3 9L3 15 M9 -3L15 3",
+    fill: "none",
+    stroke: "#ff5f56",
+    "stroke-opacity": 0.3,
+    "stroke-width": 1.25,
+  });
+  downtimePattern.appendChild(downtimeStripe);
+  const resetPattern = capacityChartSvgElement("pattern", {
+    id: "capacity-chart-rate-limit-reset-stripes",
+    width: 10,
+    height: 10,
+    patternUnits: "userSpaceOnUse",
+  });
+  const resetStripe = capacityChartSvgElement("path", {
+    d: "M-2 10L10 -2 M3 12L12 3",
+    fill: "none",
+    stroke: "#55d98a",
+    "stroke-opacity": 0.72,
+    "stroke-width": 1.5,
+  });
+  resetPattern.appendChild(resetStripe);
+  defs.append(downtimePattern, resetPattern);
+  svg.appendChild(defs);
+
+  for (const bridge of aggregateDowntimeBridges) {
+    const band = capacityChartDowntimeBandCoordinates(bridge, plot);
+    if (!band) continue;
+    const background = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "#ff5f56",
+      "fill-opacity": 0.055,
+    });
+    background.dataset.capacityDowntimeBand = "openai";
+    background.setAttribute("aria-hidden", "true");
+    const stripes = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "url(#capacity-chart-downtime-stripes)",
+    });
+    stripes.dataset.capacityDowntimeBand = "openai";
+    stripes.setAttribute("aria-hidden", "true");
+    svg.append(background, stripes);
+  }
+
+  const rateLimitResetMarkers = capacityChartRateLimitResetMarkers(
+    snapshot?.rate_limit_reset_events,
+    history,
+    chartWindow,
+    snapshot?.downtime_events,
+  );
+  for (const event of rateLimitResetMarkers) {
+    const markerX = capacityChartMarkerX(event.observed_at_ms, chartWindow, plot);
+    const markerWidth = CAPACITY_CHART_RESET_BAND_WIDTH_PX;
+    const markerLeft = Math.max(plot.left, Math.min(plot.left + plot.width - markerWidth, markerX - markerWidth / 2));
+    const marker = capacityChartSvgElement("g");
+    const background = capacityChartSvgElement("rect", {
+      x: markerLeft,
+      y: plot.top,
+      width: markerWidth,
+      height: plot.height,
+      fill: "#55d98a",
+      "fill-opacity": 0.16,
+    });
+    const stripes = capacityChartSvgElement("rect", {
+      x: markerLeft,
+      y: plot.top,
+      width: markerWidth,
+      height: plot.height,
+      fill: "url(#capacity-chart-rate-limit-reset-stripes)",
+    });
+    const centerLine = capacityChartSvgElement("line", {
+      x1: markerX,
+      y1: plot.top,
+      x2: markerX,
+      y2: plot.top + plot.height,
+      stroke: "#55d98a",
+      "stroke-opacity": 0.96,
+      "stroke-width": 2,
+    });
+    marker.dataset.capacityRateLimitReset = event.event_id || `${event.slot}-${event.window}-${event.observed_at_ms}`;
+    marker.setAttribute(
+      "aria-label",
+      `OpenAI ${event.window} rate-limit reset for account ${event.slot}: ${
+        quotaPercentFormatter.format(event.capacity_gain_percentage_points)
+      } percentage points of capacity gained`,
+    );
+    marker.append(background, stripes, centerLine);
+    svg.appendChild(marker);
+  }
 
   const currentSample = { sampled_at_ms: nowMs, sources };
   const aggregateDowntimeBridges = capacityChartDowntimeBridges(
@@ -1762,7 +2101,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     y: height - 8,
     "text-anchor": "middle",
   });
-  xAxisTitle.textContent = `Usage period · ${capacityChartIntervalLabel(chartWindow.durationMs)}`;
+  xAxisTitle.textContent = "Trailing 7-day capacity history";
   xAxisTitle.dataset.capacityChartAxisTitle = "x";
   svg.appendChild(xAxisTitle);
   const yAxisTitle = capacityChartSvgElement("text", {
@@ -1775,19 +2114,27 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   yAxisTitle.dataset.capacityChartAxisTitle = "y";
   svg.appendChild(yAxisTitle);
 
-  const optimalSpendTrend = capacityChartSvgElement("line", {
-    x1: plot.left,
-    y1: plot.top,
-    x2: plot.left + plot.width,
-    y2: plot.top + plot.height,
-  });
-  optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
-  optimalSpendTrend.setAttribute("aria-label", "Optimal token spend trend, 100 percent to 0 percent remaining");
-  svg.appendChild(optimalSpendTrend);
+  const optimalSpendCoordinates = capacityChartOptimalSpendCoordinates(
+    activeUsageWindow,
+    rateLimitResetMarkers,
+    chartWindow,
+    plot,
+    nowMs,
+  );
+  for (const [index, coordinates] of optimalSpendCoordinates.entries()) {
+    const optimalSpendTrend = capacityChartSvgElement("line", {
+      x1: coordinates.start.x,
+      y1: coordinates.start.y,
+      x2: coordinates.end.x,
+      y2: coordinates.end.y,
+    });
+    optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
+    optimalSpendTrend.setAttribute("aria-label", `Optimal token spend for weekly reset ${index + 1}`);
+    svg.appendChild(optimalSpendTrend);
+  }
 
-  const pacing = capacityChartSpendPacing(chartWindow, sources, nowMs);
-  const currentElapsedPercent = pacing.elapsedPercent ?? 0;
-  const currentX = plot.left + (currentElapsedPercent / 100) * plot.width;
+  const pacing = capacityChartSpendPacing(activeUsageWindow, sources, nowMs);
+  const currentX = capacityChartMarkerX(nowMs, chartWindow, plot);
   const reticule = capacityChartSvgElement("line", {
     x1: currentX,
     y1: plot.top,
@@ -1799,7 +2146,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   svg.appendChild(reticule);
 
   for (const series of CAPACITY_CHART_SERIES) {
-    const activeInterval = chartWindow;
+    const activeInterval = series.source === "aggregate" || series.source === "yunwu" ? chartWindow : activeUsageWindow;
     const shouldRender = true;
     const currentPoint = shouldRender ? capacityChartPoint(currentSample, series, activeInterval, chartWindow) : null;
     const chartPoints = shouldRender
@@ -1816,8 +2163,8 @@ const renderProviderCapacityChart = (snapshot, sources) => {
       : [];
     const path = capacityChartSvgElement("path", {
       d: capacityChartPath(chartPoints, plot, {
-        anchorStart: series.source === "aggregate",
-        anchorEnd: series.source === "aggregate",
+        anchorStart: false,
+        anchorEnd: false,
       }),
       fill: "none",
     });
@@ -1849,8 +2196,61 @@ const renderProviderCapacityChart = (snapshot, sources) => {
 
   const chartBody = document.createElement("div");
   chartBody.dataset.capacityChartBody = "";
-  chartBody.append(svg, renderCapacitySpendSummary(pacing, chartWindow));
+  const chartScroll = document.createElement("div");
+  chartScroll.dataset.capacityChartScroll = "";
+  chartScroll.tabIndex = 0;
+  chartScroll.setAttribute("role", "region");
+  chartScroll.setAttribute("aria-label", "Scrollable seven-day provider capacity history");
+  chartScroll.appendChild(svg);
+  chartScroll.addEventListener("scroll", rememberCapacityChartScroll, { passive: true });
+  chartScroll.addEventListener("keydown", (event) => {
+    const amount = Math.max(80, Math.round(chartScroll.clientWidth * 0.8));
+    if (event.key === "ArrowLeft" || event.key === "PageUp") {
+      event.preventDefault();
+      chartScroll.scrollBy({ left: -amount, behavior: capacityChartScrollBehavior() });
+    } else if (event.key === "ArrowRight" || event.key === "PageDown") {
+      event.preventDefault();
+      chartScroll.scrollBy({ left: amount, behavior: capacityChartScrollBehavior() });
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      chartScroll.scrollTo({ left: 0, behavior: capacityChartScrollBehavior() });
+    } else if (event.key === "End") {
+      event.preventDefault();
+      chartScroll.scrollTo({ left: chartScroll.scrollWidth, behavior: capacityChartScrollBehavior() });
+    }
+  });
+  chartBody.append(chartScroll, renderCapacitySpendSummary(pacing, activeUsageWindow));
   figure.appendChild(chartBody);
+  if (rateLimitResetMarkers.length) {
+    const navigation = document.createElement("nav");
+    navigation.dataset.capacityResetNavigation = "";
+    navigation.setAttribute("aria-label", "Rate-limit reset markers");
+    for (const [index, event] of rateLimitResetMarkers.entries()) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.capacityReset = event.event_id || `${event.slot}-${event.window}-${event.observed_at_ms}`;
+      button.textContent = `${formatCapacityTimestamp(event.observed_at_ms)} · +${
+        quotaPercentFormatter.format(event.capacity_gain_percentage_points)
+      } pp`;
+      button.setAttribute(
+        "aria-label",
+        `Go to rate-limit reset ${
+          index + 1
+        } of ${rateLimitResetMarkers.length}, account ${event.slot} ${event.window} window, ${
+          quotaPercentFormatter.format(event.capacity_gain_percentage_points)
+        } percentage points of capacity gained and timer reset`,
+      );
+      button.addEventListener("click", () => {
+        const markerX = capacityChartMarkerX(event.observed_at_ms, chartWindow, plot);
+        chartScroll.scrollTo({
+          left: Math.max(0, markerX - chartScroll.clientWidth / 2),
+          behavior: capacityChartScrollBehavior(),
+        });
+      });
+      navigation.appendChild(button);
+    }
+    figure.appendChild(navigation);
+  }
   const caption = document.createElement("figcaption");
   caption.dataset.capacityChartMeta = "";
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
@@ -1862,6 +2262,9 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const resetEvents = Array.isArray(snapshot?.reset_events) ? snapshot.reset_events : [];
   const resetSuffix = resetEvents.length
     ? ` · ${resetEvents.length} verified reset${resetEvents.length === 1 ? "" : "s"}`
+    : "";
+  const rateLimitResetSuffix = rateLimitResetMarkers.length
+    ? ` · ${rateLimitResetMarkers.length} observed rate-limit reset${rateLimitResetMarkers.length === 1 ? "" : "s"}`
     : "";
   const downtimeBridgeCount = capacityChartDowntimeBridges(
     history,
@@ -1878,10 +2281,13 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   caption.textContent = samples.length
     ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
       formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
-    } · ${samples.length} sample${samples.length === 1 ? "" : "s"}${resetSuffix}${downtimeSuffix}${staleSuffix}`
-    : `No retained samples yet · current Codex usage period${resetSuffix}${downtimeSuffix}${staleSuffix}`;
+    } · ${samples.length} sample${
+      samples.length === 1 ? "" : "s"
+    }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${staleSuffix}`
+    : `No retained samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${staleSuffix}`;
   figure.appendChild(caption);
   providerCapacityChart.replaceChildren(figure);
+  restoreCapacityChartScroll(chartScroll, chartWindow, plot);
 };
 
 const renderProviderCapacity = (snapshot) => {
@@ -6963,7 +7369,9 @@ viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashM
 viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
 
 globalThis.setInterval(() => {
-  if (currentAdminView === "providers" && document.visibilityState === "visible") void loadProviders();
+  if (currentAdminView !== "providers" || document.visibilityState !== "visible") return;
+  void loadProviders();
+  void loadProviderCapacity({ live: false });
 }, 30_000);
 
 createKeyBtn.addEventListener("click", () => {

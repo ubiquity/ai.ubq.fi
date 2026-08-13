@@ -11,7 +11,7 @@
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
     <link rel="stylesheet" href="/style.css" />
-    <link rel="stylesheet" href="/admin.css" />
+    <link rel="stylesheet" href="/admin.css?v=provider-capacity-reset-history-20260814-scroll" />
   </head>
   <body data-page="admin" data-role="admin" data-auth-widget="collapsed" data-auth-scope="none">
     <div data-shell>
@@ -567,7 +567,7 @@
           <article data-card aria-labelledby="card-provider-capacity">
             <header>
               <h2 id="card-provider-capacity">Available capacity</h2>
-              <p>Usage windows, provider health, and the sampled YunWu refill cycle in one view. The chart keeps Codex capacity and YunWu refill as separate series; cards preserve each provider's value.</p>
+              <p>Seven days of provider capacity, OpenAI rate-limit resets, provider health, and the sampled YunWu refill cycle. Green striped markers show observed resets that advanced both capacity and the timer; red striped bands show OpenAI downtime.</p>
             </header>
             <div data-card-body>
               <div data-provider-heading>
@@ -708,6 +708,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=passkey-relay-20260814-v2"></script>
+    <script type="module" src="/admin.js?v=provider-capacity-reset-history-20260814-scroll"></script>
   </body>
 </html>
