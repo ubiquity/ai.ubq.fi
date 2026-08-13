@@ -40,6 +40,9 @@ import {
   BUFFERED_INFERENCE_DEADLINE_MS,
   createInferenceSignal,
   createStreamFirstEventDeadline,
+  createStreamSemanticDeadline,
+  STREAM_FAILOVER_RESERVE_MS,
+  type StreamDeadline,
 } from "./inference_deadline.ts";
 import { getKv } from "./kv.ts";
 import { loadRuntimeConfig } from "./runtime_config.ts";
@@ -48,11 +51,40 @@ import { readJsonBody } from "./request.ts";
 import {
   type PreflightedResponsesStream,
   preflightResponsesStream,
-  proxyResponsesStreamIterator,
   readResponsesStream,
   ResponsesStreamError,
   type ResponsesStreamEvent,
+  type ResponsesStreamIterator,
+  withSseKeepalive,
 } from "./responses_stream.ts";
+import {
+  deriveOpenRouterSessionId,
+  fetchOpenRouterResponses,
+  isEligibleOpenRouterModel,
+  openRouterModelFromEvent,
+  openRouterTaskTypeFromResponse,
+  readOpenRouterApiKey,
+  stripOpenRouterMetadata,
+} from "./openrouter.ts";
+import {
+  claimOpenRouterEarlyRecoveryProbe,
+  closeOpenRouterCircuit,
+  type OpenRouterCircuitProbe,
+  recordOpenRouterEligibleFailure,
+  releaseOpenRouterCircuitProbe as releaseGlobalOpenRouterProbe,
+  renewOpenRouterCircuitProbe,
+  selectOpenRouterCircuitRoute,
+} from "./openrouter_circuit.ts";
+import { recordOpenRouterTelemetry } from "./openrouter_telemetry.ts";
+import {
+  appendResponsesPrecommitEvent,
+  createOwnedResponsesStream,
+  isSyntheticResponsesFailureEvent,
+  type PreparedResponsesStream,
+  prepareResponsesStreamForCommit,
+  responseEventFromValue,
+  responseIdFromEvents,
+} from "./responses_failover_stream.ts";
 import {
   type PaidFallbackReservation,
   recordYunwuAmbiguousFailure,
@@ -118,11 +150,13 @@ type UsageContext = Readonly<{
   responseTelemetry?: ResponseTelemetryState;
   /** Commits an admitted API-key reservation exactly once before transport. */
   beforeProviderDispatch?: (
-    provider: "cerebras" | "chatgpt_codex" | "yunwu" | "voyage",
+    provider: "cerebras" | "chatgpt_codex" | "openrouter" | "yunwu" | "voyage",
   ) => Promise<ApiKeyProviderDispatch | void>;
+  /** Test seam for proving one terminal usage observation per response. */
+  onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
 
-type UpstreamProvider = "cerebras" | "chatgpt_codex" | "yunwu";
+type UpstreamProvider = "cerebras" | "chatgpt_codex" | "openrouter" | "yunwu";
 export type InferenceFallbackReason = "primary_401" | "primary_403" | "primary_429";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
@@ -156,6 +190,14 @@ export type ResponseTelemetry = Readonly<{
   firstCodexHeadersMs: number | null;
   firstSseEventMs: number | null;
   streamTerminalMs: number | null;
+  attemptedProviders: readonly string[];
+  openRouterTriggerClass: string | null;
+  openRouterCircuitTransition: string | null;
+  openRouterSelectedModel: string | null;
+  openRouterTaskType: string | null;
+  openRouterSemanticCommitment: string | null;
+  openRouterLatencyMs: number | null;
+  openRouterTerminalStatus: string | null;
 }>;
 
 export type ResponseStreamTerminalType =
@@ -195,6 +237,14 @@ type ResponseTelemetryState = {
   firstCodexHeadersMs: number | null;
   firstSseEventMs: number | null;
   streamTerminalMs: number | null;
+  attemptedProviders: string[];
+  openRouterTriggerClass: string | null;
+  openRouterCircuitTransition: string | null;
+  openRouterSelectedModel: string | null;
+  openRouterTaskType: string | null;
+  openRouterSemanticCommitment: string | null;
+  openRouterLatencyMs: number | null;
+  openRouterTerminalStatus: string | null;
 };
 
 const responseTelemetry = new WeakMap<Response, ResponseTelemetryState>();
@@ -227,6 +277,14 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   firstCodexHeadersMs: null,
   firstSseEventMs: null,
   streamTerminalMs: null,
+  attemptedProviders: [],
+  openRouterTriggerClass: null,
+  openRouterCircuitTransition: null,
+  openRouterSelectedModel: null,
+  openRouterTaskType: null,
+  openRouterSemanticCommitment: null,
+  openRouterLatencyMs: null,
+  openRouterTerminalStatus: null,
 });
 
 const withResponseTelemetryContext = (
@@ -242,6 +300,7 @@ const withResponseTelemetryContext = (
   startedAtMs: context?.startedAtMs,
   startedAtMonotonicMs: context?.startedAtMonotonicMs,
   beforeProviderDispatch: context?.beforeProviderDispatch,
+  onTerminalUsage: context?.onTerminalUsage,
   responseTelemetry: state,
 });
 
@@ -282,7 +341,20 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     firstCodexHeadersMs: state.firstCodexHeadersMs,
     firstSseEventMs: state.firstSseEventMs,
     streamTerminalMs: state.streamTerminalMs,
+    attemptedProviders: [...state.attemptedProviders],
+    openRouterTriggerClass: state.openRouterTriggerClass,
+    openRouterCircuitTransition: state.openRouterCircuitTransition,
+    openRouterSelectedModel: state.openRouterSelectedModel,
+    openRouterTaskType: state.openRouterTaskType,
+    openRouterSemanticCommitment: state.openRouterSemanticCommitment,
+    openRouterLatencyMs: state.openRouterLatencyMs,
+    openRouterTerminalStatus: state.openRouterTerminalStatus,
   };
+};
+
+const recordAttemptedProvider = (context: UsageContext | undefined, provider: string): void => {
+  const attempted = context?.responseTelemetry?.attemptedProviders;
+  if (attempted && !attempted.includes(provider)) attempted.push(provider);
 };
 
 type ResponseTelemetryTimingField =
@@ -321,6 +393,57 @@ const recordFirstProviderDispatch = (context: UsageContext | undefined): void =>
 
 const recordFirstProviderHeaders = (context: UsageContext | undefined): void => {
   recordResponseTiming(context, "firstProviderHeadersMs");
+};
+
+const recordOpenRouterFields = (
+  context: UsageContext | undefined,
+  fields: Readonly<{
+    triggerClass?: string | null;
+    circuitTransition?: string | null;
+    selectedModel?: string | null;
+    taskType?: string | null;
+    semanticCommitment?: string | null;
+    latencyMs?: number | null;
+    terminalStatus?: string | null;
+  }>,
+): void => {
+  const telemetry = context?.responseTelemetry;
+  if (!telemetry) return;
+  if (fields.triggerClass !== undefined) telemetry.openRouterTriggerClass = fields.triggerClass;
+  if (fields.circuitTransition !== undefined) telemetry.openRouterCircuitTransition = fields.circuitTransition;
+  if (fields.selectedModel !== undefined) telemetry.openRouterSelectedModel = fields.selectedModel;
+  if (fields.taskType !== undefined) telemetry.openRouterTaskType = fields.taskType;
+  if (fields.semanticCommitment !== undefined) telemetry.openRouterSemanticCommitment = fields.semanticCommitment;
+  if (fields.latencyMs !== undefined) telemetry.openRouterLatencyMs = fields.latencyMs;
+  if (fields.terminalStatus !== undefined) telemetry.openRouterTerminalStatus = fields.terminalStatus;
+};
+
+const persistOpenRouterFields = (context: UsageContext | undefined): Promise<void> => {
+  const telemetry = context?.responseTelemetry;
+  if (!telemetry) return Promise.resolve();
+  return recordOpenRouterTelemetry({
+    attempted_provider: telemetry.attemptedProviders.join(",") || null,
+    trigger_class: telemetry.openRouterTriggerClass,
+    circuit_transition: telemetry.openRouterCircuitTransition,
+    selected_model: telemetry.openRouterSelectedModel,
+    task_type: telemetry.openRouterTaskType,
+    latency_ms: telemetry.openRouterLatencyMs,
+    terminal_status: telemetry.openRouterTerminalStatus,
+    semantic_commitment: telemetry.openRouterSemanticCommitment,
+  }).catch(() => {});
+};
+
+const persistFailedOpenRouterAttempt = (
+  context: UsageContext | undefined,
+  startedAtMonotonicMs: number,
+  triggerClass: string,
+): Promise<void> => {
+  recordOpenRouterFields(context, {
+    triggerClass,
+    latencyMs: Math.max(0, Math.round(performance.now() - startedAtMonotonicMs)),
+    terminalStatus: "failed_before_commit",
+  });
+  return persistOpenRouterFields(context);
 };
 
 const recordFirstSseEvent = (context: UsageContext | undefined): void => {
@@ -546,6 +669,11 @@ const recordTerminalUsage = (
   telemetry.usageObserved = usage !== null;
   telemetry.usageTelemetryStatus = usage?.status ?? "missing";
   telemetry.completed = completed;
+  try {
+    context?.onTerminalUsage?.(usage, completed);
+  } catch {
+    // A test/observability callback cannot alter response delivery.
+  }
 };
 
 const recordErrorUsage = (_context: UsageContext | undefined): Promise<void> => Promise.resolve();
@@ -614,6 +742,574 @@ const streamPreflightFailureResponse = (
     provider,
     warnings,
   );
+};
+
+type ResponsesAttemptTrigger =
+  | "http_5xx"
+  | "missing_body"
+  | "malformed_event"
+  | "premature_eof"
+  | "semantic_timeout"
+  | "terminal_failure"
+  | "read_error"
+  | "invalid_model";
+
+type PreparedResponsesAttempt = Readonly<{
+  provider: UpstreamProvider;
+  response: Response;
+  prepared: PreparedResponsesStream;
+  responseId: string | null;
+  selectedModel: string | null;
+  taskType: string | null;
+  signal: AbortSignal;
+  abort: (reason?: unknown) => void;
+  clearDeadline: () => void;
+}>;
+
+type FailedResponsesAttempt = Readonly<{
+  provider: UpstreamProvider;
+  response: Response;
+  trigger: ResponsesAttemptTrigger;
+  signal: AbortSignal;
+  clearDeadline: () => void;
+}>;
+
+type ResponsesAttemptResult =
+  | { kind: "ready"; attempt: PreparedResponsesAttempt }
+  | { kind: "failed"; attempt: FailedResponsesAttempt };
+
+const isEligibleResponsesAttemptStatus = (response: Response): boolean => response.status >= 500;
+
+const triggerForResponsesError = (error: unknown, signal: AbortSignal): ResponsesAttemptTrigger => {
+  if (signal.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError") {
+    return "semantic_timeout";
+  }
+  if (error instanceof ResponsesStreamError) {
+    if (error.kind === "malformed_event" || error.kind === "event_too_large") return "malformed_event";
+    if (error.kind === "premature_eof") return "premature_eof";
+    if (error.kind === "inactivity_timeout") return "semantic_timeout";
+  }
+  return "read_error";
+};
+
+const safeFailedAttemptResponse = (
+  response: Response,
+  provider: UpstreamProvider,
+  trigger: ResponsesAttemptTrigger,
+  warnings: readonly string[],
+): Response => {
+  if (!response.ok) return response;
+  if (trigger === "semantic_timeout") {
+    return streamErrorResponse(
+      504,
+      "Upstream stream exceeded the gateway deadline before semantic output.",
+      "gateway_timeout",
+      provider,
+      warnings,
+      "server_error",
+    );
+  }
+  if (trigger === "missing_body") {
+    return streamErrorResponse(
+      502,
+      "Upstream response missing body.",
+      "server_error",
+      provider,
+      warnings,
+    );
+  }
+  return streamErrorResponse(
+    502,
+    "Upstream Responses stream ended unexpectedly.",
+    "server_error",
+    provider,
+    warnings,
+  );
+};
+
+const prepareResponsesAttempt = async (
+  response: Response,
+  provider: UpstreamProvider,
+  deadline: StreamDeadline,
+  requestSignal: AbortSignal,
+  warnings: readonly string[],
+  options: Readonly<{
+    requireEligibleModel?: boolean;
+    rejectFailedTerminal?: boolean;
+    rejectPresemanticFailureTerminal?: boolean;
+  }> = {},
+): Promise<ResponsesAttemptResult> => {
+  const fail = (trigger: ResponsesAttemptTrigger, failedResponse = response): ResponsesAttemptResult => {
+    deadline.clear();
+    return {
+      kind: "failed",
+      attempt: {
+        provider,
+        response: safeFailedAttemptResponse(failedResponse, provider, trigger, warnings),
+        trigger,
+        signal: deadline.signal,
+        clearDeadline: deadline.clear,
+      },
+    };
+  };
+  if (!response.ok) {
+    const trigger = isEligibleResponsesAttemptStatus(response) ? "http_5xx" : "read_error";
+    const normalized = await toOpenAiUpstreamErrorResponse(response, provider, deadline.signal);
+    deadline.clear();
+    return fail(trigger, normalized);
+  }
+  if (!response.body) {
+    deadline.clear();
+    return fail("missing_body");
+  }
+  const iterator = readResponsesStream(response.body, deadline.signal, {
+    firstEventTimeoutMs: Math.ceil(deadline.remainingMs()),
+  });
+  let preparedStream: PreparedResponsesStream | null = null;
+  try {
+    const prepared = await prepareResponsesStreamForCommit(iterator);
+    preparedStream = prepared;
+    if (
+      prepared.terminal &&
+      ((options.rejectFailedTerminal &&
+        (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error") &&
+        prepared.semantic === null) ||
+        (options.rejectPresemanticFailureTerminal && prepared.semantic === null &&
+          (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error")))
+    ) {
+      deadline.clear();
+      return fail(
+        options.rejectPresemanticFailureTerminal && prepared.semantic === null &&
+          (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error")
+          ? "terminal_failure"
+          : "read_error",
+      );
+    }
+    let responseId = responseIdFromEvents(prepared.buffered);
+    let bufferedChars = prepared.bufferedChars;
+    let discoveredTerminal = prepared.terminal;
+    let selectedModel: string | null = null;
+    let taskType: string | null = null;
+    for (const event of prepared.buffered) {
+      const candidate = openRouterModelFromEvent(event.value);
+      if (candidate) {
+        if (selectedModel && selectedModel !== candidate) {
+          await iterator.return("inconsistent model identity").catch(() => {});
+          return fail(prepared.semantic ? "terminal_failure" : "invalid_model");
+        }
+        selectedModel = candidate;
+      }
+      if (!taskType && isRecord(event.value.response)) {
+        taskType = openRouterTaskTypeFromResponse(event.value.response);
+      }
+    }
+    while (options.requireEligibleModel && (!selectedModel || !responseId) && !discoveredTerminal) {
+      const next = await iterator.next();
+      if (next.done || !next.value) break;
+      bufferedChars = appendResponsesPrecommitEvent(prepared.buffered, next.value, bufferedChars);
+      const candidateResponseId = responseIdFromEvents([next.value]);
+      if (candidateResponseId && responseId && candidateResponseId !== responseId) {
+        await iterator.return("inconsistent response identity").catch(() => {});
+        return fail("malformed_event");
+      }
+      responseId ??= candidateResponseId;
+      const candidate = openRouterModelFromEvent(next.value.value);
+      if (candidate) {
+        if (selectedModel && selectedModel !== candidate) {
+          await iterator.return("inconsistent model identity").catch(() => {});
+          return fail("invalid_model");
+        }
+        selectedModel = candidate;
+      }
+      if (!taskType && isRecord(next.value.value.response)) {
+        taskType = openRouterTaskTypeFromResponse(next.value.value.response);
+      }
+      if (next.value.terminal) discoveredTerminal = next.value;
+    }
+    if (
+      options.rejectFailedTerminal && discoveredTerminal &&
+      (discoveredTerminal.type === "response.failed" || discoveredTerminal.type === "error") &&
+      prepared.semantic === null
+    ) {
+      await iterator.return("failed terminal before release").catch(() => {});
+      return fail("read_error");
+    }
+    if (options.requireEligibleModel && !prepared.buffered.some((event) => event.type === "response.created")) {
+      await iterator.return("missing response.created").catch(() => {});
+      return fail(prepared.semantic ? "terminal_failure" : "malformed_event");
+    }
+    if (options.requireEligibleModel && !responseId) {
+      await iterator.return("missing response id").catch(() => {});
+      return fail("malformed_event");
+    }
+    deadline.clear();
+    if (options.requireEligibleModel && (!selectedModel || !isEligibleOpenRouterModel(selectedModel))) {
+      await iterator.return("invalid selected model").catch(() => {});
+      return fail(prepared.semantic ? "terminal_failure" : "invalid_model");
+    }
+    const sanitizedBuffered = options.requireEligibleModel
+      ? prepared.buffered.map((event) => {
+        const value = stripOpenRouterMetadata(event.value);
+        return value === event.value ? event : responseEventFromValue(value);
+      })
+      : prepared.buffered;
+    const sanitizedTerminal = discoveredTerminal
+      ? sanitizedBuffered[prepared.buffered.indexOf(discoveredTerminal)] ?? discoveredTerminal
+      : null;
+    const sanitizedIterator = options.requireEligibleModel
+      ? (async function* (): ResponsesStreamIterator {
+        for await (const event of iterator) {
+          const value = stripOpenRouterMetadata(event.value);
+          yield value === event.value ? event : responseEventFromValue(value);
+        }
+        return undefined;
+      })()
+      : iterator;
+    return {
+      kind: "ready",
+      attempt: {
+        provider,
+        response,
+        prepared: {
+          ...prepared,
+          iterator: sanitizedIterator,
+          buffered: sanitizedBuffered,
+          bufferedChars,
+          terminal: sanitizedTerminal,
+        },
+        responseId,
+        selectedModel,
+        taskType,
+        signal: deadline.signal,
+        abort: deadline.abort,
+        clearDeadline: deadline.clear,
+      },
+    };
+  } catch (error) {
+    await preparedStream?.iterator.return(error).catch(() => {});
+    deadline.clear();
+    if (requestSignal.aborted) throw requestSignal.reason ?? error;
+    return fail(preparedStream?.semantic ? "terminal_failure" : triggerForResponsesError(error, deadline.signal));
+  }
+};
+
+type ResponsesRouteAttempt = Readonly<{
+  routed: RoutedResponsesUpstream;
+  prepared: PreparedResponsesAttempt;
+  lifecycle: YunwuTransportLifecycle;
+}>;
+
+type ResponsesRouteFailure = Readonly<{
+  routed: RoutedResponsesUpstream;
+  failed: FailedResponsesAttempt;
+  lifecycle: YunwuTransportLifecycle;
+}>;
+
+const responseFailureTerminalType = (
+  trigger: ResponsesAttemptTrigger,
+  signal: AbortSignal,
+  downstreamSignal: AbortSignal,
+): ResponseStreamTerminalType => {
+  if (downstreamSignal.aborted) return "cancelled";
+  if (trigger === "semantic_timeout" || signal.aborted) return "deadline";
+  if (trigger === "premature_eof") return "eof";
+  if (trigger === "terminal_failure") return "response.failed";
+  return "error";
+};
+
+const fetchAndPreparePrimaryResponses = async (
+  body: Record<string, unknown>,
+  options: Readonly<{
+    model: string;
+    reasoning: string | null;
+    clientWantsStream: boolean;
+    usageContext?: UsageContext;
+    clientVersion?: string | null;
+    requestSignal: AbortSignal;
+    warnings: readonly string[];
+    attemptDeadline: StreamDeadline;
+    rejectPresemanticFailureTerminal?: boolean;
+  }>,
+): Promise<{ kind: "ready"; value: ResponsesRouteAttempt } | { kind: "failed"; value: ResponsesRouteFailure }> => {
+  const deadline = options.attemptDeadline;
+  let routed: RoutedResponsesUpstream;
+  try {
+    routed = await fetchResponsesWithPaidFallback(body, {
+      model: options.model,
+      route: "responses",
+      stream: options.clientWantsStream,
+      reasoning: options.reasoning,
+      usageContext: options.usageContext,
+      clientVersion: options.clientVersion,
+      signal: deadline.signal,
+    });
+  } catch (error) {
+    deadline.clear();
+    if (options.requestSignal.aborted || error instanceof ApiKeyQuotaDispatchError) throw error;
+    if (
+      error instanceof CodexError &&
+      (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable")
+    ) {
+      logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
+      const response = toCodexErrorResponse(error, "chatgpt_codex");
+      const trigger: ResponsesAttemptTrigger = error.code === "gateway_timeout" ? "semantic_timeout" : "read_error";
+      return {
+        kind: "failed",
+        value: {
+          routed: {
+            response,
+            provider: "chatgpt_codex",
+            paidFallback: null,
+            gatewayResponse: false,
+            fallbackReason: null,
+          },
+          lifecycle: createYunwuTransportLifecycle(null),
+          failed: {
+            provider: "chatgpt_codex",
+            response,
+            trigger,
+            signal: deadline.signal,
+            clearDeadline: deadline.clear,
+          },
+        },
+      };
+    }
+    throw error;
+  }
+  const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
+  if (routed.gatewayResponse) {
+    deadline.clear();
+    const trigger: ResponsesAttemptTrigger = routed.response.status === 504
+      ? "semantic_timeout"
+      : routed.response.status >= 500
+      ? "http_5xx"
+      : "read_error";
+    return {
+      kind: "failed",
+      value: {
+        routed,
+        lifecycle,
+        failed: {
+          provider: routed.provider,
+          response: routed.response,
+          trigger,
+          signal: deadline.signal,
+          clearDeadline: deadline.clear,
+        },
+      },
+    };
+  }
+  const prepared = await prepareResponsesAttempt(
+    routed.response,
+    routed.provider,
+    deadline,
+    options.requestSignal,
+    [...options.warnings, ...responseWarnings(routed.response)],
+    { rejectPresemanticFailureTerminal: options.rejectPresemanticFailureTerminal },
+  );
+  return prepared.kind === "ready"
+    ? { kind: "ready", value: { routed, prepared: prepared.attempt, lifecycle } }
+    : { kind: "failed", value: { routed, failed: prepared.attempt, lifecycle } };
+};
+
+const fetchAndPrepareOpenRouterResponses = async (
+  body: Record<string, unknown>,
+  options: Readonly<{
+    usageContext?: UsageContext;
+    requestSignal: AbortSignal;
+    sessionId: string | null;
+    apiKey: string;
+    attemptDeadline: StreamDeadline;
+  }>,
+): Promise<ResponsesAttemptResult> => {
+  const deadline = options.attemptDeadline;
+  recordAttemptedProvider(options.usageContext, "openrouter");
+  if (options.usageContext?.responseTelemetry) options.usageContext.responseTelemetry.provider = "openrouter";
+  let response: Response;
+  try {
+    const result = await fetchOpenRouterResponses(body, {
+      apiKey: options.apiKey,
+      sessionId: options.sessionId,
+      signal: deadline.signal,
+      timing: {
+        onDispatch: () => recordFirstProviderDispatch(options.usageContext),
+        onHeaders: () => recordFirstProviderHeaders(options.usageContext),
+      },
+      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("openrouter") ?? Promise.resolve(),
+    });
+    response = result.response;
+  } catch (error) {
+    deadline.clear();
+    if (error instanceof ApiKeyQuotaDispatchError) throw error;
+    if (options.requestSignal.aborted) throw options.requestSignal.reason ?? error;
+    return {
+      kind: "failed",
+      attempt: {
+        provider: "openrouter",
+        response: streamErrorResponse(
+          502,
+          "OpenRouter request failed before response headers were received.",
+          "server_error",
+          "openrouter",
+          [],
+        ),
+        trigger: triggerForResponsesError(error, deadline.signal),
+        signal: deadline.signal,
+        clearDeadline: deadline.clear,
+      },
+    };
+  }
+  return await prepareResponsesAttempt(
+    response,
+    "openrouter",
+    deadline,
+    options.requestSignal,
+    [],
+    { requireEligibleModel: true, rejectFailedTerminal: true },
+  );
+};
+
+const finalizeAbandonedPrimaryAttempt = (
+  routed: RoutedResponsesUpstream,
+  lifecycle: YunwuTransportLifecycle,
+  options: Readonly<{
+    cancelled?: boolean;
+    failureTrigger?: ResponsesAttemptTrigger;
+  }> = {},
+): void => {
+  if (routed.provider === "chatgpt_codex") {
+    void releaseCodexResponseProbe(routed.response).catch(() => {});
+  } else if (routed.provider === "yunwu" && !routed.gatewayResponse) {
+    if (options.cancelled) lifecycle.cancelled();
+    else if (options.failureTrigger === "http_5xx" || options.failureTrigger === "terminal_failure") {
+      lifecycle.terminal("response.failed");
+    } else lifecycle.ambiguous();
+  }
+};
+
+const markPrimarySemanticRecovery = (
+  routed: RoutedResponsesUpstream,
+  circuitProbe: OpenRouterCircuitProbe | null,
+  usageContext?: UsageContext,
+  terminalType?: string | null,
+): void => {
+  if (!circuitProbe) return;
+  const transition = routed.provider === "chatgpt_codex"
+    ? terminalType === "response.failed"
+      ? recordOpenRouterEligibleFailure(circuitProbe)
+      : closeOpenRouterCircuit(circuitProbe)
+    : releaseGlobalOpenRouterProbe(circuitProbe);
+  void transition.then((value) => {
+    if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+  }).catch(() => {});
+};
+
+const collectBufferedResponses = async (
+  attempt: PreparedResponsesAttempt,
+  options: Readonly<{
+    warningModel?: string | null;
+    usageContext?: UsageContext;
+    onTerminal?: (event: ResponsesStreamEvent) => void;
+    validateEvent?: (event: ResponsesStreamEvent) => void;
+    onFailure?: (error: unknown) => void;
+  }> = {},
+): Promise<Response> => {
+  const initial = options.warningModel
+    ? (() => {
+      const stream = createOwnedResponsesStream({
+        initial: attempt.prepared.buffered,
+        iterator: attempt.prepared.iterator,
+        responseId: attempt.responseId,
+        warning: { model: options.warningModel! },
+        validateEvent: options.validateEvent,
+        onFailure: options.onFailure,
+      });
+      return readResponsesStream(stream);
+    })()
+    : (async function* (): AsyncGenerator<ResponsesStreamEvent> {
+      for (const event of attempt.prepared.buffered) {
+        options.validateEvent?.(event);
+        yield event;
+      }
+      for await (const event of attempt.prepared.iterator) {
+        options.validateEvent?.(event);
+        yield event;
+      }
+    })();
+  let finalResponse: Record<string, unknown> | null = null;
+  let responseId = attempt.responseId;
+  let outputText = "";
+  let refusalText = "";
+  const outputItems: Record<string, unknown>[] = [];
+  try {
+    for await (const event of initial) {
+      recordFirstSseEvent(options.usageContext);
+      const ev = event.value;
+      const eventResponseId = responseIdFromEvents([event]);
+      if (eventResponseId && responseId && eventResponseId !== responseId) {
+        throw new ResponsesStreamError("Upstream Responses stream changed response identifiers.", {
+          kind: "malformed_event",
+        });
+      }
+      responseId ??= eventResponseId;
+      if (
+        event.type === "response.output_text.delta" &&
+        !(options.warningModel && ev.output_index === 0)
+      ) outputText += getString(ev.delta) ?? "";
+      if (event.type === "response.refusal.delta") refusalText += getString(ev.delta) ?? "";
+      if (event.type === "response.refusal.done" && !refusalText) refusalText = getString(ev.refusal) ?? "";
+      if (event.type === "response.output_item.done" && isRecord(ev.item)) outputItems.push(ev.item);
+      if (event.type === "response.output") {
+        const output = ev.output ?? (isRecord(ev.response) ? ev.response.output : undefined);
+        if (Array.isArray(output)) outputItems.push(...output.filter(isRecord));
+      }
+      if (event.type === "error") {
+        options.onTerminal?.(event);
+        const code = getString(ev.code) ?? "server_error";
+        const message = getString(ev.message) ?? "Upstream Responses stream ended unexpectedly.";
+        return streamErrorResponse(
+          502,
+          message,
+          code,
+          attempt.provider,
+          [],
+        );
+      }
+      if (
+        (event.type === "response.completed" || event.type === "response.failed" ||
+          event.type === "response.incomplete") &&
+        isRecord(ev.response) && !Array.isArray(ev.response)
+      ) {
+        options.onTerminal?.(event);
+        finalResponse = ev.response;
+        break;
+      }
+    }
+  } catch (error) {
+    options.onFailure?.(error);
+    return streamErrorResponse(
+      502,
+      "Upstream Responses stream ended unexpectedly.",
+      "server_error",
+      attempt.provider,
+      [],
+    );
+  }
+  if (!finalResponse) {
+    return streamErrorResponse(
+      502,
+      "Upstream Responses stream ended unexpectedly.",
+      "server_error",
+      attempt.provider,
+      [],
+    );
+  }
+  finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
+  finalResponse = withAccumulatedResponseText(finalResponse, outputText, options.warningModel ? 1 : 0);
+  finalResponse = withAccumulatedResponseRefusal(finalResponse, refusalText, options.warningModel ? 1 : 0);
+  // The terminal callback owns usage and terminal telemetry for buffered and
+  // streamed Responses alike. Do not record it a second time here.
+  return json(200, finalResponse, { "x-uos-upstream": attempt.provider });
 };
 
 const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
@@ -1067,6 +1763,7 @@ const fetchResponsesWithPaidFallback = async (
 ): Promise<RoutedResponsesUpstream> => {
   const telemetry = options.usageContext?.responseTelemetry;
   if (telemetry) telemetry.provider = "chatgpt_codex";
+  recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
   try {
     primary = await fetchCodexResponses(body, {
@@ -1208,6 +1905,7 @@ const fetchResponsesWithPaidFallback = async (
     telemetry.accountSlot = null;
     telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
   }
+  recordAttemptedProvider(options.usageContext, "yunwu");
   logYunwuSelected(requestId, fallbackReason);
   let result: Awaited<ReturnType<typeof fetchYunwuResponses>>;
   try {
@@ -4041,9 +4739,9 @@ const recordResponsesTerminal = (
   else recordTerminalUsage(usageContext, usage, false);
 };
 
-const responseHasOutputText = (output: unknown): boolean => {
+const responseHasOutputText = (output: unknown, startIndex = 0): boolean => {
   if (!Array.isArray(output)) return false;
-  for (const item of output) {
+  for (const item of output.slice(startIndex)) {
     if (!isRecord(item) || !Array.isArray(item.content)) continue;
     for (const contentItem of item.content) {
       if (!isRecord(contentItem)) continue;
@@ -4053,6 +4751,14 @@ const responseHasOutputText = (output: unknown): boolean => {
     }
   }
   return false;
+};
+
+const responseHasRefusal = (output: unknown, startIndex = 0): boolean => {
+  if (!Array.isArray(output)) return false;
+  return output.slice(startIndex).some((item) =>
+    isRecord(item) && Array.isArray(item.content) &&
+    item.content.some((part) => isRecord(part) && part.type === "refusal" && Boolean(getString(part.refusal)))
+  );
 };
 
 /**
@@ -4084,8 +4790,12 @@ const reconcileResponseOutputText = (emittedText: string, output: unknown): stri
   return malformedFunctionCallStream("Upstream response output text conflicts with prior text deltas.");
 };
 
-const withAccumulatedResponseText = (response: Record<string, unknown>, text: string): Record<string, unknown> => {
-  if (!text || responseHasOutputText(response.output)) return response;
+const withAccumulatedResponseText = (
+  response: Record<string, unknown>,
+  text: string,
+  ignoredOutputPrefix = 0,
+): Record<string, unknown> => {
+  if (!text || responseHasOutputText(response.output, ignoredOutputPrefix)) return response;
   const output = Array.isArray(response.output) ? [...response.output] : [];
   output.push({
     id: `msg_${crypto.randomUUID().replace(/-/g, "")}`,
@@ -4093,6 +4803,23 @@ const withAccumulatedResponseText = (response: Record<string, unknown>, text: st
     status: "completed",
     role: "assistant",
     content: [{ type: "output_text", text, annotations: [] }],
+  });
+  return { ...response, output };
+};
+
+const withAccumulatedResponseRefusal = (
+  response: Record<string, unknown>,
+  refusal: string,
+  ignoredOutputPrefix = 0,
+): Record<string, unknown> => {
+  if (!refusal || responseHasRefusal(response.output, ignoredOutputPrefix)) return response;
+  const output = Array.isArray(response.output) ? [...response.output] : [];
+  output.push({
+    id: `msg_${crypto.randomUUID().replace(/-/g, "")}`,
+    type: "message",
+    status: "completed",
+    role: "assistant",
+    content: [{ type: "refusal", refusal }],
   });
   return { ...response, output };
 };
@@ -4591,18 +5318,18 @@ const streamChatCompletions = (
         controller.close();
       }
     },
-    cancel(reason) {
+    async cancel(reason) {
       if (closed) return;
       closed = true;
       onResponseTerminal?.(false);
       recordStreamTerminalType(usageContext, "cancelled");
       lifecycle.cancelled();
       void recordErrorUsage(usageContext);
-      void iterator.return(reason).catch(() => {});
+      await source.cancel(reason);
     },
   });
 
-  return new Response(stream, {
+  return new Response(withSseKeepalive(stream), {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream",
@@ -5918,7 +6645,7 @@ const handleCerebrasChatCompletions = async (
   const captured = await readBoundedResponseBody(upstream, {
     signal: requestSignal,
     maxBytes: 128 * 1024,
-    // Successful buffered inference uses the request-level 85s deadline, not
+    // Successful buffered inference uses the request-level edge deadline, not
     // the one-second error-body default. `requestSignal` still caps the whole
     // request from dispatch through body completion.
     timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
@@ -6152,7 +6879,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   });
   // One timer covers both provider dispatch/headers and the first SSE event.
   // It is cleared immediately after preflight so active streams get their own
-  // renewable inactivity deadline rather than an 85-second absolute cutoff.
+  // renewable inactivity deadline rather than an absolute buffered cutoff.
   const streamFirstEventDeadline = stream ? createStreamFirstEventDeadline(req.signal) : null;
   const requestInferenceSignal = streamFirstEventDeadline?.signal ?? inferenceSignal(req);
   const clearStreamFirstEventDeadline = (): void => streamFirstEventDeadline?.clear();
@@ -6272,6 +6999,30 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS, CODEX_RESPONSES_EXTENSION_KEYS);
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
+  }
+  const maxOutputTokens = rawRecord.max_output_tokens;
+  if (
+    maxOutputTokens !== undefined && maxOutputTokens !== null &&
+    (typeof maxOutputTokens !== "number" || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0)
+  ) {
+    return openaiError(400, "max_output_tokens must be a positive integer", "invalid_request_error", {
+      param: "max_output_tokens",
+    });
+  }
+  const parallelToolCalls = rawRecord.parallel_tool_calls;
+  if (parallelToolCalls !== undefined && typeof parallelToolCalls !== "boolean") {
+    return openaiError(400, "parallel_tool_calls must be a boolean", "invalid_request_error", {
+      param: "parallel_tool_calls",
+    });
+  }
+  const maxToolCalls = rawRecord.max_tool_calls;
+  if (
+    maxToolCalls !== undefined && maxToolCalls !== null &&
+    (typeof maxToolCalls !== "number" || !Number.isSafeInteger(maxToolCalls) || maxToolCalls <= 0)
+  ) {
+    return openaiError(400, "max_tool_calls must be a positive integer", "invalid_request_error", {
+      param: "max_tool_calls",
+    });
   }
   const promptCacheControls = validatePromptCacheControls(rawRecord);
   if (!promptCacheControls.ok) {
@@ -6501,6 +7252,24 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   codexBody.input = input;
   codexBody.stream = true;
   codexBody.store = false;
+  const openRouterBody = { ...codexBody };
+  // Preserve official controls supported by OpenRouter even when Codex does
+  // not currently accept them on its compatibility transport.
+  for (
+    const key of [
+      "max_output_tokens",
+      "max_tool_calls",
+      "metadata",
+      "safety_identifier",
+      "service_tier",
+      "temperature",
+      "top_p",
+      "truncation",
+      "user",
+    ]
+  ) {
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) openRouterBody[key] = rawRecord[key];
+  }
 
   await recordRequestUsage(usageContext, {
     model: modelRaw,
@@ -6511,206 +7280,370 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     promptCacheMode: promptCacheModeFor(rawRecord),
     explicitBreakpointCount: countExplicitPromptCacheBreakpoints(input),
   });
-  const streamFirstEventDeadline = clientWantsStream ? createStreamFirstEventDeadline(req.signal) : null;
-  const requestInferenceSignal = streamFirstEventDeadline?.signal ?? inferenceSignal(req);
-  const clearStreamFirstEventDeadline = (): void => streamFirstEventDeadline?.clear();
+  const requestInferenceSignal = clientWantsStream ? req.signal : inferenceSignal(req);
+  const preHeaderDeadline = createStreamFirstEventDeadline(requestInferenceSignal);
+  const apiKey = readOpenRouterApiKey();
+  const circuit = apiKey ? await selectOpenRouterCircuitRoute() : null;
+  if (circuit && circuit.transition !== "none") {
+    recordOpenRouterFields(usageContext, { circuitTransition: circuit.transition });
+  }
+  const sessionId = apiKey
+    ? await deriveOpenRouterSessionId(usageContext?.idempotencyPrincipal, rawRecord.client_metadata)
+    : null;
+  let route: "codex" | "openrouter" = circuit?.route ?? "codex";
+  let globalProbe: OpenRouterCircuitProbe | null = circuit?.probe ?? null;
+  let primaryFailureResponse: Response | null = null;
+  let primaryResult: ResponsesRouteAttempt | null = null;
+  let openRouterAttempt: PreparedResponsesAttempt | null = null;
+  let selectedModel: string | null = null;
+  let fallbackStartedAt = 0;
 
-  let routed: RoutedResponsesUpstream;
   try {
-    routed = await fetchResponsesWithPaidFallback(codexBody, {
-      model,
-      route: "responses",
-      stream: clientWantsStream,
-      reasoning: reasoningLabel,
-      usageContext,
-      clientVersion: modelMetadata.snapshot?.client_version,
-      signal: requestInferenceSignal,
-    });
-  } catch (error) {
-    clearStreamFirstEventDeadline();
-    logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
-    await recordErrorUsage(usageContext);
-    return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
-  }
-  const upstream = routed.response;
-  const providerWarnings = responseWarnings(upstream);
-  const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
-  const resolveCodexProbe = (completed = false): void => {
-    if (routed.provider !== "chatgpt_codex") return;
-    const transition = completed ? markCodexResponseCompleted(upstream) : releaseCodexResponseProbe(upstream);
-    void transition.catch(() => {});
-  };
+    if (route === "codex") {
+      try {
+        const remainingMs = preHeaderDeadline.remainingMs();
+        const failoverReserveMs = Math.min(STREAM_FAILOVER_RESERVE_MS, remainingMs / 2);
+        const primaryBudgetMs = apiKey ? Math.max(0, remainingMs - failoverReserveMs) : remainingMs;
+        const result = await fetchAndPreparePrimaryResponses(codexBody, {
+          model,
+          reasoning: reasoningLabel,
+          clientWantsStream,
+          usageContext,
+          clientVersion: modelMetadata.snapshot?.client_version,
+          requestSignal: requestInferenceSignal,
+          warnings,
+          attemptDeadline: createStreamSemanticDeadline(preHeaderDeadline.signal, Math.ceil(primaryBudgetMs)),
+          rejectPresemanticFailureTerminal: apiKey !== null,
+        });
+        if (result.kind === "ready") {
+          primaryResult = result.value;
+          if (
+            result.value.prepared.prepared.terminal?.type === "response.completed" ||
+            result.value.prepared.prepared.terminal?.type === "response.incomplete"
+          ) {
+            markPrimarySemanticRecovery(
+              result.value.routed,
+              globalProbe,
+              usageContext,
+              result.value.prepared.prepared.terminal?.type,
+            );
+          }
+        } else {
+          const { routed, failed, lifecycle } = result.value;
+          primaryFailureResponse = failed.response;
+          const terminalType = responseFailureTerminalType(failed.trigger, failed.signal, req.signal);
+          recordStreamTerminalType(usageContext, terminalType);
+          if (routed.gatewayResponse && !isEligibleResponsesAttemptStatus(failed.response)) {
+            if (globalProbe) void releaseGlobalOpenRouterProbe(globalProbe).catch(() => {});
+            return failed.response;
+          }
+          if (!isEligibleResponsesAttemptStatus(failed.response) && failed.trigger === "read_error") {
+            if (globalProbe) void releaseGlobalOpenRouterProbe(globalProbe).catch(() => {});
+            lifecycle.terminal("response.failed");
+            return failed.response;
+          }
+          if (!routed.gatewayResponse) {
+            finalizeAbandonedPrimaryAttempt(routed, lifecycle, { failureTrigger: failed.trigger });
+          }
+          if (!apiKey) return failed.response;
+          const transition = await recordOpenRouterEligibleFailure(globalProbe);
+          if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
+          recordOpenRouterFields(usageContext, { triggerClass: failed.trigger });
+          route = "openrouter";
+        }
+      } catch (error) {
+        if (globalProbe) void releaseGlobalOpenRouterProbe(globalProbe).catch(() => {});
+        logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
+        await recordErrorUsage(usageContext);
+        return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
+      }
+    }
 
-  if (routed.gatewayResponse) {
-    clearStreamFirstEventDeadline();
-    recordStreamTerminalType(usageContext, "error");
-    await recordErrorUsage(usageContext);
-    return upstream;
-  }
-  if (!upstream.ok) {
-    lifecycle.terminal("response.failed");
-    recordStreamTerminalType(usageContext, "response.failed");
-    await recordErrorUsage(usageContext);
-    try {
-      const normalized = await toOpenAiUpstreamErrorResponse(upstream, routed.provider, requestInferenceSignal);
-      return attachResponseTelemetry(normalized, usageContext?.responseTelemetry ?? createResponseTelemetryState());
-    } finally {
-      clearStreamFirstEventDeadline();
-    }
-  }
-
-  if (clientWantsStream) {
-    if (!upstream.body) {
-      clearStreamFirstEventDeadline();
-      resolveCodexProbe();
-      lifecycle.ambiguous();
-      recordStreamTerminalType(usageContext, "error");
-      await recordErrorUsage(usageContext);
-      return streamErrorResponse(
-        502,
-        "Codex upstream response missing body.",
-        "codex_upstream_missing_body",
-        routed.provider,
-        [...warnings, ...providerWarnings],
-      );
-    }
-    let preflight: PreflightedResponsesStream;
-    try {
-      preflight = await preflightResponsesStream(upstream.body, requestInferenceSignal);
-      clearStreamFirstEventDeadline();
-    } catch (error) {
-      clearStreamFirstEventDeadline();
-      resolveCodexProbe();
-      const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
-      recordStreamTerminalType(usageContext, terminalType);
-      if (terminalType === "cancelled") lifecycle.cancelled();
-      else lifecycle.ambiguous();
-      await recordErrorUsage(usageContext);
-      return streamPreflightFailureResponse(terminalType, routed.provider, [...warnings, ...providerWarnings]);
-    }
-    recordFirstSseEvent(usageContext);
-    if (preflight.first.terminal) recordStreamTerminal(usageContext);
-    const headers = new Headers(upstream.headers);
-    // The gateway always emits the Responses wire format as SSE. Some
-    // compatible upstreams omit (or mislabel) this header; preserve the
-    // stream contract so handler-level terminal logging and clients consume
-    // it as an event stream.
-    headers.set("Content-Type", "text/event-stream");
-    headers.set("x-uos-upstream", routed.provider);
-    const responseBody = proxyResponsesStreamIterator(preflight.iterator, {
-      signal: requestInferenceSignal,
-      downstreamSignal: req.signal,
-      onEvent: (event) => {
-        if (event.terminal) {
-          resolveCodexProbe(
-            event.type === "response.completed" && isRecord(event.value.response) &&
-              !Array.isArray(event.value.response),
+    if (route === "openrouter" && apiKey) {
+      fallbackStartedAt = performance.now();
+      const openRouter = await fetchAndPrepareOpenRouterResponses(openRouterBody, {
+        usageContext,
+        requestSignal: requestInferenceSignal,
+        sessionId,
+        apiKey,
+        attemptDeadline: createStreamSemanticDeadline(
+          preHeaderDeadline.signal,
+          Math.ceil(preHeaderDeadline.remainingMs()),
+        ),
+      });
+      if (openRouter.kind === "ready") {
+        openRouterAttempt = openRouter.attempt;
+        selectedModel = openRouter.attempt.selectedModel;
+        recordOpenRouterFields(usageContext, {
+          selectedModel,
+          taskType: openRouter.attempt.taskType,
+          semanticCommitment: openRouter.attempt.prepared.semanticKind ??
+            (openRouter.attempt.prepared.terminal?.type === "response.completed" ? "terminal_completed" : null),
+        });
+      } else {
+        void persistFailedOpenRouterAttempt(usageContext, fallbackStartedAt, openRouter.attempt.trigger);
+        if (primaryFailureResponse || openRouter.attempt.trigger === "terminal_failure") {
+          if (usageContext?.responseTelemetry) {
+            usageContext.responseTelemetry.provider = primaryFailureResponse?.headers.get("x-uos-upstream") ||
+              (primaryFailureResponse ? "chatgpt_codex" : "openrouter");
+          }
+          return primaryFailureResponse ?? openRouter.attempt.response;
+        }
+        let recoveryProbe = await claimOpenRouterEarlyRecoveryProbe();
+        if (!recoveryProbe) {
+          const recoveryRoute = await selectOpenRouterCircuitRoute();
+          if (recoveryRoute.route !== "codex") return openRouter.attempt.response;
+          recoveryProbe = recoveryRoute.probe;
+        }
+        globalProbe = recoveryProbe;
+        let recovery: Awaited<ReturnType<typeof fetchAndPreparePrimaryResponses>>;
+        try {
+          recovery = await fetchAndPreparePrimaryResponses(codexBody, {
+            model,
+            reasoning: reasoningLabel,
+            clientWantsStream,
+            usageContext,
+            clientVersion: modelMetadata.snapshot?.client_version,
+            requestSignal: requestInferenceSignal,
+            warnings,
+            attemptDeadline: createStreamSemanticDeadline(
+              preHeaderDeadline.signal,
+              Math.ceil(preHeaderDeadline.remainingMs()),
+            ),
+            rejectPresemanticFailureTerminal: true,
+          });
+        } catch (error) {
+          const transition = recoveryProbe ? await releaseGlobalOpenRouterProbe(recoveryProbe) : "none";
+          if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
+          if (requestInferenceSignal.aborted) throw requestInferenceSignal.reason ?? error;
+          if (usageContext?.responseTelemetry) usageContext.responseTelemetry.provider = "openrouter";
+          return openRouter.attempt.response;
+        }
+        if (recovery.kind === "failed") {
+          finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle, {
+            failureTrigger: recovery.value.failed.trigger,
+          });
+          if (recovery.value.failed.trigger === "semantic_timeout") {
+            const transition = recoveryProbe ? await releaseGlobalOpenRouterProbe(recoveryProbe) : "none";
+            if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
+            return recovery.value.failed.response;
+          }
+          const transition = isEligibleResponsesAttemptStatus(recovery.value.failed.response)
+            ? await recordOpenRouterEligibleFailure(recoveryProbe)
+            : recoveryProbe
+            ? await releaseGlobalOpenRouterProbe(recoveryProbe)
+            : "none";
+          if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
+          if (usageContext?.responseTelemetry) usageContext.responseTelemetry.provider = "openrouter";
+          return openRouter.attempt.response;
+        }
+        primaryResult = recovery.value;
+        if (
+          recovery.value.prepared.prepared.terminal?.type === "response.completed" ||
+          recovery.value.prepared.prepared.terminal?.type === "response.incomplete"
+        ) {
+          markPrimarySemanticRecovery(
+            recovery.value.routed,
+            recoveryProbe,
+            usageContext,
+            recovery.value.prepared.prepared.terminal?.type,
           );
         }
-        lifecycle.terminal(event.type);
-        recordResponsesTerminal(event, usageContext);
-      },
-      onFailure: (error) => {
-        resolveCodexProbe();
-        const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
-        recordStreamTerminalType(usageContext, terminalType);
-        if (terminalType === "cancelled") lifecycle.cancelled();
-        else lifecycle.ambiguous();
-        void recordErrorUsage(usageContext);
-      },
-      onCancel: () => {
-        resolveCodexProbe();
-        recordStreamTerminalType(usageContext, "cancelled");
-        lifecycle.cancelled();
-        void recordErrorUsage(usageContext);
-      },
-    }, preflight.first);
-    const response = new Response(responseBody, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers,
-    });
-    return withUosWarning(response, [...warnings, ...providerWarnings]);
-  }
-
-  if (!upstream.body) {
-    resolveCodexProbe();
-    lifecycle.ambiguous();
-    recordStreamTerminalType(usageContext, "error");
-    await recordErrorUsage(usageContext);
-    return streamErrorResponse(
-      502,
-      "Codex upstream response missing body.",
-      "codex_upstream_missing_body",
-      routed.provider,
-      [...warnings, ...providerWarnings],
-    );
-  }
-
-  let finalResponse: Record<string, unknown> | null = null;
-  let finalEventType: string | null = null;
-  let outputText = "";
-  const outputItems: Record<string, unknown>[] = [];
-  try {
-    for await (const event of readResponsesStream(upstream.body, requestInferenceSignal)) {
-      recordFirstSseEvent(usageContext);
-      const ev = event.value;
-      if (event.terminal) {
-        if (event.type !== "response.completed") resolveCodexProbe();
-        lifecycle.terminal(event.type);
-        recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
-      }
-      if (event.type === "response.output_text.delta") {
-        outputText += getString(ev.delta) ?? "";
-        continue;
-      }
-      if (event.type === "response.output_item.done" && isRecord(ev.item)) {
-        outputItems.push(ev.item);
-        continue;
-      }
-      if (
-        (event.type === "response.completed" || event.type === "response.failed" ||
-          event.type === "response.incomplete") &&
-        isRecord(ev.response) && !Array.isArray(ev.response)
-      ) {
-        finalResponse = ev.response;
-        finalEventType = event.type;
-        break;
       }
     }
-  } catch (error) {
-    resolveCodexProbe();
-    const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType === "cancelled") lifecycle.cancelled();
-    else lifecycle.ambiguous();
-    finalResponse = null;
+  } finally {
+    preHeaderDeadline.clear();
   }
-  if (!finalResponse) {
-    resolveCodexProbe();
-    lifecycle.ambiguous();
-    await recordErrorUsage(usageContext);
-    return streamErrorResponse(
+
+  const ready = openRouterAttempt ?? primaryResult?.prepared;
+  if (!ready) {
+    return primaryFailureResponse ?? streamErrorResponse(
       502,
-      "Codex upstream stream ended unexpectedly.",
-      "codex_upstream_stream_error",
-      routed.provider,
-      [...warnings, ...providerWarnings],
+      "No upstream provider produced a response.",
+      "upstream_error",
+      "chatgpt_codex",
+      warnings,
     );
   }
-  finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
-  finalResponse = withAccumulatedResponseText(finalResponse, outputText);
-  const usageTokens = extractUsageTokens(finalResponse.usage);
-  resolveCodexProbe(finalEventType === "response.completed");
-  if (finalEventType === "response.failed" || finalEventType === "response.incomplete") {
-    recordTerminalUsage(usageContext, usageTokens, false);
-  } else await recordCompletionUsage(usageContext, usageTokens);
-  const response = json(200, finalResponse, { "x-uos-upstream": routed.provider });
-  return withUosWarning(response, [...warnings, ...providerWarnings]);
+  const lifecycle = primaryResult?.lifecycle ?? createYunwuTransportLifecycle(null);
+  const routed = primaryResult?.routed ?? null;
+  const forwardedOpenRouterControls = new Set([
+    "max_output_tokens",
+    "max_tool_calls",
+    "metadata",
+    "safety_identifier",
+    "service_tier",
+    "temperature",
+    "top_p",
+    "truncation",
+    "user",
+  ]);
+  const clientWarnings = [
+    ...warnings,
+    ...(primaryFailureResponse ? responseWarnings(primaryFailureResponse) : []),
+    ...responseWarnings(ready.response),
+  ].filter((warning) => {
+    if (!openRouterAttempt) return true;
+    return ![...forwardedOpenRouterControls].some((key) =>
+      Object.prototype.hasOwnProperty.call(rawRecord, key) &&
+      warning === (WARNING_KEY_MAP.get(key) ?? `${key}_ignored`)
+    );
+  });
+  const structuredTextOutput = isRecord(rawRecord.text) && isRecord(rawRecord.text.format) &&
+    (rawRecord.text.format.type === "json_schema" || rawRecord.text.format.type === "json_object");
+  const warningModel = openRouterAttempt && !structuredTextOutput ? selectedModel : null;
+  if (globalProbe && ready.prepared.semantic) {
+    void renewOpenRouterCircuitProbe(globalProbe).catch(() => {});
+  }
+  const probeRenewal = globalProbe && ready.prepared.semantic
+    ? setInterval(() => void renewOpenRouterCircuitProbe(globalProbe).catch(() => {}), 60_000)
+    : null;
+  const clearProbeRenewal = (): void => {
+    if (probeRenewal !== null) clearInterval(probeRenewal);
+  };
+  const reconcileCommittedFailure = (terminalType: ResponseStreamTerminalType): void => {
+    clearProbeRenewal();
+    if (usageContext?.responseTelemetry?.streamTerminalType === null) {
+      recordStreamTerminalType(usageContext, terminalType);
+    }
+    if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
+    if (globalProbe && routed?.provider === "yunwu") {
+      void releaseGlobalOpenRouterProbe(globalProbe).then((value) => {
+        if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+      }).catch(() => {});
+    } else if (routed?.provider === "chatgpt_codex") {
+      const transition = terminalType === "cancelled"
+        ? globalProbe ? releaseGlobalOpenRouterProbe(globalProbe) : Promise.resolve("none" as const)
+        : recordOpenRouterEligibleFailure(globalProbe);
+      void transition.then((value) => {
+        if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+      }).catch(() => {});
+    }
+    if (openRouterAttempt && usageContext?.responseTelemetry?.openRouterTerminalStatus !== "response.failed") {
+      recordOpenRouterFields(usageContext, {
+        latencyMs: Math.max(0, Math.round(performance.now() - fallbackStartedAt)),
+        terminalStatus: terminalType,
+      });
+      persistOpenRouterFields(usageContext);
+    }
+    void recordErrorUsage(usageContext);
+  };
+  const validateOpenRouterEvent = (event: ResponsesStreamEvent): void => {
+    if (!openRouterAttempt || !selectedModel) return;
+    const candidate = openRouterModelFromEvent(event.value);
+    if (!candidate) return;
+    if (candidate !== selectedModel || !isEligibleOpenRouterModel(candidate)) {
+      throw new ResponsesStreamError("OpenRouter changed the selected model after stream release.", {
+        kind: "malformed_event",
+      });
+    }
+  };
+  const onTerminal = (event: ResponsesStreamEvent): void => {
+    if (!event.terminal) return;
+    clearProbeRenewal();
+    const syntheticFailure = isSyntheticResponsesFailureEvent(event);
+    if (routed && !syntheticFailure) {
+      lifecycle.terminal(event.type);
+      if (routed.provider === "chatgpt_codex") {
+        const transition = event.type === "response.completed"
+          ? markCodexResponseCompleted(routed.response)
+          : releaseCodexResponseProbe(routed.response);
+        void transition.catch(() => {});
+      }
+      if (globalProbe) {
+        const transition = routed.provider === "chatgpt_codex"
+          ? event.type === "response.completed" || event.type === "response.incomplete"
+            ? closeOpenRouterCircuit(globalProbe)
+            : event.type === "response.failed" || event.type === "error"
+            ? recordOpenRouterEligibleFailure(globalProbe)
+            : releaseGlobalOpenRouterProbe(globalProbe)
+          : releaseGlobalOpenRouterProbe(globalProbe);
+        void transition.then((value) => {
+          if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+        }).catch(() => {});
+      } else if (
+        routed.provider === "chatgpt_codex" && (event.type === "response.failed" || event.type === "error")
+      ) {
+        void recordOpenRouterEligibleFailure(null).then((value) => {
+          if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+        }).catch(() => {});
+      }
+    }
+    // A synthetic failure is the client-visible terminal owner after a
+    // committed stream breaks. For an abandoned Codex/Yunwu attempt, keep the
+    // underlying EOF/read classification in telemetry so paid-fallback
+    // reconciliation retains its diagnostic cause. OpenRouter owns its
+    // synthetic terminal because no later provider can take over after the
+    // failover notice has been released.
+    if (!syntheticFailure || openRouterAttempt) {
+      recordResponsesTerminal(event, usageContext);
+    }
+    if (openRouterAttempt) {
+      recordOpenRouterFields(usageContext, {
+        latencyMs: Math.max(0, Math.round(performance.now() - fallbackStartedAt)),
+        terminalStatus: event.type,
+      });
+      persistOpenRouterFields(usageContext);
+    }
+  };
+
+  if (!clientWantsStream) {
+    const response = await collectBufferedResponses(ready, {
+      warningModel,
+      usageContext,
+      onTerminal,
+      validateEvent: validateOpenRouterEvent,
+      onFailure: (error) => {
+        reconcileCommittedFailure(classifyStreamFailure(error, ready.signal, req.signal));
+      },
+    });
+    return withUosWarning(response, clientWarnings);
+  }
+
+  recordFirstSseEvent(usageContext);
+  const body = createOwnedResponsesStream({
+    initial: ready.prepared.buffered,
+    iterator: ready.prepared.iterator,
+    responseId: ready.responseId,
+    ...(warningModel ? { warning: { model: warningModel } } : {}),
+    signal: ready.signal,
+    downstreamSignal: req.signal,
+    abortUpstream: ready.abort,
+    onEvent: onTerminal,
+    validateEvent: validateOpenRouterEvent,
+    onFailure: (error) => {
+      const terminalType = classifyStreamFailure(error, ready.signal, req.signal);
+      reconcileCommittedFailure(terminalType);
+    },
+    onCancel: () => {
+      reconcileCommittedFailure("cancelled");
+    },
+  });
+  const headers = new Headers(ready.response.headers);
+  headers.delete("Content-Encoding");
+  headers.delete("Content-Length");
+  headers.set("Content-Type", "text/event-stream");
+  headers.set("x-uos-upstream", ready.provider);
+  return withUosWarning(new Response(withSseKeepalive(body), { status: 200, headers }), clientWarnings);
 };
 
 export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
   await runWithResponseTelemetry(
     usageContext,
-    (context) => handleResponsesInternal(req, context),
+    async (context) => {
+      try {
+        return await handleResponsesInternal(req, context);
+      } catch (error) {
+        if (req.signal.aborted || !(error instanceof Error && error.name === "TimeoutError")) throw error;
+        await recordErrorUsage(context);
+        return streamErrorResponse(
+          504,
+          "Upstream request exceeded the gateway deadline.",
+          "gateway_timeout",
+          "chatgpt_codex",
+          [],
+          "server_error",
+        );
+      }
+    },
   );

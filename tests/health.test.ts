@@ -63,7 +63,9 @@ const {
   "../src/health.ts"
 );
 const { default: handler } = await import("../src/handler.ts");
+const { config } = await import("../src/config.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const { setOpenRouterApiKeyForTest } = await import("../src/openrouter.ts");
 const {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
@@ -192,6 +194,77 @@ Deno.test("admin provider health includes cached quota fields without an active 
   }
 });
 
+Deno.test("passive provider health exposes only bounded OpenRouter circuit and telemetry fields", async () => {
+  kvStore.clear();
+  setOpenRouterApiKeyForTest("openrouter-secret-must-not-leak");
+  kvStore.set(keyToString(["uos_ai", "openrouter_failover", "circuit", "v1"]), {
+    v: 1,
+    phase: "half_open",
+    failure_at_ms: [1_000, 2_000],
+    open_until_ms: Date.now() + 120_000,
+    generation: 4,
+    probe: {
+      token: "private-probe-token",
+      generation: 4,
+      lease_until_ms: Date.now() + 150_000,
+      source: "expiry",
+    },
+    updated_at_ms: 2_000,
+  });
+  kvStore.set(keyToString(["uos_ai", "openrouter_failover", "telemetry", "v1"]), {
+    v: 1,
+    attempted_provider: "chatgpt_codex,openrouter",
+    trigger_class: "http_5xx",
+    circuit_transition: "probe_claimed",
+    selected_model: "google/gemini-2.5-pro",
+    task_type: "coding",
+    latency_ms: 42,
+    terminal_status: "response.completed",
+    semantic_commitment: "tool_call",
+    observed_at_ms: 3_000,
+  });
+  try {
+    const response = await handleHealthProviders();
+    const text = await response.text();
+    const payload = JSON.parse(text) as {
+      openrouter?: {
+        configured?: boolean;
+        circuit?: Record<string, unknown>;
+        telemetry?: Record<string, unknown>;
+      };
+    };
+    assert.equal(response.status, 200);
+    assert.equal(payload.openrouter?.configured, true);
+    assert.deepEqual(Object.keys(payload.openrouter?.circuit ?? {}).sort(), [
+      "available",
+      "open_until_ms",
+      "probe_active",
+      "recent_failures",
+      "state",
+    ]);
+    assert.equal(payload.openrouter?.circuit?.state, "half_open");
+    assert.equal(payload.openrouter?.circuit?.probe_active, true);
+    assert.deepEqual(Object.keys(payload.openrouter?.telemetry ?? {}).sort(), [
+      "attempted_provider",
+      "available",
+      "circuit_transition",
+      "latency_ms",
+      "observed_at_ms",
+      "selected_model",
+      "semantic_commitment",
+      "task_type",
+      "terminal_status",
+      "trigger_class",
+      "v",
+    ]);
+    assert.equal(payload.openrouter?.telemetry?.selected_model, "google/gemini-2.5-pro");
+    assert.equal(text.includes("openrouter-secret-must-not-leak"), false);
+    assert.equal(text.includes("private-probe-token"), false);
+  } finally {
+    setOpenRouterApiKeyForTest(undefined);
+  }
+});
+
 Deno.test("provider health persists a recovery immediately while retaining the last 429", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();
@@ -300,6 +373,7 @@ Deno.test("detailed provider health and recheck routes require admin authenticat
     const request of [
       new Request("https://ai.ubq.fi/health/providers"),
       new Request("https://ai.ubq.fi/health/upstream"),
+      new Request("https://ai.ubq.fi/admin/providers"),
       new Request("https://ai.ubq.fi/admin/providers/codex/1/recheck", { method: "POST" }),
       new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "GET" }),
       new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "POST" }),
@@ -307,6 +381,26 @@ Deno.test("detailed provider health and recheck routes require admin authenticat
   ) {
     const response = await handler(request);
     assert.equal(response.status, 401);
+  }
+});
+
+Deno.test("authenticated admin provider route is private and not cacheable", async () => {
+  const token = "health-route-admin-token";
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(token);
+  try {
+    const response = await handler(
+      new Request("https://ai.ubq.fi/admin/providers", {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    const payload = await response.json() as { mode?: unknown; openrouter?: unknown };
+    assert.equal(payload.mode, "passive");
+    assert.equal(typeof payload.openrouter, "object");
+  } finally {
+    adminTokens.delete(token);
   }
 });
 

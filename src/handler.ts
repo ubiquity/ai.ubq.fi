@@ -182,6 +182,14 @@ const logTerminalRequest = async (
     fallback_reason: telemetry?.fallbackReason ?? null,
     stream: telemetry?.stream ?? null,
     stream_terminal_type: telemetry?.streamTerminalType ?? null,
+    attempted_providers: telemetry?.attemptedProviders ?? [],
+    openrouter_trigger_class: telemetry?.openRouterTriggerClass ?? null,
+    openrouter_circuit_transition: telemetry?.openRouterCircuitTransition ?? null,
+    openrouter_selected_model: telemetry?.openRouterSelectedModel ?? null,
+    openrouter_task_type: telemetry?.openRouterTaskType ?? null,
+    openrouter_latency_ms: telemetry?.openRouterLatencyMs ?? null,
+    openrouter_terminal_status: telemetry?.openRouterTerminalStatus ?? null,
+    openrouter_semantic_commitment: telemetry?.openRouterSemanticCommitment ?? null,
     git_sha: runtimeGitSha(),
     deno_revision: runtimeDeploymentId(),
     router_revision: input.response.headers.get("x-uos-router-revision"),
@@ -198,7 +206,7 @@ const logTerminalRequest = async (
   });
 };
 
-const warnQuotaAccountingFailure = (
+export const warnQuotaAccountingFailure = (
   input: Readonly<{ route: string; requestId: string }>,
   error: unknown,
 ): void => {
@@ -209,7 +217,9 @@ const warnQuotaAccountingFailure = (
       JSON.stringify({
         request_id: input.requestId,
         route: input.route,
-        errors: errors.map((item) => item instanceof Error ? item.message : String(item)),
+        errors: errors.map((item) => ({
+          class: item instanceof Error ? item.name : typeof item,
+        })),
       }),
     );
   } catch {
@@ -292,10 +302,12 @@ export const withTerminalRequestLog = (
         controller.error(error);
       }
     },
-    async cancel(reason) {
+    cancel(reason) {
+      // Cancellation must not await a concurrently pending provider pull;
+      // that pull observes the cancellation and performs layered cleanup.
       void reader.cancel(reason).catch(() => {});
       void finalizeCompletion();
-      await log();
+      void log();
     },
   });
   return Promise.resolve(

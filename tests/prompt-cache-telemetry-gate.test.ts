@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { withTerminalRequestLog } from "../src/handler.ts";
+import { warnQuotaAccountingFailure, withTerminalRequestLog } from "../src/handler.ts";
 import {
   PROMPT_CACHE_TELEMETRY_MIN_COMPLETED,
   readPromptCacheTelemetryBaseline,
@@ -296,5 +296,25 @@ Deno.test("terminal telemetry failures do not change non-stream or SSE responses
     assert.equal(terminalLogs.length, 2, "each response emits at most one terminal log");
   } finally {
     console.info = originalInfo;
+  }
+});
+
+Deno.test("quota accounting warnings expose only error classes", () => {
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  const secret = "quota-secret-must-not-reach-logs";
+  console.warn = (...args: unknown[]): void => {
+    warnings.push(args);
+  };
+  try {
+    warnQuotaAccountingFailure(
+      { route: "responses", requestId: "quota-warning-redaction" },
+      new TypeError(secret),
+    );
+    const serialized = JSON.stringify(warnings);
+    assert.doesNotMatch(serialized, new RegExp(secret));
+    assert.match(serialized, /TypeError/);
+  } finally {
+    console.warn = originalWarn;
   }
 });

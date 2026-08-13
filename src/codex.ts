@@ -45,6 +45,7 @@ import {
 import { getKv } from "./kv.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
+import { BUFFERED_INFERENCE_DEADLINE_MS } from "./inference_deadline.ts";
 import { recordCodexProviderHealth } from "./provider_health.ts";
 import {
   buildRuntimeConfig,
@@ -1414,7 +1415,7 @@ const fetchCodexResponseWithAuth = async (
   const deadline = new AbortController();
   const deadlineTimer = setTimeout(
     () => deadline.abort(new DOMException("Codex response headers timed out.", "TimeoutError")),
-    85_000,
+    BUFFERED_INFERENCE_DEADLINE_MS,
   );
   const transportSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
   try {

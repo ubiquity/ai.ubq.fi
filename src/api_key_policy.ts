@@ -20,7 +20,7 @@ export const API_KEY_USAGE_V3_RESERVATION_LEASE_MS = 5 * 60_000;
 export const API_KEY_USAGE_V3_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_KV_RETRIES = 5;
 
-export type ApiKeyUsageProvider = "cerebras" | "chatgpt_codex" | "yunwu" | "voyage";
+export type ApiKeyUsageProvider = "cerebras" | "chatgpt_codex" | "openrouter" | "yunwu" | "voyage";
 
 export type ApiKeyProviderDispatch = Readonly<{
   markTransportStarted: () => void;
@@ -194,7 +194,7 @@ export const normalizeApiKeyUsageRequestV3 = (value: unknown): ApiKeyUsageReques
     (value.state !== "reserved" && value.state !== "dispatched" && value.state !== "released") ||
     !isSafeNonNegativeInteger(value.reserved_at_ms) || !isSafeNonNegativeInteger(value.lease_expires_at_ms) ||
     !(value.provider === null || value.provider === "cerebras" || value.provider === "chatgpt_codex" ||
-      value.provider === "yunwu" || value.provider === "voyage") ||
+      value.provider === "openrouter" || value.provider === "yunwu" || value.provider === "voyage") ||
     !(value.dispatched_at_ms === null || isSafeNonNegativeInteger(value.dispatched_at_ms)) ||
     !(value.released_at_ms === null || isSafeNonNegativeInteger(value.released_at_ms)) ||
     !(value.release_reason === null || typeof value.release_reason === "string")
