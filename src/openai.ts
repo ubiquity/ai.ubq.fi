@@ -7311,8 +7311,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           }
           return primaryFailureResponse;
         }
-        const recoveryProbe = await claimOpenRouterEarlyRecoveryProbe();
-        if (!recoveryProbe) return openRouter.attempt.response;
+        let recoveryProbe = await claimOpenRouterEarlyRecoveryProbe();
+        if (!recoveryProbe) {
+          const recoveryRoute = await selectOpenRouterCircuitRoute();
+          if (recoveryRoute.route !== "codex") return openRouter.attempt.response;
+          recoveryProbe = recoveryRoute.probe;
+        }
         globalProbe = recoveryProbe;
         let recovery: Awaited<ReturnType<typeof fetchAndPreparePrimaryResponses>>;
         try {
@@ -7331,7 +7335,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
             rejectPresemanticFailureTerminal: true,
           });
         } catch {
-          const transition = await releaseGlobalOpenRouterProbe(recoveryProbe);
+          const transition = recoveryProbe ? await releaseGlobalOpenRouterProbe(recoveryProbe) : "none";
           if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
           if (usageContext?.responseTelemetry) usageContext.responseTelemetry.provider = "openrouter";
           return openRouter.attempt.response;
@@ -7342,7 +7346,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           });
           const transition = isEligibleResponsesAttemptStatus(recovery.value.failed.response)
             ? await recordOpenRouterEligibleFailure(recoveryProbe)
-            : await releaseGlobalOpenRouterProbe(recoveryProbe);
+            : recoveryProbe
+            ? await releaseGlobalOpenRouterProbe(recoveryProbe)
+            : "none";
           if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
           if (usageContext?.responseTelemetry) usageContext.responseTelemetry.provider = "openrouter";
           return openRouter.attempt.response;

@@ -96,6 +96,21 @@ Deno.test("Responses parser rejects terminal events without their protocol paylo
   assert.equal(error.kind, "malformed_event");
 });
 
+Deno.test("Responses parser accepts an official flat error terminal", async () => {
+  const events = [];
+  for await (
+    const event of readResponsesStream(
+      chunked(
+        'data: {"type":"error","code":"provider_error","message":"Provider stopped.","param":null}\n\n',
+        [],
+      ),
+    )
+  ) events.push(event);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.type, "error");
+  assert.equal(events[0]?.value.code, "provider_error");
+});
+
 Deno.test("Responses preflight surfaces immediate failures before a stream response is created", async () => {
   const malformed = await captureError(async () => {
     await preflightResponsesStream(chunked("data: nope\n\n", []));

@@ -77,7 +77,11 @@ const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
     });
   }
   if (
-    (type === "error" && !isRecord(value.error)) ||
+    (type === "error" && !isRecord(value.error) && !(
+      typeof value.code === "string" && value.code.trim() &&
+      typeof value.message === "string" && value.message.trim() &&
+      (value.param === null || typeof value.param === "string")
+    )) ||
     (type !== "error" && RESPONSES_TERMINAL_EVENT_TYPES.has(type) && !isRecord(value.response))
   ) {
     throw new ResponsesStreamError("Upstream emitted a Responses terminal event with an invalid payload.", {
