@@ -7372,7 +7372,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         void transition.catch(() => {});
       }
       if (globalProbe && !ready.prepared.semantic) {
-        void releaseGlobalOpenRouterProbe(globalProbe).catch(() => {});
+        const transition = routed.provider === "chatgpt_codex" && event.type === "response.completed"
+          ? closeOpenRouterCircuit(globalProbe)
+          : releaseGlobalOpenRouterProbe(globalProbe);
+        void transition.then((value) => {
+          if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+        }).catch(() => {});
       }
     }
     // A synthetic failure is the client-visible terminal owner after a

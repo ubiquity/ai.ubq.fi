@@ -310,6 +310,18 @@ export const failureEventAfterCommit = (
   return event;
 };
 
+const errorEventAfterCommit = (sequenceNumber: number): ResponsesStreamEvent => {
+  const event = responseEventFromValue({
+    type: "error",
+    sequence_number: sequenceNumber,
+    code: "upstream_stream_error",
+    message: "The upstream stream ended unexpectedly.",
+    param: null,
+  });
+  syntheticFailureEvents.add(event);
+  return event;
+};
+
 export const isSyntheticResponsesFailureEvent = (event: ResponsesStreamEvent): boolean =>
   syntheticFailureEvents.has(event);
 
@@ -352,11 +364,12 @@ export const createOwnedResponsesStream = (
         : max, 0);
   let closed = false;
   let terminalEmitted = false;
+  let responseCreatedObserved = false;
   const queue: ResponsesStreamEvent[] = [];
   let responseTemplate: Record<string, unknown> = {};
   const completedOutputItems: Record<string, unknown>[] = [];
   const completedOutputItemIds = new Map<string, number>();
-  const accumulatedText = new Map<string, { id: string; text: string }>();
+  const accumulatedText = new Map<string, { id: string; text: string; completed: boolean }>();
 
   if (options.warning) {
     if (!responseId) {
@@ -417,12 +430,13 @@ export const createOwnedResponsesStream = (
     const id = eventItemId(event) ?? `msg_recovered_${getString(event.value.output_index) ?? accumulatedText.size}`;
     const current = accumulatedText.get(id);
     if (event.type === "response.output_text.done") {
-      if (!current || text.startsWith(current.text)) accumulatedText.set(id, { id, text });
+      if (!current || text.startsWith(current.text)) accumulatedText.set(id, { id, text, completed: true });
       return;
     }
-    accumulatedText.set(id, { id, text: `${current?.text ?? ""}${text}` });
+    accumulatedText.set(id, { id, text: `${current?.text ?? ""}${text}`, completed: current?.completed ?? false });
   };
   const observeVisibleEvent = (event: ResponsesStreamEvent): void => {
+    if (event.type === "response.created") responseCreatedObserved = true;
     const valueResponse = event.value.response;
     if (isRecord(valueResponse) && !Array.isArray(valueResponse)) {
       responseTemplate = { ...responseTemplate, ...valueResponse };
@@ -456,7 +470,7 @@ export const createOwnedResponsesStream = (
       const message = {
         id: recovered.id,
         type: "message",
-        status: "completed",
+        status: recovered.completed ? "completed" : "incomplete",
         role: "assistant",
         content: [{ type: "output_text", text: recovered.text, annotations: [] }],
       };
@@ -469,13 +483,16 @@ export const createOwnedResponsesStream = (
     }
     return output;
   };
-  const syntheticFailure = (): ResponsesStreamEvent =>
-    failureEventAfterCommit(
-      responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
-      sequenceNumber++,
-      failureOutput(),
-      responseTemplate,
-    );
+  const syntheticFailure = (): ResponsesStreamEvent => {
+    return responseCreatedObserved
+      ? failureEventAfterCommit(
+        responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
+        sequenceNumber++,
+        failureOutput(),
+        responseTemplate,
+      )
+      : errorEventAfterCommit(sequenceNumber++);
+  };
   const advanceSequence = (event: ResponsesStreamEvent): void => {
     const value = event.value.sequence_number;
     if (typeof value === "number" && Number.isSafeInteger(value) && value >= sequenceNumber) {

@@ -8410,6 +8410,39 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
       assert.equal(values.some((event) => JSON.stringify(event).includes("Failover active")), false);
     });
   }
+
+  await t.step("missing response template uses an official error event", async () => {
+    let openRouterCalls = 0;
+    const response = await withFetchMock(
+      (url) => {
+        if (url === "https://openrouter.ai/api/v1/responses") {
+          openRouterCalls += 1;
+          return sseResponse(openRouterTextSseChunks());
+        }
+        return sseResponse([
+          `data: ${
+            JSON.stringify({
+              type: "response.output_text.delta",
+              response_id: "resp_primary_without_created",
+              item_id: "msg_primary_without_created",
+              output_index: 0,
+              content_index: 0,
+              delta: "primary text",
+            })
+          }\n\n`,
+        ]);
+      },
+      () => handleResponses(openRouterResponsesRequest()),
+      { openRouterApiKey: "or-test-key" },
+    );
+    const values = parseResponsesSseValues(await response.text());
+    assert.equal(openRouterCalls, 0);
+    assert.equal(values.filter((event) => event.type === "response.failed").length, 0);
+    const error = values.find((event) => event.type === "error");
+    assert.equal(error?.code, "upstream_stream_error");
+    assert.equal(error?.param, null);
+    assert.equal(Object.prototype.hasOwnProperty.call(error ?? {}, "response"), false);
+  });
 });
 
 Deno.test("openai: OpenRouter pre-output rejection restores the authoritative primary error", async (t) => {
@@ -8930,6 +8963,56 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     assert.deepEqual(urls, ["https://chatgpt.com/backend-api/codex/responses"]);
+    assert.equal(state.probe, null);
+    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
+  });
+
+  await t.step("expired open circuit closes on an empty Codex completion", async () => {
+    const response = await withFetchMock(
+      (url) => {
+        assert.equal(url, "https://chatgpt.com/backend-api/codex/responses");
+        return sseResponse([
+          `data: ${
+            JSON.stringify({
+              type: "response.created",
+              response: {
+                id: "resp_empty_probe",
+                object: "response",
+                created_at: 1,
+                model: DEFAULT_TEST_MODEL,
+                status: "in_progress",
+                output: [],
+              },
+            })
+          }\n\n`,
+          `data: ${
+            JSON.stringify({
+              type: "response.completed",
+              response: {
+                id: "resp_empty_probe",
+                object: "response",
+                created_at: 1,
+                model: DEFAULT_TEST_MODEL,
+                status: "completed",
+                output: [],
+                usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 },
+              },
+            })
+          }\n\n`,
+        ]);
+      },
+      async () => {
+        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+        const response = await handleResponses(openRouterResponsesRequest());
+        await response.text();
+        return response;
+      },
+      { openRouterApiKey: "or-test-key" },
+    );
+
+    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "closed");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     assert.equal(state.probe, null);
     assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
   });

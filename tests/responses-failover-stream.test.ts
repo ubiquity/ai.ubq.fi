@@ -269,4 +269,48 @@ Deno.test("Owned stream synthetic failure preserves template, text, tools, and s
   assert.equal(response.status, "failed");
   assert.match(JSON.stringify(response.output), /kept text/);
   assert.match(JSON.stringify(response.output), /ctc_broken/);
+  const output = response.output as Record<string, unknown>[];
+  assert.equal(output.find((item) => item.id === "msg_broken")?.status, "incomplete");
+  assert.equal(output.find((item) => item.id === "ctc_broken")?.status, "completed");
+});
+
+Deno.test("Owned stream marks recovered text completed only after a done event", async () => {
+  const responseTemplate = {
+    id: "resp_done_text",
+    object: "response",
+    created_at: 43,
+    model: "google/gemini",
+    status: "in_progress",
+    output: [],
+  };
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({ type: "response.created", sequence_number: 0, response: responseTemplate }),
+      event({
+        type: "response.output_text.delta",
+        sequence_number: 1,
+        response_id: "resp_done_text",
+        item_id: "msg_done_text",
+        output_index: 0,
+        content_index: 0,
+        delta: "complete text",
+      }),
+      event({
+        type: "response.output_text.done",
+        sequence_number: 2,
+        response_id: "resp_done_text",
+        item_id: "msg_done_text",
+        output_index: 0,
+        content_index: 0,
+        text: "complete text",
+      }),
+    ],
+    iterator: iterator([]),
+    responseId: "resp_done_text",
+  });
+  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  const response = values.at(-1)?.response as Record<string, unknown>;
+  const output = response.output as Record<string, unknown>[];
+  assert.equal(output.find((item) => item.id === "msg_done_text")?.status, "completed");
 });
