@@ -7372,7 +7372,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         void transition.catch(() => {});
       }
       if (globalProbe && !ready.prepared.semantic) {
-        const transition = routed.provider === "chatgpt_codex" && event.type === "response.completed"
+        const transition = routed.provider === "chatgpt_codex" &&
+            (event.type === "response.completed" || event.type === "response.incomplete")
           ? closeOpenRouterCircuit(globalProbe)
           : releaseGlobalOpenRouterProbe(globalProbe);
         void transition.then((value) => {

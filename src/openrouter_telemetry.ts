@@ -79,7 +79,16 @@ export const recordOpenRouterTelemetry = async (input: OpenRouterTelemetryInput)
   const kv = await getKv();
   if (!kv) return;
   const value = normalizeTelemetry(input);
-  await kv.set(OPENROUTER_TELEMETRY_KEY, value, { expireIn: OPENROUTER_TELEMETRY_TTL_MS });
+  while (true) {
+    const current = await kv.get<OpenRouterTelemetryRecord>(OPENROUTER_TELEMETRY_KEY);
+    const parsed = parseOpenRouterTelemetryRecord(current.value);
+    if (parsed && parsed.observed_at_ms >= value.observed_at_ms) return;
+    const committed = await kv.atomic()
+      .check(current)
+      .set(OPENROUTER_TELEMETRY_KEY, value, { expireIn: OPENROUTER_TELEMETRY_TTL_MS })
+      .commit();
+    if (committed.ok) return;
+  }
 };
 
 export const getOpenRouterTelemetryView = async (): Promise<Record<string, unknown>> => {

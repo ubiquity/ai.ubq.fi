@@ -9017,6 +9017,57 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
     assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
   });
 
+  await t.step("expired open circuit closes on an empty Codex incomplete terminal", async () => {
+    const response = await withFetchMock(
+      (url) => {
+        assert.equal(url, "https://chatgpt.com/backend-api/codex/responses");
+        return sseResponse([
+          `data: ${
+            JSON.stringify({
+              type: "response.created",
+              response: {
+                id: "resp_empty_incomplete_probe",
+                object: "response",
+                created_at: 1,
+                model: DEFAULT_TEST_MODEL,
+                status: "in_progress",
+                output: [],
+              },
+            })
+          }\n\n`,
+          `data: ${
+            JSON.stringify({
+              type: "response.incomplete",
+              response: {
+                id: "resp_empty_incomplete_probe",
+                object: "response",
+                created_at: 1,
+                model: DEFAULT_TEST_MODEL,
+                status: "incomplete",
+                incomplete_details: { reason: "max_output_tokens" },
+                output: [],
+                usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 },
+              },
+            })
+          }\n\n`,
+        ]);
+      },
+      async () => {
+        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+        const response = await handleResponses(openRouterResponsesRequest());
+        await response.text();
+        return response;
+      },
+      { openRouterApiKey: "or-test-key" },
+    );
+
+    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "closed");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    assert.equal(state.probe, null);
+    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
+  });
+
   await t.step("half-open YunWu semantic output releases rather than closes the Codex circuit", async () => {
     const keyId = "openrouter-half-open-yunwu";
     const requestId = "request-openrouter-half-open-yunwu";

@@ -512,11 +512,6 @@ export const createOwnedResponsesStream = (
       });
     }
     responseId ??= candidate;
-    if (next.value.type === "error") {
-      throw new ResponsesStreamError("Upstream Responses stream emitted an error event after commitment.", {
-        kind: "malformed_event",
-      });
-    }
     if (!warningItem) return next.value;
     return rewriteResponsesEventForWarning(next.value, warningItem, sequenceNumber++);
   };

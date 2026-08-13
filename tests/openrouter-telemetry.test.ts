@@ -76,6 +76,20 @@ Deno.test("OpenRouter telemetry stores only bounded aggregate fields", async () 
   }
 });
 
+Deno.test("OpenRouter telemetry does not replace a newer observation with an older one", async () => {
+  const kv = new CountingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  try {
+    await recordOpenRouterTelemetry({ selected_model: "newer/model", observed_at_ms: 2_000 });
+    await recordOpenRouterTelemetry({ selected_model: "older/model", observed_at_ms: 1_000 });
+    const entry = kv.entries.get(JSON.stringify(OPENROUTER_TELEMETRY_KEY));
+    assert.equal((entry?.value as { selected_model?: unknown })?.selected_model, "newer/model");
+    assert.equal((entry?.value as { observed_at_ms?: unknown })?.observed_at_ms, 2_000);
+  } finally {
+    setKvForTest(null);
+  }
+});
+
 Deno.test("OpenRouter telemetry reports unavailable KV without inventing an observation", async () => {
   setKvForTest(null);
   assert.deepEqual(await getOpenRouterTelemetryView(), {

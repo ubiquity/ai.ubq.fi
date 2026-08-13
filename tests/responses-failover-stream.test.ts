@@ -217,6 +217,42 @@ Deno.test("Owned failover stream preserves a legitimate incomplete terminal", as
   assert.deepEqual(terminal.usage, { input_tokens: 2, output_tokens: 3, total_tokens: 5 });
 });
 
+Deno.test("Owned stream forwards a committed upstream error terminal", async () => {
+  const upstreamError = event({
+    type: "error",
+    sequence_number: 2,
+    code: "provider_stream_error",
+    message: "Provider stopped generation.",
+    param: null,
+  });
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({
+        type: "response.created",
+        sequence_number: 0,
+        response: { id: "resp_error", object: "response", status: "in_progress", output: [] },
+      }),
+      event({
+        type: "response.output_text.delta",
+        sequence_number: 1,
+        response_id: "resp_error",
+        item_id: "msg_error",
+        output_index: 0,
+        content_index: 0,
+        delta: "partial",
+      }),
+    ],
+    iterator: iterator([upstreamError]),
+    responseId: "resp_error",
+  });
+  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  assert.equal(values.at(-1)?.type, "error");
+  assert.equal(values.at(-1)?.code, "provider_stream_error");
+  assert.equal(values.at(-1)?.message, "Provider stopped generation.");
+  assert.equal(values.filter((value) => value.type === "response.failed").length, 0);
+});
+
 Deno.test("Owned stream synthetic failure preserves template, text, tools, and sequence order", async () => {
   const responseTemplate = {
     id: "resp_broken",
