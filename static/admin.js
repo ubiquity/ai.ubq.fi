@@ -1453,6 +1453,17 @@ const capacityChartBridgePath = (bridges, plot) =>
     return `M${fromX.toFixed(2)} ${fromY.toFixed(2)} L${toX.toFixed(2)} ${toY.toFixed(2)}`;
   }).join(" ");
 
+const capacityChartDowntimeBandCoordinates = (bridge, plot) => {
+  const [from, to] = bridge ?? [];
+  if (!from || !to) return null;
+  const fromX = plot.left + (from.elapsedPercent / 100) * plot.width;
+  const toX = plot.left + (to.elapsedPercent / 100) * plot.width;
+  const left = Math.max(plot.left, Math.min(fromX, toX));
+  const right = Math.min(plot.left + plot.width, Math.max(fromX, toX));
+  if (!Number.isFinite(left) || !Number.isFinite(right) || right <= left) return null;
+  return { x: left, width: right - left };
+};
+
 const capacityChartPath = (points, plot, options = {}) => {
   const anchorStart = options.anchorStart !== false;
   const anchorEnd = options.anchorEnd !== false;
@@ -1573,6 +1584,59 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   });
   svg.dataset.capacityChartSvg = "";
 
+  const currentSample = { sampled_at_ms: nowMs, sources };
+  const aggregateDowntimeBridges = capacityChartDowntimeBridges(
+    history,
+    CAPACITY_CHART_SERIES[0],
+    chartWindow,
+    chartWindow,
+    capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
+    nowMs,
+    snapshot?.downtime_events,
+  );
+  const defs = capacityChartSvgElement("defs");
+  const downtimePattern = capacityChartSvgElement("pattern", {
+    id: "capacity-chart-downtime-stripes",
+    width: 12,
+    height: 12,
+    patternUnits: "userSpaceOnUse",
+  });
+  const downtimeStripe = capacityChartSvgElement("path", {
+    d: "M-3 -3L15 15 M-3 9L3 15 M9 -3L15 3",
+    fill: "none",
+    stroke: "#ff5f56",
+    "stroke-opacity": 0.3,
+    "stroke-width": 1.25,
+  });
+  downtimePattern.appendChild(downtimeStripe);
+  defs.appendChild(downtimePattern);
+  svg.appendChild(defs);
+
+  for (const bridge of aggregateDowntimeBridges) {
+    const band = capacityChartDowntimeBandCoordinates(bridge, plot);
+    if (!band) continue;
+    const background = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "#ff5f56",
+      "fill-opacity": 0.055,
+    });
+    background.dataset.capacityDowntimeBand = "openai";
+    background.setAttribute("aria-hidden", "true");
+    const stripes = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "url(#capacity-chart-downtime-stripes)",
+    });
+    stripes.dataset.capacityDowntimeBand = "openai";
+    stripes.setAttribute("aria-hidden", "true");
+    svg.append(background, stripes);
+  }
+
   for (const remaining of [100, 75, 50, 25, 0]) {
     const y = plot.top + ((100 - remaining) / 100) * plot.height;
     const grid = capacityChartSvgElement("line", {
@@ -1644,7 +1708,6 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   reticule.setAttribute("aria-label", "Current time in usage period");
   svg.appendChild(reticule);
 
-  const currentSample = { sampled_at_ms: nowMs, sources };
   for (const series of CAPACITY_CHART_SERIES) {
     const activeInterval = chartWindow;
     const shouldRender = true;
@@ -1673,7 +1736,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     path.setAttribute("aria-label", series.label);
     svg.appendChild(path);
 
-    const downtimeBridges = capacityChartDowntimeBridges(
+    const downtimeBridges = series.source === "aggregate" ? aggregateDowntimeBridges : capacityChartDowntimeBridges(
       history,
       series,
       activeInterval,
