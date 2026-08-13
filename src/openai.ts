@@ -910,14 +910,14 @@ const prepareResponsesAttempt = async (
       const candidateResponseId = responseIdFromEvents([next.value]);
       if (candidateResponseId && responseId && candidateResponseId !== responseId) {
         await iterator.return("inconsistent response identity").catch(() => {});
-        return fail("malformed_event");
+        return fail(prepared.semantic ? "terminal_failure" : "malformed_event");
       }
       responseId ??= candidateResponseId;
       const candidate = openRouterModelFromEvent(next.value.value);
       if (candidate) {
         if (selectedModel && selectedModel !== candidate) {
           await iterator.return("inconsistent model identity").catch(() => {});
-          return fail("invalid_model");
+          return fail(prepared.semantic ? "terminal_failure" : "invalid_model");
         }
         selectedModel = candidate;
       }
@@ -940,7 +940,7 @@ const prepareResponsesAttempt = async (
     }
     if (options.requireEligibleModel && !responseId) {
       await iterator.return("missing response id").catch(() => {});
-      return fail("malformed_event");
+      return fail(prepared.semantic ? "terminal_failure" : "malformed_event");
     }
     deadline.clear();
     if (options.requireEligibleModel && (!selectedModel || !isEligibleOpenRouterModel(selectedModel))) {
@@ -1256,6 +1256,7 @@ const collectBufferedResponses = async (
         event.type === "response.output_text.delta" &&
         !(options.warningModel && ev.output_index === 0)
       ) outputText += getString(ev.delta) ?? "";
+      if (event.type === "response.output_text.done" && !outputText) outputText = getString(ev.text) ?? "";
       if (event.type === "response.refusal.delta") refusalText += getString(ev.delta) ?? "";
       if (event.type === "response.refusal.done" && !refusalText) refusalText = getString(ev.refusal) ?? "";
       if (event.type === "response.output_item.done" && isRecord(ev.item)) outputItems.push(ev.item);
