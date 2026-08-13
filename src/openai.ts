@@ -7401,6 +7401,28 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const structuredTextOutput = isRecord(rawRecord.text) && isRecord(rawRecord.text.format) &&
     (rawRecord.text.format.type === "json_schema" || rawRecord.text.format.type === "json_object");
   const warningModel = openRouterAttempt && !structuredTextOutput ? selectedModel : null;
+  const reconcileCommittedFailure = (terminalType: ResponseStreamTerminalType): void => {
+    if (usageContext?.responseTelemetry?.streamTerminalType === null) {
+      recordStreamTerminalType(usageContext, terminalType);
+    }
+    if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
+    if (globalProbe && routed?.provider === "chatgpt_codex") {
+      const transition = terminalType === "cancelled"
+        ? releaseGlobalOpenRouterProbe(globalProbe)
+        : recordOpenRouterEligibleFailure(globalProbe);
+      void transition.then((value) => {
+        if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+      }).catch(() => {});
+    }
+    if (openRouterAttempt && usageContext?.responseTelemetry?.openRouterTerminalStatus !== "response.failed") {
+      recordOpenRouterFields(usageContext, {
+        latencyMs: Math.max(0, Math.round(performance.now() - fallbackStartedAt)),
+        terminalStatus: terminalType,
+      });
+      persistOpenRouterFields(usageContext);
+    }
+    void recordErrorUsage(usageContext);
+  };
   const validateOpenRouterEvent = (event: ResponsesStreamEvent): void => {
     if (!openRouterAttempt || !selectedModel) return;
     const candidate = openRouterModelFromEvent(event.value);
@@ -7460,11 +7482,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       onTerminal,
       validateEvent: validateOpenRouterEvent,
       onFailure: (error) => {
-        const terminalType = classifyStreamFailure(error, ready.signal, req.signal);
-        if (usageContext?.responseTelemetry?.streamTerminalType === null) {
-          recordStreamTerminalType(usageContext, terminalType);
-        }
-        if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
+        reconcileCommittedFailure(classifyStreamFailure(error, ready.signal, req.signal));
       },
     });
     return withUosWarning(response, clientWarnings);
@@ -7483,37 +7501,10 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     validateEvent: validateOpenRouterEvent,
     onFailure: (error) => {
       const terminalType = classifyStreamFailure(error, ready.signal, req.signal);
-      if (usageContext?.responseTelemetry?.streamTerminalType === null) {
-        recordStreamTerminalType(usageContext, terminalType);
-      }
-      if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
-      if (globalProbe && routed?.provider === "chatgpt_codex" && terminalType !== "cancelled") {
-        void recordOpenRouterEligibleFailure(globalProbe).then((value) => {
-          if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
-        }).catch(() => {});
-      }
-      if (openRouterAttempt) {
-        if (usageContext?.responseTelemetry?.openRouterTerminalStatus !== "response.failed") {
-          recordOpenRouterFields(usageContext, {
-            latencyMs: Math.max(0, Math.round(performance.now() - fallbackStartedAt)),
-            terminalStatus: terminalType,
-          });
-          persistOpenRouterFields(usageContext);
-        }
-      }
-      void recordErrorUsage(usageContext);
+      reconcileCommittedFailure(terminalType);
     },
     onCancel: () => {
-      recordStreamTerminalType(usageContext, "cancelled");
-      if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: true });
-      if (openRouterAttempt) {
-        recordOpenRouterFields(usageContext, {
-          latencyMs: Math.max(0, Math.round(performance.now() - fallbackStartedAt)),
-          terminalStatus: "cancelled",
-        });
-        persistOpenRouterFields(usageContext);
-      }
-      void recordErrorUsage(usageContext);
+      reconcileCommittedFailure("cancelled");
     },
   });
   const headers = new Headers(ready.response.headers);
