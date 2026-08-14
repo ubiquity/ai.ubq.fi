@@ -406,7 +406,26 @@ const normalizeChoice = (
   };
 };
 
-const normalizeUsage = (value: unknown): NormalizationResult<Record<string, number> | null> => {
+const normalizeUsageDetails = (
+  value: unknown,
+  fields: readonly string[],
+  label: string,
+): NormalizationResult<Record<string, number> | null> => {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (!isRecord(value) || Array.isArray(value)) {
+    return { ok: false, message: `Upstream ${label} is not an object.` };
+  }
+  const details: Record<string, number> = {};
+  for (const field of fields) {
+    if (value[field] === undefined || value[field] === null) continue;
+    const normalized = nonNegativeInteger(value[field]);
+    if (normalized === null) return { ok: false, message: `Upstream ${label}.${field} is invalid.` };
+    details[field] = normalized;
+  }
+  return { ok: true, value: details };
+};
+
+const normalizeUsage = (value: unknown): NormalizationResult<Record<string, unknown> | null> => {
   if (value === undefined || value === null) return { ok: true, value: null };
   if (!isRecord(value) || Array.isArray(value)) return { ok: false, message: "Upstream usage is not an object." };
   const promptTokens = nonNegativeInteger(value.prompt_tokens);
@@ -415,12 +434,26 @@ const normalizeUsage = (value: unknown): NormalizationResult<Record<string, numb
   if (promptTokens === null || completionTokens === null || totalTokens === null) {
     return { ok: false, message: "Upstream usage is incomplete." };
   }
+  const promptDetails = normalizeUsageDetails(
+    value.prompt_tokens_details,
+    ["audio_tokens", "cached_tokens"],
+    "prompt_tokens_details",
+  );
+  if (!promptDetails.ok) return promptDetails;
+  const completionDetails = normalizeUsageDetails(
+    value.completion_tokens_details,
+    ["accepted_prediction_tokens", "audio_tokens", "reasoning_tokens", "rejected_prediction_tokens"],
+    "completion_tokens_details",
+  );
+  if (!completionDetails.ok) return completionDetails;
   return {
     ok: true,
     value: {
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       total_tokens: totalTokens,
+      ...(promptDetails.value ? { prompt_tokens_details: promptDetails.value } : {}),
+      ...(completionDetails.value ? { completion_tokens_details: completionDetails.value } : {}),
     },
   };
 };

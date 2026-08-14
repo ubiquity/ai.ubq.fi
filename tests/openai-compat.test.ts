@@ -7664,7 +7664,13 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
                   },
                   finish_reason: "tool_calls",
                 }],
-                usage: { prompt_tokens: 13, completion_tokens: 7, total_tokens: 20 },
+                usage: {
+                  prompt_tokens: 13,
+                  prompt_tokens_details: { cached_tokens: 5 },
+                  completion_tokens: 7,
+                  completion_tokens_details: { reasoning_tokens: 4 },
+                  total_tokens: 20,
+                },
                 provider_debug: "provider-body-must-not-be-logged-or-relayed",
               }),
               {
@@ -7710,7 +7716,13 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
           type: "function",
           function: { name: "assistant_message", arguments: '{"message":"Ready"}' },
         }]);
-        assert.deepEqual(payload.usage, { prompt_tokens: 13, completion_tokens: 7, total_tokens: 20 });
+        assert.deepEqual(payload.usage, {
+          prompt_tokens: 13,
+          completion_tokens: 7,
+          total_tokens: 20,
+          prompt_tokens_details: { cached_tokens: 5 },
+          completion_tokens_details: { reasoning_tokens: 4 },
+        });
         const telemetry = getResponseTelemetry(response);
         assert.equal(telemetry?.provider, "cerebras");
         assert.equal(telemetry?.providerRequestId, "cerebras-header-request-1");
@@ -7995,6 +8007,37 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       );
       assert.equal(response.status, 400);
       assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "max_tool_calls");
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("rejects constrained Responses text formats before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                text: {
+                  format: {
+                    type: "json_schema",
+                    name: "answer",
+                    schema: { type: "object", properties: { answer: { type: "string" } } },
+                  },
+                },
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "text");
       assert.equal(cerebrasCalls, 0);
     });
 

@@ -45,6 +45,17 @@ const jsonRequest = (method: string, path: string, body: unknown): Request =>
     body: JSON.stringify(body),
   });
 
+const invalidCursorKv = (): Deno.Kv => {
+  const iterator = {
+    cursor: "",
+    next: () => Promise.reject(new TypeError("invalid cursor")),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  } as unknown as Deno.KvListIterator<unknown>;
+  return { list: () => iterator } as unknown as Deno.Kv;
+};
+
 const createAccount = async (kv: CountingKv, userId = "owner-1"): Promise<string> => {
   const response = await handleMarketplaceCreateAuth(
     jsonRequest("POST", "/marketplace/auths", {
@@ -316,6 +327,22 @@ Deno.test("marketplace public catalog validates and bounds pagination", async ()
     assert.equal(invalid.status, 400, value);
     assert.equal((await invalid.json() as { error?: { param?: string } }).error?.param, "limit");
   }
+});
+
+Deno.test("marketplace listings return 400 for invalid cursors", async () => {
+  const ownerResponse = await handleMarketplaceListAuth(
+    new Request("https://ai.ubq.fi/marketplace/auths/me?cursor=wrong-selector"),
+    { authenticateClient: ownerAuth("owner-1"), kv: invalidCursorKv() },
+  );
+  assert.equal(ownerResponse.status, 400);
+  assert.equal((await ownerResponse.json() as { error?: { param?: string } }).error?.param, "cursor");
+
+  const publicResponse = await handleMarketplacePublicCatalog(
+    new Request("https://ai.ubq.fi/marketplace/auths?cursor=malformed"),
+    { kv: invalidCursorKv() },
+  );
+  assert.equal(publicResponse.status, 400);
+  assert.equal((await publicResponse.json() as { error?: { param?: string } }).error?.param, "cursor");
 });
 
 Deno.test("marketplace routes reject malformed ids without throwing", async () => {

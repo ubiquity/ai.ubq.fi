@@ -141,7 +141,13 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
         },
         finish_reason: "tool_calls",
       }],
-      usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
+      usage: {
+        prompt_tokens: 3,
+        prompt_tokens_details: { cached_tokens: 2 },
+        completion_tokens: 4,
+        completion_tokens_details: { reasoning_tokens: 3 },
+        total_tokens: 7,
+      },
     },
     "cerebras/gpt-oss-120b",
     {
@@ -167,9 +173,9 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
   ]);
   assert.deepEqual(value.usage, {
     input_tokens: 3,
-    input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+    input_tokens_details: { cached_tokens: 2, cache_write_tokens: 0 },
     output_tokens: 4,
-    output_tokens_details: { reasoning_tokens: 0 },
+    output_tokens_details: { reasoning_tokens: 3 },
     total_tokens: 7,
   });
   assert.deepEqual(

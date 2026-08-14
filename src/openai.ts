@@ -7574,6 +7574,22 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       { param: "max_tool_calls" },
     );
   }
+  if (isCerebrasModel && rawRecord.text !== undefined && rawRecord.text !== null) {
+    const text = rawRecord.text;
+    const format = isRecord(text) && !Array.isArray(text) ? text.format : undefined;
+    const plainTextFormat = format === undefined || format === null ||
+      (isRecord(format) && !Array.isArray(format) && format.type === "text" && Object.keys(format).length === 1);
+    const supportedText = isRecord(text) && !Array.isArray(text) && plainTextFormat &&
+      Object.keys(text).every((key) => key === "format");
+    if (!supportedText) {
+      return openaiError(
+        400,
+        `text output constraints are not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+        "invalid_request_error",
+        { param: "text" },
+      );
+    }
+  }
 
   let instructions: string | undefined;
   if (Object.prototype.hasOwnProperty.call(rawRecord, "instructions")) {

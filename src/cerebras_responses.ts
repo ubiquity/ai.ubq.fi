@@ -298,11 +298,21 @@ const responseUsage = (usage: unknown): Record<string, unknown> | undefined => {
   const outputTokens = typeof usage.completion_tokens === "number" ? usage.completion_tokens : null;
   const totalTokens = typeof usage.total_tokens === "number" ? usage.total_tokens : null;
   if (inputTokens === null || outputTokens === null || totalTokens === null) return undefined;
+  const promptDetails = isRecord(usage.prompt_tokens_details) && !Array.isArray(usage.prompt_tokens_details)
+    ? usage.prompt_tokens_details
+    : {};
+  const completionDetails = isRecord(usage.completion_tokens_details) && !Array.isArray(usage.completion_tokens_details)
+    ? usage.completion_tokens_details
+    : {};
+  const cachedTokens = typeof promptDetails.cached_tokens === "number" ? promptDetails.cached_tokens : 0;
+  const reasoningTokens = typeof completionDetails.reasoning_tokens === "number"
+    ? completionDetails.reasoning_tokens
+    : 0;
   return {
     input_tokens: inputTokens,
-    input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+    input_tokens_details: { cached_tokens: cachedTokens, cache_write_tokens: 0 },
     output_tokens: outputTokens,
-    output_tokens_details: { reasoning_tokens: 0 },
+    output_tokens_details: { reasoning_tokens: reasoningTokens },
     total_tokens: totalTokens,
   };
 };

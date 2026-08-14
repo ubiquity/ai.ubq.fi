@@ -108,6 +108,10 @@ const resolveKv = async (deps: MarketplaceDeps): Promise<Deno.Kv | null> =>
   deps.kv !== undefined ? deps.kv : await getKv();
 
 const unavailableKv = (): Response => withCors(openaiError(503, "Deno KV unavailable", "server_error"));
+const invalidCursor = (): Response =>
+  withCors(openaiError(400, "cursor is invalid for this marketplace listing", "invalid_request_error", {
+    param: "cursor",
+  }));
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -221,22 +225,30 @@ export const handleMarketplaceListAuth = async (req: Request, deps: MarketplaceD
   if (!kv) return unavailableKv();
   const prefix = ["ubq_ai", "marketplace", "auth_accounts_by_owner", owner.ownerUserId] as const;
   const accounts: MarketplaceAuthAccount[] = [];
-  const entries = kv.list(
-    { prefix },
-    { limit: page.limit, ...(page.cursor ? { cursor: page.cursor } : {}) },
-  );
   let listedEntries = 0;
-  for await (const entry of entries) {
-    listedEntries += 1;
-    const id = entry.key.at(-1);
-    if (typeof id !== "string") continue;
-    const account = await kv.get<MarketplaceAuthAccount>(authAccountKey(id));
-    if (account.value?.ownerUserId === owner.ownerUserId) accounts.push(account.value);
-    if (listedEntries >= page.limit) break;
+  let nextCursor: string | null = null;
+  try {
+    const entries = kv.list(
+      { prefix },
+      { limit: page.limit, ...(page.cursor ? { cursor: page.cursor } : {}) },
+    );
+    for await (const entry of entries) {
+      listedEntries += 1;
+      const id = entry.key.at(-1);
+      if (typeof id === "string") {
+        const account = await kv.get<MarketplaceAuthAccount>(authAccountKey(id));
+        if (account.value?.ownerUserId === owner.ownerUserId) accounts.push(account.value);
+      }
+      if (listedEntries >= page.limit) break;
+    }
+    nextCursor = listedEntries === page.limit && entries.cursor ? entries.cursor : null;
+  } catch (error) {
+    if (page.cursor && error instanceof TypeError) return invalidCursor();
+    throw error;
   }
   return withCors(json(200, {
     auths: accounts,
-    next_cursor: listedEntries === page.limit && entries.cursor ? entries.cursor : null,
+    next_cursor: nextCursor,
   }, { "Cache-Control": "no-store" }));
 };
 
@@ -314,26 +326,33 @@ export const handleMarketplacePublicCatalog = async (
   const kv = await resolveKv(deps);
   if (!kv) return unavailableKv();
   const accounts: Array<Record<string, unknown>> = [];
-  const entries = kv.list<MarketplaceAuthAccount>(
-    { prefix: ["ubq_ai", "marketplace", "auth_accounts"] },
-    { limit: page.limit, ...(page.cursor ? { cursor: page.cursor } : {}) },
-  );
-  for await (const entry of entries) {
-    const account = entry.value;
-    accounts.push({
-      id: account.id,
-      provider: account.provider,
-      status: account.status,
-      pricing: account.pricing,
-      maxConcurrent: account.maxConcurrent,
-      health: account.health,
-      enabled: account.enabled,
-      labels: account.labels,
-    });
-    if (accounts.length >= page.limit) break;
+  let nextCursor: string | null = null;
+  try {
+    const entries = kv.list<MarketplaceAuthAccount>(
+      { prefix: ["ubq_ai", "marketplace", "auth_accounts"] },
+      { limit: page.limit, ...(page.cursor ? { cursor: page.cursor } : {}) },
+    );
+    for await (const entry of entries) {
+      const account = entry.value;
+      accounts.push({
+        id: account.id,
+        provider: account.provider,
+        status: account.status,
+        pricing: account.pricing,
+        maxConcurrent: account.maxConcurrent,
+        health: account.health,
+        enabled: account.enabled,
+        labels: account.labels,
+      });
+      if (accounts.length >= page.limit) break;
+    }
+    nextCursor = accounts.length === page.limit && entries.cursor ? entries.cursor : null;
+  } catch (error) {
+    if (page.cursor && error instanceof TypeError) return invalidCursor();
+    throw error;
   }
   return withCors(json(200, {
     auths: accounts,
-    next_cursor: accounts.length === page.limit && entries.cursor ? entries.cursor : null,
+    next_cursor: nextCursor,
   }));
 };
