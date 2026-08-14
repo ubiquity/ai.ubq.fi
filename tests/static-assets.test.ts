@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { hasStaticAsset } from "../src/static.ts";
 import adminHtml from "../static/admin.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
+import authScript from "../static/auth.js" with { type: "text" };
 
 Deno.test("static assets register frontend module dependencies", () => {
   for (
@@ -42,6 +43,16 @@ Deno.test("admin provider view declares and renders the OpenRouter failover card
   assert.match(adminScript, /if \(loadId !== providersLoadId\) return/);
   assert.match(adminScript, /cache: "no-store"/);
   assert.match(adminScript, /Authorization: `Bearer \$\{token\}`/);
+  assert.match(adminScript, /credentials: "include"/);
+  assert.match(adminScript, /authenticated: true/);
+  assert.doesNotMatch(adminScript, /token: result\.token/);
+  const passkeySignInSection = adminScript.slice(
+    adminScript.indexOf("const signInAdminWithPasskey"),
+    adminScript.indexOf("const runPasskeyLogin"),
+  );
+  assert.doesNotMatch(passkeySignInSection, /applySignedInToken\(relay\.token/);
+  assert.match(authScript, /relay_session !== true/);
+  assert.match(authScript, /credentials: init\?\.credentials \?\? "include"/);
   for (
     const field of [
       "attempted_provider",

@@ -96,6 +96,7 @@ const kvStub = {
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
 const {
+  PASSKEY_RELAY_COOKIE_NAME,
   PASSKEY_SESSION_TTL_MS,
   buildPasskeyHandle,
   getPasskeyRequestMeta,
@@ -894,6 +895,15 @@ Deno.test("audience-bound passkey sessions require their requesting origin", asy
     }),
   );
   assert.ok(matching);
+  const cookieAdmin = await authenticateAdmin(
+    new Request("https://ai.ubq.fi/uos/auth", {
+      headers: {
+        Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`,
+        Origin: audienceOrigin,
+      },
+    }),
+  );
+  assert.equal(cookieAdmin.ok, true);
 
   const wrongOrigin = await getPasskeySessionForRequest(
     new Request("https://ai.ubq.fi/uos/auth", {
@@ -912,6 +922,60 @@ Deno.test("audience-bound passkey sessions require their requesting origin", asy
     new Request("https://ai.ubq.fi/uos/auth", { headers: { Authorization: `Bearer ${token}` } }),
   );
   assert.equal(missingOrigin, null);
+});
+
+Deno.test("relay cookie sessions authenticate only for their preview audience", async () => {
+  kvStore.clear();
+  const audienceOrigin = "https://p-ai-ubq-fi-hwtbr5x2mgy1.ubiquity-dao.deno.net";
+  const { token } = seedPasskeySession("uos_ai_session_cookie", { audienceOrigin });
+  const matching = await getPasskeySessionForRequest(
+    new Request("https://ai.ubq.fi/uos/auth", {
+      headers: {
+        Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`,
+        Origin: audienceOrigin,
+      },
+    }),
+  );
+  assert.ok(matching);
+
+  const wrongOrigin = await getPasskeySessionForRequest(
+    new Request("https://ai.ubq.fi/uos/auth", {
+      headers: {
+        Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`,
+        Origin: "https://evil.example",
+      },
+    }),
+  );
+  assert.equal(wrongOrigin, null);
+});
+
+Deno.test("credentialed CORS is restricted to trusted preview origins", async () => {
+  kvStore.clear();
+  const { default: handler } = await import("../src/handler.ts");
+  const previewOrigin = "https://p-ai-ubq-fi-hwtbr5x2mgy1.ubiquity-dao.deno.net";
+  const previewResponse = await handler(
+    new Request("https://ai.ubq.fi/api/auth/session", {
+      method: "OPTIONS",
+      headers: {
+        Origin: previewOrigin,
+        "Access-Control-Request-Method": "GET",
+      },
+    }),
+  );
+  assert.equal(previewResponse.headers.get("access-control-allow-origin"), previewOrigin);
+  assert.equal(previewResponse.headers.get("access-control-allow-credentials"), "true");
+
+  const untrustedResponse = await handler(
+    new Request("https://ai.ubq.fi/api/auth/session", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://evil.example",
+        "Access-Control-Request-Method": "GET",
+      },
+    }),
+  );
+  assert.equal(untrustedResponse.headers.get("access-control-allow-origin"), "*");
+  assert.equal(untrustedResponse.headers.get("access-control-allow-credentials"), null);
 });
 
 Deno.test("passkey login finish does not log raw user handles on assertion failure", async () => {
