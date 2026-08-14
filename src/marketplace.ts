@@ -72,12 +72,10 @@ const marketplacePrincipal = (
 ): string | null => {
   const { method } = authResult;
   switch (method.kind) {
-    case "kv_api_key":
-      return `api-key:${method.key_id}`;
-    case "github_token":
-      return null;
     case "passkey_session":
       return `passkey-user:${method.user_id}`;
+    case "kv_api_key":
+    case "github_token":
     case "auth_tokens_allowlist":
     case "admin_allowlist":
     case "deno_deploy_token":
@@ -127,13 +125,25 @@ const readObject = async (req: Request): Promise<Record<string, unknown> | null>
   }
 };
 
-const isJsonText = (value: string): boolean => {
+const ENCRYPTED_AUTH_FIELDS = new Set(["v", "alg", "kid", "iv", "ciphertext", "tag"]);
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+const isBase64Url = (value: string): boolean => BASE64URL.test(value) && value.length % 4 !== 1;
+
+const isEncryptedAuthEnvelope = (value: string): boolean => {
+  let parsed: unknown;
   try {
-    JSON.parse(value);
-    return true;
+    parsed = JSON.parse(value);
   } catch {
     return false;
   }
+  if (!isObject(parsed) || Object.keys(parsed).length !== ENCRYPTED_AUTH_FIELDS.size) return false;
+  if (Object.keys(parsed).some((key) => !ENCRYPTED_AUTH_FIELDS.has(key))) return false;
+  return parsed.v === 1 && parsed.alg === "A256GCM" &&
+    typeof parsed.kid === "string" && parsed.kid.trim() === parsed.kid && parsed.kid.length >= 1 &&
+    parsed.kid.length <= 128 &&
+    typeof parsed.iv === "string" && parsed.iv.length === 16 && isBase64Url(parsed.iv) &&
+    typeof parsed.ciphertext === "string" && isBase64Url(parsed.ciphertext) &&
+    typeof parsed.tag === "string" && parsed.tag.length === 22 && isBase64Url(parsed.tag);
 };
 
 const validateMarketplaceMetadata = (body: Record<string, unknown>): string | null => {
@@ -198,10 +208,10 @@ export const handleMarketplaceCreateAuth = async (req: Request, deps: Marketplac
   if (typeof body.encryptedAuthJson !== "string" || !body.encryptedAuthJson.trim()) {
     return withCors(openaiError(400, "encryptedAuthJson must be a non-empty string", "invalid_request_error"));
   }
-  if (isJsonText(body.encryptedAuthJson)) {
+  if (!isEncryptedAuthEnvelope(body.encryptedAuthJson)) {
     return withCors(openaiError(
       400,
-      "encryptedAuthJson must contain opaque encrypted data, not raw JSON",
+      "encryptedAuthJson must be a valid A256GCM encrypted envelope",
       "invalid_request_error",
       { param: "encryptedAuthJson" },
     ));

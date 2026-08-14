@@ -44,6 +44,23 @@ const tokenOnlyAuth = (
   return (_req: Request) => Promise.resolve({ ok: true as const, token: `token-${kind}`, method: { kind } });
 };
 
+const inferenceApiKeyAuth = (_req: Request) =>
+  Promise.resolve({
+    ok: true as const,
+    token: "u_fixture",
+    method: { kind: "kv_api_key" as const, key_id: "inference-key", policy: {} as never },
+  });
+
+const encryptedAuthEnvelope = (ciphertext = "Y2lwaGVydGV4dA"): string =>
+  JSON.stringify({
+    v: 1,
+    alg: "A256GCM",
+    kid: "marketplace-key-1",
+    iv: "AAECAwQFBgcICQoL",
+    ciphertext,
+    tag: "AAECAwQFBgcICQoLDA0ODw",
+  });
+
 const jsonRequest = (method: string, path: string, body: unknown): Request =>
   new Request(`https://ai.ubq.fi${path}`, {
     method,
@@ -66,7 +83,7 @@ const createAccount = async (kv: CountingKv, userId = "owner-1"): Promise<string
   const response = await handleMarketplaceCreateAuth(
     jsonRequest("POST", "/marketplace/auths", {
       provider: "chatgpt_codex",
-      encryptedAuthJson: "ciphertext",
+      encryptedAuthJson: encryptedAuthEnvelope(),
       pricing: { per_request: 1 },
       maxConcurrent: 2,
       labels: { region: "us" },
@@ -95,7 +112,7 @@ Deno.test("marketplace create atomically writes the account and owner index", as
   assert.equal(kv.commands.some((command) => command.command === "set"), false);
   const stored = await kv.get<Record<string, unknown>>(authAccountKey(id));
   assert.equal(stored.value?.ownerUserId, "passkey-user:owner-1");
-  assert.equal(stored.value?.encryptedAuthJson, "ciphertext");
+  assert.equal(stored.value?.encryptedAuthJson, encryptedAuthEnvelope());
 });
 
 Deno.test("marketplace rejects malformed pricing and labels before persistence", async () => {
@@ -103,7 +120,7 @@ Deno.test("marketplace rejects malformed pricing and labels before persistence",
   const invalidCreate = await handleMarketplaceCreateAuth(
     jsonRequest("POST", "/marketplace/auths", {
       provider: "chatgpt_codex",
-      encryptedAuthJson: "ciphertext",
+      encryptedAuthJson: encryptedAuthEnvelope(),
       pricing: "free",
     }),
     { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
@@ -140,12 +157,53 @@ Deno.test("marketplace rejects raw auth JSON before persistence", async () => {
   assert.equal(kv.commands.length, 0);
 });
 
+Deno.test("marketplace rejects plaintext and malformed encryption envelopes before persistence", async () => {
+  const malformed = [
+    "ciphertext",
+    JSON.stringify({ v: 1, alg: "A256GCM", kid: "key", iv: "short", ciphertext: "YQ", tag: "YQ" }),
+    JSON.stringify({
+      v: 1,
+      alg: "A256GCM",
+      kid: "key",
+      iv: "AAECAwQFBgcICQoL",
+      ciphertext: "not+base64url",
+      tag: "AAECAwQFBgcICQoLDA0ODw",
+    }),
+    JSON.stringify({
+      v: 1,
+      alg: "A256GCM",
+      kid: "key",
+      iv: "AAECAwQFBgcICQoL",
+      ciphertext: "A",
+      tag: "AAECAwQFBgcICQoLDA0ODw",
+    }),
+    JSON.stringify({
+      v: 1,
+      alg: "A256GCM",
+      kid: "key",
+      iv: "AAECAwQFBgcICQoL",
+      ciphertext: "YQ",
+      tag: "AAECAwQFBgcICQoLDA0ODw",
+      extra: true,
+    }),
+  ];
+  for (const encryptedAuthJson of malformed) {
+    const kv = new CountingKv();
+    const response = await handleMarketplaceCreateAuth(
+      jsonRequest("POST", "/marketplace/auths", { provider: "chatgpt_codex", encryptedAuthJson }),
+      { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
+    );
+    assert.equal(response.status, 400, encryptedAuthJson);
+    assert.equal(kv.commands.length, 0, encryptedAuthJson);
+  }
+});
+
 Deno.test("marketplace rejects oversized accounts before persistence", async () => {
   const kv = new CountingKv();
   const response = await handleMarketplaceCreateAuth(
     jsonRequest("POST", "/marketplace/auths", {
       provider: "chatgpt_codex",
-      encryptedAuthJson: "x".repeat(65_536),
+      encryptedAuthJson: encryptedAuthEnvelope("x".repeat(65_536)),
     }),
     {
       authenticateClient: ownerAuth("owner-1"),
@@ -168,7 +226,7 @@ Deno.test("marketplace owner routes reject repository-scoped GitHub authenticati
   const create = await handleMarketplaceCreateAuth(
     jsonRequest("POST", "/marketplace/auths", {
       provider: "chatgpt_codex",
-      encryptedAuthJson: "ciphertext",
+      encryptedAuthJson: encryptedAuthEnvelope(),
     }),
     { authenticateClient: githubRepoAuth, kv: kv as unknown as Deno.Kv },
   );
@@ -188,13 +246,26 @@ Deno.test("marketplace owner routes reject rotating token-only identities", asyn
     const create = await handleMarketplaceCreateAuth(
       jsonRequest("POST", "/marketplace/auths", {
         provider: "chatgpt_codex",
-        encryptedAuthJson: "ciphertext",
+        encryptedAuthJson: encryptedAuthEnvelope(),
       }),
       { authenticateClient: tokenOnlyAuth(kind), kv: kv as unknown as Deno.Kv },
     );
     assert.equal(create.status, 403, kind);
     assert.equal(kv.commands.length, 0, kind);
   }
+});
+
+Deno.test("marketplace owner routes reject inference API keys", async () => {
+  const kv = new CountingKv();
+  const response = await handleMarketplaceCreateAuth(
+    jsonRequest("POST", "/marketplace/auths", {
+      provider: "chatgpt_codex",
+      encryptedAuthJson: encryptedAuthEnvelope(),
+    }),
+    { authenticateClient: inferenceApiKeyAuth, kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(response.status, 403);
+  assert.equal(kv.commands.length, 0);
 });
 
 Deno.test("marketplace owner listing is paginated and never cacheable", async () => {
@@ -205,7 +276,7 @@ Deno.test("marketplace owner listing is paginated and never cacheable", async ()
       id,
       ownerUserId: "passkey-user:owner-1",
       provider: "chatgpt_codex",
-      encryptedAuthJson: `ciphertext-${index}`,
+      encryptedAuthJson: encryptedAuthEnvelope(`Y2lwaGVydGV4dC0${index}`),
       status: "enabled",
       pricing: null,
       maxConcurrent: null,
@@ -227,7 +298,7 @@ Deno.test("marketplace owner listing is paginated and never cacheable", async ()
   assert.equal(response.headers.get("cache-control"), "no-store");
   const body = await response.json() as { auths: Array<{ encryptedAuthJson?: string }>; next_cursor: string | null };
   assert.equal(body.auths.length, 2);
-  assert.equal(body.auths.every((account) => account.encryptedAuthJson?.startsWith("ciphertext-")), true);
+  assert.equal(body.auths.every((account) => account.encryptedAuthJson?.startsWith('{"v":1')), true);
   assert.equal(body.next_cursor, null);
 });
 
@@ -295,7 +366,7 @@ Deno.test("marketplace updates require ownership and reject protected fields", a
   assert.equal(updated.status, 200);
   const stored = await kv.get<Record<string, unknown>>(authAccountKey(id));
   assert.equal(stored.value?.ownerUserId, "passkey-user:owner-1");
-  assert.equal(stored.value?.encryptedAuthJson, "ciphertext");
+  assert.equal(stored.value?.encryptedAuthJson, encryptedAuthEnvelope());
   assert.deepEqual(stored.value?.pricing, { per_request: 3 });
   assert.equal(stored.value?.maxConcurrent, 4);
   assert.equal(stored.value?.updatedAt, 2_000);
@@ -360,7 +431,7 @@ Deno.test("marketplace public catalog validates and bounds pagination", async ()
       id: `auth_${index}`,
       ownerUserId: `passkey-user:${index}`,
       provider: "chatgpt_codex",
-      encryptedAuthJson: "ciphertext",
+      encryptedAuthJson: encryptedAuthEnvelope(),
       status: "enabled",
       pricing: null,
       maxConcurrent: null,

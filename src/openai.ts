@@ -6901,6 +6901,9 @@ const handleCerebrasResponses = async (
       "top_p",
       "top_logprobs",
       "service_tier",
+      "safety_identifier",
+      "user",
+      "context_management",
     ]),
   );
   if (usageContext?.responseTelemetry) {
@@ -7586,6 +7589,16 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   if (promptCacheAvailabilityError) return promptCacheAvailabilityError;
 
   if (isCerebrasModel) {
+    for (const field of ["safety_identifier", "user", "context_management"] as const) {
+      if (rawRecord[field] !== undefined && rawRecord[field] !== null) {
+        return openaiError(
+          400,
+          `${field} is not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+          "invalid_request_error",
+          { param: field },
+        );
+      }
+    }
     for (const field of ["previous_response_id", "conversation", "prompt"] as const) {
       if (rawRecord[field] !== undefined && rawRecord[field] !== null) {
         return openaiError(

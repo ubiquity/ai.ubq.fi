@@ -8044,6 +8044,22 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         { field: "include", value: ["reasoning.encrypted_content"], param: "include" },
         { field: "top_logprobs", value: 1, param: "top_logprobs" },
         { field: "service_tier", value: "priority", param: "service_tier" },
+        { field: "safety_identifier", value: "safety-fixture", param: "safety_identifier" },
+        { field: "user", value: "user-fixture", param: "user" },
+        {
+          field: "context_management",
+          value: [{ type: "compaction", compact_threshold: 1 }],
+          param: "context_management",
+        },
+        {
+          field: "input",
+          value: [{
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "ping", prompt_cache_breakpoint: { mode: "explicit" } }],
+          }],
+          param: "input[0].content[0].prompt_cache_breakpoint",
+        },
         { field: "input", value: [{ type: "reasoning", id: "reasoning_1", summary: [] }], param: "input[0].type" },
       ] as const;
       for (const testCase of cases) {

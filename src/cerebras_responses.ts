@@ -25,6 +25,13 @@ const textFromContent = (
     if (!isRecord(part) || Array.isArray(part)) {
       return { ok: false, message: `${partParam} must be an object`, param: partParam };
     }
+    if (Object.prototype.hasOwnProperty.call(part, "prompt_cache_breakpoint")) {
+      return {
+        ok: false,
+        message: `${partParam}.prompt_cache_breakpoint is not supported by GPT-OSS`,
+        param: `${partParam}.prompt_cache_breakpoint`,
+      };
+    }
     const type = getString(part.type);
     if (type !== "input_text" && type !== "output_text") {
       return {

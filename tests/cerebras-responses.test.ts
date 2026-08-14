@@ -131,6 +131,21 @@ Deno.test("GPT-OSS Responses translation rejects multimodal input and unsupporte
   assert.equal(supportedStrictTool.ok, true);
 });
 
+Deno.test("GPT-OSS Responses translation rejects cache breakpoints with the content path", () => {
+  const translated = buildCerebrasResponsesTranslation(
+    [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "status", prompt_cache_breakpoint: { mode: "explicit" } }],
+    }],
+    undefined,
+    {},
+  );
+  assert.equal(translated.ok, false);
+  if (translated.ok) throw new Error("expected cache-breakpoint rejection");
+  assert.equal(translated.param, "input[0].content[0].prompt_cache_breakpoint");
+});
+
 Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () => {
   const translationStartedAt = Math.floor(Date.now() / 1000);
   const translated = chatCompletionToCerebrasResponse(
