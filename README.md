@@ -371,8 +371,8 @@ ubq-ai admin keys list | jq
   gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
-- `CEREBRAS_API_KEY` (optional): Server-side credential for explicit non-streaming Chat Completions requests to Cerebras
-  `gpt-oss-120b`. It is never accepted from clients or exposed by health responses.
+- `CEREBRAS_API_KEY` (optional): Server-side credential for Cerebras `gpt-oss-120b` Chat Completions and the Codex
+  `/v1/responses` bridge. It is never accepted from clients or exposed by health responses.
 - `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
   Deno KV at `["uos_ai","voyage_api_key"]`.
 - `YUNWU_SYSTEM_TOKEN` (required for Codex quota reporting): YunWu System Access Token used only by the server to read
@@ -401,6 +401,18 @@ support-correlation value only, never a credential or provider response body.
 On a Cerebras `429`, the gateway also forwards Cerebras' documented `x-ratelimit-*` capacity headers. These values
 describe the shared server-side `CEREBRAS_API_KEY` capacity, not a per-user UOS quota, and are not forwarded for other
 upstream statuses.
+
+## GPT-OSS Responses bridge (preview)
+
+Codex uses `/v1/responses`, while Cerebras GPT-OSS currently exposes Chat Completions. When the selected model is
+`gpt-oss-120b`, the gateway translates the text and function-tool subset of a Responses request into a buffered,
+non-streaming Cerebras Chat Completions request, then returns a native Responses body. Client `stream: true` is also
+accepted: the provider response is buffered and replayed as a complete Responses SSE sequence with
+`x-uos-warning: gpt_oss_stream_downgraded`.
+
+The bridge supports `low`, `medium`, and `high` reasoning, function tools, and follow-up `function_call_output` turns.
+GPT-OSS is text-only, so image/file input, web search, and other non-function tools are rejected with a normal
+`invalid_request_error`. `xhigh`, `max`, and `ultra` are not silently remapped for this model.
 
 ## Admin: upload/validate Codex auth.json
 

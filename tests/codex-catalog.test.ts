@@ -209,6 +209,68 @@ Deno.test("codex catalog: exact versions preserve rich JSON, isolate caches, and
   }
 });
 
+Deno.test("codex catalog: configured GPT-OSS is appended to the versioned Codex catalog", async () => {
+  seedBaseState();
+  const envKey = "CEREBRAS_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  const originalFetch = globalThis.fetch;
+  Deno.env.set(envKey, "cerebras-catalog-test-key");
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(catalogBody("0.146.0"), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: '"upstream-catalog"' },
+      }),
+    );
+  try {
+    const response = await handleCodexCatalogModels(request("0.146.0"), "0.146.0");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("etag"), null);
+    const payload = await response.json() as { models?: Array<Record<string, unknown>> };
+    const model = payload.models?.find((entry) => entry.slug === "gpt-oss-120b");
+    assert.deepEqual(model, {
+      slug: "gpt-oss-120b",
+      display_name: "GPT-OSS 120B (Cerebras)",
+      description: "OpenAI GPT-OSS 120B through the UOS Cerebras adapter.",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [
+        { effort: "low", description: "Fast responses with lighter reasoning" },
+        { effort: "medium", description: "Balances speed and reasoning depth" },
+        { effort: "high", description: "Greater reasoning depth for complex tasks" },
+      ],
+      shell_type: "shell_command",
+      visibility: "list",
+      supported_in_api: true,
+      priority: 0,
+      additional_speed_tiers: [],
+      service_tiers: [],
+      availability_nux: null,
+      base_instructions: "",
+      upgrade: null,
+      supports_reasoning_summaries: false,
+      default_reasoning_summary: "none",
+      support_verbosity: false,
+      default_verbosity: "low",
+      apply_patch_tool_type: "freeform",
+      web_search_tool_type: "none",
+      truncation_policy: { mode: "tokens", limit: 131072 },
+      supports_parallel_tool_calls: true,
+      supports_image_detail_original: false,
+      context_window: 131072,
+      max_context_window: 131072,
+      effective_context_window_percent: 95,
+      experimental_supported_tools: [],
+      input_modalities: ["text"],
+      supports_search_tool: false,
+      use_responses_lite: false,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
 Deno.test("codex catalog: malformed versions are rejected before upstream access", async () => {
   seedBaseState();
   const originalFetch = globalThis.fetch;
