@@ -117,6 +117,36 @@ Deno.test("Codex additional_tools namespaces flatten into the request-scoped reg
   assert.equal((projection.tools?.[0] as Record<string, unknown>).type, "function");
 });
 
+Deno.test("Codex clock.sleep custom tools retain their call and output pairing", () => {
+  const projection = buildOpenRouterRequestProjection({
+    input: [
+      {
+        type: "additional_tools",
+        role: "developer",
+        tools: [{
+          type: "namespace",
+          name: "clock",
+          tools: [{ type: "custom", name: "sleep", description: "Pause briefly", format: { type: "text" } }],
+        }],
+      },
+      { type: "custom_tool_call", call_id: "call_sleep", name: "sleep", input: "1000" },
+      { type: "custom_tool_call_output", call_id: "call_sleep", output: "slept" },
+    ],
+    stream: true,
+  });
+  const projectedInput = projection.input as readonly Record<string, unknown>[];
+  const projectedCall = projectedInput[0]!;
+  const projectedOutput = projectedInput[1]!;
+  assert.equal(projectedCall.type, "function_call");
+  assert.equal(projectedCall.call_id, "call_sleep");
+  assert.equal(JSON.parse(projectedCall.arguments as string).input, "1000");
+  assert.deepEqual(projectedOutput, {
+    type: "function_call_output",
+    call_id: "call_sleep",
+    output: "slept",
+  });
+});
+
 Deno.test("failover warning episode detection resets after a new user message", () => {
   const warning = {
     type: "message",
@@ -483,4 +513,24 @@ Deno.test("synthetic warning history is removed, user quotes remain, and provide
   ));
   assert.equal(JSON.stringify(values).includes(warning), false);
   assert.equal(values.filter((item) => item.terminal).length, 1);
+});
+
+Deno.test("OpenRouter logprobs are stripped from retained output text", () => {
+  const projection = buildOpenRouterRequestProjection({
+    input: [{
+      type: "message",
+      role: "assistant",
+      content: [{
+        type: "output_text",
+        text: "provider text",
+        logprobs: [{ token: "provider", logprob: -0.1 }],
+      }],
+    }],
+    stream: true,
+  });
+  const content = (projection.input as readonly Record<string, unknown>[])[0]!.content as Array<
+    Record<string, unknown>
+  >;
+  assert.equal("logprobs" in content[0]!, false);
+  assert.equal(content[0]!.text, "provider text");
 });

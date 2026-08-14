@@ -499,7 +499,14 @@ const projectMessage = (item: Record<string, unknown>, param: string): Record<st
       );
     }
   }
-  return { type: "message", role, content: copyJson(content) };
+  const projectedContent = content.map((part) => {
+    const projectedPart = copyJson(part);
+    // OpenRouter can add this provider-only field to retained output text.
+    // It is not portable Responses history, so keep it out of the next route.
+    if (projectedPart.type === "output_text") delete projectedPart.logprobs;
+    return projectedPart;
+  });
+  return { type: "message", role, content: projectedContent };
 };
 
 const findOriginal = (
