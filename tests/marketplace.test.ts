@@ -84,6 +84,13 @@ Deno.test("marketplace updates require ownership and reject protected fields", a
   );
   assert.equal(protectedField.status, 400);
 
+  const invalidStatus = await handleMarketplaceUpdateAuth(
+    jsonRequest("PATCH", `/marketplace/auths/${id}`, { status: "healthy" }),
+    id,
+    { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(invalidStatus.status, 400);
+
   const updated = await handleMarketplaceUpdateAuth(
     jsonRequest("PATCH", `/marketplace/auths/${id}`, {
       pricing: { per_request: 3 },

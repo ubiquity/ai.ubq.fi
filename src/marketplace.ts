@@ -35,6 +35,7 @@ type MarketplaceDeps = Readonly<{
 }>;
 
 const MUTABLE_FIELDS = new Set(["pricing", "maxConcurrent", "status", "enabled", "labels"]);
+const MARKETPLACE_AUTH_STATUSES = new Set(["enabled", "disabled", "error"]);
 
 export const authAccountKey = (id: string) => ["ubq_ai", "marketplace", "auth_accounts", id] as const;
 export const authAccountByOwnerKey = (ownerUserId: string, id: string) =>
@@ -90,8 +91,11 @@ const validateMutableFields = (body: Record<string, unknown>): string | null => 
   const unknown = Object.keys(body).find((key) => !MUTABLE_FIELDS.has(key));
   if (unknown) return `Field is not mutable: ${unknown}`;
   if (Object.keys(body).length === 0) return "At least one mutable field is required";
-  if (body.status !== undefined && (typeof body.status !== "string" || !body.status.trim())) {
-    return "status must be a non-empty string";
+  if (
+    body.status !== undefined &&
+    (typeof body.status !== "string" || !MARKETPLACE_AUTH_STATUSES.has(body.status.trim()))
+  ) {
+    return "status must be enabled, disabled, or error";
   }
   if (body.enabled !== undefined && typeof body.enabled !== "boolean") return "enabled must be a boolean";
   if (
