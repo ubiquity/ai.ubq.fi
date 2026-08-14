@@ -12,13 +12,13 @@ import {
   signOut,
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
-} from "./auth.js?v=provider-capacity-20260807-yunwu-overlay";
+} from "./auth.js?v=passkey-relay-20260814-v2";
 import {
   AUTH_RELAY_MESSAGE_TYPE,
   isAiGatewayPreviewOrigin,
   parseAuthRelayAction,
   parseTrustedAuthRelayOrigin,
-} from "./auth-relay.js?v=passkey-relay-20260814-v1";
+} from "./auth-relay.js?v=passkey-relay-20260814-v2";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
@@ -486,22 +486,6 @@ const formatPasskeyLoginError = (error) => {
   return message;
 };
 
-const getValidCachedRelayAuth = async () => {
-  const token = getAdminToken();
-  if (!token) return null;
-  try {
-    const res = await fetch(apiUrl("/uos/auth"), {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data?.auth?.is_admin) return null;
-    return { token, handle: getPasskeyHandle() };
-  } catch {
-    return null;
-  }
-};
-
 let authRelayRequest = null;
 const requestRemotePasskeySession = () => {
   if (authRelayRequest) return authRelayRequest;
@@ -572,6 +556,7 @@ const signInAdminWithPasskey = async () => {
     baseUrl: getPasskeyBaseUrl(),
     handle: getPasskeyHandle(),
     useHandle: Boolean(getPasskeyHandle()),
+    audienceOrigin: isAuthRelayMode ? authRelayOrigin : "",
   });
   if (result.handle) setPasskeyHandleValue(result.handle);
   applySignedInToken(result.token, { deviceRegistered: true });
@@ -7099,14 +7084,9 @@ const startAuthRelayIfRequested = async () => {
   setAuthWidgetOpen(true);
   passkeyRegisterBtn.hidden = true;
   setAuthBadge("unknown", "Relay sign-in");
-  setPasskeyStatus("unknown", "Checking signed-in session...");
+  setPasskeyStatus("unknown", "Starting passkey sign-in...");
   passkeyLoginBtn.disabled = true;
   try {
-    const cachedAuth = await getValidCachedRelayAuth();
-    if (cachedAuth) {
-      postAuthRelayResult(cachedAuth);
-      return;
-    }
     await runPasskeyLogin({ automatic: true });
   } catch (error) {
     setPasskeyStatus("bad", `${formatPasskeyLoginError(error)} Click the sign-in button to continue.`);

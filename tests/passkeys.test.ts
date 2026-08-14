@@ -99,6 +99,7 @@ const {
   PASSKEY_SESSION_TTL_MS,
   buildPasskeyHandle,
   getPasskeyRequestMeta,
+  getPasskeySessionForRequest,
   handlePasskeyLoginFinish,
   handlePasskeyLoginStart,
   handlePasskeyRegisterStart,
@@ -131,7 +132,10 @@ const withEnv = async (updates: Record<string, string | null>, fn: () => Promise
   }
 };
 
-const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true } = {}) => {
+const seedPasskeySession = (
+  token = "uos_ai_session_test",
+  { isAdmin = true, audienceOrigin = "" } = {},
+) => {
   const now = Date.now();
   const user = {
     id: "user-test",
@@ -148,6 +152,7 @@ const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true } = 
     user_id: user.id,
     created_at_ms: now,
     expires_at_ms: now + PASSKEY_SESSION_TTL_MS,
+    ...(audienceOrigin ? { audience_origin: audienceOrigin } : {}),
   });
   return { token, user };
 };
@@ -845,6 +850,68 @@ Deno.test("passkey login start without username remains discoverable", async () 
   const body = await response.json();
   assert.equal(body.publicKey.allowCredentials, undefined);
   assert.equal(body.publicKey.userVerification, "preferred");
+});
+
+Deno.test("passkey login start binds relay sessions to a trusted preview origin", async () => {
+  kvStore.clear();
+  const response = await handlePasskeyLoginStart(
+    new Request("https://ai.ubq.fi/api/auth/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ relay_origin: "https://p-ai-ubq-fi-z707765qdpnm.ubiquity-dao.deno.net" }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  const challenge = await kvStub.get(passkeyChallengeKey(body.publicKey.challenge));
+  const challengeValue = challenge.value as { audience_origin?: string } | null;
+  assert.equal(challengeValue?.audience_origin, "https://p-ai-ubq-fi-z707765qdpnm.ubiquity-dao.deno.net");
+});
+
+Deno.test("passkey login start rejects an untrusted relay origin", async () => {
+  kvStore.clear();
+  const response = await handlePasskeyLoginStart(
+    new Request("https://ai.ubq.fi/api/auth/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ relay_origin: "https://evil.example" }),
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.message, "Invalid passkey relay origin");
+});
+
+Deno.test("audience-bound passkey sessions require their requesting origin", async () => {
+  kvStore.clear();
+  const audienceOrigin = "https://p-ai-ubq-fi-z707765qdpnm.ubiquity-dao.deno.net";
+  const { token } = seedPasskeySession("uos_ai_session_audience", { audienceOrigin });
+  const matching = await getPasskeySessionForRequest(
+    new Request("https://ai.ubq.fi/uos/auth", {
+      headers: { Authorization: `Bearer ${token}`, Origin: audienceOrigin },
+    }),
+  );
+  assert.ok(matching);
+
+  const wrongOrigin = await getPasskeySessionForRequest(
+    new Request("https://ai.ubq.fi/uos/auth", {
+      headers: { Authorization: `Bearer ${token}`, Origin: "https://evil.example" },
+    }),
+  );
+  assert.equal(wrongOrigin, null);
+  const wrongAdmin = await requireAdminAuth(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      headers: { Authorization: `Bearer ${token}`, Origin: "https://evil.example" },
+    }),
+  );
+  assert.equal(wrongAdmin?.status, 401);
+
+  const missingOrigin = await getPasskeySessionForRequest(
+    new Request("https://ai.ubq.fi/uos/auth", { headers: { Authorization: `Bearer ${token}` } }),
+  );
+  assert.equal(missingOrigin, null);
 });
 
 Deno.test("passkey login finish does not log raw user handles on assertion failure", async () => {

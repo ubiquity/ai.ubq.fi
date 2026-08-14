@@ -140,7 +140,7 @@ const captureRegisterStartBody = async (
 };
 
 const captureLoginStartBody = async (
-  input: { handle?: string; useHandle?: boolean; baseUrl?: string },
+  input: { handle?: string; useHandle?: boolean; audienceOrigin?: string; baseUrl?: string },
 ): Promise<Record<string, unknown>> => {
   let requestBody: Record<string, unknown> | null = null;
   const originalFetch = globalThis.fetch;
@@ -173,6 +173,15 @@ Deno.test("signInWithPasskey sends username only when explicitly requested", asy
   await withPasskeyBrowser(async () => {
     const body = await captureLoginStartBody({ handle: " Admin Laptop ", useHandle: true });
     assert.equal(body.handle, "admin-laptop");
+  });
+});
+
+Deno.test("signInWithPasskey sends the relay audience only when requested", async () => {
+  await withPasskeyBrowser(async () => {
+    const body = await captureLoginStartBody({
+      audienceOrigin: "https://p-ai-ubq-fi-z707765qdpnm.ubiquity-dao.deno.net",
+    });
+    assert.equal(body.relay_origin, "https://p-ai-ubq-fi-z707765qdpnm.ubiquity-dao.deno.net");
   });
 });
 
