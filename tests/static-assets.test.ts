@@ -29,7 +29,7 @@ Deno.test("admin provider view declares and renders the OpenRouter failover card
     ]
   ) assert.match(adminHtml, new RegExp(`id=["']${id}["']`));
 
-  assert.match(adminHtml, /admin\.js\?v=openrouter-failover-20260813-v2/);
+  assert.match(adminHtml, /admin\.js\?v=passkey-relay-20260814-v1/);
   assert.match(adminScript, /renderOpenRouterFailover\(payload\.openrouter\)/);
   assert.match(adminScript, /const loadId = \+\+providersLoadId/);
   assert.match(adminScript, /if \(loadId !== providersLoadId\) return/);
