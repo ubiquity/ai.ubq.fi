@@ -227,6 +227,7 @@ let defaultsModelMap = new Map();
 let defaultsTouched = false;
 let defaultsLoadId = 0;
 let debugToolsSaving = false;
+let debugToolsLoadId = 0;
 
 const kernelListBadge = mustGet("kernel-list-badge");
 const kernelAttention = mustGet("kernel-attention");
@@ -7018,6 +7019,7 @@ const loadDefaults = async (options = {}) => {
 };
 
 const loadDebugTools = async () => {
+  const loadId = ++debugToolsLoadId;
   if (!adminAccessState.isSuperAdmin) {
     debugForceCodex503Input.checked = false;
     debugForceCodex503Input.disabled = true;
@@ -7034,6 +7036,7 @@ const loadDebugTools = async () => {
       cache: "no-store",
     });
     const data = await res.json().catch(() => null);
+    if (loadId !== debugToolsLoadId || debugToolsSaving) return;
     if (!res.ok) {
       setDebugToolsBadge("bad", data?.error?.message ?? "Error");
       return;
@@ -7042,9 +7045,12 @@ const loadDebugTools = async () => {
     debugForceCodex503Input.checked = enabled;
     setDebugToolsBadge(enabled ? "bad" : "ok", enabled ? "Forcing 503" : "Off");
   } catch {
+    if (loadId !== debugToolsLoadId || debugToolsSaving) return;
     setDebugToolsBadge("bad", "Offline");
   } finally {
-    debugForceCodex503Input.disabled = !adminAccessState.isSuperAdmin;
+    if (loadId === debugToolsLoadId && !debugToolsSaving) {
+      debugForceCodex503Input.disabled = !adminAccessState.isSuperAdmin;
+    }
   }
 };
 
@@ -7052,6 +7058,7 @@ const saveDebugTools = async () => {
   if (debugToolsSaving || !adminAccessState.isSuperAdmin) return;
   const enabled = debugForceCodex503Input.checked;
   const token = getAdminToken();
+  const saveLoadId = ++debugToolsLoadId;
   debugToolsSaving = true;
   debugForceCodex503Input.disabled = true;
   setDebugToolsBadge("unknown", "Saving...");
@@ -7078,7 +7085,9 @@ const saveDebugTools = async () => {
     setDebugToolsBadge("bad", "Offline");
   } finally {
     debugToolsSaving = false;
-    debugForceCodex503Input.disabled = !adminAccessState.isSuperAdmin;
+    if (saveLoadId === debugToolsLoadId) {
+      debugForceCodex503Input.disabled = !adminAccessState.isSuperAdmin;
+    }
   }
 };
 

@@ -8651,6 +8651,19 @@ Deno.test("openai: persisted admin forced primary 503 uses the OpenRouter failov
         assert.equal(response.status, 200);
         assert.match(await response.text(), /Failover active/);
         assert.equal(getResponseTelemetry(response)?.openRouterTriggerClass, "http_5xx");
+
+        const chatResponse = await handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              messages: [{ role: "user", content: "keep this Chat request on Codex" }],
+              stream: false,
+            }),
+          }),
+        );
+        assert.equal(chatResponse.status, 200);
       } finally {
         kvStore.delete(debugToolsKey);
         resetDebugToolsStateCacheForTest();
@@ -8658,7 +8671,7 @@ Deno.test("openai: persisted admin forced primary 503 uses the OpenRouter failov
     },
     { openRouterApiKey: "or-test-key" },
   );
-  assert.equal(codexCalls, 0);
+  assert.equal(codexCalls, 1);
   assert.equal(openRouterCalls, 1);
 });
 

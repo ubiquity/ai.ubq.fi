@@ -52,9 +52,13 @@ export const isCodexPrimary503Forced = async (): Promise<boolean> => {
   if (cachedDebugToolsState && Date.now() < cachedDebugToolsExpiresAtMs) {
     return cachedDebugToolsState.force_codex_primary_503;
   }
-  const kv = await getKv();
-  if (!kv) return false;
-  const state = await loadDebugToolsState(kv);
-  cacheDebugToolsState(state);
-  return state.force_codex_primary_503;
+  try {
+    const kv = await getKv();
+    if (!kv) return false;
+    const state = await loadDebugToolsState(kv);
+    cacheDebugToolsState(state);
+    return state.force_codex_primary_503;
+  } catch {
+    return cachedDebugToolsState?.force_codex_primary_503 ?? false;
+  }
 };

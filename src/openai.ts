@@ -1794,7 +1794,7 @@ const fetchResponsesWithPaidFallback = async (
   recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
   try {
-    primary = await isCodexPrimary503Forced()
+    primary = options.route === "responses" && await isCodexPrimary503Forced()
       ? openaiError(503, "Codex primary failure forced by an admin debug tool", "debug_forced_codex_503")
       : await fetchCodexResponses(body, {
         clientVersion: options.clientVersion,
