@@ -66,6 +66,7 @@ const catalogMemo = new Map<string, LoadedCodexCatalog>();
 
 const CEREBRAS_CODEX_MODEL: Record<string, unknown> = {
   slug: CEREBRAS_GPT_OSS_120B_MODEL,
+  _uos_synthetic_provider: "cerebras",
   display_name: "GPT-OSS 120B (Cerebras)",
   description: "OpenAI GPT-OSS 120B through the UOS Cerebras adapter.",
   default_reasoning_level: "medium",
@@ -108,8 +109,10 @@ const withCerebrasCatalogModel = (catalog: Record<string, unknown>): Record<stri
     const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
     return id?.trim() === CEREBRAS_GPT_OSS_120B_MODEL;
   };
+  const isSyntheticCerebrasModel = (model: unknown): boolean =>
+    isCerebrasModel(model) && isRecord(model) && model._uos_synthetic_provider === "cerebras";
   if (!readCerebrasApiKey()) {
-    const models = catalog.models.filter((model) => !isCerebrasModel(model));
+    const models = catalog.models.filter((model) => !isSyntheticCerebrasModel(model));
     return models.length === catalog.models.length ? catalog : { ...catalog, models };
   }
   const present = catalog.models.some(isCerebrasModel);

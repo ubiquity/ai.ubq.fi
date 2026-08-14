@@ -2536,6 +2536,10 @@ const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
 const RESPONSES_ALLOWED_KEYS = new Set(RESPONSES_REQUEST_KEYS);
 const CODEX_RESPONSES_EXTENSION_KEYS = new Set(["client_metadata"]);
 const CEREBRAS_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high"]);
+const CEREBRAS_MAX_OUTPUT_TOKENS = 8_192;
+// Keep a wide serialized allowance per requested token while retaining a
+// finite edge-memory bound for the provider's buffered Chat response.
+const CEREBRAS_MAX_RESPONSE_BYTES = CEREBRAS_MAX_OUTPUT_TOKENS * 1_024;
 
 const findUnknownKey = (
   record: Record<string, unknown>,
@@ -6632,6 +6636,22 @@ const handleCerebrasChatCompletions = async (
   }
   const clientWantsStream = parsedStream.value;
 
+  for (const field of ["max_completion_tokens", "max_tokens"] as const) {
+    const value = rawRecord[field];
+    if (
+      value !== undefined && value !== null &&
+      (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 ||
+        value > CEREBRAS_MAX_OUTPUT_TOKENS)
+    ) {
+      return openaiError(
+        400,
+        `${field} must be a positive integer no greater than ${CEREBRAS_MAX_OUTPUT_TOKENS}`,
+        "invalid_request_error",
+        { param: field },
+      );
+    }
+  }
+
   // Preserve the official nested Chat tools/tool_choice contract. In
   // particular, do not run the Codex-specific flattening that follows this
   // early branch in handleChatCompletionsInternal.
@@ -6639,7 +6659,7 @@ const handleCerebrasChatCompletions = async (
   if (!CEREBRAS_REASONING_EFFORTS.has(reasoning)) {
     return openaiError(
       400,
-      `reasoning_effort '${reasoning}' is not supported by gpt-oss-120b; use low, medium, or high`,
+      `reasoning_effort '${reasoning}' is not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}; use low, medium, or high`,
       "invalid_request_error",
       { param: "reasoning_effort" },
     );
@@ -6649,6 +6669,9 @@ const handleCerebrasChatCompletions = async (
     model: CEREBRAS_GPT_OSS_120B_MODEL,
     reasoning_effort: reasoning,
     stream: false,
+    ...(typeof rawRecord.max_completion_tokens !== "number" && typeof rawRecord.max_tokens !== "number"
+      ? { max_completion_tokens: CEREBRAS_MAX_OUTPUT_TOKENS }
+      : {}),
   };
   delete cerebrasBody.stream_options;
   if (usageContext?.responseTelemetry) {
@@ -6693,7 +6716,7 @@ const handleCerebrasChatCompletions = async (
 
   const captured = await readBoundedResponseBody(upstream, {
     signal: requestSignal,
-    maxBytes: 128 * 1024,
+    maxBytes: CEREBRAS_MAX_RESPONSE_BYTES,
     // Successful buffered inference uses the request-level edge deadline, not
     // the one-second error-body default. `requestSignal` still caps the whole
     // request from dispatch through body completion.
@@ -6787,7 +6810,7 @@ const handleCerebrasResponses = async (
   if (!CEREBRAS_REASONING_EFFORTS.has(reasoning)) {
     return openaiError(
       400,
-      `reasoning.effort '${reasoning}' is not supported by gpt-oss-120b; use low, medium, or high`,
+      `reasoning.effort '${reasoning}' is not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}; use low, medium, or high`,
       "invalid_request_error",
       { param: "reasoning.effort" },
     );
@@ -6829,11 +6852,12 @@ const handleCerebrasResponses = async (
     if (
       typeof rawRecord.max_output_tokens !== "number" ||
       !Number.isSafeInteger(rawRecord.max_output_tokens) ||
-      rawRecord.max_output_tokens <= 0
+      rawRecord.max_output_tokens <= 0 ||
+      rawRecord.max_output_tokens > CEREBRAS_MAX_OUTPUT_TOKENS
     ) {
       return openaiError(
         400,
-        "max_output_tokens must be a positive integer",
+        `max_output_tokens must be a positive integer no greater than ${CEREBRAS_MAX_OUTPUT_TOKENS}`,
         "invalid_request_error",
         { param: "max_output_tokens" },
       );
@@ -6849,7 +6873,7 @@ const handleCerebrasResponses = async (
     ...(translation.value.tools ? { tools: translation.value.tools } : {}),
     ...(translation.value.toolChoice !== undefined ? { tool_choice: translation.value.toolChoice } : {}),
     ...(rawRecord.parallel_tool_calls === undefined ? {} : { parallel_tool_calls: rawRecord.parallel_tool_calls }),
-    ...(maxOutputTokens === undefined ? {} : { max_completion_tokens: maxOutputTokens }),
+    max_completion_tokens: maxOutputTokens ?? CEREBRAS_MAX_OUTPUT_TOKENS,
     ...(typeof rawRecord.temperature === "number" ? { temperature: rawRecord.temperature } : {}),
     ...(typeof rawRecord.top_p === "number" ? { top_p: rawRecord.top_p } : {}),
   };
@@ -6912,7 +6936,7 @@ const handleCerebrasResponses = async (
 
   const captured = await readBoundedResponseBody(upstream, {
     signal: requestSignal,
-    maxBytes: 128 * 1024,
+    maxBytes: CEREBRAS_MAX_RESPONSE_BYTES,
     timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
     cancellationReason: "Cerebras Responses bridge body was incomplete",
   });
@@ -6984,7 +7008,7 @@ const handleCerebrasResponses = async (
     CEREBRAS_GPT_OSS_120B_MODEL,
     {
       ...(instructions === undefined ? {} : { instructions }),
-      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+      maxOutputTokens: maxOutputTokens ?? CEREBRAS_MAX_OUTPUT_TOKENS,
       parallelToolCalls: typeof rawRecord.parallel_tool_calls === "boolean" ? rawRecord.parallel_tool_calls : true,
       reasoningEffort: reasoning,
       ...(typeof rawRecord.temperature === "number" ? { temperature: rawRecord.temperature } : {}),
@@ -7537,7 +7561,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
   const defaultEffort = await getDefaultReasoningEffort();
   const modelReasoning = modelMetadata.reasoning;
-  const defaultReasoningLabel = resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
+  const defaultReasoningLabel = isCerebrasModel
+    ? modelReasoning.defaultLevel ?? "medium"
+    : resolveDefaultReasoningLabel(modelReasoning, defaultEffort);
   const reasoningLabel = resolveReasoningLabelFromParam(reasoning.value, defaultReasoningLabel);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.reasoning = reasoningLabel;
 

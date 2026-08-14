@@ -518,6 +518,34 @@ Deno.test("V3 unlimited Cerebras Responses admission uses the same unmetered fas
   assert.equal(kv.writes, 0);
 });
 
+Deno.test("V3 unlimited Cerebras policy-read failures stay quota errors before dispatch", async () => {
+  const { policy } = await prepareApiKeyInference("1", "unlimited-cerebras-policy-read-failure", -1);
+  const failingKv = new Proxy(kv as unknown as Deno.Kv, {
+    get(target, property, receiver) {
+      if (property === "get" || property === "getMany") {
+        return () => Promise.reject(new Error("KV read unavailable"));
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const admission = await reserveApiKeyUsageV3(
+    policy,
+    "unlimited-cerebras-policy-read-failure",
+    "responses",
+    {
+      kv: failingKv,
+      unmeteredProviderWhenUnlimited: "cerebras",
+    },
+  );
+  assert.equal(admission.ok, true);
+  if (!admission.ok) return;
+  await assert.rejects(
+    () => admission.reservation.beforeProviderDispatch("cerebras"),
+    (error: unknown) => error instanceof ApiKeyQuotaDispatchError && error.status === 503,
+  );
+});
+
 Deno.test("V3 Cerebras fast path falls back to the full ledger when the live policy becomes bounded", async () => {
   const { hash, record, policy } = await prepareApiKeyInference("1", "cerebras-became-bounded", -1);
   const admission = await reserveApiKeyUsageV3(
@@ -1410,7 +1438,7 @@ Deno.test("unlimited GPT-OSS requests expose gateway timing without writing the 
       id: "chatcmpl_gateway_timing",
       object: "chat.completion",
       created: 1_728_000_000,
-      model: "gpt-oss-120b",
+      model: "cerebras/gpt-oss-120b",
       choices: [{
         index: 0,
         message: { role: "assistant", content: "Ready." },
@@ -1425,7 +1453,7 @@ Deno.test("unlimited GPT-OSS requests expose gateway timing without writing the 
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "gpt-oss-120b",
+          model: "cerebras/gpt-oss-120b",
           messages: [{ role: "user", content: "ping" }],
           stream: false,
         }),

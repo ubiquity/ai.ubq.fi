@@ -5,6 +5,7 @@ import {
   authAccountKey,
   handleMarketplaceCreateAuth,
   handleMarketplaceDisableAuth,
+  handleMarketplaceListAuth,
   handleMarketplacePublicCatalog,
   handleMarketplaceUpdateAuth,
 } from "../src/marketplace.ts";
@@ -20,6 +21,19 @@ const ownerAuth = (userId: string) => (_req: Request) =>
       handle: userId,
       is_admin: false,
       credential_count: 1,
+    },
+  });
+
+const githubRepoAuth = (_req: Request) =>
+  Promise.resolve({
+    ok: true as const,
+    token: "github-token",
+    method: {
+      kind: "github_token" as const,
+      owner: "ubiquity",
+      repo: "ai.ubq.fi",
+      state_id: "state-1",
+      limit_scope: "repo" as const,
     },
   });
 
@@ -64,6 +78,25 @@ Deno.test("marketplace create atomically writes the account and owner index", as
   const stored = await kv.get<Record<string, unknown>>(authAccountKey(id));
   assert.equal(stored.value?.ownerUserId, "passkey-user:owner-1");
   assert.equal(stored.value?.encryptedAuthJson, "ciphertext");
+});
+
+Deno.test("marketplace owner routes reject repository-scoped GitHub authentication", async () => {
+  const kv = new CountingKv();
+  const create = await handleMarketplaceCreateAuth(
+    jsonRequest("POST", "/marketplace/auths", {
+      provider: "chatgpt_codex",
+      encryptedAuthJson: "ciphertext",
+    }),
+    { authenticateClient: githubRepoAuth, kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(create.status, 403);
+
+  const list = await handleMarketplaceListAuth(
+    new Request("https://ai.ubq.fi/marketplace/auths/me"),
+    { authenticateClient: githubRepoAuth, kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(list.status, 403);
+  assert.equal(kv.commands.length, 0);
 });
 
 Deno.test("marketplace updates require ownership and reject protected fields", async () => {

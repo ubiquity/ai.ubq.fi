@@ -649,14 +649,20 @@ const unlimitedProviderReservationContext = (
   const stillUnlimited = async (): Promise<boolean> => {
     if (!unlimitedVerification) {
       unlimitedVerification = (async () => {
-        const nowMs = Date.now();
-        const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(currentPolicy.token_hash), {
-          consistency: "strong",
-        });
-        const livePolicy = livePolicyFromEntry(currentPolicy.token_hash, entry, nowMs);
-        if (!livePolicy || livePolicy.usage_limit_requests !== API_KEY_NO_USAGE_LIMIT) return false;
-        currentPolicy = livePolicy;
-        return true;
+        try {
+          const nowMs = Date.now();
+          const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(currentPolicy.token_hash), {
+            consistency: "strong",
+          });
+          const livePolicy = livePolicyFromEntry(currentPolicy.token_hash, entry, nowMs);
+          if (!livePolicy || livePolicy.usage_limit_requests !== API_KEY_NO_USAGE_LIMIT) return false;
+          currentPolicy = livePolicy;
+          return true;
+        } catch {
+          // Fall through to the ordinary admission path so its normalized
+          // quota-unavailable error remains authoritative before dispatch.
+          return false;
+        }
       })();
     }
     return await unlimitedVerification;

@@ -43,13 +43,13 @@ export const authAccountByOwnerKey = (ownerUserId: string, id: string) =>
 
 const marketplacePrincipal = async (
   authResult: Extract<Awaited<ReturnType<typeof authenticateClient>>, { ok: true }>,
-): Promise<string> => {
+): Promise<string | null> => {
   const { token, method } = authResult;
   switch (method.kind) {
     case "kv_api_key":
       return `api-key:${method.key_id}`;
     case "github_token":
-      return `github-repo:${method.owner.toLowerCase()}/${method.repo.toLowerCase()}`;
+      return null;
     case "passkey_session":
       return `passkey-user:${method.user_id}`;
     case "auth_tokens_allowlist":
@@ -67,7 +67,18 @@ const authenticateOwner = async (
 ): Promise<{ ok: true; ownerUserId: string } | { ok: false; response: Response }> => {
   const authResult = await (deps.authenticateClient ?? authenticateClient)(req);
   if (!authResult.ok) return { ok: false, response: authResult.response };
-  return { ok: true, ownerUserId: await marketplacePrincipal(authResult) };
+  const ownerUserId = await marketplacePrincipal(authResult);
+  if (!ownerUserId) {
+    return {
+      ok: false,
+      response: openaiError(
+        403,
+        "Marketplace account ownership requires user-specific authentication",
+        "forbidden",
+      ),
+    };
+  }
+  return { ok: true, ownerUserId };
 };
 
 const resolveKv = async (deps: MarketplaceDeps): Promise<Deno.Kv | null> =>

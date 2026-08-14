@@ -141,7 +141,14 @@ export const responsesInputToChatMessages = (
     // Reasoning items are model-private state. GPT-OSS does not accept a
     // Responses reasoning item in Chat Completions, and replaying it would
     // leak hidden content across turns, so omit it deliberately.
-    if (type === "reasoning" || type === "item_reference") continue;
+    if (type === "reasoning") continue;
+    if (type === "item_reference") {
+      return {
+        ok: false,
+        message: `${param}.type 'item_reference' is not supported by the GPT-OSS Responses bridge`,
+        param: `${param}.type`,
+      };
+    }
     return {
       ok: false,
       message: `${param}.type '${type ?? ""}' is not supported by the GPT-OSS Responses bridge`,
@@ -161,15 +168,21 @@ const normalizeFunctionTool = (
   if (getString(value.type) !== "function") {
     return { ok: false, message: `${param}.type is not supported by the GPT-OSS bridge`, param: `${param}.type` };
   }
-  const nested = isRecord(value.function) && !Array.isArray(value.function) ? value.function : null;
-  const name = getString(value.name)?.trim() ?? getString(nested?.name)?.trim();
+  if (Object.prototype.hasOwnProperty.call(value, "function")) {
+    return {
+      ok: false,
+      message: `${param}.function is not valid in the Responses function tool shape`,
+      param: `${param}.function`,
+    };
+  }
+  const name = getString(value.name)?.trim();
   if (!name) return { ok: false, message: `${param}.name must be a non-empty string`, param: `${param}.name` };
-  const parameters = value.parameters ?? nested?.parameters;
+  const parameters = value.parameters;
   if (parameters !== undefined && (!isRecord(parameters) || Array.isArray(parameters))) {
     return { ok: false, message: `${param}.parameters must be an object`, param: `${param}.parameters` };
   }
-  const description = getString(value.description) ?? getString(nested?.description);
-  const strict = value.strict ?? nested?.strict;
+  const description = getString(value.description);
+  const strict = value.strict;
   if (strict !== undefined && typeof strict !== "boolean") {
     return { ok: false, message: `${param}.strict must be a boolean`, param: `${param}.strict` };
   }

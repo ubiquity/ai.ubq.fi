@@ -372,7 +372,7 @@ ubq-ai admin keys list | jq
   gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
-- `CEREBRAS_API_KEY` (optional): Server-side credential for Cerebras `gpt-oss-120b` Chat Completions and the Codex
+- `CEREBRAS_API_KEY` (optional): Server-side credential for the `cerebras/gpt-oss-120b` gateway model and its Codex
   `/v1/responses` bridge. It is never accepted from clients or exposed by health responses.
 - `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
   Deno KV at `["uos_ai","voyage_api_key"]`.
@@ -386,9 +386,10 @@ ubq-ai admin keys list | jq
 
 ## Chat Completions provider contract
 
-`gpt-oss-120b` is sent to Cerebras as a non-streaming Chat Completions request. Its standard `temperature` and
-`max_completion_tokens` fields are forwarded unchanged. If a client requests `stream: true`, the gateway keeps the
-client-facing SSE contract but buffers the Cerebras completion first, and returns
+`cerebras/gpt-oss-120b` is sent to Cerebras as a non-streaming `gpt-oss-120b` Chat Completions request. Its standard
+`temperature` field is forwarded unchanged. Output limits must not exceed 8,192 tokens; the gateway applies that limit
+when the client omits one so the buffered response remains within its bounded capture. If a client requests
+`stream: true`, the gateway keeps the client-facing SSE contract but buffers the Cerebras completion first, and returns
 `x-uos-warning: gpt_oss_stream_downgraded`. Successful downgraded requests remain HTTP `200`; a non-2xx status would
 make compatible clients treat the completed response as an error. The existing Terra/Codex Chat Completions path
 translates `max_completion_tokens` to the upstream Responses `max_output_tokens` cap. Terra/Codex does not support
@@ -406,13 +407,14 @@ upstream statuses.
 ## GPT-OSS Responses bridge (preview)
 
 Codex uses `/v1/responses`, while Cerebras GPT-OSS currently exposes Chat Completions. When the selected model is
-`gpt-oss-120b`, the gateway translates the text and function-tool subset of a Responses request into a buffered,
-non-streaming Cerebras Chat Completions request, then returns a native Responses body. Client `stream: true` is also
-accepted: the provider response is buffered and replayed as a complete Responses SSE sequence with
+`cerebras/gpt-oss-120b`, the gateway translates the text and function-tool subset of a Responses request into a
+buffered, non-streaming Cerebras Chat Completions request, then returns a native Responses body. Client `stream: true`
+is also accepted: the provider response is buffered and replayed as a complete Responses SSE sequence with
 `x-uos-warning: gpt_oss_stream_downgraded`.
 
 The bridge supports `low`, `medium`, and `high` reasoning, function tools, and follow-up `function_call_output` turns.
-GPT-OSS is text-only, so image/file input, web search, and other non-function tools are rejected with a normal
+Unresolved `item_reference` inputs are rejected because the bridge cannot recover their conversation context. GPT-OSS is
+text-only, so image/file input, web search, and other non-function tools are rejected with a normal
 `invalid_request_error`. `xhigh`, `max`, and `ultra` are not silently remapped for this model.
 
 ## Admin: upload/validate Codex auth.json

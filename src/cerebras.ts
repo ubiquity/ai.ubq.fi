@@ -2,7 +2,7 @@ import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "./inference_deadline.ts";
 import { getString, isRecord } from "./utils.ts";
 
-export const CEREBRAS_GPT_OSS_120B_MODEL = "gpt-oss-120b";
+export const CEREBRAS_GPT_OSS_120B_MODEL = "cerebras/gpt-oss-120b";
 export const CEREBRAS_CHAT_COMPLETIONS_URL = "https://api.cerebras.ai/v1/chat/completions";
 
 const CEREBRAS_API_KEY_ENV = "CEREBRAS_API_KEY";

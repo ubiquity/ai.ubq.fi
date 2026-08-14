@@ -62,6 +62,24 @@ Deno.test("GPT-OSS Responses translation rejects multimodal input and unsupporte
   assert.equal(webSearch.ok, false);
   if (webSearch.ok) throw new Error("expected web-search rejection");
   assert.equal(webSearch.param, "tools[0].type");
+
+  const itemReference = buildCerebrasResponsesTranslation(
+    [{ type: "item_reference", id: "item_1" }],
+    undefined,
+    {},
+  );
+  assert.equal(itemReference.ok, false);
+  if (itemReference.ok) throw new Error("expected item-reference rejection");
+  assert.equal(itemReference.param, "input[0].type");
+
+  const nestedFunction = buildCerebrasResponsesTranslation(
+    [{ type: "message", role: "user", content: [{ type: "input_text", text: "status" }] }],
+    undefined,
+    { tools: [{ type: "function", function: { name: "status", parameters: { type: "object" } } }] },
+  );
+  assert.equal(nestedFunction.ok, false);
+  if (nestedFunction.ok) throw new Error("expected nested Chat tool rejection");
+  assert.equal(nestedFunction.param, "tools[0].function");
 });
 
 Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () => {
@@ -69,7 +87,7 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
     {
       id: "chatcmpl_fixture",
       created: 1_728_000_000,
-      model: "gpt-oss-120b",
+      model: "cerebras/gpt-oss-120b",
       choices: [{
         index: 0,
         message: {
@@ -85,7 +103,7 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
       }],
       usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
     },
-    "gpt-oss-120b",
+    "cerebras/gpt-oss-120b",
     {
       instructions: "Be concise.",
       maxOutputTokens: 512,
@@ -174,7 +192,7 @@ Deno.test("GPT-OSS length termination becomes an incomplete Responses terminal",
     {
       id: "chatcmpl_truncated",
       created: 1_728_000_000,
-      model: "gpt-oss-120b",
+      model: "cerebras/gpt-oss-120b",
       choices: [{
         index: 0,
         message: { role: "assistant", content: "Partial output" },
@@ -182,7 +200,7 @@ Deno.test("GPT-OSS length termination becomes an incomplete Responses terminal",
       }],
       usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
     },
-    "gpt-oss-120b",
+    "cerebras/gpt-oss-120b",
   );
   const value = expectOk(translated);
   assert.equal(value.status, "incomplete");
@@ -199,7 +217,7 @@ Deno.test("GPT-OSS content filtering becomes an incomplete Responses terminal", 
     {
       id: "chatcmpl_filtered",
       created: 1_728_000_000,
-      model: "gpt-oss-120b",
+      model: "cerebras/gpt-oss-120b",
       choices: [{
         index: 0,
         message: { role: "assistant", content: "Filtered output" },
@@ -207,7 +225,7 @@ Deno.test("GPT-OSS content filtering becomes an incomplete Responses terminal", 
       }],
       usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
     },
-    "gpt-oss-120b",
+    "cerebras/gpt-oss-120b",
   );
   const value = expectOk(translated);
   assert.equal(value.status, "incomplete");
