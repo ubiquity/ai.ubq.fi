@@ -2246,13 +2246,18 @@ const selectCodexRoutingAccountsFromState = async (
     const slot = slotMatchesRoutingAccount(storedSlot, account)
       ? storedSlot
       : neutralSlot(account.credentialVersion, account.accountIdHash);
+    const requestedQuotaClass = quotaClass(model);
+    const classAwareSlot = withLegacyQuotaClassMap(slot);
+    const requestedClassBlock = quotaBlockForClass(classAwareSlot, requestedQuotaClass);
     const capacityObservation = observationsByAccount.get(account.accountIdHash);
     const freshCapacity = capacityObservation !== undefined && capacityObservationIsFresh(capacityObservation, now);
     const observedCapacityHeadroom = freshCapacity ? capacityHeadroomForObservation(capacityObservation!, model) : null;
     const quotaHeadroom = freshCapacity ? observedCapacityHeadroom : quotaHeadroomFor(slot);
+    const classQuotaSignalObservedAtMs = requestedClassBlock?.quota_signal_observed_at_ms ??
+      (Object.keys(slot.quota_blocks_by_class ?? {}).length === 0 ? slot.quota_signal_observed_at_ms : null);
     const quotaSignalNewer = capacityObservation?.snapshot_at_ms !== undefined &&
-      slot.quota_signal_observed_at_ms !== null &&
-      slot.quota_signal_observed_at_ms >= capacityObservation.snapshot_at_ms;
+      classQuotaSignalObservedAtMs !== null &&
+      classQuotaSignalObservedAtMs >= capacityObservation.snapshot_at_ms;
     // This is the last in-memory guard after the durable reconciliation CAS.
     // It prevents a stale local circuit from suppressing a fresh, positive
     // account observation that lost a concurrent write race.
@@ -2271,8 +2276,6 @@ const selectCodexRoutingAccountsFromState = async (
         : Math.min(retryAt, slot.upstream_timeout_blocked_until_ms);
       continue;
     }
-    const requestedQuotaClass = quotaClass(model);
-    const requestedClassBlock = quotaBlockForClass(slot, requestedQuotaClass);
     if (
       requestedClassBlock && requestedClassBlock.blocked_until_ms > now &&
       !capacityOverride
