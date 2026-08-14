@@ -36,6 +36,8 @@ export type CodexRoutingSlot = Readonly<{
   credential_version: string;
   quota_blocked_until_ms: number | null;
   quota_block_source: CodexQuotaBlockSource | null;
+  /** Separately metered model classes exhausted during the current quota circuit. */
+  quota_blocked_classes?: readonly string[];
   invalid_credential_version: string | null;
   primary_used_percent: number | null;
   secondary_used_percent: number | null;
@@ -91,6 +93,8 @@ export type RoutingAccount = Readonly<{
   probeCircuit?: CodexProbeCircuit | null;
   /** Durable routing generation observed when this account was selected. */
   routingGeneration?: number;
+  /** Exact incoming model id used to keep separately metered pools independent. */
+  requestedModel?: string | null;
 }>;
 
 export type CodexCapacityRoutingWindow = Readonly<{
@@ -264,11 +268,16 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
     ? false
     : value.banked_reset_generation_ambiguous !== false;
   const bankedResetRecoveryProbePending = value.banked_reset_recovery_probe_pending === true;
+  const quotaBlockedClasses = Array.isArray(value.quota_blocked_classes) &&
+      value.quota_blocked_classes.every((entry) => typeof entry === "string")
+    ? [...new Set(value.quota_blocked_classes as string[])]
+    : [];
   return {
     account_id_hash: accountIdHash,
     credential_version: value.credential_version,
     quota_blocked_until_ms: quotaBlockedUntilMs,
     quota_block_source: source as CodexQuotaBlockSource | null,
+    quota_blocked_classes: quotaBlockedClasses,
     invalid_credential_version: invalidCredentialVersion,
     primary_used_percent: typeof value.primary_used_percent === "number" && Number.isFinite(value.primary_used_percent)
       ? value.primary_used_percent
@@ -338,6 +347,7 @@ const neutralSlot = (credentialVersion: string, accountIdHash: string | null): C
   credential_version: credentialVersion,
   quota_blocked_until_ms: null,
   quota_block_source: null,
+  quota_blocked_classes: [],
   invalid_credential_version: null,
   primary_used_percent: null,
   secondary_used_percent: null,
@@ -695,6 +705,13 @@ const capacityHeadroomForWindows = (
 
 const normalizeQuotaLabel = (value: string | null | undefined): string =>
   typeof value === "string" ? value.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+
+const quotaClass = (model: string | null | undefined): string => {
+  const normalized = typeof model === "string" ? model.trim().toLowerCase() : "";
+  if (normalized === "gpt-5.3-codex-spark") return "spark";
+  if (normalized === "gpt-oss-120b") return "gpt_oss_120b";
+  return normalized ? "standard" : "unknown";
+};
 
 const capacityHeadroomForObservation = (
   observation: CodexCapacityRoutingObservation,
@@ -1353,6 +1370,12 @@ const markCodexQuotaBlockedWithMode = async (
       account_id_hash: account.accountIdHash,
       quota_blocked_until_ms: deadline,
       quota_block_source: quotaBlockSource,
+      quota_blocked_classes: [
+        ...new Set([
+          ...(priorDeadline > now ? current.quota_blocked_classes ?? [] : []),
+          quotaClass(account.requestedModel),
+        ]),
+      ],
       upstream_timeout_blocked_until_ms: priorTimeout > now ? priorTimeout : null,
       quota_signal_observed_at_ms: now,
       primary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-primary-used-percent")) ??
@@ -1897,6 +1920,7 @@ const selectCodexRoutingAccountsFromState = async (
       probeGeneration: null,
       probeToken: null,
       probeCircuit: null,
+      requestedModel: model,
     };
     const storedSlot = slotFor(state, account);
     const slot = slotMatchesRoutingAccount(storedSlot, account)
@@ -1927,7 +1951,14 @@ const selectCodexRoutingAccountsFromState = async (
         : Math.min(retryAt, slot.upstream_timeout_blocked_until_ms);
       continue;
     }
-    if (slot.quota_blocked_until_ms && slot.quota_blocked_until_ms > now && !capacityOverride) {
+    const requestedQuotaClass = quotaClass(model);
+    const quotaBlockedForRequest = requestedQuotaClass === "unknown" ||
+      (slot.quota_blocked_classes ?? []).includes("unknown") ||
+      (slot.quota_blocked_classes ?? []).includes(requestedQuotaClass);
+    if (
+      slot.quota_blocked_until_ms && slot.quota_blocked_until_ms > now && quotaBlockedForRequest &&
+      !capacityOverride
+    ) {
       skipped.push(mapped.slot + 1);
       hasQuotaBlock = true;
       retryAt = retryAt === null ? slot.quota_blocked_until_ms : Math.min(retryAt, slot.quota_blocked_until_ms);
@@ -1957,7 +1988,7 @@ const selectCodexRoutingAccountsFromState = async (
       retryAt = retryAt === null ? slot.probe_lease!.expires_at_ms : Math.min(retryAt, slot.probe_lease!.expires_at_ms);
       continue;
     }
-    if (slot.quota_blocked_until_ms) {
+    if (slot.quota_blocked_until_ms && quotaBlockedForRequest) {
       // Claim the half-open lease only if request execution actually reaches
       // this slot. This preserves first/second order without abandoning a
       // secondary lease when the healthy first account returns directly.

@@ -132,6 +132,52 @@ Deno.test("v2 routing ignores the v1 key and rejects v1 payloads", async () => {
   }
 });
 
+Deno.test("quota circuits isolate Spark, GPT-OSS, and standard model pools", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const deadline = now + 60_000;
+    const exhausted = () =>
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(deadline).toUTCString() },
+      });
+
+    const spark = await selectCodexRoutingAccounts(
+      singlePool,
+      singlePool.accounts,
+      now,
+      "gpt-5.3-codex-spark",
+    );
+    assert.equal(spark.kind, "eligible");
+    if (spark.kind !== "eligible") return;
+    await markCodexQuotaBlocked(spark.accounts[0]!, exhausted(), now);
+
+    assert.equal(
+      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.3-codex-spark")).kind,
+      "quota_blocked",
+    );
+    const luna = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.6-luna");
+    assert.equal(luna.kind, "eligible");
+    if (luna.kind !== "eligible") return;
+    await markCodexQuotaBlocked(luna.accounts[0]!, exhausted(), now + 1);
+
+    assert.equal(
+      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-terra")).kind,
+      "quota_blocked",
+    );
+    assert.equal(
+      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-oss-120b")).kind,
+      "eligible",
+    );
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("response-header timeouts fence one account and fail closed when every account is blocked", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
