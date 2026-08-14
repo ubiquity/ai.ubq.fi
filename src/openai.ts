@@ -1258,9 +1258,8 @@ const collectBufferedResponses = async (
       ) outputText += getString(ev.delta) ?? "";
       if (
         event.type === "response.output_text.done" &&
-        !(options.warningModel && ev.output_index === 0) &&
-        !outputText
-      ) outputText = getString(ev.text) ?? "";
+        !(options.warningModel && ev.output_index === 0)
+      ) outputText += getString(ev.text) ?? "";
       if (event.type === "response.refusal.delta") refusalText += getString(ev.delta) ?? "";
       if (event.type === "response.refusal.done" && !refusalText) refusalText = getString(ev.refusal) ?? "";
       if (event.type === "response.output_item.done" && isRecord(ev.item)) outputItems.push(ev.item);
