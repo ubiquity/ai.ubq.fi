@@ -1,0 +1,78 @@
+{
+  "incident_index": "input[101].content",
+  "reduced_fixture_index": "input[9].content",
+  "stream": true,
+  "tools": [
+    {
+      "type": "custom",
+      "name": "exec",
+      "description": "Run one harmless fixture command.",
+      "format": { "type": "text" }
+    }
+  ],
+  "input": [
+    {
+      "type": "message",
+      "role": "developer",
+      "content": [{ "type": "input_text", "text": "Use the advertised fixture tool when required." }]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [{ "type": "input_text", "text": "Inspect the sanitized fixture state." }]
+    },
+    {
+      "id": "msg_failover_fixture",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "⚠ Failover active: your request was rerouted to `openrouter:fixture/model` because the primary Codex service was unavailable.",
+          "annotations": []
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [{ "type": "output_text", "text": "The fixture is ready." }]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [{ "type": "input_text", "text": "Run the harmless check." }]
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "ctc_fixture",
+      "status": "completed",
+      "call_id": "call_fixture",
+      "name": "exec",
+      "input": "printf fixture-nonce"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "call_id": "call_fixture",
+      "output": "fixture-nonce"
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [{ "type": "output_text", "text": "The harmless check returned its nonce." }]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [{ "type": "input_text", "text": "Continue with the final response." }]
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_fixture",
+      "summary": [{ "type": "summary_text", "text": "Retain this summary across the route." }],
+      "content": [{ "type": "reasoning_text", "text": "sanitized raw reasoning content that the route must omit" }],
+      "encrypted_content": "sanitized-opaque-reasoning"
+    }
+  ]
+}

@@ -1,4 +1,9 @@
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
+import {
+  buildOpenRouterRequestProjection,
+  OpenRouterProjectionError,
+  type OpenRouterProjectionRegistry,
+} from "./openrouter_projection.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
 
 export const OPENROUTER_RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
@@ -16,6 +21,7 @@ export const OPENROUTER_EXCLUDED_MODELS = [
 export type OpenRouterResponsesResult = Readonly<{
   response: Response;
   requestBody: Record<string, unknown>;
+  projection: OpenRouterProjectionRegistry;
 }>;
 
 export type OpenRouterResponseTiming = Readonly<{
@@ -26,12 +32,14 @@ export type OpenRouterResponseTiming = Readonly<{
 export class OpenRouterError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly param: string | null;
 
-  constructor(message: string, code: string, status = 502, options?: ErrorOptions) {
+  constructor(message: string, code: string, status = 502, options?: ErrorOptions & { param?: string | null }) {
     super(message, options);
     this.name = "OpenRouterError";
     this.code = code;
     this.status = status;
+    this.param = options?.param ?? null;
   }
 }
 
@@ -60,6 +68,7 @@ const OPENROUTER_REQUEST_KEYS = new Set([
   "max_output_tokens",
   "metadata",
   "parallel_tool_calls",
+  "provider",
   "reasoning",
   "safety_identifier",
   "service_tier",
@@ -107,6 +116,23 @@ const validateRequestValue = (key: string, value: unknown): void => {
   if (key === "parallel_tool_calls" && typeof value !== "boolean") {
     throw new OpenRouterError("OpenRouter parallel-tool setting is invalid.", "openrouter_translation_invalid", 400);
   }
+  if (key === "provider") {
+    if (!isRecord(value) || Array.isArray(value)) {
+      throw new OpenRouterError(
+        "OpenRouter provider routing constraint is invalid.",
+        "openrouter_translation_invalid",
+        400,
+      );
+    }
+    if (value.require_parameters !== undefined && typeof value.require_parameters !== "boolean") {
+      throw new OpenRouterError(
+        "OpenRouter provider.require_parameters must be a boolean.",
+        "openrouter_translation_invalid",
+        400,
+      );
+    }
+    return;
+  }
   if (key === "max_tool_calls") {
     if (value === null) return;
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
@@ -148,22 +174,54 @@ const validateRequestValue = (key: string, value: unknown): void => {
 
 const normalizeOpenRouterReasoning = (value: unknown): unknown => {
   if (!isRecord(value) || Array.isArray(value)) return value;
-  return value.effort === "ultra" ? { ...value, effort: "max" } : value;
+  const effort = typeof value.effort === "string" ? value.effort : null;
+  if (!effort) return undefined;
+  return { effort: effort === "ultra" ? "max" : effort };
 };
 
 export const buildOpenRouterResponsesRequest = (
   canonical: Record<string, unknown>,
   sessionId?: string | null,
 ): Record<string, unknown> => {
+  return buildOpenRouterResponsesRequestWithProjection(canonical, sessionId).requestBody;
+};
+
+export const buildOpenRouterResponsesRequestWithProjection = (
+  canonical: Record<string, unknown>,
+  sessionId?: string | null,
+): Readonly<{ requestBody: Record<string, unknown>; projection: OpenRouterProjectionRegistry }> => {
   const translated: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(canonical)) {
     if (!OPENROUTER_REQUEST_KEYS.has(key)) continue;
     validateRequestValue(key, value);
-    translated[key] = key === "reasoning" ? normalizeOpenRouterReasoning(value) : value;
+    const normalized = key === "reasoning" ? normalizeOpenRouterReasoning(value) : value;
+    if (normalized !== undefined) translated[key] = normalized;
   }
   if (!("input" in translated) || translated.stream !== true) {
     throw new OpenRouterError("OpenRouter request translation is incomplete.", "openrouter_translation_invalid", 400);
   }
+  const projection = (() => {
+    try {
+      return buildOpenRouterRequestProjection(translated);
+    } catch (error) {
+      if (error instanceof OpenRouterProjectionError) {
+        throw new OpenRouterError(error.message, error.code, error.status, { cause: error, param: error.param });
+      }
+      throw error;
+    }
+  })();
+  translated.input = projection.input;
+  if (projection.tools !== undefined) translated.tools = projection.tools;
+  else delete translated.tools;
+  if (projection.toolChoice !== undefined) translated.tool_choice = projection.toolChoice;
+  else delete translated.tool_choice;
+  // The current Responses endpoint catalog does not advertise these fields
+  // for the eligible Auto Router endpoints. With require_parameters enabled,
+  // forwarding them would make the entire route ineligible before dispatch.
+  delete translated.include;
+  delete translated.parallel_tool_calls;
+  delete translated.text;
+  translated.provider = { require_parameters: true };
   translated.model = OPENROUTER_AUTO_MODEL;
   translated.plugins = [{
     id: "auto-router",
@@ -171,7 +229,7 @@ export const buildOpenRouterResponsesRequest = (
     excluded_models: [...OPENROUTER_EXCLUDED_MODELS],
   }];
   if (sessionId?.trim()) translated.session_id = sessionId.trim();
-  return translated;
+  return { requestBody: translated, projection: projection.registry };
 };
 
 export const deriveOpenRouterSessionId = async (
@@ -245,7 +303,7 @@ export const fetchOpenRouterResponses = async (
   if (!apiKey) {
     throw new OpenRouterError("OpenRouter is not configured.", "openrouter_not_configured", 503);
   }
-  const requestBody = buildOpenRouterResponsesRequest(canonical, options.sessionId);
+  const { requestBody, projection } = buildOpenRouterResponsesRequestWithProjection(canonical, options.sessionId);
   const dispatch = options.beforeDispatch ? await options.beforeDispatch() : undefined;
   if (options.signal?.aborted) {
     await dispatch?.cancelBeforeTransport();
@@ -275,7 +333,7 @@ export const fetchOpenRouterResponses = async (
     } catch {
       // Telemetry must not affect provider routing.
     }
-    return { response, requestBody };
+    return { response, requestBody, projection };
   } catch (cause) {
     if (cause instanceof ApiKeyQuotaDispatchError) throw cause;
     if (options.signal?.aborted) throw options.signal.reason ?? cause;
