@@ -8332,7 +8332,7 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["chatgpt_codex", "openrouter"]);
 });
 
-Deno.test("openai: a client follow-up replays failover output without the gateway warning", async () => {
+Deno.test("openai: five Kimi failover turns replay conversation without gateway warnings", async () => {
   const openRouterInputs: Array<Array<Record<string, unknown>>> = [];
   let openRouterCall = 0;
   const requestFor = (input: unknown) =>
@@ -8356,44 +8356,43 @@ Deno.test("openai: a client follow-up replays failover output without the gatewa
       openRouterCall += 1;
       return sseResponse(openRouterTextSseChunks({
         responseId: `resp_openrouter_${openRouterCall}`,
-        text: openRouterCall === 1 ? "first fallback answer" : "follow-up fallback answer",
+        model: "moonshotai/kimi-k3",
+        text: `Kimi fallback answer ${openRouterCall}`,
       }));
     },
     async () => {
-      const first = await handleResponses(requestFor([
-        { type: "message", role: "user", content: [{ type: "input_text", text: "first question" }] },
-      ]));
-      assert.equal(first.status, 200);
-      const firstEvents = [...(await first.text()).matchAll(/^data: (.+)$/gm)]
-        .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
-      const firstTerminal = firstEvents.find((event) => event.type === "response.completed");
-      const firstOutput = (firstTerminal?.response as { output?: unknown[] } | undefined)?.output;
-      assert.ok(Array.isArray(firstOutput));
-      const warning = firstOutput.find((item) => {
-        if (!item || typeof item !== "object") return false;
-        const id = (item as { id?: unknown }).id;
-        return typeof id === "string" && id.startsWith("msg_failover_");
-      }) as Record<string, unknown> | undefined;
-      assert.ok(warning);
-      assert.match(JSON.stringify(warning), /⚠ Failover active: this response is from `openrouter:/);
-
-      const followUp = await handleResponses(requestFor([
-        ...firstOutput,
-        { type: "message", role: "user", content: [{ type: "input_text", text: "second question" }] },
-      ]));
-      assert.equal(followUp.status, 200);
-      assert.match(await followUp.text(), /follow-up fallback answer/);
+      const conversation: unknown[] = [];
+      for (let turn = 1; turn <= 5; turn += 1) {
+        const prompt = `Kimi follow-up turn ${turn}`;
+        const response = await handleResponses(requestFor([
+          ...conversation,
+          { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] },
+        ]));
+        assert.equal(response.status, 200);
+        const events = [...(await response.text()).matchAll(/^data: (.+)$/gm)]
+          .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+        const terminal = events.find((event) => event.type === "response.completed");
+        const output = (terminal?.response as { output?: unknown[] } | undefined)?.output;
+        assert.ok(Array.isArray(output));
+        assert.match(
+          JSON.stringify(output),
+          /⚠ Failover active: this response is from `openrouter:moonshotai\/kimi-k3`/,
+        );
+        assert.match(JSON.stringify(output), new RegExp(`Kimi fallback answer ${turn}`));
+        conversation.push(...output);
+      }
     },
     { openRouterApiKey: "or-test-key" },
   );
 
-  assert.equal(openRouterInputs.length, 2);
-  const firstWarning = openRouterInputs[0]?.find((item) => String(item.id).startsWith("msg_failover_"));
-  assert.equal(firstWarning, undefined);
-  const replay = openRouterInputs[1]!;
-  assert.equal(replay.some((item) => String(item.id).startsWith("msg_failover_")), false);
-  assert.match(JSON.stringify(replay), /first fallback answer/);
-  assert.match(JSON.stringify(replay), /second question/);
+  assert.equal(openRouterInputs.length, 5);
+  for (const [index, replay] of openRouterInputs.entries()) {
+    assert.equal(replay.some((item) => String(item.id).startsWith("msg_failover_")), false);
+    assert.match(JSON.stringify(replay), new RegExp(`Kimi follow-up turn ${index + 1}`));
+    for (let priorTurn = 1; priorTurn <= index; priorTurn += 1) {
+      assert.match(JSON.stringify(replay), new RegExp(`Kimi fallback answer ${priorTurn}`));
+    }
+  }
 });
 
 Deno.test("openai: OpenRouter handler failover covers precommit failures and commitment barriers", async (t) => {
