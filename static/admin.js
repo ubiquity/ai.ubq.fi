@@ -383,7 +383,13 @@ const getBaseChoice = () => (baseSelect.value === "ai" ? "ai" : "local");
 
 const resolveBaseUrl = () => resolveBackendBase(getBaseChoice());
 
-const apiUrl = (path) => buildBackendUrl(path, resolveBaseUrl());
+const apiUrl = (path) => {
+  const endpoint = new URL(buildBackendUrl(path, resolveBaseUrl()));
+  if (isPreviewOrigin() && endpoint.origin === PASSKEY_CANONICAL_ORIGIN) {
+    endpoint.searchParams.set("cors_origin", globalThis.location.origin);
+  }
+  return endpoint.toString();
+};
 
 const updateBasePreview = () => {
   basePreview.textContent = resolveBaseUrl();
@@ -7224,7 +7230,11 @@ signOutBtn.addEventListener("click", async () => {
   const token = getAdminToken();
   signOutBtn.disabled = true;
   try {
-    await signOut({ token, baseUrl: resolveBaseUrl() });
+    await signOut({
+      token,
+      baseUrl: resolveBaseUrl(),
+      corsOrigin: isPreviewOrigin() ? globalThis.location.origin : "",
+    });
   } finally {
     relaySessionActive = false;
     tokenInput.value = "";
