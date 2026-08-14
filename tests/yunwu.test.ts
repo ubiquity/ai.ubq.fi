@@ -53,7 +53,7 @@ Deno.test("initializeYunwuPricing intersects the current Codex catalog and retur
   };
 
   const snapshot = await initializeYunwuPricing({
-    codexModelIds: ["gpt-fixed", "missing", "gpt-5.6-sol", "gpt-fixed"],
+    codexModelIds: ["gpt-fixed", "missing", "gpt-5.6-sol", "gpt-fixed", "disabled-model"],
     fetcher,
     now: () => 1_234_567,
   });

@@ -149,6 +149,7 @@ Deno.test("Codex clock.sleep custom tools retain their call and output pairing",
 
 Deno.test("failover warning episode detection resets after a new user message", () => {
   const warning = {
+    id: "msg_failover_fixture",
     type: "message",
     role: "assistant",
     content: [{
@@ -475,7 +476,12 @@ Deno.test("synthetic warning history is removed, user quotes remain, and provide
   const projection = buildOpenRouterRequestProjection({
     input: [
       { type: "message", role: "user", content: [{ type: "input_text", text: warning }] },
-      { type: "message", role: "assistant", content: [{ type: "output_text", text: warning }] },
+      {
+        id: "msg_failover_fixture",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: warning }],
+      },
     ],
     stream: true,
   });

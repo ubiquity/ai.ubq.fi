@@ -112,6 +112,7 @@ const {
   setCodexBankedResetOptionsForTest,
 } = await import("../src/openai.ts");
 const { withCors } = await import("../src/http.ts");
+const { resetDebugToolsStateCacheForTest } = await import("../src/debug_tools.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 const { setOpenRouterApiKeyForTest } = await import("../src/openrouter.ts");
 const {
@@ -537,7 +538,7 @@ const liveBankedResetFixtureConfig = (accountId: string): CodexBankedResetConfig
 const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> => {
   const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
   const now = Date.now();
-  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now, DEFAULT_TEST_MODEL);
   if (selection.kind !== "eligible") throw new Error(`Expected an eligible fixture account, got ${selection.kind}.`);
   const routing = selection.accounts[0]!;
   const blocked = await markCodexQuotaBlocked(
@@ -618,7 +619,7 @@ const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> =>
 const createUnknownBankedResetFixture = async (): Promise<readonly string[]> => {
   const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
   const now = Date.now();
-  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now, DEFAULT_TEST_MODEL);
   if (selection.kind !== "eligible") throw new Error(`Expected an eligible fixture account, got ${selection.kind}.`);
   const routing = selection.accounts[0]!;
   const blocked = await markCodexQuotaBlocked(
@@ -742,7 +743,12 @@ Deno.test("openai: verified banked reset recovers the fenced account before Resp
             // is not proof of successful recovery.
             const responseBody = await response.text();
             const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
-            const routingAfterRecovery = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+            const routingAfterRecovery = await selectCodexRoutingAccounts(
+              authPool,
+              authPool.accounts,
+              Date.now(),
+              DEFAULT_TEST_MODEL,
+            );
             return {
               responseStatus,
               responseContentType,
@@ -1712,7 +1718,7 @@ Deno.test("openai: an expired access token makes a quota-shaped 403 actionable",
   }
 });
 
-Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly ignores temperature", async () => {
+Deno.test("openai: Terra Chat Completions maps completion caps and ignores temperature", async () => {
   let recordedBody: Record<string, unknown> | null = null;
 
   const response = await withFetchMock(
@@ -1738,7 +1744,6 @@ Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly
   assert.equal(response.status, 200);
   const warnings = parseWarnings(response.headers.get("x-uos-warning"));
   assert.ok(warnings.includes("temperature_ignored"));
-  assert.equal(warnings.includes("max_output_tokens_ignored"), false);
   assert.ok(recordedBody);
   const recorded = recordedBody as Record<string, unknown>;
   assert.equal(recorded.model, TERRA_TEST_MODEL);
@@ -2225,9 +2230,9 @@ Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering 
     const models = await handleModels();
     assert.equal(models.status, 200);
     const modelList = await models.json() as { data?: Array<Record<string, unknown>> };
-    const model = modelList.data?.find((entry) => entry.id === "gpt-oss-120b");
+    const model = modelList.data?.find((entry) => entry.id === "cerebras/gpt-oss-120b");
     assert.deepEqual(model, {
-      id: "gpt-oss-120b",
+      id: "cerebras/gpt-oss-120b",
       object: "model",
       created: 0,
       owned_by: "cerebras",
@@ -2237,19 +2242,19 @@ Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering 
     assert.equal(capabilities.status, 200);
     const capabilityList = await capabilities.json() as { data?: Array<Record<string, unknown>> };
     assert.deepEqual(
-      capabilityList.data?.find((entry) => entry.id === "gpt-oss-120b"),
+      capabilityList.data?.find((entry) => entry.id === "cerebras/gpt-oss-120b"),
       {
-        id: "gpt-oss-120b",
+        id: "cerebras/gpt-oss-120b",
         object: "uos.model_capabilities",
         owned_by: "cerebras",
         display_name: "GPT-OSS 120B",
         upstream_provider: "cerebras",
-        supported_endpoints: ["/v1/chat/completions"],
-        supported_reasoning_levels: ["medium"],
+        supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
+        supported_reasoning_levels: ["low", "medium", "high"],
         default_reasoning_effort: "medium",
         reasoning_effort_wire_map: {},
-        context_window_tokens: null,
-        max_context_window_tokens: null,
+        context_window_tokens: 131072,
+        max_context_window_tokens: 131072,
         auto_compact_token_limit_tokens: null,
       },
     );
@@ -7477,7 +7482,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       signal,
     });
   const canonicalBody = {
-    model: "gpt-oss-120b",
+    model: "cerebras/gpt-oss-120b",
     messages: [
       { role: "developer", content: "Use exactly one function tool call." },
       { role: "user", content: "Prepare the dashboard summary." },
@@ -7665,7 +7670,13 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
                   },
                   finish_reason: "tool_calls",
                 }],
-                usage: { prompt_tokens: 13, completion_tokens: 7, total_tokens: 20 },
+                usage: {
+                  prompt_tokens: 13,
+                  prompt_tokens_details: { cached_tokens: 5 },
+                  completion_tokens: 7,
+                  completion_tokens_details: { reasoning_tokens: 4 },
+                  total_tokens: 20,
+                },
                 provider_debug: "provider-body-must-not-be-logged-or-relayed",
               }),
               {
@@ -7693,7 +7704,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
 
         assert.equal(response.status, 200);
         assert.deepEqual(upstreamCalls.map((call) => call.url), ["https://api.cerebras.ai/v1/chat/completions"]);
-        assert.deepEqual(upstreamCalls[0]?.body, canonicalBody);
+        assert.deepEqual(upstreamCalls[0]?.body, { ...canonicalBody, model: "gpt-oss-120b" });
         assert.equal(upstreamCalls[0]?.headers.get("Authorization"), `Bearer ${fakeApiKey}`);
         assert.equal(upstreamCalls[0]?.headers.get("Content-Type"), "application/json");
         const payload = await response.json() as {
@@ -7704,14 +7715,20 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         };
         assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
         assert.equal(response.headers.get("x-uos-provider-request-id"), "cerebras-header-request-1");
-        assert.equal(payload.model, "gpt-oss-120b");
+        assert.equal(payload.model, "cerebras/gpt-oss-120b");
         assert.equal(payload.provider_debug, undefined);
         assert.deepEqual(payload.choices?.[0]?.message?.tool_calls, [{
           id: "call_fixture",
           type: "function",
           function: { name: "assistant_message", arguments: '{"message":"Ready"}' },
         }]);
-        assert.deepEqual(payload.usage, { prompt_tokens: 13, completion_tokens: 7, total_tokens: 20 });
+        assert.deepEqual(payload.usage, {
+          prompt_tokens: 13,
+          completion_tokens: 7,
+          total_tokens: 20,
+          prompt_tokens_details: { cached_tokens: 5 },
+          completion_tokens_details: { reasoning_tokens: 4 },
+        });
         const telemetry = getResponseTelemetry(response);
         assert.equal(telemetry?.provider, "cerebras");
         assert.equal(telemetry?.providerRequestId, "cerebras-header-request-1");
@@ -7806,7 +7823,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(upstreamBody.stream, false);
     });
 
-    await t.step("downgrades Chat Completions streaming while keeping Responses unavailable", async () => {
+    await t.step("downgrades provider streaming and bridges Responses", async () => {
       let cerebrasCalls = 0;
       const upstreamBodies: Record<string, unknown>[] = [];
       const streamResponse = await withFetchMock(
@@ -7848,23 +7865,534 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(upstreamBody.stream_options, undefined);
       assert.equal(cerebrasCalls, 1);
 
+      const responsesUpstreamBodies: Record<string, unknown>[] = [];
       const responsesResponse = await withFetchMock(
-        (url) => {
-          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
-          return sseResponse(baseSseChunks());
+        (url, bodyText) => {
+          if (url !== "https://api.cerebras.ai/v1/chat/completions") throw new Error(`unexpected URL: ${url}`);
+          cerebrasCalls += 1;
+          if (bodyText) responsesUpstreamBodies.push(JSON.parse(bodyText) as Record<string, unknown>);
+          return new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_responses_bridge",
+              object: "chat.completion",
+              created: 1_728_000_005,
+              model: "gpt-oss-120b",
+              choices: [{
+                index: 0,
+                message: { role: "assistant", content: "Ready from Responses" },
+                finish_reason: "stop",
+              }],
+              usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", "X-Request-Id": "cerebras-response-bridge" },
+            },
+          );
         },
         () =>
           handleResponses(
             new Request("https://ai.ubq.fi/v1/responses", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model: "gpt-oss-120b", input: "ping" }),
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                reasoning: { effort: "low" },
+                stream: true,
+              }),
             }),
           ),
       );
-      assert.equal(responsesResponse.status, 400);
-      assert.equal((await responsesResponse.json() as { error?: { param?: string } }).error?.param, "model");
-      assert.equal(cerebrasCalls, 1);
+      assert.equal(responsesResponse.status, 200);
+      assert.equal(responsesResponse.headers.get("Content-Type"), "text/event-stream");
+      assert.equal(responsesResponse.headers.get("x-uos-upstream"), "cerebras");
+      assert.equal(responsesResponse.headers.get("x-uos-provider-request-id"), "cerebras-response-bridge");
+      assert.equal(responsesResponse.headers.get("x-uos-warning"), "gpt_oss_stream_downgraded");
+      const responsesText = await responsesResponse.text();
+      assert.match(responsesText, /response\.output_text\.delta/);
+      assert.match(responsesText, /Ready from Responses/);
+      assert.match(responsesText, /response\.completed/);
+      assert.doesNotMatch(responsesText, /data: \[DONE\]/);
+      assert.deepEqual(responsesUpstreamBodies[0]?.messages, [{ role: "user", content: "ping" }]);
+      assert.equal(responsesUpstreamBodies[0]?.model, "gpt-oss-120b");
+      assert.equal(responsesUpstreamBodies[0]?.stream, false);
+      assert.equal(responsesUpstreamBodies[0]?.reasoning_effort, "low");
+      assert.equal(cerebrasCalls, 2);
+    });
+
+    await t.step("preserves refusals in downgraded Chat streams", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_refusal_stream",
+              object: "chat.completion",
+              created: 1_728_000_006,
+              model: "gpt-oss-120b",
+              choices: [{
+                index: 0,
+                message: { role: "assistant", content: null, refusal: "I cannot help with that." },
+                finish_reason: "stop",
+              }],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request({ ...canonicalBody, stream: true })),
+      );
+
+      assert.equal(response.status, 200);
+      assert.match(await response.text(), /"refusal":"I cannot help with that\."/);
+    });
+
+    await t.step("rejects invalid Responses controls before Cerebras dispatch", async () => {
+      const cases = [
+        { field: "temperature", value: "0.5" },
+        { field: "temperature", value: -0.1 },
+        { field: "temperature", value: 2.1 },
+        { field: "top_p", value: "0.5" },
+        { field: "top_p", value: -0.1 },
+        { field: "top_p", value: 1.1 },
+        { field: "max_output_tokens", value: 8_193 },
+      ] as const;
+      for (const testCase of cases) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "cerebras/gpt-oss-120b",
+                  input: "ping",
+                  reasoning: { effort: "medium" },
+                  [testCase.field]: testCase.value,
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400, `${testCase.field}=${String(testCase.value)}`);
+        assert.equal(
+          (await response.json() as { error?: { param?: string } }).error?.param,
+          testCase.field,
+        );
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
+    await t.step("rejects unresolved response context before Cerebras dispatch", async () => {
+      const cases = [
+        { field: "previous_response_id", value: "resp_prior" },
+        { field: "conversation", value: "conv_prior" },
+        { field: "prompt", value: { id: "pmpt_prior", variables: { topic: "test" } } },
+      ] as const;
+      for (const testCase of cases) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "cerebras/gpt-oss-120b",
+                  input: "ping",
+                  [testCase.field]: testCase.value,
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400, testCase.field);
+        assert.equal(
+          (await response.json() as { error?: { param?: string } }).error?.param,
+          testCase.field,
+        );
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
+    await t.step("rejects unsupported background Responses before Cerebras dispatch", async () => {
+      for (const field of ["background", "store"] as const) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "cerebras/gpt-oss-120b",
+                  input: "ping",
+                  [field]: true,
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400, field);
+        assert.equal((await response.json() as { error?: { param?: string } }).error?.param, field);
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
+    await t.step("rejects missing input before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "cerebras/gpt-oss-120b" }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "input");
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("rejects unsupported response controls and state before Cerebras dispatch", async () => {
+      const cases = [
+        { field: "truncation", value: "auto", param: "truncation" },
+        { field: "include", value: ["reasoning.encrypted_content"], param: "include" },
+        { field: "top_logprobs", value: 1, param: "top_logprobs" },
+        { field: "service_tier", value: "priority", param: "service_tier" },
+        { field: "safety_identifier", value: "safety-fixture", param: "safety_identifier" },
+        { field: "user", value: "user-fixture", param: "user" },
+        {
+          field: "context_management",
+          value: [{ type: "compaction", compact_threshold: 1 }],
+          param: "context_management",
+        },
+        {
+          field: "input",
+          value: [{
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "ping", prompt_cache_breakpoint: { mode: "explicit" } }],
+          }],
+          param: "input[0].content[0].prompt_cache_breakpoint",
+        },
+        { field: "input", value: [{ type: "reasoning", id: "reasoning_1", summary: [] }], param: "input[0].type" },
+      ] as const;
+      for (const testCase of cases) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "cerebras/gpt-oss-120b",
+                  input: "ping",
+                  [testCase.field]: testCase.value,
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400, testCase.field);
+        assert.equal((await response.json() as { error?: { param?: string } }).error?.param, testCase.param);
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
+    await t.step("rejects malformed function descriptions before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                tools: [{ type: "function", name: "lookup", description: 42 }],
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "tools[0].description");
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("rejects malformed Responses metadata before Cerebras dispatch", async () => {
+      const cases: unknown[] = [
+        [],
+        { invalid: 1 },
+        Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`key-${index}`, "value"])),
+        { ["k".repeat(65)]: "value" },
+        { key: "v".repeat(513) },
+      ];
+      for (const metadata of cases) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: "cerebras/gpt-oss-120b", input: "ping", metadata }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400);
+        assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "metadata");
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
+    await t.step("rejects unsupported Responses reasoning summaries before Cerebras dispatch", async () => {
+      for (const field of ["summary", "generate_summary"] as const) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "cerebras/gpt-oss-120b",
+                  input: "ping",
+                  reasoning: { effort: "medium", [field]: "detailed" },
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400, field);
+        assert.equal(
+          (await response.json() as { error?: { param?: string } }).error?.param,
+          `reasoning.${field}`,
+        );
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
+    await t.step("rejects max_tool_calls before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                max_tool_calls: 1,
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "max_tool_calls");
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("rejects constrained Responses text formats before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                text: {
+                  format: {
+                    type: "json_schema",
+                    name: "answer",
+                    schema: { type: "object", properties: { answer: { type: "string" } } },
+                  },
+                },
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "text");
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("treats null Responses max_output_tokens as unspecified", async () => {
+      let upstreamBody: Record<string, unknown> | null = null;
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+          return Response.json({
+            id: "chatcmpl_cerebras_null_output_limit",
+            object: "chat.completion",
+            created: 1_728_000_006,
+            model: "gpt-oss-120b",
+            choices: [{
+              index: 0,
+              message: { role: "assistant", content: "Ready" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                reasoning: { effort: "medium" },
+                max_output_tokens: null,
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 200);
+      const recorded = upstreamBody as Record<string, unknown> | null;
+      assert.ok(recorded);
+      assert.equal(recorded.max_completion_tokens, 8_192);
+    });
+
+    await t.step("uses the GPT-OSS default when Responses reasoning is omitted", async () => {
+      const defaultReasoningKey = keyToString(DEFAULT_REASONING_EFFORT_KEY);
+      const previousDefaultReasoning = kvStore.get(defaultReasoningKey);
+      kvStore.set(defaultReasoningKey, "xhigh");
+      let upstreamBody: Record<string, unknown> | null = null;
+      try {
+        const response = await withFetchMock(
+          (_url, bodyText) => {
+            upstreamBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+            return Response.json({
+              id: "chatcmpl_cerebras_default_reasoning",
+              object: "chat.completion",
+              created: 1_728_000_007,
+              model: "gpt-oss-120b",
+              choices: [{
+                index: 0,
+                message: { role: "assistant", content: "Ready" },
+                finish_reason: "stop",
+              }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: "cerebras/gpt-oss-120b", input: "ping" }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 200);
+        const recorded = upstreamBody as Record<string, unknown> | null;
+        assert.ok(recorded);
+        assert.equal(recorded.reasoning_effort, "medium");
+      } finally {
+        if (previousDefaultReasoning === undefined) kvStore.delete(defaultReasoningKey);
+        else kvStore.set(defaultReasoningKey, previousDefaultReasoning);
+        resetRuntimeConfigCacheForTest();
+      }
+    });
+
+    await t.step("rejects oversized Chat output limits before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () => handleChatCompletions(request({ ...canonicalBody, max_completion_tokens: 8_193 })),
+      );
+      assert.equal(response.status, 400);
+      assert.equal(
+        (await response.json() as { error?: { param?: string } }).error?.param,
+        "max_completion_tokens",
+      );
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("rejects unsupported none reasoning before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                reasoning: { effort: "none" },
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "reasoning.effort");
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("rejects unsupported Chat reasoning before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () => handleChatCompletions(request({ ...canonicalBody, reasoning_effort: "none" })),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "reasoning_effort");
+      assert.equal(cerebrasCalls, 0);
     });
 
     await t.step("rejects a missing server credential without provider dispatch", async () => {
@@ -7969,7 +8497,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
               id: "chatcmpl_cerebras_invalid_tool",
               object: "chat.completion",
               created: 1_728_000_002,
-              model: "gpt-oss-120b",
+              model: "cerebras/gpt-oss-120b",
               choices: [{
                 index: 0,
                 message: {
@@ -8023,7 +8551,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
                 id: "chatcmpl_cerebras_invalid_native_tool",
                 object: "chat.completion",
                 created: 1_728_000_003,
-                model: "gpt-oss-120b",
+                model: "cerebras/gpt-oss-120b",
                 choices: [{
                   index: 0,
                   message: { role: "assistant", content: null, tool_calls: [toolCall] },
@@ -8191,7 +8719,29 @@ Deno.test("openai: streamed Responses force the SSE content type", async () => {
 Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", async () => {
   const primaryBody = JSON.stringify({
     model: DEFAULT_TEST_MODEL,
-    input: "ping",
+    input: [
+      {
+        id: "msg_failover_fixture",
+        type: "message",
+        status: "completed",
+        role: "assistant",
+        content: [{
+          type: "output_text",
+          text:
+            "⚠ Failover active: this response is from `openrouter:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
+        }],
+      },
+      {
+        type: "message",
+        role: "assistant",
+        content: [{
+          type: "output_text",
+          text:
+            "⚠ Failover active: this response is from `openrouter:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
+        }],
+      },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "ping" }] },
+    ],
     stream: true,
     reasoning: { effort: "ultra" },
     max_output_tokens: 256,
@@ -8270,6 +8820,10 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   assert.equal(typeof sent.session_id, "string");
   assert.doesNotMatch(String(sent.session_id), /raw-session-id|test-principal/);
   assert.equal(JSON.stringify(sent).includes("raw-session-id"), false);
+  assert.deepEqual(
+    (sent.input as Array<Record<string, unknown>>).map((item) => item.role),
+    ["assistant", "user"],
+  );
   assert.equal(openRouterAuthorization, "Bearer or-test-key");
   assert.equal(openRouterMetadata, "enabled");
 
@@ -8305,6 +8859,7 @@ Deno.test("openai: failover warning history is not replayed upstream and coalesc
   const warningText =
     "⚠ Failover active: your request was rerouted to `openrouter:fixture/model` because the primary Codex service was unavailable.";
   const warningItem = {
+    id: "msg_failover_fixture",
     type: "message",
     role: "assistant",
     content: [{ type: "output_text", text: warningText, annotations: [] }],
@@ -8357,6 +8912,69 @@ Deno.test("openai: failover warning history is not replayed upstream and coalesc
   assert.equal(JSON.stringify(openRouterBodies[0]).includes("Failover active"), false);
   assert.equal(result.continuationText.includes(warningText), false);
   assert.equal(result.newTurnWarningDeltaCount, 1);
+});
+
+Deno.test("openai: five Kimi failover turns replay conversation without gateway warnings", async () => {
+  const openRouterInputs: Array<Array<Record<string, unknown>>> = [];
+  let openRouterCall = 0;
+  const requestFor = (input: unknown) =>
+    new Request("https://ai.ubq.fi/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input, stream: true }),
+    });
+
+  await withFetchMock(
+    (url, bodyText) => {
+      if (url !== "https://openrouter.ai/api/v1/responses") {
+        return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const body = JSON.parse(bodyText ?? "{}") as { input?: unknown };
+      assert.ok(Array.isArray(body.input));
+      openRouterInputs.push(body.input as Array<Record<string, unknown>>);
+      openRouterCall += 1;
+      return sseResponse(openRouterTextSseChunks({
+        responseId: `resp_openrouter_${openRouterCall}`,
+        model: "moonshotai/kimi-k3",
+        text: `Kimi fallback answer ${openRouterCall}`,
+      }));
+    },
+    async () => {
+      const conversation: unknown[] = [];
+      for (let turn = 1; turn <= 5; turn += 1) {
+        const prompt = `Kimi follow-up turn ${turn}`;
+        const response = await handleResponses(requestFor([
+          ...conversation,
+          { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] },
+        ]));
+        assert.equal(response.status, 200);
+        const events = [...(await response.text()).matchAll(/^data: (.+)$/gm)]
+          .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+        const terminal = events.find((event) => event.type === "response.completed");
+        const output = (terminal?.response as { output?: unknown[] } | undefined)?.output;
+        assert.ok(Array.isArray(output));
+        assert.match(
+          JSON.stringify(output),
+          /⚠ Failover active: your request was rerouted to `openrouter:moonshotai\/kimi-k3`/,
+        );
+        assert.match(JSON.stringify(output), new RegExp(`Kimi fallback answer ${turn}`));
+        conversation.push(...output);
+      }
+    },
+    { openRouterApiKey: "or-test-key" },
+  );
+
+  assert.equal(openRouterInputs.length, 5);
+  for (const [index, replay] of openRouterInputs.entries()) {
+    assert.equal(replay.some((item) => String(item.id).startsWith("msg_failover_")), false);
+    assert.match(JSON.stringify(replay), new RegExp(`Kimi follow-up turn ${index + 1}`));
+    for (let priorTurn = 1; priorTurn <= index; priorTurn += 1) {
+      assert.match(JSON.stringify(replay), new RegExp(`Kimi fallback answer ${priorTurn}`));
+    }
+  }
 });
 
 Deno.test("openai: OpenRouter handler failover covers precommit failures and commitment barriers", async (t) => {
@@ -8591,6 +9209,51 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
     assert.equal(error?.param, null);
     assert.equal(Object.prototype.hasOwnProperty.call(error ?? {}, "response"), false);
   });
+});
+
+Deno.test("openai: persisted admin forced primary 503 uses the OpenRouter failover path", async () => {
+  const debugToolsKey = keyToString(["uos_ai", "debug_tools", "v1"]);
+  let codexCalls = 0;
+  let openRouterCalls = 0;
+  await withFetchMock(
+    (url) => {
+      if (url === "https://openrouter.ai/api/v1/responses") {
+        openRouterCalls += 1;
+        return sseResponse(openRouterTextSseChunks({ text: "forced failover answer" }));
+      }
+      codexCalls += 1;
+      return sseResponse(baseSseChunks());
+    },
+    async () => {
+      resetDebugToolsStateCacheForTest();
+      kvStore.set(debugToolsKey, { force_codex_primary_503: true, updated_at_ms: Date.now() });
+      try {
+        const response = await handleResponses(openRouterResponsesRequest());
+        assert.equal(response.status, 200);
+        assert.match(await response.text(), /Failover active/);
+        assert.equal(getResponseTelemetry(response)?.openRouterTriggerClass, "http_5xx");
+
+        const chatResponse = await handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              messages: [{ role: "user", content: "keep this Chat request on Codex" }],
+              stream: false,
+            }),
+          }),
+        );
+        assert.equal(chatResponse.status, 200);
+      } finally {
+        kvStore.delete(debugToolsKey);
+        resetDebugToolsStateCacheForTest();
+      }
+    },
+    { openRouterApiKey: "or-test-key" },
+  );
+  assert.equal(codexCalls, 1);
+  assert.equal(openRouterCalls, 1);
 });
 
 Deno.test("openai: OpenRouter pre-output rejection restores the authoritative primary error", async (t) => {

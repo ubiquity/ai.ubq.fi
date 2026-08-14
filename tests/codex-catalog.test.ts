@@ -209,6 +209,134 @@ Deno.test("codex catalog: exact versions preserve rich JSON, isolate caches, and
   }
 });
 
+Deno.test("codex catalog: configured GPT-OSS is appended to the versioned Codex catalog", async () => {
+  seedBaseState();
+  const envKey = "CEREBRAS_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  const originalFetch = globalThis.fetch;
+  Deno.env.set(envKey, "cerebras-catalog-test-key");
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(catalogBody("0.201.0"), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: '"upstream-catalog"' },
+      }),
+    );
+  try {
+    const response = await handleCodexCatalogModels(request("0.201.0"), "0.201.0");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("etag"), null);
+    const payload = await response.json() as { models?: Array<Record<string, unknown>> };
+    const model = payload.models?.find((entry) => entry.slug === "cerebras/gpt-oss-120b");
+    assert.deepEqual(model, {
+      slug: "cerebras/gpt-oss-120b",
+      _uos_synthetic_provider: "cerebras",
+      display_name: "GPT-OSS 120B (Cerebras)",
+      description: "OpenAI GPT-OSS 120B through the UOS Cerebras adapter.",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [
+        { effort: "low", description: "Fast responses with lighter reasoning" },
+        { effort: "medium", description: "Balances speed and reasoning depth" },
+        { effort: "high", description: "Greater reasoning depth for complex tasks" },
+      ],
+      shell_type: "disabled",
+      visibility: "list",
+      supported_in_api: true,
+      priority: 0,
+      additional_speed_tiers: [],
+      service_tiers: [],
+      availability_nux: null,
+      base_instructions: "",
+      upgrade: null,
+      supports_reasoning_summaries: false,
+      default_reasoning_summary: "none",
+      support_verbosity: false,
+      default_verbosity: "low",
+      apply_patch_tool_type: null,
+      web_search_tool_type: "none",
+      truncation_policy: { mode: "tokens", limit: 131072 },
+      supports_parallel_tool_calls: true,
+      supports_image_detail_original: false,
+      context_window: 131072,
+      max_context_window: 131072,
+      effective_context_window_percent: 95,
+      experimental_supported_tools: [],
+      input_modalities: ["text"],
+      supports_search_tool: false,
+      use_responses_lite: false,
+    });
+    const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as {
+      client_version: string;
+      models: Array<{ slug: string }>;
+    };
+    assert.equal(snapshot.client_version, "0.201.0");
+    assert.deepEqual(snapshot.models.map((entry) => entry.slug), ["gpt-0.201.0"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("codex catalog: cached GPT-OSS is removed when the credential is removed", async () => {
+  seedBaseState();
+  const envKey = "CEREBRAS_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  const originalFetch = globalThis.fetch;
+  Deno.env.set(envKey, "cerebras-catalog-test-key");
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(catalogBody("0.146.1"), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: '"upstream-catalog"' },
+      }),
+    );
+  try {
+    const configured = await handleCodexCatalogModels(request("0.146.1"), "0.146.1");
+    assert.equal(configured.status, 200);
+    const configuredPayload = await configured.json() as { models?: Array<Record<string, unknown>> };
+    assert.equal(configuredPayload.models?.some((entry) => entry.slug === "cerebras/gpt-oss-120b"), true);
+
+    Deno.env.delete(envKey);
+    const removed = await handleCodexCatalogModels(request("0.146.1"), "0.146.1");
+    assert.equal(removed.status, 200);
+    assert.equal(removed.headers.get("etag"), null);
+    const removedPayload = await removed.json() as { models?: Array<Record<string, unknown>> };
+    assert.equal(removedPayload.models?.some((entry) => entry.slug === "cerebras/gpt-oss-120b"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("codex catalog: an upstream model is never removed when Cerebras is unconfigured", async () => {
+  seedBaseState();
+  const envKey = "CEREBRAS_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  const originalFetch = globalThis.fetch;
+  Deno.env.delete(envKey);
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(
+        catalogBody("0.146.2", {
+          models: [{ slug: "cerebras/gpt-oss-120b", display_name: "Upstream-owned model" }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json", ETag: '"upstream-catalog"' } },
+      ),
+    );
+  try {
+    const response = await handleCodexCatalogModels(request("0.146.2"), "0.146.2");
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { models?: Array<Record<string, unknown>> };
+    assert.deepEqual(payload.models, [{ slug: "cerebras/gpt-oss-120b", display_name: "Upstream-owned model" }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
 Deno.test("codex catalog: malformed versions are rejected before upstream access", async () => {
   seedBaseState();
   const originalFetch = globalThis.fetch;

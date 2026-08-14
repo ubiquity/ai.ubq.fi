@@ -5,6 +5,7 @@ import {
   fetchCodexModels,
   preserveCodexDefaultModel,
 } from "./codex.ts";
+import { CEREBRAS_GPT_OSS_120B_MODEL, readCerebrasApiKey } from "./cerebras.ts";
 import {
   CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
   compareCodexClientVersions,
@@ -62,6 +63,73 @@ type LoadedCodexCatalog = Readonly<{
 
 type RefreshLease = Readonly<{ owner: string; lease_until_ms: number }>;
 const catalogMemo = new Map<string, LoadedCodexCatalog>();
+
+const CEREBRAS_CODEX_MODEL: Record<string, unknown> = {
+  slug: CEREBRAS_GPT_OSS_120B_MODEL,
+  _uos_synthetic_provider: "cerebras",
+  display_name: "GPT-OSS 120B (Cerebras)",
+  description: "OpenAI GPT-OSS 120B through the UOS Cerebras adapter.",
+  default_reasoning_level: "medium",
+  supported_reasoning_levels: [
+    { effort: "low", description: "Fast responses with lighter reasoning" },
+    { effort: "medium", description: "Balances speed and reasoning depth" },
+    { effort: "high", description: "Greater reasoning depth for complex tasks" },
+  ],
+  shell_type: "disabled",
+  visibility: "list",
+  supported_in_api: true,
+  priority: 0,
+  additional_speed_tiers: [],
+  service_tiers: [],
+  availability_nux: null,
+  base_instructions: "",
+  upgrade: null,
+  supports_reasoning_summaries: false,
+  default_reasoning_summary: "none",
+  support_verbosity: false,
+  default_verbosity: "low",
+  apply_patch_tool_type: null,
+  web_search_tool_type: "none",
+  truncation_policy: { mode: "tokens", limit: 131072 },
+  supports_parallel_tool_calls: true,
+  supports_image_detail_original: false,
+  context_window: 131072,
+  max_context_window: 131072,
+  effective_context_window_percent: 95,
+  experimental_supported_tools: [],
+  input_modalities: ["text"],
+  supports_search_tool: false,
+  use_responses_lite: false,
+};
+
+const withCerebrasCatalogModel = (catalog: Record<string, unknown>): Record<string, unknown> => {
+  if (!Array.isArray(catalog.models)) return catalog;
+  const isCerebrasModel = (model: unknown): boolean => {
+    if (!isRecord(model) || Array.isArray(model)) return false;
+    const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
+    return id?.trim() === CEREBRAS_GPT_OSS_120B_MODEL;
+  };
+  const isSyntheticCerebrasModel = (model: unknown): boolean =>
+    isCerebrasModel(model) && isRecord(model) && model._uos_synthetic_provider === "cerebras";
+  if (!readCerebrasApiKey()) {
+    const models = catalog.models.filter((model) => !isSyntheticCerebrasModel(model));
+    return models.length === catalog.models.length ? catalog : { ...catalog, models };
+  }
+  const present = catalog.models.some(isCerebrasModel);
+  return present ? catalog : { ...catalog, models: [...catalog.models, CEREBRAS_CODEX_MODEL] };
+};
+
+const withCerebrasCatalogEntry = (catalog: LoadedCodexCatalog): LoadedCodexCatalog => {
+  const parsed = withCerebrasCatalogModel(catalog.parsed);
+  if (parsed === catalog.parsed) return catalog;
+  const body = JSON.stringify(parsed);
+  return {
+    ...catalog,
+    body,
+    parsed,
+    metadata: { ...catalog.metadata, etag: null },
+  };
+};
 
 export type PromptCacheScopePromotionLease = Readonly<{
   key: Deno.KvKey;
@@ -582,6 +650,7 @@ const etagMatches = (requestValue: string | null, etag: string | null): boolean 
 };
 
 const catalogResponse = (catalog: LoadedCodexCatalog, req: Request, cacheState: string): Response => {
+  catalog = withCerebrasCatalogEntry(catalog);
   const headers = new Headers({
     "Content-Type": catalog.metadata.content_type,
     "Cache-Control": "private, max-age=300",
@@ -682,6 +751,8 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
         ? catalogResponse(replacement, req, "rotated")
         : openaiError(502, "Codex upstream did not return a valid model catalog", "codex_catalog_unavailable");
     }
+    const publishedParsed = withCerebrasCatalogModel(parsed);
+    const publishedBody = publishedParsed === parsed ? body : JSON.stringify(publishedParsed);
 
     if (leaseHeartbeat.lost() || !await authGenerationIsCurrent(kv, authGeneration)) {
       const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
@@ -693,8 +764,8 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
     const stored = await storeCodexCatalog(kv, {
       clientVersion: version,
       authGeneration,
-      body,
-      etag: upstream.headers.get("ETag"),
+      body: publishedBody,
+      etag: publishedBody === body ? upstream.headers.get("ETag") : null,
       contentType,
       fetchedAtMs: nowMs,
     });

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 
-import { hasStaticAsset } from "../src/static.ts";
+import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts";
 import adminHtml from "../static/admin.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
 import authScript from "../static/auth.js" with { type: "text" };
+import openApiText from "../static/openapi.json" with { type: "text" };
 
 Deno.test("static assets register frontend module dependencies", () => {
   for (
@@ -25,6 +26,17 @@ Deno.test("admin module remains syntactically valid", () => {
   assert.doesNotThrow(() => Function(sourceWithoutImports));
 });
 
+Deno.test("admin defaults view declares the Codex primary 503 debug switch", () => {
+  assert.match(adminHtml, /id="card-debug-tools"/);
+  assert.match(adminHtml, /id="debug-force-codex-503"/);
+  assert.match(adminHtml, /admin\.css\?v=debug-tools-503-20260814-v1/);
+  assert.match(adminHtml, /admin\.js\?v=debug-tools-503-20260814-v1/);
+  assert.match(adminScript, /apiUrl\("\/admin\/debug-tools"\)/);
+  assert.match(adminScript, /force_codex_primary_503/);
+  assert.match(adminScript, /adminAccessState\.isSuperAdmin/);
+  assert.match(adminScript, /let debugToolsLoadId = 0/);
+});
+
 Deno.test("admin provider view declares and renders the OpenRouter failover card", () => {
   for (
     const id of [
@@ -35,7 +47,7 @@ Deno.test("admin provider view declares and renders the OpenRouter failover card
     ]
   ) assert.match(adminHtml, new RegExp(`id=["']${id}["']`));
 
-  assert.match(adminHtml, /admin\.js\?v=passkey-relay-20260814-v4/);
+  assert.match(adminHtml, /admin\.js\?v=debug-tools-503-20260814-v1/);
   assert.match(adminScript, /auth\.js\?v=passkey-relay-20260814-v2/);
   assert.match(adminScript, /auth-relay\.js\?v=passkey-relay-20260814-v2/);
   assert.match(adminScript, /cors_origin/);
@@ -68,4 +80,44 @@ Deno.test("admin provider view declares and renders the OpenRouter failover card
       "semantic_commitment",
     ]
   ) assert.match(adminScript, new RegExp(`telemetry\\.${field}`));
+});
+
+Deno.test("static assets register autonomous agent discovery documents", () => {
+  for (const path of ["/llms.txt", "/llms-full.txt", "/docs/llms-agents.md", "/openapi.json"]) {
+    assert.equal(hasStaticAsset(path), true, `${path} should be registered`);
+  }
+});
+
+Deno.test("OpenAPI discovery contract describes the public inference API", () => {
+  const document = JSON.parse(openApiText);
+
+  assert.equal(document.openapi, "3.1.0");
+  assert.equal(document.servers[0].url, "https://ai.ubq.fi");
+  assert.ok(document.components.securitySchemes.bearerAuth);
+  assert.ok(document.paths["/v1/models"].get);
+  assert.ok(document.paths["/v1/chat/completions"].post);
+  assert.ok(document.paths["/v1/responses"].post);
+});
+
+Deno.test("agent discovery documents are served with useful media types", async () => {
+  const llms = await handleStaticAsset("/llms.txt");
+  const llmsFull = await handleStaticAsset("/llms-full.txt");
+  const markdown = await handleStaticAsset("/docs/llms-agents.md");
+  const openapi = await handleStaticAsset("/openapi.json");
+
+  assert.equal(llms?.status, 200);
+  assert.equal(llms?.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert.match(await llms!.text(), /https:\/\/ai\.ubq\.fi\/openapi\.json/);
+  assert.equal(llmsFull?.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert.equal(markdown?.headers.get("content-type"), "text/markdown; charset=utf-8");
+  assert.equal(openapi?.headers.get("content-type"), "application/json; charset=utf-8");
+});
+
+Deno.test("JSON root advertises autonomous agent discovery documents", async () => {
+  const response = await handleRoot(new Request("https://ai.ubq.fi/", { headers: { Accept: "application/json" } }));
+  const body = await response.json();
+
+  assert.equal(body.discovery.llms, "/llms.txt");
+  assert.equal(body.discovery.llms_full, "/llms-full.txt");
+  assert.equal(body.discovery.openapi, "/openapi.json");
 });

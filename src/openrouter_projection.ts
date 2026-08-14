@@ -42,6 +42,7 @@ const messageText = (value: Record<string, unknown>): string | null => {
 
 export const isGatewayFailoverWarningItem = (value: unknown): boolean => {
   if (!isRecord(value) || Array.isArray(value) || value.type !== "message" || value.role !== "assistant") return false;
+  if (!getString(value.id)?.startsWith("msg_failover_")) return false;
   const text = messageText(value);
   return text !== null && isFailoverWarningText(text);
 };
@@ -908,10 +909,10 @@ const stripWarningEcho = (event: ResponsesStreamEvent): ResponsesStreamEvent | n
     if (isFailoverWarningText(text)) return null;
   }
   if (event.type === "response.output_item.done" && isRecord(value.item) && !Array.isArray(value.item)) {
-    if (isGatewayFailoverWarningItem(value.item)) return null;
+    if (isFailoverWarningText(messageText(value.item))) return null;
   }
   if (event.type === "response.output_item.added" && isRecord(value.item) && !Array.isArray(value.item)) {
-    if (isGatewayFailoverWarningItem(value.item)) return null;
+    if (isFailoverWarningText(messageText(value.item))) return null;
   }
   const next: Record<string, unknown> = { ...value };
   const output = removeWarningEchoFromOutput(value.output);

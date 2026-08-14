@@ -11,7 +11,7 @@
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
     <link rel="stylesheet" href="/style.css" />
-    <link rel="stylesheet" href="/admin.css?v=provider-capacity-reset-history-20260814-scroll-v4" />
+    <link rel="stylesheet" href="/admin.css?v=debug-tools-503-20260814-v1" />
   </head>
   <body data-page="admin" data-role="admin" data-auth-widget="collapsed" data-auth-scope="none">
     <div data-shell>
@@ -502,6 +502,23 @@
             </div>
           </article>
 
+          <article data-card data-span="half" aria-labelledby="card-debug-tools">
+            <header>
+              <h2 id="card-debug-tools">Debug tools</h2>
+              <p>Temporary fault injection for exercising gateway recovery paths.</p>
+            </header>
+            <div data-card-body>
+              <label data-check data-debug-toggle>
+                <span>
+                  <strong>Force Codex primary 503</strong>
+                  <small>Skip the Codex upstream and exercise the normal OpenRouter failover path.</small>
+                </span>
+                <input id="debug-force-codex-503" type="checkbox" role="switch" />
+              </label>
+              <span id="debug-tools-badge" data-badge data-state="unknown">Not loaded</span>
+            </div>
+          </article>
+
           <article data-card data-span="half" aria-labelledby="card-yunwu-quota">
             <header>
               <h2 id="card-yunwu-quota">YunWu refill cycle</h2>
@@ -709,6 +726,6 @@
       </section>
     </div>
     <script type="module"
-      src="/admin.js?v=passkey-relay-20260814-v4&capacity-chart-scroll-20260814-syntax-fix"></script>
+      src="/admin.js?v=debug-tools-503-20260814-v1"></script>
   </body>
 </html>

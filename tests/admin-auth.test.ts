@@ -121,6 +121,7 @@ const {
   handleAdminCodexAuth,
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
+  handleAdminDebugTools,
   handleAdminDefaults,
   handleAdminKernelUsageDelete,
   handleAdminKernelUsageSet,
@@ -469,6 +470,47 @@ Deno.test("admin defaults includes serializable YunWu quota diagnostics without 
   assert.equal(payload.yunwu_quota?.latest_refill_id, "refill-2");
   assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "system_token"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "user_id"), false);
+});
+
+Deno.test("admin debug tools persist the forced Codex primary 503 switch", async () => {
+  kvStore.clear();
+
+  const initial = await handleAdminDebugTools(new Request("https://ai.ubq.fi/admin/debug-tools"));
+  assert.equal(initial.status, 200);
+  const initialPayload = await initial.json() as {
+    debug?: { force_codex_primary_503?: boolean; updated_at_ms?: number };
+  };
+  assert.equal(initialPayload.debug?.force_codex_primary_503, false);
+  assert.equal(typeof initialPayload.debug?.updated_at_ms, "number");
+
+  const invalid = await handleAdminDebugTools(
+    new Request("https://ai.ubq.fi/admin/debug-tools", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force_codex_primary_503: "yes" }),
+    }),
+  );
+  assert.equal(invalid.status, 400);
+
+  const enabled = await handleAdminDebugTools(
+    new Request("https://ai.ubq.fi/admin/debug-tools", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force_codex_primary_503: true }),
+    }),
+  );
+  assert.equal(enabled.status, 200);
+  const enabledPayload = await enabled.json() as {
+    debug?: { force_codex_primary_503?: boolean; updated_at_ms?: number };
+  };
+  assert.equal(enabledPayload.debug?.force_codex_primary_503, true);
+  assert.equal(typeof enabledPayload.debug?.updated_at_ms, "number");
+
+  const restored = await handleAdminDebugTools(new Request("https://ai.ubq.fi/admin/debug-tools"));
+  assert.equal(
+    (await restored.json() as { debug?: { force_codex_primary_503?: boolean } }).debug?.force_codex_primary_503,
+    true,
+  );
 });
 
 Deno.test("admin defaults permits kernel-only updates without runtime configuration", async () => {

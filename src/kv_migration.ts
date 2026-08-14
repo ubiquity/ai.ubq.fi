@@ -127,6 +127,11 @@ const DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "api_keys_usage", prefix: ["ubq_ai", "api_keys", "usage"] },
   { group: "api_keys_usage_daily", prefix: ["ubq_ai", "api_keys", "usage_daily"] },
   { group: "api_keys_request_log", prefix: ["ubq_ai", "api_keys", "request_log"] },
+  { group: "marketplace_auth_accounts", prefix: ["ubq_ai", "marketplace", "auth_accounts"] },
+  {
+    group: "marketplace_auth_accounts_by_owner",
+    prefix: ["ubq_ai", "marketplace", "auth_accounts_by_owner"],
+  },
   { group: "api_key_usage_v2", prefix: ["uos_ai", "api_key_usage", "v2"] },
   { group: "api_key_usage_v3_windows", prefix: ["uos_ai", "api_key_usage", "v3", "window"] },
   { group: "api_key_usage_v3_requests", prefix: ["uos_ai", "api_key_usage", "v3", "request"] },

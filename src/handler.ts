@@ -14,6 +14,7 @@ import {
   handleAdminCodexModelsSet,
   handleAdminCodexPromptsPurge,
   handleAdminCodexRecheck,
+  handleAdminDebugTools,
   handleAdminDefaults,
   handleAdminKernelPolicyQueueList,
   handleAdminKernelPubKeysCreate,
@@ -72,6 +73,13 @@ import {
   handlePasskeyUsersUpdate,
 } from "./passkeys.ts";
 import { withCodexQuotaHeaders } from "./codex_quota.ts";
+import {
+  handleMarketplaceCreateAuth,
+  handleMarketplaceDisableAuth,
+  handleMarketplaceListAuth,
+  handleMarketplacePublicCatalog,
+  handleMarketplaceUpdateAuth,
+} from "./marketplace.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
 import { sha256Hex } from "./utils.ts";
 import { handleProviderCapacity } from "./provider_capacity.ts";
@@ -110,9 +118,62 @@ const normalizePath = (path: string): string => {
   return path.replace(/\/+$/, "");
 };
 
+const decodeMarketplaceAuthId = (value: string): string | null => {
+  try {
+    const decoded = decodeURIComponent(value);
+    return /^auth_[A-Za-z0-9-]+$/.test(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+};
+
 const withRequestId = (response: Response, requestId: string): Response => {
   const headers = new Headers(response.headers);
   headers.set("x-uos-request-id", requestId);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
+
+type InferenceTimingState = {
+  authStartedAtMonotonicMs: number;
+  authCompletedAtMonotonicMs: number;
+  quotaCompletedAtMonotonicMs: number;
+  contextReadyAtMonotonicMs: number;
+};
+
+const serverTimingDuration = (value: number): string => String(Math.max(0, Math.round(value)));
+
+const withInferenceServerTiming = (
+  response: Response,
+  telemetry: ResponseTelemetry | null,
+  requestStartedAtMonotonicMs: number,
+  timing: InferenceTimingState,
+): Response => {
+  const completedAtMonotonicMs = performance.now();
+  const metrics = [
+    `auth;dur=${serverTimingDuration(timing.authCompletedAtMonotonicMs - timing.authStartedAtMonotonicMs)}`,
+    `quota;dur=${serverTimingDuration(timing.quotaCompletedAtMonotonicMs - timing.authCompletedAtMonotonicMs)}`,
+    `context;dur=${serverTimingDuration(timing.contextReadyAtMonotonicMs - timing.quotaCompletedAtMonotonicMs)}`,
+  ];
+  if (telemetry?.firstProviderDispatchMs !== null && telemetry?.firstProviderDispatchMs !== undefined) {
+    const dispatchAtMonotonicMs = requestStartedAtMonotonicMs + telemetry.firstProviderDispatchMs;
+    metrics.push(
+      `pre_provider;dur=${serverTimingDuration(dispatchAtMonotonicMs - timing.contextReadyAtMonotonicMs)}`,
+    );
+    if (telemetry.firstProviderHeadersMs !== null) {
+      const headersAtMonotonicMs = requestStartedAtMonotonicMs + telemetry.firstProviderHeadersMs;
+      metrics.push(
+        `provider;dur=${serverTimingDuration(headersAtMonotonicMs - dispatchAtMonotonicMs)}`,
+        `post_provider;dur=${serverTimingDuration(completedAtMonotonicMs - headersAtMonotonicMs)}`,
+      );
+    }
+  }
+  metrics.push(`total;dur=${serverTimingDuration(completedAtMonotonicMs - requestStartedAtMonotonicMs)}`);
+  const headers = new Headers(response.headers);
+  headers.set("Server-Timing", metrics.join(", "));
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -477,6 +538,12 @@ export default async function handler(req: Request): Promise<Response> {
     return applyCors(await handleAdminDefaults(req));
   }
 
+  if ((req.method === "GET" || req.method === "POST") && path === "/admin/debug-tools") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminDebugTools(req));
+  }
+
   if (req.method === "GET" && path === "/admin/providers") {
     const authError = await requireAdminAuth(req);
     if (authError) return applyCors(authError);
@@ -602,6 +669,33 @@ export default async function handler(req: Request): Promise<Response> {
     return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
   }
 
+  if (path === "/marketplace/auths") {
+    if (req.method === "POST") return applyCors(await handleMarketplaceCreateAuth(req));
+    if (req.method === "GET") return applyCors(await handleMarketplacePublicCatalog(req));
+    return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+  }
+
+  if (path === "/marketplace/auths/me") {
+    if (req.method === "GET") return applyCors(await handleMarketplaceListAuth(req));
+    return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+  }
+
+  const marketplaceDisableMatch = path.match(/^\/marketplace\/auths\/([^/]+)\/disable$/);
+  if (marketplaceDisableMatch) {
+    if (req.method !== "POST") return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+    const id = decodeMarketplaceAuthId(marketplaceDisableMatch[1]);
+    if (!id) return applyCors(openaiError(400, "Invalid marketplace auth id", "invalid_request_error"));
+    return applyCors(await handleMarketplaceDisableAuth(req, id));
+  }
+
+  const marketplaceAuthMatch = path.match(/^\/marketplace\/auths\/([^/]+)$/);
+  if (marketplaceAuthMatch) {
+    if (req.method !== "PATCH") return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+    const id = decodeMarketplaceAuthId(marketplaceAuthMatch[1]);
+    if (!id) return applyCors(openaiError(400, "Invalid marketplace auth id", "invalid_request_error"));
+    return applyCors(await handleMarketplaceUpdateAuth(req, id));
+  }
+
   const isUosEmbeddingPath = path === "/uos/embeddings" || path === "/uos/embedding-jobs" ||
     path.startsWith("/uos/embedding-jobs/");
   if (!path.startsWith("/v1/") && !isUosEmbeddingPath) {
@@ -609,7 +703,9 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   const terminalRoute = terminalRouteForRequest(req.method, path);
+  const authStartedAtMonotonicMs = performance.now();
   const authResult = await authenticateClient(req);
+  const authCompletedAtMonotonicMs = performance.now();
   if (!authResult.ok) {
     const response = applyCors(withRequestId(authResult.response, requestId));
     return terminalRoute
@@ -625,7 +721,12 @@ export default async function handler(req: Request): Promise<Response> {
   const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
   let usageReservation: ApiKeyUsageReservation | null = null;
   if (usagePolicy && terminalRoute) {
-    const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute, { deferWhenFull: true });
+    const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute, {
+      deferWhenFull: true,
+      ...(terminalRoute === "chat.completions" || terminalRoute === "responses"
+        ? { unmeteredProviderWhenUnlimited: "cerebras" as const }
+        : {}),
+    });
     if (!admission.ok) {
       const response = applyCors(withRequestId(admission.response, requestId));
       return await withTerminalRequestLog(response, {
@@ -635,10 +736,12 @@ export default async function handler(req: Request): Promise<Response> {
       });
     }
     usageReservation = admission.reservation;
-    // Admission re-reads the strict hash policy, so downstream quota headers
-    // and paid fallback use the policy that actually reserved this request.
+    // Full admission exposes its strict live policy immediately. The unlimited
+    // Cerebras path refreshes this getter at provider dispatch, and response
+    // decoration samples it again after the handler completes.
     usagePolicy = admission.reservation.policy;
   }
+  const quotaCompletedAtMonotonicMs = performance.now();
   const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
   let kernelRepo = authResult.method.kind === "github_token"
     ? { owner: authResult.method.owner, repo: authResult.method.repo }
@@ -654,12 +757,20 @@ export default async function handler(req: Request): Promise<Response> {
     keyId: usageKeyId,
     kernelRepo,
     kernelOrg,
-    paidFallbackEnabled: usagePolicy?.paid_fallback_enabled === true,
+    get paidFallbackEnabled() {
+      return (usageReservation?.policy ?? usagePolicy)?.paid_fallback_enabled === true;
+    },
     idempotencyPrincipal,
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,
     beforeProviderDispatch: usageReservation?.beforeProviderDispatch,
+  };
+  const inferenceTiming: InferenceTimingState = {
+    authStartedAtMonotonicMs,
+    authCompletedAtMonotonicMs,
+    quotaCompletedAtMonotonicMs,
+    contextReadyAtMonotonicMs: performance.now(),
   };
   if (terminalRoute) {
     console.info(
@@ -694,15 +805,22 @@ export default async function handler(req: Request): Promise<Response> {
     includeQuota = false,
     onCompleted?: () => Promise<void>,
   ): Promise<Response> => {
+    usagePolicy = usageReservation?.policy ?? usagePolicy;
     const telemetry = getResponseTelemetry(response);
     const decorated = includeQuota ? decorateInferenceQuota(response, usagePolicy, telemetry) : response;
-    return await withTerminalRequestLog(applyCors(withRequestId(decorated, requestId)), {
+    const terminalResponse = await withTerminalRequestLog(applyCors(withRequestId(decorated, requestId)), {
       route,
       telemetryResponse: response,
       startedAtMonotonicMs: requestStartedAtMonotonicMs,
       requestId,
       onCompleted,
     });
+    return withInferenceServerTiming(
+      terminalResponse,
+      telemetry,
+      requestStartedAtMonotonicMs,
+      inferenceTiming,
+    );
   };
   const bestEffortKernelInferenceUsage = async (): Promise<void> => {
     try {
