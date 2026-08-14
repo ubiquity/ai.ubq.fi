@@ -2,8 +2,9 @@
 
 OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 
-LLM and app integration notes live in [`static/docs/llms-agents.md`](static/docs/llms-agents.md) and are served at
-`https://ai.ubq.fi/docs/llms-agents.md`.
+Autonomous agents should start at `https://ai.ubq.fi/llms.txt`. The machine-readable API contract is served at
+`https://ai.ubq.fi/openapi.json`, and the complete integration guide is served at `https://ai.ubq.fi/llms-full.txt` from
+[`static/docs/llms-agents.md`](static/docs/llms-agents.md).
 
 ## How auth works
 

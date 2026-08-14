@@ -79,7 +79,10 @@ textAsset(["/network.js"], "network.js", "text/javascript; charset=utf-8");
 textAsset(["/reasoning-select.js"], "reasoning-select.js", "text/javascript; charset=utf-8");
 
 textAsset(["/company-logo.svg"], "company-logo.svg", "image/svg+xml; charset=utf-8");
+textAsset(["/llms.txt"], "llms.txt", "text/plain; charset=utf-8");
+textAsset(["/llms-full.txt"], "docs/llms-agents.md", "text/plain; charset=utf-8");
 textAsset(["/docs/llms-agents.md"], "docs/llms-agents.md", "text/markdown; charset=utf-8");
+textAsset(["/openapi.json"], "openapi.json", "application/json; charset=utf-8");
 
 bytesAsset(["/favicon.ico", "/favicon.png"], "favicon.png", "image/png");
 bytesAsset(["/favicon-32.png"], "favicon-32.png", "image/png");
@@ -168,6 +171,11 @@ export const handleRoot = async (req: Request): Promise<Response> => {
       endpoints: {
         openai_compat: "/v1/*",
         health: "/health",
+      },
+      discovery: {
+        llms: "/llms.txt",
+        llms_full: "/llms-full.txt",
+        openapi: "/openapi.json",
       },
     },
     { "Vary": "Accept" },
