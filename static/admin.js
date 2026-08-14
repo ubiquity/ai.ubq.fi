@@ -18,7 +18,7 @@ import {
   isAiGatewayPreviewOrigin,
   parseAuthRelayAction,
   parseTrustedAuthRelayOrigin,
-} from "./auth-relay.js";
+} from "./auth-relay.js?v=passkey-relay-20260814-v1";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
@@ -554,6 +554,50 @@ const requestRemotePasskeySession = () => {
   });
 
   return authRelayRequest;
+};
+
+const signInAdminWithPasskey = async () => {
+  if (
+    !isAuthRelayMode &&
+    (isPreviewOrigin() || (isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()))
+  ) {
+    const relay = await requestRemotePasskeySession();
+    if (relay.handle) setPasskeyHandleValue(relay.handle);
+    applySignedInToken(relay.token, { deviceRegistered: true });
+    setPasskeyStatus("ok", "Passkey signed in");
+    return relay;
+  }
+
+  const result = await signInWithPasskey({
+    baseUrl: getPasskeyBaseUrl(),
+    handle: getPasskeyHandle(),
+    useHandle: Boolean(getPasskeyHandle()),
+  });
+  if (result.handle) setPasskeyHandleValue(result.handle);
+  applySignedInToken(result.token, { deviceRegistered: true });
+  setPasskeyStatus("ok", "Passkey signed in");
+  postAuthRelayResult(result);
+  return result;
+};
+
+const runPasskeyLogin = async ({ automatic = false } = {}) => {
+  setPasskeyStatus("unknown", automatic ? "Starting passkey sign-in..." : "Signing in...");
+  passkeyLoginBtn.disabled = true;
+  passkeyRegisterBtn.disabled = true;
+  try {
+    return await signInAdminWithPasskey();
+  } catch (error) {
+    setSignedInState(false);
+    const message = formatPasskeyLoginError(error);
+    setPasskeyStatus(
+      automatic ? "unknown" : "bad",
+      automatic ? `${message} Click the sign-in button to continue.` : message,
+    );
+    return null;
+  } finally {
+    passkeyLoginBtn.disabled = false;
+    passkeyRegisterBtn.disabled = false;
+  }
 };
 
 const getRegistrationAdminToken = async () => {
@@ -6757,40 +6801,8 @@ passkeyHandleInput.addEventListener("input", () => {
   schedulePasskeyHandlePersist();
 });
 
-passkeyLoginBtn.addEventListener("click", async () => {
-  const passkeyBaseUrl = getPasskeyBaseUrl();
-  setPasskeyStatus("unknown", "Signing in...");
-  passkeyLoginBtn.disabled = true;
-  passkeyRegisterBtn.disabled = true;
-  try {
-    if (
-      !isAuthRelayMode &&
-      (isPreviewOrigin() || (isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()))
-    ) {
-      const relay = await requestRemotePasskeySession();
-      if (relay.handle) setPasskeyHandleValue(relay.handle);
-      applySignedInToken(relay.token, { deviceRegistered: true });
-      setPasskeyStatus("ok", "Passkey signed in");
-      return;
-    }
-
-    const passkeyHandle = getPasskeyHandle();
-    const result = await signInWithPasskey({
-      baseUrl: passkeyBaseUrl,
-      handle: passkeyHandle,
-      useHandle: Boolean(passkeyHandle),
-    });
-    if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token, { deviceRegistered: true });
-    setPasskeyStatus("ok", "Passkey signed in");
-    postAuthRelayResult(result);
-  } catch (error) {
-    setSignedInState(false);
-    setPasskeyStatus("bad", formatPasskeyLoginError(error));
-  } finally {
-    passkeyLoginBtn.disabled = false;
-    passkeyRegisterBtn.disabled = false;
-  }
+passkeyLoginBtn.addEventListener("click", () => {
+  void runPasskeyLogin();
 });
 
 passkeyRegisterBtn.addEventListener("click", async () => {
@@ -7095,9 +7107,9 @@ const startAuthRelayIfRequested = async () => {
       postAuthRelayResult(cachedAuth);
       return;
     }
-    setPasskeyStatus("unknown", "Use the sign-in button to continue.");
+    await runPasskeyLogin({ automatic: true });
   } catch (error) {
-    setPasskeyStatus("bad", `${error?.message ?? "Passkey sign-in failed"} Use the sign-in button to try again.`);
+    setPasskeyStatus("bad", `${formatPasskeyLoginError(error)} Click the sign-in button to continue.`);
   } finally {
     passkeyLoginBtn.disabled = false;
   }
