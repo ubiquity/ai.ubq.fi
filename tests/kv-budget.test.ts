@@ -493,6 +493,31 @@ Deno.test("V3 unlimited Cerebras admission performs one strong policy read and n
   );
 });
 
+Deno.test("V3 unlimited Cerebras Responses admission uses the same unmetered fast path", async () => {
+  const { policy } = await prepareApiKeyInference("1", "unlimited-cerebras-responses-fast-path", -1);
+  kv.resetCounts();
+
+  const admission = await reserveApiKeyUsageV3(
+    policy,
+    "unlimited-cerebras-responses-fast-path",
+    "responses",
+    {
+      kv: kv as unknown as Deno.Kv,
+      unmeteredProviderWhenUnlimited: "cerebras",
+    },
+  );
+  assert.equal(admission.ok, true);
+  if (!admission.ok) return;
+  assert.equal(kv.reads, 0);
+  assert.equal(kv.writes, 0);
+
+  await admission.reservation.beforeProviderDispatch("cerebras");
+  await admission.reservation.release();
+
+  assert.equal(kv.reads, 1);
+  assert.equal(kv.writes, 0);
+});
+
 Deno.test("V3 Cerebras fast path falls back to the full ledger when the live policy becomes bounded", async () => {
   const { hash, record, policy } = await prepareApiKeyInference("1", "cerebras-became-bounded", -1);
   const admission = await reserveApiKeyUsageV3(

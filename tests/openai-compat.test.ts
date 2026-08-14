@@ -7880,7 +7880,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
               body: JSON.stringify({
                 model: "gpt-oss-120b",
                 input: "ping",
-                reasoning: { effort: "none" },
+                reasoning: { effort: "low" },
                 stream: true,
               }),
             }),
@@ -7898,8 +7898,47 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.match(responsesText, /data: \[DONE\]/);
       assert.deepEqual(responsesUpstreamBodies[0]?.messages, [{ role: "user", content: "ping" }]);
       assert.equal(responsesUpstreamBodies[0]?.stream, false);
-      assert.equal(responsesUpstreamBodies[0]?.reasoning_effort, "none");
+      assert.equal(responsesUpstreamBodies[0]?.reasoning_effort, "low");
       assert.equal(cerebrasCalls, 2);
+    });
+
+    await t.step("rejects unsupported none reasoning before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "gpt-oss-120b",
+                input: "ping",
+                reasoning: { effort: "none" },
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "reasoning.effort");
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("rejects unsupported Chat reasoning before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () => handleChatCompletions(request({ ...canonicalBody, reasoning_effort: "none" })),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "reasoning_effort");
+      assert.equal(cerebrasCalls, 0);
     });
 
     await t.step("rejects a missing server credential without provider dispatch", async () => {

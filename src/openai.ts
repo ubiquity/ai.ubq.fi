@@ -2535,6 +2535,7 @@ const parseMaxCompletionTokensField = (
 const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
 const RESPONSES_ALLOWED_KEYS = new Set(RESPONSES_REQUEST_KEYS);
 const CODEX_RESPONSES_EXTENSION_KEYS = new Set(["client_metadata"]);
+const CEREBRAS_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high"]);
 
 const findUnknownKey = (
   record: Record<string, unknown>,
@@ -6635,6 +6636,14 @@ const handleCerebrasChatCompletions = async (
   // particular, do not run the Codex-specific flattening that follows this
   // early branch in handleChatCompletionsInternal.
   const reasoning = reasoningEffort.value ?? DEFAULT_REASONING_EFFORT;
+  if (!CEREBRAS_REASONING_EFFORTS.has(reasoning)) {
+    return openaiError(
+      400,
+      `reasoning_effort '${reasoning}' is not supported by gpt-oss-120b; use low, medium, or high`,
+      "invalid_request_error",
+      { param: "reasoning_effort" },
+    );
+  }
   const cerebrasBody: Record<string, unknown> = {
     ...rawRecord,
     model: CEREBRAS_GPT_OSS_120B_MODEL,
@@ -6775,11 +6784,10 @@ const handleCerebrasResponses = async (
   clientWantsStream: boolean,
   usageContext?: UsageContext,
 ): Promise<Response> => {
-  const supportedReasoning = new Set(["none", "low", "medium", "high"]);
-  if (!supportedReasoning.has(reasoning)) {
+  if (!CEREBRAS_REASONING_EFFORTS.has(reasoning)) {
     return openaiError(
       400,
-      `reasoning.effort '${reasoning}' is not supported by gpt-oss-120b; use none, low, medium, or high`,
+      `reasoning.effort '${reasoning}' is not supported by gpt-oss-120b; use low, medium, or high`,
       "invalid_request_error",
       { param: "reasoning.effort" },
     );

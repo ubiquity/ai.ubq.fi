@@ -716,7 +716,9 @@ export default async function handler(req: Request): Promise<Response> {
   if (usagePolicy && terminalRoute) {
     const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute, {
       deferWhenFull: true,
-      ...(terminalRoute === "chat.completions" ? { unmeteredProviderWhenUnlimited: "cerebras" as const } : {}),
+      ...(terminalRoute === "chat.completions" || terminalRoute === "responses"
+        ? { unmeteredProviderWhenUnlimited: "cerebras" as const }
+        : {}),
     });
     if (!admission.ok) {
       const response = applyCors(withRequestId(admission.response, requestId));
