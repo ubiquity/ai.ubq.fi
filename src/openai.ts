@@ -6900,6 +6900,7 @@ const handleCerebrasResponses = async (
       "temperature",
       "top_p",
       "top_logprobs",
+      "service_tier",
     ]),
   );
   if (usageContext?.responseTelemetry) {
@@ -7639,6 +7640,16 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         `token log probabilities are not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
         "invalid_request_error",
         { param: "top_logprobs" },
+      );
+    }
+    if (
+      rawRecord.service_tier !== undefined && rawRecord.service_tier !== null && rawRecord.service_tier !== "default"
+    ) {
+      return openaiError(
+        400,
+        `non-default service tiers are not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+        "invalid_request_error",
+        { param: "service_tier" },
       );
     }
   }

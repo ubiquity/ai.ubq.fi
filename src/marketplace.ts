@@ -10,7 +10,6 @@
 import { authenticateClient } from "./auth.ts";
 import { json, openaiError, withCors } from "./http.ts";
 import { getKv } from "./kv.ts";
-import { sha256Hex } from "./utils.ts";
 
 type MarketplaceAuthAccount = Readonly<{
   id: string;
@@ -68,10 +67,10 @@ export const authAccountKey = (id: string) => ["ubq_ai", "marketplace", "auth_ac
 export const authAccountByOwnerKey = (ownerUserId: string, id: string) =>
   ["ubq_ai", "marketplace", "auth_accounts_by_owner", ownerUserId, id] as const;
 
-const marketplacePrincipal = async (
+const marketplacePrincipal = (
   authResult: Extract<Awaited<ReturnType<typeof authenticateClient>>, { ok: true }>,
-): Promise<string | null> => {
-  const { token, method } = authResult;
+): string | null => {
+  const { method } = authResult;
   switch (method.kind) {
     case "kv_api_key":
       return `api-key:${method.key_id}`;
@@ -82,9 +81,8 @@ const marketplacePrincipal = async (
     case "auth_tokens_allowlist":
     case "admin_allowlist":
     case "deno_deploy_token":
-      return token ? `bearer-sha256:${await sha256Hex(token)}` : `auth-method:${method.kind}`;
     case "disabled":
-      return token ? `bearer-sha256:${await sha256Hex(token)}` : "local-auth-disabled";
+      return null;
   }
 };
 
@@ -94,7 +92,7 @@ const authenticateOwner = async (
 ): Promise<{ ok: true; ownerUserId: string } | { ok: false; response: Response }> => {
   const authResult = await (deps.authenticateClient ?? authenticateClient)(req);
   if (!authResult.ok) return { ok: false, response: authResult.response };
-  const ownerUserId = await marketplacePrincipal(authResult);
+  const ownerUserId = marketplacePrincipal(authResult);
   if (!ownerUserId) {
     return {
       ok: false,

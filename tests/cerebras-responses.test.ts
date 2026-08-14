@@ -73,6 +73,15 @@ Deno.test("GPT-OSS Responses translation rejects multimodal input and unsupporte
   if (itemReference.ok) throw new Error("expected item-reference rejection");
   assert.equal(itemReference.param, "input[0].type");
 
+  const reasoning = buildCerebrasResponsesTranslation(
+    [{ type: "reasoning", id: "reasoning_1", summary: [] }],
+    undefined,
+    {},
+  );
+  assert.equal(reasoning.ok, false);
+  if (reasoning.ok) throw new Error("expected reasoning-item rejection");
+  assert.equal(reasoning.param, "input[0].type");
+
   const nestedFunction = buildCerebrasResponsesTranslation(
     [{ type: "message", role: "user", content: [{ type: "input_text", text: "status" }] }],
     undefined,

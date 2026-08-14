@@ -8038,11 +8038,13 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(cerebrasCalls, 0);
     });
 
-    await t.step("rejects unsupported response projections before Cerebras dispatch", async () => {
+    await t.step("rejects unsupported response controls and state before Cerebras dispatch", async () => {
       const cases = [
-        { field: "truncation", value: "auto" },
-        { field: "include", value: ["reasoning.encrypted_content"] },
-        { field: "top_logprobs", value: 1 },
+        { field: "truncation", value: "auto", param: "truncation" },
+        { field: "include", value: ["reasoning.encrypted_content"], param: "include" },
+        { field: "top_logprobs", value: 1, param: "top_logprobs" },
+        { field: "service_tier", value: "priority", param: "service_tier" },
+        { field: "input", value: [{ type: "reasoning", id: "reasoning_1", summary: [] }], param: "input[0].type" },
       ] as const;
       for (const testCase of cases) {
         let cerebrasCalls = 0;
@@ -8065,7 +8067,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
             ),
         );
         assert.equal(response.status, 400, testCase.field);
-        assert.equal((await response.json() as { error?: { param?: string } }).error?.param, testCase.field);
+        assert.equal((await response.json() as { error?: { param?: string } }).error?.param, testCase.param);
         assert.equal(cerebrasCalls, 0);
       }
     });

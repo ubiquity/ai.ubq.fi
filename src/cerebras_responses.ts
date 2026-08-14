@@ -139,10 +139,13 @@ export const responsesInputToChatMessages = (
       messages.push(toolMessage.value);
       continue;
     }
-    // Reasoning items are model-private state. GPT-OSS does not accept a
-    // Responses reasoning item in Chat Completions, and replaying it would
-    // leak hidden content across turns, so omit it deliberately.
-    if (type === "reasoning") continue;
+    if (type === "reasoning") {
+      return {
+        ok: false,
+        message: `${param}.type 'reasoning' is not supported by the GPT-OSS Responses bridge`,
+        param: `${param}.type`,
+      };
+    }
     if (type === "item_reference") {
       return {
         ok: false,

@@ -38,6 +38,12 @@ const githubRepoAuth = (_req: Request) =>
     },
   });
 
+const tokenOnlyAuth = (
+  kind: "auth_tokens_allowlist" | "admin_allowlist" | "deno_deploy_token" | "disabled",
+) => {
+  return (_req: Request) => Promise.resolve({ ok: true as const, token: `token-${kind}`, method: { kind } });
+};
+
 const jsonRequest = (method: string, path: string, body: unknown): Request =>
   new Request(`https://ai.ubq.fi${path}`, {
     method,
@@ -174,6 +180,21 @@ Deno.test("marketplace owner routes reject repository-scoped GitHub authenticati
   );
   assert.equal(list.status, 403);
   assert.equal(kv.commands.length, 0);
+});
+
+Deno.test("marketplace owner routes reject rotating token-only identities", async () => {
+  for (const kind of ["auth_tokens_allowlist", "admin_allowlist", "deno_deploy_token", "disabled"] as const) {
+    const kv = new CountingKv();
+    const create = await handleMarketplaceCreateAuth(
+      jsonRequest("POST", "/marketplace/auths", {
+        provider: "chatgpt_codex",
+        encryptedAuthJson: "ciphertext",
+      }),
+      { authenticateClient: tokenOnlyAuth(kind), kv: kv as unknown as Deno.Kv },
+    );
+    assert.equal(create.status, 403, kind);
+    assert.equal(kv.commands.length, 0, kind);
+  }
 });
 
 Deno.test("marketplace owner listing is paginated and never cacheable", async () => {
