@@ -2,7 +2,7 @@ import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
 
 export const OPENROUTER_RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
-export const OPENROUTER_AUTO_MODEL = "openrouter/auto";
+export const OPENROUTER_AUTO_MODEL = "~deepseek/deepseek-v4-flash-latest";
 export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
 export const OPENROUTER_EXCLUDED_MODELS = [
   "openai/*",

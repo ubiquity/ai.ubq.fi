@@ -27,7 +27,7 @@ Deno.test("OpenRouter request translation applies the fixed Auto policy and stri
     stream: true,
   }, sessionId);
 
-  assert.equal(translated.model, "openrouter/auto");
+  assert.equal(translated.model, "~deepseek/deepseek-v4-flash-latest");
   assert.deepEqual(translated.plugins, [{
     id: "auto-router",
     cost_tier: "max",
@@ -78,7 +78,7 @@ Deno.test("OpenRouter selected-model validation rejects disallowed publishers an
       "~anthropic/claude-opus-latest",
       "vendor/gpt-oss-120b",
       "vendor/claude-3",
-      "openrouter/auto",
+      "~deepseek/deepseek-v4-flash-latest",
       "missing-separator",
       "vendor/",
       "",

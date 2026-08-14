@@ -8802,7 +8802,7 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   ]);
   assert.ok(openRouterBody);
   const sent = openRouterBody as Record<string, unknown>;
-  assert.equal(sent.model, "openrouter/auto");
+  assert.equal(sent.model, "~deepseek/deepseek-v4-flash-latest");
   assert.deepEqual(sent.plugins, [{
     id: "auto-router",
     cost_tier: "max",
@@ -9201,7 +9201,7 @@ Deno.test("openai: OpenRouter pre-output rejection restores the authoritative pr
   for (
     const model of [
       null,
-      "openrouter/auto",
+      "~deepseek/deepseek-v4-flash-latest",
       "openai/gpt-5",
       "anthropic/claude-sonnet-4",
       "vendor/gpt-oss-120b",
