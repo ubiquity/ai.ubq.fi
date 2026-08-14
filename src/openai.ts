@@ -6888,6 +6888,9 @@ const handleCerebrasResponses = async (
       "instructions",
       "reasoning",
       "stream",
+      "background",
+      "store",
+      "metadata",
       "tools",
       "tool_choice",
       "parallel_tool_calls",
@@ -7409,6 +7412,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   if (rawRecord.background !== undefined && typeof rawRecord.background !== "boolean") {
     return openaiError(400, "background must be a boolean", "invalid_request_error", { param: "background" });
   }
+  if (rawRecord.store !== undefined && rawRecord.store !== null && typeof rawRecord.store !== "boolean") {
+    return openaiError(400, "store must be a boolean", "invalid_request_error", { param: "store" });
+  }
   const warnings = buildIgnoredWarnings(
     rawRecord,
     new Set([
@@ -7456,6 +7462,11 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   if (modelAvailabilityError) return modelAvailabilityError;
 
   const inputRaw = rawBody.input;
+  if (isCerebrasModel && inputRaw === undefined) {
+    return openaiError(400, "input is required for Cerebras Responses", "invalid_request_error", {
+      param: "input",
+    });
+  }
   let input: ResponseInputItem[];
   if (inputRaw === undefined) {
     input = [];
@@ -7587,6 +7598,14 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         `background responses are not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
         "invalid_request_error",
         { param: "background" },
+      );
+    }
+    if (rawRecord.store === true) {
+      return openaiError(
+        400,
+        `stored responses are not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+        "invalid_request_error",
+        { param: "store" },
       );
     }
   }

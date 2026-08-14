@@ -7991,6 +7991,33 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
     });
 
     await t.step("rejects unsupported background Responses before Cerebras dispatch", async () => {
+      for (const field of ["background", "store"] as const) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "cerebras/gpt-oss-120b",
+                  input: "ping",
+                  [field]: true,
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400, field);
+        assert.equal((await response.json() as { error?: { param?: string } }).error?.param, field);
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
+    await t.step("rejects missing input before Cerebras dispatch", async () => {
       let cerebrasCalls = 0;
       const response = await withFetchMock(
         (url) => {
@@ -8002,16 +8029,12 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
             new Request("https://ai.ubq.fi/v1/responses", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                model: "cerebras/gpt-oss-120b",
-                input: "ping",
-                background: true,
-              }),
+              body: JSON.stringify({ model: "cerebras/gpt-oss-120b" }),
             }),
           ),
       );
       assert.equal(response.status, 400);
-      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "background");
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "input");
       assert.equal(cerebrasCalls, 0);
     });
 
