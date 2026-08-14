@@ -7920,6 +7920,30 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(cerebrasCalls, 2);
     });
 
+    await t.step("preserves refusals in downgraded Chat streams", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_refusal_stream",
+              object: "chat.completion",
+              created: 1_728_000_006,
+              model: "gpt-oss-120b",
+              choices: [{
+                index: 0,
+                message: { role: "assistant", content: null, refusal: "I cannot help with that." },
+                finish_reason: "stop",
+              }],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request({ ...canonicalBody, stream: true })),
+      );
+
+      assert.equal(response.status, 200);
+      assert.match(await response.text(), /"refusal":"I cannot help with that\."/);
+    });
+
     await t.step("rejects invalid Responses controls before Cerebras dispatch", async () => {
       const cases = [
         { field: "temperature", value: "0.5" },

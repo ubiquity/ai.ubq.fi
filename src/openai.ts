@@ -1529,6 +1529,7 @@ const streamCerebrasChatCompletion = (
     const message = isRecord(value.message) && !Array.isArray(value.message) ? value.message : {};
     const delta: Record<string, unknown> = { role: "assistant" };
     if (typeof message.content === "string") delta.content = message.content;
+    if (typeof message.refusal === "string" && message.refusal) delta.refusal = message.refusal;
 
     if (Array.isArray(message.tool_calls)) {
       delta.tool_calls = message.tool_calls.flatMap((toolCall, toolCallIndex) => {
