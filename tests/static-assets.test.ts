@@ -35,7 +35,7 @@ Deno.test("admin provider view declares and renders the OpenRouter failover card
     ]
   ) assert.match(adminHtml, new RegExp(`id=["']${id}["']`));
 
-  assert.match(adminHtml, /admin\.js\?v=passkey-relay-20260814-v2/);
+  assert.match(adminHtml, /admin\.js\?v=passkey-relay-20260814-v3/);
   assert.match(adminScript, /auth\.js\?v=passkey-relay-20260814-v2/);
   assert.match(adminScript, /auth-relay\.js\?v=passkey-relay-20260814-v2/);
   assert.match(adminScript, /renderOpenRouterFailover\(payload\.openrouter\)/);
@@ -44,6 +44,8 @@ Deno.test("admin provider view declares and renders the OpenRouter failover card
   assert.match(adminScript, /cache: "no-store"/);
   assert.match(adminScript, /Authorization: `Bearer \$\{token\}`/);
   assert.match(adminScript, /credentials: "include"/);
+  assert.match(adminScript, /if \(!getAdminToken\(\)\) headers\.delete\("Authorization"\)/);
+  assert.match(adminScript, /!token && !relaySessionActive && !isPreviewOrigin\(\)/);
   assert.match(adminScript, /authenticated: true/);
   assert.doesNotMatch(adminScript, /token: result\.token/);
   const passkeySignInSection = adminScript.slice(

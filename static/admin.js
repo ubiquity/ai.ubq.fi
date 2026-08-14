@@ -38,7 +38,11 @@ const AUTH_RELAY_TIMEOUT_MS = 120_000;
 const API_KEY_REQUEST_LOGS_LIMIT = 20;
 const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
 
-const fetch = (input, init = {}) => globalThis.fetch(input, { ...init, credentials: "include" });
+const fetch = (input, init = {}) => {
+  const headers = new Headers(init.headers);
+  if (!getAdminToken()) headers.delete("Authorization");
+  return globalThis.fetch(input, { ...init, headers, credentials: "include" });
+};
 
 const readStorageJson = (key) => {
   const raw = storage.get(key);
@@ -6359,7 +6363,7 @@ const computeExpiresAtMs = (preset) => {
 
 const testAdminToken = async () => {
   const token = getAdminToken();
-  if (!token && !isPreviewOrigin()) {
+  if (!token && !relaySessionActive && !isPreviewOrigin()) {
     setAuthBadge("bad", "Missing token");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
