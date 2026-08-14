@@ -217,6 +217,8 @@ const yunwuQuotaLatestRefill = mustGet("yunwu-quota-latest-refill");
 const yunwuQuotaInferredCredit = mustGet("yunwu-quota-inferred-credit");
 const yunwuQuotaCache = mustGet("yunwu-quota-cache");
 const yunwuQuotaConfidence = mustGet("yunwu-quota-confidence");
+const debugForceCodex503Input = mustGet("debug-force-codex-503");
+const debugToolsBadge = mustGet("debug-tools-badge");
 const yunwuQuotaObserved = mustGet("yunwu-quota-observed");
 const yunwuQuotaCycleStarted = mustGet("yunwu-quota-cycle-started");
 let defaultsLoaded = false;
@@ -224,6 +226,7 @@ let defaultsSaving = false;
 let defaultsModelMap = new Map();
 let defaultsTouched = false;
 let defaultsLoadId = 0;
+let debugToolsSaving = false;
 
 const kernelListBadge = mustGet("kernel-list-badge");
 const kernelAttention = mustGet("kernel-attention");
@@ -357,6 +360,7 @@ const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
 const setPasskeyUsersBadge = (state, text) => setBadge(passkeyUsersBadge, state, text);
 const setDefaultsBadge = (state, text) => setBadge(defaultsBadge, state, text);
 const setYunwuQuotaBadge = (state, text) => setBadge(yunwuQuotaBadge, state, text);
+const setDebugToolsBadge = (state, text) => setBadge(debugToolsBadge, state, text);
 const setKernelListBadge = (state, text) => setBadge(kernelListBadge, state, text);
 const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text);
 const setKernelQueueBadge = (state, text) => setBadge(kernelQueueBadge, state, text);
@@ -6911,6 +6915,7 @@ const updateReasoningOptions = (modelSlug, preferred) => {
 };
 
 const loadDefaults = async (options = {}) => {
+  void loadDebugTools();
   const token = getAdminToken();
   if (!token && !hasAdminCredential()) {
     setDefaultsBadge("bad", "Missing token");
@@ -7009,6 +7014,71 @@ const loadDefaults = async (options = {}) => {
   } catch {
     setDefaultsBadge("bad", "Offline");
     renderYunwuQuotaDiagnostics(null);
+  }
+};
+
+const loadDebugTools = async () => {
+  if (!adminAccessState.isSuperAdmin) {
+    debugForceCodex503Input.checked = false;
+    debugForceCodex503Input.disabled = true;
+    setDebugToolsBadge("unknown", "Super admin required");
+    return;
+  }
+
+  const token = getAdminToken();
+  debugForceCodex503Input.disabled = true;
+  setDebugToolsBadge("unknown", "Loading...");
+  try {
+    const res = await fetch(apiUrl("/admin/debug-tools"), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setDebugToolsBadge("bad", data?.error?.message ?? "Error");
+      return;
+    }
+    const enabled = data?.debug?.force_codex_primary_503 === true;
+    debugForceCodex503Input.checked = enabled;
+    setDebugToolsBadge(enabled ? "bad" : "ok", enabled ? "Forcing 503" : "Off");
+  } catch {
+    setDebugToolsBadge("bad", "Offline");
+  } finally {
+    debugForceCodex503Input.disabled = !adminAccessState.isSuperAdmin;
+  }
+};
+
+const saveDebugTools = async () => {
+  if (debugToolsSaving || !adminAccessState.isSuperAdmin) return;
+  const enabled = debugForceCodex503Input.checked;
+  const token = getAdminToken();
+  debugToolsSaving = true;
+  debugForceCodex503Input.disabled = true;
+  setDebugToolsBadge("unknown", "Saving...");
+  try {
+    const res = await fetch(apiUrl("/admin/debug-tools"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ force_codex_primary_503: enabled }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      debugForceCodex503Input.checked = !enabled;
+      setDebugToolsBadge("bad", data?.error?.message ?? "Error");
+      return;
+    }
+    const saved = data?.debug?.force_codex_primary_503 === true;
+    debugForceCodex503Input.checked = saved;
+    setDebugToolsBadge(saved ? "bad" : "ok", saved ? "Forcing 503" : "Off");
+  } catch {
+    debugForceCodex503Input.checked = !enabled;
+    setDebugToolsBadge("bad", "Offline");
+  } finally {
+    debugToolsSaving = false;
+    debugForceCodex503Input.disabled = !adminAccessState.isSuperAdmin;
   }
 };
 
@@ -7493,6 +7563,10 @@ defaultsReasoningSelect.addEventListener("change", () => {
   if (!defaultsLoaded) return;
   defaultsTouched = true;
   scheduleDefaultsSave();
+});
+
+debugForceCodex503Input.addEventListener("change", () => {
+  void saveDebugTools();
 });
 
 const markDefaultsEditing = () => {

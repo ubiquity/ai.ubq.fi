@@ -502,6 +502,23 @@
             </div>
           </article>
 
+          <article data-card data-span="half" aria-labelledby="card-debug-tools">
+            <header>
+              <h2 id="card-debug-tools">Debug tools</h2>
+              <p>Temporary fault injection for exercising gateway recovery paths.</p>
+            </header>
+            <div data-card-body>
+              <label data-check data-debug-toggle>
+                <span>
+                  <strong>Force Codex primary 503</strong>
+                  <small>Skip the Codex upstream and exercise the normal OpenRouter failover path.</small>
+                </span>
+                <input id="debug-force-codex-503" type="checkbox" role="switch" />
+              </label>
+              <span id="debug-tools-badge" data-badge data-state="unknown">Not loaded</span>
+            </div>
+          </article>
+
           <article data-card data-span="half" aria-labelledby="card-yunwu-quota">
             <header>
               <h2 id="card-yunwu-quota">YunWu refill cycle</h2>

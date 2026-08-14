@@ -831,7 +831,8 @@ body[data-page="admin"] [data-paid-fallback-summary][hidden] {
   display: none;
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] {
+body[data-page="admin"] label[data-paid-fallback-toggle],
+body[data-page="admin"] label[data-debug-toggle] {
   width: 100%;
   min-width: 0;
   justify-content: space-between;
@@ -839,25 +840,29 @@ body[data-page="admin"] label[data-paid-fallback-toggle] {
   cursor: pointer;
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] > span {
+body[data-page="admin"] label[data-paid-fallback-toggle] > span,
+body[data-page="admin"] label[data-debug-toggle] > span {
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] strong {
+body[data-page="admin"] label[data-paid-fallback-toggle] strong,
+body[data-page="admin"] label[data-debug-toggle] strong {
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] small {
+body[data-page="admin"] label[data-paid-fallback-toggle] small,
+body[data-page="admin"] label[data-debug-toggle] small {
   color: var(--muted-2);
   font-size: 11px;
   line-height: 1.4;
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"] {
+body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"],
+body[data-page="admin"] label[data-debug-toggle] input[role="switch"] {
   appearance: none;
   width: 38px;
   height: 22px;
@@ -870,7 +875,8 @@ body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"] {
   transition: background-color 140ms ease;
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]::after {
+body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]::after,
+body[data-page="admin"] label[data-debug-toggle] input[role="switch"]::after {
   content: "";
   display: block;
   width: 18px;
@@ -881,21 +887,25 @@ body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]::a
   transition: transform 140ms ease, background-color 140ms ease;
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]:checked {
+body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]:checked,
+body[data-page="admin"] label[data-debug-toggle] input[role="switch"]:checked {
   background: var(--accent);
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]:checked::after {
+body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]:checked::after,
+body[data-page="admin"] label[data-debug-toggle] input[role="switch"]:checked::after {
   background: var(--accent-ink);
   transform: translateX(16px);
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]:focus-visible {
+body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]:focus-visible,
+body[data-page="admin"] label[data-debug-toggle] input[role="switch"]:focus-visible {
   background-color: rgba(255, 255, 255, 0.2);
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.14);
 }
 
-body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]:checked:focus-visible {
+body[data-page="admin"] label[data-paid-fallback-toggle] input[role="switch"]:checked:focus-visible,
+body[data-page="admin"] label[data-debug-toggle] input[role="switch"]:checked:focus-visible {
   background: var(--accent);
 }
 

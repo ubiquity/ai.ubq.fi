@@ -25,6 +25,14 @@ Deno.test("admin module remains syntactically valid", () => {
   assert.doesNotThrow(() => Function(sourceWithoutImports));
 });
 
+Deno.test("admin defaults view declares the Codex primary 503 debug switch", () => {
+  assert.match(adminHtml, /id="card-debug-tools"/);
+  assert.match(adminHtml, /id="debug-force-codex-503"/);
+  assert.match(adminScript, /apiUrl\("\/admin\/debug-tools"\)/);
+  assert.match(adminScript, /force_codex_primary_503/);
+  assert.match(adminScript, /adminAccessState\.isSuperAdmin/);
+});
+
 Deno.test("admin provider view declares and renders the OpenRouter failover card", () => {
   for (
     const id of [
