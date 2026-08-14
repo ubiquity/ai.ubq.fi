@@ -880,13 +880,19 @@ const withoutQuotaClass = (slot: CodexRoutingSlot, quotaClassKey: CodexQuotaClas
     (candidate, block) => !candidate || block.blocked_until_ms > candidate.blocked_until_ms ? block : candidate,
     null,
   );
+  const observedQuotaSignals = remaining
+    .map((block) => block.quota_signal_observed_at_ms)
+    .filter((value): value is number => value !== null);
+  const latestQuotaSignalObservedAtMs = observedQuotaSignals.length
+    ? Math.max(...observedQuotaSignals)
+    : slot.quota_signal_observed_at_ms;
   return {
     ...slot,
     quota_blocks_by_class: quotaBlocksByClass,
     quota_blocked_classes: Object.keys(quotaBlocksByClass),
     quota_blocked_until_ms: latest?.blocked_until_ms ?? null,
     quota_block_source: latest?.source ?? null,
-    quota_signal_observed_at_ms: latest?.quota_signal_observed_at_ms ?? null,
+    quota_signal_observed_at_ms: latestQuotaSignalObservedAtMs,
     observed_reset_at_ms: latest?.observed_reset_at_ms ?? null,
     observed_reset_at_is_stable: latest?.observed_reset_at_is_stable ?? false,
     banked_reset_generation_ambiguous: remaining.some((block) => block.banked_reset_generation_ambiguous),
@@ -909,7 +915,12 @@ const recheckQuotaClasses = (slot: CodexRoutingSlot, recheckAtMs: number): Codex
   const quotaBlocksByClass = Object.fromEntries(
     Object.entries(slot.quota_blocks_by_class ?? {}).map(([key, block]) => [
       key,
-      { ...block, blocked_until_ms: recheckAtMs, banked_reset_generation_ambiguous: true },
+      {
+        ...block,
+        blocked_until_ms: recheckAtMs,
+        quota_signal_observed_at_ms: recheckAtMs,
+        banked_reset_generation_ambiguous: true,
+      },
     ]),
   ) as Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>>;
   const latest = Object.values(quotaBlocksByClass).reduce<CodexQuotaClassBlock | null>(
@@ -1160,7 +1171,7 @@ const applyCapacityObservation = (
   const classAwareCurrent = withLegacyQuotaClassMap(current);
   const classBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
   const classQuotaSignalObservedAtMs = classBlock?.quota_signal_observed_at_ms ??
-    (Object.keys(current.quota_blocks_by_class ?? {}).length === 0 ? current.quota_signal_observed_at_ms : null);
+    current.quota_signal_observed_at_ms;
   const newerQuotaSignal = classQuotaSignalObservedAtMs !== null &&
     classQuotaSignalObservedAtMs >= observation.snapshot_at_ms;
   const clearCircuit = capacityPositive && !newerQuotaSignal;
@@ -2254,7 +2265,7 @@ const selectCodexRoutingAccountsFromState = async (
     const observedCapacityHeadroom = freshCapacity ? capacityHeadroomForObservation(capacityObservation!, model) : null;
     const quotaHeadroom = freshCapacity ? observedCapacityHeadroom : quotaHeadroomFor(slot);
     const classQuotaSignalObservedAtMs = requestedClassBlock?.quota_signal_observed_at_ms ??
-      (Object.keys(slot.quota_blocks_by_class ?? {}).length === 0 ? slot.quota_signal_observed_at_ms : null);
+      slot.quota_signal_observed_at_ms;
     const quotaSignalNewer = capacityObservation?.snapshot_at_ms !== undefined &&
       classQuotaSignalObservedAtMs !== null &&
       classQuotaSignalObservedAtMs >= capacityObservation.snapshot_at_ms;
