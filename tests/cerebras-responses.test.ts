@@ -4,6 +4,7 @@ import {
   cerebrasResponseSse,
   chatCompletionToCerebrasResponse,
 } from "../src/cerebras_responses.ts";
+import { normalizeCerebrasChatCompletion } from "../src/cerebras.ts";
 
 const expectOk = <T>(value: { ok: true; value: T } | { ok: false; message: string; param?: string }): T => {
   if (!value.ok) throw new Error(value.message);
@@ -234,6 +235,41 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
   assert.equal((events[0]?.response as Record<string, unknown>).completed_at, null);
   assert.equal((events[0]?.response as Record<string, unknown>).usage, null);
   assert.doesNotMatch(stream, /data: \[DONE\]/);
+});
+
+Deno.test("GPT-OSS Chat refusals remain refusals in Responses bodies and SSE", () => {
+  const normalized = normalizeCerebrasChatCompletion(
+    {
+      id: "chatcmpl_refusal",
+      object: "chat.completion",
+      created: 1_728_000_000,
+      model: "gpt-oss-120b",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: null, refusal: "I cannot help with that." },
+        finish_reason: "stop",
+      }],
+      usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
+    },
+    "gpt-oss-120b",
+  );
+  const response = chatCompletionToCerebrasResponse(
+    expectOk(normalized),
+    "cerebras/gpt-oss-120b",
+  );
+  const value = expectOk(response);
+  assert.equal(value.output_text, "");
+  assert.deepEqual((value.output as Array<Record<string, unknown>>)[0]?.content, [
+    { type: "refusal", refusal: "I cannot help with that." },
+  ]);
+
+  const events = [...cerebrasResponseSse(value).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  assert.equal(events.some((event) => event.type === "response.output_text.delta"), false);
+  assert.equal(
+    events.find((event) => event.type === "response.refusal.done")?.refusal,
+    "I cannot help with that.",
+  );
 });
 
 Deno.test("GPT-OSS length termination becomes an incomplete Responses terminal", () => {

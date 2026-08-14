@@ -4,8 +4,8 @@ import { getString, isRecord } from "./utils.ts";
 
 /**
  * The Cerebras GPT-OSS endpoint speaks Chat Completions.  Codex speaks
- * Responses, so this module contains only the lossless, text/tool subset that
- * the preview bridge can translate between those two wire contracts.
+ * Responses, so this module contains only the lossless text, refusal, and tool
+ * subset that the preview bridge can translate between those wire contracts.
  */
 
 type NormalizationResult<T> =
@@ -324,13 +324,12 @@ const responseUsage = (usage: unknown): Record<string, unknown> | undefined => {
   };
 };
 
-const responseMessageItem = (id: string, text: string): Record<string, unknown> => ({
-  id,
-  type: "message",
-  role: "assistant",
-  status: "completed",
-  content: [{ type: "output_text", text, annotations: [] }],
-});
+const responseMessageItem = (id: string, text: string, refusal = ""): Record<string, unknown> => {
+  const content: Record<string, unknown>[] = [];
+  if (text || !refusal) content.push({ type: "output_text", text, annotations: [] });
+  if (refusal) content.push({ type: "refusal", refusal });
+  return { id, type: "message", role: "assistant", status: "completed", content };
+};
 
 const responseFunctionCallItem = (
   id: string,
@@ -374,8 +373,9 @@ export const chatCompletionToCerebrasResponse = (
   const message = choice.message;
   const output: Record<string, unknown>[] = [];
   const text = typeof message.content === "string" ? message.content : "";
-  if (text || !Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
-    output.push(responseMessageItem(`msg_${id}`, text));
+  const refusal = typeof message.refusal === "string" ? message.refusal : "";
+  if (text || refusal || !Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
+    output.push(responseMessageItem(`msg_${id}`, text, refusal));
   }
   if (Array.isArray(message.tool_calls)) {
     for (const [index, rawCall] of message.tool_calls.entries()) {
@@ -461,7 +461,44 @@ export const cerebrasResponseSse = (response: CerebrasResponsesBody): string => 
     add({ type: "response.output_item.added", response_id: id, output_index: index, item: inProgressItem });
     if (item.type === "message" && Array.isArray(item.content)) {
       for (const [contentIndex, content] of item.content.entries()) {
-        if (!isRecord(content) || getString(content.type) !== "output_text") continue;
+        if (!isRecord(content)) continue;
+        if (getString(content.type) === "refusal") {
+          const refusal = getString(content.refusal) ?? "";
+          add({
+            type: "response.content_part.added",
+            response_id: id,
+            item_id: item.id,
+            output_index: index,
+            content_index: contentIndex,
+            part: { type: "refusal", refusal: "" },
+          });
+          add({
+            type: "response.refusal.delta",
+            response_id: id,
+            item_id: item.id,
+            output_index: index,
+            content_index: contentIndex,
+            delta: refusal,
+          });
+          add({
+            type: "response.refusal.done",
+            response_id: id,
+            item_id: item.id,
+            output_index: index,
+            content_index: contentIndex,
+            refusal,
+          });
+          add({
+            type: "response.content_part.done",
+            response_id: id,
+            item_id: item.id,
+            output_index: index,
+            content_index: contentIndex,
+            part: content,
+          });
+          continue;
+        }
+        if (getString(content.type) !== "output_text") continue;
         const text = getString(content.text) ?? "";
         add({
           type: "response.content_part.added",

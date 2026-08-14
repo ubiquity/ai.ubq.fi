@@ -8042,6 +8042,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       const cases = [
         { field: "truncation", value: "auto" },
         { field: "include", value: ["reasoning.encrypted_content"] },
+        { field: "top_logprobs", value: 1 },
       ] as const;
       for (const testCase of cases) {
         let cerebrasCalls = 0;

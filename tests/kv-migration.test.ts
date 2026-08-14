@@ -189,6 +189,17 @@ Deno.test("KV migration classifies v2 incident state and skips the transient cir
     "paid_fallback_v3_deletion_guards",
   );
   assert.equal(classifyKvMigrationKey(["uos_ai", "runtime_config", "v2"], options).action, "import");
+  assert.equal(
+    classifyKvMigrationKey(["ubq_ai", "marketplace", "auth_accounts", "auth-id"], options).group,
+    "marketplace_auth_accounts",
+  );
+  assert.equal(
+    classifyKvMigrationKey(
+      ["ubq_ai", "marketplace", "auth_accounts_by_owner", "owner-id", "auth-id"],
+      options,
+    ).group,
+    "marketplace_auth_accounts_by_owner",
+  );
   assert.equal(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options).group, "unknown");
 });
 

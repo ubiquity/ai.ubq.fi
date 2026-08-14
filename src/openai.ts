@@ -6899,6 +6899,7 @@ const handleCerebrasResponses = async (
       "max_output_tokens",
       "temperature",
       "top_p",
+      "top_logprobs",
     ]),
   );
   if (usageContext?.responseTelemetry) {
@@ -7629,6 +7630,16 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           { param: "include" },
         );
       }
+    }
+    if (
+      rawRecord.top_logprobs !== undefined && rawRecord.top_logprobs !== null && rawRecord.top_logprobs !== 0
+    ) {
+      return openaiError(
+        400,
+        `token log probabilities are not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+        "invalid_request_error",
+        { param: "top_logprobs" },
+      );
     }
   }
 
