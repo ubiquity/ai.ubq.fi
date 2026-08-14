@@ -7388,6 +7388,27 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       );
     }
   }
+  if (rawRecord.metadata !== undefined && rawRecord.metadata !== null) {
+    const metadata = rawRecord.metadata;
+    if (!isRecord(metadata) || Array.isArray(metadata)) {
+      return openaiError(400, "metadata must be an object", "invalid_request_error", { param: "metadata" });
+    }
+    const entries = Object.entries(metadata);
+    if (
+      entries.length > 16 ||
+      entries.some(([key, value]) => key.length > 64 || typeof value !== "string" || value.length > 512)
+    ) {
+      return openaiError(
+        400,
+        "metadata supports at most 16 string entries with 64-character keys and 512-character values",
+        "invalid_request_error",
+        { param: "metadata" },
+      );
+    }
+  }
+  if (rawRecord.background !== undefined && typeof rawRecord.background !== "boolean") {
+    return openaiError(400, "background must be a boolean", "invalid_request_error", { param: "background" });
+  }
   const warnings = buildIgnoredWarnings(
     rawRecord,
     new Set([
@@ -7550,7 +7571,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   if (promptCacheAvailabilityError) return promptCacheAvailabilityError;
 
   if (isCerebrasModel) {
-    for (const field of ["previous_response_id", "conversation"] as const) {
+    for (const field of ["previous_response_id", "conversation", "prompt"] as const) {
       if (rawRecord[field] !== undefined && rawRecord[field] !== null) {
         return openaiError(
           400,
@@ -7559,6 +7580,14 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           { param: field },
         );
       }
+    }
+    if (rawRecord.background === true) {
+      return openaiError(
+        400,
+        `background responses are not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+        "invalid_request_error",
+        { param: "background" },
+      );
     }
   }
 

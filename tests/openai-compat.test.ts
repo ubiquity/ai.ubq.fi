@@ -7959,6 +7959,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       const cases = [
         { field: "previous_response_id", value: "resp_prior" },
         { field: "conversation", value: "conv_prior" },
+        { field: "prompt", value: { id: "pmpt_prior", variables: { topic: "test" } } },
       ] as const;
       for (const testCase of cases) {
         let cerebrasCalls = 0;
@@ -7985,6 +7986,61 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
           (await response.json() as { error?: { param?: string } }).error?.param,
           testCase.field,
         );
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
+    await t.step("rejects unsupported background Responses before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                background: true,
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "background");
+      assert.equal(cerebrasCalls, 0);
+    });
+
+    await t.step("rejects malformed Responses metadata before Cerebras dispatch", async () => {
+      const cases: unknown[] = [
+        [],
+        { invalid: 1 },
+        Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`key-${index}`, "value"])),
+        { ["k".repeat(65)]: "value" },
+        { key: "v".repeat(513) },
+      ];
+      for (const metadata of cases) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: "cerebras/gpt-oss-120b", input: "ping", metadata }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400);
+        assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "metadata");
         assert.equal(cerebrasCalls, 0);
       }
     });
