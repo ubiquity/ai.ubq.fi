@@ -8332,6 +8332,70 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["chatgpt_codex", "openrouter"]);
 });
 
+Deno.test("openai: a client follow-up replays failover output without the gateway warning", async () => {
+  const openRouterInputs: Array<Array<Record<string, unknown>>> = [];
+  let openRouterCall = 0;
+  const requestFor = (input: unknown) =>
+    new Request("https://ai.ubq.fi/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input, stream: true }),
+    });
+
+  await withFetchMock(
+    (url, bodyText) => {
+      if (url !== "https://openrouter.ai/api/v1/responses") {
+        return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const body = JSON.parse(bodyText ?? "{}") as { input?: unknown };
+      assert.ok(Array.isArray(body.input));
+      openRouterInputs.push(body.input as Array<Record<string, unknown>>);
+      openRouterCall += 1;
+      return sseResponse(openRouterTextSseChunks({
+        responseId: `resp_openrouter_${openRouterCall}`,
+        text: openRouterCall === 1 ? "first fallback answer" : "follow-up fallback answer",
+      }));
+    },
+    async () => {
+      const first = await handleResponses(requestFor([
+        { type: "message", role: "user", content: [{ type: "input_text", text: "first question" }] },
+      ]));
+      assert.equal(first.status, 200);
+      const firstEvents = [...(await first.text()).matchAll(/^data: (.+)$/gm)]
+        .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+      const firstTerminal = firstEvents.find((event) => event.type === "response.completed");
+      const firstOutput = (firstTerminal?.response as { output?: unknown[] } | undefined)?.output;
+      assert.ok(Array.isArray(firstOutput));
+      const warning = firstOutput.find((item) => {
+        if (!item || typeof item !== "object") return false;
+        const id = (item as { id?: unknown }).id;
+        return typeof id === "string" && id.startsWith("msg_failover_");
+      }) as Record<string, unknown> | undefined;
+      assert.ok(warning);
+      assert.match(JSON.stringify(warning), /⚠ Failover active: this response is from `openrouter:/);
+
+      const followUp = await handleResponses(requestFor([
+        ...firstOutput,
+        { type: "message", role: "user", content: [{ type: "input_text", text: "second question" }] },
+      ]));
+      assert.equal(followUp.status, 200);
+      assert.match(await followUp.text(), /follow-up fallback answer/);
+    },
+    { openRouterApiKey: "or-test-key" },
+  );
+
+  assert.equal(openRouterInputs.length, 2);
+  const firstWarning = openRouterInputs[0]?.find((item) => String(item.id).startsWith("msg_failover_"));
+  assert.equal(firstWarning, undefined);
+  const replay = openRouterInputs[1]!;
+  assert.equal(replay.some((item) => String(item.id).startsWith("msg_failover_")), false);
+  assert.match(JSON.stringify(replay), /first fallback answer/);
+  assert.match(JSON.stringify(replay), /second question/);
+});
+
 Deno.test("openai: OpenRouter handler failover covers precommit failures and commitment barriers", async (t) => {
   const scenarios = [
     {
