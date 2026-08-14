@@ -57,7 +57,6 @@ export const PASSKEY_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const AUTH_PREFIX = ["uos_ai", "auth"] as const;
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
-const PASSKEY_PREVIEW_HOST = /^(?:p-)?ai-ubq-fi(?:-[a-z0-9]{12})?\.(?:deno\.dev|ubiquity-dao\.deno\.net)$/;
 const RP_NAME = "UbiquityOS AI Gateway";
 
 export const passkeyUserKey = (userId: string): Deno.KvKey => [...AUTH_PREFIX, "users", userId];
@@ -139,7 +138,6 @@ const isTrustedPasskeyOrigin = (origin: string): boolean => {
   try {
     const url = new URL(origin);
     if (url.origin === PASSKEY_CANONICAL_ORIGIN) return true;
-    if (url.protocol === "https:" && PASSKEY_PREVIEW_HOST.test(url.hostname.toLowerCase())) return true;
     return (url.protocol === "http:" || url.protocol === "https:") && isLoopbackHost(url.hostname);
   } catch {
     return false;

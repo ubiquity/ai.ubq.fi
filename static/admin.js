@@ -481,8 +481,7 @@ const formatPasskeyLoginError = (error) => {
     !isAuthRelayMode && !isRemoteAiTarget() &&
     /invalid passkey assertion|unknown passkey|passkey account not found|no passkeys registered/i.test(message)
   ) {
-    const originHint = isPreviewOrigin() ? "this preview origin" : "localhost";
-    return `${message}. This origin uses ${originHint} passkeys; choose ai.ubq.fi or add a passkey with the fallback token.`;
+    return `${message}. This origin uses localhost passkeys; choose ai.ubq.fi or add a local passkey with the fallback token.`;
   }
   return message;
 };
@@ -573,7 +572,8 @@ const restoreSettings = () => {
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
   passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
-  baseSelect.value = storage.get(STORAGE_KEYS.base) ?? "local";
+  baseSelect.value = isPreviewOrigin() ? "ai" : storage.get(STORAGE_KEYS.base) ?? "local";
+  if (isPreviewOrigin()) storage.set(STORAGE_KEYS.base, "ai");
   applyLocalDevelopmentAuth();
   updateBasePreview();
 };
@@ -6764,7 +6764,8 @@ passkeyLoginBtn.addEventListener("click", async () => {
   passkeyRegisterBtn.disabled = true;
   try {
     if (
-      !isAuthRelayMode && isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()
+      !isAuthRelayMode &&
+      (isPreviewOrigin() || (isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()))
     ) {
       const relay = await requestRemotePasskeySession();
       if (relay.handle) setPasskeyHandleValue(relay.handle);
