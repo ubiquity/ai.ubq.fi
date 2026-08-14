@@ -1712,7 +1712,7 @@ Deno.test("openai: an expired access token makes a quota-shaped 403 actionable",
   }
 });
 
-Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly ignores temperature", async () => {
+Deno.test("openai: Terra Chat Completions ignores unsupported completion caps and temperature", async () => {
   let recordedBody: Record<string, unknown> | null = null;
 
   const response = await withFetchMock(
@@ -1738,11 +1738,10 @@ Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly
   assert.equal(response.status, 200);
   const warnings = parseWarnings(response.headers.get("x-uos-warning"));
   assert.ok(warnings.includes("temperature_ignored"));
-  assert.equal(warnings.includes("max_output_tokens_ignored"), false);
   assert.ok(recordedBody);
   const recorded = recordedBody as Record<string, unknown>;
   assert.equal(recorded.model, TERRA_TEST_MODEL);
-  assert.equal(recorded.max_output_tokens, 2048);
+  assert.equal("max_output_tokens" in recorded, false);
   assert.equal("max_completion_tokens" in recorded, false);
   assert.equal("temperature" in recorded, false);
 });

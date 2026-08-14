@@ -7040,11 +7040,13 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   }
   const model = normalizeModelForCodex(modelRaw);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.model = modelRaw;
-  const maxCompletionTokens = parseMaxCompletionTokensField(rawRecord.max_completion_tokens);
-  if (!maxCompletionTokens.ok) {
-    return openaiError(400, maxCompletionTokens.message, "invalid_request_error", { param: "max_completion_tokens" });
-  }
   if (model === CEREBRAS_GPT_OSS_120B_MODEL) {
+    const maxCompletionTokens = parseMaxCompletionTokensField(rawRecord.max_completion_tokens);
+    if (!maxCompletionTokens.ok) {
+      return openaiError(400, maxCompletionTokens.message, "invalid_request_error", {
+        param: "max_completion_tokens",
+      });
+    }
     return await handleCerebrasChatCompletions(req, rawRecord, modelRaw, usageContext);
   }
   const modelMetadata = await getCodexModelMetadata(model);
@@ -7129,7 +7131,6 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     reasoning: reasoningValue,
     instructions,
   });
-  if (maxCompletionTokens.value !== undefined) codexBody.max_output_tokens = maxCompletionTokens.value;
   const passthroughKeys: PassthroughToolSchemaKey[] = [
     "tools",
     "tool_choice",
