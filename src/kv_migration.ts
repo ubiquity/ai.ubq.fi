@@ -184,6 +184,7 @@ const LEGACY_DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
 ];
 
 const TRANSIENT_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
+  { group: "codex_rate_limit", prefix: ["uos_ai", "codex_rate_limit"] },
   { group: "passkey_challenges", prefix: ["uos_ai", "auth", "challenges"] },
   { group: "passkey_sessions", prefix: ["uos_ai", "auth", "sessions"] },
   { group: "embeddings_rate", prefix: ["embeddings", "v1", "rate"] },

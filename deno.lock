@@ -49,6 +49,7 @@
     "npm:pg-connection-string@^2.9.1": "2.11.0",
     "npm:superjson@^2.2.2": "2.2.3",
     "npm:temporal-polyfill@0.3": "0.3.0",
+    "npm:tiktoken@1.0.22": "1.0.22",
     "npm:ws@^8.18.3": "8.20.0",
     "npm:zod@^4.1.5": "4.3.6"
   },
@@ -462,6 +463,9 @@
     },
     "temporal-spec@0.3.0": {
       "integrity": "sha512-n+noVpIqz4hYgFSMOSiINNOUOMFtV5cZQNCmmszA6GiVFVRt3G7AqVyhXjhCSmowvQn+NsGn+jMDMKJYHd3bSQ=="
+    },
+    "tiktoken@1.0.22": {
+      "integrity": "sha512-PKvy1rVF1RibfF3JlXBSP0Jrcw2uq3yXdgcEXtKTYn3QJ/cBRBHDnrJ5jHky+MENZ6DIPwNUGWpkVx+7joCpNA=="
     },
     "tslib@1.14.1": {
       "integrity": "sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg=="
