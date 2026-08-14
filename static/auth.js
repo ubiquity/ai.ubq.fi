@@ -284,14 +284,18 @@ const finishRegister = async (baseUrl, credential, handle) => {
   });
 };
 
-export const signInWithPasskey = async ({ handle = "", baseUrl = "", useHandle = false } = {}) => {
+export const signInWithPasskey = async ({ handle = "", baseUrl = "", useHandle = false, audienceOrigin = "" } = {}) => {
   const normalizedHandle = normalizePasskeyHandle(handle);
   const unavailable = getPasskeyUnavailableMessage("login");
   if (unavailable) throw new Error(unavailable);
 
-  const body = useHandle && normalizedHandle
-    ? { ...getClientOriginPayload(), handle: normalizedHandle }
-    : getClientOriginPayload();
+  const clientOriginPayload = getClientOriginPayload();
+  const normalizedAudienceOrigin = String(audienceOrigin ?? "").trim();
+  const body = {
+    ...clientOriginPayload,
+    ...(useHandle && normalizedHandle ? { handle: normalizedHandle } : {}),
+    ...(normalizedAudienceOrigin ? { relay_origin: normalizedAudienceOrigin } : {}),
+  };
   const start = await requestJson(baseUrl, "/api/auth/login/start", {
     method: "POST",
     headers: { "content-type": "application/json" },

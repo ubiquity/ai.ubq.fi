@@ -11,7 +11,7 @@ import {
 } from "./kernel_usage.ts";
 import { recordKernelPolicyQueue } from "./kernel_policy_queue.ts";
 import { getKv } from "./kv.ts";
-import { getPasskeySession, isPasskeyUserAdmin } from "./passkeys.ts";
+import { getPasskeySessionForRequest, isPasskeyUserAdmin } from "./passkeys.ts";
 import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type { ApiKeyRecord } from "./types.ts";
 
@@ -693,7 +693,7 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   }
 
   if (token.startsWith("uos_ai_session_")) {
-    const passkeySession = await getPasskeySession(token);
+    const passkeySession = await getPasskeySessionForRequest(req);
     if (!passkeySession) {
       logClientAuth({ ok: false, method: "passkey_session", status: 401, reason: "invalid_api_key" });
       return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
@@ -915,7 +915,7 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
     return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
 
-  const passkeySession = await getPasskeySession(token);
+  const passkeySession = await getPasskeySessionForRequest(req);
   if (passkeySession) {
     if (!isPasskeyUserAdmin(passkeySession.user)) {
       logAdminAuth({ ok: false, method: "passkey_session", status: 403, reason: "passkey_user_not_admin" });

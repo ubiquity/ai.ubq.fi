@@ -32,6 +32,7 @@ export type PasskeySessionRecord = {
   user_id: string;
   created_at_ms: number;
   expires_at_ms: number;
+  audience_origin?: string;
 };
 
 type PasskeyChallengeRecord = {
@@ -39,6 +40,7 @@ type PasskeyChallengeRecord = {
   type: "registration" | "authentication";
   origin: string;
   rp_id: string;
+  audience_origin?: string;
   user_id?: string;
   handle?: string;
   is_admin?: boolean;
@@ -57,6 +59,7 @@ export const PASSKEY_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const AUTH_PREFIX = ["uos_ai", "auth"] as const;
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
+const DENO_PREVIEW_HOST = /^(?:p-)?ai-ubq-fi(?:-[a-z0-9]{12})?\.(?:deno\.dev|ubiquity-dao\.deno\.net)$/;
 const RP_NAME = "UbiquityOS AI Gateway";
 
 export const passkeyUserKey = (userId: string): Deno.KvKey => [...AUTH_PREFIX, "users", userId];
@@ -117,6 +120,21 @@ const parseOrigin = (value: string | null): string | null => {
   try {
     const origin = new URL(trimmed).origin;
     return origin === "null" ? null : origin;
+  } catch {
+    return null;
+  }
+};
+
+const parseTrustedPasskeyAudienceOrigin = (value: unknown): string | null => {
+  const raw = getString(value)?.trim() ?? "";
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.origin !== raw.replace(/\/+$/g, "")) return null;
+    const hostname = url.hostname.toLowerCase();
+    if (isLoopbackHost(hostname) && url.protocol === "http:") return url.origin;
+    if (url.protocol === "https:" && DENO_PREVIEW_HOST.test(hostname)) return url.origin;
+    return null;
   } catch {
     return null;
   }
@@ -230,7 +248,11 @@ const consumeChallenge = async (kv: Deno.Kv, challenge: string): Promise<Passkey
   return entry.value;
 };
 
-const createSession = async (kv: Deno.Kv, userId: string): Promise<PasskeySessionRecord> => {
+const createSession = async (
+  kv: Deno.Kv,
+  userId: string,
+  audienceOrigin?: string,
+): Promise<PasskeySessionRecord> => {
   const createdAtMs = nowMs();
   const token = `uos_ai_session_${crypto.randomUUID()}`;
   const record: PasskeySessionRecord = {
@@ -238,6 +260,7 @@ const createSession = async (kv: Deno.Kv, userId: string): Promise<PasskeySessio
     user_id: userId,
     created_at_ms: createdAtMs,
     expires_at_ms: createdAtMs + PASSKEY_SESSION_TTL_MS,
+    ...(audienceOrigin ? { audience_origin: audienceOrigin } : {}),
   };
   await kv.set(passkeySessionKey(token), record, { expireIn: PASSKEY_SESSION_TTL_MS });
   return record;
@@ -332,6 +355,15 @@ export const getPasskeySessionFromRequest = async (req: Request): Promise<Passke
   return token ? await getPasskeySession(token) : null;
 };
 
+const getRequestOrigin = (req: Request): string | null =>
+  parseOrigin(req.headers.get("origin")) ?? parseOrigin(req.headers.get("referer"));
+
+export const getPasskeySessionForRequest = async (req: Request): Promise<PasskeySession | null> => {
+  const session = await getPasskeySessionFromRequest(req);
+  if (!session?.session.audience_origin) return session;
+  return getRequestOrigin(req) === session.session.audience_origin ? session : null;
+};
+
 export const handlePasskeyRegisterStart = async (
   req: Request,
   options: { defaultIsAdmin?: boolean } = {},
@@ -349,7 +381,7 @@ export const handlePasskeyRegisterStart = async (
   if (!isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
   const token = getBearerToken(req) ?? "";
-  const existingSession = token ? await getPasskeySession(token) : null;
+  const existingSession = token ? await getPasskeySessionForRequest(req) : null;
   const requestedHandle = normalizePasskeyHandle(raw.handle);
   const tokenHandle = token ? await buildPasskeyHandle(token) : "";
   const requestedUser = requestedHandle ? await getUserByHandle(kv, requestedHandle) : null;
@@ -499,6 +531,11 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
   if (!isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
   const handle = normalizePasskeyHandle(raw.handle);
+  const rawAudienceOrigin = getString(raw.relay_origin)?.trim() ?? "";
+  const audienceOrigin = rawAudienceOrigin ? parseTrustedPasskeyAudienceOrigin(rawAudienceOrigin) : null;
+  if (rawAudienceOrigin && !audienceOrigin) {
+    return openaiError(400, "Invalid passkey relay origin", "invalid_request_error");
+  }
 
   let allowCredentials: Array<{ id: string; type: "public-key" }> | undefined;
   let userVerification: "preferred" | "required" = "preferred";
@@ -518,7 +555,13 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
     userVerification,
   });
 
-  await saveChallenge(kv, { challenge: publicKey.challenge, type: "authentication", origin, rp_id: rpId });
+  await saveChallenge(kv, {
+    challenge: publicKey.challenge,
+    type: "authentication",
+    origin,
+    rp_id: rpId,
+    ...(audienceOrigin ? { audience_origin: audienceOrigin } : {}),
+  });
   return json(200, { publicKey }, { "Cache-Control": "no-store" });
 };
 
@@ -585,7 +628,7 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
       return openaiError(409, "Passkey credential was modified concurrently; retry", "invalid_request_error");
     }
 
-    const session = await createSession(kv, credential.user_id);
+    const session = await createSession(kv, credential.user_id, challengeRecord.audience_origin);
     return json(
       200,
       {
@@ -611,7 +654,7 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
 };
 
 export const handlePasskeySession = async (req: Request): Promise<Response> => {
-  const session = await getPasskeySessionFromRequest(req);
+  const session = await getPasskeySessionForRequest(req);
   if (!session) return openaiError(401, "Unauthorized", "invalid_api_key");
   return json(
     200,
@@ -634,8 +677,11 @@ export const handlePasskeySession = async (req: Request): Promise<Response> => {
 export const handlePasskeyLogout = async (req: Request): Promise<Response> => {
   const token = getBearerToken(req);
   if (token) {
-    const kv = await getKv();
-    if (kv) await kv.delete(passkeySessionKey(token));
+    const session = await getPasskeySessionForRequest(req);
+    if (session) {
+      const kv = await getKv();
+      if (kv) await kv.delete(passkeySessionKey(token));
+    }
   }
   return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
 };

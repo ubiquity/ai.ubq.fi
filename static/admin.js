@@ -12,8 +12,13 @@ import {
   signOut,
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
-} from "./auth.js?v=provider-capacity-20260807-yunwu-overlay";
-import { AUTH_RELAY_MESSAGE_TYPE, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "./auth-relay.js";
+} from "./auth.js?v=passkey-relay-20260814-v2";
+import {
+  AUTH_RELAY_MESSAGE_TYPE,
+  isAiGatewayPreviewOrigin,
+  parseAuthRelayAction,
+  parseTrustedAuthRelayOrigin,
+} from "./auth-relay.js?v=passkey-relay-20260814-v2";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
@@ -386,7 +391,9 @@ const isAuthRelayMode = Boolean(authRelayOrigin && authRelayAction && globalThis
 
 const getPasskeyBaseUrl = () => isAuthRelayMode ? globalThis.location.origin : resolveBaseUrl();
 
-const isRemoteAiTarget = () => new URL(resolveBaseUrl()).origin === "https://ai.ubq.fi";
+const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
+const isPreviewOrigin = () => isAiGatewayPreviewOrigin(globalThis.location.origin);
+const isRemoteAiTarget = () => new URL(resolveBaseUrl()).origin === PASSKEY_CANONICAL_ORIGIN;
 
 const isCrossOriginTarget = () => new URL(resolveBaseUrl()).origin !== globalThis.location.origin;
 
@@ -479,26 +486,10 @@ const formatPasskeyLoginError = (error) => {
   return message;
 };
 
-const getValidCachedRelayAuth = async () => {
-  const token = getAdminToken();
-  if (!token) return null;
-  try {
-    const res = await fetch(apiUrl("/uos/auth"), {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data?.auth?.is_admin) return null;
-    return { token, handle: getPasskeyHandle() };
-  } catch {
-    return null;
-  }
-};
-
 let authRelayRequest = null;
 const requestRemotePasskeySession = () => {
   if (authRelayRequest) return authRelayRequest;
-  const targetOrigin = new URL(resolveBaseUrl()).origin;
+  const targetOrigin = isPreviewOrigin() ? PASSKEY_CANONICAL_ORIGIN : new URL(resolveBaseUrl()).origin;
   const relayUrl = new URL("/admin", targetOrigin);
   relayUrl.searchParams.set("auth_relay_origin", globalThis.location.origin);
   relayUrl.searchParams.set("auth_relay_action", "passkey-login");
@@ -549,6 +540,51 @@ const requestRemotePasskeySession = () => {
   return authRelayRequest;
 };
 
+const signInAdminWithPasskey = async () => {
+  if (
+    !isAuthRelayMode &&
+    (isPreviewOrigin() || (isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()))
+  ) {
+    const relay = await requestRemotePasskeySession();
+    if (relay.handle) setPasskeyHandleValue(relay.handle);
+    applySignedInToken(relay.token, { deviceRegistered: true });
+    setPasskeyStatus("ok", "Passkey signed in");
+    return relay;
+  }
+
+  const result = await signInWithPasskey({
+    baseUrl: getPasskeyBaseUrl(),
+    handle: getPasskeyHandle(),
+    useHandle: Boolean(getPasskeyHandle()),
+    audienceOrigin: isAuthRelayMode ? authRelayOrigin : "",
+  });
+  if (result.handle) setPasskeyHandleValue(result.handle);
+  applySignedInToken(result.token, { deviceRegistered: true });
+  setPasskeyStatus("ok", "Passkey signed in");
+  postAuthRelayResult(result);
+  return result;
+};
+
+const runPasskeyLogin = async ({ automatic = false } = {}) => {
+  setPasskeyStatus("unknown", automatic ? "Starting passkey sign-in..." : "Signing in...");
+  passkeyLoginBtn.disabled = true;
+  passkeyRegisterBtn.disabled = true;
+  try {
+    return await signInAdminWithPasskey();
+  } catch (error) {
+    setSignedInState(false);
+    const message = formatPasskeyLoginError(error);
+    setPasskeyStatus(
+      automatic ? "unknown" : "bad",
+      automatic ? `${message} Click the sign-in button to continue.` : message,
+    );
+    return null;
+  } finally {
+    passkeyLoginBtn.disabled = false;
+    passkeyRegisterBtn.disabled = false;
+  }
+};
+
 const getRegistrationAdminToken = async () => {
   const token = getAdminToken();
   if (token || !isCrossOriginTarget() || !isRemoteAiTarget()) return token;
@@ -565,7 +601,8 @@ const restoreSettings = () => {
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
   passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
-  baseSelect.value = storage.get(STORAGE_KEYS.base) ?? "local";
+  baseSelect.value = isPreviewOrigin() ? "ai" : storage.get(STORAGE_KEYS.base) ?? "local";
+  if (isPreviewOrigin()) storage.set(STORAGE_KEYS.base, "ai");
   applyLocalDevelopmentAuth();
   updateBasePreview();
 };
@@ -6749,37 +6786,8 @@ passkeyHandleInput.addEventListener("input", () => {
   schedulePasskeyHandlePersist();
 });
 
-passkeyLoginBtn.addEventListener("click", async () => {
-  const passkeyBaseUrl = getPasskeyBaseUrl();
-  setPasskeyStatus("unknown", "Signing in...");
-  passkeyLoginBtn.disabled = true;
-  passkeyRegisterBtn.disabled = true;
-  try {
-    if (!isAuthRelayMode && isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()) {
-      const relay = await requestRemotePasskeySession();
-      if (relay.handle) setPasskeyHandleValue(relay.handle);
-      applySignedInToken(relay.token, { deviceRegistered: true });
-      setPasskeyStatus("ok", "Passkey signed in");
-      return;
-    }
-
-    const passkeyHandle = getPasskeyHandle();
-    const result = await signInWithPasskey({
-      baseUrl: passkeyBaseUrl,
-      handle: passkeyHandle,
-      useHandle: Boolean(passkeyHandle),
-    });
-    if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token, { deviceRegistered: true });
-    setPasskeyStatus("ok", "Passkey signed in");
-    postAuthRelayResult(result);
-  } catch (error) {
-    setSignedInState(false);
-    setPasskeyStatus("bad", formatPasskeyLoginError(error));
-  } finally {
-    passkeyLoginBtn.disabled = false;
-    passkeyRegisterBtn.disabled = false;
-  }
+passkeyLoginBtn.addEventListener("click", () => {
+  void runPasskeyLogin();
 });
 
 passkeyRegisterBtn.addEventListener("click", async () => {
@@ -7076,17 +7084,12 @@ const startAuthRelayIfRequested = async () => {
   setAuthWidgetOpen(true);
   passkeyRegisterBtn.hidden = true;
   setAuthBadge("unknown", "Relay sign-in");
-  setPasskeyStatus("unknown", "Checking signed-in session...");
+  setPasskeyStatus("unknown", "Starting passkey sign-in...");
   passkeyLoginBtn.disabled = true;
   try {
-    const cachedAuth = await getValidCachedRelayAuth();
-    if (cachedAuth) {
-      postAuthRelayResult(cachedAuth);
-      return;
-    }
-    setPasskeyStatus("unknown", "Use the sign-in button to continue.");
+    await runPasskeyLogin({ automatic: true });
   } catch (error) {
-    setPasskeyStatus("bad", `${error?.message ?? "Passkey sign-in failed"} Use the sign-in button to try again.`);
+    setPasskeyStatus("bad", `${formatPasskeyLoginError(error)} Click the sign-in button to continue.`);
   } finally {
     passkeyLoginBtn.disabled = false;
   }
