@@ -222,8 +222,16 @@ const hasUnmarkedSyntheticLegacyUnknown = (rawClassBlocks: Record<string, unknow
   const unknown = rawClassBlocks.unknown;
   if (!isRecord(unknown) || "legacy_fallback" in unknown) return false;
   const knownClassKeys = ["spark", "gpt_oss_120b", "standard"] as const;
-  if (!knownClassKeys.every((key) => isRecord(rawClassBlocks[key]))) return false;
-  return knownClassKeys.some((key) => {
+  if (
+    !knownClassKeys.every((key) => {
+      const candidate = rawClassBlocks[key];
+      return isRecord(candidate) && !("legacy_fallback" in candidate);
+    })
+  ) return false;
+  // The preceding migration copied one unmarked block into all four entries.
+  // Require every known entry to retain that exact shape; one matching class
+  // is not enough because independent 429s can share a deadline by chance.
+  return knownClassKeys.every((key) => {
     const candidate = rawClassBlocks[key];
     return isRecord(candidate) && quotaClassBlockFieldsMatch(candidate, unknown);
   });
