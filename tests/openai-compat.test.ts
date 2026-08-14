@@ -537,7 +537,7 @@ const liveBankedResetFixtureConfig = (accountId: string): CodexBankedResetConfig
 const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> => {
   const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
   const now = Date.now();
-  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now, DEFAULT_TEST_MODEL);
   if (selection.kind !== "eligible") throw new Error(`Expected an eligible fixture account, got ${selection.kind}.`);
   const routing = selection.accounts[0]!;
   const blocked = await markCodexQuotaBlocked(
@@ -618,7 +618,7 @@ const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> =>
 const createUnknownBankedResetFixture = async (): Promise<readonly string[]> => {
   const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
   const now = Date.now();
-  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now, DEFAULT_TEST_MODEL);
   if (selection.kind !== "eligible") throw new Error(`Expected an eligible fixture account, got ${selection.kind}.`);
   const routing = selection.accounts[0]!;
   const blocked = await markCodexQuotaBlocked(
@@ -742,7 +742,12 @@ Deno.test("openai: verified banked reset recovers the fenced account before Resp
             // is not proof of successful recovery.
             const responseBody = await response.text();
             const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
-            const routingAfterRecovery = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+            const routingAfterRecovery = await selectCodexRoutingAccounts(
+              authPool,
+              authPool.accounts,
+              Date.now(),
+              DEFAULT_TEST_MODEL,
+            );
             return {
               responseStatus,
               responseContentType,
