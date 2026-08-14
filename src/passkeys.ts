@@ -56,6 +56,7 @@ export type PasskeySession = {
 
 export const PASSKEY_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export const PASSKEY_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const PASSKEY_RELAY_COOKIE_NAME = "__Host-uos_ai_relay_session";
 
 const AUTH_PREFIX = ["uos_ai", "auth"] as const;
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
@@ -350,8 +351,34 @@ export const getPasskeySession = async (token: string): Promise<PasskeySession |
   return { token, user: userEntry.value, session: sessionEntry.value };
 };
 
+const getCookieValue = (req: Request, name: string): string | null => {
+  const cookieHeader = req.headers.get("cookie") ?? "";
+  for (const part of cookieHeader.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    const rawValue = part.slice(separator + 1).trim();
+    if (!rawValue) return null;
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const buildRelayCookie = (token: string, expiresAtMs: number): string => {
+  const maxAge = Math.max(0, Math.ceil((expiresAtMs - nowMs()) / 1000));
+  return `${PASSKEY_RELAY_COOKIE_NAME}=${
+    encodeURIComponent(token)
+  }; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=None`;
+};
+
+const clearRelayCookie = (): string =>
+  `${PASSKEY_RELAY_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`;
+
 export const getPasskeySessionFromRequest = async (req: Request): Promise<PasskeySession | null> => {
-  const token = getBearerToken(req);
+  const token = getBearerToken(req) ?? getCookieValue(req, PASSKEY_RELAY_COOKIE_NAME);
   return token ? await getPasskeySession(token) : null;
 };
 
@@ -629,16 +656,20 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
     }
 
     const session = await createSession(kv, credential.user_id, challengeRecord.audience_origin);
+    const relaySession = Boolean(challengeRecord.audience_origin);
     return json(
       200,
       {
-        token: session.token,
+        ...(relaySession ? { relay_session: true } : { token: session.token }),
         user_id: userEntry.value.id,
         handle: userEntry.value.handle,
         credential_count: userEntry.value.credential_ids.length,
         expires_at_ms: session.expires_at_ms,
       },
-      { "Cache-Control": "no-store" },
+      {
+        "Cache-Control": "no-store",
+        ...(relaySession ? { "Set-Cookie": buildRelayCookie(session.token, session.expires_at_ms) } : {}),
+      },
     );
   } catch (error) {
     console.warn("[ai.ubq.fi] passkey assertion verification failed", {
@@ -675,7 +706,7 @@ export const handlePasskeySession = async (req: Request): Promise<Response> => {
 };
 
 export const handlePasskeyLogout = async (req: Request): Promise<Response> => {
-  const token = getBearerToken(req);
+  const token = getBearerToken(req) ?? getCookieValue(req, PASSKEY_RELAY_COOKIE_NAME);
   if (token) {
     const session = await getPasskeySessionForRequest(req);
     if (session) {
@@ -683,7 +714,13 @@ export const handlePasskeyLogout = async (req: Request): Promise<Response> => {
       if (kv) await kv.delete(passkeySessionKey(token));
     }
   }
-  return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Cache-Control": "no-store",
+      "Set-Cookie": clearRelayCookie(),
+    },
+  });
 };
 
 export const handlePasskeyUsersList = async (): Promise<Response> => {
