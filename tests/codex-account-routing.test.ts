@@ -387,6 +387,80 @@ Deno.test("a legacy class block survives migration when another class is exhaust
   }
 });
 
+Deno.test("an unclassified legacy block stays on other classes after capacity clears one", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const legacyDeadline = now + 60_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.6-luna");
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
+      v: 2,
+      updated_at_ms: now,
+      banked_reset_legacy_identity_unresolved: false,
+      slots: [{
+        account_id_hash: initial.accounts[0]!.accountIdHash,
+        credential_version: initial.accounts[0]!.credentialVersion,
+        quota_blocked_until_ms: legacyDeadline,
+        quota_block_source: "header_retry_after",
+        quota_blocked_classes: [],
+        quota_blocks_by_class: {},
+        invalid_credential_version: null,
+        primary_used_percent: null,
+        secondary_used_percent: null,
+        quota_signal_observed_at_ms: now,
+        capacity_observed_at_ms: null,
+        upstream_timeout_blocked_until_ms: null,
+        observed_reset_at_ms: null,
+        observed_reset_at_is_stable: false,
+        banked_reset_generation_ambiguous: false,
+        banked_reset_recovery_probe_pending: false,
+        generation: 1,
+        probe_lease: null,
+      }],
+    });
+    resetCodexAccountRoutingForTest();
+    await recordCodexCapacityRoutingObservations([{
+      slot: 0,
+      account_id: "one",
+      state: "available",
+      source_observed_at_ms: now + 1,
+      snapshot_at_ms: now + 1,
+      windows: {
+        primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: legacyDeadline },
+        secondary: null,
+      },
+      additional_rate_limits: [{
+        limit_name: "gpt-5.3-codex-spark",
+        metered_feature: "codex_bengalfox",
+        windows: {
+          primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: legacyDeadline },
+          secondary: null,
+        },
+      }],
+    }], now + 1);
+    assert.equal(
+      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.3-codex-spark")).kind,
+      "eligible",
+    );
+    const migrated = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.spark, undefined);
+    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.unknown, undefined);
+    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.standard?.blocked_until_ms, legacyDeadline);
+    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.gpt_oss_120b?.blocked_until_ms, legacyDeadline);
+    assert.equal(
+      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-luna")).kind,
+      "quota_blocked",
+    );
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("an administrative recheck marks every class reset fence ambiguous", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
