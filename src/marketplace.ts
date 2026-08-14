@@ -1,17 +1,18 @@
 /**
  * Marketplace authentication account management.
  *
- * This module provides the public API surface described in
- * `marketplace-platform-handoff.md` for creating, listing, updating, and
- * disabling seller‑uploaded `auth.json` credentials.
+ * This is the bounded account CRUD surface from
+ * `marketplace-platform-handoff.md`. Marketplace accounts are not part of the
+ * production Codex routing pool until the handoff's routing and ledger phases
+ * are implemented together.
  */
 
 import { authenticateClient } from "./auth.ts";
-import { sha256Hex } from "./utils.ts";
+import { json, openaiError, withCors } from "./http.ts";
 import { getKv } from "./kv.ts";
-import { openaiError, withCors } from "./http.ts";
+import { sha256Hex } from "./utils.ts";
 
-type MarketplaceAuthAccount = {
+type MarketplaceAuthAccount = Readonly<{
   id: string;
   ownerUserId: string;
   provider: string;
@@ -24,181 +25,229 @@ type MarketplaceAuthAccount = {
   labels: unknown;
   createdAt: number;
   updatedAt: number;
-  [key: string]: unknown;
-};
+}>;
 
-// KV key helpers -----------------------------------------------------------
+type MarketplaceDeps = Readonly<{
+  authenticateClient?: typeof authenticateClient;
+  kv?: Deno.Kv | null;
+  now?: () => number;
+  uuid?: () => string;
+}>;
+
+const MUTABLE_FIELDS = new Set(["pricing", "maxConcurrent", "status", "enabled", "labels"]);
+
 export const authAccountKey = (id: string) => ["ubq_ai", "marketplace", "auth_accounts", id] as const;
 export const authAccountByOwnerKey = (ownerUserId: string, id: string) =>
   ["ubq_ai", "marketplace", "auth_accounts_by_owner", ownerUserId, id] as const;
 
-/**
- * Create a new marketplace authentication account.
- */
-export const handleMarketplaceCreateAuth = async (req: Request): Promise<Response> => {
-  const authResult = await authenticateClient(req);
-  if (!authResult.ok) return withCors(openaiError(401, "unauthorized", "invalid_request_error"));
-  const principal = await (async () => {
-    // Re‑use the same logic as `resolveIdempotencyPrincipal` but in‑line.
-    const { token, method } = authResult;
-    switch (method.kind) {
-      case "kv_api_key":
-        return `api-key:${method.key_id}`;
-      case "github_token":
-        return `github-repo:${method.owner.toLowerCase()}/${method.repo.toLowerCase()}`;
-      case "passkey_session":
-        return `passkey-user:${method.user_id}`;
-      case "auth_tokens_allowlist":
-      case "admin_allowlist":
-      case "deno_deploy_token":
-        return `auth-method:${method.kind}`;
-      case "disabled":
-        return token ? `bearer-sha256:${await sha256Hex(token)}` : "local-auth-disabled";
-    }
-  })();
-  const ownerUserId = principal;
-  let body: unknown;
+const marketplacePrincipal = async (
+  authResult: Extract<Awaited<ReturnType<typeof authenticateClient>>, { ok: true }>,
+): Promise<string> => {
+  const { token, method } = authResult;
+  switch (method.kind) {
+    case "kv_api_key":
+      return `api-key:${method.key_id}`;
+    case "github_token":
+      return `github-repo:${method.owner.toLowerCase()}/${method.repo.toLowerCase()}`;
+    case "passkey_session":
+      return `passkey-user:${method.user_id}`;
+    case "auth_tokens_allowlist":
+    case "admin_allowlist":
+    case "deno_deploy_token":
+      return token ? `bearer-sha256:${await sha256Hex(token)}` : `auth-method:${method.kind}`;
+    case "disabled":
+      return token ? `bearer-sha256:${await sha256Hex(token)}` : "local-auth-disabled";
+  }
+};
+
+const authenticateOwner = async (
+  req: Request,
+  deps: MarketplaceDeps,
+): Promise<{ ok: true; ownerUserId: string } | { ok: false; response: Response }> => {
+  const authResult = await (deps.authenticateClient ?? authenticateClient)(req);
+  if (!authResult.ok) return { ok: false, response: authResult.response };
+  return { ok: true, ownerUserId: await marketplacePrincipal(authResult) };
+};
+
+const resolveKv = async (deps: MarketplaceDeps): Promise<Deno.Kv | null> =>
+  deps.kv !== undefined ? deps.kv : await getKv();
+
+const unavailableKv = (): Response => withCors(openaiError(503, "Deno KV unavailable", "server_error"));
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const readObject = async (req: Request): Promise<Record<string, unknown> | null> => {
   try {
-    body = await req.json();
+    const value: unknown = await req.json();
+    return isObject(value) ? value : null;
   } catch {
-    return withCors(openaiError(400, "invalid JSON payload", "invalid_request_error"));
+    return null;
   }
-  if (!body || typeof body !== "object") {
-    return withCors(openaiError(400, "invalid payload", "invalid_request_error"));
+};
+
+const validateMutableFields = (body: Record<string, unknown>): string | null => {
+  const unknown = Object.keys(body).find((key) => !MUTABLE_FIELDS.has(key));
+  if (unknown) return `Field is not mutable: ${unknown}`;
+  if (Object.keys(body).length === 0) return "At least one mutable field is required";
+  if (body.status !== undefined && (typeof body.status !== "string" || !body.status.trim())) {
+    return "status must be a non-empty string";
   }
-  const record = body as Record<string, unknown>;
-  if (typeof record.provider !== "string" || typeof record.encryptedAuthJson !== "string") {
-    return withCors(openaiError(400, "missing required fields", "invalid_request_error"));
+  if (body.enabled !== undefined && typeof body.enabled !== "boolean") return "enabled must be a boolean";
+  if (
+    body.maxConcurrent !== undefined && body.maxConcurrent !== null &&
+    (typeof body.maxConcurrent !== "number" || !Number.isInteger(body.maxConcurrent) || body.maxConcurrent < 1)
+  ) {
+    return "maxConcurrent must be a positive integer or null";
   }
-  const kv = await getKv();
-  const rand = crypto.getRandomValues(new Uint8Array(8));
-  const id = `auth_${await sha256Hex(new TextDecoder().decode(rand))}`;
-  const now = Date.now();
-  const authAccount = {
+  return null;
+};
+
+export const handleMarketplaceCreateAuth = async (req: Request, deps: MarketplaceDeps = {}): Promise<Response> => {
+  const owner = await authenticateOwner(req, deps);
+  if (!owner.ok) return withCors(owner.response);
+  const body = await readObject(req);
+  if (!body) return withCors(openaiError(400, "Invalid JSON payload", "invalid_request_error"));
+  if (typeof body.provider !== "string" || !body.provider.trim()) {
+    return withCors(openaiError(400, "provider must be a non-empty string", "invalid_request_error"));
+  }
+  if (typeof body.encryptedAuthJson !== "string" || !body.encryptedAuthJson.trim()) {
+    return withCors(openaiError(400, "encryptedAuthJson must be a non-empty string", "invalid_request_error"));
+  }
+  if (
+    body.maxConcurrent !== undefined && body.maxConcurrent !== null &&
+    (typeof body.maxConcurrent !== "number" || !Number.isInteger(body.maxConcurrent) || body.maxConcurrent < 1)
+  ) {
+    return withCors(openaiError(400, "maxConcurrent must be a positive integer or null", "invalid_request_error"));
+  }
+
+  const kv = await resolveKv(deps);
+  if (!kv) return unavailableKv();
+  const id = `auth_${(deps.uuid ?? (() => crypto.randomUUID()))()}`;
+  const now = (deps.now ?? Date.now)();
+  const account: MarketplaceAuthAccount = {
     id,
-    ownerUserId,
-    provider: record.provider,
-    encryptedAuthJson: record.encryptedAuthJson,
-    status: "enabled" as const,
-    pricing: record.pricing ?? null,
-    maxConcurrent: typeof record.maxConcurrent === "number" ? record.maxConcurrent : null,
-    health: record.health ?? null,
+    ownerUserId: owner.ownerUserId,
+    provider: body.provider.trim(),
+    encryptedAuthJson: body.encryptedAuthJson,
+    status: "enabled",
+    pricing: body.pricing ?? null,
+    maxConcurrent: typeof body.maxConcurrent === "number" ? body.maxConcurrent : null,
+    health: null,
     enabled: true,
-    labels: record.labels ?? null,
+    labels: body.labels ?? null,
     createdAt: now,
     updatedAt: now,
   };
-  await kv.set(authAccountKey(id), authAccount);
-  // Create an owner → id mapping for quick lookup.
-  await kv.set(authAccountByOwnerKey(ownerUserId, id), null);
-  return withCors(
-    new Response(JSON.stringify({ success: true, id }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
+  const accountEntry = await kv.get(authAccountKey(id));
+  const ownerEntry = await kv.get(authAccountByOwnerKey(owner.ownerUserId, id));
+  const committed = await kv.atomic()
+    .check(accountEntry)
+    .check(ownerEntry)
+    .set(authAccountKey(id), account)
+    .set(authAccountByOwnerKey(owner.ownerUserId, id), null)
+    .commit();
+  if (!committed.ok) return withCors(openaiError(409, "Auth account id conflict", "conflict"));
+  return withCors(json(201, { id }));
 };
 
-/**
- * List the caller's own auth accounts.
- */
-export const handleMarketplaceListAuth = async (req: Request): Promise<Response> => {
-  const authResult = await authenticateClient(req);
-  if (!authResult.ok) return withCors(openaiError(401, "unauthorized", "invalid_request_error"));
-  const principal = await (async () => {
-    const { token, method } = authResult;
-    switch (method.kind) {
-      case "kv_api_key":
-        return `api-key:${method.key_id}`;
-      case "github_token":
-        return `github-repo:${method.owner.toLowerCase()}/${method.repo.toLowerCase()}`;
-      case "passkey_session":
-        return `passkey-user:${method.user_id}`;
-      case "auth_tokens_allowlist":
-      case "admin_allowlist":
-      case "deno_deploy_token":
-        return `auth-method:${method.kind}`;
-      case "disabled":
-        return token ? `bearer-sha256:${await sha256Hex(token)}` : "local-auth-disabled";
-    }
-  })();
-  const kv = await getKv();
-  const prefix = ["ubq_ai", "marketplace", "auth_accounts_by_owner", principal] as const;
-  const accounts: unknown[] = [];
+export const handleMarketplaceListAuth = async (req: Request, deps: MarketplaceDeps = {}): Promise<Response> => {
+  const owner = await authenticateOwner(req, deps);
+  if (!owner.ok) return withCors(owner.response);
+  const kv = await resolveKv(deps);
+  if (!kv) return unavailableKv();
+  const prefix = ["ubq_ai", "marketplace", "auth_accounts_by_owner", owner.ownerUserId] as const;
+  const accounts: MarketplaceAuthAccount[] = [];
   for await (const entry of kv.list({ prefix })) {
-    const id = entry.key[entry.key.length - 1] as string;
+    const id = entry.key.at(-1);
+    if (typeof id !== "string") continue;
     const account = await kv.get<MarketplaceAuthAccount>(authAccountKey(id));
-    if (account.value) accounts.push(account.value);
+    if (account.value?.ownerUserId === owner.ownerUserId) accounts.push(account.value);
   }
-  return withCors(
-    new Response(JSON.stringify({ auths: accounts }), { status: 200, headers: { "Content-Type": "application/json" } }),
-  );
+  return withCors(json(200, { auths: accounts }));
 };
 
-/**
- * Update an existing auth account (owner‑only).
- */
-export const handleMarketplaceUpdateAuth = async (req: Request, id: string): Promise<Response> => {
-  const authResult = await authenticateClient(req);
-  if (!authResult.ok) return withCors(openaiError(401, "unauthorized", "invalid_request_error"));
-  const kv = await getKv();
+export const handleMarketplaceUpdateAuth = async (
+  req: Request,
+  id: string,
+  deps: MarketplaceDeps = {},
+): Promise<Response> => {
+  const owner = await authenticateOwner(req, deps);
+  if (!owner.ok) return withCors(owner.response);
+  const kv = await resolveKv(deps);
+  if (!kv) return unavailableKv();
   const existing = await kv.get<MarketplaceAuthAccount>(authAccountKey(id));
-  if (!existing.value) return withCors(openaiError(404, "auth account not found", "invalid_request_error"));
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return withCors(openaiError(400, "invalid JSON payload", "invalid_request_error"));
+  if (!existing.value) return withCors(openaiError(404, "Auth account not found", "invalid_request_error"));
+  if (existing.value.ownerUserId !== owner.ownerUserId) {
+    return withCors(openaiError(403, "Auth account belongs to another owner", "forbidden"));
   }
-  const now = Date.now();
-  const updated = { ...existing.value, ...(body as Record<string, unknown>), updatedAt: now };
-  await kv.set(authAccountKey(id), updated);
-  return withCors(
-    new Response(JSON.stringify({ success: true, id }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
+  const body = await readObject(req);
+  if (!body) return withCors(openaiError(400, "Invalid JSON payload", "invalid_request_error"));
+  const validationError = validateMutableFields(body);
+  if (validationError) return withCors(openaiError(400, validationError, "invalid_request_error"));
+
+  const updated: MarketplaceAuthAccount = {
+    ...existing.value,
+    ...(body.pricing !== undefined ? { pricing: body.pricing } : {}),
+    ...(body.maxConcurrent !== undefined ? { maxConcurrent: body.maxConcurrent as number | null } : {}),
+    ...(body.status !== undefined ? { status: (body.status as string).trim() } : {}),
+    ...(body.enabled !== undefined ? { enabled: body.enabled as boolean } : {}),
+    ...(body.labels !== undefined ? { labels: body.labels } : {}),
+    updatedAt: (deps.now ?? Date.now)(),
+  };
+  const committed = await kv.atomic().check(existing).set(authAccountKey(id), updated).commit();
+  if (!committed.ok) return withCors(openaiError(409, "Auth account changed; retry the update", "conflict"));
+  return withCors(json(200, { id }));
 };
 
-/**
- * Disable an auth account (owner‑only).
- */
-export const handleMarketplaceDisableAuth = async (req: Request, id: string): Promise<Response> => {
-  const authResult = await authenticateClient(req);
-  if (!authResult.ok) return withCors(openaiError(401, "unauthorized", "invalid_request_error"));
-  const kv = await getKv();
+export const handleMarketplaceDisableAuth = async (
+  req: Request,
+  id: string,
+  deps: MarketplaceDeps = {},
+): Promise<Response> => {
+  const owner = await authenticateOwner(req, deps);
+  if (!owner.ok) return withCors(owner.response);
+  const kv = await resolveKv(deps);
+  if (!kv) return unavailableKv();
   const existing = await kv.get<MarketplaceAuthAccount>(authAccountKey(id));
-  if (!existing.value) return withCors(openaiError(404, "auth account not found", "invalid_request_error"));
-  const now = Date.now();
-  const updated = { ...existing.value, enabled: false, updatedAt: now };
-  await kv.set(authAccountKey(id), updated);
-  return withCors(
-    new Response(JSON.stringify({ success: true, id }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
+  if (!existing.value) return withCors(openaiError(404, "Auth account not found", "invalid_request_error"));
+  if (existing.value.ownerUserId !== owner.ownerUserId) {
+    return withCors(openaiError(403, "Auth account belongs to another owner", "forbidden"));
+  }
+  const updated: MarketplaceAuthAccount = {
+    ...existing.value,
+    enabled: false,
+    status: "disabled",
+    updatedAt: (deps.now ?? Date.now)(),
+  };
+  const committed = await kv.atomic().check(existing).set(authAccountKey(id), updated).commit();
+  if (!committed.ok) return withCors(openaiError(409, "Auth account changed; retry the update", "conflict"));
+  return withCors(json(200, { id }));
 };
 
-/**
- * Public catalog – returns a list of all marketplace auth accounts with only
- * non‑secret fields. This is intended for discoverability and does not expose
- * the encrypted `auth.json` payload.
- */
-export const handleMarketplacePublicCatalog = async (_req: Request): Promise<Response> => {
-  const kv = await getKv();
-  const prefix = ["ubq_ai", "marketplace", "auth_accounts"] as const;
-  const accounts: unknown[] = [];
-  for await (const entry of kv.list({ prefix })) {
-    const account = await kv.get<MarketplaceAuthAccount>(entry.key);
-    if (account.value) {
-      const publicFields: Record<string, unknown> = { ...account.value };
-      delete publicFields.encryptedAuthJson;
-      accounts.push(publicFields);
-    }
+export const handleMarketplacePublicCatalog = async (
+  _req: Request,
+  deps: MarketplaceDeps = {},
+): Promise<Response> => {
+  const kv = await resolveKv(deps);
+  if (!kv) return unavailableKv();
+  const accounts: Array<Record<string, unknown>> = [];
+  for await (
+    const entry of kv.list<MarketplaceAuthAccount>({
+      prefix: ["ubq_ai", "marketplace", "auth_accounts"],
+    })
+  ) {
+    const account = entry.value;
+    accounts.push({
+      id: account.id,
+      provider: account.provider,
+      status: account.status,
+      pricing: account.pricing,
+      maxConcurrent: account.maxConcurrent,
+      health: account.health,
+      enabled: account.enabled,
+      labels: account.labels,
+    });
   }
-  return withCors(
-    new Response(JSON.stringify({ auths: accounts }), { status: 200, headers: { "Content-Type": "application/json" } }),
-  );
+  return withCors(json(200, { auths: accounts }));
 };

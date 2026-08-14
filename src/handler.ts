@@ -72,6 +72,13 @@ import {
   handlePasskeyUsersUpdate,
 } from "./passkeys.ts";
 import { withCodexQuotaHeaders } from "./codex_quota.ts";
+import {
+  handleMarketplaceCreateAuth,
+  handleMarketplaceDisableAuth,
+  handleMarketplaceListAuth,
+  handleMarketplacePublicCatalog,
+  handleMarketplaceUpdateAuth,
+} from "./marketplace.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
 import { sha256Hex } from "./utils.ts";
 import { handleProviderCapacity } from "./provider_capacity.ts";
@@ -108,6 +115,15 @@ export const resolveIdempotencyPrincipal = async (
 const normalizePath = (path: string): string => {
   if (path === "/") return path;
   return path.replace(/\/+$/, "");
+};
+
+const decodeMarketplaceAuthId = (value: string): string | null => {
+  try {
+    const decoded = decodeURIComponent(value);
+    return /^auth_[A-Za-z0-9-]+$/.test(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
 };
 
 const withRequestId = (response: Response, requestId: string): Response => {
@@ -644,6 +660,33 @@ export default async function handler(req: Request): Promise<Response> {
     if (req.method === "GET") return applyCors(await handleAgentMessagesList(req));
     if (req.method === "POST") return applyCors(await handleAgentMessagesPost(req));
     return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+  }
+
+  if (path === "/marketplace/auths") {
+    if (req.method === "POST") return applyCors(await handleMarketplaceCreateAuth(req));
+    if (req.method === "GET") return applyCors(await handleMarketplacePublicCatalog(req));
+    return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+  }
+
+  if (path === "/marketplace/auths/me") {
+    if (req.method === "GET") return applyCors(await handleMarketplaceListAuth(req));
+    return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+  }
+
+  const marketplaceDisableMatch = path.match(/^\/marketplace\/auths\/([^/]+)\/disable$/);
+  if (marketplaceDisableMatch) {
+    if (req.method !== "POST") return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+    const id = decodeMarketplaceAuthId(marketplaceDisableMatch[1]);
+    if (!id) return applyCors(openaiError(400, "Invalid marketplace auth id", "invalid_request_error"));
+    return applyCors(await handleMarketplaceDisableAuth(req, id));
+  }
+
+  const marketplaceAuthMatch = path.match(/^\/marketplace\/auths\/([^/]+)$/);
+  if (marketplaceAuthMatch) {
+    if (req.method !== "PATCH") return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+    const id = decodeMarketplaceAuthId(marketplaceAuthMatch[1]);
+    if (!id) return applyCors(openaiError(400, "Invalid marketplace auth id", "invalid_request_error"));
+    return applyCors(await handleMarketplaceUpdateAuth(req, id));
   }
 
   const isUosEmbeddingPath = path === "/uos/embeddings" || path === "/uos/embedding-jobs" ||
