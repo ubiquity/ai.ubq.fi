@@ -382,8 +382,12 @@ export const getPasskeySessionFromRequest = async (req: Request): Promise<Passke
   return token ? await getPasskeySession(token) : null;
 };
 
-const getRequestOrigin = (req: Request): string | null =>
-  parseOrigin(req.headers.get("origin")) ?? parseOrigin(req.headers.get("referer"));
+const getRequestOrigin = (req: Request): string | null => {
+  const url = new URL(req.url);
+  return parseOrigin(req.headers.get("origin")) ??
+    parseOrigin(req.headers.get("referer")) ??
+    parseOrigin(url.searchParams.get("cors_origin"));
+};
 
 export const getPasskeySessionForRequest = async (req: Request): Promise<PasskeySession | null> => {
   const session = await getPasskeySessionFromRequest(req);

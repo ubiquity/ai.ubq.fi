@@ -38,8 +38,18 @@ const isCredentialedOrigin = (value: string): boolean => {
   }
 };
 
+const getRequestOrigin = (req?: Request): string => {
+  const headerOrigin = req?.headers.get("Origin")?.trim() ?? "";
+  if (headerOrigin) return headerOrigin;
+  try {
+    return new URL(req?.url ?? "").searchParams.get("cors_origin")?.trim() ?? "";
+  } catch {
+    return "";
+  }
+};
+
 export const corsHeaders = (req?: Request): HeadersInit => {
-  const requestOrigin = req?.headers.get("Origin")?.trim() ?? "";
+  const requestOrigin = getRequestOrigin(req);
   const configuredOrigin = config.allowOrigin;
   const canUseCredentials = Boolean(requestOrigin) &&
     (configuredOrigin === "*" ? isCredentialedOrigin(requestOrigin) : configuredOrigin === requestOrigin);
