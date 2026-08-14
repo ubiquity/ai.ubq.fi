@@ -86,6 +86,17 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
       usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
     },
     "gpt-oss-120b",
+    {
+      instructions: "Be concise.",
+      maxOutputTokens: 512,
+      parallelToolCalls: false,
+      reasoningEffort: "medium",
+      temperature: 0.5,
+      toolChoice: "required",
+      tools: [{ type: "function", name: "status" }],
+      topP: 0.8,
+      metadata: { request: "fixture" },
+    },
   );
   const value = expectOk(translated);
   assert.equal(value.output_text, "Before the call");
@@ -93,11 +104,50 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
     "message",
     "function_call",
   ]);
-  assert.deepEqual(value.usage, { input_tokens: 3, output_tokens: 4, total_tokens: 7 });
+  assert.deepEqual(value.usage, {
+    input_tokens: 3,
+    input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+    output_tokens: 4,
+    output_tokens_details: { reasoning_tokens: 0 },
+    total_tokens: 7,
+  });
+  assert.deepEqual(
+    {
+      error: value.error,
+      instructions: value.instructions,
+      max_output_tokens: value.max_output_tokens,
+      parallel_tool_calls: value.parallel_tool_calls,
+      previous_response_id: value.previous_response_id,
+      reasoning: value.reasoning,
+      store: value.store,
+      temperature: value.temperature,
+      text: value.text,
+      tool_choice: value.tool_choice,
+      tools: value.tools,
+      top_p: value.top_p,
+      truncation: value.truncation,
+      metadata: value.metadata,
+    },
+    {
+      error: null,
+      instructions: "Be concise.",
+      max_output_tokens: 512,
+      parallel_tool_calls: false,
+      previous_response_id: null,
+      reasoning: { effort: "medium", summary: null },
+      store: false,
+      temperature: 0.5,
+      text: { format: { type: "text" } },
+      tool_choice: "required",
+      tools: [{ type: "function", name: "status" }],
+      top_p: 0.8,
+      truncation: "disabled",
+      metadata: { request: "fixture" },
+    },
+  );
   const stream = cerebrasResponseSse(value);
   const events = [...stream.matchAll(/^data: (.+)$/gm)]
-    .map((match) => match[1] === "[DONE]" ? null : JSON.parse(match[1]!) as Record<string, unknown>)
-    .filter((event): event is Record<string, unknown> => event !== null);
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
   assert.deepEqual(events.map((event) => event.sequence_number), events.map((_, index) => index));
   assert.deepEqual(events.map((event) => event.type), [
     "response.created",
@@ -114,8 +164,9 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
     "response.completed",
   ]);
   assert.deepEqual((events[0]?.response as Record<string, unknown>).output, []);
+  assert.equal((events[0]?.response as Record<string, unknown>).completed_at, null);
   assert.equal((events[0]?.response as Record<string, unknown>).usage, null);
-  assert.match(stream, /data: \[DONE\]/);
+  assert.doesNotMatch(stream, /data: \[DONE\]/);
 });
 
 Deno.test("GPT-OSS length termination becomes an incomplete Responses terminal", () => {
@@ -138,8 +189,32 @@ Deno.test("GPT-OSS length termination becomes an incomplete Responses terminal",
   assert.deepEqual(value.incomplete_details, { reason: "max_output_tokens" });
   assert.equal((value.output as Array<Record<string, unknown>>)[0]?.status, "incomplete");
   const events = [...cerebrasResponseSse(value).matchAll(/^data: (.+)$/gm)]
-    .map((match) => match[1] === "[DONE]" ? null : JSON.parse(match[1]!) as Record<string, unknown>)
-    .filter((event): event is Record<string, unknown> => event !== null);
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  assert.equal(events.at(-1)?.type, "response.incomplete");
+  assert.equal(events.some((event) => event.type === "response.completed"), false);
+});
+
+Deno.test("GPT-OSS content filtering becomes an incomplete Responses terminal", () => {
+  const translated = chatCompletionToCerebrasResponse(
+    {
+      id: "chatcmpl_filtered",
+      created: 1_728_000_000,
+      model: "gpt-oss-120b",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: "Filtered output" },
+        finish_reason: "content_filter",
+      }],
+      usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+    },
+    "gpt-oss-120b",
+  );
+  const value = expectOk(translated);
+  assert.equal(value.status, "incomplete");
+  assert.deepEqual(value.incomplete_details, { reason: "content_filter" });
+  assert.equal((value.output as Array<Record<string, unknown>>)[0]?.status, "incomplete");
+  const events = [...cerebrasResponseSse(value).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
   assert.equal(events.at(-1)?.type, "response.incomplete");
   assert.equal(events.some((event) => event.type === "response.completed"), false);
 });

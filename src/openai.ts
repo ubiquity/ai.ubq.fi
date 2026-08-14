@@ -6809,6 +6809,21 @@ const handleCerebrasResponses = async (
     });
   }
 
+  for (const [field, maximum] of [["temperature", 2], ["top_p", 1]] as const) {
+    const value = rawRecord[field];
+    if (
+      value !== undefined && value !== null &&
+      (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > maximum)
+    ) {
+      return openaiError(
+        400,
+        `${field} must be a number between 0 and ${maximum}`,
+        "invalid_request_error",
+        { param: field },
+      );
+    }
+  }
+
   let maxOutputTokens: number | undefined;
   if (rawRecord.max_output_tokens !== undefined && rawRecord.max_output_tokens !== null) {
     if (
@@ -6964,7 +6979,21 @@ const handleCerebrasResponses = async (
   providerRequestId ??= normalizeCerebrasProviderRequestId(normalized.value.id);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const usage = extractChatUsageTokens(normalized.value.usage);
-  const translated = chatCompletionToCerebrasResponse(normalized.value, CEREBRAS_GPT_OSS_120B_MODEL);
+  const translated = chatCompletionToCerebrasResponse(
+    normalized.value,
+    CEREBRAS_GPT_OSS_120B_MODEL,
+    {
+      ...(instructions === undefined ? {} : { instructions }),
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+      parallelToolCalls: typeof rawRecord.parallel_tool_calls === "boolean" ? rawRecord.parallel_tool_calls : true,
+      reasoningEffort: reasoning,
+      ...(typeof rawRecord.temperature === "number" ? { temperature: rawRecord.temperature } : {}),
+      toolChoice: rawRecord.tool_choice ?? "auto",
+      tools: Array.isArray(rawRecord.tools) ? rawRecord.tools : [],
+      ...(typeof rawRecord.top_p === "number" ? { topP: rawRecord.top_p } : {}),
+      metadata: isRecord(rawRecord.metadata) && !Array.isArray(rawRecord.metadata) ? rawRecord.metadata : {},
+    },
+  );
   if (!translated.ok) {
     recordStreamTerminalType(usageContext, "error");
     void recordCerebrasProviderHealth("upstream_error", upstream.status);
@@ -6983,7 +7012,10 @@ const handleCerebrasResponses = async (
     );
   }
   await recordCompletionUsage(usageContext, usage);
-  recordStreamTerminalType(usageContext, "response.completed");
+  recordStreamTerminalType(
+    usageContext,
+    translated.value.status === "incomplete" ? "response.incomplete" : "response.completed",
+  );
   recordCerebrasResponseHealth(upstream.status);
   const headers = cerebrasResponseHeaders(
     providerRequestId,

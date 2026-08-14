@@ -250,13 +250,31 @@ type ChatCompletionChoice = Readonly<{
 
 export type CerebrasResponsesBody = Readonly<Record<string, unknown>>;
 
+export type CerebrasResponseRequestMetadata = Readonly<{
+  instructions?: string;
+  maxOutputTokens?: number;
+  parallelToolCalls?: boolean;
+  reasoningEffort?: string;
+  temperature?: number;
+  toolChoice?: unknown;
+  tools?: readonly unknown[];
+  topP?: number;
+  metadata?: Record<string, unknown>;
+}>;
+
 const responseUsage = (usage: unknown): Record<string, unknown> | undefined => {
   if (!isRecord(usage) || Array.isArray(usage)) return undefined;
   const inputTokens = typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : null;
   const outputTokens = typeof usage.completion_tokens === "number" ? usage.completion_tokens : null;
   const totalTokens = typeof usage.total_tokens === "number" ? usage.total_tokens : null;
   if (inputTokens === null || outputTokens === null || totalTokens === null) return undefined;
-  return { input_tokens: inputTokens, output_tokens: outputTokens, total_tokens: totalTokens };
+  return {
+    input_tokens: inputTokens,
+    input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+    output_tokens: outputTokens,
+    output_tokens_details: { reasoning_tokens: 0 },
+    total_tokens: totalTokens,
+  };
 };
 
 const responseMessageItem = (id: string, text: string): Record<string, unknown> => ({
@@ -285,6 +303,7 @@ const responseFunctionCallItem = (
 export const chatCompletionToCerebrasResponse = (
   completion: Record<string, unknown>,
   requestedModel: string,
+  request: CerebrasResponseRequestMetadata = {},
 ): NormalizationResult<CerebrasResponsesBody> => {
   const id = getString(completion.id)?.trim();
   if (!id) return { ok: false, message: "Upstream Chat Completion is missing an id." };
@@ -298,7 +317,12 @@ export const chatCompletionToCerebrasResponse = (
   if (!isRecord(choice.message) || Array.isArray(choice.message)) {
     return { ok: false, message: "Upstream Chat Completion is missing its assistant message." };
   }
-  const incomplete = choice.finish_reason === "length";
+  const incompleteReason = choice.finish_reason === "length"
+    ? "max_output_tokens"
+    : choice.finish_reason === "content_filter"
+    ? "content_filter"
+    : null;
+  const incomplete = incompleteReason !== null;
   const message = choice.message;
   const output: Record<string, unknown>[] = [];
   const text = typeof message.content === "string" ? message.content : "";
@@ -327,12 +351,32 @@ export const chatCompletionToCerebrasResponse = (
       id: `resp_${id.replace(/^chatcmpl_/, "")}`,
       object: "response",
       created_at: created,
+      completed_at: created,
+      background: false,
+      error: null,
+      instructions: request.instructions ?? null,
+      max_output_tokens: request.maxOutputTokens ?? null,
+      max_tool_calls: null,
       model: requestedModel,
       status: incomplete ? "incomplete" : "completed",
       output: terminalOutput,
       output_text: text,
-      ...(usage ? { usage } : {}),
-      incomplete_details: incomplete ? { reason: "max_output_tokens" } : null,
+      parallel_tool_calls: request.parallelToolCalls ?? true,
+      previous_response_id: null,
+      reasoning: { effort: request.reasoningEffort ?? null, summary: null },
+      service_tier: "default",
+      store: false,
+      temperature: request.temperature ?? 1,
+      text: { format: { type: "text" } },
+      tool_choice: request.toolChoice ?? "auto",
+      tools: request.tools ? [...request.tools] : [],
+      top_logprobs: 0,
+      top_p: request.topP ?? 1,
+      truncation: "disabled",
+      usage: usage ?? null,
+      user: null,
+      metadata: request.metadata ?? {},
+      incomplete_details: incomplete ? { reason: incompleteReason } : null,
     },
   };
 };
@@ -351,6 +395,7 @@ export const cerebrasResponseSse = (response: CerebrasResponsesBody): string => 
     response: {
       ...response,
       status: "in_progress",
+      completed_at: null,
       output: [],
       output_text: "",
       usage: null,
@@ -424,6 +469,5 @@ export const cerebrasResponseSse = (response: CerebrasResponsesBody): string => 
     add({ type: "response.output_item.done", response_id: id, output_index: index, item });
   }
   add({ type: response.status === "incomplete" ? "response.incomplete" : "response.completed", response });
-  events.push("data: [DONE]\n\n");
   return events.join("");
 };

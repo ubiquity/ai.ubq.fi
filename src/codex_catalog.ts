@@ -74,7 +74,7 @@ const CEREBRAS_CODEX_MODEL: Record<string, unknown> = {
     { effort: "medium", description: "Balances speed and reasoning depth" },
     { effort: "high", description: "Greater reasoning depth for complex tasks" },
   ],
-  shell_type: "shell_command",
+  shell_type: "disabled",
   visibility: "list",
   supported_in_api: true,
   priority: 0,
@@ -87,7 +87,7 @@ const CEREBRAS_CODEX_MODEL: Record<string, unknown> = {
   default_reasoning_summary: "none",
   support_verbosity: false,
   default_verbosity: "low",
-  apply_patch_tool_type: "freeform",
+  apply_patch_tool_type: null,
   web_search_tool_type: "none",
   truncation_policy: { mode: "tokens", limit: 131072 },
   supports_parallel_tool_calls: true,
@@ -775,7 +775,7 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
         ? catalogResponse(replacement, req, "rotated")
         : openaiError(502, "Codex model catalog could not be cached", "codex_catalog_unavailable");
     }
-    await maybeUpdateNormalizedSnapshot(kv, version, authGeneration, publishedParsed, nowMs).catch((error) => {
+    await maybeUpdateNormalizedSnapshot(kv, version, authGeneration, parsed, nowMs).catch((error) => {
       console.error(`[ai.ubq.fi] Codex normalized snapshot update failed for ${version}:`, error);
     });
     if (!await authGenerationIsCurrent(kv, authGeneration)) {

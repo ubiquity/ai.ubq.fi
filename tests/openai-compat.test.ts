@@ -7895,11 +7895,50 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.match(responsesText, /response\.output_text\.delta/);
       assert.match(responsesText, /Ready from Responses/);
       assert.match(responsesText, /response\.completed/);
-      assert.match(responsesText, /data: \[DONE\]/);
+      assert.doesNotMatch(responsesText, /data: \[DONE\]/);
       assert.deepEqual(responsesUpstreamBodies[0]?.messages, [{ role: "user", content: "ping" }]);
       assert.equal(responsesUpstreamBodies[0]?.stream, false);
       assert.equal(responsesUpstreamBodies[0]?.reasoning_effort, "low");
       assert.equal(cerebrasCalls, 2);
+    });
+
+    await t.step("rejects invalid Responses sampling controls before Cerebras dispatch", async () => {
+      const cases = [
+        { field: "temperature", value: "0.5" },
+        { field: "temperature", value: -0.1 },
+        { field: "temperature", value: 2.1 },
+        { field: "top_p", value: "0.5" },
+        { field: "top_p", value: -0.1 },
+        { field: "top_p", value: 1.1 },
+      ] as const;
+      for (const testCase of cases) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "gpt-oss-120b",
+                  input: "ping",
+                  reasoning: { effort: "medium" },
+                  [testCase.field]: testCase.value,
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400, `${testCase.field}=${String(testCase.value)}`);
+        assert.equal(
+          (await response.json() as { error?: { param?: string } }).error?.param,
+          testCase.field,
+        );
+        assert.equal(cerebrasCalls, 0);
+      }
     });
 
     await t.step("treats null Responses max_output_tokens as unspecified", async () => {

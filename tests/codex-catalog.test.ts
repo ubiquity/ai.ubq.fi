@@ -217,13 +217,13 @@ Deno.test("codex catalog: configured GPT-OSS is appended to the versioned Codex 
   Deno.env.set(envKey, "cerebras-catalog-test-key");
   globalThis.fetch = () =>
     Promise.resolve(
-      new Response(catalogBody("0.146.0"), {
+      new Response(catalogBody("0.201.0"), {
         status: 200,
         headers: { "Content-Type": "application/json", ETag: '"upstream-catalog"' },
       }),
     );
   try {
-    const response = await handleCodexCatalogModels(request("0.146.0"), "0.146.0");
+    const response = await handleCodexCatalogModels(request("0.201.0"), "0.201.0");
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("etag"), null);
     const payload = await response.json() as { models?: Array<Record<string, unknown>> };
@@ -238,7 +238,7 @@ Deno.test("codex catalog: configured GPT-OSS is appended to the versioned Codex 
         { effort: "medium", description: "Balances speed and reasoning depth" },
         { effort: "high", description: "Greater reasoning depth for complex tasks" },
       ],
-      shell_type: "shell_command",
+      shell_type: "disabled",
       visibility: "list",
       supported_in_api: true,
       priority: 0,
@@ -251,7 +251,7 @@ Deno.test("codex catalog: configured GPT-OSS is appended to the versioned Codex 
       default_reasoning_summary: "none",
       support_verbosity: false,
       default_verbosity: "low",
-      apply_patch_tool_type: "freeform",
+      apply_patch_tool_type: null,
       web_search_tool_type: "none",
       truncation_policy: { mode: "tokens", limit: 131072 },
       supports_parallel_tool_calls: true,
@@ -264,6 +264,12 @@ Deno.test("codex catalog: configured GPT-OSS is appended to the versioned Codex 
       supports_search_tool: false,
       use_responses_lite: false,
     });
+    const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as {
+      client_version: string;
+      models: Array<{ slug: string }>;
+    };
+    assert.equal(snapshot.client_version, "0.201.0");
+    assert.deepEqual(snapshot.models.map((entry) => entry.slug), ["gpt-0.201.0"]);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) Deno.env.delete(envKey);
