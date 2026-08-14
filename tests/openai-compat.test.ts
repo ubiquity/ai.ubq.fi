@@ -9249,7 +9249,7 @@ Deno.test("openai: OpenRouter pre-output rejection restores the authoritative pr
   for (
     const model of [
       null,
-      "~deepseek/deepseek-v4-flash-latest",
+      "openrouter/auto",
       "openai/gpt-5",
       "anthropic/claude-sonnet-4",
       "vendor/gpt-oss-120b",
