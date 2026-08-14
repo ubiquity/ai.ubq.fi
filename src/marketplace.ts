@@ -38,6 +38,10 @@ const MUTABLE_FIELDS = new Set(["pricing", "maxConcurrent", "status", "enabled",
 const MARKETPLACE_AUTH_STATUSES = new Set(["enabled", "disabled", "error"]);
 const DEFAULT_MARKETPLACE_PAGE_LIMIT = 50;
 const MAX_MARKETPLACE_PAGE_LIMIT = 100;
+// Keep JSON payloads below Deno KV's 64 KiB value limit so its storage
+// encoding has bounded headroom for object metadata.
+const MAX_MARKETPLACE_ACCOUNT_JSON_BYTES = 60 * 1024;
+const textEncoder = new TextEncoder();
 
 const marketplacePage = (
   req: Request,
@@ -166,6 +170,16 @@ const validateMutableFields = (body: Record<string, unknown>): string | null => 
   return null;
 };
 
+const marketplaceAccountSizeError = (account: MarketplaceAuthAccount, param?: string): Response | null =>
+  textEncoder.encode(JSON.stringify(account)).byteLength > MAX_MARKETPLACE_ACCOUNT_JSON_BYTES
+    ? openaiError(
+      400,
+      "Marketplace account exceeds the maximum stored value size",
+      "invalid_request_error",
+      param ? { param } : undefined,
+    )
+    : null;
+
 export const handleMarketplaceCreateAuth = async (req: Request, deps: MarketplaceDeps = {}): Promise<Response> => {
   const owner = await authenticateOwner(req, deps);
   if (!owner.ok) return withCors(owner.response);
@@ -204,6 +218,8 @@ export const handleMarketplaceCreateAuth = async (req: Request, deps: Marketplac
     createdAt: now,
     updatedAt: now,
   };
+  const sizeError = marketplaceAccountSizeError(account, "encryptedAuthJson");
+  if (sizeError) return withCors(sizeError);
   const accountEntry = await kv.get(authAccountKey(id));
   const ownerEntry = await kv.get(authAccountByOwnerKey(owner.ownerUserId, id));
   const committed = await kv.atomic()
@@ -287,6 +303,8 @@ export const handleMarketplaceUpdateAuth = async (
     ...(body.labels !== undefined ? { labels: body.labels } : {}),
     updatedAt: (deps.now ?? Date.now)(),
   };
+  const sizeError = marketplaceAccountSizeError(updated);
+  if (sizeError) return withCors(sizeError);
   const committed = await kv.atomic().check(existing).set(authAccountKey(id), updated).commit();
   if (!committed.ok) return withCors(openaiError(409, "Auth account changed; retry the update", "conflict"));
   return withCors(json(200, { id }));

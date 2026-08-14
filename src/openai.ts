@@ -7549,6 +7549,19 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   );
   if (promptCacheAvailabilityError) return promptCacheAvailabilityError;
 
+  if (isCerebrasModel) {
+    for (const field of ["previous_response_id", "conversation"] as const) {
+      if (rawRecord[field] !== undefined && rawRecord[field] !== null) {
+        return openaiError(
+          400,
+          `${field} is not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+          "invalid_request_error",
+          { param: field },
+        );
+      }
+    }
+  }
+
   const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error", { param: "reasoning" });
   if (isCerebrasModel && reasoning.value) {

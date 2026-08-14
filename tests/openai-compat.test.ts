@@ -7955,6 +7955,40 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       }
     });
 
+    await t.step("rejects unresolved response context before Cerebras dispatch", async () => {
+      const cases = [
+        { field: "previous_response_id", value: "resp_prior" },
+        { field: "conversation", value: "conv_prior" },
+      ] as const;
+      for (const testCase of cases) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "cerebras/gpt-oss-120b",
+                  input: "ping",
+                  [testCase.field]: testCase.value,
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400, testCase.field);
+        assert.equal(
+          (await response.json() as { error?: { param?: string } }).error?.param,
+          testCase.field,
+        );
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
     await t.step("rejects unsupported Responses reasoning summaries before Cerebras dispatch", async () => {
       for (const field of ["summary", "generate_summary"] as const) {
         let cerebrasCalls = 0;
