@@ -584,6 +584,23 @@ Deno.test("passkey RP ID follows browser origin behind Deno Deploy custom domain
   });
 });
 
+Deno.test("passkey RP ID follows the current p-ai preview origin", () => {
+  const origin = "https://p-ai-ubq-fi-z707765qdpnm.ubiquity-dao.deno.net";
+  const req = new Request(`${origin}/api/auth/login/start`, {
+    method: "POST",
+    headers: {
+      "Origin": origin,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+
+  assert.deepEqual(getPasskeyRequestMeta(req), {
+    origin,
+    rpId: "p-ai-ubq-fi-z707765qdpnm.ubiquity-dao.deno.net",
+  });
+});
+
 Deno.test("passkey RP ID uses client window location when headers are unavailable", () => {
   const req = new Request("https://ai-ubq-fi.ubiquity-dao.deno.net/api/auth/register/start", {
     method: "POST",
