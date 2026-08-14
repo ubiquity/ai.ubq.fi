@@ -34,6 +34,7 @@ export type CodexQuotaClass = "spark" | "gpt_oss_120b" | "standard" | "unknown";
 export type CodexQuotaClassBlock = Readonly<{
   blocked_until_ms: number;
   source: CodexQuotaBlockSource;
+  quota_signal_observed_at_ms: number | null;
   observed_reset_at_ms: number | null;
   observed_reset_at_is_stable: boolean;
   banked_reset_generation_ambiguous: boolean;
@@ -300,6 +301,9 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
       quotaBlocksByClass[quotaClassKey] = {
         blocked_until_ms: block.blocked_until_ms,
         source: block.source,
+        quota_signal_observed_at_ms: isSafeMs(block.quota_signal_observed_at_ms)
+          ? block.quota_signal_observed_at_ms
+          : null,
         observed_reset_at_ms: isSafeMs(block.observed_reset_at_ms)
           ? block.observed_reset_at_ms
           : block.blocked_until_ms === observedResetAtMs && observedResetAtIsStable
@@ -427,6 +431,7 @@ const rotateCredentialForSameAccount = (
       ? {
         blocked_until_ms: slot.quota_blocked_until_ms ?? slot.observed_reset_at_ms,
         source: slot.quota_block_source,
+        quota_signal_observed_at_ms: slot.quota_signal_observed_at_ms,
         observed_reset_at_ms: slot.observed_reset_at_ms,
         observed_reset_at_is_stable: slot.observed_reset_at_is_stable,
         banked_reset_generation_ambiguous: slot.banked_reset_generation_ambiguous,
@@ -793,10 +798,12 @@ const quotaBlockForClass = (
   // plus the classes observed so far. Preserve those named blocks during the
   // one-time migration instead of dispatching directly into a known circuit.
   const legacy = !hasClassMap && slot.quota_blocked_until_ms !== null && slot.quota_block_source !== null &&
-      (quotaClassKey === "unknown" || legacyClasses.includes("unknown") || legacyClasses.includes(quotaClassKey))
+      (legacyClasses.length === 0 || quotaClassKey === "unknown" || legacyClasses.includes("unknown") ||
+        legacyClasses.includes(quotaClassKey))
     ? {
       blocked_until_ms: slot.quota_blocked_until_ms,
       source: slot.quota_block_source,
+      quota_signal_observed_at_ms: slot.quota_signal_observed_at_ms,
       observed_reset_at_ms: slot.observed_reset_at_ms,
       observed_reset_at_is_stable: slot.observed_reset_at_is_stable,
       banked_reset_generation_ambiguous: slot.banked_reset_generation_ambiguous,
@@ -810,6 +817,68 @@ const quotaBlockForClass = (
       (latest, block) => !latest || block.blocked_until_ms > latest.blocked_until_ms ? block : latest,
       null,
     );
+};
+
+const quotaClassKeys = ["spark", "gpt_oss_120b", "standard", "unknown"] as const;
+
+const isQuotaClassKey = (value: string): value is CodexQuotaClass =>
+  (quotaClassKeys as readonly string[]).includes(value);
+
+const quotaBlocksIncludingLegacy = (
+  slot: CodexRoutingSlot,
+): Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>> => {
+  const blocks = { ...slot.quota_blocks_by_class };
+  if (slot.quota_blocked_until_ms === null || slot.quota_block_source === null) return blocks;
+  const legacyClasses = (slot.quota_blocked_classes ?? []).filter(isQuotaClassKey);
+  // An unclassified legacy deadline is conservatively copied to every quota
+  // class so clearing one class cannot release the other separately metered
+  // pools. The synthetic unknown entry remains the slot-wide fallback for
+  // callers that do not provide a model.
+  const classes = legacyClasses.length ? legacyClasses : quotaClassKeys;
+  const legacyBlock: CodexQuotaClassBlock = {
+    blocked_until_ms: slot.quota_blocked_until_ms,
+    source: slot.quota_block_source,
+    quota_signal_observed_at_ms: slot.quota_signal_observed_at_ms,
+    observed_reset_at_ms: slot.observed_reset_at_ms,
+    observed_reset_at_is_stable: slot.observed_reset_at_is_stable,
+    banked_reset_generation_ambiguous: slot.banked_reset_generation_ambiguous,
+    banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending,
+  };
+  for (const quotaClassKey of classes) {
+    if (blocks[quotaClassKey] === undefined) blocks[quotaClassKey] = legacyBlock;
+  }
+  return blocks;
+};
+
+const withLegacyQuotaClassMap = (slot: CodexRoutingSlot): CodexRoutingSlot => {
+  const quotaBlocksByClass = quotaBlocksIncludingLegacy(slot);
+  return Object.keys(quotaBlocksByClass).length === 0 ? slot : {
+    ...slot,
+    quota_blocks_by_class: quotaBlocksByClass,
+    quota_blocked_classes: Object.keys(quotaBlocksByClass),
+  };
+};
+
+const quotaBlocksForClass = (
+  slot: CodexRoutingSlot,
+  quotaClassKey: CodexQuotaClass,
+): readonly CodexQuotaClassBlock[] => {
+  const classAwareSlot = withLegacyQuotaClassMap(slot);
+  const candidates = [
+    classAwareSlot.quota_blocks_by_class?.[quotaClassKey],
+    quotaClassKey === "unknown" ? undefined : classAwareSlot.quota_blocks_by_class?.unknown,
+  ].filter((block): block is CodexQuotaClassBlock => block !== undefined);
+  return candidates.filter((block, index) => candidates.indexOf(block) === index);
+};
+
+const quotaSignalObservedAtForClass = (
+  slot: CodexRoutingSlot,
+  quotaClassKey: CodexQuotaClass,
+): number | null => {
+  const signals = quotaBlocksForClass(slot, quotaClassKey)
+    .map((block) => block.quota_signal_observed_at_ms ?? slot.quota_signal_observed_at_ms)
+    .filter((value): value is number => value !== null);
+  return signals.length ? Math.max(...signals) : null;
 };
 
 const quotaBlockKeyForClass = (
@@ -832,17 +901,25 @@ export const codexQuotaBlockForModel = (
 const withoutQuotaClass = (slot: CodexRoutingSlot, quotaClassKey: CodexQuotaClass): CodexRoutingSlot => {
   const quotaBlocksByClass = { ...slot.quota_blocks_by_class };
   delete quotaBlocksByClass[quotaClassKey];
+  if (quotaClassKey !== "unknown") delete quotaBlocksByClass.unknown;
   const remaining = Object.values(quotaBlocksByClass);
   const latest = remaining.reduce<CodexQuotaClassBlock | null>(
     (candidate, block) => !candidate || block.blocked_until_ms > candidate.blocked_until_ms ? block : candidate,
     null,
   );
+  const observedQuotaSignals = remaining
+    .map((block) => block.quota_signal_observed_at_ms)
+    .filter((value): value is number => value !== null);
+  const latestQuotaSignalObservedAtMs = observedQuotaSignals.length
+    ? Math.max(...observedQuotaSignals)
+    : slot.quota_signal_observed_at_ms;
   return {
     ...slot,
     quota_blocks_by_class: quotaBlocksByClass,
     quota_blocked_classes: Object.keys(quotaBlocksByClass),
     quota_blocked_until_ms: latest?.blocked_until_ms ?? null,
     quota_block_source: latest?.source ?? null,
+    quota_signal_observed_at_ms: latestQuotaSignalObservedAtMs,
     observed_reset_at_ms: latest?.observed_reset_at_ms ?? null,
     observed_reset_at_is_stable: latest?.observed_reset_at_is_stable ?? false,
     banked_reset_generation_ambiguous: remaining.some((block) => block.banked_reset_generation_ambiguous),
@@ -858,12 +935,19 @@ const recheckQuotaClasses = (slot: CodexRoutingSlot, recheckAtMs: number): Codex
       // migrate it. Rechecking must not erase the only evidence that names
       // which old quota pool was blocked.
       quota_blocked_until_ms: slot.quota_blocked_until_ms === null ? null : recheckAtMs,
+      banked_reset_generation_ambiguous: slot.quota_blocked_until_ms !== null ||
+        slot.banked_reset_generation_ambiguous,
     };
   }
   const quotaBlocksByClass = Object.fromEntries(
     Object.entries(slot.quota_blocks_by_class ?? {}).map(([key, block]) => [
       key,
-      { ...block, blocked_until_ms: recheckAtMs },
+      {
+        ...block,
+        blocked_until_ms: recheckAtMs,
+        quota_signal_observed_at_ms: recheckAtMs,
+        banked_reset_generation_ambiguous: true,
+      },
     ]),
   ) as Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>>;
   const latest = Object.values(quotaBlocksByClass).reduce<CodexQuotaClassBlock | null>(
@@ -882,9 +966,13 @@ const recheckQuotaClasses = (slot: CodexRoutingSlot, recheckAtMs: number): Codex
 };
 
 const releaseQuotaClassProbe = (slot: CodexRoutingSlot, quotaClassKey: CodexQuotaClass): CodexRoutingSlot => {
-  const block = quotaBlockForClass(slot, quotaClassKey);
-  const released = withoutQuotaClass(slot, quotaBlockKeyForClass(slot, quotaClassKey) ?? quotaClassKey);
-  if (!slot.banked_reset_recovery_probe_pending) return released;
+  const classAwareSlot = withLegacyQuotaClassMap(slot);
+  const block = quotaBlockForClass(classAwareSlot, quotaClassKey);
+  const released = withoutQuotaClass(
+    classAwareSlot,
+    quotaBlockKeyForClass(classAwareSlot, quotaClassKey) ?? quotaClassKey,
+  );
+  if (!classAwareSlot.banked_reset_recovery_probe_pending) return released;
   return {
     ...released,
     observed_reset_at_ms: block?.observed_reset_at_ms ?? slot.observed_reset_at_ms,
@@ -1106,14 +1194,19 @@ const applyCapacityObservation = (
   ) return null;
   const fresh = capacityObservationIsFresh(observation, now);
   const capacityPositive = fresh && capacityHasAnyPositiveHeadroom(observation, model);
-  const newerQuotaSignal = current.quota_signal_observed_at_ms !== null &&
-    current.quota_signal_observed_at_ms >= observation.snapshot_at_ms;
+  const requestedQuotaClass = quotaClass(model);
+  const classAwareCurrent = withLegacyQuotaClassMap(current);
+  const classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareCurrent, requestedQuotaClass);
+  const newerQuotaSignal = classQuotaSignalObservedAtMs !== null &&
+    classQuotaSignalObservedAtMs >= observation.snapshot_at_ms;
   const clearCircuit = capacityPositive && !newerQuotaSignal;
   const preserveResetSafety = current.banked_reset_generation_ambiguous ||
     current.banked_reset_recovery_probe_pending || current.probe_lease !== null;
-  const requestedQuotaClass = quotaClass(model);
   const capacityClearedSlot = clearCircuit
-    ? withoutQuotaClass(current, quotaBlockKeyForClass(current, requestedQuotaClass) ?? requestedQuotaClass)
+    ? withoutQuotaClass(
+      classAwareCurrent,
+      quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass) ?? requestedQuotaClass,
+    )
     : current;
   const clearedAllQuotaClasses = Object.keys(capacityClearedSlot.quota_blocks_by_class ?? {}).length === 0;
   const nextSlot: CodexRoutingSlot = {
@@ -1533,9 +1626,11 @@ const markCodexQuotaBlockedWithMode = async (
     // replace that lease or admit a parallel probe.
     if (account.probeGeneration === null && current.probe_lease !== null && !foreignQuotaProbe) return null;
     if (account.probeGeneration !== null && !probeLeaseMatchesRoutingAccount(current, account)) return null;
-    const priorClassBlock = quotaBlockForClass(current, blockedQuotaClass);
+    const quotaBlocksBeforeUpdate = quotaBlocksIncludingLegacy(current);
+    const classAwareCurrent = { ...current, quota_blocks_by_class: quotaBlocksBeforeUpdate };
+    const priorClassBlock = quotaBlockForClass(classAwareCurrent, blockedQuotaClass);
     const priorDeadline = priorClassBlock?.blocked_until_ms ?? 0;
-    const hasClassBlocks = Object.keys(current.quota_blocks_by_class ?? {}).length > 0;
+    const hasClassBlocks = Object.keys(quotaBlocksBeforeUpdate).length > 0;
     const priorTimeout = current.upstream_timeout_blocked_until_ms ?? 0;
     const boundedRecoveryProbe = recoveryProbe ||
       (current.banked_reset_recovery_probe_pending && account.probeGeneration !== null);
@@ -1578,10 +1673,11 @@ const markCodexQuotaBlockedWithMode = async (
       ? parsed.resetDeadlineIsStable
       : priorObservedResetIsStable;
     const quotaBlocksByClass = {
-      ...current.quota_blocks_by_class,
+      ...quotaBlocksBeforeUpdate,
       [blockedQuotaClass]: {
         blocked_until_ms: deadline,
         source: quotaBlockSource,
+        quota_signal_observed_at_ms: now,
         observed_reset_at_ms: observedResetAtMs,
         observed_reset_at_is_stable: observedResetAtIsStable,
         banked_reset_generation_ambiguous: generationAmbiguous,
@@ -1774,10 +1870,12 @@ export const markCodexSuccess = async (account: RoutingAccount): Promise<void> =
       !slotMatchesRoutingAccount(current, account) ||
       !probeLeaseMatchesRoutingAccount(current, account)
     ) return null;
+    const classAwareCurrent = withLegacyQuotaClassMap(current);
     const released = routingProbeCircuit(account) === "quota"
       ? withoutQuotaClass(
-        current,
-        quotaBlockKeyForClass(current, quotaClass(account.requestedModel)) ?? quotaClass(account.requestedModel),
+        classAwareCurrent,
+        quotaBlockKeyForClass(classAwareCurrent, quotaClass(account.requestedModel)) ??
+          quotaClass(account.requestedModel),
       )
       : current;
     const hasOtherQuotaClasses = Object.keys(released.quota_blocks_by_class ?? {}).length > 0;
@@ -1787,10 +1885,10 @@ export const markCodexSuccess = async (account: RoutingAccount): Promise<void> =
       upstream_timeout_blocked_until_ms: routingProbeCircuit(account) === "upstream_timeout"
         ? null
         : current.upstream_timeout_blocked_until_ms,
-      observed_reset_at_ms: hasOtherQuotaClasses ? current.observed_reset_at_ms : null,
-      observed_reset_at_is_stable: hasOtherQuotaClasses ? current.observed_reset_at_is_stable : false,
-      banked_reset_generation_ambiguous: hasOtherQuotaClasses ? current.banked_reset_generation_ambiguous : false,
-      banked_reset_recovery_probe_pending: hasOtherQuotaClasses ? current.banked_reset_recovery_probe_pending : false,
+      observed_reset_at_ms: hasOtherQuotaClasses ? released.observed_reset_at_ms : null,
+      observed_reset_at_is_stable: hasOtherQuotaClasses ? released.observed_reset_at_is_stable : false,
+      banked_reset_generation_ambiguous: hasOtherQuotaClasses ? released.banked_reset_generation_ambiguous : false,
+      banked_reset_recovery_probe_pending: hasOtherQuotaClasses ? released.banked_reset_recovery_probe_pending : false,
       probe_lease: null,
     });
   });
@@ -1949,10 +2047,11 @@ const reconcileCodexQuotaAfterProbe = async (
         quota_class: quotaClass(account.requestedModel),
       };
       const requestedQuotaClass = quotaClass(account.requestedModel);
-      const releasedClassBlock = quotaBlockForClass(current, requestedQuotaClass);
+      const classAwareCurrent = withLegacyQuotaClassMap(current);
+      const releasedClassBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
       const released = withoutQuotaClass(
-        current,
-        quotaBlockKeyForClass(current, requestedQuotaClass) ?? requestedQuotaClass,
+        classAwareCurrent,
+        quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass) ?? requestedQuotaClass,
       );
       const next = withSlot(state, account.slot, {
         ...released,
@@ -2183,13 +2282,17 @@ const selectCodexRoutingAccountsFromState = async (
     const slot = slotMatchesRoutingAccount(storedSlot, account)
       ? storedSlot
       : neutralSlot(account.credentialVersion, account.accountIdHash);
+    const requestedQuotaClass = quotaClass(model);
+    const classAwareSlot = withLegacyQuotaClassMap(slot);
+    const requestedClassBlock = quotaBlockForClass(classAwareSlot, requestedQuotaClass);
     const capacityObservation = observationsByAccount.get(account.accountIdHash);
     const freshCapacity = capacityObservation !== undefined && capacityObservationIsFresh(capacityObservation, now);
     const observedCapacityHeadroom = freshCapacity ? capacityHeadroomForObservation(capacityObservation!, model) : null;
     const quotaHeadroom = freshCapacity ? observedCapacityHeadroom : quotaHeadroomFor(slot);
+    const classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareSlot, requestedQuotaClass);
     const quotaSignalNewer = capacityObservation?.snapshot_at_ms !== undefined &&
-      slot.quota_signal_observed_at_ms !== null &&
-      slot.quota_signal_observed_at_ms >= capacityObservation.snapshot_at_ms;
+      classQuotaSignalObservedAtMs !== null &&
+      classQuotaSignalObservedAtMs >= capacityObservation.snapshot_at_ms;
     // This is the last in-memory guard after the durable reconciliation CAS.
     // It prevents a stale local circuit from suppressing a fresh, positive
     // account observation that lost a concurrent write race.
@@ -2208,8 +2311,6 @@ const selectCodexRoutingAccountsFromState = async (
         : Math.min(retryAt, slot.upstream_timeout_blocked_until_ms);
       continue;
     }
-    const requestedQuotaClass = quotaClass(model);
-    const requestedClassBlock = quotaBlockForClass(slot, requestedQuotaClass);
     if (
       requestedClassBlock && requestedClassBlock.blocked_until_ms > now &&
       !capacityOverride
@@ -2385,7 +2486,9 @@ export const recheckCodexRoutingSlot = async (slotNumber: number): Promise<boole
         // An administrative deadline mutation is not provider proof of the
         // same quota generation. A later recovery probe is required before a
         // stable identity may authorize a banked claim again.
-        banked_reset_generation_ambiguous: current.banked_reset_generation_ambiguous ||
+        banked_reset_generation_ambiguous: rechecked.banked_reset_generation_ambiguous ||
+          rechecked.quota_blocked_until_ms !== null ||
+          current.banked_reset_generation_ambiguous ||
           (current.observed_reset_at_ms !== null && current.observed_reset_at_is_stable),
         generation: current.generation + 1,
         probe_lease: null,
@@ -2410,7 +2513,9 @@ export const recheckCodexRoutingSlot = async (slotNumber: number): Promise<boole
   cachedState = withSlot(state, index, {
     ...rechecked,
     quota_signal_observed_at_ms: recheckAtMs,
-    banked_reset_generation_ambiguous: current.banked_reset_generation_ambiguous ||
+    banked_reset_generation_ambiguous: rechecked.banked_reset_generation_ambiguous ||
+      rechecked.quota_blocked_until_ms !== null ||
+      current.banked_reset_generation_ambiguous ||
       (current.observed_reset_at_ms !== null && current.observed_reset_at_is_stable),
     generation: current.generation + 1,
     probe_lease: null,
