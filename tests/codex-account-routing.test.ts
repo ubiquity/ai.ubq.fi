@@ -502,7 +502,7 @@ Deno.test("migrates an unmarked synthetic unknown block from the prior class rel
         quota_blocks_by_class: {
           spark: legacyBlock(legacyDeadline),
           gpt_oss_120b: legacyBlock(legacyDeadline),
-          standard: legacyBlock(standardDeadline),
+          standard: legacyBlock(legacyDeadline),
           unknown: legacyBlock(legacyDeadline),
         },
         quota_signal_observed_at_ms: now,
@@ -532,6 +532,36 @@ Deno.test("migrates an unmarked synthetic unknown block from the prior class rel
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
   }
+});
+
+Deno.test("does not mark a coincidentally matching unknown block as synthetic", () => {
+  const now = 1_700_000_000_000;
+  const matchingDeadline = now + 60_000;
+  const block = (blockedUntilMs: number) => ({
+    blocked_until_ms: blockedUntilMs,
+    source: "header_retry_after" as const,
+    quota_signal_observed_at_ms: now,
+    observed_reset_at_ms: null,
+    observed_reset_at_is_stable: false,
+    banked_reset_generation_ambiguous: false,
+    banked_reset_recovery_probe_pending: false,
+  });
+  const parsed = parseCodexAccountRoutingState({
+    v: 2,
+    updated_at_ms: now,
+    slots: [{
+      credential_version: "credential",
+      quota_block_source: null,
+      probe_lease: null,
+      quota_blocks_by_class: {
+        spark: block(matchingDeadline),
+        gpt_oss_120b: block(matchingDeadline + 1),
+        standard: block(matchingDeadline + 2),
+        unknown: block(matchingDeadline),
+      },
+    }],
+  });
+  assert.equal(parsed?.slots[0]?.quota_blocks_by_class?.unknown?.legacy_fallback, false);
 });
 
 Deno.test("an administrative recheck marks every class reset fence ambiguous", async () => {
