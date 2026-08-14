@@ -36,8 +36,29 @@ type MarketplaceDeps = Readonly<{
 
 const MUTABLE_FIELDS = new Set(["pricing", "maxConcurrent", "status", "enabled", "labels"]);
 const MARKETPLACE_AUTH_STATUSES = new Set(["enabled", "disabled", "error"]);
-const DEFAULT_PUBLIC_CATALOG_LIMIT = 50;
-const MAX_PUBLIC_CATALOG_LIMIT = 100;
+const DEFAULT_MARKETPLACE_PAGE_LIMIT = 50;
+const MAX_MARKETPLACE_PAGE_LIMIT = 100;
+
+const marketplacePage = (
+  req: Request,
+): { ok: true; limit: number; cursor?: string } | { ok: false; response: Response } => {
+  const url = new URL(req.url);
+  const rawLimit = url.searchParams.get("limit");
+  const limit = rawLimit === null ? DEFAULT_MARKETPLACE_PAGE_LIMIT : Number(rawLimit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_MARKETPLACE_PAGE_LIMIT) {
+    return {
+      ok: false,
+      response: openaiError(
+        400,
+        `limit must be an integer between 1 and ${MAX_MARKETPLACE_PAGE_LIMIT}`,
+        "invalid_request_error",
+        { param: "limit" },
+      ),
+    };
+  }
+  const cursor = url.searchParams.get("cursor")?.trim() || undefined;
+  return { ok: true, limit, ...(cursor ? { cursor } : {}) };
+};
 
 export const authAccountKey = (id: string) => ["ubq_ai", "marketplace", "auth_accounts", id] as const;
 export const authAccountByOwnerKey = (ownerUserId: string, id: string) =>
@@ -177,17 +198,29 @@ export const handleMarketplaceCreateAuth = async (req: Request, deps: Marketplac
 export const handleMarketplaceListAuth = async (req: Request, deps: MarketplaceDeps = {}): Promise<Response> => {
   const owner = await authenticateOwner(req, deps);
   if (!owner.ok) return withCors(owner.response);
+  const page = marketplacePage(req);
+  if (!page.ok) return withCors(page.response);
   const kv = await resolveKv(deps);
   if (!kv) return unavailableKv();
   const prefix = ["ubq_ai", "marketplace", "auth_accounts_by_owner", owner.ownerUserId] as const;
   const accounts: MarketplaceAuthAccount[] = [];
-  for await (const entry of kv.list({ prefix })) {
+  const entries = kv.list(
+    { prefix },
+    { limit: page.limit, ...(page.cursor ? { cursor: page.cursor } : {}) },
+  );
+  let listedEntries = 0;
+  for await (const entry of entries) {
+    listedEntries += 1;
     const id = entry.key.at(-1);
     if (typeof id !== "string") continue;
     const account = await kv.get<MarketplaceAuthAccount>(authAccountKey(id));
     if (account.value?.ownerUserId === owner.ownerUserId) accounts.push(account.value);
+    if (listedEntries >= page.limit) break;
   }
-  return withCors(json(200, { auths: accounts }));
+  return withCors(json(200, {
+    auths: accounts,
+    next_cursor: listedEntries === page.limit && entries.cursor ? entries.cursor : null,
+  }, { "Cache-Control": "no-store" }));
 };
 
 export const handleMarketplaceUpdateAuth = async (
@@ -259,26 +292,14 @@ export const handleMarketplacePublicCatalog = async (
   req: Request,
   deps: MarketplaceDeps = {},
 ): Promise<Response> => {
-  const url = new URL(req.url);
-  const rawLimit = url.searchParams.get("limit");
-  const limit = rawLimit === null ? DEFAULT_PUBLIC_CATALOG_LIMIT : Number(rawLimit);
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PUBLIC_CATALOG_LIMIT) {
-    return withCors(
-      openaiError(
-        400,
-        `limit must be an integer between 1 and ${MAX_PUBLIC_CATALOG_LIMIT}`,
-        "invalid_request_error",
-        { param: "limit" },
-      ),
-    );
-  }
-  const cursor = url.searchParams.get("cursor")?.trim() || undefined;
+  const page = marketplacePage(req);
+  if (!page.ok) return withCors(page.response);
   const kv = await resolveKv(deps);
   if (!kv) return unavailableKv();
   const accounts: Array<Record<string, unknown>> = [];
   const entries = kv.list<MarketplaceAuthAccount>(
     { prefix: ["ubq_ai", "marketplace", "auth_accounts"] },
-    { limit, ...(cursor ? { cursor } : {}) },
+    { limit: page.limit, ...(page.cursor ? { cursor: page.cursor } : {}) },
   );
   for await (const entry of entries) {
     const account = entry.value;
@@ -292,10 +313,10 @@ export const handleMarketplacePublicCatalog = async (
       enabled: account.enabled,
       labels: account.labels,
     });
-    if (accounts.length >= limit) break;
+    if (accounts.length >= page.limit) break;
   }
   return withCors(json(200, {
     auths: accounts,
-    next_cursor: accounts.length === limit && entries.cursor ? entries.cursor : null,
+    next_cursor: accounts.length === page.limit && entries.cursor ? entries.cursor : null,
   }));
 };

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import handler from "../src/handler.ts";
 import { setKvForTest } from "../src/kv.ts";
 import {
+  authAccountByOwnerKey,
   authAccountKey,
   handleMarketplaceCreateAuth,
   handleMarketplaceDisableAuth,
@@ -97,6 +98,40 @@ Deno.test("marketplace owner routes reject repository-scoped GitHub authenticati
   );
   assert.equal(list.status, 403);
   assert.equal(kv.commands.length, 0);
+});
+
+Deno.test("marketplace owner listing is paginated and never cacheable", async () => {
+  const kv = new CountingKv();
+  for (let index = 0; index < 3; index += 1) {
+    const id = `auth_${index}`;
+    const account = {
+      id,
+      ownerUserId: "passkey-user:owner-1",
+      provider: "chatgpt_codex",
+      encryptedAuthJson: `ciphertext-${index}`,
+      status: "enabled",
+      pricing: null,
+      maxConcurrent: null,
+      health: null,
+      enabled: true,
+      labels: null,
+      createdAt: index,
+      updatedAt: index,
+    };
+    kv.seed(authAccountKey(id), account);
+    kv.seed(authAccountByOwnerKey(account.ownerUserId, id), null);
+  }
+
+  const response = await handleMarketplaceListAuth(
+    new Request("https://ai.ubq.fi/marketplace/auths/me?limit=2&cursor=opaque-cursor"),
+    { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const body = await response.json() as { auths: Array<{ encryptedAuthJson?: string }>; next_cursor: string | null };
+  assert.equal(body.auths.length, 2);
+  assert.equal(body.auths.every((account) => account.encryptedAuthJson?.startsWith("ciphertext-")), true);
+  assert.equal(body.next_cursor, null);
 });
 
 Deno.test("marketplace updates require ownership and reject protected fields", async () => {

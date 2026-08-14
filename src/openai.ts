@@ -7551,6 +7551,21 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
 
   const reasoning = parseReasoningParam(rawBody.reasoning);
   if (!reasoning.ok) return openaiError(400, reasoning.message, "invalid_request_error", { param: "reasoning" });
+  if (isCerebrasModel && reasoning.value) {
+    const unsupportedSummary = "summary" in reasoning.value
+      ? "summary"
+      : "generate_summary" in reasoning.value
+      ? "generate_summary"
+      : null;
+    if (unsupportedSummary) {
+      return openaiError(
+        400,
+        `reasoning.${unsupportedSummary} is not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+        "invalid_request_error",
+        { param: `reasoning.${unsupportedSummary}` },
+      );
+    }
+  }
 
   let instructions: string | undefined;
   if (Object.prototype.hasOwnProperty.call(rawRecord, "instructions")) {

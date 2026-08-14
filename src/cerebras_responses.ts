@@ -329,6 +329,7 @@ export const chatCompletionToCerebrasResponse = (
   const created = typeof completion.created === "number" && Number.isFinite(completion.created)
     ? Math.trunc(completion.created)
     : Math.floor(Date.now() / 1000);
+  const completed = Math.floor(Date.now() / 1000);
   if (!Array.isArray(completion.choices) || completion.choices.length === 0) {
     return { ok: false, message: "Upstream Chat Completion has no choices." };
   }
@@ -370,7 +371,7 @@ export const chatCompletionToCerebrasResponse = (
       id: `resp_${id.replace(/^chatcmpl_/, "")}`,
       object: "response",
       created_at: created,
-      completed_at: created,
+      completed_at: completed,
       background: false,
       error: null,
       instructions: request.instructions ?? null,

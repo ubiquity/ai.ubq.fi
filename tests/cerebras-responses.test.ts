@@ -92,6 +92,7 @@ Deno.test("GPT-OSS Responses translation rejects multimodal input and unsupporte
 });
 
 Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () => {
+  const translationStartedAt = Math.floor(Date.now() / 1000);
   const translated = chatCompletionToCerebrasResponse(
     {
       id: "chatcmpl_fixture",
@@ -126,6 +127,9 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
     },
   );
   const value = expectOk(translated);
+  assert.equal(value.created_at, 1_728_000_000);
+  assert.equal(typeof value.completed_at, "number");
+  assert.ok((value.completed_at as number) >= translationStartedAt);
   assert.equal(value.output_text, "Before the call");
   assert.deepEqual((value.output as Array<Record<string, unknown>>).map((item) => item.type), [
     "message",
