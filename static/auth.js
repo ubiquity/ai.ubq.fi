@@ -195,10 +195,12 @@ export const clearCachedAuth = () => {
   storage.remove(STORAGE_KEYS.token);
 };
 
-export const signOut = async ({ baseUrl = "", token = "" } = {}) => {
+export const signOut = async ({ baseUrl = "", token = "", corsOrigin = "" } = {}) => {
   const bearer = token.trim();
+  const endpoint = new URL(buildBackendUrl("/api/auth/logout", baseUrl));
+  if (corsOrigin.trim()) endpoint.searchParams.set("cors_origin", corsOrigin.trim());
   try {
-    await fetch(buildBackendUrl("/api/auth/logout", baseUrl), {
+    await fetch(endpoint, {
       method: "POST",
       ...(bearer ? { headers: { Authorization: `Bearer ${bearer}` } } : {}),
       credentials: "include",

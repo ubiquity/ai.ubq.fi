@@ -938,6 +938,13 @@ Deno.test("relay cookie sessions authenticate only for their preview audience", 
   );
   assert.ok(matching);
 
+  const cloudflareMatching = await getPasskeySessionForRequest(
+    new Request(`https://ai.ubq.fi/uos/auth?cors_origin=${encodeURIComponent(audienceOrigin)}`, {
+      headers: { Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}` },
+    }),
+  );
+  assert.ok(cloudflareMatching);
+
   const wrongOrigin = await getPasskeySessionForRequest(
     new Request("https://ai.ubq.fi/uos/auth", {
       headers: {
@@ -964,6 +971,15 @@ Deno.test("credentialed CORS is restricted to trusted preview origins", async ()
   );
   assert.equal(previewResponse.headers.get("access-control-allow-origin"), previewOrigin);
   assert.equal(previewResponse.headers.get("access-control-allow-credentials"), "true");
+
+  const cloudflarePreviewResponse = await handler(
+    new Request(`https://ai.ubq.fi/api/auth/session?cors_origin=${encodeURIComponent(previewOrigin)}`, {
+      method: "OPTIONS",
+      headers: { "Access-Control-Request-Method": "GET" },
+    }),
+  );
+  assert.equal(cloudflarePreviewResponse.headers.get("access-control-allow-origin"), previewOrigin);
+  assert.equal(cloudflarePreviewResponse.headers.get("access-control-allow-credentials"), "true");
 
   const untrustedResponse = await handler(
     new Request("https://ai.ubq.fi/api/auth/session", {
