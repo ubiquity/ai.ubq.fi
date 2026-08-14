@@ -99,6 +99,12 @@ const validateMutableFields = (body: Record<string, unknown>): string | null => 
   }
   if (body.enabled !== undefined && typeof body.enabled !== "boolean") return "enabled must be a boolean";
   if (
+    typeof body.status === "string" && typeof body.enabled === "boolean" &&
+    body.enabled !== (body.status.trim() === "enabled")
+  ) {
+    return "status and enabled must describe the same account state";
+  }
+  if (
     body.maxConcurrent !== undefined && body.maxConcurrent !== null &&
     (typeof body.maxConcurrent !== "number" || !Number.isInteger(body.maxConcurrent) || body.maxConcurrent < 1)
   ) {
@@ -190,12 +196,19 @@ export const handleMarketplaceUpdateAuth = async (
   const validationError = validateMutableFields(body);
   if (validationError) return withCors(openaiError(400, validationError, "invalid_request_error"));
 
+  const requestedStatus = typeof body.status === "string" ? body.status.trim() : undefined;
+  const requestedEnabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+  const status = requestedStatus ??
+    (requestedEnabled === undefined ? existing.value.status : requestedEnabled ? "enabled" : "disabled");
+  const enabled = requestedEnabled ??
+    (requestedStatus === undefined ? existing.value.enabled : requestedStatus === "enabled");
+
   const updated: MarketplaceAuthAccount = {
     ...existing.value,
     ...(body.pricing !== undefined ? { pricing: body.pricing } : {}),
     ...(body.maxConcurrent !== undefined ? { maxConcurrent: body.maxConcurrent as number | null } : {}),
-    ...(body.status !== undefined ? { status: (body.status as string).trim() } : {}),
-    ...(body.enabled !== undefined ? { enabled: body.enabled as boolean } : {}),
+    status,
+    enabled,
     ...(body.labels !== undefined ? { labels: body.labels } : {}),
     updatedAt: (deps.now ?? Date.now)(),
   };

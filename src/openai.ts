@@ -6810,7 +6810,7 @@ const handleCerebrasResponses = async (
   }
 
   let maxOutputTokens: number | undefined;
-  if (rawRecord.max_output_tokens !== undefined) {
+  if (rawRecord.max_output_tokens !== undefined && rawRecord.max_output_tokens !== null) {
     if (
       typeof rawRecord.max_output_tokens !== "number" ||
       !Number.isSafeInteger(rawRecord.max_output_tokens) ||

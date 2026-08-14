@@ -91,6 +91,33 @@ Deno.test("marketplace updates require ownership and reject protected fields", a
   );
   assert.equal(invalidStatus.status, 400);
 
+  const inconsistentState = await handleMarketplaceUpdateAuth(
+    jsonRequest("PATCH", `/marketplace/auths/${id}`, { status: "disabled", enabled: true }),
+    id,
+    { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(inconsistentState.status, 400);
+
+  const disabledByStatus = await handleMarketplaceUpdateAuth(
+    jsonRequest("PATCH", `/marketplace/auths/${id}`, { status: "disabled" }),
+    id,
+    { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(disabledByStatus.status, 200);
+  const disabledAccount = await kv.get<Record<string, unknown>>(authAccountKey(id));
+  assert.equal(disabledAccount.value?.status, "disabled");
+  assert.equal(disabledAccount.value?.enabled, false);
+
+  const enabledByFlag = await handleMarketplaceUpdateAuth(
+    jsonRequest("PATCH", `/marketplace/auths/${id}`, { enabled: true }),
+    id,
+    { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(enabledByFlag.status, 200);
+  const enabledAccount = await kv.get<Record<string, unknown>>(authAccountKey(id));
+  assert.equal(enabledAccount.value?.status, "enabled");
+  assert.equal(enabledAccount.value?.enabled, true);
+
   const updated = await handleMarketplaceUpdateAuth(
     jsonRequest("PATCH", `/marketplace/auths/${id}`, {
       pricing: { per_request: 3 },

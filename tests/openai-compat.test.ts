@@ -7902,6 +7902,43 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(cerebrasCalls, 2);
     });
 
+    await t.step("treats null Responses max_output_tokens as unspecified", async () => {
+      let upstreamBody: Record<string, unknown> | null = null;
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+          return Response.json({
+            id: "chatcmpl_cerebras_null_output_limit",
+            object: "chat.completion",
+            created: 1_728_000_006,
+            model: "gpt-oss-120b",
+            choices: [{
+              index: 0,
+              message: { role: "assistant", content: "Ready" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "gpt-oss-120b",
+                input: "ping",
+                reasoning: { effort: "medium" },
+                max_output_tokens: null,
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 200);
+      assert.ok(upstreamBody);
+      assert.equal("max_completion_tokens" in upstreamBody, false);
+    });
+
     await t.step("rejects unsupported none reasoning before Cerebras dispatch", async () => {
       let cerebrasCalls = 0;
       const response = await withFetchMock(
