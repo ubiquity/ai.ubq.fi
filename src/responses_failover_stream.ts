@@ -101,16 +101,21 @@ export const responsesEventSemanticKind = (event: ResponsesStreamEvent): Respons
       ? "tool_call"
       : null;
   }
-  if (event.type === "response.output_item.done" && isRecord(event.value.item)) {
+  if (
+    (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
+    isRecord(event.value.item)
+  ) {
     const item = event.value.item;
     const itemType = getString(item.type) ?? "";
-    if (executableToolTypes.has(itemType)) {
+    if (event.type === "response.output_item.done" && executableToolTypes.has(itemType)) {
       const callId = getString(item.call_id)?.trim();
       const name = getString(item.name)?.trim();
       if (!callId || !name) return null;
       if (itemType === "function_call") return typeof item.arguments === "string" ? "tool_call" : null;
       return typeof item.input === "string" ? "tool_call" : null;
     }
+    if (hostedToolTypes.has(itemType)) return semanticKindFromOutput([item]);
+    if (event.type === "response.output_item.added") return null;
     return semanticKindFromOutput([item]);
   }
   if (isRecord(event.value.response) && !Array.isArray(event.value.response)) {
@@ -491,6 +496,21 @@ export const createOwnedResponsesStream = (
     rememberText(event);
     if (isWarningEvent(event)) return;
     let item: Record<string, unknown> | null = null;
+    const compatibilityOutput = event.type === "response.output"
+      ? event.value.output ?? (isRecord(valueResponse) ? valueResponse.output : undefined)
+      : undefined;
+    if (Array.isArray(compatibilityOutput)) {
+      for (const outputItem of compatibilityOutput) {
+        if (!isRecord(outputItem)) continue;
+        const id = getString(outputItem.id)?.trim();
+        if (id && completedOutputItemIds.has(id)) {
+          completedOutputItems[completedOutputItemIds.get(id)!] = { ...outputItem };
+        } else {
+          if (id) completedOutputItemIds.set(id, completedOutputItems.length);
+          completedOutputItems.push({ ...outputItem });
+        }
+      }
+    }
     if (
       (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
       isRecord(event.value.item) && !Array.isArray(event.value.item)

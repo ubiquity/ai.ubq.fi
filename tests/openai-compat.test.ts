@@ -8657,6 +8657,37 @@ Deno.test("openai: buffered fallback keeps provider deltas when terminal output 
   assert.match(JSON.stringify(output[1]), /pong/);
 });
 
+Deno.test("openai: buffered fallback reconciles done-only text with prior deltas", async () => {
+  const chunks = openRouterTextSseChunks();
+  chunks.splice(
+    4,
+    0,
+    `data: ${
+      JSON.stringify({
+        type: "response.output_text.done",
+        response_id: "resp_openrouter_fixture",
+        item_id: "msg_openrouter_fixture",
+        output_index: 0,
+        content_index: 0,
+        text: "pong",
+      })
+    }\n\n`,
+  );
+  const terminal = JSON.parse(chunks.at(-1)!.match(/^data: (.+)\n\n$/)![1]!) as Record<string, unknown>;
+  (terminal.response as Record<string, unknown>).output = [];
+  chunks[chunks.length - 1] = `data: ${JSON.stringify(terminal)}\n\n`;
+  const response = await withFetchMock(
+    (url) =>
+      url === "https://openrouter.ai/api/v1/responses"
+        ? sseResponse(chunks)
+        : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), { status: 503 }),
+    () => handleResponses(openRouterResponsesRequest({ stream: false })),
+    { openRouterApiKey: "or-test-key" },
+  );
+  const payload = await response.json() as Record<string, unknown>;
+  assert.equal(JSON.stringify(payload.output).match(/pong/g)?.length, 1);
+});
+
 Deno.test("openai: OpenRouter preserves a first-semantic incomplete terminal", async () => {
   const responseId = "resp_openrouter_incomplete";
   const response = await withFetchMock(
