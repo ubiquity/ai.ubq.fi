@@ -8659,6 +8659,9 @@ Deno.test("openai: buffered fallback keeps provider deltas when terminal output 
 
 Deno.test("openai: buffered fallback reconciles done-only text with prior deltas", async () => {
   const chunks = openRouterTextSseChunks();
+  const outputItemDone = JSON.parse(chunks[3]!.match(/^data: (.+)\n\n$/)![1]!) as Record<string, unknown>;
+  (outputItemDone.item as Record<string, unknown>).content = [];
+  chunks[3] = `data: ${JSON.stringify(outputItemDone)}\n\n`;
   chunks.splice(
     4,
     0,

@@ -1252,8 +1252,15 @@ const collectBufferedResponses = async (
     if (!text) return;
     const key = textPartKey(value);
     if (!textPartOrder.includes(key)) textPartOrder.push(key);
-    const parts = done ? doneTextParts : deltaTextParts;
-    parts.set(key, done ? text : `${parts.get(key) ?? ""}${text}`);
+    if (done) {
+      const deltaText = deltaTextParts.get(key) ?? "";
+      // A done event normally repeats the complete text accumulated by its
+      // deltas. Some upstreams instead send a conflicting fragment; retain
+      // the delta text in that case, matching the owned stream reconciler.
+      if (!deltaText || text.startsWith(deltaText)) doneTextParts.set(key, text);
+      return;
+    }
+    deltaTextParts.set(key, `${deltaTextParts.get(key) ?? ""}${text}`);
   };
   try {
     for await (const event of initial) {
