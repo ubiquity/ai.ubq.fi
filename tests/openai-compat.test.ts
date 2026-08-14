@@ -112,6 +112,7 @@ const {
   setCodexBankedResetOptionsForTest,
 } = await import("../src/openai.ts");
 const { withCors } = await import("../src/http.ts");
+const { resetDebugToolsStateCacheForTest } = await import("../src/debug_tools.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 const { setOpenRouterApiKeyForTest } = await import("../src/openrouter.ts");
 const {
@@ -9149,6 +9150,51 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
     assert.equal(error?.param, null);
     assert.equal(Object.prototype.hasOwnProperty.call(error ?? {}, "response"), false);
   });
+});
+
+Deno.test("openai: persisted admin forced primary 503 uses the OpenRouter failover path", async () => {
+  const debugToolsKey = keyToString(["uos_ai", "debug_tools", "v1"]);
+  let codexCalls = 0;
+  let openRouterCalls = 0;
+  await withFetchMock(
+    (url) => {
+      if (url === "https://openrouter.ai/api/v1/responses") {
+        openRouterCalls += 1;
+        return sseResponse(openRouterTextSseChunks({ text: "forced failover answer" }));
+      }
+      codexCalls += 1;
+      return sseResponse(baseSseChunks());
+    },
+    async () => {
+      resetDebugToolsStateCacheForTest();
+      kvStore.set(debugToolsKey, { force_codex_primary_503: true, updated_at_ms: Date.now() });
+      try {
+        const response = await handleResponses(openRouterResponsesRequest());
+        assert.equal(response.status, 200);
+        assert.match(await response.text(), /Failover active/);
+        assert.equal(getResponseTelemetry(response)?.openRouterTriggerClass, "http_5xx");
+
+        const chatResponse = await handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              messages: [{ role: "user", content: "keep this Chat request on Codex" }],
+              stream: false,
+            }),
+          }),
+        );
+        assert.equal(chatResponse.status, 200);
+      } finally {
+        kvStore.delete(debugToolsKey);
+        resetDebugToolsStateCacheForTest();
+      }
+    },
+    { openRouterApiKey: "or-test-key" },
+  );
+  assert.equal(codexCalls, 1);
+  assert.equal(openRouterCalls, 1);
 });
 
 Deno.test("openai: OpenRouter pre-output rejection restores the authoritative primary error", async (t) => {

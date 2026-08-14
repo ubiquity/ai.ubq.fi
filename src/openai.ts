@@ -51,6 +51,7 @@ import {
   type StreamDeadline,
 } from "./inference_deadline.ts";
 import { getKv } from "./kv.ts";
+import { isCodexPrimary503Forced } from "./debug_tools.ts";
 import { loadRuntimeConfig } from "./runtime_config.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
 import { readJsonBody } from "./request.ts";
@@ -1800,19 +1801,21 @@ const fetchResponsesWithPaidFallback = async (
   recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
   try {
-    primary = await fetchCodexResponses(body, {
-      clientVersion: options.clientVersion,
-      signal: options.signal,
-      requestId: options.usageContext?.requestId,
-      // Keep terminal telemetry bounded: only the first real Codex transport
-      // attempt contributes dispatch/header timings, even when routing retries.
-      timing: {
-        onDispatch: () => recordFirstCodexDispatch(options.usageContext),
-        onHeaders: () => recordFirstCodexHeaders(options.usageContext),
-      },
-      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(),
-      bankedReset: codexBankedResetOptionsForTest ?? undefined,
-    });
+    primary = options.route === "responses" && await isCodexPrimary503Forced()
+      ? openaiError(503, "Codex primary failure forced by an admin debug tool", "debug_forced_codex_503")
+      : await fetchCodexResponses(body, {
+        clientVersion: options.clientVersion,
+        signal: options.signal,
+        requestId: options.usageContext?.requestId,
+        // Keep terminal telemetry bounded: only the first real Codex transport
+        // attempt contributes dispatch/header timings, even when routing retries.
+        timing: {
+          onDispatch: () => recordFirstCodexDispatch(options.usageContext),
+          onHeaders: () => recordFirstCodexHeaders(options.usageContext),
+        },
+        beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(),
+        bankedReset: codexBankedResetOptionsForTest ?? undefined,
+      });
   } catch (error) {
     if (!(error instanceof CodexError) || error.status !== 401) throw error;
     primary = openaiError(error.status, error.message, error.code);

@@ -99,6 +99,7 @@ import {
   validateKvMigrationTarget,
 } from "./kv_migration.ts";
 import { getKv } from "./kv.ts";
+import { cacheDebugToolsState, DEBUG_TOOLS_KEY, defaultDebugToolsState, loadDebugToolsState } from "./debug_tools.ts";
 import { listCodexResetShadowDecisions } from "./codex_banked_reset.ts";
 import {
   assertPromptCacheScopeExperimentTelemetryBaseline,
@@ -719,6 +720,34 @@ export const handleAdminDefaults = async (
   }
 
   return openaiError(405, "Method not allowed", "method_not_allowed");
+};
+
+export const handleAdminDebugTools = async (req: Request): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(500, "Deno KV is not available; cannot manage debug tools", "server_error");
+  if (req.method === "GET") {
+    const state = await loadDebugToolsState(kv);
+    cacheDebugToolsState(state);
+    return json(200, { debug: state });
+  }
+  if (req.method !== "POST") return openaiError(405, "Method not allowed", "invalid_request_error");
+
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const fields = Object.keys(raw);
+  if (fields.length !== 1 || fields[0] !== "force_codex_primary_503") {
+    return openaiError(400, "Unknown debug tools field", "invalid_request_error");
+  }
+  if (typeof raw.force_codex_primary_503 !== "boolean") {
+    return openaiError(400, "force_codex_primary_503 must be a boolean", "invalid_request_error");
+  }
+  const state = {
+    ...defaultDebugToolsState(),
+    force_codex_primary_503: raw.force_codex_primary_503,
+  };
+  await kv.set(DEBUG_TOOLS_KEY, state);
+  cacheDebugToolsState(state);
+  return json(200, { debug: state });
 };
 
 const normalizeApiKeyName = (value: unknown): string | null => {
