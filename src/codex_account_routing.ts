@@ -830,7 +830,11 @@ const quotaBlocksIncludingLegacy = (
   const blocks = { ...slot.quota_blocks_by_class };
   if (slot.quota_blocked_until_ms === null || slot.quota_block_source === null) return blocks;
   const legacyClasses = (slot.quota_blocked_classes ?? []).filter(isQuotaClassKey);
-  const classes = legacyClasses.length ? legacyClasses : ["unknown" as const];
+  // An unclassified legacy deadline is conservatively copied to every quota
+  // class so clearing one class cannot release the other separately metered
+  // pools. The synthetic unknown entry remains the slot-wide fallback for
+  // callers that do not provide a model.
+  const classes = legacyClasses.length ? legacyClasses : quotaClassKeys;
   const legacyBlock: CodexQuotaClassBlock = {
     blocked_until_ms: slot.quota_blocked_until_ms,
     source: slot.quota_block_source,
@@ -855,6 +859,28 @@ const withLegacyQuotaClassMap = (slot: CodexRoutingSlot): CodexRoutingSlot => {
   };
 };
 
+const quotaBlocksForClass = (
+  slot: CodexRoutingSlot,
+  quotaClassKey: CodexQuotaClass,
+): readonly CodexQuotaClassBlock[] => {
+  const classAwareSlot = withLegacyQuotaClassMap(slot);
+  const candidates = [
+    classAwareSlot.quota_blocks_by_class?.[quotaClassKey],
+    quotaClassKey === "unknown" ? undefined : classAwareSlot.quota_blocks_by_class?.unknown,
+  ].filter((block): block is CodexQuotaClassBlock => block !== undefined);
+  return candidates.filter((block, index) => candidates.indexOf(block) === index);
+};
+
+const quotaSignalObservedAtForClass = (
+  slot: CodexRoutingSlot,
+  quotaClassKey: CodexQuotaClass,
+): number | null => {
+  const signals = quotaBlocksForClass(slot, quotaClassKey)
+    .map((block) => block.quota_signal_observed_at_ms ?? slot.quota_signal_observed_at_ms)
+    .filter((value): value is number => value !== null);
+  return signals.length ? Math.max(...signals) : null;
+};
+
 const quotaBlockKeyForClass = (
   slot: CodexRoutingSlot,
   quotaClassKey: CodexQuotaClass,
@@ -875,6 +901,7 @@ export const codexQuotaBlockForModel = (
 const withoutQuotaClass = (slot: CodexRoutingSlot, quotaClassKey: CodexQuotaClass): CodexRoutingSlot => {
   const quotaBlocksByClass = { ...slot.quota_blocks_by_class };
   delete quotaBlocksByClass[quotaClassKey];
+  if (quotaClassKey !== "unknown") delete quotaBlocksByClass.unknown;
   const remaining = Object.values(quotaBlocksByClass);
   const latest = remaining.reduce<CodexQuotaClassBlock | null>(
     (candidate, block) => !candidate || block.blocked_until_ms > candidate.blocked_until_ms ? block : candidate,
@@ -1169,9 +1196,7 @@ const applyCapacityObservation = (
   const capacityPositive = fresh && capacityHasAnyPositiveHeadroom(observation, model);
   const requestedQuotaClass = quotaClass(model);
   const classAwareCurrent = withLegacyQuotaClassMap(current);
-  const classBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
-  const classQuotaSignalObservedAtMs = classBlock?.quota_signal_observed_at_ms ??
-    current.quota_signal_observed_at_ms;
+  const classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareCurrent, requestedQuotaClass);
   const newerQuotaSignal = classQuotaSignalObservedAtMs !== null &&
     classQuotaSignalObservedAtMs >= observation.snapshot_at_ms;
   const clearCircuit = capacityPositive && !newerQuotaSignal;
@@ -2264,8 +2289,7 @@ const selectCodexRoutingAccountsFromState = async (
     const freshCapacity = capacityObservation !== undefined && capacityObservationIsFresh(capacityObservation, now);
     const observedCapacityHeadroom = freshCapacity ? capacityHeadroomForObservation(capacityObservation!, model) : null;
     const quotaHeadroom = freshCapacity ? observedCapacityHeadroom : quotaHeadroomFor(slot);
-    const classQuotaSignalObservedAtMs = requestedClassBlock?.quota_signal_observed_at_ms ??
-      slot.quota_signal_observed_at_ms;
+    const classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareSlot, requestedQuotaClass);
     const quotaSignalNewer = capacityObservation?.snapshot_at_ms !== undefined &&
       classQuotaSignalObservedAtMs !== null &&
       classQuotaSignalObservedAtMs >= capacityObservation.snapshot_at_ms;
