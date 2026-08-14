@@ -1,0 +1,26 @@
+# UbiquityOS AI Gateway
+
+OpenAI-compatible AI inference service for the UbiquityOS ecosystem.
+
+Canonical service URL: https://ai.ubq.fi
+OpenAI-compatible base URL: https://ai.ubq.fi/v1
+Authentication: Authorization: Bearer <UOS_AI_TOKEN>
+
+## Authoritative resources
+
+- OpenAPI 3.1 contract: https://ai.ubq.fi/openapi.json
+- Complete agent instructions: https://ai.ubq.fi/llms-full.txt
+- Supported models: GET https://ai.ubq.fi/v1/models
+- Responses: POST https://ai.ubq.fi/v1/responses
+- Chat completions: POST https://ai.ubq.fi/v1/chat/completions
+
+## Autonomous use
+
+1. Read this file and the linked OpenAPI contract.
+2. Obtain `UOS_AI_TOKEN` from the environment or an approved secret manager.
+3. Configure an OpenAI-compatible client with base URL `https://ai.ubq.fi/v1` and the token as its API key.
+4. Query `/v1/models` and select a returned model. Do not assume that an OpenAI public model alias is available.
+5. Use `/v1/responses` or `/v1/chat/completions` with the official OpenAI request shape.
+
+Never print, log, persist, transmit elsewhere, or commit the token. If no token is available, tell the user that service
+authentication is required. Do not request that the user paste a token into chat.
