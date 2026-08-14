@@ -6775,11 +6775,11 @@ const handleCerebrasResponses = async (
   clientWantsStream: boolean,
   usageContext?: UsageContext,
 ): Promise<Response> => {
-  const supportedReasoning = new Set(["low", "medium", "high"]);
+  const supportedReasoning = new Set(["none", "low", "medium", "high"]);
   if (!supportedReasoning.has(reasoning)) {
     return openaiError(
       400,
-      `reasoning.effort '${reasoning}' is not supported by gpt-oss-120b; use low, medium, or high`,
+      `reasoning.effort '${reasoning}' is not supported by gpt-oss-120b; use none, low, medium, or high`,
       "invalid_request_error",
       { param: "reasoning.effort" },
     );

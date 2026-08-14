@@ -13,6 +13,7 @@ const expectOk = <T>(value: { ok: true; value: T } | { ok: false; message: strin
 Deno.test("GPT-OSS Responses translation preserves text and tool turns", () => {
   const translated = buildCerebrasResponsesTranslation(
     [
+      { type: "message", role: "system", content: [{ type: "input_text", text: "Follow policy." }] },
       { type: "message", role: "user", content: [{ type: "input_text", text: "look up status" }] },
       { type: "function_call", id: "fc_1", call_id: "call_1", name: "status", arguments: '{"id":"1"}' },
       { type: "function_call_output", call_id: "call_1", output: "ready" },
@@ -27,6 +28,7 @@ Deno.test("GPT-OSS Responses translation preserves text and tool turns", () => {
   const value = expectOk(translated);
   assert.deepEqual(value.messages, [
     { role: "developer", content: "You are concise." },
+    { role: "developer", content: "Follow policy." },
     { role: "user", content: "look up status" },
     {
       role: "assistant",
@@ -93,8 +95,25 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
   ]);
   assert.deepEqual(value.usage, { input_tokens: 3, output_tokens: 4, total_tokens: 7 });
   const stream = cerebrasResponseSse(value);
-  assert.match(stream, /response\.output_text\.delta/);
-  assert.match(stream, /response\.function_call_arguments\.delta/);
-  assert.match(stream, /response\.completed/);
+  const events = [...stream.matchAll(/^data: (.+)$/gm)]
+    .map((match) => match[1] === "[DONE]" ? null : JSON.parse(match[1]!) as Record<string, unknown>)
+    .filter((event): event is Record<string, unknown> => event !== null);
+  assert.deepEqual(events.map((event) => event.sequence_number), events.map((_, index) => index));
+  assert.deepEqual(events.map((event) => event.type), [
+    "response.created",
+    "response.output_item.added",
+    "response.content_part.added",
+    "response.output_text.delta",
+    "response.output_text.done",
+    "response.content_part.done",
+    "response.output_item.done",
+    "response.output_item.added",
+    "response.function_call_arguments.delta",
+    "response.function_call_arguments.done",
+    "response.output_item.done",
+    "response.completed",
+  ]);
+  assert.deepEqual((events[0]?.response as Record<string, unknown>).output, []);
+  assert.equal((events[0]?.response as Record<string, unknown>).usage, null);
   assert.match(stream, /data: \[DONE\]/);
 });

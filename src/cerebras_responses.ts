@@ -110,18 +110,19 @@ export const responsesInputToChatMessages = (
     const type = getString(raw.type);
     if (type === "message") {
       const role = getString(raw.role);
-      if (role !== "user" && role !== "assistant" && role !== "developer") {
+      if (role !== "user" && role !== "assistant" && role !== "developer" && role !== "system") {
         return { ok: false, message: `${param}.role is not supported by GPT-OSS`, param: `${param}.role` };
       }
       const content = textFromContent(raw.content, `${param}.content`);
       if (!content.ok) return content;
+      const chatRole = role === "system" ? "developer" : role;
       const previous = messages[messages.length - 1];
       // Keep a text assistant message adjacent to a function_call item in the
       // same Chat assistant turn. This preserves the Responses output order.
-      if (role === "assistant" && previous?.role === "assistant" && previous.tool_calls) {
-        messages.push({ role, content: content.value });
+      if (chatRole === "assistant" && previous?.role === "assistant" && previous.tool_calls) {
+        messages.push({ role: chatRole, content: content.value });
       } else {
-        messages.push({ role, content: content.value });
+        messages.push({ role: chatRole, content: content.value });
       }
       continue;
     }
@@ -337,39 +338,88 @@ export const chatCompletionToCerebrasResponse = (
 /** Emit a complete, buffered Responses SSE sequence for a synthetic response. */
 export const cerebrasResponseSse = (response: CerebrasResponsesBody): string => {
   const id = getString(response.id) ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`;
-  const createdAt = typeof response.created_at === "number" ? response.created_at : Math.floor(Date.now() / 1000);
   const events: string[] = [];
+  let sequenceNumber = 0;
   const add = (value: Record<string, unknown>): void => {
-    events.push(`data: ${JSON.stringify(value)}\n\n`);
+    events.push(`data: ${JSON.stringify({ ...value, sequence_number: sequenceNumber })}\n\n`);
+    sequenceNumber += 1;
   };
-  add({ type: "response.created", response: { id, object: "response", created_at: createdAt, status: "in_progress" } });
+  add({
+    type: "response.created",
+    response: {
+      ...response,
+      status: "in_progress",
+      output: [],
+      output_text: "",
+      usage: null,
+      incomplete_details: null,
+    },
+  });
   const output = Array.isArray(response.output) ? response.output : [];
   for (const [index, item] of output.entries()) {
     if (!isRecord(item) || Array.isArray(item)) continue;
-    add({ type: "response.output_item.added", output_index: index, item: { ...item, status: "in_progress" } });
+    const inProgressItem = item.type === "message"
+      ? { ...item, status: "in_progress", content: [] }
+      : item.type === "function_call"
+      ? { ...item, status: "in_progress", arguments: "" }
+      : { ...item, status: "in_progress" };
+    add({ type: "response.output_item.added", response_id: id, output_index: index, item: inProgressItem });
     if (item.type === "message" && Array.isArray(item.content)) {
       for (const [contentIndex, content] of item.content.entries()) {
         if (!isRecord(content) || getString(content.type) !== "output_text") continue;
+        const text = getString(content.text) ?? "";
         add({
-          type: "response.output_text.delta",
+          type: "response.content_part.added",
+          response_id: id,
           item_id: item.id,
           output_index: index,
           content_index: contentIndex,
-          delta: getString(content.text) ?? "",
+          part: { type: "output_text", text: "", annotations: [] },
+        });
+        add({
+          type: "response.output_text.delta",
+          response_id: id,
+          item_id: item.id,
+          output_index: index,
+          content_index: contentIndex,
+          delta: text,
+        });
+        add({
+          type: "response.output_text.done",
+          response_id: id,
+          item_id: item.id,
+          output_index: index,
+          content_index: contentIndex,
+          text,
+        });
+        add({
+          type: "response.content_part.done",
+          response_id: id,
+          item_id: item.id,
+          output_index: index,
+          content_index: contentIndex,
+          part: content,
         });
       }
     }
     if (item.type === "function_call") {
       const args = getString(item.arguments) ?? "";
-      add({ type: "response.function_call_arguments.delta", item_id: item.id, output_index: index, delta: args });
+      add({
+        type: "response.function_call_arguments.delta",
+        response_id: id,
+        item_id: item.id,
+        output_index: index,
+        delta: args,
+      });
       add({
         type: "response.function_call_arguments.done",
+        response_id: id,
         item_id: item.id,
         output_index: index,
         arguments: args,
       });
     }
-    add({ type: "response.output_item.done", output_index: index, item });
+    add({ type: "response.output_item.done", response_id: id, output_index: index, item });
   }
   add({ type: "response.completed", response });
   events.push("data: [DONE]\n\n");

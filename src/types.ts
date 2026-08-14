@@ -442,7 +442,7 @@ export type MessageContentItem = Readonly<
 
 export type ResponseMessageItem = Readonly<{
   type: "message";
-  role: "user" | "assistant" | "developer";
+  role: "user" | "assistant" | "developer" | "system";
   content: MessageContentItem[];
 }>;
 

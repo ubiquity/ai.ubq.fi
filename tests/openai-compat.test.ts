@@ -7877,7 +7877,12 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
             new Request("https://ai.ubq.fi/v1/responses", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model: "gpt-oss-120b", input: "ping", stream: true }),
+              body: JSON.stringify({
+                model: "gpt-oss-120b",
+                input: "ping",
+                reasoning: { effort: "none" },
+                stream: true,
+              }),
             }),
           ),
       );
@@ -7893,7 +7898,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.match(responsesText, /data: \[DONE\]/);
       assert.deepEqual(responsesUpstreamBodies[0]?.messages, [{ role: "user", content: "ping" }]);
       assert.equal(responsesUpstreamBodies[0]?.stream, false);
-      assert.equal(responsesUpstreamBodies[0]?.reasoning_effort, "low");
+      assert.equal(responsesUpstreamBodies[0]?.reasoning_effort, "none");
       assert.equal(cerebrasCalls, 2);
     });
 
