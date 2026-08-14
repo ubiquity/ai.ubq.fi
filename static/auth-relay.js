@@ -17,12 +17,6 @@ export const isAiGatewayPreviewOrigin = (value) => {
   }
 };
 
-const isAiGatewayDeployHost = (hostname) =>
-  hostname === "ai.ubq.fi" ||
-  hostname === "ai-ubq-fi.deno.dev" ||
-  hostname === "ai-ubq-fi.ubiquity-dao.deno.net" ||
-  isAiGatewayPreviewHost(hostname);
-
 export const parseTrustedAuthRelayOrigin = (value) => {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
@@ -33,7 +27,7 @@ export const parseTrustedAuthRelayOrigin = (value) => {
       return "";
     }
     if (isLocalHost(hostname)) return url.origin;
-    if (url.protocol === "https:" && isAiGatewayDeployHost(hostname)) return url.origin;
+    if (url.protocol === "https:") return url.origin;
     return "";
   } catch {
     return "";

@@ -1834,8 +1834,16 @@ const restoreCapacityChartScroll = (scroll, displayWindow, plot) => {
   rememberCapacityChartScroll();
 };
 
-const capacityChartOptimalSpendCoordinates = (activeWindow, resetMarkers, displayWindow, plot, nowMs) => {
+const capacityChartOptimalSpendCoordinates = (
+  activeWindow,
+  resetMarkers,
+  displayWindow,
+  plot,
+  nowMs,
+  targetSpendPercent = 100,
+) => {
   if (!displayWindow) return [];
+  const targetDurationMs = CAPACITY_CHART_OPTIMAL_WEEK_MS * 100 / targetSpendPercent;
   const segments = [];
   const seenStarts = new Set();
   const resetStarts = [
@@ -1847,7 +1855,7 @@ const capacityChartOptimalSpendCoordinates = (activeWindow, resetMarkers, displa
   ].sort((left, right) => left - right);
   const addWeeklySegment = (startAtMs, nextResetAtMs = Number.POSITIVE_INFINITY) => {
     if (!Number.isFinite(startAtMs) || seenStarts.has(startAtMs)) return;
-    const endAtMs = Math.min(startAtMs + CAPACITY_CHART_OPTIMAL_WEEK_MS, nextResetAtMs);
+    const endAtMs = Math.min(startAtMs + targetDurationMs, nextResetAtMs);
     const visibleStartAtMs = Math.max(startAtMs, displayWindow.startAtMs);
     const visibleEndAtMs = Math.min(endAtMs, displayWindow.resetAtMs, nowMs);
     if (!Number.isFinite(visibleStartAtMs) || !Number.isFinite(visibleEndAtMs) || visibleEndAtMs <= visibleStartAtMs) {
@@ -1856,7 +1864,7 @@ const capacityChartOptimalSpendCoordinates = (activeWindow, resetMarkers, displa
     const point = (timestamp) => ({
       x: capacityChartMarkerX(timestamp, displayWindow, plot),
       y: plot.top + clampCapacityChartPercent(
-            ((timestamp - startAtMs) / CAPACITY_CHART_OPTIMAL_WEEK_MS) * 100,
+            ((timestamp - startAtMs) / targetDurationMs) * 100,
           ) / 100 * plot.height,
     });
     seenStarts.add(startAtMs);
@@ -1902,6 +1910,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
       { key: "rate-limit-reset", label: "OpenAI rate-limit reset" },
       { key: "openai-downtime", label: "OpenAI downtime" },
       { key: "optimal-spend", label: "Optimal token spend" },
+      { key: "double-spend", label: "200% token spend target" },
     ]
   ) {
     const item = document.createElement("span");
@@ -2109,6 +2118,26 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
     optimalSpendTrend.setAttribute("aria-label", `Optimal token spend for weekly reset ${index + 1}`);
     svg.appendChild(optimalSpendTrend);
+  }
+
+  const doubleSpendCoordinates = capacityChartOptimalSpendCoordinates(
+    activeUsageWindow,
+    rateLimitResetMarkers,
+    chartWindow,
+    plot,
+    nowMs,
+    200,
+  );
+  for (const [index, coordinates] of doubleSpendCoordinates.entries()) {
+    const doubleSpendTrend = capacityChartSvgElement("line", {
+      x1: coordinates.start.x,
+      y1: coordinates.start.y,
+      x2: coordinates.end.x,
+      y2: coordinates.end.y,
+    });
+    doubleSpendTrend.dataset.capacityTrend = "double-spend";
+    doubleSpendTrend.setAttribute("aria-label", `200% token spend target for weekly reset ${index + 1}`);
+    svg.appendChild(doubleSpendTrend);
   }
 
   const pacing = capacityChartSpendPacing(activeUsageWindow, sources, nowMs);

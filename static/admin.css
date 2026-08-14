@@ -435,6 +435,11 @@ body[data-page="admin"] [data-capacity-legend-item="optimal-spend"] [data-capaci
   border-top-style: dashed;
 }
 
+body[data-page="admin"] [data-capacity-legend-item="double-spend"] [data-capacity-legend-swatch] {
+  border-top-color: rgba(255, 255, 255, 0.16);
+  border-top-style: dashed;
+}
+
 body[data-page="admin"] [data-capacity-legend-item="openai-downtime"] [data-capacity-legend-swatch] {
   border-top-color: #ff5f56;
   border-top-width: 3px;
@@ -579,6 +584,14 @@ body[data-page="admin"] [data-capacity-downtime="openai"] {
 
 body[data-page="admin"] [data-capacity-trend="optimal-spend"] {
   stroke: rgba(255, 255, 255, 0.32);
+  stroke-dasharray: 4 5;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+body[data-page="admin"] [data-capacity-trend="double-spend"] {
+  stroke: rgba(255, 255, 255, 0.16);
   stroke-dasharray: 4 5;
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
