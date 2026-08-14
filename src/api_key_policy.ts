@@ -622,6 +622,61 @@ const deferredReservationContext = (
   };
 };
 
+const unlimitedProviderReservationContext = (
+  kv: Deno.Kv,
+  policy: ApiKeyPolicy,
+  requestId: string,
+  route: string,
+  unmeteredProvider: ApiKeyUsageProvider,
+): ApiKeyUsageReservation => {
+  let currentPolicy = policy;
+  let active: ApiKeyUsageReservation | null = null;
+  let admission: Promise<ApiKeyUsageReservation> | null = null;
+  let unlimitedVerification: Promise<boolean> | null = null;
+  const requireAdmission = async (): Promise<ApiKeyUsageReservation> => {
+    if (active) return active;
+    if (!admission) {
+      admission = (async () => {
+        const decision = await reserveApiKeyUsageV3(currentPolicy, requestId, route, { kv });
+        if (!decision.ok) throw await quotaDispatchErrorFromResponse(decision.response);
+        active = decision.reservation;
+        currentPolicy = active.policy;
+        return active;
+      })();
+    }
+    return await admission;
+  };
+  const stillUnlimited = async (): Promise<boolean> => {
+    if (!unlimitedVerification) {
+      unlimitedVerification = (async () => {
+        const nowMs = Date.now();
+        const entry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(currentPolicy.token_hash), {
+          consistency: "strong",
+        });
+        const livePolicy = livePolicyFromEntry(currentPolicy.token_hash, entry, nowMs);
+        if (!livePolicy || livePolicy.usage_limit_requests !== API_KEY_NO_USAGE_LIMIT) return false;
+        currentPolicy = livePolicy;
+        return true;
+      })();
+    }
+    return await unlimitedVerification;
+  };
+  return {
+    get policy() {
+      return currentPolicy;
+    },
+    request_id: requestId,
+    route,
+    beforeProviderDispatch: async (provider) => {
+      if (provider === unmeteredProvider && await stillUnlimited()) return;
+      return await (await requireAdmission()).beforeProviderDispatch(provider);
+    },
+    release: async (reason) => {
+      if (active) await active.release(reason);
+    },
+  };
+};
+
 /**
  * Auth only proves that a key is valid. Route admission is a separate V3
  * reservation so non-inference endpoints never consume or block on quota.
@@ -630,12 +685,32 @@ export const reserveApiKeyUsageV3 = async (
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; deferWhenFull?: boolean }> = {},
+  options: Readonly<{
+    kv?: Deno.Kv | null;
+    nowMs?: number;
+    deferWhenFull?: boolean;
+    unmeteredProviderWhenUnlimited?: ApiKeyUsageProvider;
+  }> = {},
 ): Promise<ApiKeyUsageReservationDecision> => {
   try {
     const kv = options.kv === undefined ? await getKv() : options.kv;
     if (!kv) return quotaUnavailable();
     if (!requestId || !route) return quotaUnavailable("API key quota reservation requires a request id and route");
+    if (
+      options.unmeteredProviderWhenUnlimited &&
+      policy.usage_limit_requests === API_KEY_NO_USAGE_LIMIT
+    ) {
+      return {
+        ok: true,
+        reservation: unlimitedProviderReservationContext(
+          kv,
+          policy,
+          requestId,
+          route,
+          options.unmeteredProviderWhenUnlimited,
+        ),
+      };
+    }
 
     return await withApiKeyUsageWindowLock(policy, async () => {
       let reclaimedExpiredReservations = false;
