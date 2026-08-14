@@ -129,6 +129,15 @@ const readObject = async (req: Request): Promise<Record<string, unknown> | null>
   }
 };
 
+const isJsonText = (value: string): boolean => {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const validateMarketplaceMetadata = (body: Record<string, unknown>): string | null => {
   if (body.pricing !== undefined && body.pricing !== null && !isObject(body.pricing)) {
     return "pricing must be an object or null";
@@ -190,6 +199,14 @@ export const handleMarketplaceCreateAuth = async (req: Request, deps: Marketplac
   }
   if (typeof body.encryptedAuthJson !== "string" || !body.encryptedAuthJson.trim()) {
     return withCors(openaiError(400, "encryptedAuthJson must be a non-empty string", "invalid_request_error"));
+  }
+  if (isJsonText(body.encryptedAuthJson)) {
+    return withCors(openaiError(
+      400,
+      "encryptedAuthJson must contain opaque encrypted data, not raw JSON",
+      "invalid_request_error",
+      { param: "encryptedAuthJson" },
+    ));
   }
   if (
     body.maxConcurrent !== undefined && body.maxConcurrent !== null &&

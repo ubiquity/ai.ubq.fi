@@ -6891,6 +6891,8 @@ const handleCerebrasResponses = async (
       "background",
       "store",
       "metadata",
+      "truncation",
+      "include",
       "tools",
       "tool_choice",
       "parallel_tool_calls",
@@ -7607,6 +7609,26 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         "invalid_request_error",
         { param: "store" },
       );
+    }
+    if (
+      rawRecord.truncation !== undefined && rawRecord.truncation !== null && rawRecord.truncation !== "disabled"
+    ) {
+      return openaiError(
+        400,
+        `automatic truncation is not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+        "invalid_request_error",
+        { param: "truncation" },
+      );
+    }
+    if (rawRecord.include !== undefined && rawRecord.include !== null) {
+      if (!Array.isArray(rawRecord.include) || rawRecord.include.length > 0) {
+        return openaiError(
+          400,
+          `included response data is not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+          "invalid_request_error",
+          { param: "include" },
+        );
+      }
     }
   }
 

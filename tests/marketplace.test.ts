@@ -116,6 +116,24 @@ Deno.test("marketplace rejects malformed pricing and labels before persistence",
   assert.equal(kv.commands.some((command) => command.command === "atomic.commit"), false);
 });
 
+Deno.test("marketplace rejects raw auth JSON before persistence", async () => {
+  const kv = new CountingKv();
+  const response = await handleMarketplaceCreateAuth(
+    jsonRequest("POST", "/marketplace/auths", {
+      provider: "chatgpt_codex",
+      encryptedAuthJson: JSON.stringify({ tokens: { access_token: "raw-secret" } }),
+    }),
+    { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(
+    (await response.json() as { error?: { param?: string } }).error?.param,
+    "encryptedAuthJson",
+  );
+  assert.equal(kv.commands.length, 0);
+});
+
 Deno.test("marketplace rejects oversized accounts before persistence", async () => {
   const kv = new CountingKv();
   const response = await handleMarketplaceCreateAuth(

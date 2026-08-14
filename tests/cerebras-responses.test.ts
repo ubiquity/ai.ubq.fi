@@ -28,7 +28,7 @@ Deno.test("GPT-OSS Responses translation preserves text and tool turns", () => {
   const value = expectOk(translated);
   assert.deepEqual(value.messages, [
     { role: "developer", content: "You are concise." },
-    { role: "developer", content: "Follow policy." },
+    { role: "system", content: "Follow policy." },
     { role: "user", content: "look up status" },
     {
       role: "assistant",

@@ -116,7 +116,7 @@ export const responsesInputToChatMessages = (
       }
       const content = textFromContent(raw.content, `${param}.content`);
       if (!content.ok) return content;
-      const chatRole = role === "system" ? "developer" : role;
+      const chatRole = role;
       const previous = messages[messages.length - 1];
       // Keep a text assistant message adjacent to a function_call item in the
       // same Chat assistant turn. This preserves the Responses output order.
@@ -181,6 +181,13 @@ const normalizeFunctionTool = (
   const parameters = value.parameters;
   if (parameters !== undefined && (!isRecord(parameters) || Array.isArray(parameters))) {
     return { ok: false, message: `${param}.parameters must be an object`, param: `${param}.parameters` };
+  }
+  if (value.description !== undefined && typeof value.description !== "string") {
+    return {
+      ok: false,
+      message: `${param}.description must be a string`,
+      param: `${param}.description`,
+    };
   }
   const description = getString(value.description);
   const strict = value.strict;

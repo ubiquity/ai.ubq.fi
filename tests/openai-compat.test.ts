@@ -8038,6 +8038,62 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(cerebrasCalls, 0);
     });
 
+    await t.step("rejects unsupported response projections before Cerebras dispatch", async () => {
+      const cases = [
+        { field: "truncation", value: "auto" },
+        { field: "include", value: ["reasoning.encrypted_content"] },
+      ] as const;
+      for (const testCase of cases) {
+        let cerebrasCalls = 0;
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+            return new Response(null, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "cerebras/gpt-oss-120b",
+                  input: "ping",
+                  [testCase.field]: testCase.value,
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 400, testCase.field);
+        assert.equal((await response.json() as { error?: { param?: string } }).error?.param, testCase.field);
+        assert.equal(cerebrasCalls, 0);
+      }
+    });
+
+    await t.step("rejects malformed function descriptions before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                tools: [{ type: "function", name: "lookup", description: 42 }],
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "tools[0].description");
+      assert.equal(cerebrasCalls, 0);
+    });
+
     await t.step("rejects malformed Responses metadata before Cerebras dispatch", async () => {
       const cases: unknown[] = [
         [],
