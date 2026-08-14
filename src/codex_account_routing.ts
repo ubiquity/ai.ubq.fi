@@ -931,7 +931,10 @@ const quotaBlockKeyForClass = (
   if (!block) return null;
   const blocks = slot.quota_blocks_by_class ?? {};
   if (blocks[quotaClassKey] === block) return quotaClassKey;
-  if (quotaClassKey !== "unknown" && blocks.unknown === block) return "unknown";
+  // An independent unknown fence protects every model class. A known-class
+  // recovery can release the shared fallback only when migration marked it as
+  // a synthetic copy of the legacy slot-wide fence.
+  if (quotaClassKey !== "unknown" && blocks.unknown === block && block.legacy_fallback === true) return "unknown";
   return null;
 };
 

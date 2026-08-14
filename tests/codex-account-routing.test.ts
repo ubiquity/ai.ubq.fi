@@ -2812,7 +2812,7 @@ Deno.test("clearing a class preserves an independent unknown quota fence", async
   try {
     const now = 1_700_000_000_000;
     const standardDeadline = now + 60_000;
-    const unknownDeadline = now + 30_000;
+    const unknownDeadline = now + 120_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
     if (initial.kind !== "eligible") return;
@@ -2841,7 +2841,7 @@ Deno.test("clearing a class preserves an independent unknown quota fence", async
       ...state,
       slots: [{
         ...state.slots[0]!,
-        quota_blocked_until_ms: standardDeadline,
+        quota_blocked_until_ms: unknownDeadline,
         quota_block_source: "header_retry_after",
         quota_blocked_classes: ["standard", "unknown"],
         quota_blocks_by_class: {
