@@ -203,6 +203,32 @@ const hasUnresolvedLegacyResetIdentity = (state: CodexAccountRoutingState | null
   state?.banked_reset_legacy_identity_unresolved === true ||
   state?.slots.some(isLegacyStableResetIdentity) === true;
 
+const quotaClassBlockFieldsMatch = (left: Record<string, unknown>, right: Record<string, unknown>): boolean =>
+  left.blocked_until_ms === right.blocked_until_ms &&
+  left.source === right.source &&
+  left.quota_signal_observed_at_ms === right.quota_signal_observed_at_ms &&
+  left.observed_reset_at_ms === right.observed_reset_at_ms &&
+  left.observed_reset_at_is_stable === right.observed_reset_at_is_stable &&
+  left.banked_reset_generation_ambiguous === right.banked_reset_generation_ambiguous &&
+  left.banked_reset_recovery_probe_pending === right.banked_reset_recovery_probe_pending;
+
+/**
+ * The previous class-migration release copied an unclassified slot fence into
+ * every class, including `unknown`, without a marker. Recognize that exact
+ * all-class shape so a later class recovery does not retain a synthetic
+ * fallback forever. Explicitly marked entries are always authoritative.
+ */
+const hasUnmarkedSyntheticLegacyUnknown = (rawClassBlocks: Record<string, unknown>): boolean => {
+  const unknown = rawClassBlocks.unknown;
+  if (!isRecord(unknown) || "legacy_fallback" in unknown) return false;
+  const knownClassKeys = ["spark", "gpt_oss_120b", "standard"] as const;
+  if (!knownClassKeys.every((key) => isRecord(rawClassBlocks[key]))) return false;
+  return knownClassKeys.some((key) => {
+    const candidate = rawClassBlocks[key];
+    return isRecord(candidate) && quotaClassBlockFieldsMatch(candidate, unknown);
+  });
+};
+
 const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRoutingSlot | null => {
   if (!isRecord(value) || typeof value.credential_version !== "string") return null;
   const source = value.quota_block_source;
@@ -293,6 +319,7 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
     ? [...new Set(value.quota_blocked_classes as string[])]
     : [];
   const rawClassBlocks = isRecord(value.quota_blocks_by_class) ? value.quota_blocks_by_class : {};
+  const unmarkedSyntheticLegacyUnknown = hasUnmarkedSyntheticLegacyUnknown(rawClassBlocks);
   const quotaBlocksByClass: Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>> = {};
   for (const quotaClassKey of ["spark", "gpt_oss_120b", "standard", "unknown"] as const) {
     const block = rawClassBlocks[quotaClassKey];
@@ -303,7 +330,8 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
       quotaBlocksByClass[quotaClassKey] = {
         blocked_until_ms: block.blocked_until_ms,
         source: block.source,
-        legacy_fallback: block.legacy_fallback === true,
+        legacy_fallback: block.legacy_fallback === true ||
+          (quotaClassKey === "unknown" && unmarkedSyntheticLegacyUnknown),
         quota_signal_observed_at_ms: isSafeMs(block.quota_signal_observed_at_ms)
           ? block.quota_signal_observed_at_ms
           : null,
