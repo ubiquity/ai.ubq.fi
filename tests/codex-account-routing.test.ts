@@ -2010,6 +2010,40 @@ Deno.test("credential rotation clears only the matching invalid circuit state", 
   }
 });
 
+Deno.test("fresh capacity cannot reopen a credential marked invalid", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const observedAtMs = Date.now();
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, observedAtMs, "gpt-5.6-luna");
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    await markCodexCredentialInvalid(initial.accounts[0]!);
+
+    await recordCodexCapacityRoutingObservations([{
+      slot: 0,
+      account_id: "one",
+      state: "available",
+      source_observed_at_ms: observedAtMs,
+      snapshot_at_ms: observedAtMs,
+      windows: {
+        primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: observedAtMs + 604_800_000 },
+        secondary: null,
+      },
+      additional_rate_limits: [],
+    }], observedAtMs);
+
+    assert.equal(
+      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, observedAtMs + 1, "gpt-5.6-luna")).kind,
+      "credentials_invalid",
+    );
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("same-account credential rotation retains an active upstream timeout circuit", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
@@ -2662,6 +2696,77 @@ Deno.test("class capacity freshness ignores a newer independent quota signal", a
       (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 3, "gpt-5.6-luna")).kind,
       "quota_blocked",
     );
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("clearing a class preserves an independent unknown quota fence", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const standardDeadline = now + 60_000;
+    const unknownDeadline = now + 30_000;
+    const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.6-luna");
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(standardDeadline).toUTCString() },
+      }),
+      now,
+    );
+    const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.ok(state);
+    if (!state) return;
+    const block = (blockedUntilMs: number) => ({
+      blocked_until_ms: blockedUntilMs,
+      source: "header_retry_after" as const,
+      legacy_fallback: false,
+      quota_signal_observed_at_ms: now,
+      observed_reset_at_ms: null,
+      observed_reset_at_is_stable: false,
+      banked_reset_generation_ambiguous: false,
+      banked_reset_recovery_probe_pending: false,
+    });
+    await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
+      ...state,
+      slots: [{
+        ...state.slots[0]!,
+        quota_blocked_until_ms: standardDeadline,
+        quota_block_source: "header_retry_after",
+        quota_blocked_classes: ["standard", "unknown"],
+        quota_blocks_by_class: {
+          standard: block(standardDeadline),
+          unknown: block(unknownDeadline),
+        },
+        quota_signal_observed_at_ms: now,
+      }],
+    });
+    resetCodexAccountRoutingForTest();
+    await recordCodexCapacityRoutingObservations([{
+      slot: 0,
+      account_id: "one",
+      state: "available",
+      source_observed_at_ms: now + 1,
+      snapshot_at_ms: now + 1,
+      windows: {
+        primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: standardDeadline },
+        secondary: null,
+      },
+      additional_rate_limits: [],
+    }], now + 1);
+    await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-luna");
+
+    const migrated = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.standard, undefined);
+    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.unknown?.blocked_until_ms, unknownDeadline);
+    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.unknown?.legacy_fallback, false);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();

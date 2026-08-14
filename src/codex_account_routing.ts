@@ -34,6 +34,8 @@ export type CodexQuotaClass = "spark" | "gpt_oss_120b" | "standard" | "unknown";
 export type CodexQuotaClassBlock = Readonly<{
   blocked_until_ms: number;
   source: CodexQuotaBlockSource;
+  /** True when this entry is the synthetic fallback copied from legacy slot state. */
+  legacy_fallback: boolean;
   quota_signal_observed_at_ms: number | null;
   observed_reset_at_ms: number | null;
   observed_reset_at_is_stable: boolean;
@@ -301,6 +303,7 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
       quotaBlocksByClass[quotaClassKey] = {
         blocked_until_ms: block.blocked_until_ms,
         source: block.source,
+        legacy_fallback: block.legacy_fallback === true,
         quota_signal_observed_at_ms: isSafeMs(block.quota_signal_observed_at_ms)
           ? block.quota_signal_observed_at_ms
           : null,
@@ -431,6 +434,7 @@ const rotateCredentialForSameAccount = (
       ? {
         blocked_until_ms: slot.quota_blocked_until_ms ?? slot.observed_reset_at_ms,
         source: slot.quota_block_source,
+        legacy_fallback: true,
         quota_signal_observed_at_ms: slot.quota_signal_observed_at_ms,
         observed_reset_at_ms: slot.observed_reset_at_ms,
         observed_reset_at_is_stable: slot.observed_reset_at_is_stable,
@@ -803,6 +807,7 @@ const quotaBlockForClass = (
     ? {
       blocked_until_ms: slot.quota_blocked_until_ms,
       source: slot.quota_block_source,
+      legacy_fallback: true,
       quota_signal_observed_at_ms: slot.quota_signal_observed_at_ms,
       observed_reset_at_ms: slot.observed_reset_at_ms,
       observed_reset_at_is_stable: slot.observed_reset_at_is_stable,
@@ -838,6 +843,7 @@ const quotaBlocksIncludingLegacy = (
   const legacyBlock: CodexQuotaClassBlock = {
     blocked_until_ms: slot.quota_blocked_until_ms,
     source: slot.quota_block_source,
+    legacy_fallback: true,
     quota_signal_observed_at_ms: slot.quota_signal_observed_at_ms,
     observed_reset_at_ms: slot.observed_reset_at_ms,
     observed_reset_at_is_stable: slot.observed_reset_at_is_stable,
@@ -878,7 +884,7 @@ const quotaSignalObservedAtForClass = (
   const signals = quotaBlocksForClass(slot, quotaClassKey)
     .map((block) => block.quota_signal_observed_at_ms ?? slot.quota_signal_observed_at_ms)
     .filter((value): value is number => value !== null);
-  return signals.length ? Math.max(...signals) : null;
+  return signals.length ? Math.max(...signals) : slot.quota_signal_observed_at_ms;
 };
 
 const quotaBlockKeyForClass = (
@@ -900,8 +906,11 @@ export const codexQuotaBlockForModel = (
 
 const withoutQuotaClass = (slot: CodexRoutingSlot, quotaClassKey: CodexQuotaClass): CodexRoutingSlot => {
   const quotaBlocksByClass = { ...slot.quota_blocks_by_class };
+  const unknownBlock = quotaBlocksByClass.unknown;
   delete quotaBlocksByClass[quotaClassKey];
-  if (quotaClassKey !== "unknown") delete quotaBlocksByClass.unknown;
+  if (quotaClassKey !== "unknown" && unknownBlock?.legacy_fallback === true) {
+    delete quotaBlocksByClass.unknown;
+  }
   const remaining = Object.values(quotaBlocksByClass);
   const latest = remaining.reduce<CodexQuotaClassBlock | null>(
     (candidate, block) => !candidate || block.blocked_until_ms > candidate.blocked_until_ms ? block : candidate,
@@ -1677,6 +1686,7 @@ const markCodexQuotaBlockedWithMode = async (
       [blockedQuotaClass]: {
         blocked_until_ms: deadline,
         source: quotaBlockSource,
+        legacy_fallback: false,
         quota_signal_observed_at_ms: now,
         observed_reset_at_ms: observedResetAtMs,
         observed_reset_at_is_stable: observedResetAtIsStable,
