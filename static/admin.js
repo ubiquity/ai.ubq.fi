@@ -1770,11 +1770,22 @@ const capacityChartMarkerX = (observedAtMs, chartWindow, plot) =>
 const capacityChartScrollBehavior = () =>
   globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth";
 
+const capacityChartScrollAmount = (scroll) => Math.max(80, Math.round(scroll.clientWidth * 0.8));
+
+const capacityChartScrollMaximum = (scroll) =>
+  Math.max(0, scroll.scrollWidth - Math.max(scroll.clientWidth, scroll.offsetWidth || 0));
+
+const updateCapacityChartScrollControls = (scroll, olderButton, newerButton) => {
+  const maximum = capacityChartScrollMaximum(scroll);
+  olderButton.disabled = maximum <= 1 || scroll.scrollLeft <= 1;
+  newerButton.disabled = maximum <= 1 || maximum - scroll.scrollLeft <= 1;
+};
+
 const rememberCapacityChartScroll = () => {
   const current = providerCapacityChart.querySelector("[data-capacity-chart-scroll]");
   const svg = current?.querySelector("[data-capacity-chart-svg]");
   if (!current || !svg) return;
-  const maximum = Math.max(0, current.scrollWidth - current.clientWidth);
+  const maximum = capacityChartScrollMaximum(current);
   const scrollLeft = Number.isFinite(current.scrollLeft) ? current.scrollLeft : 0;
   const clientWidth = Number.isFinite(current.clientWidth) ? current.clientWidth : 0;
   const startAtMs = Number(svg.dataset.capacityChartStartAtMs);
@@ -1792,7 +1803,7 @@ const rememberCapacityChartScroll = () => {
 };
 
 const restoreCapacityChartScroll = (scroll, displayWindow, plot) => {
-  const maximum = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
+  const maximum = capacityChartScrollMaximum(scroll);
   const state = capacityChartScrollState;
   let nextScrollLeft = maximum;
   if (!state?.atEnd && typeof state?.anchorAtMs === "number" && Number.isFinite(state.anchorAtMs)) {
@@ -2202,9 +2213,33 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   chartScroll.setAttribute("role", "region");
   chartScroll.setAttribute("aria-label", "Scrollable seven-day provider capacity history");
   chartScroll.appendChild(svg);
-  chartScroll.addEventListener("scroll", rememberCapacityChartScroll, { passive: true });
+
+  const chartScrollControls = document.createElement("div");
+  chartScrollControls.dataset.capacityChartScrollControls = "";
+  chartScrollControls.setAttribute("aria-label", "History navigation");
+  const olderButton = document.createElement("button");
+  olderButton.type = "button";
+  olderButton.textContent = "← Older";
+  olderButton.setAttribute("aria-label", "Scroll to older capacity history");
+  const newerButton = document.createElement("button");
+  newerButton.type = "button";
+  newerButton.textContent = "Newer →";
+  newerButton.setAttribute("aria-label", "Scroll to newer capacity history");
+  chartScrollControls.append(olderButton, newerButton);
+
+  const syncCapacityChartScroll = () => {
+    rememberCapacityChartScroll();
+    updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
+  };
+  chartScroll.addEventListener("scroll", syncCapacityChartScroll, { passive: true });
+  olderButton.addEventListener("click", () => {
+    chartScroll.scrollBy({ left: -capacityChartScrollAmount(chartScroll), behavior: capacityChartScrollBehavior() });
+  });
+  newerButton.addEventListener("click", () => {
+    chartScroll.scrollBy({ left: capacityChartScrollAmount(chartScroll), behavior: capacityChartScrollBehavior() });
+  });
   chartScroll.addEventListener("keydown", (event) => {
-    const amount = Math.max(80, Math.round(chartScroll.clientWidth * 0.8));
+    const amount = capacityChartScrollAmount(chartScroll);
     if (event.key === "ArrowLeft" || event.key === "PageUp") {
       event.preventDefault();
       chartScroll.scrollBy({ left: -amount, behavior: capacityChartScrollBehavior() });
@@ -2219,7 +2254,10 @@ const renderProviderCapacityChart = (snapshot, sources) => {
       chartScroll.scrollTo({ left: chartScroll.scrollWidth, behavior: capacityChartScrollBehavior() });
     }
   });
-  chartBody.append(chartScroll, renderCapacitySpendSummary(pacing, activeUsageWindow));
+  const chartPane = document.createElement("div");
+  chartPane.dataset.capacityChartPane = "";
+  chartPane.append(chartScroll, chartScrollControls);
+  chartBody.append(chartPane, renderCapacitySpendSummary(pacing, activeUsageWindow));
   figure.appendChild(chartBody);
   if (rateLimitResetMarkers.length) {
     const navigation = document.createElement("nav");
@@ -2288,6 +2326,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   figure.appendChild(caption);
   providerCapacityChart.replaceChildren(figure);
   restoreCapacityChartScroll(chartScroll, chartWindow, plot);
+  updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
 };
 
 const renderProviderCapacity = (snapshot) => {
