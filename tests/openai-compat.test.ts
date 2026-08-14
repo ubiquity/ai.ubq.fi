@@ -8287,7 +8287,7 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   );
   assert.equal(
     warning?.delta,
-    "⚠ Failover active: this response is from `openrouter:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
+    "⚠ Failover active: your request was rerouted to `openrouter:google/gemini-2.5-pro` because the primary Codex service was unavailable.",
   );
   const providerDelta = events.find((event) => event.delta === "pong");
   assert.equal(providerDelta?.output_index, 1);
@@ -8304,6 +8304,64 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   assert.equal((terminalOutput[0] as { role?: unknown } | undefined)?.role, "assistant");
   assert.equal(getResponseTelemetry(response)?.provider, "openrouter");
   assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["chatgpt_codex", "openrouter"]);
+});
+
+Deno.test("openai: failover warning history is not replayed upstream and coalesces per user turn", async () => {
+  const warningText =
+    "⚠ Failover active: your request was rerouted to `openrouter:fixture/model` because the primary Codex service was unavailable.";
+  const warningItem = {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: warningText, annotations: [] }],
+  };
+  const userItem = { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] };
+  const primaryBodies: Record<string, unknown>[] = [];
+  const openRouterBodies: Record<string, unknown>[] = [];
+  const result = await withFetchMock(
+    (url, bodyText) => {
+      const body = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      if (url === "https://chatgpt.com/backend-api/codex/responses") {
+        if (body) primaryBodies.push(body);
+        return sseResponse(baseSseChunks());
+      }
+      assert.equal(url, "https://openrouter.ai/api/v1/responses");
+      if (body) openRouterBodies.push(body);
+      return sseResponse(openRouterTextSseChunks());
+    },
+    async () => {
+      seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+      const primaryResponse = await handleResponses(openRouterResponsesRequest({
+        input: [userItem, warningItem],
+      }));
+      await primaryResponse.text();
+
+      seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+      const continuationResponse = await handleResponses(openRouterResponsesRequest({
+        input: [userItem, warningItem],
+      }));
+      const continuationText = await continuationResponse.text();
+
+      seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+      const newTurnResponse = await handleResponses(openRouterResponsesRequest({
+        input: [userItem, warningItem, { ...userItem, content: [{ type: "input_text", text: "new turn" }] }],
+      }));
+      const newTurnText = await newTurnResponse.text();
+      const newTurnWarningDeltaCount =
+        parseResponsesSseValues(newTurnText).filter((event) =>
+          event.type === "response.output_text.delta" && typeof event.delta === "string" &&
+          event.delta.includes("Failover active")
+        ).length;
+      return { continuationText, newTurnWarningDeltaCount };
+    },
+    { openRouterApiKey: "or-test-key" },
+  );
+
+  assert.equal(primaryBodies.length, 1);
+  assert.equal(JSON.stringify(primaryBodies[0]).includes("Failover active"), false);
+  assert.equal(openRouterBodies.length, 2);
+  assert.equal(JSON.stringify(openRouterBodies[0]).includes("Failover active"), false);
+  assert.equal(result.continuationText.includes(warningText), false);
+  assert.equal(result.newTurnWarningDeltaCount, 1);
 });
 
 Deno.test("openai: OpenRouter handler failover covers precommit failures and commitment barriers", async (t) => {
@@ -8851,7 +8909,7 @@ Deno.test("openai: OpenRouter quota dispatch errors propagate for outer status c
   assert.equal(fetches, 0);
 });
 
-Deno.test("openai: OpenRouter keeps native custom-tool events and identities", async () => {
+Deno.test("openai: OpenRouter reverse-projects projected custom-tool events and identities", async () => {
   const responseId = "resp_openrouter_custom";
   const itemId = "ctc_openrouter_custom";
   const callId = "call_openrouter_custom";
@@ -8865,13 +8923,15 @@ Deno.test("openai: OpenRouter keeps native custom-tool events and identities", a
         });
       }
       fallbackBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      const projectedName = ((((fallbackBody?.tools as unknown[])?.[0] as Record<string, unknown> | undefined)?.name) ??
+        "") as string;
       const item = {
         id: itemId,
-        type: "custom_tool_call",
+        type: "function_call",
         status: "completed",
         call_id: callId,
-        name: "exec",
-        input: "pwd",
+        name: projectedName,
+        arguments: JSON.stringify({ input: "pwd" }),
       };
       return sseResponse([
         `data: ${
@@ -8893,27 +8953,27 @@ Deno.test("openai: OpenRouter keeps native custom-tool events and identities", a
             sequence_number: 1,
             response_id: responseId,
             output_index: 0,
-            item: { ...item, status: "in_progress", input: "" },
+            item: { ...item, status: "in_progress", arguments: "" },
           })
         }\n\n`,
         `data: ${
           JSON.stringify({
-            type: "response.custom_tool_call_input.delta",
+            type: "response.function_call_arguments.delta",
             sequence_number: 2,
             response_id: responseId,
             item_id: itemId,
             output_index: 0,
-            delta: "pwd",
+            delta: JSON.stringify({ input: "pwd" }),
           })
         }\n\n`,
         `data: ${
           JSON.stringify({
-            type: "response.custom_tool_call_input.done",
+            type: "response.function_call_arguments.done",
             sequence_number: 3,
             response_id: responseId,
             item_id: itemId,
             output_index: 0,
-            input: "pwd",
+            arguments: JSON.stringify({ input: "pwd" }),
           })
         }\n\n`,
         `data: ${
@@ -8944,33 +9004,42 @@ Deno.test("openai: OpenRouter keeps native custom-tool events and identities", a
     () =>
       handleResponses(openRouterResponsesRequest({
         tools: [{ type: "custom", name: "exec", description: "Run a command", format: { type: "text" } }],
-        input: [{ type: "custom_tool_call_output", call_id: "prior_call", output: "prior result" }],
+        input: [
+          { type: "custom_tool_call", call_id: "prior_call", name: "exec", input: "prior command" },
+          { type: "custom_tool_call_output", call_id: "prior_call", output: "prior result" },
+        ],
       })),
     { openRouterApiKey: "or-test-key" },
   );
 
   assert.equal(response.status, 200);
   const sentFallbackBody = fallbackBody as unknown as Record<string, unknown>;
-  assert.deepEqual(sentFallbackBody.tools, [{
-    type: "custom",
-    name: "exec",
-    description: "Run a command",
-    format: { type: "text" },
-  }]);
+  const projectedTool = (sentFallbackBody.tools as Array<Record<string, unknown>>)[0]!;
+  assert.equal(projectedTool.type, "function");
+  assert.equal(projectedTool.name !== "exec", true);
+  assert.equal(projectedTool.description, "Run a command");
+  assert.deepEqual(projectedTool.parameters, {
+    type: "object",
+    properties: { input: { type: "string" } },
+    required: ["input"],
+    additionalProperties: false,
+  });
   assert.deepEqual(sentFallbackBody.input, [{
-    type: "custom_tool_call_output",
+    type: "function_call",
+    name: projectedTool.name,
+    arguments: JSON.stringify({ input: "prior command" }),
+    call_id: "prior_call",
+  }, {
+    type: "function_call_output",
     call_id: "prior_call",
     output: "prior result",
   }]);
   const values = parseResponsesSseValues(await response.text());
-  const delta = values.find((event) => event.type === "response.custom_tool_call_input.delta");
   const done = values.find((event) => event.type === "response.custom_tool_call_input.done");
   const itemDone = values.find((event) =>
     event.type === "response.output_item.done" &&
     (event.item as { id?: unknown } | undefined)?.id === itemId
   );
-  assert.equal(delta?.item_id, itemId);
-  assert.equal(delta?.output_index, 1);
   assert.equal(done?.item_id, itemId);
   assert.equal(done?.input, "pwd");
   assert.equal((itemDone?.item as { call_id?: unknown } | undefined)?.call_id, callId);
