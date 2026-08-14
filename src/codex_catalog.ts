@@ -102,12 +102,17 @@ const CEREBRAS_CODEX_MODEL: Record<string, unknown> = {
 };
 
 const withCerebrasCatalogModel = (catalog: Record<string, unknown>): Record<string, unknown> => {
-  if (!readCerebrasApiKey() || !Array.isArray(catalog.models)) return catalog;
-  const present = catalog.models.some((model) => {
+  if (!Array.isArray(catalog.models)) return catalog;
+  const isCerebrasModel = (model: unknown): boolean => {
     if (!isRecord(model) || Array.isArray(model)) return false;
     const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
     return id?.trim() === CEREBRAS_GPT_OSS_120B_MODEL;
-  });
+  };
+  if (!readCerebrasApiKey()) {
+    const models = catalog.models.filter((model) => !isCerebrasModel(model));
+    return models.length === catalog.models.length ? catalog : { ...catalog, models };
+  }
+  const present = catalog.models.some(isCerebrasModel);
   return present ? catalog : { ...catalog, models: [...catalog.models, CEREBRAS_CODEX_MODEL] };
 };
 

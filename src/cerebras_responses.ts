@@ -298,6 +298,7 @@ export const chatCompletionToCerebrasResponse = (
   if (!isRecord(choice.message) || Array.isArray(choice.message)) {
     return { ok: false, message: "Upstream Chat Completion is missing its assistant message." };
   }
+  const incomplete = choice.finish_reason === "length";
   const message = choice.message;
   const output: Record<string, unknown>[] = [];
   const text = typeof message.content === "string" ? message.content : "";
@@ -318,6 +319,7 @@ export const chatCompletionToCerebrasResponse = (
       output.push(responseFunctionCallItem(`fc_${callId}`, callId, name, fn.arguments));
     }
   }
+  const terminalOutput = incomplete ? output.map((item) => ({ ...item, status: "incomplete" })) : output;
   const usage = responseUsage(completion.usage);
   return {
     ok: true,
@@ -326,11 +328,11 @@ export const chatCompletionToCerebrasResponse = (
       object: "response",
       created_at: created,
       model: requestedModel,
-      status: "completed",
-      output,
+      status: incomplete ? "incomplete" : "completed",
+      output: terminalOutput,
       output_text: text,
       ...(usage ? { usage } : {}),
-      incomplete_details: null,
+      incomplete_details: incomplete ? { reason: "max_output_tokens" } : null,
     },
   };
 };
@@ -421,7 +423,7 @@ export const cerebrasResponseSse = (response: CerebrasResponsesBody): string => 
     }
     add({ type: "response.output_item.done", response_id: id, output_index: index, item });
   }
-  add({ type: "response.completed", response });
+  add({ type: response.status === "incomplete" ? "response.incomplete" : "response.completed", response });
   events.push("data: [DONE]\n\n");
   return events.join("");
 };

@@ -117,3 +117,29 @@ Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () =>
   assert.equal((events[0]?.response as Record<string, unknown>).usage, null);
   assert.match(stream, /data: \[DONE\]/);
 });
+
+Deno.test("GPT-OSS length termination becomes an incomplete Responses terminal", () => {
+  const translated = chatCompletionToCerebrasResponse(
+    {
+      id: "chatcmpl_truncated",
+      created: 1_728_000_000,
+      model: "gpt-oss-120b",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: "Partial output" },
+        finish_reason: "length",
+      }],
+      usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
+    },
+    "gpt-oss-120b",
+  );
+  const value = expectOk(translated);
+  assert.equal(value.status, "incomplete");
+  assert.deepEqual(value.incomplete_details, { reason: "max_output_tokens" });
+  assert.equal((value.output as Array<Record<string, unknown>>)[0]?.status, "incomplete");
+  const events = [...cerebrasResponseSse(value).matchAll(/^data: (.+)$/gm)]
+    .map((match) => match[1] === "[DONE]" ? null : JSON.parse(match[1]!) as Record<string, unknown>)
+    .filter((event): event is Record<string, unknown> => event !== null);
+  assert.equal(events.at(-1)?.type, "response.incomplete");
+  assert.equal(events.some((event) => event.type === "response.completed"), false);
+});

@@ -271,6 +271,38 @@ Deno.test("codex catalog: configured GPT-OSS is appended to the versioned Codex 
   }
 });
 
+Deno.test("codex catalog: cached GPT-OSS is removed when the credential is removed", async () => {
+  seedBaseState();
+  const envKey = "CEREBRAS_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  const originalFetch = globalThis.fetch;
+  Deno.env.set(envKey, "cerebras-catalog-test-key");
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(catalogBody("0.146.1"), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: '"upstream-catalog"' },
+      }),
+    );
+  try {
+    const configured = await handleCodexCatalogModels(request("0.146.1"), "0.146.1");
+    assert.equal(configured.status, 200);
+    const configuredPayload = await configured.json() as { models?: Array<Record<string, unknown>> };
+    assert.equal(configuredPayload.models?.some((entry) => entry.slug === "gpt-oss-120b"), true);
+
+    Deno.env.delete(envKey);
+    const removed = await handleCodexCatalogModels(request("0.146.1"), "0.146.1");
+    assert.equal(removed.status, 200);
+    assert.equal(removed.headers.get("etag"), null);
+    const removedPayload = await removed.json() as { models?: Array<Record<string, unknown>> };
+    assert.equal(removedPayload.models?.some((entry) => entry.slug === "gpt-oss-120b"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
 Deno.test("codex catalog: malformed versions are rejected before upstream access", async () => {
   seedBaseState();
   const originalFetch = globalThis.fetch;
