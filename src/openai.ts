@@ -61,11 +61,17 @@ import {
   deriveOpenRouterSessionId,
   fetchOpenRouterResponses,
   isEligibleOpenRouterModel,
+  OpenRouterError,
   openRouterModelFromEvent,
   openRouterTaskTypeFromResponse,
   readOpenRouterApiKey,
   stripOpenRouterMetadata,
 } from "./openrouter.ts";
+import {
+  hasFailoverWarningAfterLatestUserMessage,
+  isGatewayFailoverWarningItem,
+  projectOpenRouterResponsesIterator,
+} from "./openrouter_projection.ts";
 import {
   claimOpenRouterEarlyRecoveryProbe,
   closeOpenRouterCircuit,
@@ -84,6 +90,7 @@ import {
   prepareResponsesStreamForCommit,
   responseEventFromValue,
   responseIdFromEvents,
+  type ResponsesSemanticOptions,
 } from "./responses_failover_stream.ts";
 import {
   type PaidFallbackReservation,
@@ -837,6 +844,8 @@ const prepareResponsesAttempt = async (
     requireEligibleModel?: boolean;
     rejectFailedTerminal?: boolean;
     rejectPresemanticFailureTerminal?: boolean;
+    transformIterator?: (iterator: ResponsesStreamIterator) => ResponsesStreamIterator;
+    semanticOptions?: ResponsesSemanticOptions;
   }> = {},
 ): Promise<ResponsesAttemptResult> => {
   const fail = (trigger: ResponsesAttemptTrigger, failedResponse = response): ResponsesAttemptResult => {
@@ -862,12 +871,13 @@ const prepareResponsesAttempt = async (
     deadline.clear();
     return fail("missing_body");
   }
-  const iterator = readResponsesStream(response.body, deadline.signal, {
+  const parsedIterator = readResponsesStream(response.body, deadline.signal, {
     firstEventTimeoutMs: Math.ceil(deadline.remainingMs()),
   });
+  const iterator = options.transformIterator?.(parsedIterator) ?? parsedIterator;
   let preparedStream: PreparedResponsesStream | null = null;
   try {
-    const prepared = await prepareResponsesStreamForCommit(iterator);
+    const prepared = await prepareResponsesStreamForCommit(iterator, options.semanticOptions);
     preparedStream = prepared;
     if (
       prepared.terminal &&
@@ -1126,6 +1136,7 @@ const fetchAndPrepareOpenRouterResponses = async (
   recordAttemptedProvider(options.usageContext, "openrouter");
   if (options.usageContext?.responseTelemetry) options.usageContext.responseTelemetry.provider = "openrouter";
   let response: Response;
+  let projection: Awaited<ReturnType<typeof fetchOpenRouterResponses>>["projection"];
   try {
     const result = await fetchOpenRouterResponses(body, {
       apiKey: options.apiKey,
@@ -1138,9 +1149,11 @@ const fetchAndPrepareOpenRouterResponses = async (
       beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("openrouter") ?? Promise.resolve(),
     });
     response = result.response;
+    projection = result.projection;
   } catch (error) {
     deadline.clear();
     if (error instanceof ApiKeyQuotaDispatchError) throw error;
+    if (error instanceof OpenRouterError && error.status < 500) throw error;
     if (options.requestSignal.aborted) throw options.requestSignal.reason ?? error;
     return {
       kind: "failed",
@@ -1165,7 +1178,12 @@ const fetchAndPrepareOpenRouterResponses = async (
     deadline,
     options.requestSignal,
     [],
-    { requireEligibleModel: true, rejectFailedTerminal: true },
+    {
+      requireEligibleModel: true,
+      rejectFailedTerminal: true,
+      transformIterator: (iterator) => projectOpenRouterResponsesIterator(iterator, projection!),
+      semanticOptions: { ignoreRawReasoning: true, ignoreFailoverWarningEcho: true },
+    },
   );
 };
 
@@ -7261,7 +7279,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     reasoningValue = { effort: reasoningEffortForCodexRequest(defaultReasoningLabel, modelReasoning) };
   }
 
-  const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });
+  const upstreamInput = input.filter((item) => !isGatewayFailoverWarningItem(item));
+  const codexBody = await buildCodexRequest(model, upstreamInput, { reasoning: reasoningValue, instructions });
   const passthroughKeys: PassthroughToolSchemaKey[] = [
     "tools",
     "tool_choice",
@@ -7275,7 +7294,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   ];
   applyPassthroughToCodexRequest(codexBody, rawRecord, passthroughKeys);
   codexBody.model = model;
-  codexBody.input = input;
+  codexBody.input = upstreamInput;
   codexBody.stream = true;
   codexBody.store = false;
   const openRouterBody = { ...codexBody };
@@ -7387,16 +7406,24 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
 
     if (route === "openrouter" && apiKey) {
       fallbackStartedAt = performance.now();
-      const openRouter = await fetchAndPrepareOpenRouterResponses(openRouterBody, {
-        usageContext,
-        requestSignal: requestInferenceSignal,
-        sessionId,
-        apiKey,
-        attemptDeadline: createStreamSemanticDeadline(
-          preHeaderDeadline.signal,
-          Math.ceil(preHeaderDeadline.remainingMs()),
-        ),
-      });
+      let openRouter: ResponsesAttemptResult;
+      try {
+        openRouter = await fetchAndPrepareOpenRouterResponses(openRouterBody, {
+          usageContext,
+          requestSignal: requestInferenceSignal,
+          sessionId,
+          apiKey,
+          attemptDeadline: createStreamSemanticDeadline(
+            preHeaderDeadline.signal,
+            Math.ceil(preHeaderDeadline.remainingMs()),
+          ),
+        });
+      } catch (error) {
+        if (error instanceof OpenRouterError && error.status < 500) {
+          return openaiError(400, error.message, "invalid_request_error", error.param ? { param: error.param } : {});
+        }
+        throw error;
+      }
       if (openRouter.kind === "ready") {
         openRouterAttempt = openRouter.attempt;
         selectedModel = openRouter.attempt.selectedModel;
@@ -7517,7 +7544,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   });
   const structuredTextOutput = isRecord(rawRecord.text) && isRecord(rawRecord.text.format) &&
     (rawRecord.text.format.type === "json_schema" || rawRecord.text.format.type === "json_object");
-  const warningModel = openRouterAttempt && !structuredTextOutput ? selectedModel : null;
+  const warningModel = openRouterAttempt && !structuredTextOutput && !hasFailoverWarningAfterLatestUserMessage(input)
+    ? selectedModel
+    : null;
   if (globalProbe && ready.prepared.semantic) {
     void renewOpenRouterCircuitProbe(globalProbe).catch(() => {});
   }
