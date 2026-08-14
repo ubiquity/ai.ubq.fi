@@ -4,13 +4,12 @@ import {
   deriveOpenRouterSessionId,
   fetchOpenRouterResponses,
   isEligibleOpenRouterModel,
-  OPENROUTER_EXCLUDED_MODELS,
   OPENROUTER_RESPONSES_URL,
   openRouterTaskTypeFromResponse,
   stripOpenRouterMetadata,
 } from "../src/openrouter.ts";
 
-Deno.test("OpenRouter request translation applies the fixed Auto policy and strips gateway fields", async () => {
+Deno.test("OpenRouter request translation applies the fixed DeepSeek Flash policy and strips gateway fields", async () => {
   const sessionId = await deriveOpenRouterSessionId("api-key:key-1", { session_id: "raw-session" });
   const translated = buildOpenRouterResponsesRequest({
     model: "gpt-5.6-sol",
@@ -32,12 +31,8 @@ Deno.test("OpenRouter request translation applies the fixed Auto policy and stri
     stream: true,
   }, sessionId);
 
-  assert.equal(translated.model, "openrouter/auto");
-  assert.deepEqual(translated.plugins, [{
-    id: "auto-router",
-    cost_tier: "max",
-    excluded_models: [...OPENROUTER_EXCLUDED_MODELS],
-  }]);
+  assert.equal(translated.model, "~deepseek/deepseek-v4-flash-latest");
+  assert.equal("plugins" in translated, false);
   assert.deepEqual(translated.reasoning, { effort: "max" });
   const translatedTools = translated.tools as Array<Record<string, unknown>>;
   const projectedName = translatedTools[0]?.name;

@@ -7,16 +7,8 @@ import {
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
 
 export const OPENROUTER_RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
-export const OPENROUTER_AUTO_MODEL = "openrouter/auto";
+export const OPENROUTER_AUTO_MODEL = "~deepseek/deepseek-v4-flash-latest";
 export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
-export const OPENROUTER_EXCLUDED_MODELS = [
-  "openai/*",
-  "~openai/*",
-  "anthropic/*",
-  "~anthropic/*",
-  "*/gpt-*",
-  "*/claude-*",
-] as const;
 
 export type OpenRouterResponsesResult = Readonly<{
   response: Response;
@@ -215,19 +207,15 @@ export const buildOpenRouterResponsesRequestWithProjection = (
   else delete translated.tools;
   if (projection.toolChoice !== undefined) translated.tool_choice = projection.toolChoice;
   else delete translated.tool_choice;
-  // The current Responses endpoint catalog does not advertise these fields
-  // for the eligible Auto Router endpoints. With require_parameters enabled,
-  // forwarding them would make the entire route ineligible before dispatch.
+  // The DeepSeek Flash Responses endpoint does not advertise these fields.
+  // With require_parameters enabled, forwarding them would make the route
+  // ineligible before dispatch.
   delete translated.include;
   delete translated.parallel_tool_calls;
   delete translated.text;
   translated.provider = { require_parameters: true };
   translated.model = OPENROUTER_AUTO_MODEL;
-  translated.plugins = [{
-    id: "auto-router",
-    cost_tier: "max",
-    excluded_models: [...OPENROUTER_EXCLUDED_MODELS],
-  }];
+  delete translated.plugins;
   if (sessionId?.trim()) translated.session_id = sessionId.trim();
   return { requestBody: translated, projection: projection.registry };
 };
@@ -251,7 +239,7 @@ export const isEligibleOpenRouterModel = (value: unknown): value is string => {
   if (!model || model.length > 256 || [...model].some((character) => character < " " || character === "\u007f")) {
     return false;
   }
-  if (model.toLowerCase() === OPENROUTER_AUTO_MODEL) return false;
+  if (model.toLowerCase() === "openrouter/auto") return false;
   const separator = model.indexOf("/");
   if (separator <= 0 || separator === model.length - 1) return false;
   const publisher = model.slice(0, separator).toLowerCase();

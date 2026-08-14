@@ -8716,7 +8716,7 @@ Deno.test("openai: streamed Responses force the SSE content type", async () => {
   assert.match(await response.text(), /response.completed/);
 });
 
-Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", async () => {
+Deno.test("openai: eligible Responses failure replays through DeepSeek Flash", async () => {
   const primaryBody = JSON.stringify({
     model: DEFAULT_TEST_MODEL,
     input: [
@@ -8802,19 +8802,8 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   ]);
   assert.ok(openRouterBody);
   const sent = openRouterBody as Record<string, unknown>;
-  assert.equal(sent.model, "openrouter/auto");
-  assert.deepEqual(sent.plugins, [{
-    id: "auto-router",
-    cost_tier: "max",
-    excluded_models: [
-      "openai/*",
-      "~openai/*",
-      "anthropic/*",
-      "~anthropic/*",
-      "*/gpt-*",
-      "*/claude-*",
-    ],
-  }]);
+  assert.equal(sent.model, "~deepseek/deepseek-v4-flash-latest");
+  assert.equal("plugins" in sent, false);
   assert.deepEqual(sent.reasoning, { effort: "max" });
   assert.equal(sent.max_output_tokens, 256);
   assert.equal(typeof sent.session_id, "string");
