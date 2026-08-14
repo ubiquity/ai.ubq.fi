@@ -1,6 +1,9 @@
 import { config } from "./config.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
+import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
+import llmsText from "../static/llms.txt" with { type: "text" };
+import openApiText from "../static/openapi.json" with { type: "text" };
 
 type StaticBody = string | Uint8Array<ArrayBuffer>;
 
@@ -10,6 +13,7 @@ type StaticAsset = {
   contentType: string;
   readAs: "text" | "bytes";
   security: "html" | "asset";
+  body?: StaticBody;
 };
 
 const staticCacheControl = config.isDeploy ? "public, max-age=300" : "no-store";
@@ -34,6 +38,7 @@ const textAsset = (
   path: string,
   contentType: string,
   security: StaticAsset["security"] = "asset",
+  body?: string,
 ): StaticAsset =>
   registerAsset(routes, {
     url: fromStatic(path),
@@ -41,6 +46,7 @@ const textAsset = (
     contentType,
     readAs: "text",
     security,
+    body,
   });
 
 const bytesAsset = (
@@ -79,16 +85,23 @@ textAsset(["/network.js"], "network.js", "text/javascript; charset=utf-8");
 textAsset(["/reasoning-select.js"], "reasoning-select.js", "text/javascript; charset=utf-8");
 
 textAsset(["/company-logo.svg"], "company-logo.svg", "image/svg+xml; charset=utf-8");
-textAsset(["/llms.txt"], "llms.txt", "text/plain; charset=utf-8");
-textAsset(["/llms-full.txt"], "docs/llms-agents.md", "text/plain; charset=utf-8");
-textAsset(["/docs/llms-agents.md"], "docs/llms-agents.md", "text/markdown; charset=utf-8");
-textAsset(["/openapi.json"], "openapi.json", "application/json; charset=utf-8");
+textAsset(["/llms.txt"], "llms.txt", "text/plain; charset=utf-8", "asset", llmsText);
+textAsset(["/llms-full.txt"], "docs/llms-agents.md", "text/plain; charset=utf-8", "asset", llmsFullText);
+textAsset(
+  ["/docs/llms-agents.md"],
+  "docs/llms-agents.md",
+  "text/markdown; charset=utf-8",
+  "asset",
+  llmsFullText,
+);
+textAsset(["/openapi.json"], "openapi.json", "application/json; charset=utf-8", "asset", openApiText);
 
 bytesAsset(["/favicon.ico", "/favicon.png"], "favicon.png", "image/png");
 bytesAsset(["/favicon-32.png"], "favicon-32.png", "image/png");
 
 const readAsset = async (asset: StaticAsset): Promise<StaticBody | null> => {
   try {
+    if (asset.body !== undefined) return asset.body;
     if (asset.readAs === "text") {
       return await Deno.readTextFile(asset.url);
     }
