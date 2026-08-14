@@ -1,4 +1,4 @@
-import { kvPromise } from "./kv.ts";
+import { getKv } from "./kv.ts";
 import { isRecord } from "./utils.ts";
 
 export const CODEX_RATE_LIMIT_KV_KEY = ["uos_ai", "codex_rate_limit"] as const;
@@ -88,7 +88,7 @@ export const getCodexRateLimitDecision = async (
 };
 
 export const getGlobalCodexRateLimitDecision = async (nowMs = Date.now()): Promise<CodexRateLimitDecision> =>
-  await getCodexRateLimitDecision(await kvPromise, nowMs);
+  await getCodexRateLimitDecision(await getKv(), nowMs);
 
 export const openCodexRateLimitCircuit = async (
   kv: Deno.Kv | null,
@@ -115,7 +115,7 @@ export const openCodexRateLimitCircuit = async (
 export const openGlobalCodexRateLimitCircuit = async (
   retryAfter: string | null,
   nowMs = Date.now(),
-): Promise<number> => await openCodexRateLimitCircuit(await kvPromise, retryAfter, nowMs);
+): Promise<number> => await openCodexRateLimitCircuit(await getKv(), retryAfter, nowMs);
 
 export const closeCodexRateLimitProbe = async (kv: Deno.Kv | null, probeId: string): Promise<void> => {
   if (!kv) return;
@@ -133,4 +133,4 @@ export const closeCodexRateLimitProbe = async (kv: Deno.Kv | null, probeId: stri
 };
 
 export const closeGlobalCodexRateLimitProbe = async (probeId: string): Promise<void> =>
-  await closeCodexRateLimitProbe(await kvPromise, probeId);
+  await closeCodexRateLimitProbe(await getKv(), probeId);

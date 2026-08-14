@@ -12,6 +12,7 @@ const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-cache",
   "ETag",
   "Retry-After",
+  "Server-Timing",
   ...CEREBRAS_RATE_LIMIT_HEADERS,
   "x-codex-limit-name",
   "x-codex-primary-used-percent",

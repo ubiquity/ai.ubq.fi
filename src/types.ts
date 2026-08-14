@@ -413,7 +413,6 @@ export type ResponsesRequest = Readonly<{
   model?: unknown;
   input?: unknown;
   instructions?: unknown;
-  client_metadata?: unknown;
   reasoning?: unknown;
   stream?: unknown;
 }>;

@@ -11,6 +11,22 @@ import { sha256Hex } from "./utils.ts";
 import { getKv } from "./kv.ts";
 import { openaiError, withCors } from "./http.ts";
 
+type MarketplaceAuthAccount = {
+  id: string;
+  ownerUserId: string;
+  provider: string;
+  encryptedAuthJson: string;
+  status: string;
+  pricing: unknown;
+  maxConcurrent: number | null;
+  health: unknown;
+  enabled: boolean;
+  labels: unknown;
+  createdAt: number;
+  updatedAt: number;
+  [key: string]: unknown;
+};
+
 // KV key helpers -----------------------------------------------------------
 export const authAccountKey = (id: string) => ["ubq_ai", "marketplace", "auth_accounts", id] as const;
 export const authAccountByOwnerKey = (ownerUserId: string, id: string) =>
@@ -111,7 +127,7 @@ export const handleMarketplaceListAuth = async (req: Request): Promise<Response>
   const accounts: unknown[] = [];
   for await (const entry of kv.list({ prefix })) {
     const id = entry.key[entry.key.length - 1] as string;
-    const account = await kv.get<any>(authAccountKey(id));
+    const account = await kv.get<MarketplaceAuthAccount>(authAccountKey(id));
     if (account.value) accounts.push(account.value);
   }
   return withCors(
@@ -126,7 +142,7 @@ export const handleMarketplaceUpdateAuth = async (req: Request, id: string): Pro
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return withCors(openaiError(401, "unauthorized", "invalid_request_error"));
   const kv = await getKv();
-  const existing = await kv.get<any>(authAccountKey(id));
+  const existing = await kv.get<MarketplaceAuthAccount>(authAccountKey(id));
   if (!existing.value) return withCors(openaiError(404, "auth account not found", "invalid_request_error"));
   let body: unknown;
   try {
@@ -152,7 +168,7 @@ export const handleMarketplaceDisableAuth = async (req: Request, id: string): Pr
   const authResult = await authenticateClient(req);
   if (!authResult.ok) return withCors(openaiError(401, "unauthorized", "invalid_request_error"));
   const kv = await getKv();
-  const existing = await kv.get<any>(authAccountKey(id));
+  const existing = await kv.get<MarketplaceAuthAccount>(authAccountKey(id));
   if (!existing.value) return withCors(openaiError(404, "auth account not found", "invalid_request_error"));
   const now = Date.now();
   const updated = { ...existing.value, enabled: false, updatedAt: now };
@@ -175,9 +191,10 @@ export const handleMarketplacePublicCatalog = async (_req: Request): Promise<Res
   const prefix = ["ubq_ai", "marketplace", "auth_accounts"] as const;
   const accounts: unknown[] = [];
   for await (const entry of kv.list({ prefix })) {
-    const account = await kv.get<any>(entry.key);
+    const account = await kv.get<MarketplaceAuthAccount>(entry.key);
     if (account.value) {
-      const { encryptedAuthJson, ...publicFields } = account.value as Record<string, unknown>;
+      const publicFields: Record<string, unknown> = { ...account.value };
+      delete publicFields.encryptedAuthJson;
       accounts.push(publicFields);
     }
   }

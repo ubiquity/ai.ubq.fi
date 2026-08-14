@@ -135,19 +135,7 @@ export const CODEX_AUTH_POOL_KV_KEY = ["ubq_ai", "codex_auth"] as const;
 export const CODEX_MODELS_KV_KEY = ["ubq_ai", "codex_models"] as const;
 export const CODEX_AUTH_REFRESH_LEASE_PREFIX = ["uos_ai", "codex_auth_refresh", "v1"] as const;
 export const CODEX_AUTH_CACHE_TTL_MS = 5 * 60_000;
-/**
- * The original implementation limited the auth pool to exactly two accounts – a
- * hard‑coded slot model used for the initial admin‑managed capacity approach.
- * The marketplace handoff plan requires the pool to be unbounded so that
- * sellers can upload an arbitrary number of `auth.json` credentials.
- *
- * Rather than remove the constant entirely (which would require updating a
- * handful of guard clauses that still reference it), we raise the limit to a
- * very high safe integer.  This retains the compile‑time type expectations while
- * effectively disabling the ceiling.  The constant remains exported for any
- * external callers that may still do a sanity check on slot numbers.
- */
-export const CODEX_AUTH_POOL_MAX_ACCOUNTS = Number.MAX_SAFE_INTEGER;
+export const CODEX_AUTH_POOL_MAX_ACCOUNTS = 2;
 const CODEX_AUTH_REFRESH_LEASE_MS = 15_000;
 const CODEX_AUTH_REFRESH_WAIT_MS = 10_000;
 export const CODEX_ADDITIONAL_429_RETRY_MAX_DELAY_MS = 2_000;
