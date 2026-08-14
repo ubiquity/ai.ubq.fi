@@ -8196,7 +8196,29 @@ Deno.test("openai: streamed Responses force the SSE content type", async () => {
 Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", async () => {
   const primaryBody = JSON.stringify({
     model: DEFAULT_TEST_MODEL,
-    input: "ping",
+    input: [
+      {
+        id: "msg_failover_fixture",
+        type: "message",
+        status: "completed",
+        role: "assistant",
+        content: [{
+          type: "output_text",
+          text:
+            "⚠ Failover active: this response is from `openrouter:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
+        }],
+      },
+      {
+        type: "message",
+        role: "assistant",
+        content: [{
+          type: "output_text",
+          text:
+            "⚠ Failover active: this response is from `openrouter:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
+        }],
+      },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "ping" }] },
+    ],
     stream: true,
     reasoning: { effort: "ultra" },
     max_output_tokens: 256,
@@ -8275,6 +8297,10 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   assert.equal(typeof sent.session_id, "string");
   assert.doesNotMatch(String(sent.session_id), /raw-session-id|test-principal/);
   assert.equal(JSON.stringify(sent).includes("raw-session-id"), false);
+  assert.deepEqual(
+    (sent.input as Array<Record<string, unknown>>).map((item) => item.role),
+    ["assistant", "user"],
+  );
   assert.equal(openRouterAuthorization, "Bearer or-test-key");
   assert.equal(openRouterMetadata, "enabled");
 

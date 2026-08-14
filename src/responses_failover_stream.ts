@@ -35,9 +35,26 @@ const hostedToolTerminalEventTypes = new Set([
   ...[...hostedToolTypes].map((type) => `response.${type}.failed`),
 ]);
 const imagePartialEventType = "response.image_generation_call.partial_image";
+const FAILOVER_WARNING_PREFIX = "⚠ Failover active: this response is from `openrouter:";
+const FAILOVER_WARNING_SUFFIX = "` because the Codex upstream was unavailable.";
 
 const nonEmptyText = (value: Record<string, unknown>): boolean =>
   [value.delta, value.text].some((item) => typeof item === "string" && item.length > 0);
+
+/** Identifies only the assistant item injected by buildFailoverWarningEvents. */
+export const isGatewayFailoverWarningItem = (value: unknown): boolean => {
+  if (!isRecord(value) || Array.isArray(value) || value.type !== "message" || value.role !== "assistant") {
+    return false;
+  }
+  const id = getString(value.id);
+  if (!id?.startsWith("msg_failover_")) return false;
+  if (!Array.isArray(value.content) || value.content.length !== 1) return false;
+  const content = value.content[0];
+  if (!isRecord(content) || Array.isArray(content) || content.type !== "output_text") return false;
+  const text = getString(content.text);
+  return !!text && text.startsWith(FAILOVER_WARNING_PREFIX) && text.endsWith(FAILOVER_WARNING_SUFFIX) &&
+    text.length > FAILOVER_WARNING_PREFIX.length + FAILOVER_WARNING_SUFFIX.length;
+};
 
 const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null => {
   if (!Array.isArray(output)) return null;
