@@ -683,6 +683,21 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   }
 
   if (!token) {
+    const passkeySession = await getPasskeySessionForRequest(req);
+    if (passkeySession) {
+      logClientAuth({ ok: true, method: "passkey_session" });
+      return {
+        ok: true,
+        token: passkeySession.token,
+        method: {
+          kind: "passkey_session",
+          user_id: passkeySession.user.id,
+          handle: passkeySession.user.handle,
+          is_admin: isPasskeyUserAdmin(passkeySession.user),
+          credential_count: passkeySession.user.credential_ids.length,
+        },
+      };
+    }
     logClientAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
     return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
@@ -910,11 +925,6 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
       token_shape: tokenShape,
       ...entry,
     });
-  if (!token) {
-    logAdminAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
-    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
-  }
-
   const passkeySession = await getPasskeySessionForRequest(req);
   if (passkeySession) {
     if (!isPasskeyUserAdmin(passkeySession.user)) {
@@ -924,7 +934,7 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
     logAdminAuth({ ok: true, method: "passkey_session" });
     return {
       ok: true,
-      token,
+      token: passkeySession.token,
       is_super_admin: false,
       method: {
         kind: "passkey_session",
@@ -934,6 +944,11 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
         credential_count: passkeySession.user.credential_ids.length,
       },
     };
+  }
+
+  if (!token) {
+    logAdminAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
 
   if (config.adminTokens.size === 0 && !looksLikeDenoDeployToken(token)) {
