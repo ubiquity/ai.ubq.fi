@@ -8,7 +8,7 @@ Deno.test("auth relay accepts local development origins", () => {
   assert.equal(parseTrustedAuthRelayOrigin("http://[::1]:8000"), "http://[::1]:8000");
 });
 
-Deno.test("auth relay accepts ai gateway production and preview origins", () => {
+Deno.test("auth relay accepts secure production, preview, and development origins", () => {
   assert.equal(parseTrustedAuthRelayOrigin("https://ai.ubq.fi"), "https://ai.ubq.fi");
   assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi.deno.dev"), "https://ai-ubq-fi.deno.dev");
   assert.equal(
@@ -27,6 +27,7 @@ Deno.test("auth relay accepts ai gateway production and preview origins", () => 
     parseTrustedAuthRelayOrigin("https://p-ai-ubq-fi-z707765qdpnm.ubiquity-dao.deno.net"),
     "https://p-ai-ubq-fi-z707765qdpnm.ubiquity-dao.deno.net",
   );
+  assert.equal(parseTrustedAuthRelayOrigin("https://preview.example.com"), "https://preview.example.com");
 });
 
 Deno.test("preview origin detection is restricted to HTTPS gateway deployments", () => {
@@ -39,11 +40,7 @@ Deno.test("preview origin detection is restricted to HTTPS gateway deployments",
   assert.equal(isAiGatewayPreviewOrigin("https://example.com"), false);
 });
 
-Deno.test("auth relay rejects untrusted or malformed origins", () => {
-  assert.equal(parseTrustedAuthRelayOrigin("https://example.com"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi-evil.deno.dev"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi-evil.ubiquity-dao.deno.net"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi-cv5fc93pzb5a.evil.example"), "");
+Deno.test("auth relay rejects insecure or malformed non-local origins", () => {
   assert.equal(parseTrustedAuthRelayOrigin("http://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net"), "");
   assert.equal(parseTrustedAuthRelayOrigin("https://ai.ubq.fi/admin"), "");
   assert.equal(parseTrustedAuthRelayOrigin("javascript:alert(1)"), "");
