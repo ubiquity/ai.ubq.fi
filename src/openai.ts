@@ -1238,9 +1238,23 @@ const collectBufferedResponses = async (
     })();
   let finalResponse: Record<string, unknown> | null = null;
   let responseId = attempt.responseId;
-  let outputText = "";
+  const deltaTextParts = new Map<string, string>();
+  const doneTextParts = new Map<string, string>();
+  const textPartOrder: string[] = [];
   let refusalText = "";
   const outputItems: Record<string, unknown>[] = [];
+  const textPartKey = (value: Record<string, unknown>): string => {
+    const itemId = getString(value.item_id)?.trim();
+    if (itemId) return `item:${itemId}:${String(value.content_index ?? 0)}`;
+    return `output:${String(value.output_index ?? 0)}:${String(value.content_index ?? 0)}`;
+  };
+  const rememberTextPart = (value: Record<string, unknown>, text: string, done: boolean): void => {
+    if (!text) return;
+    const key = textPartKey(value);
+    if (!textPartOrder.includes(key)) textPartOrder.push(key);
+    const parts = done ? doneTextParts : deltaTextParts;
+    parts.set(key, done ? text : `${parts.get(key) ?? ""}${text}`);
+  };
   try {
     for await (const event of initial) {
       recordFirstSseEvent(options.usageContext);
@@ -1255,11 +1269,11 @@ const collectBufferedResponses = async (
       if (
         event.type === "response.output_text.delta" &&
         !(options.warningModel && ev.output_index === 0)
-      ) outputText += getString(ev.delta) ?? "";
+      ) rememberTextPart(ev, getString(ev.delta) ?? "", false);
       if (
         event.type === "response.output_text.done" &&
         !(options.warningModel && ev.output_index === 0)
-      ) outputText += getString(ev.text) ?? "";
+      ) rememberTextPart(ev, getString(ev.text) ?? "", true);
       if (event.type === "response.refusal.delta") refusalText += getString(ev.delta) ?? "";
       if (event.type === "response.refusal.done" && !refusalText) refusalText = getString(ev.refusal) ?? "";
       if (event.type === "response.output_item.done" && isRecord(ev.item)) outputItems.push(ev.item);
@@ -1308,6 +1322,7 @@ const collectBufferedResponses = async (
       [],
     );
   }
+  const outputText = textPartOrder.map((key) => doneTextParts.get(key) ?? deltaTextParts.get(key) ?? "").join("");
   finalResponse = withAccumulatedResponseItems(finalResponse, outputItems);
   finalResponse = withAccumulatedResponseText(finalResponse, outputText, options.warningModel ? 1 : 0);
   finalResponse = withAccumulatedResponseRefusal(finalResponse, refusalText, options.warningModel ? 1 : 0);
