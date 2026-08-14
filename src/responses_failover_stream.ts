@@ -4,9 +4,15 @@ import {
   type ResponsesStreamEvent,
   type ResponsesStreamIterator,
 } from "./responses_stream.ts";
+import { FAILOVER_WARNING_TEXT, isFailoverWarningText } from "./openrouter_projection.ts";
 import { getString, isRecord } from "./utils.ts";
 
 export type ResponsesSemanticKind = "text" | "reasoning" | "tool_call";
+
+export type ResponsesSemanticOptions = Readonly<{
+  ignoreRawReasoning?: boolean;
+  ignoreFailoverWarningEcho?: boolean;
+}>;
 
 export const MAX_RESPONSES_PRECOMMIT_EVENTS = 10_000;
 export const MAX_RESPONSES_PRECOMMIT_CHARS = 32 * 1024 * 1024;
@@ -35,28 +41,14 @@ const hostedToolTerminalEventTypes = new Set([
   ...[...hostedToolTypes].map((type) => `response.${type}.failed`),
 ]);
 const imagePartialEventType = "response.image_generation_call.partial_image";
-const FAILOVER_WARNING_PREFIX = "⚠ Failover active: this response is from `openrouter:";
-const FAILOVER_WARNING_SUFFIX = "` because the Codex upstream was unavailable.";
 
 const nonEmptyText = (value: Record<string, unknown>): boolean =>
   [value.delta, value.text].some((item) => typeof item === "string" && item.length > 0);
 
-/** Identifies only the assistant item injected by buildFailoverWarningEvents. */
-export const isGatewayFailoverWarningItem = (value: unknown): boolean => {
-  if (!isRecord(value) || Array.isArray(value) || value.type !== "message" || value.role !== "assistant") {
-    return false;
-  }
-  const id = getString(value.id);
-  if (!id?.startsWith("msg_failover_")) return false;
-  if (!Array.isArray(value.content) || value.content.length !== 1) return false;
-  const content = value.content[0];
-  if (!isRecord(content) || Array.isArray(content) || content.type !== "output_text") return false;
-  const text = getString(content.text);
-  return !!text && text.startsWith(FAILOVER_WARNING_PREFIX) && text.endsWith(FAILOVER_WARNING_SUFFIX) &&
-    text.length > FAILOVER_WARNING_PREFIX.length + FAILOVER_WARNING_SUFFIX.length;
-};
-
-const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null => {
+const semanticKindFromOutput = (
+  output: unknown,
+  options: ResponsesSemanticOptions = {},
+): ResponsesSemanticKind | null => {
   if (!Array.isArray(output)) return null;
   for (const item of output) {
     if (!isRecord(item) || Array.isArray(item)) continue;
@@ -79,6 +71,7 @@ const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null =
       return "tool_call";
     }
     if (item.type === "reasoning") {
+      if (options.ignoreRawReasoning) continue;
       const values = [item.content, item.summary];
       if (
         values.some((value) =>
@@ -88,6 +81,14 @@ const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null =
           )
         )
       ) return "reasoning";
+    }
+    if (options.ignoreFailoverWarningEcho && item.type === "message" && item.role === "assistant") {
+      const text = typeof item.content === "string"
+        ? item.content
+        : Array.isArray(item.content)
+        ? item.content.map((part) => isRecord(part) ? getString(part.text) ?? "" : "").join("")
+        : "";
+      if (isFailoverWarningText(text)) continue;
     }
     if (!Array.isArray(item.content)) continue;
     if (
@@ -103,14 +104,28 @@ const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null =
   return null;
 };
 
-export const responsesEventSemanticKind = (event: ResponsesStreamEvent): ResponsesSemanticKind | null => {
-  if (textTypes.has(event.type)) return nonEmptyText(event.value) ? "text" : null;
+export const responsesEventSemanticKind = (
+  event: ResponsesStreamEvent,
+  options: ResponsesSemanticOptions = {},
+): ResponsesSemanticKind | null => {
+  if (textTypes.has(event.type)) {
+    if (
+      options.ignoreFailoverWarningEcho &&
+      isFailoverWarningText(event.type.endsWith("delta") ? event.value.delta : event.value.text)
+    ) {
+      return null;
+    }
+    return nonEmptyText(event.value) ? "text" : null;
+  }
   if (refusalTypes.has(event.type)) {
     return (nonEmptyText(event.value) || (typeof event.value.refusal === "string" && event.value.refusal.length > 0))
       ? "text"
       : null;
   }
-  if (reasoningTypes.has(event.type)) return nonEmptyText(event.value) ? "reasoning" : null;
+  if (reasoningTypes.has(event.type)) {
+    if (options.ignoreRawReasoning) return null;
+    return nonEmptyText(event.value) ? "reasoning" : null;
+  }
   if (hostedToolTerminalEventTypes.has(event.type)) return "tool_call";
   if (event.type === imagePartialEventType) {
     return [event.value.partial_image_b64, event.value.partial_image, event.value.result]
@@ -136,9 +151,9 @@ export const responsesEventSemanticKind = (event: ResponsesStreamEvent): Respons
     return semanticKindFromOutput([item]);
   }
   if (isRecord(event.value.response) && !Array.isArray(event.value.response)) {
-    return semanticKindFromOutput(event.value.response.output);
+    return semanticKindFromOutput(event.value.response.output, options);
   }
-  const topLevelOutputKind = semanticKindFromOutput(event.value.output);
+  const topLevelOutputKind = semanticKindFromOutput(event.value.output, options);
   if (topLevelOutputKind) return topLevelOutputKind;
   return null;
 };
@@ -170,6 +185,7 @@ export const appendResponsesPrecommitEvent = (
 /** Holds all provider events until semantic output or a valid terminal owns the attempt. */
 export const prepareResponsesStreamForCommit = async (
   iterator: ResponsesStreamIterator,
+  options: ResponsesSemanticOptions = {},
 ): Promise<PreparedResponsesStream> => {
   const buffered: ResponsesStreamEvent[] = [];
   let bufferedChars = 0;
@@ -182,7 +198,7 @@ export const prepareResponsesStreamForCommit = async (
         });
       }
       bufferedChars = appendResponsesPrecommitEvent(buffered, next.value, bufferedChars);
-      const semanticKind = responsesEventSemanticKind(next.value);
+      const semanticKind = responsesEventSemanticKind(next.value, options);
       if (semanticKind) {
         return {
           iterator,
@@ -258,8 +274,7 @@ export const buildFailoverWarningEvents = (
   startingSequenceNumber = 0,
 ): Readonly<{ item: Record<string, unknown>; events: ResponsesStreamEvent[] }> => {
   const itemId = `msg_failover_${crypto.randomUUID().replace(/-/g, "")}`;
-  const text =
-    `⚠ Failover active: this response is from \`openrouter:${actualModel}\` because the Codex upstream was unavailable.`;
+  const text = FAILOVER_WARNING_TEXT(actualModel);
   const content = { type: "output_text", text, annotations: [] };
   const item: Record<string, unknown> = {
     id: itemId,

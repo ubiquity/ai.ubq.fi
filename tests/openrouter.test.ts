@@ -4,22 +4,26 @@ import {
   deriveOpenRouterSessionId,
   fetchOpenRouterResponses,
   isEligibleOpenRouterModel,
-  OPENROUTER_EXCLUDED_MODELS,
   OPENROUTER_RESPONSES_URL,
   openRouterTaskTypeFromResponse,
   stripOpenRouterMetadata,
 } from "../src/openrouter.ts";
 
-Deno.test("OpenRouter request translation applies the fixed Auto policy and strips gateway fields", async () => {
+Deno.test("OpenRouter request translation applies the fixed DeepSeek Flash policy and strips gateway fields", async () => {
   const sessionId = await deriveOpenRouterSessionId("api-key:key-1", { session_id: "raw-session" });
   const translated = buildOpenRouterResponsesRequest({
     model: "gpt-5.6-sol",
-    input: [{ type: "custom_tool_call_output", call_id: "call_1", output: "done" }],
+    input: [
+      { type: "custom_tool_call", call_id: "call_1", name: "exec", input: "echo done" },
+      { type: "custom_tool_call_output", call_id: "call_1", output: "done" },
+    ],
     instructions: "Continue.",
     reasoning: { effort: "ultra", summary: "auto" },
     tools: [{ type: "custom", name: "exec", description: "Run", format: { type: "text" } }],
     tool_choice: "auto",
     parallel_tool_calls: true,
+    include: ["reasoning.encrypted_content"],
+    text: { format: { type: "text" } },
     max_output_tokens: 512,
     context_management: [{ type: "compaction", compact_threshold: 1000 }],
     prompt_cache_key: "gateway-only",
@@ -28,16 +32,43 @@ Deno.test("OpenRouter request translation applies the fixed Auto policy and stri
   }, sessionId);
 
   assert.equal(translated.model, "~deepseek/deepseek-v4-flash-latest");
-  assert.deepEqual(translated.plugins, [{
-    id: "auto-router",
-    cost_tier: "max",
-    excluded_models: [...OPENROUTER_EXCLUDED_MODELS],
-  }]);
-  assert.deepEqual(translated.reasoning, { effort: "max", summary: "auto" });
+  assert.equal("plugins" in translated, false);
+  assert.deepEqual(translated.reasoning, { effort: "max" });
+  const translatedTools = translated.tools as Array<Record<string, unknown>>;
+  const projectedName = translatedTools[0]?.name;
+  assert.equal(typeof projectedName, "string");
+  assert.match(projectedName as string, /^uos_custom_exec_[0-9a-f]{8}$/);
+  assert.deepEqual(
+    translatedTools,
+    [{
+      type: "function",
+      name: projectedName,
+      description: "Run",
+      parameters: {
+        type: "object",
+        properties: { input: { type: "string" } },
+        required: ["input"],
+        additionalProperties: false,
+      },
+    }],
+  );
+  assert.deepEqual(translated.input, [
+    {
+      type: "function_call",
+      name: projectedName,
+      arguments: JSON.stringify({ input: "echo done" }),
+      call_id: "call_1",
+    },
+    { type: "function_call_output", call_id: "call_1", output: "done" },
+  ]);
+  assert.deepEqual(translated.provider, { require_parameters: true });
   assert.equal(translated.session_id, sessionId);
   assert.equal("prompt_cache_key" in translated, false);
   assert.equal("context_management" in translated, false);
   assert.equal("store" in translated, false);
+  assert.equal("include" in translated, false);
+  assert.equal("parallel_tool_calls" in translated, false);
+  assert.equal("text" in translated, false);
   assert.ok(typeof sessionId === "string");
   assert.doesNotMatch(sessionId, /raw-session|key-1/);
   assert.equal(await deriveOpenRouterSessionId(null, { session_id: "raw-session" }), null);
@@ -78,7 +109,7 @@ Deno.test("OpenRouter selected-model validation rejects disallowed publishers an
       "~anthropic/claude-opus-latest",
       "vendor/gpt-oss-120b",
       "vendor/claude-3",
-      "~deepseek/deepseek-v4-flash-latest",
+      "openrouter/auto",
       "missing-separator",
       "vendor/",
       "",
@@ -90,6 +121,7 @@ Deno.test("OpenRouter selected-model validation rejects disallowed publishers an
     const model of [
       "google/gemini-2.5-pro",
       "deepseek/deepseek-v3.2",
+      "~deepseek/deepseek-v4-flash-latest",
       "qwen/qwen3-coder",
       "vendor/claudette-model",
       "vendor/gptransformer",
