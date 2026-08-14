@@ -81,6 +81,30 @@ Deno.test("marketplace create atomically writes the account and owner index", as
   assert.equal(stored.value?.encryptedAuthJson, "ciphertext");
 });
 
+Deno.test("marketplace rejects malformed pricing and labels before persistence", async () => {
+  const kv = new CountingKv();
+  const invalidCreate = await handleMarketplaceCreateAuth(
+    jsonRequest("POST", "/marketplace/auths", {
+      provider: "chatgpt_codex",
+      encryptedAuthJson: "ciphertext",
+      pricing: "free",
+    }),
+    { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(invalidCreate.status, 400);
+  assert.equal(kv.commands.length, 0);
+
+  const id = await createAccount(kv);
+  kv.clearMeasurements();
+  const invalidUpdate = await handleMarketplaceUpdateAuth(
+    jsonRequest("PATCH", `/marketplace/auths/${id}`, { labels: ["region"] }),
+    id,
+    { authenticateClient: ownerAuth("owner-1"), kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(invalidUpdate.status, 400);
+  assert.equal(kv.commands.some((command) => command.command === "atomic.commit"), false);
+});
+
 Deno.test("marketplace owner routes reject repository-scoped GitHub authentication", async () => {
   const kv = new CountingKv();
   const create = await handleMarketplaceCreateAuth(

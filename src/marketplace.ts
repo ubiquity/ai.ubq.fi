@@ -121,10 +121,25 @@ const readObject = async (req: Request): Promise<Record<string, unknown> | null>
   }
 };
 
+const validateMarketplaceMetadata = (body: Record<string, unknown>): string | null => {
+  if (body.pricing !== undefined && body.pricing !== null && !isObject(body.pricing)) {
+    return "pricing must be an object or null";
+  }
+  if (
+    body.labels !== undefined && body.labels !== null &&
+    (!isObject(body.labels) || Object.values(body.labels).some((value) => typeof value !== "string"))
+  ) {
+    return "labels must be an object with string values or null";
+  }
+  return null;
+};
+
 const validateMutableFields = (body: Record<string, unknown>): string | null => {
   const unknown = Object.keys(body).find((key) => !MUTABLE_FIELDS.has(key));
   if (unknown) return `Field is not mutable: ${unknown}`;
   if (Object.keys(body).length === 0) return "At least one mutable field is required";
+  const metadataError = validateMarketplaceMetadata(body);
+  if (metadataError) return metadataError;
   if (
     body.status !== undefined &&
     (typeof body.status !== "string" || !MARKETPLACE_AUTH_STATUSES.has(body.status.trim()))
@@ -164,6 +179,8 @@ export const handleMarketplaceCreateAuth = async (req: Request, deps: Marketplac
   ) {
     return withCors(openaiError(400, "maxConcurrent must be a positive integer or null", "invalid_request_error"));
   }
+  const metadataError = validateMarketplaceMetadata(body);
+  if (metadataError) return withCors(openaiError(400, metadataError, "invalid_request_error"));
 
   const kv = await resolveKv(deps);
   if (!kv) return unavailableKv();

@@ -7973,6 +7973,31 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       }
     });
 
+    await t.step("rejects max_tool_calls before Cerebras dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response(null, { status: 500 });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "cerebras/gpt-oss-120b",
+                input: "ping",
+                max_tool_calls: 1,
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: string } }).error?.param, "max_tool_calls");
+      assert.equal(cerebrasCalls, 0);
+    });
+
     await t.step("treats null Responses max_output_tokens as unspecified", async () => {
       let upstreamBody: Record<string, unknown> | null = null;
       const response = await withFetchMock(

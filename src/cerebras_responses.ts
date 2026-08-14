@@ -1,3 +1,4 @@
+import { projectCerebrasToolSchema } from "./cerebras.ts";
 import type { ResponseInputItem } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
 
@@ -185,6 +186,16 @@ const normalizeFunctionTool = (
   const strict = value.strict;
   if (strict !== undefined && typeof strict !== "boolean") {
     return { ok: false, message: `${param}.strict must be a boolean`, param: `${param}.strict` };
+  }
+  if (
+    strict === true && parameters !== undefined &&
+    JSON.stringify(projectCerebrasToolSchema(parameters)) !== JSON.stringify(parameters)
+  ) {
+    return {
+      ok: false,
+      message: `${param}.parameters contains constraints that Cerebras cannot enforce in strict mode`,
+      param: `${param}.parameters`,
+    };
   }
   return {
     ok: true,

@@ -7566,6 +7566,14 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       );
     }
   }
+  if (isCerebrasModel && rawRecord.max_tool_calls !== undefined && rawRecord.max_tool_calls !== null) {
+    return openaiError(
+      400,
+      `max_tool_calls is not supported by ${CEREBRAS_GPT_OSS_120B_MODEL}`,
+      "invalid_request_error",
+      { param: "max_tool_calls" },
+    );
+  }
 
   let instructions: string | undefined;
   if (Object.prototype.hasOwnProperty.call(rawRecord, "instructions")) {
