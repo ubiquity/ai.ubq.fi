@@ -4,14 +4,24 @@ export const AUTH_RELAY_ACTION_PASSKEY_LOGIN = "passkey-login";
 const isLocalHost = (hostname) =>
   hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 
-const DENO_PREVIEW_SUFFIX = "[a-z0-9]{12}";
+const DENO_PREVIEW_HOST = /^(?:p-)?ai-ubq-fi(?:-[a-z0-9]{12})?\.(?:deno\.dev|ubiquity-dao\.deno\.net)$/;
+
+const isAiGatewayPreviewHost = (hostname) => DENO_PREVIEW_HOST.test(hostname);
+
+export const isAiGatewayPreviewOrigin = (value) => {
+  try {
+    const url = new URL(String(value ?? "").trim());
+    return url.protocol === "https:" && isAiGatewayPreviewHost(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+};
 
 const isAiGatewayDeployHost = (hostname) =>
   hostname === "ai.ubq.fi" ||
   hostname === "ai-ubq-fi.deno.dev" ||
   hostname === "ai-ubq-fi.ubiquity-dao.deno.net" ||
-  new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.deno\\.dev$`).test(hostname) ||
-  new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.ubiquity-dao\\.deno\\.net$`).test(hostname);
+  isAiGatewayPreviewHost(hostname);
 
 export const parseTrustedAuthRelayOrigin = (value) => {
   const raw = String(value ?? "").trim();

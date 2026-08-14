@@ -5,6 +5,7 @@ import {
   proxyResponsesStream,
   readResponsesStream,
   ResponsesStreamError,
+  withSseKeepalive,
 } from "../src/responses_stream.ts";
 
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
@@ -93,6 +94,36 @@ Deno.test("Responses parser rejects terminal events without their protocol paylo
   });
   assert.ok(error instanceof ResponsesStreamError);
   assert.equal(error.kind, "malformed_event");
+});
+
+Deno.test("Responses parser accepts an official flat error terminal", async () => {
+  const events = [];
+  for await (
+    const event of readResponsesStream(
+      chunked(
+        'data: {"type":"error","code":"provider_error","message":"Provider stopped.","param":null}\n\n',
+        [],
+      ),
+    )
+  ) events.push(event);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.type, "error");
+  assert.equal(events[0]?.value.code, "provider_error");
+});
+
+Deno.test("Responses parser accepts a nullable code in an official flat error terminal", async () => {
+  const events = [];
+  for await (
+    const event of readResponsesStream(
+      chunked(
+        'data: {"type":"error","code":null,"message":"Provider stopped.","param":"input"}\n\n',
+        [],
+      ),
+    )
+  ) events.push(event);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.value.code, null);
+  assert.equal(events[0]?.value.param, "input");
 });
 
 Deno.test("Responses preflight surfaces immediate failures before a stream response is created", async () => {
@@ -197,12 +228,109 @@ Deno.test("Responses proxy forwards only the first terminal and cancels a hangin
   assert.equal(source.locked, false);
 });
 
+Deno.test("Responses proxy keeps first-event delivery, byte framing, and terminal cancellation incremental", async () => {
+  const firstFrame = 'data: {"type":"response.output_text.delta","delta":"first"}\n\n';
+  const terminalFrame = 'data: {"type":"response.completed","response":{"status":"completed"}}\n\n';
+  let releaseTerminal = (): void => {};
+  const terminalGate = new Promise<void>((resolve) => {
+    releaseTerminal = resolve;
+  });
+  let firstSent = false;
+  let terminalScheduled = false;
+  let upstreamCancelCount = 0;
+  let resolveCancelled = (): void => {};
+  const cancelled = new Promise<void>((resolve) => {
+    resolveCancelled = resolve;
+  });
+  const source = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (!firstSent) {
+        firstSent = true;
+        controller.enqueue(bytes(firstFrame));
+        return;
+      }
+      if (terminalScheduled) return;
+      terminalScheduled = true;
+      return terminalGate.then(() => controller.enqueue(bytes(terminalFrame)));
+    },
+    cancel() {
+      upstreamCancelCount += 1;
+      resolveCancelled();
+    },
+  });
+
+  const reader = proxyResponsesStream(source).getReader();
+  const first = await Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("first SSE event was delayed")), 100)),
+  ]);
+  if (first.done) assert.fail("Expected the first SSE event before the terminal event was released.");
+  assert.equal(new TextDecoder().decode(first.value), firstFrame);
+
+  const terminalRead = reader.read();
+  const terminalBeforeRelease = await Promise.race([
+    terminalRead.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 20)),
+  ]);
+  assert.equal(terminalBeforeRelease, false);
+  releaseTerminal();
+
+  const terminal = await terminalRead;
+  if (terminal.done) assert.fail("Expected the terminal SSE event.");
+  assert.equal(new TextDecoder().decode(terminal.value), terminalFrame);
+  const done = await reader.read();
+  assert.equal(done.done, true);
+  await Promise.race([
+    cancelled,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("terminal did not cancel upstream")), 100)),
+  ]);
+  assert.equal(upstreamCancelCount, 1);
+  assert.equal(
+    bytes(new TextDecoder().decode(first.value) + new TextDecoder().decode(terminal.value)).byteLength,
+    bytes(firstFrame).byteLength + bytes(terminalFrame).byteLength,
+  );
+  assert.equal(
+    new TextDecoder().decode(first.value) + new TextDecoder().decode(terminal.value),
+    `${firstFrame}${terminalFrame}`,
+  );
+  assert.equal(source.locked, false);
+});
+
 Deno.test("Responses proxy emits an official error event after premature EOF", async () => {
   const source = chunked('data: {"type":"response.output_text.delta","delta":"x"}\n\n', []);
   const output = await new Response(proxyResponsesStream(source)).text();
   assert.match(output, /response.output_text.delta/);
   assert.match(output, /event: error/);
   assert.doesNotMatch(output, /response.completed/);
+});
+
+Deno.test("SSE keepalive emits short comment bursts while the provider is quiet", async () => {
+  const encoder = new TextEncoder();
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      void gate.then(() => {
+        controller.enqueue(encoder.encode('data: {"type":"response.completed","response":{"status":"completed"}}\n\n'));
+        controller.close();
+      });
+    },
+  });
+  const reader = withSseKeepalive(source, { intervalMs: 5 }).getReader();
+  const heartbeat = await Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("keepalive was delayed")), 100)),
+  ]);
+  assert.equal(heartbeat.done, false);
+  assert.equal(new TextDecoder().decode(heartbeat.value), ": keepalive\n\n");
+
+  release();
+  const terminal = await reader.read();
+  assert.equal(terminal.done, false);
+  assert.match(new TextDecoder().decode(terminal.value), /response.completed/);
+  assert.equal((await reader.read()).done, true);
 });
 
 Deno.test("Responses proxy does not wait for lifecycle callbacks before terminal delivery", async () => {

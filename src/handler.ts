@@ -139,6 +139,7 @@ const logTerminalRequest = async (
     startedAtMonotonicMs: number;
     downstreamDrainedAtMonotonicMs?: number;
     requestId: string;
+    recordTelemetry?: typeof recordPromptCacheTelemetry;
   }>,
 ): Promise<void> => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
@@ -181,12 +182,20 @@ const logTerminalRequest = async (
     fallback_reason: telemetry?.fallbackReason ?? null,
     stream: telemetry?.stream ?? null,
     stream_terminal_type: telemetry?.streamTerminalType ?? null,
+    attempted_providers: telemetry?.attemptedProviders ?? [],
+    openrouter_trigger_class: telemetry?.openRouterTriggerClass ?? null,
+    openrouter_circuit_transition: telemetry?.openRouterCircuitTransition ?? null,
+    openrouter_selected_model: telemetry?.openRouterSelectedModel ?? null,
+    openrouter_task_type: telemetry?.openRouterTaskType ?? null,
+    openrouter_latency_ms: telemetry?.openRouterLatencyMs ?? null,
+    openrouter_terminal_status: telemetry?.openRouterTerminalStatus ?? null,
+    openrouter_semantic_commitment: telemetry?.openRouterSemanticCommitment ?? null,
     git_sha: runtimeGitSha(),
     deno_revision: runtimeDeploymentId(),
     router_revision: input.response.headers.get("x-uos-router-revision"),
   };
   console.info("[ai.ubq.fi] request_terminal", JSON.stringify(terminal));
-  await recordPromptCacheTelemetry({
+  await (input.recordTelemetry ?? recordPromptCacheTelemetry)({
     provider: terminal.provider,
     model: terminal.model,
     route: terminal.route,
@@ -197,7 +206,7 @@ const logTerminalRequest = async (
   });
 };
 
-const warnQuotaAccountingFailure = (
+export const warnQuotaAccountingFailure = (
   input: Readonly<{ route: string; requestId: string }>,
   error: unknown,
 ): void => {
@@ -208,7 +217,9 @@ const warnQuotaAccountingFailure = (
       JSON.stringify({
         request_id: input.requestId,
         route: input.route,
-        errors: errors.map((item) => item instanceof Error ? item.message : String(item)),
+        errors: errors.map((item) => ({
+          class: item instanceof Error ? item.name : typeof item,
+        })),
       }),
     );
   } catch {
@@ -217,7 +228,7 @@ const warnQuotaAccountingFailure = (
   }
 };
 
-const withTerminalRequestLog = (
+export const withTerminalRequestLog = (
   response: Response,
   input: Readonly<{
     route: string;
@@ -225,6 +236,8 @@ const withTerminalRequestLog = (
     startedAtMonotonicMs: number;
     requestId: string;
     onCompleted?: () => Promise<void>;
+    /** Test seam for proving terminal telemetry remains best effort. */
+    recordTelemetry?: typeof recordPromptCacheTelemetry;
   }>,
 ): Promise<Response> => {
   let terminalLog: Promise<void> | null = null;
@@ -289,10 +302,12 @@ const withTerminalRequestLog = (
         controller.error(error);
       }
     },
-    async cancel(reason) {
+    cancel(reason) {
+      // Cancellation must not await a concurrently pending provider pull;
+      // that pull observes the cancellation and performs layered cleanup.
       void reader.cancel(reason).catch(() => {});
       void finalizeCompletion();
-      await log();
+      void log();
     },
   });
   return Promise.resolve(
@@ -317,27 +332,28 @@ export default async function handler(req: Request): Promise<Response> {
   const requestStartedAtMs = Date.now();
   const requestStartedAtMonotonicMs = performance.now();
   const requestId = crypto.randomUUID();
+  const applyCors = (response: Response): Response => withCors(response, req);
   if (req.method === "OPTIONS") {
-    return withCors(new Response(null, { status: 204, headers: corsHeaders() }));
+    return applyCors(new Response(null, { status: 204, headers: corsHeaders(req) }));
   }
 
   const url = new URL(req.url);
   const path = normalizePath(url.pathname);
 
   if (req.method === "GET" && (path === "/" || path === "/index.html")) {
-    return withCors(await handleRoot(req));
+    return applyCors(await handleRoot(req));
   }
 
   if (req.method === "GET") {
     const staticResponse = await handleStaticAsset(path);
-    if (staticResponse) return withCors(staticResponse);
+    if (staticResponse) return applyCors(staticResponse);
   }
 
   if ((req.method === "GET" || req.method === "HEAD") && path === "/health") {
     const health = await handleHealth();
     // Keep HEAD semantically equivalent to public GET liveness while correctly
     // omitting the body.
-    return withCors(
+    return applyCors(
       req.method === "HEAD"
         ? new Response(null, { status: health.status, statusText: health.statusText, headers: health.headers })
         : health,
@@ -346,256 +362,256 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/health/providers") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleHealthProviders());
+    if (authError) return applyCors(authError);
+    return applyCors(await handleHealthProviders());
   }
 
   if (req.method === "GET" && path === "/health/upstream") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleHealthUpstream());
+    if (authError) return applyCors(authError);
+    return applyCors(await handleHealthUpstream());
   }
 
   if (req.method === "POST" && path === "/api/auth/register/start") {
     const auth = await authenticateAdmin(req);
-    if (!auth.ok) return withCors(auth.response);
-    return withCors(await handlePasskeyRegisterStart(req, { defaultIsAdmin: auth.is_super_admin }));
+    if (!auth.ok) return applyCors(auth.response);
+    return applyCors(await handlePasskeyRegisterStart(req, { defaultIsAdmin: auth.is_super_admin }));
   }
 
   if (req.method === "POST" && path === "/api/auth/register/finish") {
-    return withCors(await handlePasskeyRegisterFinish(req));
+    return applyCors(await handlePasskeyRegisterFinish(req));
   }
 
   if (req.method === "POST" && path === "/api/auth/login/start") {
-    return withCors(await handlePasskeyLoginStart(req));
+    return applyCors(await handlePasskeyLoginStart(req));
   }
 
   if (req.method === "POST" && path === "/api/auth/login/finish") {
-    return withCors(await handlePasskeyLoginFinish(req));
+    return applyCors(await handlePasskeyLoginFinish(req));
   }
 
   if (req.method === "GET" && path === "/api/auth/session") {
-    return withCors(await handlePasskeySession(req));
+    return applyCors(await handlePasskeySession(req));
   }
 
   if (req.method === "POST" && path === "/api/auth/logout") {
-    return withCors(await handlePasskeyLogout(req));
+    return applyCors(await handlePasskeyLogout(req));
   }
 
   if (req.method === "GET" && path === "/admin/passkey-users") {
     const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handlePasskeyUsersList());
+    if (authError) return applyCors(authError);
+    return applyCors(await handlePasskeyUsersList());
   }
 
   if (req.method === "PATCH" && path === "/admin/passkey-users") {
     const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handlePasskeyUsersUpdate(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handlePasskeyUsersUpdate(req));
   }
 
   if (req.method === "POST" && path === "/admin/codex/auth") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexAuth(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminCodexAuth(req));
   }
 
   if (req.method === "GET" && path === "/admin/providers/codex/banked-resets/shadow-decisions") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexBankedResetShadowDecisions());
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminCodexBankedResetShadowDecisions());
   }
 
   if (req.method === "GET" && path === "/admin/providers/codex/cache-scope-experiment") {
     const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexCacheScopeExperimentTelemetryBaseline());
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminCodexCacheScopeExperimentTelemetryBaseline());
   }
 
   if (req.method === "POST" && path === "/admin/providers/codex/cache-scope-experiment") {
     const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexCacheScopeExperiment(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminCodexCacheScopeExperiment(req));
   }
 
   const codexRecheckMatch = path.match(/^\/admin\/providers\/codex\/(\d+)\/recheck$/);
   if (req.method === "POST" && codexRecheckMatch) {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexRecheck(Number(codexRecheckMatch[1])));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminCodexRecheck(Number(codexRecheckMatch[1])));
   }
 
   if (req.method === "GET" && path === "/admin/codex/models") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexModelsGet());
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminCodexModelsGet());
   }
 
   if (req.method === "POST" && path === "/admin/codex/models") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexModelsSet(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminCodexModelsSet(req));
   }
 
   if (req.method === "POST" && path === "/admin/codex/prompts/purge") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexPromptsPurge());
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminCodexPromptsPurge());
   }
 
   if (req.method === "POST" && path === "/admin/kv-migration/import") {
     const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKvMigrationImport(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminKvMigrationImport(req));
   }
 
   if (req.method === "GET" && path === "/admin/kv-migration/validate") {
     const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKvMigrationValidate());
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminKvMigrationValidate());
   }
 
   if ((req.method === "GET" || req.method === "POST") && path === "/admin/defaults") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminDefaults(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminDefaults(req));
   }
 
   if (req.method === "GET" && path === "/admin/providers") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleHealthProviders({ includeQuota: true }));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleHealthProviders({ includeQuota: true }));
   }
 
   if (req.method === "GET" && path === "/admin/providers/capacity") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleProviderCapacity(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleProviderCapacity(req));
   }
 
   if (req.method === "POST" && path === "/admin/api-keys") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysCreate(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminApiKeysCreate(req));
   }
 
   if (req.method === "GET" && path === "/admin/api-keys") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysList(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminApiKeysList(req));
   }
 
   const apiKeyPaidFallbacksPathMatch = path.match(/^\/admin\/api-keys\/([^/]+)\/paid-fallbacks$/);
   if (apiKeyPaidFallbacksPathMatch && req.method === "GET") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
+    if (authError) return applyCors(authError);
     const pathKeyId = apiKeyPaidFallbacksPathMatch[1] ?? "";
     let keyId: string;
     try {
       keyId = decodeURIComponent(pathKeyId);
     } catch {
-      return withCors(openaiError(400, "Invalid API key id", "invalid_request_error"));
+      return applyCors(openaiError(400, "Invalid API key id", "invalid_request_error"));
     }
 
-    return withCors(await handleAdminApiKeysPaidFallbacks(req, keyId));
+    return applyCors(await handleAdminApiKeysPaidFallbacks(req, keyId));
   }
 
   if (apiKeyPaidFallbacksPathMatch) {
-    return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+    return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
   }
 
   if (req.method === "PATCH" && path === "/admin/api-keys") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysUpdate(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminApiKeysUpdate(req));
   }
 
   if (req.method === "POST" && path === "/admin/api-keys/revoke") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysRevoke(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminApiKeysRevoke(req));
   }
 
   if (req.method === "POST" && path === "/admin/api-keys/unrevoke") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysUnrevoke(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminApiKeysUnrevoke(req));
   }
 
   if (req.method === "DELETE" && path === "/admin/api-keys") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysDelete(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminApiKeysDelete(req));
   }
 
   if (req.method === "GET" && path === "/admin/kernel-usage") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelUsageGet(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminKernelUsageGet(req));
   }
 
   if (req.method === "GET" && path === "/admin/kernel-policy-queue") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelPolicyQueueList());
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminKernelPolicyQueueList());
   }
 
   if (req.method === "POST" && path === "/admin/kernel-usage") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelUsageSet(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminKernelUsageSet(req));
   }
 
   if (req.method === "DELETE" && path === "/admin/kernel-usage") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelUsageDelete(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminKernelUsageDelete(req));
   }
 
   if (req.method === "GET" && path === "/admin/kernel-pubkeys") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelPubKeysList());
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminKernelPubKeysList());
   }
 
   if (req.method === "POST" && path === "/admin/kernel-pubkeys") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelPubKeysCreate(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminKernelPubKeysCreate(req));
   }
 
   if (req.method === "DELETE" && path === "/admin/kernel-pubkeys") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelPubKeysDelete(req));
+    if (authError) return applyCors(authError);
+    return applyCors(await handleAdminKernelPubKeysDelete(req));
   }
 
   if (req.method === "GET" && path === "/uos/auth") {
-    return withCors(await handleV1Auth(req));
+    return applyCors(await handleV1Auth(req));
   }
 
   if (req.method === "GET" && path === "/uos/models/capabilities") {
     const authResult = await authenticateClient(req);
-    if (!authResult.ok) return withCors(authResult.response);
-    return withCors(await handleModelCapabilities());
+    if (!authResult.ok) return applyCors(authResult.response);
+    return applyCors(await handleModelCapabilities());
   }
 
   if (path === "/uos/agent-messages") {
-    if (req.method === "GET") return withCors(await handleAgentMessagesList(req));
-    if (req.method === "POST") return withCors(await handleAgentMessagesPost(req));
-    return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+    if (req.method === "GET") return applyCors(await handleAgentMessagesList(req));
+    if (req.method === "POST") return applyCors(await handleAgentMessagesPost(req));
+    return applyCors(openaiError(405, "Method not allowed", "method_not_allowed"));
   }
 
   const isUosEmbeddingPath = path === "/uos/embeddings" || path === "/uos/embedding-jobs" ||
     path.startsWith("/uos/embedding-jobs/");
   if (!path.startsWith("/v1/") && !isUosEmbeddingPath) {
-    return withCors(notFound());
+    return applyCors(notFound());
   }
 
   const terminalRoute = terminalRouteForRequest(req.method, path);
   const authResult = await authenticateClient(req);
   if (!authResult.ok) {
-    const response = withCors(withRequestId(authResult.response, requestId));
+    const response = applyCors(withRequestId(authResult.response, requestId));
     return terminalRoute
       ? await withTerminalRequestLog(response, {
         route: terminalRoute,
@@ -611,7 +627,7 @@ export default async function handler(req: Request): Promise<Response> {
   if (usagePolicy && terminalRoute) {
     const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute, { deferWhenFull: true });
     if (!admission.ok) {
-      const response = withCors(withRequestId(admission.response, requestId));
+      const response = applyCors(withRequestId(admission.response, requestId));
       return await withTerminalRequestLog(response, {
         route: terminalRoute,
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
@@ -680,7 +696,7 @@ export default async function handler(req: Request): Promise<Response> {
   ): Promise<Response> => {
     const telemetry = getResponseTelemetry(response);
     const decorated = includeQuota ? decorateInferenceQuota(response, usagePolicy, telemetry) : response;
-    return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
+    return await withTerminalRequestLog(applyCors(withRequestId(decorated, requestId)), {
       route,
       telemetryResponse: response,
       startedAtMonotonicMs: requestStartedAtMonotonicMs,
@@ -737,7 +753,7 @@ export default async function handler(req: Request): Promise<Response> {
   };
 
   if (req.method === "GET" && path === "/v1/models") {
-    return withCors(await handleModels(req));
+    return applyCors(await handleModels(req));
   }
 
   if (req.method === "POST" && path === "/uos/embeddings") {
@@ -775,5 +791,5 @@ export default async function handler(req: Request): Promise<Response> {
     return await finishTerminalResponse(response, "responses", true, incrementKernelLimitUsage);
   }
 
-  return withCors(openaiError(404, "Not found", "not_found"));
+  return applyCors(openaiError(404, "Not found", "not_found"));
 }

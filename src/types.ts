@@ -134,7 +134,7 @@ export type ApiKeyUsageRequestV3 = Readonly<{
   state: "reserved" | "dispatched" | "released";
   reserved_at_ms: number;
   lease_expires_at_ms: number;
-  provider: "cerebras" | "chatgpt_codex" | "yunwu" | "voyage" | null;
+  provider: "cerebras" | "chatgpt_codex" | "openrouter" | "yunwu" | "voyage" | null;
   dispatched_at_ms: number | null;
   released_at_ms: number | null;
   release_reason: string | null;

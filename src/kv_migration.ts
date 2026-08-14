@@ -42,6 +42,7 @@ import type {
   PaidFallbackWindowV3,
 } from "./types.ts";
 import { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
+import { recomputePaidFallbackReconciliationGateV3 } from "./paid_fallback_ledger.ts";
 import { isRecord } from "./utils.ts";
 
 export type KvMigrationProfile = "local" | "prod";
@@ -1609,6 +1610,10 @@ const projectLegacyPaidFallbackV3 = async (
   }
   await repairProjectedPaidFallbackPending(kv, nowMs);
   await repairProjectedPaidFallbackWindows(kv, pairs, candidateWindowReferences, nowMs);
+  // Migration can create or repair pending markers after the runtime gate has
+  // already been initialized. Recompute it so the next cron wake-up cannot
+  // miss newly projected billable fallback work.
+  await recomputePaidFallbackReconciliationGateV3(kv);
   return { projected, pending };
 };
 

@@ -12,8 +12,13 @@ import {
   signOut,
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
-} from "./auth.js?v=provider-capacity-20260807-yunwu-overlay";
-import { AUTH_RELAY_MESSAGE_TYPE, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "./auth-relay.js";
+} from "./auth.js?v=passkey-relay-20260814-v2";
+import {
+  AUTH_RELAY_MESSAGE_TYPE,
+  isAiGatewayPreviewOrigin,
+  parseAuthRelayAction,
+  parseTrustedAuthRelayOrigin,
+} from "./auth-relay.js?v=passkey-relay-20260814-v2";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
@@ -32,6 +37,8 @@ const STORAGE_KEYS = {
 const AUTH_RELAY_TIMEOUT_MS = 120_000;
 const API_KEY_REQUEST_LOGS_LIMIT = 20;
 const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
+
+const fetch = (input, init = {}) => globalThis.fetch(input, { ...init, credentials: "include" });
 
 const readStorageJson = (key) => {
   const raw = storage.get(key);
@@ -137,11 +144,15 @@ const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
+const openRouterFailoverBadge = mustGet("openrouter-failover-badge");
+const openRouterFailoverObserved = mustGet("openrouter-failover-observed");
+const openRouterFailoverFacts = mustGet("openrouter-failover-facts");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
 let pendingAdminView = null;
 let adminAccessState = { checked: false, isAdmin: false, isSuperAdmin: false };
+let relaySessionActive = false;
 let localDevelopmentAutoAuth = false;
 let adminPrefetchRunId = 0;
 let adminPrefetchSignature = "";
@@ -151,11 +162,13 @@ let allKeys = [];
 let keysLoading = false;
 let keysLoadedAt = 0;
 let providersLoading = false;
+let providersLoadId = 0;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
 let latestProviderCapacityChartState = null;
 let capacityChartResizeFrame = 0;
+let capacityChartScrollState = null;
 let latestProviderHealth = null;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
@@ -329,7 +342,8 @@ const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
   const canRegisterPasskey = options.canRegisterPasskey ?? false;
   passkeyLoginBtn.hidden = signedIn;
-  passkeyRegisterBtn.hidden = isAuthRelayMode || deviceRegistered || (signedIn && !canRegisterPasskey);
+  passkeyRegisterBtn.hidden = isAuthRelayMode || isPreviewOrigin() || deviceRegistered ||
+    (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
   if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
   else setPasskeyStatus("unknown", "Passkey idle");
@@ -382,11 +396,14 @@ const isAuthRelayMode = Boolean(authRelayOrigin && authRelayAction && globalThis
 
 const getPasskeyBaseUrl = () => isAuthRelayMode ? globalThis.location.origin : resolveBaseUrl();
 
-const isRemoteAiTarget = () => new URL(resolveBaseUrl()).origin === "https://ai.ubq.fi";
+const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
+const isPreviewOrigin = () => isAiGatewayPreviewOrigin(globalThis.location.origin);
+const isRemoteAiTarget = () => new URL(resolveBaseUrl()).origin === PASSKEY_CANONICAL_ORIGIN;
 
 const isCrossOriginTarget = () => new URL(resolveBaseUrl()).origin !== globalThis.location.origin;
 
 const getAdminToken = () => tokenInput.value.trim();
+const hasAdminCredential = () => Boolean(getAdminToken()) || relaySessionActive || adminAccessState.isAdmin;
 
 const canUseLocalDevelopmentAuth = () => isLocalDevelopmentOrigin() && getBaseChoice() === "local";
 
@@ -452,10 +469,10 @@ const applySignedInToken = (token, options = {}) => {
 };
 
 const postAuthRelayResult = (result) => {
-  if (!isAuthRelayMode || !result?.token) return false;
+  if (!isAuthRelayMode || result?.relay_session !== true) return false;
   globalThis.opener.postMessage({
     type: AUTH_RELAY_MESSAGE_TYPE,
-    token: result.token,
+    authenticated: true,
     handle: result.handle ?? getPasskeyHandle(),
     expires_at_ms: result.expires_at_ms ?? null,
   }, authRelayOrigin);
@@ -475,26 +492,10 @@ const formatPasskeyLoginError = (error) => {
   return message;
 };
 
-const getValidCachedRelayAuth = async () => {
-  const token = getAdminToken();
-  if (!token) return null;
-  try {
-    const res = await fetch(apiUrl("/uos/auth"), {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data?.auth?.is_admin) return null;
-    return { token, handle: getPasskeyHandle() };
-  } catch {
-    return null;
-  }
-};
-
 let authRelayRequest = null;
 const requestRemotePasskeySession = () => {
   if (authRelayRequest) return authRelayRequest;
-  const targetOrigin = new URL(resolveBaseUrl()).origin;
+  const targetOrigin = isPreviewOrigin() ? PASSKEY_CANONICAL_ORIGIN : new URL(resolveBaseUrl()).origin;
   const relayUrl = new URL("/admin", targetOrigin);
   relayUrl.searchParams.set("auth_relay_origin", globalThis.location.origin);
   relayUrl.searchParams.set("auth_relay_action", "passkey-login");
@@ -522,7 +523,7 @@ const requestRemotePasskeySession = () => {
     const onMessage = (event) => {
       if (event.origin !== targetOrigin) return;
       const data = event.data;
-      if (!data || data.type !== AUTH_RELAY_MESSAGE_TYPE || typeof data.token !== "string") return;
+      if (!data || data.type !== AUTH_RELAY_MESSAGE_TYPE || data.authenticated !== true) return;
       try {
         popup.close();
       } catch {
@@ -545,14 +546,64 @@ const requestRemotePasskeySession = () => {
   return authRelayRequest;
 };
 
-const getRegistrationAdminToken = async () => {
+const signInAdminWithPasskey = async () => {
+  if (
+    !isAuthRelayMode &&
+    (isPreviewOrigin() || (isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()))
+  ) {
+    const relay = await requestRemotePasskeySession();
+    if (relay.handle) setPasskeyHandleValue(relay.handle);
+    relaySessionActive = true;
+    const authenticated = await testAdminToken();
+    if (!authenticated) {
+      relaySessionActive = false;
+      throw new Error("The ai.ubq.fi sign-in session was not established.");
+    }
+    setPasskeyStatus("ok", "Passkey signed in");
+    return relay;
+  }
+
+  const result = await signInWithPasskey({
+    baseUrl: getPasskeyBaseUrl(),
+    handle: getPasskeyHandle(),
+    useHandle: Boolean(getPasskeyHandle()),
+    audienceOrigin: isAuthRelayMode ? authRelayOrigin : "",
+  });
+  if (result.handle) setPasskeyHandleValue(result.handle);
+  if (isAuthRelayMode) {
+    setPasskeyStatus("ok", "Passkey signed in");
+    postAuthRelayResult(result);
+    return result;
+  }
+  applySignedInToken(result.token, { deviceRegistered: true });
+  setPasskeyStatus("ok", "Passkey signed in");
+  return result;
+};
+
+const runPasskeyLogin = async ({ automatic = false } = {}) => {
+  setPasskeyStatus("unknown", automatic ? "Starting passkey sign-in..." : "Signing in...");
+  passkeyLoginBtn.disabled = true;
+  passkeyRegisterBtn.disabled = true;
+  try {
+    return await signInAdminWithPasskey();
+  } catch (error) {
+    setSignedInState(false);
+    const message = formatPasskeyLoginError(error);
+    setPasskeyStatus(
+      automatic ? "unknown" : "bad",
+      automatic ? `${message} Click the sign-in button to continue.` : message,
+    );
+    return null;
+  } finally {
+    passkeyLoginBtn.disabled = false;
+    passkeyRegisterBtn.disabled = false;
+  }
+};
+
+const getRegistrationAdminToken = () => {
   const token = getAdminToken();
   if (token || !isCrossOriginTarget() || !isRemoteAiTarget()) return token;
-  setPasskeyStatus("unknown", "Sign in on ai.ubq.fi to authorize registration...");
-  const relay = await requestRemotePasskeySession();
-  if (relay.handle) setPasskeyHandleValue(relay.handle);
-  applySignedInToken(relay.token, { deviceRegistered: true });
-  return relay.token;
+  throw new Error("Register a passkey from the ai.ubq.fi admin page.");
 };
 
 const restoreSettings = () => {
@@ -561,7 +612,8 @@ const restoreSettings = () => {
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
   passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
-  baseSelect.value = storage.get(STORAGE_KEYS.base) ?? "local";
+  baseSelect.value = isPreviewOrigin() ? "ai" : storage.get(STORAGE_KEYS.base) ?? "local";
+  if (isPreviewOrigin()) storage.set(STORAGE_KEYS.base, "ai");
   applyLocalDevelopmentAuth();
   updateBasePreview();
 };
@@ -701,12 +753,61 @@ const appendProviderFact = (list, label, value) => {
   list.appendChild(item);
 };
 
+const resetOpenRouterFailover = (message = "Waiting for snapshot") => {
+  setBadge(openRouterFailoverBadge, "unknown", "Not loaded");
+  openRouterFailoverObserved.textContent = message;
+  openRouterFailoverFacts.replaceChildren();
+};
+
+const renderOpenRouterFailover = (openRouter) => {
+  openRouterFailoverFacts.replaceChildren();
+  if (!openRouter || typeof openRouter !== "object") {
+    setBadge(openRouterFailoverBadge, "bad", "Unavailable");
+    openRouterFailoverObserved.textContent = "Snapshot unavailable";
+    appendProviderFact(openRouterFailoverFacts, "Configured", "Unknown");
+    appendProviderFact(openRouterFailoverFacts, "Circuit", "Unknown");
+    return;
+  }
+  const circuit = openRouter.circuit ?? {};
+  const telemetry = openRouter.telemetry ?? {};
+  const configured = openRouter.configured === true;
+  const circuitState = formatOptionalText(circuit.state);
+  const available = circuit.available !== false;
+  const state = !configured || !available ? "bad" : circuitState === "closed" ? "ok" : "unknown";
+  const label = !configured ? "Not configured" : !available ? "State unavailable" : `Circuit ${circuitState}`;
+  setBadge(openRouterFailoverBadge, state, label);
+  openRouterFailoverObserved.textContent = typeof telemetry.observed_at_ms === "number"
+    ? `Observed ${formatDate(telemetry.observed_at_ms)}`
+    : "No failover observed";
+  appendProviderFact(openRouterFailoverFacts, "Configured", configured ? "Yes" : "No");
+  appendProviderFact(openRouterFailoverFacts, "Circuit", circuitState);
+  appendProviderFact(
+    openRouterFailoverFacts,
+    "Open until",
+    typeof circuit.open_until_ms === "number" ? formatDate(circuit.open_until_ms) : "Not open",
+  );
+  appendProviderFact(
+    openRouterFailoverFacts,
+    "Recent failures",
+    typeof circuit.recent_failures === "number" ? formatNumber(circuit.recent_failures) : "Unknown",
+  );
+  appendProviderFact(openRouterFailoverFacts, "Probe", circuit.probe_active === true ? "Active" : "Inactive");
+  appendProviderFact(openRouterFailoverFacts, "Attempted", formatOptionalText(telemetry.attempted_provider));
+  appendProviderFact(openRouterFailoverFacts, "Trigger", formatOptionalText(telemetry.trigger_class));
+  appendProviderFact(openRouterFailoverFacts, "Transition", formatOptionalText(telemetry.circuit_transition));
+  appendProviderFact(openRouterFailoverFacts, "Selected model", formatOptionalText(telemetry.selected_model));
+  appendProviderFact(openRouterFailoverFacts, "Task", formatOptionalText(telemetry.task_type));
+  appendProviderFact(openRouterFailoverFacts, "Latency", formatLatency(telemetry.latency_ms));
+  appendProviderFact(openRouterFailoverFacts, "Terminal", formatOptionalText(telemetry.terminal_status));
+  appendProviderFact(openRouterFailoverFacts, "Commitment", formatOptionalText(telemetry.semantic_commitment));
+};
+
 const capacityBadgeState = (state) => state === "available" ? "ok" : state === "stale" ? "unknown" : "bad";
 
 const capacityStateLabel = (state) => {
   if (state === "available") return "Live";
-  if (state === "stale") return "Stale";
-  return "Unavailable";
+  if (state === "stale") return "Quota stale";
+  return "Quota unavailable";
 };
 
 const formatCapacityTimestamp = (value, unavailable = "Not reported") =>
@@ -794,9 +895,9 @@ const capacityProviderStatus = (source, provider) => {
   const state = provider?.configured === false ? "unconfigured" : health?.state;
   const hasState = typeof state === "string" && state.trim().length > 0;
   let badgeState = capacityBadgeState(source.state);
-  if (source.state !== "unavailable" && hasState) {
+  if (hasState) {
     badgeState = providerBadgeState(state);
-    if (source.state === "stale" && badgeState === "ok") badgeState = "unknown";
+    if (source.state !== "available" && badgeState === "ok") badgeState = "unknown";
   }
   const healthLabel = hasState ? providerStateLabel({ ...health, state }) : "";
   return {
@@ -852,7 +953,9 @@ const renderCodexCapacitySource = (source, provider = null) => {
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
-  title.textContent = `Codex account ${source.slot}`;
+  title.textContent = typeof source.label === "string" && source.label.trim()
+    ? source.label.trim()
+    : `Codex account ${source.slot}`;
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   const status = capacityProviderStatus(source, provider);
@@ -953,6 +1056,8 @@ const unavailableCapacitySource = (source, slot = null) =>
 const CAPACITY_CHART_SVG_NS = "http://www.w3.org/2000/svg";
 const CAPACITY_CHART_MIN_DAYS = 7;
 const CAPACITY_CHART_MAX_DAYS = 14;
+const CAPACITY_CHART_MIN_WIDTH_PX = 1280;
+const CAPACITY_CHART_PIXELS_PER_DAY = 180;
 const CAPACITY_CHART_DAY_MS = 24 * 60 * 60 * 1_000;
 const CAPACITY_CHART_HOUR_MS = 60 * 60 * 1_000;
 const CAPACITY_CHART_MINUTE_MS = 60 * 1_000;
@@ -961,11 +1066,15 @@ const CAPACITY_CHART_PLOT_LEFT = 48;
 const CAPACITY_CHART_PLOT_TOP = 24;
 const CAPACITY_CHART_PLOT_RIGHT = 12;
 const CAPACITY_CHART_PLOT_BOTTOM = 56;
+const CAPACITY_CHART_BUCKET_MS = 15 * CAPACITY_CHART_MINUTE_MS;
 const CAPACITY_CHART_MAX_PIXELS_PER_PERCENT = 4;
 const CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT = 2;
 const CAPACITY_CHART_MIN_PIXELS_PER_PERCENT = 1;
 const CAPACITY_CHART_VIEWPORT_GAP_PX = 16;
 const CAPACITY_CHART_FIGURE_OVERHEAD_PX = 48;
+const CAPACITY_CHART_RESET_BAND_WIDTH_PX = 18;
+const CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS = 25;
+const CAPACITY_CHART_OPTIMAL_WEEK_MS = 7 * CAPACITY_CHART_DAY_MS;
 const CAPACITY_CHART_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
   month: "short",
@@ -981,6 +1090,65 @@ const CAPACITY_CHART_SERIES = [
   { key: "available-capacity", label: "Codex capacity", source: "aggregate" },
   { key: "yunwu-refill", label: "YunWu refill", source: "yunwu", valueKey: "refill_cycle_remaining_percent" },
 ];
+
+const capacityChartFailureIsDowntime = (source) =>
+  source?.source === "codex" &&
+  source?.state === "unavailable" &&
+  (source.failure_kind === "upstream_error" || source.failure_kind === "unreachable") &&
+  (source.failure_kind === "unreachable" ||
+    (typeof source.failure_status === "number" && Number.isFinite(source.failure_status) &&
+      source.failure_status >= 500 && source.failure_status <= 599));
+
+const capacityChartSampleIsDowntime = (sample) => {
+  if (!Array.isArray(sample?.sources)) return false;
+  const codexSources = sample.sources.filter((source) => source?.source === "codex");
+  const configuredCodexSources = codexSources.filter((source) => source?.failure_kind !== "not_configured");
+  // A single failed account is still provider-side degradation. Do not let a
+  // healthy sibling account hide the outage: the aggregate white path should
+  // break for this sample and the red bridge should connect the surrounding
+  // observed values.
+  return configuredCodexSources.length > 0 && configuredCodexSources.some(capacityChartFailureIsDowntime);
+};
+
+const capacityChartDowntimeEventIsDowntime = (event) => {
+  if (event?.provider !== "openai") return false;
+  if (event.failure_kind === "unreachable") return true;
+  return event.failure_kind === "upstream_error" &&
+    typeof event.status === "number" && Number.isFinite(event.status) &&
+    event.status >= 500 && event.status <= 599;
+};
+
+const capacityChartDowntimeEventTimes = (events, displayInterval) =>
+  (Array.isArray(events) ? events : [])
+    .filter((event) =>
+      capacityChartDowntimeEventIsDowntime(event) &&
+      typeof event.observed_at_ms === "number" && Number.isFinite(event.observed_at_ms) &&
+      (!displayInterval ||
+        (event.observed_at_ms >= displayInterval.startAtMs && event.observed_at_ms <= displayInterval.resetAtMs))
+    )
+    .map((event) => event.observed_at_ms)
+    .sort((left, right) => left - right);
+
+const capacityChartDowntimeEventBetween = (eventTimes, startAtMs, endAtMs) =>
+  eventTimes.some((eventAtMs) => eventAtMs > startAtMs && eventAtMs <= endAtMs);
+
+const capacityChartSampleBucketStart = (sample) => {
+  if (typeof sample?.bucket_start_at_ms === "number" && Number.isFinite(sample.bucket_start_at_ms)) {
+    return sample.bucket_start_at_ms;
+  }
+  const sampledAtMs = typeof sample?.sampled_at_ms === "number" ? sample.sampled_at_ms : sample?.sampledAtMs;
+  if (typeof sampledAtMs === "number" && Number.isFinite(sampledAtMs)) {
+    return Math.floor(sampledAtMs / CAPACITY_CHART_BUCKET_MS) * CAPACITY_CHART_BUCKET_MS;
+  }
+  return null;
+};
+
+const capacityChartSampleGapBetween = (left, right) => {
+  const leftBucket = capacityChartSampleBucketStart(left);
+  const rightBucket = capacityChartSampleBucketStart(right);
+  return typeof leftBucket === "number" && typeof rightBucket === "number" &&
+    rightBucket - leftBucket > CAPACITY_CHART_BUCKET_MS;
+};
 
 const capacityChartSvgElement = (name, attributes = {}) => {
   const element = document.createElementNS(CAPACITY_CHART_SVG_NS, name);
@@ -1035,14 +1203,25 @@ const capacityChartWindow = (window) => {
   return { startAtMs, resetAtMs, durationMs };
 };
 
-const capacityChartContentWidth = () => {
+const capacityChartViewportWidth = () => {
   const chartStyles = getComputedStyle(providerCapacityChart);
-  const horizontalPadding = Number.parseFloat(chartStyles.paddingLeft) + Number.parseFloat(chartStyles.paddingRight);
+  const horizontalPadding = (Number.parseFloat(chartStyles.paddingLeft) || 0) +
+    (Number.parseFloat(chartStyles.paddingRight) || 0);
   const width = providerCapacityChart.getBoundingClientRect().width - horizontalPadding;
   return Number.isFinite(width) && width > 0
     ? Math.max(CAPACITY_CHART_PLOT_LEFT + CAPACITY_CHART_PLOT_RIGHT + 1, width)
     : 740;
 };
+
+const capacityChartIntrinsicWidth = (displayWindow) =>
+  Math.max(
+    capacityChartViewportWidth(),
+    CAPACITY_CHART_MIN_WIDTH_PX,
+    Math.ceil(
+      ((displayWindow?.durationMs ?? CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS) /
+        CAPACITY_CHART_DAY_MS) * CAPACITY_CHART_PIXELS_PER_DAY,
+    ),
+  );
 
 const capacityChartPlotHeight = () => {
   const viewportHeight = Number.isFinite(globalThis.innerHeight) ? globalThis.innerHeight : 0;
@@ -1122,7 +1301,7 @@ const formatCapacitySpendDelta = (value) => {
   return `${sign}${quotaPercentFormatter.format(Math.abs(value))} pp ${direction}`;
 };
 
-const renderCapacitySpendSummary = (pacing, chartWindow) => {
+const renderCapacitySpendSummary = (pacing, activeCycleWindow) => {
   const summary = document.createElement("aside");
   summary.dataset.capacitySpendSummary = "";
   summary.setAttribute("aria-label", "Optimal token spend pacing");
@@ -1162,15 +1341,21 @@ const renderCapacitySpendSummary = (pacing, chartWindow) => {
 
   const note = document.createElement("small");
   note.dataset.capacitySpendNote = "";
-  note.textContent = `100% → 0% remaining · ${capacityChartIntervalLabel(chartWindow?.durationMs)}`;
+  note.textContent = `100% → 0% remaining · ${capacityChartIntervalLabel(activeCycleWindow?.durationMs)}`;
   summary.append(title, description, metrics, note);
   return summary;
 };
 
-const capacityChartPoint = (sample, series, activeInterval = null, chartWindow = null) => {
+const capacityChartPoint = (
+  sample,
+  series,
+  activeInterval = null,
+  chartWindow = null,
+) => {
   if (series.source === "aggregate") {
     const displayInterval = chartWindow ?? activeInterval;
     const sampledAtMs = sample?.sampled_at_ms;
+    if (capacityChartSampleIsDowntime(sample)) return null;
     const remainingPercent = capacityChartCodexAggregateRemainingPercent(sample);
     if (
       !displayInterval ||
@@ -1207,7 +1392,6 @@ const capacityChartPoint = (sample, series, activeInterval = null, chartWindow =
     !Number.isFinite(remainingPercent) ||
     typeof sampledAtMs !== "number" ||
     !Number.isFinite(sampledAtMs) ||
-    (series.source === "codex" && (sampledAtMs < interval.startAtMs || sampledAtMs > interval.resetAtMs)) ||
     sampledAtMs < displayInterval.startAtMs ||
     sampledAtMs > displayInterval.resetAtMs
   ) return null;
@@ -1227,7 +1411,6 @@ const capacityChartResetPoint = (event, series, activeInterval = null, chartWind
   if (
     !interval || !displayInterval ||
     typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs) ||
-    sampledAtMs < interval.startAtMs || sampledAtMs > interval.resetAtMs ||
     sampledAtMs < displayInterval.startAtMs || sampledAtMs > displayInterval.resetAtMs
   ) return null;
   return {
@@ -1246,21 +1429,39 @@ const capacityChartSeriesPoints = (
   currentPoint,
   nowMs,
   resetEvents,
+  downtimeEvents,
 ) => {
+  const eventTimes = series.source === "aggregate"
+    ? capacityChartDowntimeEventTimes(downtimeEvents, chartWindow ?? activeInterval)
+    : [];
   const runs = [];
   let run = [];
+  let previousSample = null;
   const pushRun = () => {
     if (run.length) runs.push(run);
     run = [];
   };
-  for (const sample of history) {
+  for (const sample of [...history].sort((left, right) => (left?.sampled_at_ms ?? 0) - (right?.sampled_at_ms ?? 0))) {
+    const sampledAtMs = sample?.sampled_at_ms;
+    if (
+      previousSample && typeof sampledAtMs === "number" &&
+      (capacityChartSampleGapBetween(previousSample, sample) ||
+        capacityChartDowntimeEventBetween(eventTimes, previousSample.sampled_at_ms, sampledAtMs))
+    ) pushRun();
     const point = capacityChartPoint(sample, series, activeInterval, chartWindow);
     if (!point) {
       pushRun();
+      previousSample = typeof sampledAtMs === "number" ? sample : previousSample;
       continue;
     }
-    run.push({ sampledAtMs: sample.sampled_at_ms, point, synthetic: false });
+    run.push({ sampledAtMs, point, synthetic: false });
+    previousSample = typeof sampledAtMs === "number" ? sample : previousSample;
   }
+  if (
+    currentPoint && previousSample &&
+    (capacityChartSampleGapBetween(previousSample, { sampled_at_ms: nowMs }) ||
+      capacityChartDowntimeEventBetween(eventTimes, previousSample.sampled_at_ms, nowMs))
+  ) pushRun();
   if (currentPoint) run.push({ sampledAtMs: nowMs, point: currentPoint, synthetic: false });
   pushRun();
 
@@ -1293,6 +1494,89 @@ const capacityChartSeriesPoints = (
     ...(index === 0 ? [] : [null]),
     ...candidate.map(({ point }) => point),
   ]);
+};
+
+const capacityChartDowntimeBridges = (
+  history,
+  series,
+  activeInterval,
+  chartWindow,
+  currentPoint,
+  nowMs,
+  downtimeEvents,
+) => {
+  if (series.source !== "aggregate") return [];
+  const displayInterval = chartWindow ?? activeInterval;
+  const samples = [...history].sort((left, right) => (left?.sampled_at_ms ?? 0) - (right?.sampled_at_ms ?? 0)).map((
+    sample,
+  ) => ({
+    sampledAtMs: sample?.sampled_at_ms,
+    downtime: capacityChartSampleIsDowntime(sample),
+    point: capacityChartPoint(sample, series, activeInterval, chartWindow),
+  }));
+  if (currentPoint) samples.push({ sampledAtMs: nowMs, downtime: false, point: currentPoint });
+
+  const validSamples = samples.filter((sample) =>
+    typeof sample.sampledAtMs === "number" && sample.point &&
+    (!displayInterval ||
+      (sample.sampledAtMs >= displayInterval.startAtMs && sample.sampledAtMs <= displayInterval.resetAtMs))
+  );
+  const markerTimes = [
+    ...samples
+      .filter((sample) =>
+        sample.downtime && typeof sample.sampledAtMs === "number" &&
+        (!displayInterval ||
+          (sample.sampledAtMs >= displayInterval.startAtMs && sample.sampledAtMs <= displayInterval.resetAtMs))
+      )
+      .map((sample) => sample.sampledAtMs),
+    ...capacityChartDowntimeEventTimes(downtimeEvents, displayInterval),
+  ].sort((left, right) => left - right);
+
+  const bridges = [];
+  const seen = new Set();
+  const addBridge = (left, right) => {
+    if (!left?.point || !right?.point) return;
+    const key = `${left.sampledAtMs}:${right.sampledAtMs}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    bridges.push([left.point, right.point]);
+  };
+
+  // A missing 15-minute bucket is an unobserved interval. Keep it out of the
+  // white path and show the connecting segment in the outage colour, even if
+  // the older sample predates explicit downtime event recording.
+  for (let index = 1; index < validSamples.length; index += 1) {
+    const left = validSamples[index - 1];
+    const right = validSamples[index];
+    if (capacityChartSampleGapBetween(left, right)) addBridge(left, right);
+  }
+
+  for (const markerAtMs of markerTimes) {
+    const left = [...validSamples].reverse().find((sample) => sample.sampledAtMs < markerAtMs);
+    const right = validSamples.find((sample) => sample.sampledAtMs > markerAtMs);
+    addBridge(left, right);
+  }
+  return bridges;
+};
+
+const capacityChartBridgePath = (bridges, plot) =>
+  bridges.map(([from, to]) => {
+    const fromX = plot.left + (from.elapsedPercent / 100) * plot.width;
+    const fromY = plot.top + ((100 - from.remainingPercent) / 100) * plot.height;
+    const toX = plot.left + (to.elapsedPercent / 100) * plot.width;
+    const toY = plot.top + ((100 - to.remainingPercent) / 100) * plot.height;
+    return `M${fromX.toFixed(2)} ${fromY.toFixed(2)} L${toX.toFixed(2)} ${toY.toFixed(2)}`;
+  }).join(" ");
+
+const capacityChartDowntimeBandCoordinates = (bridge, plot) => {
+  const [from, to] = bridge ?? [];
+  if (!from || !to) return null;
+  const fromX = plot.left + (from.elapsedPercent / 100) * plot.width;
+  const toX = plot.left + (to.elapsedPercent / 100) * plot.width;
+  const left = Math.max(plot.left, Math.min(fromX, toX));
+  const right = Math.min(plot.left + plot.width, Math.max(fromX, toX));
+  if (!Number.isFinite(left) || !Number.isFinite(right) || right <= left) return null;
+  return { x: left, width: right - left };
 };
 
 const capacityChartPath = (points, plot, options = {}) => {
@@ -1336,7 +1620,7 @@ const capacityChartPath = (points, plot, options = {}) => {
   return path;
 };
 
-const capacityChartReferenceWindow = (sources, nowMs) => {
+const capacityChartActiveUsageWindow = (sources, nowMs) => {
   const codexWindows = sources
     .filter((source) => source?.source === "codex" && source.state !== "unavailable")
     .flatMap((source) => [source.windows?.primary, source.windows?.secondary])
@@ -1362,11 +1646,227 @@ const capacityChartReferenceWindow = (sources, nowMs) => {
   };
 };
 
+const capacityChartHistoryWindow = (nowMs) => ({
+  startAtMs: nowMs - CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS,
+  resetAtMs: nowMs,
+  durationMs: CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS,
+});
+
+const capacityChartInferredRateLimitResetMarkers = (history, displayWindow, downtimeEvents = []) => {
+  if (!displayWindow) return [];
+  const downtimeTimes = capacityChartDowntimeEventTimes(downtimeEvents, displayWindow);
+  const samples = (Array.isArray(history) ? history : [])
+    .filter((sample) => typeof sample?.sampled_at_ms === "number" && Number.isFinite(sample.sampled_at_ms))
+    .sort((left, right) => left.sampled_at_ms - right.sampled_at_ms);
+  const markers = [];
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    if (
+      current.sampled_at_ms <= previous.sampled_at_ms || capacityChartSampleGapBetween(previous, current) ||
+      capacityChartDowntimeEventBetween(downtimeTimes, previous.sampled_at_ms, current.sampled_at_ms)
+    ) continue;
+    for (const slot of [1, 2]) {
+      const previousSource = previous.sources?.find((source) => source?.source === "codex" && source.slot === slot);
+      const currentSource = current.sources?.find((source) => source?.source === "codex" && source.slot === slot);
+      if (
+        !previousSource || !currentSource || previousSource.state === "unavailable" ||
+        currentSource.state === "unavailable"
+      ) continue;
+      for (const window of ["primary", "secondary"]) {
+        const previousWindow = previousSource.windows?.[window];
+        const currentWindow = currentSource.windows?.[window];
+        const previousUsedPercent = previousWindow?.used_percent;
+        const currentUsedPercent = currentWindow?.used_percent;
+        const previousResetAtMs = previousWindow?.reset_at_ms;
+        const resetAtMs = currentWindow?.reset_at_ms;
+        if (
+          typeof previousUsedPercent !== "number" || !Number.isFinite(previousUsedPercent) ||
+          typeof currentUsedPercent !== "number" || !Number.isFinite(currentUsedPercent) ||
+          typeof previousResetAtMs !== "number" || !Number.isFinite(previousResetAtMs) ||
+          typeof resetAtMs !== "number" || !Number.isFinite(resetAtMs) || resetAtMs <= previousResetAtMs
+        ) continue;
+        const capacityGain = previousUsedPercent - currentUsedPercent;
+        if (
+          capacityGain < CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS ||
+          current.sampled_at_ms < displayWindow.startAtMs || current.sampled_at_ms > displayWindow.resetAtMs
+        ) continue;
+        markers.push({
+          v: 1,
+          event_id: `history-openai-${slot}-${window}-${previous.sampled_at_ms}-${current.sampled_at_ms}`,
+          provider: "openai",
+          slot,
+          window,
+          observed_at_ms: current.sampled_at_ms,
+          previous_sampled_at_ms: previous.sampled_at_ms,
+          previous_reset_at_ms: previousResetAtMs,
+          reset_at_ms: resetAtMs,
+          previous_used_percent: previousUsedPercent,
+          current_used_percent: currentUsedPercent,
+          capacity_gain_percentage_points: capacityGain,
+          inferred_from_history: true,
+        });
+      }
+    }
+  }
+  return markers;
+};
+
+const capacityChartRateLimitResetMarkers = (events, history, displayWindow, downtimeEvents = []) => {
+  if (!displayWindow) return [];
+  const inferredEvents = capacityChartInferredRateLimitResetMarkers(history, displayWindow, downtimeEvents);
+  const recordedEvents = (Array.isArray(events) ? events : []).filter((event) => {
+    const observedAtMs = event?.observed_at_ms;
+    const previousSampledAtMs = event?.previous_sampled_at_ms;
+    const previousResetAtMs = event?.previous_reset_at_ms;
+    const resetAtMs = event?.reset_at_ms;
+    const previousUsedPercent = event?.previous_used_percent;
+    const currentUsedPercent = event?.current_used_percent;
+    const capacityGain = event?.capacity_gain_percentage_points;
+    return event?.provider === "openai" &&
+      (event.slot === 1 || event.slot === 2) &&
+      (event.window === "primary" || event.window === "secondary") &&
+      typeof observedAtMs === "number" && Number.isFinite(observedAtMs) &&
+      typeof previousSampledAtMs === "number" && Number.isFinite(previousSampledAtMs) &&
+      previousSampledAtMs < observedAtMs &&
+      typeof previousResetAtMs === "number" && Number.isFinite(previousResetAtMs) &&
+      typeof resetAtMs === "number" && Number.isFinite(resetAtMs) &&
+      resetAtMs > previousResetAtMs &&
+      typeof previousUsedPercent === "number" && Number.isFinite(previousUsedPercent) &&
+      previousUsedPercent >= 0 && previousUsedPercent <= 100 &&
+      typeof currentUsedPercent === "number" && Number.isFinite(currentUsedPercent) &&
+      currentUsedPercent >= 0 && currentUsedPercent <= 100 &&
+      typeof capacityGain === "number" && Number.isFinite(capacityGain) &&
+      Math.abs(previousUsedPercent - currentUsedPercent - capacityGain) <= 0.001 &&
+      capacityGain >= CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS &&
+      observedAtMs >= displayWindow.startAtMs && observedAtMs <= displayWindow.resetAtMs;
+  });
+  const markers = new Map();
+  const candidates = [
+    ...inferredEvents.filter((inferred) =>
+      !recordedEvents.some((recorded) =>
+        recorded?.slot === inferred.slot && recorded?.window === inferred.window &&
+        typeof recorded?.observed_at_ms === "number" &&
+        recorded.observed_at_ms > inferred.previous_sampled_at_ms &&
+        recorded.observed_at_ms <= inferred.observed_at_ms
+      )
+    ),
+    ...recordedEvents,
+  ];
+  for (const event of candidates) {
+    const observedAtMs = event?.observed_at_ms;
+    if (
+      event?.provider !== "openai" ||
+      (event.slot !== 1 && event.slot !== 2) ||
+      (event.window !== "primary" && event.window !== "secondary") ||
+      typeof observedAtMs !== "number" || !Number.isFinite(observedAtMs) ||
+      typeof event.capacity_gain_percentage_points !== "number" ||
+      !Number.isFinite(event.capacity_gain_percentage_points) ||
+      event.capacity_gain_percentage_points < CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS ||
+      observedAtMs < displayWindow.startAtMs || observedAtMs > displayWindow.resetAtMs
+    ) continue;
+    const key = `${event.slot}:${event.window}:${observedAtMs}`;
+    markers.set(key, event);
+  }
+  return [...markers.values()].sort((left, right) =>
+    left.observed_at_ms - right.observed_at_ms ||
+    String(left.event_id ?? "").localeCompare(String(right.event_id ?? ""))
+  );
+};
+
+const capacityChartMarkerX = (observedAtMs, chartWindow, plot) =>
+  plot.left + ((observedAtMs - chartWindow.startAtMs) / chartWindow.durationMs) * plot.width;
+
+const capacityChartScrollBehavior = () =>
+  globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth";
+
+const capacityChartScrollAmount = (scroll) => Math.max(80, Math.round(scroll.clientWidth * 0.8));
+
+const capacityChartScrollMaximum = (scroll) =>
+  Math.max(0, scroll.scrollWidth - Math.max(scroll.clientWidth, scroll.offsetWidth || 0));
+
+const updateCapacityChartScrollControls = (scroll, olderButton, newerButton) => {
+  const maximum = capacityChartScrollMaximum(scroll);
+  olderButton.disabled = maximum <= 1 || scroll.scrollLeft <= 1;
+  newerButton.disabled = maximum <= 1 || maximum - scroll.scrollLeft <= 1;
+};
+
+const rememberCapacityChartScroll = () => {
+  const current = providerCapacityChart.querySelector("[data-capacity-chart-scroll]");
+  const svg = current?.querySelector("[data-capacity-chart-svg]");
+  if (!current || !svg) return;
+  const maximum = capacityChartScrollMaximum(current);
+  const scrollLeft = Number.isFinite(current.scrollLeft) ? current.scrollLeft : 0;
+  const clientWidth = Number.isFinite(current.clientWidth) ? current.clientWidth : 0;
+  const startAtMs = Number(svg.dataset.capacityChartStartAtMs);
+  const durationMs = Number(svg.dataset.capacityChartDurationMs);
+  const plotLeft = Number(svg.dataset.capacityChartPlotLeft);
+  const plotWidth = Number(svg.dataset.capacityChartPlotWidth);
+  const atEnd = maximum <= 1 || maximum - scrollLeft <= 2;
+  capacityChartScrollState = {
+    atEnd,
+    anchorAtMs: !atEnd && clientWidth > 0 && Number.isFinite(startAtMs) && Number.isFinite(durationMs) &&
+        durationMs > 0 && Number.isFinite(plotLeft) && Number.isFinite(plotWidth) && plotWidth > 0
+      ? startAtMs + ((scrollLeft + clientWidth / 2 - plotLeft) / plotWidth) * durationMs
+      : null,
+  };
+};
+
+const restoreCapacityChartScroll = (scroll, displayWindow, plot) => {
+  const maximum = capacityChartScrollMaximum(scroll);
+  const state = capacityChartScrollState;
+  let nextScrollLeft = maximum;
+  if (!state?.atEnd && typeof state?.anchorAtMs === "number" && Number.isFinite(state.anchorAtMs)) {
+    const markerX = capacityChartMarkerX(state.anchorAtMs, displayWindow, plot);
+    nextScrollLeft = markerX - scroll.clientWidth / 2;
+  }
+  scroll.scrollLeft = Math.max(0, Math.min(maximum, nextScrollLeft));
+  rememberCapacityChartScroll();
+};
+
+const capacityChartOptimalSpendCoordinates = (activeWindow, resetMarkers, displayWindow, plot, nowMs) => {
+  if (!displayWindow) return [];
+  const segments = [];
+  const seenStarts = new Set();
+  const resetStarts = [
+    ...new Set(
+      (Array.isArray(resetMarkers) ? resetMarkers : [])
+        .map((event) => event?.observed_at_ms)
+        .filter((timestamp) => typeof timestamp === "number" && Number.isFinite(timestamp)),
+    ),
+  ].sort((left, right) => left - right);
+  const addWeeklySegment = (startAtMs, nextResetAtMs = Number.POSITIVE_INFINITY) => {
+    if (!Number.isFinite(startAtMs) || seenStarts.has(startAtMs)) return;
+    const endAtMs = Math.min(startAtMs + CAPACITY_CHART_OPTIMAL_WEEK_MS, nextResetAtMs);
+    const visibleStartAtMs = Math.max(startAtMs, displayWindow.startAtMs);
+    const visibleEndAtMs = Math.min(endAtMs, displayWindow.resetAtMs, nowMs);
+    if (!Number.isFinite(visibleStartAtMs) || !Number.isFinite(visibleEndAtMs) || visibleEndAtMs <= visibleStartAtMs) {
+      return;
+    }
+    const point = (timestamp) => ({
+      x: capacityChartMarkerX(timestamp, displayWindow, plot),
+      y: plot.top + clampCapacityChartPercent(
+            ((timestamp - startAtMs) / CAPACITY_CHART_OPTIMAL_WEEK_MS) * 100,
+          ) / 100 * plot.height,
+    });
+    seenStarts.add(startAtMs);
+    segments.push({ start: point(visibleStartAtMs), end: point(visibleEndAtMs) });
+  };
+
+  for (const [index, startAtMs] of resetStarts.entries()) {
+    addWeeklySegment(startAtMs, resetStarts[index + 1]);
+  }
+  if (!resetStarts.length) addWeeklySegment(activeWindow?.startAtMs);
+  return segments;
+};
+
 const renderProviderCapacityChart = (snapshot, sources) => {
+  rememberCapacityChartScroll();
   const history = Array.isArray(snapshot?.history) ? snapshot.history : [];
   const nowMs = Date.now();
-  const chartWindow = capacityChartReferenceWindow(sources, nowMs);
-  const width = capacityChartContentWidth();
+  const chartWindow = capacityChartHistoryWindow(nowMs);
+  const activeUsageWindow = capacityChartActiveUsageWindow(sources, nowMs);
+  const width = capacityChartIntrinsicWidth(chartWindow);
   const plot = {
     left: CAPACITY_CHART_PLOT_LEFT,
     top: CAPACITY_CHART_PLOT_TOP,
@@ -1389,6 +1889,8 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   for (
     const series of [
       ...CAPACITY_CHART_SERIES,
+      { key: "rate-limit-reset", label: "OpenAI rate-limit reset" },
+      { key: "openai-downtime", label: "OpenAI downtime" },
       { key: "optimal-spend", label: "Optimal token spend" },
     ]
   ) {
@@ -1407,12 +1909,130 @@ const renderProviderCapacityChart = (snapshot, sources) => {
 
   const svg = capacityChartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
-    preserveAspectRatio: "xMidYMid meet",
+    preserveAspectRatio: "none",
     role: "img",
-    "aria-label": "Codex and YunWu available capacity history across the active usage period",
+    "aria-label": "Codex and YunWu available capacity over the trailing seven days, including rate-limit resets",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
+  svg.dataset.capacityChartStartAtMs = String(chartWindow.startAtMs);
+  svg.dataset.capacityChartDurationMs = String(chartWindow.durationMs);
+  svg.dataset.capacityChartPlotLeft = String(plot.left);
+  svg.dataset.capacityChartPlotWidth = String(plot.width);
+  svg.style.width = `${width}px`;
+
+  const currentSample = { sampled_at_ms: nowMs, sources };
+  const aggregateDowntimeBridges = capacityChartDowntimeBridges(
+    history,
+    CAPACITY_CHART_SERIES[0],
+    chartWindow,
+    chartWindow,
+    capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
+    nowMs,
+    snapshot?.downtime_events,
+  );
+  const defs = capacityChartSvgElement("defs");
+  const downtimePattern = capacityChartSvgElement("pattern", {
+    id: "capacity-chart-downtime-stripes",
+    width: 12,
+    height: 12,
+    patternUnits: "userSpaceOnUse",
+  });
+  const downtimeStripe = capacityChartSvgElement("path", {
+    d: "M-3 -3L15 15 M-3 9L3 15 M9 -3L15 3",
+    fill: "none",
+    stroke: "#ff5f56",
+    "stroke-opacity": 0.3,
+    "stroke-width": 1.25,
+  });
+  downtimePattern.appendChild(downtimeStripe);
+  const resetPattern = capacityChartSvgElement("pattern", {
+    id: "capacity-chart-rate-limit-reset-stripes",
+    width: 10,
+    height: 10,
+    patternUnits: "userSpaceOnUse",
+  });
+  const resetStripe = capacityChartSvgElement("path", {
+    d: "M-2 10L10 -2 M3 12L12 3",
+    fill: "none",
+    stroke: "#55d98a",
+    "stroke-opacity": 0.72,
+    "stroke-width": 1.5,
+  });
+  resetPattern.appendChild(resetStripe);
+  defs.append(downtimePattern, resetPattern);
+  svg.appendChild(defs);
+
+  for (const bridge of aggregateDowntimeBridges) {
+    const band = capacityChartDowntimeBandCoordinates(bridge, plot);
+    if (!band) continue;
+    const background = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "#ff5f56",
+      "fill-opacity": 0.055,
+    });
+    background.dataset.capacityDowntimeBand = "openai";
+    background.setAttribute("aria-hidden", "true");
+    const stripes = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "url(#capacity-chart-downtime-stripes)",
+    });
+    stripes.dataset.capacityDowntimeBand = "openai";
+    stripes.setAttribute("aria-hidden", "true");
+    svg.append(background, stripes);
+  }
+
+  const rateLimitResetMarkers = capacityChartRateLimitResetMarkers(
+    snapshot?.rate_limit_reset_events,
+    history,
+    chartWindow,
+    snapshot?.downtime_events,
+  );
+  for (const event of rateLimitResetMarkers) {
+    const markerX = capacityChartMarkerX(event.observed_at_ms, chartWindow, plot);
+    const markerWidth = CAPACITY_CHART_RESET_BAND_WIDTH_PX;
+    const markerLeft = Math.max(plot.left, Math.min(plot.left + plot.width - markerWidth, markerX - markerWidth / 2));
+    const marker = capacityChartSvgElement("g");
+    const background = capacityChartSvgElement("rect", {
+      x: markerLeft,
+      y: plot.top,
+      width: markerWidth,
+      height: plot.height,
+      fill: "#55d98a",
+      "fill-opacity": 0.16,
+    });
+    const stripes = capacityChartSvgElement("rect", {
+      x: markerLeft,
+      y: plot.top,
+      width: markerWidth,
+      height: plot.height,
+      fill: "url(#capacity-chart-rate-limit-reset-stripes)",
+    });
+    const centerLine = capacityChartSvgElement("line", {
+      x1: markerX,
+      y1: plot.top,
+      x2: markerX,
+      y2: plot.top + plot.height,
+      stroke: "#55d98a",
+      "stroke-opacity": 0.96,
+      "stroke-width": 2,
+    });
+    marker.dataset.capacityRateLimitReset = event.event_id || `${event.slot}-${event.window}-${event.observed_at_ms}`;
+    marker.setAttribute(
+      "aria-label",
+      `OpenAI ${event.window} rate-limit reset for account ${event.slot}: ${
+        quotaPercentFormatter.format(event.capacity_gain_percentage_points)
+      } percentage points of capacity gained`,
+    );
+    marker.append(background, stripes, centerLine);
+    svg.appendChild(marker);
+  }
 
   for (const remaining of [100, 75, 50, 25, 0]) {
     const y = plot.top + ((100 - remaining) / 100) * plot.height;
@@ -1449,7 +2069,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     y: height - 8,
     "text-anchor": "middle",
   });
-  xAxisTitle.textContent = `Usage period · ${capacityChartIntervalLabel(chartWindow.durationMs)}`;
+  xAxisTitle.textContent = "Trailing 7-day capacity history";
   xAxisTitle.dataset.capacityChartAxisTitle = "x";
   svg.appendChild(xAxisTitle);
   const yAxisTitle = capacityChartSvgElement("text", {
@@ -1462,19 +2082,27 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   yAxisTitle.dataset.capacityChartAxisTitle = "y";
   svg.appendChild(yAxisTitle);
 
-  const optimalSpendTrend = capacityChartSvgElement("line", {
-    x1: plot.left,
-    y1: plot.top,
-    x2: plot.left + plot.width,
-    y2: plot.top + plot.height,
-  });
-  optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
-  optimalSpendTrend.setAttribute("aria-label", "Optimal token spend trend, 100 percent to 0 percent remaining");
-  svg.appendChild(optimalSpendTrend);
+  const optimalSpendCoordinates = capacityChartOptimalSpendCoordinates(
+    activeUsageWindow,
+    rateLimitResetMarkers,
+    chartWindow,
+    plot,
+    nowMs,
+  );
+  for (const [index, coordinates] of optimalSpendCoordinates.entries()) {
+    const optimalSpendTrend = capacityChartSvgElement("line", {
+      x1: coordinates.start.x,
+      y1: coordinates.start.y,
+      x2: coordinates.end.x,
+      y2: coordinates.end.y,
+    });
+    optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
+    optimalSpendTrend.setAttribute("aria-label", `Optimal token spend for weekly reset ${index + 1}`);
+    svg.appendChild(optimalSpendTrend);
+  }
 
-  const pacing = capacityChartSpendPacing(chartWindow, sources, nowMs);
-  const currentElapsedPercent = pacing.elapsedPercent ?? 0;
-  const currentX = plot.left + (currentElapsedPercent / 100) * plot.width;
+  const pacing = capacityChartSpendPacing(activeUsageWindow, sources, nowMs);
+  const currentX = capacityChartMarkerX(nowMs, chartWindow, plot);
   const reticule = capacityChartSvgElement("line", {
     x1: currentX,
     y1: plot.top,
@@ -1485,9 +2113,8 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   reticule.setAttribute("aria-label", "Current time in usage period");
   svg.appendChild(reticule);
 
-  const currentSample = { sampled_at_ms: nowMs, sources };
   for (const series of CAPACITY_CHART_SERIES) {
-    const activeInterval = chartWindow;
+    const activeInterval = series.source === "aggregate" || series.source === "yunwu" ? chartWindow : activeUsageWindow;
     const shouldRender = true;
     const currentPoint = shouldRender ? capacityChartPoint(currentSample, series, activeInterval, chartWindow) : null;
     const chartPoints = shouldRender
@@ -1499,12 +2126,13 @@ const renderProviderCapacityChart = (snapshot, sources) => {
         currentPoint,
         nowMs,
         snapshot?.reset_events,
+        snapshot?.downtime_events,
       )
       : [];
     const path = capacityChartSvgElement("path", {
       d: capacityChartPath(chartPoints, plot, {
-        anchorStart: series.source === "aggregate",
-        anchorEnd: series.source === "aggregate",
+        anchorStart: false,
+        anchorEnd: false,
       }),
       fill: "none",
     });
@@ -1512,12 +2140,112 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     path.dataset.capacitySeries = series.key;
     path.setAttribute("aria-label", series.label);
     svg.appendChild(path);
+
+    const downtimeBridges = series.source === "aggregate" ? aggregateDowntimeBridges : capacityChartDowntimeBridges(
+      history,
+      series,
+      activeInterval,
+      chartWindow,
+      currentPoint,
+      nowMs,
+      snapshot?.downtime_events,
+    );
+    if (downtimeBridges.length) {
+      const downtimePath = capacityChartSvgElement("path", {
+        d: capacityChartBridgePath(downtimeBridges, plot),
+        fill: "none",
+      });
+      downtimePath.style.fill = "none";
+      downtimePath.dataset.capacityDowntime = "openai";
+      downtimePath.setAttribute("aria-label", "OpenAI downtime between observed capacity samples");
+      svg.appendChild(downtimePath);
+    }
   }
 
   const chartBody = document.createElement("div");
   chartBody.dataset.capacityChartBody = "";
-  chartBody.append(svg, renderCapacitySpendSummary(pacing, chartWindow));
+  const chartScroll = document.createElement("div");
+  chartScroll.dataset.capacityChartScroll = "";
+  chartScroll.tabIndex = 0;
+  chartScroll.setAttribute("role", "region");
+  chartScroll.setAttribute("aria-label", "Scrollable seven-day provider capacity history");
+  chartScroll.appendChild(svg);
+
+  const chartScrollControls = document.createElement("div");
+  chartScrollControls.dataset.capacityChartScrollControls = "";
+  chartScrollControls.setAttribute("aria-label", "History navigation");
+  const olderButton = document.createElement("button");
+  olderButton.type = "button";
+  olderButton.textContent = "← Older";
+  olderButton.setAttribute("aria-label", "Scroll to older capacity history");
+  const newerButton = document.createElement("button");
+  newerButton.type = "button";
+  newerButton.textContent = "Newer →";
+  newerButton.setAttribute("aria-label", "Scroll to newer capacity history");
+  chartScrollControls.append(olderButton, newerButton);
+
+  const syncCapacityChartScroll = () => {
+    rememberCapacityChartScroll();
+    updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
+  };
+  chartScroll.addEventListener("scroll", syncCapacityChartScroll, { passive: true });
+  olderButton.addEventListener("click", () => {
+    chartScroll.scrollBy({ left: -capacityChartScrollAmount(chartScroll), behavior: capacityChartScrollBehavior() });
+  });
+  newerButton.addEventListener("click", () => {
+    chartScroll.scrollBy({ left: capacityChartScrollAmount(chartScroll), behavior: capacityChartScrollBehavior() });
+  });
+  chartScroll.addEventListener("keydown", (event) => {
+    const amount = capacityChartScrollAmount(chartScroll);
+    if (event.key === "ArrowLeft" || event.key === "PageUp") {
+      event.preventDefault();
+      chartScroll.scrollBy({ left: -amount, behavior: capacityChartScrollBehavior() });
+    } else if (event.key === "ArrowRight" || event.key === "PageDown") {
+      event.preventDefault();
+      chartScroll.scrollBy({ left: amount, behavior: capacityChartScrollBehavior() });
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      chartScroll.scrollTo({ left: 0, behavior: capacityChartScrollBehavior() });
+    } else if (event.key === "End") {
+      event.preventDefault();
+      chartScroll.scrollTo({ left: chartScroll.scrollWidth, behavior: capacityChartScrollBehavior() });
+    }
+  });
+  const chartPane = document.createElement("div");
+  chartPane.dataset.capacityChartPane = "";
+  chartPane.append(chartScroll, chartScrollControls);
+  chartBody.append(chartPane, renderCapacitySpendSummary(pacing, activeUsageWindow));
   figure.appendChild(chartBody);
+  if (rateLimitResetMarkers.length) {
+    const navigation = document.createElement("nav");
+    navigation.dataset.capacityResetNavigation = "";
+    navigation.setAttribute("aria-label", "Rate-limit reset markers");
+    for (const [index, event] of rateLimitResetMarkers.entries()) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.capacityReset = event.event_id || `${event.slot}-${event.window}-${event.observed_at_ms}`;
+      button.textContent = `${formatCapacityTimestamp(event.observed_at_ms)} · +${
+        quotaPercentFormatter.format(event.capacity_gain_percentage_points)
+      } pp`;
+      button.setAttribute(
+        "aria-label",
+        `Go to rate-limit reset ${
+          index + 1
+        } of ${rateLimitResetMarkers.length}, account ${event.slot} ${event.window} window, ${
+          quotaPercentFormatter.format(event.capacity_gain_percentage_points)
+        } percentage points of capacity gained and timer reset`,
+      );
+      button.addEventListener("click", () => {
+        const markerX = capacityChartMarkerX(event.observed_at_ms, chartWindow, plot);
+        chartScroll.scrollTo({
+          left: Math.max(0, markerX - chartScroll.clientWidth / 2),
+          behavior: capacityChartScrollBehavior(),
+        });
+      });
+      navigation.appendChild(button);
+    }
+    figure.appendChild(navigation);
+  }
   const caption = document.createElement("figcaption");
   caption.dataset.capacityChartMeta = "";
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
@@ -1530,13 +2258,32 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const resetSuffix = resetEvents.length
     ? ` · ${resetEvents.length} verified reset${resetEvents.length === 1 ? "" : "s"}`
     : "";
+  const rateLimitResetSuffix = rateLimitResetMarkers.length
+    ? ` · ${rateLimitResetMarkers.length} observed rate-limit reset${rateLimitResetMarkers.length === 1 ? "" : "s"}`
+    : "";
+  const downtimeBridgeCount = capacityChartDowntimeBridges(
+    history,
+    CAPACITY_CHART_SERIES[0],
+    chartWindow,
+    chartWindow,
+    capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
+    nowMs,
+    snapshot?.downtime_events,
+  ).length;
+  const downtimeSuffix = downtimeBridgeCount
+    ? ` · ${downtimeBridgeCount} OpenAI downtime bridge${downtimeBridgeCount === 1 ? "" : "s"}`
+    : "";
   caption.textContent = samples.length
     ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
       formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
-    } · ${samples.length} sample${samples.length === 1 ? "" : "s"}${resetSuffix}${staleSuffix}`
-    : `No retained samples yet · current Codex usage period${resetSuffix}${staleSuffix}`;
+    } · ${samples.length} sample${
+      samples.length === 1 ? "" : "s"
+    }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${staleSuffix}`
+    : `No retained samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${staleSuffix}`;
   figure.appendChild(caption);
   providerCapacityChart.replaceChildren(figure);
+  restoreCapacityChartScroll(chartScroll, chartWindow, plot);
+  updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
 };
 
 const renderProviderCapacity = (snapshot) => {
@@ -1556,11 +2303,11 @@ const renderProviderCapacity = (snapshot) => {
   const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
   const staleCount = sources.filter((source) => source.state === "stale").length;
   if (unavailableCount === sources.length) {
-    setBadge(providerCapacityBadge, "bad", "Unavailable");
+    setBadge(providerCapacityBadge, "unknown", "Quota unavailable");
   } else if (unavailableCount > 0) {
-    setBadge(providerCapacityBadge, "unknown", `Partial · ${unavailableCount} unavailable`);
+    setBadge(providerCapacityBadge, "unknown", `Partial quota · ${unavailableCount} unavailable`);
   } else if (staleCount > 0) {
-    setBadge(providerCapacityBadge, "unknown", `Stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
+    setBadge(providerCapacityBadge, "unknown", `Quota stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
   } else {
     setBadge(providerCapacityBadge, "ok", "Live");
   }
@@ -1572,7 +2319,7 @@ const renderProviderCapacity = (snapshot) => {
 const loadProviderCapacity = async ({ live = true } = {}) => {
   if (providerCapacityLoading) return false;
   const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !token) {
+  if (!adminAccessState.isAdmin) {
     setBadge(providerCapacityBadge, "bad", "Sign in required");
     return false;
   }
@@ -1617,9 +2364,10 @@ globalThis.addEventListener("resize", scheduleProviderCapacityChartResize);
 const loadProviders = async () => {
   if (providersLoading) return;
   const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !token) {
+  if (!adminAccessState.isAdmin) {
     return;
   }
+  const loadId = ++providersLoadId;
   providersLoading = true;
   try {
     const response = await fetch(apiUrl("/admin/providers"), {
@@ -1627,21 +2375,26 @@ const loadProviders = async () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     const payload = await response.json().catch(() => null);
+    if (loadId !== providersLoadId) return;
     if (!response.ok || !payload) {
       latestProviderHealth = null;
+      renderOpenRouterFailover(null);
       if (latestProviderCapacityChartState?.sources) {
         renderProviderCapacityList(latestProviderCapacityChartState.sources);
       }
       return;
     }
     latestProviderHealth = payload;
+    renderOpenRouterFailover(payload.openrouter);
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
     providersLoadedAt = Date.now();
   } catch {
+    if (loadId !== providersLoadId) return;
     latestProviderHealth = null;
+    renderOpenRouterFailover(null);
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
   } finally {
-    providersLoading = false;
+    if (loadId === providersLoadId) providersLoading = false;
   }
 };
 
@@ -1803,7 +2556,7 @@ const setAccessValue = (el, value, fallback = "—") => {
 };
 
 const updateAccessApiKeysSummary = () => {
-  if (!getAdminToken()) {
+  if (!hasAdminCredential()) {
     setAccessValue(accessApiKeys, "Missing token");
     return;
   }
@@ -1821,7 +2574,7 @@ const updateAccessApiKeysSummary = () => {
 };
 
 const updateAccessGithubSummary = () => {
-  if (!getAdminToken()) {
+  if (!hasAdminCredential()) {
     setAccessValue(accessGithubRepos, "Missing token");
     setAccessValue(accessGithubQueue, "Missing token");
     return;
@@ -1847,7 +2600,7 @@ const updateAccessGithubSummary = () => {
 };
 
 const updateAccessPubkeysSummary = () => {
-  if (!getAdminToken()) {
+  if (!hasAdminCredential()) {
     setAccessValue(accessKernelPubkeys, "Missing token");
     return;
   }
@@ -1867,7 +2620,7 @@ let accessUpstreamLoadedAt = 0;
 const refreshAccessUpstreamSummary = async () => {
   if (accessUpstreamLoading) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setAccessValue(accessUpstreamSource, "Missing token");
     setAccessValue(accessUpstreamExpiry, "Missing token");
     return;
@@ -2317,7 +3070,7 @@ const renderKernelPolicyQueue = (records) => {
 
 const refreshKernelPolicyQueue = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelQueueBadge("bad", "Missing token");
     setKernelQueueMessage(getKernelQueueMissingTokenMessage());
     updateAccessGithubSummary();
@@ -2362,7 +3115,7 @@ const ensureKernelPolicyQueueLoaded = async () => {
   if (currentAdminView !== "kernel") return;
   if (kernelQueueLoading) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelQueueBadge("bad", "Missing token");
     setKernelQueueMessage(getKernelQueueMissingTokenMessage());
     updateAccessGithubSummary();
@@ -2450,7 +3203,7 @@ const parseKernelExpiresValue = (raw, never, setBadgeFn) => {
 const saveNewKernelLimit = async () => {
   if (kernelNewSaving) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelNewBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     tokenInput.focus();
@@ -2644,7 +3397,7 @@ const mergeKernelRecords = (usageRecords, policyRecords, scope) => {
 
 const loadKernelList = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelListBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     setKernelListMessage(getKernelListMissingTokenMessage());
@@ -3019,7 +3772,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
     if (!expiresResult.ok) return;
 
     const token = getAdminToken();
-    if (!token) {
+    if (!token && !hasAdminCredential()) {
       setEditBadge("bad", "Missing token");
       setAuthBadge("bad", "Missing token");
       tokenInput.focus();
@@ -3072,7 +3825,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
 
   const deleteLimit = async () => {
     const token = getAdminToken();
-    if (!token) {
+    if (!token && !hasAdminCredential()) {
       setKernelListBadge("bad", "Missing token");
       setAuthBadge("bad", "Missing token");
       tokenInput.focus();
@@ -3455,7 +4208,7 @@ const renderKernelPubKeys = (records) => {
 
 const refreshKernelPubKeys = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelPubKeysBadge("bad", "Missing token");
     setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
     updateAccessPubkeysSummary();
@@ -3497,7 +4250,7 @@ const ensureKernelPubKeysLoaded = async () => {
   if (currentAdminView !== "pubkeys") return;
   if (kernelPubKeysLoading) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelPubKeysBadge("bad", "Missing token");
     setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
     updateAccessPubkeysSummary();
@@ -3514,7 +4267,7 @@ const ensureKernelPubKeysLoaded = async () => {
 const createKernelPubKey = async () => {
   if (kernelPubKeysSaving) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelPubKeyCreateBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     tokenInput.focus();
@@ -3574,7 +4327,7 @@ const createKernelPubKey = async () => {
 
 const deleteKernelPubKey = async (appId, button) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelPubKeysBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     tokenInput.focus();
@@ -4239,7 +4992,7 @@ const loadApiKeyRequestLogs = (keyId) => {
   if (!cacheKey) return { ok: false, records: [], error: "Missing key id" };
 
   const token = getAdminToken();
-  if (!token) return { ok: false, records: [], error: "Missing token" };
+  if (!token && !hasAdminCredential()) return { ok: false, records: [], error: "Missing token" };
 
   const now = Date.now();
   const cached = apiKeyRequestLogCache.get(cacheKey);
@@ -4890,7 +5643,7 @@ const renderKeys = (keys, view = "all") => {
       const result = buildEditPayload();
       if (!result) return;
       const token = getAdminToken();
-      if (!token) {
+      if (!token && !hasAdminCredential()) {
         setEditBadge("bad", "Missing token");
         setAuthBadge("bad", "Missing token");
         tokenInput.focus();
@@ -5154,7 +5907,7 @@ const renderPasskeyUsers = (users) => {
 
 const refreshPasskeyUsers = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setPasskeyUsersBadge("bad", "Missing token");
     setPasskeyUsersMessage("Paste a fallback admin token to manage passkey users.");
     return;
@@ -5204,7 +5957,7 @@ const ensurePasskeyUsersLoaded = async () => {
 
 const updatePasskeyUserAdmin = async (id, isAdmin, checkbox) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setPasskeyUsersBadge("bad", "Missing token");
     checkbox.checked = !isAdmin;
     tokenInput.focus();
@@ -5372,8 +6125,7 @@ const runAdminPrefetchTask = async (runId, task) => {
 };
 
 const startAdminPrefetch = () => {
-  const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !token) {
+  if (!adminAccessState.isAdmin) {
     return Promise.resolve({ ready: 0, failed: 0, skipped: 0 });
   }
 
@@ -5607,18 +6359,19 @@ const computeExpiresAtMs = (preset) => {
 
 const testAdminToken = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !isPreviewOrigin()) {
     setAuthBadge("bad", "Missing token");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
     tokenInput.focus();
-    return;
+    return false;
   }
 
   setAuthBadge("unknown", "Checking...");
   try {
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const res = await fetch(apiUrl("/uos/auth"), {
-      headers: { Authorization: `Bearer ${token}` },
+      headers,
       cache: "no-store",
     });
     const data = await res.json().catch(() => null);
@@ -5626,13 +6379,13 @@ const testAdminToken = async () => {
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
       setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
       setSignedInState(false);
-      return;
+      return false;
     }
     if (!data?.auth?.is_admin) {
       setAuthBadge("bad", "Not admin");
       setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
       setSignedInState(false);
-      return;
+      return false;
     }
     const kind = data?.auth?.method?.kind;
     const isSuperAdmin = data?.auth?.is_super_admin === true;
@@ -5643,15 +6396,17 @@ const testAdminToken = async () => {
       deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials(),
       statusText: formatAuthSessionLabel(data?.auth),
     });
+    return true;
   } catch {
     setAuthBadge("bad", "Offline");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
+    return false;
   }
 };
 
 const scheduleTokenCheck = debounce(() => {
-  if (!getAdminToken()) {
+  if (!getAdminToken() && !isPreviewOrigin()) {
     setAuthBadge("bad", "Missing token");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
@@ -5663,7 +6418,7 @@ const scheduleTokenCheck = debounce(() => {
 
 const createKey = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setCreateBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     tokenInput.focus();
@@ -5772,7 +6527,7 @@ const createKey = async () => {
 
 const refreshKeys = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     setKeyListMessage("Paste an admin token to load API keys.");
     updateAccessApiKeysSummary();
@@ -5813,7 +6568,7 @@ const ensureKeysLoaded = async () => {
   if (currentAdminView !== "keys") return;
   if (keysLoading) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     setKeyListMessage("Paste an admin token to load API keys.");
     return;
@@ -5841,7 +6596,7 @@ const updateKeyRevocationState = (id, revokedAtMs) => {
 
 const revokeKey = async (id, name, button) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     tokenInput.focus();
     return;
@@ -5876,7 +6631,7 @@ const revokeKey = async (id, name, button) => {
 
 const unrevokeKey = async (id, name, button) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     tokenInput.focus();
     return;
@@ -5911,7 +6666,7 @@ const unrevokeKey = async (id, name, button) => {
 
 const deleteKey = async (id, name, button) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     tokenInput.focus();
     return;
@@ -6118,7 +6873,7 @@ const updateReasoningOptions = (modelSlug, preferred) => {
 
 const loadDefaults = async (options = {}) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setDefaultsBadge("bad", "Missing token");
     clearYunwuQuotaDiagnostics();
     setYunwuQuotaBadge("unknown", "Not loaded");
@@ -6221,7 +6976,7 @@ const loadDefaults = async (options = {}) => {
 const saveDefaults = async () => {
   if (!defaultsLoaded) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setDefaultsBadge("bad", "Missing token");
     return;
   }
@@ -6310,6 +7065,7 @@ setKernelNewBadge("unknown", "Idle");
 setKernelQueueBadge("unknown", "Not loaded");
 setKernelPubKeysBadge("unknown", "Not loaded");
 setKernelPubKeyCreateBadge("unknown", "Idle");
+resetOpenRouterFailover();
 setKeyListMessage("Paste an admin token to load API keys.");
 setPasskeyUsersMessage("Paste a fallback admin token to manage passkey users.");
 setKernelListMessage(getKernelListMissingTokenMessage());
@@ -6322,11 +7078,13 @@ setKernelNewPanelOpen(false);
 resetKernelPubKeyForm();
 const initialHashView = getHashView();
 if (initialHashView === "session") setAuthWidgetOpen(true);
-const hasInitialAdminToken = Boolean(getAdminToken());
-resetAdminPrefetchState(hasInitialAdminToken ? "Checking admin session..." : "Sign in to prepare the admin views.");
+const hasInitialAdminCredential = Boolean(getAdminToken()) || isPreviewOrigin();
+resetAdminPrefetchState(
+  hasInitialAdminCredential ? "Checking admin session..." : "Sign in to prepare the admin views.",
+);
 setAdminView(ADMIN_VIEW_DEFAULT, { allowInaccessible: true });
 if (initialHashView && initialHashView !== "session") setAdminView(initialHashView, { focusAuth: false });
-if (hasInitialAdminToken) {
+if (hasInitialAdminCredential) {
   setAuthBadge("unknown", "Checking...");
   scheduleTokenCheck();
 } else {
@@ -6335,7 +7093,7 @@ if (hasInitialAdminToken) {
 }
 
 bindForegroundRefresh(() => {
-  if (currentAdminView !== "defaults" || !adminAccessState.isAdmin || !getAdminToken()) return;
+  if (currentAdminView !== "defaults" || !adminAccessState.isAdmin || !hasAdminCredential()) return;
   void loadDefaults({ preserveInputs: true });
 });
 
@@ -6364,13 +7122,16 @@ tokenInput.addEventListener("input", () => {
   kernelQueueLoadedAt = 0;
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
+  providersLoadId += 1;
+  providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
+  resetOpenRouterFailover();
   clearApiKeyRequestLogCaches();
-  if (!getAdminToken()) {
+  if (!hasAdminCredential()) {
     setAuthBadge("bad", "Missing token");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
@@ -6424,44 +7185,15 @@ rememberTokenInput.addEventListener("change", () => {
   }
   storage.remove(STORAGE_KEYS.rememberToken);
   storage.remove(STORAGE_KEYS.token);
-  setSignedInState(Boolean(getAdminToken()));
+  setSignedInState(hasAdminCredential());
 });
 
 passkeyHandleInput.addEventListener("input", () => {
   schedulePasskeyHandlePersist();
 });
 
-passkeyLoginBtn.addEventListener("click", async () => {
-  const passkeyBaseUrl = getPasskeyBaseUrl();
-  setPasskeyStatus("unknown", "Signing in...");
-  passkeyLoginBtn.disabled = true;
-  passkeyRegisterBtn.disabled = true;
-  try {
-    if (!isAuthRelayMode && isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()) {
-      const relay = await requestRemotePasskeySession();
-      if (relay.handle) setPasskeyHandleValue(relay.handle);
-      applySignedInToken(relay.token, { deviceRegistered: true });
-      setPasskeyStatus("ok", "Passkey signed in");
-      return;
-    }
-
-    const passkeyHandle = getPasskeyHandle();
-    const result = await signInWithPasskey({
-      baseUrl: passkeyBaseUrl,
-      handle: passkeyHandle,
-      useHandle: Boolean(passkeyHandle),
-    });
-    if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token, { deviceRegistered: true });
-    setPasskeyStatus("ok", "Passkey signed in");
-    postAuthRelayResult(result);
-  } catch (error) {
-    setSignedInState(false);
-    setPasskeyStatus("bad", formatPasskeyLoginError(error));
-  } finally {
-    passkeyLoginBtn.disabled = false;
-    passkeyRegisterBtn.disabled = false;
-  }
+passkeyLoginBtn.addEventListener("click", () => {
+  void runPasskeyLogin();
 });
 
 passkeyRegisterBtn.addEventListener("click", async () => {
@@ -6494,6 +7226,7 @@ signOutBtn.addEventListener("click", async () => {
   try {
     await signOut({ token, baseUrl: resolveBaseUrl() });
   } finally {
+    relaySessionActive = false;
     tokenInput.value = "";
     rememberTokenInput.checked = false;
     setAuthBadge("bad", "Missing token");
@@ -6513,7 +7246,7 @@ globalThis.addEventListener("storage", (event) => {
     return;
   }
   if (event.key === STORAGE_KEYS.passkeyCredentialIds) {
-    setSignedInState(Boolean(getAdminToken()));
+    setSignedInState(hasAdminCredential());
     return;
   }
   if (event.key !== STORAGE_KEYS.token) return;
@@ -6579,12 +7312,15 @@ baseSelect.addEventListener("change", () => {
   kernelPubKeys = [];
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
+  providersLoadId += 1;
+  providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
-  resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
+  resetOpenRouterFailover("Target changed. Waiting for snapshot");
+  resetAdminPrefetchState(hasAdminCredential() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
     void ensureKeysLoaded();
@@ -6634,7 +7370,9 @@ viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashM
 viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
 
 globalThis.setInterval(() => {
-  if (currentAdminView === "providers" && document.visibilityState === "visible") void loadProviders();
+  if (currentAdminView !== "providers" || document.visibilityState !== "visible") return;
+  void loadProviders();
+  void loadProviderCapacity({ live: false });
 }, 30_000);
 
 createKeyBtn.addEventListener("click", () => {
@@ -6755,17 +7493,12 @@ const startAuthRelayIfRequested = async () => {
   setAuthWidgetOpen(true);
   passkeyRegisterBtn.hidden = true;
   setAuthBadge("unknown", "Relay sign-in");
-  setPasskeyStatus("unknown", "Checking signed-in session...");
+  setPasskeyStatus("unknown", "Starting passkey sign-in...");
   passkeyLoginBtn.disabled = true;
   try {
-    const cachedAuth = await getValidCachedRelayAuth();
-    if (cachedAuth) {
-      postAuthRelayResult(cachedAuth);
-      return;
-    }
-    setPasskeyStatus("unknown", "Use the sign-in button to continue.");
+    await runPasskeyLogin({ automatic: true });
   } catch (error) {
-    setPasskeyStatus("bad", `${error?.message ?? "Passkey sign-in failed"} Use the sign-in button to try again.`);
+    setPasskeyStatus("bad", `${formatPasskeyLoginError(error)} Click the sign-in button to continue.`);
   } finally {
     passkeyLoginBtn.disabled = false;
   }

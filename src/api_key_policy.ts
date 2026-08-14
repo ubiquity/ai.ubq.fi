@@ -20,7 +20,7 @@ export const API_KEY_USAGE_V3_RESERVATION_LEASE_MS = 5 * 60_000;
 export const API_KEY_USAGE_V3_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_KV_RETRIES = 5;
 
-export type ApiKeyUsageProvider = "cerebras" | "chatgpt_codex" | "yunwu" | "voyage";
+export type ApiKeyUsageProvider = "cerebras" | "chatgpt_codex" | "openrouter" | "yunwu" | "voyage";
 
 export type ApiKeyProviderDispatch = Readonly<{
   markTransportStarted: () => void;
@@ -194,7 +194,7 @@ export const normalizeApiKeyUsageRequestV3 = (value: unknown): ApiKeyUsageReques
     (value.state !== "reserved" && value.state !== "dispatched" && value.state !== "released") ||
     !isSafeNonNegativeInteger(value.reserved_at_ms) || !isSafeNonNegativeInteger(value.lease_expires_at_ms) ||
     !(value.provider === null || value.provider === "cerebras" || value.provider === "chatgpt_codex" ||
-      value.provider === "yunwu" || value.provider === "voyage") ||
+      value.provider === "openrouter" || value.provider === "yunwu" || value.provider === "voyage") ||
     !(value.dispatched_at_ms === null || isSafeNonNegativeInteger(value.dispatched_at_ms)) ||
     !(value.released_at_ms === null || isSafeNonNegativeInteger(value.released_at_ms)) ||
     !(value.release_reason === null || typeof value.release_reason === "string")
@@ -483,80 +483,91 @@ const reservationContext = (
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
-): ApiKeyUsageReservation => ({
-  policy,
-  request_id: requestId,
-  route,
-  beforeProviderDispatch: async (provider: ApiKeyUsageProvider): Promise<ApiKeyProviderDispatch | void> => {
-    let dispatchedHere = false;
-    try {
-      await withApiKeyUsageWindowLock(policy, async () => {
-        const requestKey = apiKeyUsageV3RequestKey(policy, requestId);
-        const windowKey = apiKeyUsageV3WindowKey(policy);
-        for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
-          const [requestEntry, windowEntry] = await Promise.all([
-            kv.get<ApiKeyUsageRequestV3>(requestKey, { consistency: "strong" }),
-            kv.get<ApiKeyUsageWindowV3>(windowKey, { consistency: "strong" }),
-          ]);
-          const request = normalizeApiKeyUsageRequestV3(requestEntry.value);
-          if (
-            !request || request.key_id !== policy.key_id || request.request_id !== requestId ||
-            request.route !== route ||
-            request.state === "released"
-          ) throw new ApiKeyQuotaDispatchError();
-          if (request.state === "dispatched") return;
-          const window = matchingWindow(windowEntry.value, policy);
-          if (!window || window.reserved_requests < 1) throw new ApiKeyQuotaDispatchError();
-          const nowMs = Date.now();
-          const dispatched: ApiKeyUsageRequestV3 = {
-            ...request,
-            state: "dispatched",
-            provider,
-            dispatched_at_ms: nowMs,
-          };
-          const committedWindow: ApiKeyUsageWindowV3 = {
-            ...window,
-            committed_requests: window.committed_requests + 1,
-            reserved_requests: window.reserved_requests - 1,
-            updated_at_ms: nowMs,
-          };
-          const committed = await kv.atomic()
-            .check(requestEntry)
-            .check(windowEntry)
-            .set(requestKey, dispatched, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
-            .set(windowKey, committedWindow, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
-            .commit();
-          if (committed.ok) {
-            dispatchedHere = true;
-            return;
+): ApiKeyUsageReservation => {
+  // `release()` runs after every route. Once this exact reservation has
+  // durably moved from reserved to dispatched, it cannot release a
+  // reservation: the request row is no longer reserved. Remembering that
+  // local transition avoids rereading the request and aggregate merely to
+  // rediscover the already-settled state. This is deliberately not shared
+  // across requests or isolates; KV remains the authority before dispatch.
+  let dispatchedByThisReservation = false;
+  return {
+    policy,
+    request_id: requestId,
+    route,
+    beforeProviderDispatch: async (provider: ApiKeyUsageProvider): Promise<ApiKeyProviderDispatch | void> => {
+      let dispatchedHere = false;
+      try {
+        await withApiKeyUsageWindowLock(policy, async () => {
+          const requestKey = apiKeyUsageV3RequestKey(policy, requestId);
+          const windowKey = apiKeyUsageV3WindowKey(policy);
+          for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
+            const [requestEntry, windowEntry] = await Promise.all([
+              kv.get<ApiKeyUsageRequestV3>(requestKey, { consistency: "strong" }),
+              kv.get<ApiKeyUsageWindowV3>(windowKey, { consistency: "strong" }),
+            ]);
+            const request = normalizeApiKeyUsageRequestV3(requestEntry.value);
+            if (
+              !request || request.key_id !== policy.key_id || request.request_id !== requestId ||
+              request.route !== route ||
+              request.state === "released"
+            ) throw new ApiKeyQuotaDispatchError();
+            if (request.state === "dispatched") return;
+            const window = matchingWindow(windowEntry.value, policy);
+            if (!window || window.reserved_requests < 1) throw new ApiKeyQuotaDispatchError();
+            const nowMs = Date.now();
+            const dispatched: ApiKeyUsageRequestV3 = {
+              ...request,
+              state: "dispatched",
+              provider,
+              dispatched_at_ms: nowMs,
+            };
+            const committedWindow: ApiKeyUsageWindowV3 = {
+              ...window,
+              committed_requests: window.committed_requests + 1,
+              reserved_requests: window.reserved_requests - 1,
+              updated_at_ms: nowMs,
+            };
+            const committed = await kv.atomic()
+              .check(requestEntry)
+              .check(windowEntry)
+              .set(requestKey, dispatched, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
+              .set(windowKey, committedWindow, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
+              .commit();
+            if (committed.ok) {
+              dispatchedHere = true;
+              dispatchedByThisReservation = true;
+              return;
+            }
           }
-        }
-        throw new ApiKeyQuotaDispatchError("API key quota reservation changed concurrently");
-      });
-    } catch (error) {
-      if (error instanceof ApiKeyQuotaDispatchError) throw error;
-      console.warn("[ai.ubq.fi] Failed to commit API key quota dispatch:", error);
-      throw new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
-    }
-    return dispatchedHere ? providerDispatchContext(kv, policy, requestId, route, provider) : undefined;
-  },
-  release: async (reason = "route_completed_without_provider_dispatch"): Promise<void> => {
-    try {
-      await withApiKeyUsageWindowLock(policy, async () => {
-        for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
-          const outcome = await releaseReservedRequest(kv, policy, requestId, reason, Date.now(), route);
-          if (outcome === "released" || outcome === "settled" || outcome === "missing") return;
-          if (outcome === "invalid") throw new ApiKeyQuotaDispatchError("API key quota reservation is malformed");
-        }
-        throw new ApiKeyQuotaDispatchError("API key quota reservation changed concurrently");
-      });
-    } catch (error) {
-      if (error instanceof ApiKeyQuotaDispatchError) throw error;
-      console.warn("[ai.ubq.fi] Failed to release API key quota reservation:", error);
-      throw new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
-    }
-  },
-});
+          throw new ApiKeyQuotaDispatchError("API key quota reservation changed concurrently");
+        });
+      } catch (error) {
+        if (error instanceof ApiKeyQuotaDispatchError) throw error;
+        console.warn("[ai.ubq.fi] Failed to commit API key quota dispatch:", error);
+        throw new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
+      }
+      return dispatchedHere ? providerDispatchContext(kv, policy, requestId, route, provider) : undefined;
+    },
+    release: async (reason = "route_completed_without_provider_dispatch"): Promise<void> => {
+      if (dispatchedByThisReservation) return;
+      try {
+        await withApiKeyUsageWindowLock(policy, async () => {
+          for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
+            const outcome = await releaseReservedRequest(kv, policy, requestId, reason, Date.now(), route);
+            if (outcome === "released" || outcome === "settled" || outcome === "missing") return;
+            if (outcome === "invalid") throw new ApiKeyQuotaDispatchError("API key quota reservation is malformed");
+          }
+          throw new ApiKeyQuotaDispatchError("API key quota reservation changed concurrently");
+        });
+      } catch (error) {
+        if (error instanceof ApiKeyQuotaDispatchError) throw error;
+        console.warn("[ai.ubq.fi] Failed to release API key quota reservation:", error);
+        throw new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
+      }
+    },
+  };
+};
 
 const quotaDispatchErrorFromResponse = async (response: Response): Promise<ApiKeyQuotaDispatchError> => {
   const payload = await response.clone().json().catch(() => null) as unknown;

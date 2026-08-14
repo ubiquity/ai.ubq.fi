@@ -363,6 +363,14 @@ const completedSseEvent = (inputTokens = 1, outputTokens = 1): string =>
     })
   }\n\n`;
 
+// Responses precommit now waits for semantic output before returning a
+// provider stream to the caller. These fixtures intentionally keep the
+// upstream open so the tests can exercise completion, truncation, and
+// cancellation after dispatch; emit a small semantic delta before that
+// lifecycle action instead of leaving the stream at setup-only response.created.
+const semanticSseEvent = (text = "fixture output"): string =>
+  `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n`;
+
 const sse = (
   usage: Record<string, unknown> = { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
 ): Response =>
@@ -735,6 +743,7 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
                 controller.enqueue(
                   encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n`),
                 );
+                controller.enqueue(encoder.encode(semanticSseEvent()));
               },
             }),
             { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -768,7 +777,7 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
       globalThis.fetch = () =>
         Promise.resolve(
           new Response(
-            `data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n`,
+            `data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n${semanticSseEvent()}`,
             { status: 200, headers: { "Content-Type": "text/event-stream" } },
           ),
         );
@@ -791,6 +800,7 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
                 controller.enqueue(
                   encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n`),
                 );
+                controller.enqueue(encoder.encode(semanticSseEvent()));
               },
             }),
             { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -869,6 +879,7 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
                 `data: ${JSON.stringify({ type: "response.created", response: { id: "kernel" } })}\n\n`,
               ),
             );
+            controller.enqueue(textEncoder.encode(semanticSseEvent()));
           },
         }),
         { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -1002,6 +1013,14 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       affinity_outcome: "none",
       provider_request_id: null,
       fallback_reason: null,
+      attempted_providers: ["chatgpt_codex"],
+      openrouter_trigger_class: null,
+      openrouter_circuit_transition: null,
+      openrouter_selected_model: null,
+      openrouter_task_type: null,
+      openrouter_latency_ms: null,
+      openrouter_terminal_status: null,
+      openrouter_semantic_commitment: null,
       stream: false,
       stream_terminal_type: "response.completed",
       git_sha: "unknown",
@@ -1106,6 +1125,7 @@ Deno.test("streaming inference emits one terminal log only after the response bo
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "stream" } })}\n\n`),
             );
+            controller.enqueue(encoder.encode(semanticSseEvent()));
           },
         }),
         { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -1185,6 +1205,7 @@ Deno.test("streaming drain timing remains separate from V3 dispatch accounting",
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "stream" } })}\n\n`),
             );
+            controller.enqueue(encoder.encode(semanticSseEvent()));
           },
         }),
         { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -1195,6 +1216,10 @@ Deno.test("streaming drain timing remains separate from V3 dispatch accounting",
     const response = await handler(streamingRequest(token, "responses"));
     assert.ok(response.body);
     const reader = response.body.getReader();
+    assert.equal((await reader.read()).done, false);
+    // Precommit buffers response.created together with the first semantic
+    // event. Consume that buffered delta before waiting for the provider's
+    // terminal event so the drain assertion remains about terminal delivery.
     assert.equal((await reader.read()).done, false);
 
     const upstreamController = await upstreamControllerPromise;
@@ -1544,6 +1569,7 @@ Deno.test("paid fallback cancellation telemetry records a cancelled YunWu lifecy
                   `data: ${JSON.stringify({ type: "response.created", response: { id: "cancelled" } })}\n\n`,
                 ),
               );
+              controller.enqueue(encoder.encode(semanticSseEvent()));
             },
           }),
           { status: 200, headers: { "Content-Type": "text/event-stream" } },

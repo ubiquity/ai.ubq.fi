@@ -152,6 +152,10 @@ jobs:
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
         (
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        ) ||
+        (
           github.ref != 'refs/heads/development' &&
           github.event_name == 'workflow_dispatch' &&
           github.event.inputs.deploy_preview == 'true'
@@ -164,6 +168,7 @@ jobs:
       UOS_AI_TOKEN: ${{ secrets.UBIQUITY_AI_USER_TOKEN }}
       UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY }}
       CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY }}
       YUNWU_API_KEY: ${{ secrets.YUNWU_API_KEY }}
       YUNWU_SYSTEM_TOKEN: ${{ secrets.YUNWU_SYSTEM_TOKEN }}
@@ -178,12 +183,13 @@ jobs:
           set -euo pipefail
           [ -n "$DENO_DEPLOY_TOKEN" ]
           [ -n "$UOS_AI_TOKEN" ]
+          [ -n "$OPENROUTER_API_KEY" ]
           [ -n "$YUNWU_API_KEY" ]
           echo "::add-mask::$DENO_DEPLOY_TOKEN"
 
           deno eval \
             '
-              const required = ["UOS_AI_TOKEN", "YUNWU_API_KEY"];
+              const required = ["UOS_AI_TOKEN", "OPENROUTER_API_KEY", "YUNWU_API_KEY"];
               const optional = [
                 "UOS_AI_KERNEL_PUBLIC_KEY",
                 "CEREBRAS_API_KEY",
@@ -228,6 +234,10 @@ jobs:
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
         (
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        ) ||
+        (
           github.ref != 'refs/heads/development' &&
           github.event_name == 'workflow_dispatch' &&
           github.event.inputs.deploy_preview == 'true'
@@ -242,10 +252,13 @@ jobs:
     with:
       project: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
       preview_project: p-ai-ubq-fi
-      # p-ai-ubq-fi is a separate acceptance app. Its production timeline is
-      # intentionally used so its stable hostname and Deno.cron both exercise
-      # the same isolated revision; this never targets ai-ubq-fi.
-      prod_branch: ${{ github.ref_name }}
+      # p-ai-ubq-fi is a separate acceptance app. Manual preview dispatches
+      # intentionally use its stable timeline so the stable hostname and
+      # Deno.cron exercise the same isolated revision; PRs use unique preview
+      # revision URLs and never target ai-ubq-fi.
+      # A PR ref must never compare equal to the production branch. Manual
+      # preview dispatches retain their existing stable-app acceptance mode.
+      prod_branch: ${{ github.event_name == 'pull_request' && '__preview__' || github.ref_name }}
       deploy_platform: deno2
       entrypoint: serve.ts
       artifact_name: ai-ubq-fi-source-${{ github.sha }}

@@ -177,7 +177,7 @@ const isUnknownPasskeyError = (body) => /unknown passkey/i.test(String(apiErrorM
 
 const requestJson = async (baseUrl, path, init) => {
   const endpoint = buildBackendUrl(path, baseUrl);
-  const res = await fetch(endpoint, init);
+  const res = await fetch(endpoint, { ...init, credentials: init?.credentials ?? "include" });
   const text = await res.text();
   let body = null;
   try {
@@ -197,16 +197,15 @@ export const clearCachedAuth = () => {
 
 export const signOut = async ({ baseUrl = "", token = "" } = {}) => {
   const bearer = token.trim();
-  if (bearer) {
-    try {
-      await fetch(buildBackendUrl("/api/auth/logout", baseUrl), {
-        method: "POST",
-        headers: { Authorization: `Bearer ${bearer}` },
-        cache: "no-store",
-      });
-    } catch {
-      // Local sign-out still clears cached auth when the network is unavailable.
-    }
+  try {
+    await fetch(buildBackendUrl("/api/auth/logout", baseUrl), {
+      method: "POST",
+      ...(bearer ? { headers: { Authorization: `Bearer ${bearer}` } } : {}),
+      credentials: "include",
+      cache: "no-store",
+    });
+  } catch {
+    // Local sign-out still clears cached auth when the network is unavailable.
   }
   clearCachedAuth();
 };
@@ -284,14 +283,18 @@ const finishRegister = async (baseUrl, credential, handle) => {
   });
 };
 
-export const signInWithPasskey = async ({ handle = "", baseUrl = "", useHandle = false } = {}) => {
+export const signInWithPasskey = async ({ handle = "", baseUrl = "", useHandle = false, audienceOrigin = "" } = {}) => {
   const normalizedHandle = normalizePasskeyHandle(handle);
   const unavailable = getPasskeyUnavailableMessage("login");
   if (unavailable) throw new Error(unavailable);
 
-  const body = useHandle && normalizedHandle
-    ? { ...getClientOriginPayload(), handle: normalizedHandle }
-    : getClientOriginPayload();
+  const clientOriginPayload = getClientOriginPayload();
+  const normalizedAudienceOrigin = String(audienceOrigin ?? "").trim();
+  const body = {
+    ...clientOriginPayload,
+    ...(useHandle && normalizedHandle ? { handle: normalizedHandle } : {}),
+    ...(normalizedAudienceOrigin ? { relay_origin: normalizedAudienceOrigin } : {}),
+  };
   const start = await requestJson(baseUrl, "/api/auth/login/start", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -307,7 +310,7 @@ export const signInWithPasskey = async ({ handle = "", baseUrl = "", useHandle =
   if (!credential) throw new Error("No passkey was returned.");
 
   const finish = await finishLogin(baseUrl, credential);
-  if (!finish.res.ok || !finish.body?.token) {
+  if (!finish.res.ok || (!finish.body?.token && finish.body?.relay_session !== true)) {
     if (isUnknownPasskeyError(finish.body)) clearStoredPasskeyMetadata();
     throw new Error(apiErrorMessage(finish.body, "Passkey sign-in failed."));
   }

@@ -19,6 +19,9 @@ import {
 import { decodeBase64ToString } from "./utils.ts";
 import type { CodexAuthPoolState } from "./types.ts";
 import { readYunwuApiKey } from "./yunwu.ts";
+import { readOpenRouterApiKey } from "./openrouter.ts";
+import { getOpenRouterCircuitView } from "./openrouter_circuit.ts";
+import { getOpenRouterTelemetryView } from "./openrouter_telemetry.ts";
 import {
   fetchYunwuQuotaObservation,
   getCachedConfiguredYunwuQuotaSnapshot,
@@ -219,12 +222,15 @@ export const getPassiveProviderHealthSnapshot = async (
 ): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
-  const [cerebrasHealth, codexHealth, yunwuHealth, yunwuQuota] = await Promise.all([
-    getCerebrasProviderHealth(),
-    Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
-    getYunwuProviderHealth(),
-    getCachedConfiguredYunwuQuotaSnapshot(),
-  ]);
+  const [cerebrasHealth, codexHealth, yunwuHealth, yunwuQuota, openRouterCircuit, openRouterTelemetry] = await Promise
+    .all([
+      getCerebrasProviderHealth(),
+      Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
+      getYunwuProviderHealth(),
+      getCachedConfiguredYunwuQuotaSnapshot(),
+      getOpenRouterCircuitView(),
+      getOpenRouterTelemetryView(),
+    ]);
   const codexAccounts = auth.accounts.map((account, index) => ({
     ...account,
     health: codexHealth[index],
@@ -256,6 +262,11 @@ export const getPassiveProviderHealthSnapshot = async (
           observed_at_ms: yunwuQuota?.state.observed_at_ms ?? null,
         },
       }),
+    },
+    openrouter: {
+      configured: readOpenRouterApiKey() !== null,
+      circuit: openRouterCircuit,
+      telemetry: openRouterTelemetry,
     },
   };
 };

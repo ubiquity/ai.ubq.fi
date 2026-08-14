@@ -18,6 +18,8 @@ export const CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY = [
   "observations",
 ] as const;
 export const CODEX_HALF_OPEN_LEASE_MS = 30_000;
+/** Keep new requests away from an account after an ambiguous response-header timeout. */
+export const CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS = 60_000;
 /** Capacity observations older than this cannot reopen a quota circuit. */
 export const CODEX_CAPACITY_ROUTING_MAX_AGE_MS = 30 * 60_000;
 // A warm isolate avoids per-request routing reads, but it must eventually
@@ -26,6 +28,7 @@ export const CODEX_CAPACITY_ROUTING_MAX_AGE_MS = 30 * 60_000;
 const ROUTING_CACHE_REVALIDATE_MS = 5_000;
 
 export type CodexQuotaBlockSource = "body_resets_at" | "header_retry_after";
+export type CodexProbeCircuit = "quota" | "upstream_timeout";
 
 export type CodexRoutingSlot = Readonly<{
   /** Opaque account-scope hash; durable state never stores a raw account id. */
@@ -40,6 +43,8 @@ export type CodexRoutingSlot = Readonly<{
   quota_signal_observed_at_ms: number | null;
   /** Timestamp of the newest capacity sampler observation applied to this slot. */
   capacity_observed_at_ms: number | null;
+  /** A transport timeout circuit that must not be confused with a quota reset. */
+  upstream_timeout_blocked_until_ms?: number | null;
   observed_reset_at_ms: number | null;
   /** True only when the upstream supplied a canonical absolute reset deadline. */
   observed_reset_at_is_stable: boolean;
@@ -53,7 +58,15 @@ export type CodexRoutingSlot = Readonly<{
   /** A verified banked reset is waiting for its bounded post-reset probe. */
   banked_reset_recovery_probe_pending: boolean;
   generation: number;
-  probe_lease: Readonly<{ token: string; expires_at_ms: number; generation: number }> | null;
+  /** The circuit whose half-open request owns this lease. Missing on legacy records and normalized to quota. */
+  probe_lease:
+    | Readonly<{
+      token: string;
+      expires_at_ms: number;
+      generation: number;
+      circuit: CodexProbeCircuit;
+    }>
+    | null;
 }>;
 
 export type CodexAccountRoutingState = Readonly<{
@@ -74,6 +87,10 @@ export type RoutingAccount = Readonly<{
   probeRequired: boolean;
   probeGeneration: number | null;
   probeToken: string | null;
+  /** Circuit selected for a pending half-open probe. */
+  probeCircuit?: CodexProbeCircuit | null;
+  /** Durable routing generation observed when this account was selected. */
+  routingGeneration?: number;
 }>;
 
 export type CodexCapacityRoutingWindow = Readonly<{
@@ -144,6 +161,12 @@ export type RouteSelection =
     retryAtMs: number | null;
     blockedAccounts: readonly CodexBlockedRoutingAccount[];
   }>
+  | Readonly<{
+    kind: "upstream_blocked";
+    skippedSlots: readonly number[];
+    retryAtMs: number | null;
+    blockedAccounts: readonly [];
+  }>
   | Readonly<{ kind: "credentials_invalid"; skippedSlots: readonly number[] }>;
 
 export type StrongRouteSelection =
@@ -165,11 +188,20 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
   const source = value.quota_block_source;
   if (source !== null && source !== "body_resets_at" && source !== "header_retry_after") return null;
   const lease = value.probe_lease;
+  const leaseCircuit: CodexProbeCircuit | null = lease !== null && isRecord(lease) && lease.circuit !== undefined
+    ? lease.circuit === "quota" || lease.circuit === "upstream_timeout" ? lease.circuit : null
+    : "quota";
   const parsedLease = lease === null
     ? null
     : isRecord(lease) && typeof lease.token === "string" && isSafeMs(lease.expires_at_ms) &&
-        typeof lease.generation === "number" && Number.isSafeInteger(lease.generation)
-    ? { token: lease.token, expires_at_ms: lease.expires_at_ms, generation: lease.generation }
+        typeof lease.generation === "number" && Number.isSafeInteger(lease.generation) &&
+        leaseCircuit !== null
+    ? {
+      token: lease.token,
+      expires_at_ms: lease.expires_at_ms,
+      generation: lease.generation,
+      circuit: leaseCircuit,
+    }
     : null;
   if (lease !== null && !parsedLease) return null;
   const accountIdHash = typeof value.account_id_hash === "string" && value.account_id_hash.length > 0
@@ -190,6 +222,12 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
       : null;
   const capacityObservedAtMs = value.capacity_observed_at_ms === null || isSafeMs(value.capacity_observed_at_ms)
     ? value.capacity_observed_at_ms as number | null
+    : null;
+  const upstreamTimeoutBlockedUntilMs = value.upstream_timeout_blocked_until_ms === undefined ||
+      value.upstream_timeout_blocked_until_ms === null
+    ? null
+    : isSafeMs(value.upstream_timeout_blocked_until_ms)
+    ? value.upstream_timeout_blocked_until_ms
     : null;
   const observedResetAtIsStable = value.observed_reset_at_is_stable === true;
   const generation =
@@ -241,6 +279,7 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
         : null,
     quota_signal_observed_at_ms: quotaSignalObservedAtMs,
     capacity_observed_at_ms: capacityObservedAtMs,
+    upstream_timeout_blocked_until_ms: upstreamTimeoutBlockedUntilMs,
     observed_reset_at_ms: observedResetAtMs,
     // Older routing records did not carry this flag. Treat their header
     // deadline as unsuitable for an expensive reset rather than guessing its
@@ -304,6 +343,7 @@ const neutralSlot = (credentialVersion: string, accountIdHash: string | null): C
   secondary_used_percent: null,
   quota_signal_observed_at_ms: null,
   capacity_observed_at_ms: null,
+  upstream_timeout_blocked_until_ms: null,
   observed_reset_at_ms: null,
   observed_reset_at_is_stable: false,
   banked_reset_generation_ambiguous: false,
@@ -325,22 +365,27 @@ const preservesStableResetIdentity = (slot: CodexRoutingSlot): boolean =>
 const rotateCredentialForSameAccount = (
   slot: CodexRoutingSlot,
   identity: CodexRoutingAccountIdentity,
-): CodexRoutingSlot => ({
-  ...slot,
-  account_id_hash: identity.accountIdHash,
-  credential_version: identity.credentialVersion,
-  quota_blocked_until_ms: null,
-  quota_block_source: null,
-  invalid_credential_version: null,
-  primary_used_percent: null,
-  secondary_used_percent: null,
-  quota_signal_observed_at_ms: null,
-  capacity_observed_at_ms: null,
-  banked_reset_generation_ambiguous: preservesStableResetIdentity(slot),
-  banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending,
-  generation: slot.generation + 1,
-  probe_lease: null,
-});
+): CodexRoutingSlot => {
+  const generation = slot.generation + 1;
+  return {
+    ...slot,
+    account_id_hash: identity.accountIdHash,
+    credential_version: identity.credentialVersion,
+    quota_blocked_until_ms: null,
+    quota_block_source: null,
+    invalid_credential_version: null,
+    primary_used_percent: null,
+    secondary_used_percent: null,
+    quota_signal_observed_at_ms: null,
+    capacity_observed_at_ms: null,
+    banked_reset_generation_ambiguous: preservesStableResetIdentity(slot),
+    banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending,
+    generation,
+    // A refresh does not end an already-dispatched half-open probe. Transfer
+    // its lease to the new credential and fence completions to this generation.
+    probe_lease: slot.probe_lease ? { ...slot.probe_lease, generation } : null,
+  };
+};
 
 const attachLegacyAccountIdentity = (
   slot: CodexRoutingSlot,
@@ -547,6 +592,15 @@ const slotMatchesRoutingAccount = (slot: CodexRoutingSlot, account: RoutingAccou
   // Exact credential-version equality is the legacy proof of account scope;
   // every successful transition writes the opaque account hash immediately.
   (slot.account_id_hash === account.accountIdHash || slot.account_id_hash === null);
+
+const routingProbeCircuit = (account: RoutingAccount): CodexProbeCircuit => account.probeCircuit ?? "quota";
+
+const probeLeaseMatchesRoutingAccount = (slot: CodexRoutingSlot, account: RoutingAccount): boolean =>
+  account.probeGeneration !== null &&
+  slot.generation === account.probeGeneration &&
+  slot.probe_lease?.generation === account.probeGeneration &&
+  slot.probe_lease?.token === account.probeToken &&
+  slot.probe_lease?.circuit === routingProbeCircuit(account);
 
 const withSlot = (
   state: CodexAccountRoutingState,
@@ -1235,15 +1289,14 @@ const markCodexQuotaBlockedWithMode = async (
         const current = slotFor(state, account);
         if (
           !slotMatchesRoutingAccount(current, account) ||
-          current.generation !== account.probeGeneration ||
-          current.probe_lease?.generation !== account.probeGeneration ||
-          current.probe_lease?.token !== account.probeToken
+          !probeLeaseMatchesRoutingAccount(current, account)
         ) return null;
         return withSlot(state, account.slot, {
           ...current,
           account_id_hash: account.accountIdHash,
           quota_blocked_until_ms: null,
           quota_block_source: null,
+          upstream_timeout_blocked_until_ms: null,
           banked_reset_recovery_probe_pending: false,
           probe_lease: null,
         });
@@ -1257,11 +1310,9 @@ const markCodexQuotaBlockedWithMode = async (
     // An ordinary request can predate a foreign half-open claim. It must not
     // replace that lease or admit a parallel probe.
     if (account.probeGeneration === null && current.probe_lease !== null) return null;
-    if (
-      account.probeGeneration !== null &&
-      (current.generation !== account.probeGeneration || current.probe_lease?.token !== account.probeToken)
-    ) return null;
+    if (account.probeGeneration !== null && !probeLeaseMatchesRoutingAccount(current, account)) return null;
     const priorDeadline = current.quota_blocked_until_ms ?? 0;
+    const priorTimeout = current.upstream_timeout_blocked_until_ms ?? 0;
     const boundedRecoveryProbe = recoveryProbe ||
       (current.banked_reset_recovery_probe_pending && account.probeGeneration !== null);
     // A verified reset can take a short time to propagate to the inference
@@ -1302,6 +1353,7 @@ const markCodexQuotaBlockedWithMode = async (
       account_id_hash: account.accountIdHash,
       quota_blocked_until_ms: deadline,
       quota_block_source: quotaBlockSource,
+      upstream_timeout_blocked_until_ms: priorTimeout > now ? priorTimeout : null,
       quota_signal_observed_at_ms: now,
       primary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-primary-used-percent")) ??
         current.primary_used_percent,
@@ -1336,20 +1388,44 @@ export const markCodexRecoveryProbeQuotaBlocked = async (
   now = Date.now(),
 ): Promise<Codex429Classification> => await markCodexQuotaBlockedWithMode(account, response, now, true);
 
+/**
+ * Fence an account after a response-header timeout. The request may already
+ * have reached the provider, so this transition never retries that request;
+ * it only keeps later requests away from the account for a bounded interval.
+ */
+export const markCodexUpstreamTimeout = async (
+  account: RoutingAccount,
+  now = Date.now(),
+): Promise<void> => {
+  const blockedUntil = now + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS;
+  await updateRoutingState((state) => {
+    const current = slotFor(state, account);
+    if (!slotMatchesRoutingAccount(current, account)) return null;
+    if (account.probeGeneration === null && current.probe_lease !== null) return null;
+    if (account.probeGeneration !== null && !probeLeaseMatchesRoutingAccount(current, account)) return null;
+    const priorTimeout = current.upstream_timeout_blocked_until_ms ?? 0;
+    return withSlot(state, account.slot, {
+      ...current,
+      account_id_hash: account.accountIdHash,
+      upstream_timeout_blocked_until_ms: Math.max(priorTimeout, blockedUntil),
+      generation: current.generation + 1,
+      probe_lease: null,
+    });
+  });
+};
+
 export const markCodexCredentialInvalid = async (account: RoutingAccount): Promise<void> => {
   const now = Date.now();
   await updateRoutingState((state) => {
     const current = slotFor(state, account);
     if (!slotMatchesRoutingAccount(current, account)) return null;
-    if (
-      account.probeGeneration !== null &&
-      (current.generation !== account.probeGeneration || current.probe_lease?.token !== account.probeToken)
-    ) return null;
+    if (account.probeGeneration !== null && !probeLeaseMatchesRoutingAccount(current, account)) return null;
     return withSlot(state, account.slot, {
       ...current,
       account_id_hash: account.accountIdHash,
       quota_blocked_until_ms: null,
       quota_block_source: null,
+      upstream_timeout_blocked_until_ms: null,
       invalid_credential_version: account.credentialVersion,
       quota_signal_observed_at_ms: now,
       probe_lease: null,
@@ -1380,12 +1456,13 @@ export const reconcileCodexRoutingAccount = async (
     probeRequired: false,
     probeGeneration: null,
     probeToken: null,
+    probeCircuit: null,
   };
 
   // Credential rotation is exceptional. For the same account it releases
   // ordinary routing but retains a stable reset identity as lookup-only; only
   // a genuinely different account starts a neutral reset scope.
-  await updateRoutingState((state) => {
+  const nextState = await updateRoutingState((state) => {
     const current = slotFor(state, account);
     if (current.credential_version === credentialVersion) return null;
     if (!slotMatchesRoutingAccount(current, account)) return null;
@@ -1397,7 +1474,20 @@ export const reconcileCodexRoutingAccount = async (
         : neutralSlot(credentialVersion, accountIdHash),
     );
   });
-  return reconciled;
+  const nextSlot = nextState?.slots[account.slot];
+  const retainedProbe = auth.account_id === account.auth.account_id && account.probeGeneration !== null &&
+    account.probeToken !== null && nextSlot?.credential_version === credentialVersion &&
+    nextSlot.probe_lease?.token === account.probeToken &&
+    nextSlot.probe_lease?.circuit === routingProbeCircuit(account) &&
+    nextSlot.probe_lease.generation === nextSlot.generation;
+  return retainedProbe
+    ? {
+      ...reconciled,
+      probeGeneration: nextSlot.generation,
+      probeToken: nextSlot.probe_lease.token,
+      probeCircuit: nextSlot.probe_lease.circuit,
+    }
+    : reconciled;
 };
 
 export const releaseCodexRoutingProbe = async (account: RoutingAccount): Promise<void> => {
@@ -1406,15 +1496,14 @@ export const releaseCodexRoutingProbe = async (account: RoutingAccount): Promise
     const current = slotFor(state, account);
     if (
       !slotMatchesRoutingAccount(current, account) ||
-      current.generation !== account.probeGeneration ||
-      current.probe_lease?.generation !== account.probeGeneration ||
-      current.probe_lease?.token !== account.probeToken
+      !probeLeaseMatchesRoutingAccount(current, account)
     ) return null;
     return withSlot(state, account.slot, {
       ...current,
       account_id_hash: account.accountIdHash,
       quota_blocked_until_ms: null,
       quota_block_source: null,
+      upstream_timeout_blocked_until_ms: null,
       probe_lease: null,
     });
   });
@@ -1427,15 +1516,14 @@ export const markCodexSuccess = async (account: RoutingAccount): Promise<void> =
     const current = slotFor(state, account);
     if (
       !slotMatchesRoutingAccount(current, account) ||
-      current.generation !== account.probeGeneration ||
-      current.probe_lease?.generation !== account.probeGeneration ||
-      current.probe_lease?.token !== account.probeToken
+      !probeLeaseMatchesRoutingAccount(current, account)
     ) return null;
     return withSlot(state, account.slot, {
       ...current,
       account_id_hash: account.accountIdHash,
       quota_blocked_until_ms: null,
       quota_block_source: null,
+      upstream_timeout_blocked_until_ms: null,
       observed_reset_at_ms: null,
       observed_reset_at_is_stable: false,
       banked_reset_generation_ambiguous: false,
@@ -1592,6 +1680,7 @@ const reconcileCodexQuotaAfterProbe = async (
         token: crypto.randomUUID(),
         expires_at_ms: probeExpiresAtMs,
         generation: nextGeneration,
+        circuit: "quota" as const,
       };
       const next = withSlot(state, account.slot, {
         ...current,
@@ -1621,6 +1710,7 @@ const reconcileCodexQuotaAfterProbe = async (
         probeRequired: false,
         probeGeneration: recoveryLease.generation,
         probeToken: recoveryLease.token,
+        probeCircuit: recoveryLease.circuit,
       };
     } catch {
       return null;
@@ -1692,14 +1782,15 @@ const claimExpiredProbe = async (
     if (
       !slotMatchesRoutingAccount(current, account) ||
       current.invalid_credential_version === account.credentialVersion ||
-      !current.quota_blocked_until_ms ||
-      current.quota_blocked_until_ms > now ||
+      (!current.quota_blocked_until_ms && !current.upstream_timeout_blocked_until_ms) ||
+      Math.max(current.quota_blocked_until_ms ?? 0, current.upstream_timeout_blocked_until_ms ?? 0) > now ||
       (current.probe_lease?.expires_at_ms ?? 0) > now
     ) return null;
     const lease = {
       token: crypto.randomUUID(),
       expires_at_ms: now + CODEX_HALF_OPEN_LEASE_MS,
       generation: current.generation,
+      circuit: routingProbeCircuit(account),
     };
     return {
       next: withSlot(base, account.slot, {
@@ -1728,6 +1819,7 @@ const claimExpiredProbe = async (
           probeRequired: false,
           probeGeneration: claimed.lease!.generation,
           probeToken: claimed.lease!.token,
+          probeCircuit: claimed.lease!.circuit,
         };
       }
       return null;
@@ -1742,6 +1834,7 @@ const claimExpiredProbe = async (
       probeRequired: false,
       probeGeneration: claimed.lease!.generation,
       probeToken: claimed.lease!.token,
+      probeCircuit: claimed.lease!.circuit,
     };
   } catch {
     // Fail open if KV itself is unavailable. This retains availability but not cross-isolate coordination.
@@ -1755,6 +1848,7 @@ const claimExpiredProbe = async (
       probeRequired: false,
       probeGeneration: claimed.lease!.generation,
       probeToken: claimed.lease!.token,
+      probeCircuit: claimed.lease!.circuit,
     };
   }
 };
@@ -1789,6 +1883,7 @@ const selectCodexRoutingAccountsFromState = async (
   const skipped: number[] = [];
   let retryAt: number | null = null;
   let hasQuotaBlock = false;
+  let hasUpstreamTimeoutBlock = false;
   for (const auth of orderedAccounts) {
     const mapped = byId.get(auth.account_id);
     if (!mapped) continue;
@@ -1801,6 +1896,7 @@ const selectCodexRoutingAccountsFromState = async (
       probeRequired: false,
       probeGeneration: null,
       probeToken: null,
+      probeCircuit: null,
     };
     const storedSlot = slotFor(state, account);
     const slot = slotMatchesRoutingAccount(storedSlot, account)
@@ -1818,9 +1914,17 @@ const selectCodexRoutingAccountsFromState = async (
     // account observation that lost a concurrent write race.
     const capacityOverride = freshCapacity && observedCapacityHeadroom !== null && observedCapacityHeadroom > 0 &&
       !quotaSignalNewer;
-    const routedAccount = { ...account, quotaHeadroom };
+    const routedAccount = { ...account, quotaHeadroom, routingGeneration: slot.generation };
     if (slot.invalid_credential_version === account.credentialVersion && !capacityOverride) {
       skipped.push(mapped.slot + 1);
+      continue;
+    }
+    if (slot.upstream_timeout_blocked_until_ms && slot.upstream_timeout_blocked_until_ms > now) {
+      skipped.push(mapped.slot + 1);
+      hasUpstreamTimeoutBlock = true;
+      retryAt = retryAt === null
+        ? slot.upstream_timeout_blocked_until_ms
+        : Math.min(retryAt, slot.upstream_timeout_blocked_until_ms);
       continue;
     }
     if (slot.quota_blocked_until_ms && slot.quota_blocked_until_ms > now && !capacityOverride) {
@@ -1845,7 +1949,11 @@ const selectCodexRoutingAccountsFromState = async (
     // exact fenced probe succeeds, fails, or expires.
     if ((slot.probe_lease?.expires_at_ms ?? 0) > now) {
       skipped.push(mapped.slot + 1);
-      hasQuotaBlock = true;
+      if (slot.probe_lease!.circuit === "upstream_timeout") {
+        hasUpstreamTimeoutBlock = true;
+      } else {
+        hasQuotaBlock = true;
+      }
       retryAt = retryAt === null ? slot.probe_lease!.expires_at_ms : Math.min(retryAt, slot.probe_lease!.expires_at_ms);
       continue;
     }
@@ -1853,7 +1961,17 @@ const selectCodexRoutingAccountsFromState = async (
       // Claim the half-open lease only if request execution actually reaches
       // this slot. This preserves first/second order without abandoning a
       // secondary lease when the healthy first account returns directly.
-      available.push({ ...routedAccount, probeRequired: !capacityOverride });
+      available.push({
+        ...routedAccount,
+        probeRequired: !capacityOverride,
+        probeCircuit: capacityOverride ? null : "quota",
+      });
+      continue;
+    }
+    if (slot.upstream_timeout_blocked_until_ms) {
+      // A timeout circuit uses the same fenced half-open lease as a quota
+      // circuit. Only the first request after expiry may probe this account.
+      available.push({ ...routedAccount, probeRequired: true, probeCircuit: "upstream_timeout" });
       continue;
     }
     available.push(routedAccount);
@@ -1872,6 +1990,9 @@ const selectCodexRoutingAccountsFromState = async (
     return 0;
   });
   if (available.length) return { kind: "eligible", accounts: available, skippedSlots: skipped, blockedAccounts };
+  if (hasUpstreamTimeoutBlock) {
+    return { kind: "upstream_blocked", skippedSlots: skipped, retryAtMs: retryAt, blockedAccounts: [] };
+  }
   if (hasQuotaBlock) return { kind: "quota_blocked", skippedSlots: skipped, retryAtMs: retryAt, blockedAccounts };
   return { kind: "credentials_invalid", skippedSlots: skipped };
 };
