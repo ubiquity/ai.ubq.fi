@@ -19,6 +19,11 @@ Deno.test("static assets register frontend module dependencies", () => {
   }
 });
 
+Deno.test("admin module remains syntactically valid", () => {
+  const sourceWithoutImports = adminScript.replace(/^(?:import[\s\S]*?;\n)+/, "");
+  assert.doesNotThrow(() => Function(sourceWithoutImports));
+});
+
 Deno.test("admin provider view declares and renders the OpenRouter failover card", () => {
   for (
     const id of [

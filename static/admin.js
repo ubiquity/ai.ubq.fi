@@ -2024,59 +2024,6 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     svg.appendChild(marker);
   }
 
-  const currentSample = { sampled_at_ms: nowMs, sources };
-  const aggregateDowntimeBridges = capacityChartDowntimeBridges(
-    history,
-    CAPACITY_CHART_SERIES[0],
-    chartWindow,
-    chartWindow,
-    capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
-    nowMs,
-    snapshot?.downtime_events,
-  );
-  const defs = capacityChartSvgElement("defs");
-  const downtimePattern = capacityChartSvgElement("pattern", {
-    id: "capacity-chart-downtime-stripes",
-    width: 12,
-    height: 12,
-    patternUnits: "userSpaceOnUse",
-  });
-  const downtimeStripe = capacityChartSvgElement("path", {
-    d: "M-3 -3L15 15 M-3 9L3 15 M9 -3L15 3",
-    fill: "none",
-    stroke: "#ff5f56",
-    "stroke-opacity": 0.3,
-    "stroke-width": 1.25,
-  });
-  downtimePattern.appendChild(downtimeStripe);
-  defs.appendChild(downtimePattern);
-  svg.appendChild(defs);
-
-  for (const bridge of aggregateDowntimeBridges) {
-    const band = capacityChartDowntimeBandCoordinates(bridge, plot);
-    if (!band) continue;
-    const background = capacityChartSvgElement("rect", {
-      x: band.x,
-      y: plot.top,
-      width: band.width,
-      height: plot.height,
-      fill: "#ff5f56",
-      "fill-opacity": 0.055,
-    });
-    background.dataset.capacityDowntimeBand = "openai";
-    background.setAttribute("aria-hidden", "true");
-    const stripes = capacityChartSvgElement("rect", {
-      x: band.x,
-      y: plot.top,
-      width: band.width,
-      height: plot.height,
-      fill: "url(#capacity-chart-downtime-stripes)",
-    });
-    stripes.dataset.capacityDowntimeBand = "openai";
-    stripes.setAttribute("aria-hidden", "true");
-    svg.append(background, stripes);
-  }
-
   for (const remaining of [100, 75, 50, 25, 0]) {
     const y = plot.top + ((100 - remaining) / 100) * plot.height;
     const grid = capacityChartSvgElement("line", {
