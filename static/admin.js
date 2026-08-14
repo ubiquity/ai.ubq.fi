@@ -12,8 +12,13 @@ import {
   signOut,
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
-} from "./auth.js?v=provider-capacity-20260807-metered-overlay";
-import { AUTH_RELAY_MESSAGE_TYPE, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "./auth-relay.js";
+} from "./auth.js?v=passkey-relay-20260814-v2";
+import {
+  AUTH_RELAY_MESSAGE_TYPE,
+  isAiGatewayPreviewOrigin,
+  parseAuthRelayAction,
+  parseTrustedAuthRelayOrigin,
+} from "./auth-relay.js?v=passkey-relay-20260814-v2";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
@@ -27,77 +32,11 @@ const STORAGE_KEYS = {
   view: "uos_ai.admin.view",
   defaultsSnapshot: "uos_ai.admin.defaults_snapshot",
   defaultsModels: "uos_ai.admin.defaults_models",
-  providerCapacitySnapshot: "uos_ai.admin.provider_capacity_snapshot",
-  apiKeysSnapshot: "uos_ai.admin.api_keys_snapshot",
 };
 
 const AUTH_RELAY_TIMEOUT_MS = 120_000;
 const API_KEY_REQUEST_LOGS_LIMIT = 20;
 const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
-const ADMIN_RESPONSE_CACHE_TTL_MS = 5 * 60_000;
-
-const adminResponseCacheKey = (url) => {
-  try {
-    return `uos_ai.admin.response_cache.${btoa(url).replaceAll("=", "").replaceAll("+", "-").replaceAll("/", "_")}`;
-  } catch {
-    return "";
-  }
-};
-
-const nativeFetch = globalThis.fetch.bind(globalThis);
-const isCacheableAdminGet = (input, init) => {
-  if ((init?.method ?? "GET").toUpperCase() !== "GET") return false;
-  try {
-    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-    return url.pathname.startsWith("/admin/") || url.pathname === "/health/providers";
-  } catch {
-    return false;
-  }
-};
-
-const readAdminResponseCache = (url) => {
-  const key = adminResponseCacheKey(url);
-  if (!key) return null;
-  const value = readStorageJson(key);
-  if (!value || typeof value !== "object" || typeof value.cached_at_ms !== "number") return null;
-  if (Date.now() - value.cached_at_ms > ADMIN_RESPONSE_CACHE_TTL_MS) return null;
-  return value;
-};
-
-const refreshAdminResponseCache = async (input, init, key) => {
-  try {
-    const response = await nativeFetch(input, init);
-    if (!response.ok) return;
-    const payload = await response.clone().json();
-    writeStorageJson(key, { cached_at_ms: Date.now(), payload });
-  } catch {
-    // A stale cached admin view remains usable when background refresh fails.
-  }
-};
-
-globalThis.fetch = async (input, init) => {
-  if (!isCacheableAdminGet(input, init)) return nativeFetch(input, init);
-  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  const key = adminResponseCacheKey(url);
-  const cached = readAdminResponseCache(url);
-  if (cached) {
-    void refreshAdminResponseCache(input, init, key);
-    return new Response(JSON.stringify(cached.payload), {
-      status: 200,
-      headers: { "Content-Type": "application/json", "X-UOS-Browser-Cache": "hit" },
-    });
-  }
-  const response = await nativeFetch(input, init);
-  if (response.ok) {
-    try {
-      const payload = await response.clone().json();
-      writeStorageJson(key, { cached_at_ms: Date.now(), payload });
-    } catch {
-      // Non-JSON admin responses are not cached.
-    }
-  }
-  return response;
-};
 
 const readStorageJson = (key) => {
   const raw = storage.get(key);
@@ -206,12 +145,6 @@ const providerCapacityList = mustGet("provider-capacity-list");
 const openRouterFailoverBadge = mustGet("openrouter-failover-badge");
 const openRouterFailoverObserved = mustGet("openrouter-failover-observed");
 const openRouterFailoverFacts = mustGet("openrouter-failover-facts");
-const debugRoutingScenario = mustGet("debug-routing-scenario");
-const debugRoutingDuration = mustGet("debug-routing-duration");
-const debugRoutingApply = mustGet("debug-routing-apply");
-const debugRoutingReset = mustGet("debug-routing-reset");
-const debugRoutingBadge = mustGet("debug-routing-badge");
-const debugRoutingStatus = mustGet("debug-routing-status");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -232,6 +165,7 @@ let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
 let latestProviderCapacityChartState = null;
 let capacityChartResizeFrame = 0;
+let capacityChartScrollState = null;
 let latestProviderHealth = null;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
@@ -267,17 +201,17 @@ const defaultsKernelWindowPreset1h = mustGet("defaults-kernel-window-1h");
 const defaultsKernelWindowPreset1d = mustGet("defaults-kernel-window-1d");
 const defaultsKernelWindowPreset1w = mustGet("defaults-kernel-window-1w");
 const defaultsBadge = mustGet("defaults-badge");
-const meteredQuotaBadge = mustGet("metered-quota-badge");
-const meteredQuotaRemaining = mustGet("metered-quota-remaining");
-const meteredQuotaProgress = mustGet("metered-quota-progress");
-const meteredQuotaBalance = mustGet("metered-quota-balance");
-const meteredQuotaBaseline = mustGet("metered-quota-baseline");
-const meteredQuotaLatestRefill = mustGet("metered-quota-latest-refill");
-const meteredQuotaInferredCredit = mustGet("metered-quota-inferred-credit");
-const meteredQuotaCache = mustGet("metered-quota-cache");
-const meteredQuotaConfidence = mustGet("metered-quota-confidence");
-const meteredQuotaObserved = mustGet("metered-quota-observed");
-const meteredQuotaCycleStarted = mustGet("metered-quota-cycle-started");
+const yunwuQuotaBadge = mustGet("yunwu-quota-badge");
+const yunwuQuotaRemaining = mustGet("yunwu-quota-remaining");
+const yunwuQuotaProgress = mustGet("yunwu-quota-progress");
+const yunwuQuotaBalance = mustGet("yunwu-quota-balance");
+const yunwuQuotaBaseline = mustGet("yunwu-quota-baseline");
+const yunwuQuotaLatestRefill = mustGet("yunwu-quota-latest-refill");
+const yunwuQuotaInferredCredit = mustGet("yunwu-quota-inferred-credit");
+const yunwuQuotaCache = mustGet("yunwu-quota-cache");
+const yunwuQuotaConfidence = mustGet("yunwu-quota-confidence");
+const yunwuQuotaObserved = mustGet("yunwu-quota-observed");
+const yunwuQuotaCycleStarted = mustGet("yunwu-quota-cycle-started");
 let defaultsLoaded = false;
 let defaultsSaving = false;
 let defaultsModelMap = new Map();
@@ -414,7 +348,7 @@ const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
 const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
 const setPasskeyUsersBadge = (state, text) => setBadge(passkeyUsersBadge, state, text);
 const setDefaultsBadge = (state, text) => setBadge(defaultsBadge, state, text);
-const setMeteredQuotaBadge = (state, text) => setBadge(meteredQuotaBadge, state, text);
+const setYunwuQuotaBadge = (state, text) => setBadge(yunwuQuotaBadge, state, text);
 const setKernelListBadge = (state, text) => setBadge(kernelListBadge, state, text);
 const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text);
 const setKernelQueueBadge = (state, text) => setBadge(kernelQueueBadge, state, text);
@@ -458,7 +392,9 @@ const isAuthRelayMode = Boolean(authRelayOrigin && authRelayAction && globalThis
 
 const getPasskeyBaseUrl = () => isAuthRelayMode ? globalThis.location.origin : resolveBaseUrl();
 
-const isRemoteAiTarget = () => new URL(resolveBaseUrl()).origin === "https://ai.ubq.fi";
+const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
+const isPreviewOrigin = () => isAiGatewayPreviewOrigin(globalThis.location.origin);
+const isRemoteAiTarget = () => new URL(resolveBaseUrl()).origin === PASSKEY_CANONICAL_ORIGIN;
 
 const isCrossOriginTarget = () => new URL(resolveBaseUrl()).origin !== globalThis.location.origin;
 
@@ -551,26 +487,10 @@ const formatPasskeyLoginError = (error) => {
   return message;
 };
 
-const getValidCachedRelayAuth = async () => {
-  const token = getAdminToken();
-  if (!token) return null;
-  try {
-    const res = await fetch(apiUrl("/uos/auth"), {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data?.auth?.is_admin) return null;
-    return { token, handle: getPasskeyHandle() };
-  } catch {
-    return null;
-  }
-};
-
 let authRelayRequest = null;
 const requestRemotePasskeySession = () => {
   if (authRelayRequest) return authRelayRequest;
-  const targetOrigin = new URL(resolveBaseUrl()).origin;
+  const targetOrigin = isPreviewOrigin() ? PASSKEY_CANONICAL_ORIGIN : new URL(resolveBaseUrl()).origin;
   const relayUrl = new URL("/admin", targetOrigin);
   relayUrl.searchParams.set("auth_relay_origin", globalThis.location.origin);
   relayUrl.searchParams.set("auth_relay_action", "passkey-login");
@@ -621,6 +541,51 @@ const requestRemotePasskeySession = () => {
   return authRelayRequest;
 };
 
+const signInAdminWithPasskey = async () => {
+  if (
+    !isAuthRelayMode &&
+    (isPreviewOrigin() || (isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()))
+  ) {
+    const relay = await requestRemotePasskeySession();
+    if (relay.handle) setPasskeyHandleValue(relay.handle);
+    applySignedInToken(relay.token, { deviceRegistered: true });
+    setPasskeyStatus("ok", "Passkey signed in");
+    return relay;
+  }
+
+  const result = await signInWithPasskey({
+    baseUrl: getPasskeyBaseUrl(),
+    handle: getPasskeyHandle(),
+    useHandle: Boolean(getPasskeyHandle()),
+    audienceOrigin: isAuthRelayMode ? authRelayOrigin : "",
+  });
+  if (result.handle) setPasskeyHandleValue(result.handle);
+  applySignedInToken(result.token, { deviceRegistered: true });
+  setPasskeyStatus("ok", "Passkey signed in");
+  postAuthRelayResult(result);
+  return result;
+};
+
+const runPasskeyLogin = async ({ automatic = false } = {}) => {
+  setPasskeyStatus("unknown", automatic ? "Starting passkey sign-in..." : "Signing in...");
+  passkeyLoginBtn.disabled = true;
+  passkeyRegisterBtn.disabled = true;
+  try {
+    return await signInAdminWithPasskey();
+  } catch (error) {
+    setSignedInState(false);
+    const message = formatPasskeyLoginError(error);
+    setPasskeyStatus(
+      automatic ? "unknown" : "bad",
+      automatic ? `${message} Click the sign-in button to continue.` : message,
+    );
+    return null;
+  } finally {
+    passkeyLoginBtn.disabled = false;
+    passkeyRegisterBtn.disabled = false;
+  }
+};
+
 const getRegistrationAdminToken = async () => {
   const token = getAdminToken();
   if (token || !isCrossOriginTarget() || !isRemoteAiTarget()) return token;
@@ -637,7 +602,8 @@ const restoreSettings = () => {
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
   passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
-  baseSelect.value = storage.get(STORAGE_KEYS.base) ?? "local";
+  baseSelect.value = isPreviewOrigin() ? "ai" : storage.get(STORAGE_KEYS.base) ?? "local";
+  if (isPreviewOrigin()) storage.set(STORAGE_KEYS.base, "ai");
   applyLocalDevelopmentAuth();
   updateBasePreview();
 };
@@ -956,7 +922,7 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
         ? `Failed · ${formatDate(health.last_refresh_at_ms)}`
         : "Not observed",
     );
-  } else if (source.source === "metered") {
+  } else if (source.source === "yunwu") {
     const status = capacityProviderStatus(source, provider);
     appendProviderFact(facts, "Inference", status.health ? providerStateLabel(status.health) : "Not observed");
     appendProviderFact(facts, "Last response", formatDate(status.health?.last_observed_at_ms));
@@ -997,15 +963,15 @@ const renderCodexCapacitySource = (source, provider = null) => {
   return row;
 };
 
-const renderMeteredCapacitySource = (source, provider = null) => {
+const renderYunwuCapacitySource = (source, provider = null) => {
   const row = document.createElement("article");
-  row.dataset.capacitySource = "metered";
+  row.dataset.capacitySource = "yunwu";
   row.dataset.state = source.state;
   row.setAttribute("role", "listitem");
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
-  title.textContent = "Metered fallback";
+  title.textContent = "YunWu fallback";
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   const status = capacityProviderStatus(source, provider);
@@ -1043,17 +1009,17 @@ const renderProviderCapacityList = (sources) => {
   providerCapacityList.replaceChildren();
   for (const source of sources) {
     providerCapacityList.appendChild(
-      source.source === "metered"
-        ? renderMeteredCapacitySource(source, latestProviderHealth?.metered)
+      source.source === "yunwu"
+        ? renderYunwuCapacitySource(source, latestProviderHealth?.yunwu)
         : renderCodexCapacitySource(source, providerForCodexSlot(source.slot)),
     );
   }
 };
 
 const unavailableCapacitySource = (source, slot = null) =>
-  source === "metered"
+  source === "yunwu"
     ? {
-      source: "metered",
+      source: "yunwu",
       state: "unavailable",
       source_observed_at_ms: null,
       snapshot_at_ms: null,
@@ -1080,6 +1046,8 @@ const unavailableCapacitySource = (source, slot = null) =>
 const CAPACITY_CHART_SVG_NS = "http://www.w3.org/2000/svg";
 const CAPACITY_CHART_MIN_DAYS = 7;
 const CAPACITY_CHART_MAX_DAYS = 14;
+const CAPACITY_CHART_MIN_WIDTH_PX = 1280;
+const CAPACITY_CHART_PIXELS_PER_DAY = 180;
 const CAPACITY_CHART_DAY_MS = 24 * 60 * 60 * 1_000;
 const CAPACITY_CHART_HOUR_MS = 60 * 60 * 1_000;
 const CAPACITY_CHART_MINUTE_MS = 60 * 1_000;
@@ -1094,6 +1062,9 @@ const CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT = 2;
 const CAPACITY_CHART_MIN_PIXELS_PER_PERCENT = 1;
 const CAPACITY_CHART_VIEWPORT_GAP_PX = 16;
 const CAPACITY_CHART_FIGURE_OVERHEAD_PX = 48;
+const CAPACITY_CHART_RESET_BAND_WIDTH_PX = 18;
+const CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS = 25;
+const CAPACITY_CHART_OPTIMAL_WEEK_MS = 7 * CAPACITY_CHART_DAY_MS;
 const CAPACITY_CHART_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
   month: "short",
@@ -1107,7 +1078,7 @@ const CAPACITY_CHART_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
 });
 const CAPACITY_CHART_SERIES = [
   { key: "available-capacity", label: "Codex capacity", source: "aggregate" },
-  { key: "metered-refill", label: "Metered refill", source: "metered", valueKey: "refill_cycle_remaining_percent" },
+  { key: "yunwu-refill", label: "YunWu refill", source: "yunwu", valueKey: "refill_cycle_remaining_percent" },
 ];
 
 const capacityChartFailureIsDowntime = (source) =>
@@ -1222,14 +1193,25 @@ const capacityChartWindow = (window) => {
   return { startAtMs, resetAtMs, durationMs };
 };
 
-const capacityChartContentWidth = () => {
+const capacityChartViewportWidth = () => {
   const chartStyles = getComputedStyle(providerCapacityChart);
-  const horizontalPadding = Number.parseFloat(chartStyles.paddingLeft) + Number.parseFloat(chartStyles.paddingRight);
+  const horizontalPadding = (Number.parseFloat(chartStyles.paddingLeft) || 0) +
+    (Number.parseFloat(chartStyles.paddingRight) || 0);
   const width = providerCapacityChart.getBoundingClientRect().width - horizontalPadding;
   return Number.isFinite(width) && width > 0
     ? Math.max(CAPACITY_CHART_PLOT_LEFT + CAPACITY_CHART_PLOT_RIGHT + 1, width)
     : 740;
 };
+
+const capacityChartIntrinsicWidth = (displayWindow) =>
+  Math.max(
+    capacityChartViewportWidth(),
+    CAPACITY_CHART_MIN_WIDTH_PX,
+    Math.ceil(
+      ((displayWindow?.durationMs ?? CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS) /
+        CAPACITY_CHART_DAY_MS) * CAPACITY_CHART_PIXELS_PER_DAY,
+    ),
+  );
 
 const capacityChartPlotHeight = () => {
   const viewportHeight = Number.isFinite(globalThis.innerHeight) ? globalThis.innerHeight : 0;
@@ -1246,7 +1228,7 @@ const capacityChartPlotHeight = () => {
   return CAPACITY_CHART_PLOT_HEIGHT * pixelsPerPercent;
 };
 
-// Keep the Codex pool and Metered's wallet on separate series. Their percentages
+// Keep the Codex pool and YunWu's wallet on separate series. Their percentages
 // use different quota systems and must not be averaged into one value.
 const capacityChartCodexAggregateRemainingPercent = (sample) => {
   const sources = Array.isArray(sample?.sources) ? sample.sources : [];
@@ -1309,7 +1291,7 @@ const formatCapacitySpendDelta = (value) => {
   return `${sign}${quotaPercentFormatter.format(Math.abs(value))} pp ${direction}`;
 };
 
-const renderCapacitySpendSummary = (pacing, chartWindow) => {
+const renderCapacitySpendSummary = (pacing, activeCycleWindow) => {
   const summary = document.createElement("aside");
   summary.dataset.capacitySpendSummary = "";
   summary.setAttribute("aria-label", "Optimal token spend pacing");
@@ -1349,7 +1331,7 @@ const renderCapacitySpendSummary = (pacing, chartWindow) => {
 
   const note = document.createElement("small");
   note.dataset.capacitySpendNote = "";
-  note.textContent = `100% → 0% remaining · ${capacityChartIntervalLabel(chartWindow?.durationMs)}`;
+  note.textContent = `100% → 0% remaining · ${capacityChartIntervalLabel(activeCycleWindow?.durationMs)}`;
   summary.append(title, description, metrics, note);
   return summary;
 };
@@ -1380,14 +1362,14 @@ const capacityChartPoint = (
   }
   const source = Array.isArray(sample?.sources)
     ? sample.sources.find((candidate) =>
-      candidate?.source === series.source && (series.source === "metered" || candidate.slot === series.slot)
+      candidate?.source === series.source && (series.source === "yunwu" || candidate.slot === series.slot)
     )
     : null;
   const window = series.source === "codex" ? source?.windows?.[series.windowKey] : null;
-  const interval = series.source === "metered" ? chartWindow : activeInterval ?? capacityChartWindow(window);
+  const interval = series.source === "yunwu" ? chartWindow : activeInterval ?? capacityChartWindow(window);
   const displayInterval = chartWindow ?? interval;
-  const reportedPercent = series.source === "metered" ? source?.wallet?.[series.valueKey] : window?.used_percent;
-  const remainingPercent = series.source === "metered" ? reportedPercent : capacityRemainingPercent(reportedPercent);
+  const reportedPercent = series.source === "yunwu" ? source?.wallet?.[series.valueKey] : window?.used_percent;
+  const remainingPercent = series.source === "yunwu" ? reportedPercent : capacityRemainingPercent(reportedPercent);
   const sampledAtMs = sample?.sampled_at_ms;
   if (
     !source ||
@@ -1400,7 +1382,6 @@ const capacityChartPoint = (
     !Number.isFinite(remainingPercent) ||
     typeof sampledAtMs !== "number" ||
     !Number.isFinite(sampledAtMs) ||
-    (series.source === "codex" && (sampledAtMs < interval.startAtMs || sampledAtMs > interval.resetAtMs)) ||
     sampledAtMs < displayInterval.startAtMs ||
     sampledAtMs > displayInterval.resetAtMs
   ) return null;
@@ -1420,7 +1401,6 @@ const capacityChartResetPoint = (event, series, activeInterval = null, chartWind
   if (
     !interval || !displayInterval ||
     typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs) ||
-    sampledAtMs < interval.startAtMs || sampledAtMs > interval.resetAtMs ||
     sampledAtMs < displayInterval.startAtMs || sampledAtMs > displayInterval.resetAtMs
   ) return null;
   return {
@@ -1630,7 +1610,7 @@ const capacityChartPath = (points, plot, options = {}) => {
   return path;
 };
 
-const capacityChartReferenceWindow = (sources, nowMs) => {
+const capacityChartActiveUsageWindow = (sources, nowMs) => {
   const codexWindows = sources
     .filter((source) => source?.source === "codex" && source.state !== "unavailable")
     .flatMap((source) => [source.windows?.primary, source.windows?.secondary])
@@ -1656,11 +1636,227 @@ const capacityChartReferenceWindow = (sources, nowMs) => {
   };
 };
 
+const capacityChartHistoryWindow = (nowMs) => ({
+  startAtMs: nowMs - CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS,
+  resetAtMs: nowMs,
+  durationMs: CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS,
+});
+
+const capacityChartInferredRateLimitResetMarkers = (history, displayWindow, downtimeEvents = []) => {
+  if (!displayWindow) return [];
+  const downtimeTimes = capacityChartDowntimeEventTimes(downtimeEvents, displayWindow);
+  const samples = (Array.isArray(history) ? history : [])
+    .filter((sample) => typeof sample?.sampled_at_ms === "number" && Number.isFinite(sample.sampled_at_ms))
+    .sort((left, right) => left.sampled_at_ms - right.sampled_at_ms);
+  const markers = [];
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    if (
+      current.sampled_at_ms <= previous.sampled_at_ms || capacityChartSampleGapBetween(previous, current) ||
+      capacityChartDowntimeEventBetween(downtimeTimes, previous.sampled_at_ms, current.sampled_at_ms)
+    ) continue;
+    for (const slot of [1, 2]) {
+      const previousSource = previous.sources?.find((source) => source?.source === "codex" && source.slot === slot);
+      const currentSource = current.sources?.find((source) => source?.source === "codex" && source.slot === slot);
+      if (
+        !previousSource || !currentSource || previousSource.state === "unavailable" ||
+        currentSource.state === "unavailable"
+      ) continue;
+      for (const window of ["primary", "secondary"]) {
+        const previousWindow = previousSource.windows?.[window];
+        const currentWindow = currentSource.windows?.[window];
+        const previousUsedPercent = previousWindow?.used_percent;
+        const currentUsedPercent = currentWindow?.used_percent;
+        const previousResetAtMs = previousWindow?.reset_at_ms;
+        const resetAtMs = currentWindow?.reset_at_ms;
+        if (
+          typeof previousUsedPercent !== "number" || !Number.isFinite(previousUsedPercent) ||
+          typeof currentUsedPercent !== "number" || !Number.isFinite(currentUsedPercent) ||
+          typeof previousResetAtMs !== "number" || !Number.isFinite(previousResetAtMs) ||
+          typeof resetAtMs !== "number" || !Number.isFinite(resetAtMs) || resetAtMs <= previousResetAtMs
+        ) continue;
+        const capacityGain = previousUsedPercent - currentUsedPercent;
+        if (
+          capacityGain < CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS ||
+          current.sampled_at_ms < displayWindow.startAtMs || current.sampled_at_ms > displayWindow.resetAtMs
+        ) continue;
+        markers.push({
+          v: 1,
+          event_id: `history-openai-${slot}-${window}-${previous.sampled_at_ms}-${current.sampled_at_ms}`,
+          provider: "openai",
+          slot,
+          window,
+          observed_at_ms: current.sampled_at_ms,
+          previous_sampled_at_ms: previous.sampled_at_ms,
+          previous_reset_at_ms: previousResetAtMs,
+          reset_at_ms: resetAtMs,
+          previous_used_percent: previousUsedPercent,
+          current_used_percent: currentUsedPercent,
+          capacity_gain_percentage_points: capacityGain,
+          inferred_from_history: true,
+        });
+      }
+    }
+  }
+  return markers;
+};
+
+const capacityChartRateLimitResetMarkers = (events, history, displayWindow, downtimeEvents = []) => {
+  if (!displayWindow) return [];
+  const inferredEvents = capacityChartInferredRateLimitResetMarkers(history, displayWindow, downtimeEvents);
+  const recordedEvents = (Array.isArray(events) ? events : []).filter((event) => {
+    const observedAtMs = event?.observed_at_ms;
+    const previousSampledAtMs = event?.previous_sampled_at_ms;
+    const previousResetAtMs = event?.previous_reset_at_ms;
+    const resetAtMs = event?.reset_at_ms;
+    const previousUsedPercent = event?.previous_used_percent;
+    const currentUsedPercent = event?.current_used_percent;
+    const capacityGain = event?.capacity_gain_percentage_points;
+    return event?.provider === "openai" &&
+      (event.slot === 1 || event.slot === 2) &&
+      (event.window === "primary" || event.window === "secondary") &&
+      typeof observedAtMs === "number" && Number.isFinite(observedAtMs) &&
+      typeof previousSampledAtMs === "number" && Number.isFinite(previousSampledAtMs) &&
+      previousSampledAtMs < observedAtMs &&
+      typeof previousResetAtMs === "number" && Number.isFinite(previousResetAtMs) &&
+      typeof resetAtMs === "number" && Number.isFinite(resetAtMs) &&
+      resetAtMs > previousResetAtMs &&
+      typeof previousUsedPercent === "number" && Number.isFinite(previousUsedPercent) &&
+      previousUsedPercent >= 0 && previousUsedPercent <= 100 &&
+      typeof currentUsedPercent === "number" && Number.isFinite(currentUsedPercent) &&
+      currentUsedPercent >= 0 && currentUsedPercent <= 100 &&
+      typeof capacityGain === "number" && Number.isFinite(capacityGain) &&
+      Math.abs(previousUsedPercent - currentUsedPercent - capacityGain) <= 0.001 &&
+      capacityGain >= CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS &&
+      observedAtMs >= displayWindow.startAtMs && observedAtMs <= displayWindow.resetAtMs;
+  });
+  const markers = new Map();
+  const candidates = [
+    ...inferredEvents.filter((inferred) =>
+      !recordedEvents.some((recorded) =>
+        recorded?.slot === inferred.slot && recorded?.window === inferred.window &&
+        typeof recorded?.observed_at_ms === "number" &&
+        recorded.observed_at_ms > inferred.previous_sampled_at_ms &&
+        recorded.observed_at_ms <= inferred.observed_at_ms
+      )
+    ),
+    ...recordedEvents,
+  ];
+  for (const event of candidates) {
+    const observedAtMs = event?.observed_at_ms;
+    if (
+      event?.provider !== "openai" ||
+      (event.slot !== 1 && event.slot !== 2) ||
+      (event.window !== "primary" && event.window !== "secondary") ||
+      typeof observedAtMs !== "number" || !Number.isFinite(observedAtMs) ||
+      typeof event.capacity_gain_percentage_points !== "number" ||
+      !Number.isFinite(event.capacity_gain_percentage_points) ||
+      event.capacity_gain_percentage_points < CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS ||
+      observedAtMs < displayWindow.startAtMs || observedAtMs > displayWindow.resetAtMs
+    ) continue;
+    const key = `${event.slot}:${event.window}:${observedAtMs}`;
+    markers.set(key, event);
+  }
+  return [...markers.values()].sort((left, right) =>
+    left.observed_at_ms - right.observed_at_ms ||
+    String(left.event_id ?? "").localeCompare(String(right.event_id ?? ""))
+  );
+};
+
+const capacityChartMarkerX = (observedAtMs, chartWindow, plot) =>
+  plot.left + ((observedAtMs - chartWindow.startAtMs) / chartWindow.durationMs) * plot.width;
+
+const capacityChartScrollBehavior = () =>
+  globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth";
+
+const capacityChartScrollAmount = (scroll) => Math.max(80, Math.round(scroll.clientWidth * 0.8));
+
+const capacityChartScrollMaximum = (scroll) =>
+  Math.max(0, scroll.scrollWidth - Math.max(scroll.clientWidth, scroll.offsetWidth || 0));
+
+const updateCapacityChartScrollControls = (scroll, olderButton, newerButton) => {
+  const maximum = capacityChartScrollMaximum(scroll);
+  olderButton.disabled = maximum <= 1 || scroll.scrollLeft <= 1;
+  newerButton.disabled = maximum <= 1 || maximum - scroll.scrollLeft <= 1;
+};
+
+const rememberCapacityChartScroll = () => {
+  const current = providerCapacityChart.querySelector("[data-capacity-chart-scroll]");
+  const svg = current?.querySelector("[data-capacity-chart-svg]");
+  if (!current || !svg) return;
+  const maximum = capacityChartScrollMaximum(current);
+  const scrollLeft = Number.isFinite(current.scrollLeft) ? current.scrollLeft : 0;
+  const clientWidth = Number.isFinite(current.clientWidth) ? current.clientWidth : 0;
+  const startAtMs = Number(svg.dataset.capacityChartStartAtMs);
+  const durationMs = Number(svg.dataset.capacityChartDurationMs);
+  const plotLeft = Number(svg.dataset.capacityChartPlotLeft);
+  const plotWidth = Number(svg.dataset.capacityChartPlotWidth);
+  const atEnd = maximum <= 1 || maximum - scrollLeft <= 2;
+  capacityChartScrollState = {
+    atEnd,
+    anchorAtMs: !atEnd && clientWidth > 0 && Number.isFinite(startAtMs) && Number.isFinite(durationMs) &&
+        durationMs > 0 && Number.isFinite(plotLeft) && Number.isFinite(plotWidth) && plotWidth > 0
+      ? startAtMs + ((scrollLeft + clientWidth / 2 - plotLeft) / plotWidth) * durationMs
+      : null,
+  };
+};
+
+const restoreCapacityChartScroll = (scroll, displayWindow, plot) => {
+  const maximum = capacityChartScrollMaximum(scroll);
+  const state = capacityChartScrollState;
+  let nextScrollLeft = maximum;
+  if (!state?.atEnd && typeof state?.anchorAtMs === "number" && Number.isFinite(state.anchorAtMs)) {
+    const markerX = capacityChartMarkerX(state.anchorAtMs, displayWindow, plot);
+    nextScrollLeft = markerX - scroll.clientWidth / 2;
+  }
+  scroll.scrollLeft = Math.max(0, Math.min(maximum, nextScrollLeft));
+  rememberCapacityChartScroll();
+};
+
+const capacityChartOptimalSpendCoordinates = (activeWindow, resetMarkers, displayWindow, plot, nowMs) => {
+  if (!displayWindow) return [];
+  const segments = [];
+  const seenStarts = new Set();
+  const resetStarts = [
+    ...new Set(
+      (Array.isArray(resetMarkers) ? resetMarkers : [])
+        .map((event) => event?.observed_at_ms)
+        .filter((timestamp) => typeof timestamp === "number" && Number.isFinite(timestamp)),
+    ),
+  ].sort((left, right) => left - right);
+  const addWeeklySegment = (startAtMs, nextResetAtMs = Number.POSITIVE_INFINITY) => {
+    if (!Number.isFinite(startAtMs) || seenStarts.has(startAtMs)) return;
+    const endAtMs = Math.min(startAtMs + CAPACITY_CHART_OPTIMAL_WEEK_MS, nextResetAtMs);
+    const visibleStartAtMs = Math.max(startAtMs, displayWindow.startAtMs);
+    const visibleEndAtMs = Math.min(endAtMs, displayWindow.resetAtMs, nowMs);
+    if (!Number.isFinite(visibleStartAtMs) || !Number.isFinite(visibleEndAtMs) || visibleEndAtMs <= visibleStartAtMs) {
+      return;
+    }
+    const point = (timestamp) => ({
+      x: capacityChartMarkerX(timestamp, displayWindow, plot),
+      y: plot.top + clampCapacityChartPercent(
+            ((timestamp - startAtMs) / CAPACITY_CHART_OPTIMAL_WEEK_MS) * 100,
+          ) / 100 * plot.height,
+    });
+    seenStarts.add(startAtMs);
+    segments.push({ start: point(visibleStartAtMs), end: point(visibleEndAtMs) });
+  };
+
+  for (const [index, startAtMs] of resetStarts.entries()) {
+    addWeeklySegment(startAtMs, resetStarts[index + 1]);
+  }
+  if (!resetStarts.length) addWeeklySegment(activeWindow?.startAtMs);
+  return segments;
+};
+
 const renderProviderCapacityChart = (snapshot, sources) => {
+  rememberCapacityChartScroll();
   const history = Array.isArray(snapshot?.history) ? snapshot.history : [];
   const nowMs = Date.now();
-  const chartWindow = capacityChartReferenceWindow(sources, nowMs);
-  const width = capacityChartContentWidth();
+  const chartWindow = capacityChartHistoryWindow(nowMs);
+  const activeUsageWindow = capacityChartActiveUsageWindow(sources, nowMs);
+  const width = capacityChartIntrinsicWidth(chartWindow);
   const plot = {
     left: CAPACITY_CHART_PLOT_LEFT,
     top: CAPACITY_CHART_PLOT_TOP,
@@ -1683,6 +1879,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   for (
     const series of [
       ...CAPACITY_CHART_SERIES,
+      { key: "rate-limit-reset", label: "OpenAI rate-limit reset" },
       { key: "openai-downtime", label: "OpenAI downtime" },
       { key: "optimal-spend", label: "Optimal token spend" },
     ]
@@ -1702,12 +1899,130 @@ const renderProviderCapacityChart = (snapshot, sources) => {
 
   const svg = capacityChartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
-    preserveAspectRatio: "xMidYMid meet",
+    preserveAspectRatio: "none",
     role: "img",
-    "aria-label": "Codex and Metered available capacity history across the active usage period",
+    "aria-label": "Codex and YunWu available capacity over the trailing seven days, including rate-limit resets",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
+  svg.dataset.capacityChartStartAtMs = String(chartWindow.startAtMs);
+  svg.dataset.capacityChartDurationMs = String(chartWindow.durationMs);
+  svg.dataset.capacityChartPlotLeft = String(plot.left);
+  svg.dataset.capacityChartPlotWidth = String(plot.width);
+  svg.style.width = `${width}px`;
+
+  const currentSample = { sampled_at_ms: nowMs, sources };
+  const aggregateDowntimeBridges = capacityChartDowntimeBridges(
+    history,
+    CAPACITY_CHART_SERIES[0],
+    chartWindow,
+    chartWindow,
+    capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
+    nowMs,
+    snapshot?.downtime_events,
+  );
+  const defs = capacityChartSvgElement("defs");
+  const downtimePattern = capacityChartSvgElement("pattern", {
+    id: "capacity-chart-downtime-stripes",
+    width: 12,
+    height: 12,
+    patternUnits: "userSpaceOnUse",
+  });
+  const downtimeStripe = capacityChartSvgElement("path", {
+    d: "M-3 -3L15 15 M-3 9L3 15 M9 -3L15 3",
+    fill: "none",
+    stroke: "#ff5f56",
+    "stroke-opacity": 0.3,
+    "stroke-width": 1.25,
+  });
+  downtimePattern.appendChild(downtimeStripe);
+  const resetPattern = capacityChartSvgElement("pattern", {
+    id: "capacity-chart-rate-limit-reset-stripes",
+    width: 10,
+    height: 10,
+    patternUnits: "userSpaceOnUse",
+  });
+  const resetStripe = capacityChartSvgElement("path", {
+    d: "M-2 10L10 -2 M3 12L12 3",
+    fill: "none",
+    stroke: "#55d98a",
+    "stroke-opacity": 0.72,
+    "stroke-width": 1.5,
+  });
+  resetPattern.appendChild(resetStripe);
+  defs.append(downtimePattern, resetPattern);
+  svg.appendChild(defs);
+
+  for (const bridge of aggregateDowntimeBridges) {
+    const band = capacityChartDowntimeBandCoordinates(bridge, plot);
+    if (!band) continue;
+    const background = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "#ff5f56",
+      "fill-opacity": 0.055,
+    });
+    background.dataset.capacityDowntimeBand = "openai";
+    background.setAttribute("aria-hidden", "true");
+    const stripes = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "url(#capacity-chart-downtime-stripes)",
+    });
+    stripes.dataset.capacityDowntimeBand = "openai";
+    stripes.setAttribute("aria-hidden", "true");
+    svg.append(background, stripes);
+  }
+
+  const rateLimitResetMarkers = capacityChartRateLimitResetMarkers(
+    snapshot?.rate_limit_reset_events,
+    history,
+    chartWindow,
+    snapshot?.downtime_events,
+  );
+  for (const event of rateLimitResetMarkers) {
+    const markerX = capacityChartMarkerX(event.observed_at_ms, chartWindow, plot);
+    const markerWidth = CAPACITY_CHART_RESET_BAND_WIDTH_PX;
+    const markerLeft = Math.max(plot.left, Math.min(plot.left + plot.width - markerWidth, markerX - markerWidth / 2));
+    const marker = capacityChartSvgElement("g");
+    const background = capacityChartSvgElement("rect", {
+      x: markerLeft,
+      y: plot.top,
+      width: markerWidth,
+      height: plot.height,
+      fill: "#55d98a",
+      "fill-opacity": 0.16,
+    });
+    const stripes = capacityChartSvgElement("rect", {
+      x: markerLeft,
+      y: plot.top,
+      width: markerWidth,
+      height: plot.height,
+      fill: "url(#capacity-chart-rate-limit-reset-stripes)",
+    });
+    const centerLine = capacityChartSvgElement("line", {
+      x1: markerX,
+      y1: plot.top,
+      x2: markerX,
+      y2: plot.top + plot.height,
+      stroke: "#55d98a",
+      "stroke-opacity": 0.96,
+      "stroke-width": 2,
+    });
+    marker.dataset.capacityRateLimitReset = event.event_id || `${event.slot}-${event.window}-${event.observed_at_ms}`;
+    marker.setAttribute(
+      "aria-label",
+      `OpenAI ${event.window} rate-limit reset for account ${event.slot}: ${
+        quotaPercentFormatter.format(event.capacity_gain_percentage_points)
+      } percentage points of capacity gained`,
+    );
+    marker.append(background, stripes, centerLine);
+    svg.appendChild(marker);
+  }
 
   const currentSample = { sampled_at_ms: nowMs, sources };
   const aggregateDowntimeBridges = capacityChartDowntimeBridges(
@@ -1797,7 +2112,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     y: height - 8,
     "text-anchor": "middle",
   });
-  xAxisTitle.textContent = `Usage period · ${capacityChartIntervalLabel(chartWindow.durationMs)}`;
+  xAxisTitle.textContent = "Trailing 7-day capacity history";
   xAxisTitle.dataset.capacityChartAxisTitle = "x";
   svg.appendChild(xAxisTitle);
   const yAxisTitle = capacityChartSvgElement("text", {
@@ -1810,19 +2125,27 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   yAxisTitle.dataset.capacityChartAxisTitle = "y";
   svg.appendChild(yAxisTitle);
 
-  const optimalSpendTrend = capacityChartSvgElement("line", {
-    x1: plot.left,
-    y1: plot.top,
-    x2: plot.left + plot.width,
-    y2: plot.top + plot.height,
-  });
-  optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
-  optimalSpendTrend.setAttribute("aria-label", "Optimal token spend trend, 100 percent to 0 percent remaining");
-  svg.appendChild(optimalSpendTrend);
+  const optimalSpendCoordinates = capacityChartOptimalSpendCoordinates(
+    activeUsageWindow,
+    rateLimitResetMarkers,
+    chartWindow,
+    plot,
+    nowMs,
+  );
+  for (const [index, coordinates] of optimalSpendCoordinates.entries()) {
+    const optimalSpendTrend = capacityChartSvgElement("line", {
+      x1: coordinates.start.x,
+      y1: coordinates.start.y,
+      x2: coordinates.end.x,
+      y2: coordinates.end.y,
+    });
+    optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
+    optimalSpendTrend.setAttribute("aria-label", `Optimal token spend for weekly reset ${index + 1}`);
+    svg.appendChild(optimalSpendTrend);
+  }
 
-  const pacing = capacityChartSpendPacing(chartWindow, sources, nowMs);
-  const currentElapsedPercent = pacing.elapsedPercent ?? 0;
-  const currentX = plot.left + (currentElapsedPercent / 100) * plot.width;
+  const pacing = capacityChartSpendPacing(activeUsageWindow, sources, nowMs);
+  const currentX = capacityChartMarkerX(nowMs, chartWindow, plot);
   const reticule = capacityChartSvgElement("line", {
     x1: currentX,
     y1: plot.top,
@@ -1834,7 +2157,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   svg.appendChild(reticule);
 
   for (const series of CAPACITY_CHART_SERIES) {
-    const activeInterval = chartWindow;
+    const activeInterval = series.source === "aggregate" || series.source === "yunwu" ? chartWindow : activeUsageWindow;
     const shouldRender = true;
     const currentPoint = shouldRender ? capacityChartPoint(currentSample, series, activeInterval, chartWindow) : null;
     const chartPoints = shouldRender
@@ -1851,8 +2174,8 @@ const renderProviderCapacityChart = (snapshot, sources) => {
       : [];
     const path = capacityChartSvgElement("path", {
       d: capacityChartPath(chartPoints, plot, {
-        anchorStart: series.source === "aggregate",
-        anchorEnd: series.source === "aggregate",
+        anchorStart: false,
+        anchorEnd: false,
       }),
       fill: "none",
     });
@@ -1884,19 +2207,102 @@ const renderProviderCapacityChart = (snapshot, sources) => {
 
   const chartBody = document.createElement("div");
   chartBody.dataset.capacityChartBody = "";
-  chartBody.append(svg, renderCapacitySpendSummary(pacing, chartWindow));
+  const chartScroll = document.createElement("div");
+  chartScroll.dataset.capacityChartScroll = "";
+  chartScroll.tabIndex = 0;
+  chartScroll.setAttribute("role", "region");
+  chartScroll.setAttribute("aria-label", "Scrollable seven-day provider capacity history");
+  chartScroll.appendChild(svg);
+
+  const chartScrollControls = document.createElement("div");
+  chartScrollControls.dataset.capacityChartScrollControls = "";
+  chartScrollControls.setAttribute("aria-label", "History navigation");
+  const olderButton = document.createElement("button");
+  olderButton.type = "button";
+  olderButton.textContent = "← Older";
+  olderButton.setAttribute("aria-label", "Scroll to older capacity history");
+  const newerButton = document.createElement("button");
+  newerButton.type = "button";
+  newerButton.textContent = "Newer →";
+  newerButton.setAttribute("aria-label", "Scroll to newer capacity history");
+  chartScrollControls.append(olderButton, newerButton);
+
+  const syncCapacityChartScroll = () => {
+    rememberCapacityChartScroll();
+    updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
+  };
+  chartScroll.addEventListener("scroll", syncCapacityChartScroll, { passive: true });
+  olderButton.addEventListener("click", () => {
+    chartScroll.scrollBy({ left: -capacityChartScrollAmount(chartScroll), behavior: capacityChartScrollBehavior() });
+  });
+  newerButton.addEventListener("click", () => {
+    chartScroll.scrollBy({ left: capacityChartScrollAmount(chartScroll), behavior: capacityChartScrollBehavior() });
+  });
+  chartScroll.addEventListener("keydown", (event) => {
+    const amount = capacityChartScrollAmount(chartScroll);
+    if (event.key === "ArrowLeft" || event.key === "PageUp") {
+      event.preventDefault();
+      chartScroll.scrollBy({ left: -amount, behavior: capacityChartScrollBehavior() });
+    } else if (event.key === "ArrowRight" || event.key === "PageDown") {
+      event.preventDefault();
+      chartScroll.scrollBy({ left: amount, behavior: capacityChartScrollBehavior() });
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      chartScroll.scrollTo({ left: 0, behavior: capacityChartScrollBehavior() });
+    } else if (event.key === "End") {
+      event.preventDefault();
+      chartScroll.scrollTo({ left: chartScroll.scrollWidth, behavior: capacityChartScrollBehavior() });
+    }
+  });
+  const chartPane = document.createElement("div");
+  chartPane.dataset.capacityChartPane = "";
+  chartPane.append(chartScroll, chartScrollControls);
+  chartBody.append(chartPane, renderCapacitySpendSummary(pacing, activeUsageWindow));
   figure.appendChild(chartBody);
+  if (rateLimitResetMarkers.length) {
+    const navigation = document.createElement("nav");
+    navigation.dataset.capacityResetNavigation = "";
+    navigation.setAttribute("aria-label", "Rate-limit reset markers");
+    for (const [index, event] of rateLimitResetMarkers.entries()) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.capacityReset = event.event_id || `${event.slot}-${event.window}-${event.observed_at_ms}`;
+      button.textContent = `${formatCapacityTimestamp(event.observed_at_ms)} · +${
+        quotaPercentFormatter.format(event.capacity_gain_percentage_points)
+      } pp`;
+      button.setAttribute(
+        "aria-label",
+        `Go to rate-limit reset ${
+          index + 1
+        } of ${rateLimitResetMarkers.length}, account ${event.slot} ${event.window} window, ${
+          quotaPercentFormatter.format(event.capacity_gain_percentage_points)
+        } percentage points of capacity gained and timer reset`,
+      );
+      button.addEventListener("click", () => {
+        const markerX = capacityChartMarkerX(event.observed_at_ms, chartWindow, plot);
+        chartScroll.scrollTo({
+          left: Math.max(0, markerX - chartScroll.clientWidth / 2),
+          behavior: capacityChartScrollBehavior(),
+        });
+      });
+      navigation.appendChild(button);
+    }
+    figure.appendChild(navigation);
+  }
   const caption = document.createElement("figcaption");
   caption.dataset.capacityChartMeta = "";
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
   const staleNotes = [
     sources.some((source) => source?.source === "codex" && source?.state === "stale") ? "Codex samples stale" : null,
-    sources.some((source) => source?.source === "metered" && source?.state === "stale") ? "Metered sample stale" : null,
+    sources.some((source) => source?.source === "yunwu" && source?.state === "stale") ? "YunWu sample stale" : null,
   ].filter((note) => note !== null);
   const staleSuffix = staleNotes.length ? ` · ${staleNotes.join(" · ")}` : "";
   const resetEvents = Array.isArray(snapshot?.reset_events) ? snapshot.reset_events : [];
   const resetSuffix = resetEvents.length
     ? ` · ${resetEvents.length} verified reset${resetEvents.length === 1 ? "" : "s"}`
+    : "";
+  const rateLimitResetSuffix = rateLimitResetMarkers.length
+    ? ` · ${rateLimitResetMarkers.length} observed rate-limit reset${rateLimitResetMarkers.length === 1 ? "" : "s"}`
     : "";
   const downtimeBridgeCount = capacityChartDowntimeBridges(
     history,
@@ -1913,10 +2319,14 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   caption.textContent = samples.length
     ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
       formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
-    } · ${samples.length} sample${samples.length === 1 ? "" : "s"}${resetSuffix}${downtimeSuffix}${staleSuffix}`
-    : `No retained samples yet · current Codex usage period${resetSuffix}${downtimeSuffix}${staleSuffix}`;
+    } · ${samples.length} sample${
+      samples.length === 1 ? "" : "s"
+    }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${staleSuffix}`
+    : `No retained samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${staleSuffix}`;
   figure.appendChild(caption);
   providerCapacityChart.replaceChildren(figure);
+  restoreCapacityChartScroll(chartScroll, chartWindow, plot);
+  updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
 };
 
 const renderProviderCapacity = (snapshot) => {
@@ -1927,7 +2337,7 @@ const renderProviderCapacity = (snapshot) => {
   const sources = [
     sourceForSlot(1),
     sourceForSlot(2),
-    rawSources.find((source) => source?.source === "metered") ?? unavailableCapacitySource("metered"),
+    rawSources.find((source) => source?.source === "yunwu") ?? unavailableCapacitySource("yunwu"),
   ];
   latestProviderCapacityChartState = { snapshot, sources };
   renderProviderCapacityChart(snapshot, sources);
@@ -1949,33 +2359,6 @@ const renderProviderCapacity = (snapshot) => {
   providerCapacityUpdated.textContent = `Snapshot ${formatCapacityTimestamp(snapshotAt)} · ${cacheState}`;
 };
 
-const mergeProviderCapacitySnapshots = (cached, latest) => {
-  if (!cached || typeof cached !== "object") return latest;
-  if (!latest || typeof latest !== "object") return cached;
-  const mergeTimedRows = (key) => {
-    const rows = [
-      ...(Array.isArray(cached[key]) ? cached[key] : []),
-      ...(Array.isArray(latest[key]) ? latest[key] : []),
-    ];
-    const byTime = new Map();
-    rows.forEach((row) => {
-      const timestamp = [row?.sampled_at_ms, row?.reset_at_ms, row?.occurred_at_ms]
-        .find((value) => typeof value === "number" && Number.isFinite(value));
-      if (timestamp !== undefined) byTime.set(timestamp, row);
-    });
-    return [...byTime.entries()]
-      .sort(([left], [right]) => left - right)
-      .slice(-2_000)
-      .map(([, row]) => row);
-  };
-  return {
-    ...latest,
-    history: mergeTimedRows("history"),
-    reset_events: mergeTimedRows("reset_events"),
-    downtime_events: mergeTimedRows("downtime_events"),
-  };
-};
-
 const loadProviderCapacity = async ({ live = true } = {}) => {
   if (providerCapacityLoading) return false;
   const token = getAdminToken();
@@ -1983,14 +2366,8 @@ const loadProviderCapacity = async ({ live = true } = {}) => {
     setBadge(providerCapacityBadge, "bad", "Sign in required");
     return false;
   }
-  const cached = readStorageJson(STORAGE_KEYS.providerCapacitySnapshot);
-  if (cached?.payload && typeof cached.payload === "object") {
-    renderProviderCapacity(cached.payload);
-    setBadge(providerCapacityBadge, "unknown", "Cached · loading latest");
-    providerCapacityUpdated.textContent = "Showing locally cached history while loading the latest snapshot";
-  }
   providerCapacityLoading = true;
-  if (!cached?.payload) setBadge(providerCapacityBadge, "unknown", "Loading capacity");
+  setBadge(providerCapacityBadge, "unknown", "Loading capacity");
   try {
     const response = await fetch(apiUrl(`/admin/providers/capacity${live ? "?refresh=live" : ""}`), {
       cache: "no-store",
@@ -2002,10 +2379,7 @@ const loadProviderCapacity = async ({ live = true } = {}) => {
       providerCapacityUpdated.textContent = "Snapshot unavailable";
       return false;
     }
-    const previous = cached?.payload && typeof cached.payload === "object" ? cached.payload : null;
-    const merged = mergeProviderCapacitySnapshots(previous, payload);
-    writeStorageJson(STORAGE_KEYS.providerCapacitySnapshot, { payload: merged, cached_at_ms: Date.now() });
-    renderProviderCapacity(merged);
+    renderProviderCapacity(payload);
     return true;
   } catch {
     setBadge(providerCapacityBadge, "bad", "Offline");
@@ -2065,98 +2439,7 @@ const loadProviders = async () => {
   } finally {
     if (loadId === providersLoadId) providersLoading = false;
   }
-  void loadDebugRouting();
 };
-
-const formatDebugRoutingStatus = (routing) => {
-  const scenario = routing?.scenario ?? "normal";
-  const expires = typeof routing?.expires_at_ms === "number" ? new Date(routing.expires_at_ms).toLocaleString() : null;
-  return expires && scenario !== "normal" ? `${scenario.replaceAll("_", " ")} until ${expires}` : "Normal routing";
-};
-
-const loadDebugRouting = async () => {
-  if (!adminAccessState.isAdmin) {
-    setBadge(debugRoutingBadge, "unknown", "Admin required");
-    debugRoutingStatus.textContent = "Only an administrator can change routing scenarios.";
-    debugRoutingApply.disabled = true;
-    debugRoutingReset.disabled = true;
-    return;
-  }
-  const token = getAdminToken();
-  if (!token) return;
-  try {
-    const response = await fetch(apiUrl("/admin/debug/routing"), {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload?.routing) throw new Error(payload?.error?.message ?? "Debug routing unavailable");
-    debugRoutingScenario.value = payload.routing.scenario;
-    debugRoutingStatus.textContent = formatDebugRoutingStatus(payload.routing);
-    setBadge(
-      debugRoutingBadge,
-      payload.routing.scenario === "normal" ? "ok" : "unknown",
-      payload.routing.scenario === "normal" ? "Normal" : "Active",
-    );
-  } catch (error) {
-    setBadge(debugRoutingBadge, "bad", "Unavailable");
-    debugRoutingStatus.textContent = error instanceof Error ? error.message : "Debug routing unavailable";
-  }
-};
-
-const updateDebugRouting = async (scenario, durationMs) => {
-  const token = getAdminToken();
-  if (!token || !adminAccessState.isAdmin) return;
-  debugRoutingApply.disabled = true;
-  debugRoutingReset.disabled = true;
-  setBadge(debugRoutingBadge, "unknown", "Saving");
-  try {
-    const response = await fetch(apiUrl("/admin/debug/routing"), {
-      method: "POST",
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ scenario, duration_ms: durationMs }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload?.routing) throw new Error(payload?.error?.message ?? "Could not update routing");
-    debugRoutingStatus.textContent = formatDebugRoutingStatus(payload.routing);
-    setBadge(debugRoutingBadge, scenario === "normal" ? "ok" : "unknown", scenario === "normal" ? "Normal" : "Active");
-  } catch (error) {
-    setBadge(debugRoutingBadge, "bad", "Error");
-    debugRoutingStatus.textContent = error instanceof Error ? error.message : "Could not update routing";
-  } finally {
-    debugRoutingApply.disabled = false;
-    debugRoutingReset.disabled = false;
-  }
-};
-
-debugRoutingApply.addEventListener("click", () => {
-  void updateDebugRouting(debugRoutingScenario.value, Number(debugRoutingDuration.value));
-});
-debugRoutingReset.addEventListener("click", () => {
-  const token = getAdminToken();
-  if (!token || !adminAccessState.isAdmin) return;
-  debugRoutingApply.disabled = true;
-  debugRoutingReset.disabled = true;
-  setBadge(debugRoutingBadge, "unknown", "Resetting");
-  void fetch(apiUrl("/admin/debug/routing"), {
-    method: "DELETE",
-    cache: "no-store",
-    headers: { Authorization: `Bearer ${token}` },
-  }).then(async (response) => {
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload?.routing) throw new Error(payload?.error?.message ?? "Could not reset routing");
-    debugRoutingScenario.value = "normal";
-    debugRoutingStatus.textContent = "Normal routing";
-    setBadge(debugRoutingBadge, "ok", "Normal");
-  }).catch((error) => {
-    setBadge(debugRoutingBadge, "bad", "Error");
-    debugRoutingStatus.textContent = error instanceof Error ? error.message : "Could not reset routing";
-  }).finally(() => {
-    debugRoutingApply.disabled = false;
-    debugRoutingReset.disabled = false;
-  });
-});
 
 const formatPemPreview = (value) => {
   if (typeof value !== "string") return "";
@@ -4389,14 +4672,14 @@ const buildUsageSummary = (usage) => {
   });
   appendUsagePill(summary, "Last", formatDate(usage.last_seen_at_ms));
 
-  if (Object.prototype.hasOwnProperty.call(usage, "metered_fallback_requests")) {
-    appendUsagePill(summary, "Metered", formatCompactNumber(usage.metered_fallback_requests), {
-      title: `${formatNumber(usage.metered_fallback_requests)} fallback requests`,
+  if (Object.prototype.hasOwnProperty.call(usage, "yunwu_fallback_requests")) {
+    appendUsagePill(summary, "YunWu", formatCompactNumber(usage.yunwu_fallback_requests), {
+      title: `${formatNumber(usage.yunwu_fallback_requests)} fallback requests`,
     });
   }
-  if (Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")) {
-    appendUsagePill(summary, "Spend", formatMicrocreditsAsCredits(usage.metered_spend_microcredits), {
-      title: `${formatNumber(usage.metered_spend_microcredits)} microcredits`,
+  if (Object.prototype.hasOwnProperty.call(usage, "yunwu_spend_microcredits")) {
+    appendUsagePill(summary, "Spend", formatMicrocreditsAsCredits(usage.yunwu_spend_microcredits), {
+      title: `${formatNumber(usage.yunwu_spend_microcredits)} microcredits`,
     });
   }
 
@@ -4448,18 +4731,18 @@ const buildUsageDetails = (usage, options = {}) => {
   if (sparkline) usageSection.appendChild(sparkline);
   appendUsageSeries(
     usageSection,
-    "Daily Metered fallbacks",
+    "Daily YunWu fallbacks",
     buildUsageSparkline(usage, {
-      dailyKey: "daily_metered_fallback_requests",
-      ariaLabel: "Metered fallback requests",
+      dailyKey: "daily_yunwu_fallback_requests",
+      ariaLabel: "YunWu fallback requests",
     }),
   );
   appendUsageSeries(
     usageSection,
-    "Daily Metered spend",
+    "Daily YunWu spend",
     buildUsageSparkline(usage, {
-      dailyKey: "daily_metered_spend_microcredits",
-      ariaLabel: "Metered spend",
+      dailyKey: "daily_yunwu_spend_microcredits",
+      ariaLabel: "YunWu spend",
       formatScaleMax: formatMicrocreditsAsCredits,
     }),
   );
@@ -4500,24 +4783,24 @@ const buildUsageDetails = (usage, options = {}) => {
     appendMetaItem(usageList, "Last model", formatOptionalText(usage.last_model), { mono: true });
     appendMetaItem(usageList, "Last reasoning", formatOptionalText(usage.last_reasoning), { mono: true });
     appendMetaItem(usageList, "Last route", formatOptionalText(usage.last_route));
-    if (Object.prototype.hasOwnProperty.call(usage, "metered_fallback_requests")) {
-      appendMetaItem(usageList, "Metered fallbacks", formatNumber(usage.metered_fallback_requests));
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_fallback_requests")) {
+      appendMetaItem(usageList, "YunWu fallbacks", formatNumber(usage.yunwu_fallback_requests));
     }
-    if (Object.prototype.hasOwnProperty.call(usage, "metered_input_tokens")) {
-      appendMetaItem(usageList, "Metered tokens in", formatNumber(usage.metered_input_tokens));
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_input_tokens")) {
+      appendMetaItem(usageList, "YunWu tokens in", formatNumber(usage.yunwu_input_tokens));
     }
-    if (Object.prototype.hasOwnProperty.call(usage, "metered_output_tokens")) {
-      appendMetaItem(usageList, "Metered tokens out", formatNumber(usage.metered_output_tokens));
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_output_tokens")) {
+      appendMetaItem(usageList, "YunWu tokens out", formatNumber(usage.yunwu_output_tokens));
     }
-    if (Object.prototype.hasOwnProperty.call(usage, "metered_total_tokens")) {
-      appendMetaItem(usageList, "Metered tokens total", formatNumber(usage.metered_total_tokens));
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_total_tokens")) {
+      appendMetaItem(usageList, "YunWu tokens total", formatNumber(usage.yunwu_total_tokens));
     }
-    if (Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")) {
+    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_spend_microcredits")) {
       appendMetaItem(
         usageList,
-        "Metered spend",
-        formatMicrocreditsAsCredits(usage.metered_spend_microcredits),
-        { title: `${formatNumber(usage.metered_spend_microcredits)} microcredits` },
+        "YunWu spend",
+        formatMicrocreditsAsCredits(usage.yunwu_spend_microcredits),
+        { title: `${formatNumber(usage.yunwu_spend_microcredits)} microcredits` },
       );
     }
     usageSection.appendChild(usageList);
@@ -4948,7 +5231,7 @@ const renderKeys = (keys, view = "all") => {
     paidFallbackHeader.dataset.paidFallbackHeader = "header";
     const paidFallbackTitle = document.createElement("span");
     paidFallbackTitle.dataset.paidFallbackTitle = "title";
-    paidFallbackTitle.textContent = "Metered paid overflow";
+    paidFallbackTitle.textContent = "YunWu paid overflow";
     const paidFallbackStatus = document.createElement("span");
     paidFallbackStatus.dataset.badge = "status";
     paidFallbackHeader.appendChild(paidFallbackTitle);
@@ -4983,12 +5266,12 @@ const renderKeys = (keys, view = "all") => {
       paidReservedInfo.valueEl.textContent = formatCredits(reserved);
       paidResetInfo.valueEl.textContent = formatDate(key.usage_reset_at_ms);
       lifetimeSpendInfo.valueEl.textContent = usage &&
-          Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")
-        ? formatMicrocreditsAsCredits(usage.metered_spend_microcredits)
+          Object.prototype.hasOwnProperty.call(usage, "yunwu_spend_microcredits")
+        ? formatMicrocreditsAsCredits(usage.yunwu_spend_microcredits)
         : "unknown";
       fallbackCountInfo.valueEl.textContent = usage &&
-          Object.prototype.hasOwnProperty.call(usage, "metered_fallback_requests")
-        ? formatNumber(usage.metered_fallback_requests)
+          Object.prototype.hasOwnProperty.call(usage, "yunwu_fallback_requests")
+        ? formatNumber(usage.yunwu_fallback_requests)
         : "unknown";
 
       if (enabled && limit !== -1 && limit <= 0) {
@@ -5131,7 +5414,7 @@ const renderKeys = (keys, view = "all") => {
     paidFallbackToggle.dataset.paidFallbackToggle = "toggle";
     const paidFallbackToggleCopy = document.createElement("span");
     const paidFallbackToggleTitle = document.createElement("strong");
-    paidFallbackToggleTitle.textContent = "Metered paid overflow";
+    paidFallbackToggleTitle.textContent = "YunWu paid overflow";
     const paidFallbackToggleHint = document.createElement("small");
     paidFallbackToggleHint.textContent = "Fallback after the final Codex 429.";
     paidFallbackToggleCopy.appendChild(paidFallbackToggleTitle);
@@ -5165,7 +5448,7 @@ const renderKeys = (keys, view = "all") => {
     const paidFallbackWarning = document.createElement("p");
     paidFallbackWarning.dataset.paidFallbackWarning = "warning";
     paidFallbackWarning.textContent =
-      "Enabling fallback can send prompts, code, tools, and attachments to Metered. Pricing is checked only when this key is enabled; re-enabling checks it again. Ordinary requests never recheck it.";
+      "Enabling fallback can send prompts, code, tools, and attachments to YunWu. Pricing is checked only when this key is enabled; re-enabling checks it again. Ordinary requests never recheck it.";
 
     paidFallbackSettings.appendChild(paidFallbackLimitField);
     paidFallbackSettings.appendChild(paidFallbackWarning);
@@ -5415,7 +5698,7 @@ const renderKeys = (keys, view = "all") => {
       const initializingPaidFallback = payload.paid_fallback_enabled === true &&
         editSnapshot.paid_fallback_enabled === false;
       editSaving = true;
-      setEditBadge("unknown", initializingPaidFallback ? "Initializing Metered..." : "Saving...");
+      setEditBadge("unknown", initializingPaidFallback ? "Initializing YunWu..." : "Saving...");
       try {
         const res = await fetch(apiUrl("/admin/api-keys"), {
           method: "PATCH",
@@ -6025,7 +6308,6 @@ const setAdminAccessState = (next) => {
     : "none";
   updateLoadingAuthStatus();
   updateViewAccess();
-  void loadDebugRouting();
   let prefetchPromise = null;
   if (adminAccessState.isAdmin) {
     closeAutoOpenedAuthWidget();
@@ -6224,7 +6506,7 @@ const createKey = async () => {
   if (windowResult.value !== null) payload.window_ms = windowResult.value;
 
   clearCreateResult();
-  setCreateBadge("unknown", paidFallbackEnabled ? "Initializing Metered..." : "Creating...");
+  setCreateBadge("unknown", paidFallbackEnabled ? "Initializing YunWu..." : "Creating...");
   createKeyBtn.disabled = true;
 
   try {
@@ -6294,19 +6576,9 @@ const refreshKeys = async () => {
   }
 
   if (keysLoading) return;
-  const cached = readStorageJson(STORAGE_KEYS.apiKeysSnapshot);
-  const cachedKeys = Array.isArray(cached?.data) ? cached.data : null;
-  if (cachedKeys) {
-    allKeys = cachedKeys;
-    keysLoadedAt = Date.now();
-    setKeysBadge("unknown", "Cached · loading latest");
-    renderKeys(allKeys, currentKeyView);
-  }
   keysLoading = true;
-  if (!cachedKeys) {
-    setKeysBadge("unknown", "Loading...");
-    setKeysListLoading();
-  }
+  setKeysBadge("unknown", "Loading...");
+  setKeysListLoading();
 
   try {
     const res = await fetch(apiUrl("/admin/api-keys?include_usage=1"), {
@@ -6321,7 +6593,6 @@ const refreshKeys = async () => {
     }
     const keys = Array.isArray(data?.data) ? data.data : [];
     allKeys = keys;
-    writeStorageJson(STORAGE_KEYS.apiKeysSnapshot, { data: keys, cached_at_ms: Date.now() });
     keysLoadedAt = Date.now();
     renderKeys(allKeys, currentKeyView);
   } catch {
@@ -6499,20 +6770,20 @@ const extractCachedDefaults = (cached) => {
   return { model, reasoning_effort: reasoning, kernel_policy_limit_requests: limit, kernel_policy_window_ms: windowMs };
 };
 
-const clearMeteredQuotaDiagnostics = () => {
-  meteredQuotaRemaining.textContent = "—";
-  meteredQuotaProgress.hidden = true;
-  meteredQuotaProgress.value = 0;
-  meteredQuotaProgress.removeAttribute("aria-valuetext");
-  meteredQuotaBalance.textContent = "—";
-  meteredQuotaBaseline.textContent = "—";
-  meteredQuotaLatestRefill.textContent = "—";
-  meteredQuotaLatestRefill.removeAttribute("title");
-  meteredQuotaInferredCredit.textContent = "—";
-  meteredQuotaCache.textContent = "—";
-  meteredQuotaConfidence.textContent = "—";
-  meteredQuotaObserved.textContent = "—";
-  meteredQuotaCycleStarted.textContent = "—";
+const clearYunwuQuotaDiagnostics = () => {
+  yunwuQuotaRemaining.textContent = "—";
+  yunwuQuotaProgress.hidden = true;
+  yunwuQuotaProgress.value = 0;
+  yunwuQuotaProgress.removeAttribute("aria-valuetext");
+  yunwuQuotaBalance.textContent = "—";
+  yunwuQuotaBaseline.textContent = "—";
+  yunwuQuotaLatestRefill.textContent = "—";
+  yunwuQuotaLatestRefill.removeAttribute("title");
+  yunwuQuotaInferredCredit.textContent = "—";
+  yunwuQuotaCache.textContent = "—";
+  yunwuQuotaConfidence.textContent = "—";
+  yunwuQuotaObserved.textContent = "—";
+  yunwuQuotaCycleStarted.textContent = "—";
 };
 
 const formatQuotaCredits = (value) =>
@@ -6523,18 +6794,18 @@ const formatQuotaLabel = (value) => {
   return value.replaceAll("_", " ").replace(/^./, (first) => first.toUpperCase());
 };
 
-const renderMeteredQuotaDiagnostics = (diagnostics) => {
-  clearMeteredQuotaDiagnostics();
+const renderYunwuQuotaDiagnostics = (diagnostics) => {
+  clearYunwuQuotaDiagnostics();
   if (!diagnostics || typeof diagnostics !== "object") {
-    setMeteredQuotaBadge("bad", "Unavailable");
+    setYunwuQuotaBadge("bad", "Unavailable");
     return;
   }
   if (diagnostics.configured !== true) {
-    setMeteredQuotaBadge("unknown", "Not configured");
+    setYunwuQuotaBadge("unknown", "Not configured");
     return;
   }
   if (diagnostics.available !== true) {
-    setMeteredQuotaBadge("bad", "Unavailable");
+    setYunwuQuotaBadge("bad", "Unavailable");
     return;
   }
 
@@ -6543,21 +6814,21 @@ const renderMeteredQuotaDiagnostics = (diagnostics) => {
     : null;
   if (remaining !== null) {
     const formatted = quotaPercentFormatter.format(remaining);
-    meteredQuotaRemaining.textContent = `${formatted}%`;
-    meteredQuotaProgress.value = remaining;
-    meteredQuotaProgress.hidden = false;
-    meteredQuotaProgress.setAttribute("aria-valuetext", `${formatted}% remaining`);
+    yunwuQuotaRemaining.textContent = `${formatted}%`;
+    yunwuQuotaProgress.value = remaining;
+    yunwuQuotaProgress.hidden = false;
+    yunwuQuotaProgress.setAttribute("aria-valuetext", `${formatted}% remaining`);
   }
 
-  meteredQuotaBalance.textContent = formatQuotaCredits(diagnostics.balance_credits);
-  meteredQuotaBaseline.textContent = formatQuotaCredits(diagnostics.baseline_credits);
-  meteredQuotaInferredCredit.textContent = formatQuotaCredits(diagnostics.last_inferred_credit_credits);
-  meteredQuotaCache.textContent = formatQuotaLabel(diagnostics.cache_state);
-  meteredQuotaConfidence.textContent = formatQuotaLabel(diagnostics.confidence);
-  meteredQuotaObserved.textContent = typeof diagnostics.observed_at_ms === "number"
+  yunwuQuotaBalance.textContent = formatQuotaCredits(diagnostics.balance_credits);
+  yunwuQuotaBaseline.textContent = formatQuotaCredits(diagnostics.baseline_credits);
+  yunwuQuotaInferredCredit.textContent = formatQuotaCredits(diagnostics.last_inferred_credit_credits);
+  yunwuQuotaCache.textContent = formatQuotaLabel(diagnostics.cache_state);
+  yunwuQuotaConfidence.textContent = formatQuotaLabel(diagnostics.confidence);
+  yunwuQuotaObserved.textContent = typeof diagnostics.observed_at_ms === "number"
     ? formatDate(diagnostics.observed_at_ms)
     : "—";
-  meteredQuotaCycleStarted.textContent = typeof diagnostics.cycle_started_at_ms === "number"
+  yunwuQuotaCycleStarted.textContent = typeof diagnostics.cycle_started_at_ms === "number"
     ? formatDate(diagnostics.cycle_started_at_ms)
     : "—";
 
@@ -6565,15 +6836,15 @@ const renderMeteredQuotaDiagnostics = (diagnostics) => {
   const refillTime = typeof diagnostics.latest_refill_completed_at_ms === "number"
     ? formatDate(diagnostics.latest_refill_completed_at_ms)
     : "—";
-  meteredQuotaLatestRefill.textContent = refillAmount === "—" && refillTime === "—"
+  yunwuQuotaLatestRefill.textContent = refillAmount === "—" && refillTime === "—"
     ? "—"
     : `${refillAmount} · ${refillTime}`;
   if (typeof diagnostics.latest_refill_id === "string" && diagnostics.latest_refill_id) {
-    meteredQuotaLatestRefill.title = `Refill ${diagnostics.latest_refill_id}`;
+    yunwuQuotaLatestRefill.title = `Refill ${diagnostics.latest_refill_id}`;
   }
 
   const stale = diagnostics.cache_state === "stale";
-  setMeteredQuotaBadge(stale ? "unknown" : "ok", stale ? "Stale cache" : "Available");
+  setYunwuQuotaBadge(stale ? "unknown" : "ok", stale ? "Stale cache" : "Available");
 };
 
 const applyDefaultsSnapshot = (snapshot, defaults, options = {}) => {
@@ -6645,8 +6916,8 @@ const loadDefaults = async (options = {}) => {
   const token = getAdminToken();
   if (!token) {
     setDefaultsBadge("bad", "Missing token");
-    clearMeteredQuotaDiagnostics();
-    setMeteredQuotaBadge("unknown", "Not loaded");
+    clearYunwuQuotaDiagnostics();
+    setYunwuQuotaBadge("unknown", "Not loaded");
     return;
   }
 
@@ -6655,7 +6926,7 @@ const loadDefaults = async (options = {}) => {
   if (!preserveInputs) defaultsTouched = false;
   defaultsLoaded = false;
   setDefaultsBadge("unknown", "Loading...");
-  setMeteredQuotaBadge("unknown", "Loading...");
+  setYunwuQuotaBadge("unknown", "Loading...");
   let cacheApplied = false;
   const cachedDefaults = extractCachedDefaults(readStorageJson(STORAGE_KEYS.defaultsSnapshot));
   const cachedModels = extractCachedModels(readStorageJson(STORAGE_KEYS.defaultsModels));
@@ -6701,10 +6972,10 @@ const loadDefaults = async (options = {}) => {
     const defaultsPayload = await defaultsRes.json().catch(() => null);
     if (!defaultsRes.ok) {
       setDefaultsBadge("bad", defaultsPayload?.error?.message ?? "Error");
-      renderMeteredQuotaDiagnostics(null);
+      renderYunwuQuotaDiagnostics(null);
       return;
     }
-    renderMeteredQuotaDiagnostics(defaultsPayload?.metered_quota);
+    renderYunwuQuotaDiagnostics(defaultsPayload?.yunwu_quota);
 
     if (!models.length) {
       setDefaultsBadge("bad", "No models");
@@ -6739,7 +7010,7 @@ const loadDefaults = async (options = {}) => {
     }
   } catch {
     setDefaultsBadge("bad", "Offline");
-    renderMeteredQuotaDiagnostics(null);
+    renderYunwuQuotaDiagnostics(null);
   }
 };
 
@@ -6828,8 +7099,8 @@ setCreateBadge("unknown", "Idle");
 setKeysBadge("unknown", "Not loaded");
 setPasskeyUsersBadge("unknown", "Not loaded");
 setDefaultsBadge("unknown", "Idle");
-clearMeteredQuotaDiagnostics();
-setMeteredQuotaBadge("unknown", "Idle");
+clearYunwuQuotaDiagnostics();
+setYunwuQuotaBadge("unknown", "Idle");
 setKernelListBadge("unknown", "Not loaded");
 setKernelNewBadge("unknown", "Idle");
 setKernelQueueBadge("unknown", "Not loaded");
@@ -6960,37 +7231,8 @@ passkeyHandleInput.addEventListener("input", () => {
   schedulePasskeyHandlePersist();
 });
 
-passkeyLoginBtn.addEventListener("click", async () => {
-  const passkeyBaseUrl = getPasskeyBaseUrl();
-  setPasskeyStatus("unknown", "Signing in...");
-  passkeyLoginBtn.disabled = true;
-  passkeyRegisterBtn.disabled = true;
-  try {
-    if (!isAuthRelayMode && isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()) {
-      const relay = await requestRemotePasskeySession();
-      if (relay.handle) setPasskeyHandleValue(relay.handle);
-      applySignedInToken(relay.token, { deviceRegistered: true });
-      setPasskeyStatus("ok", "Passkey signed in");
-      return;
-    }
-
-    const passkeyHandle = getPasskeyHandle();
-    const result = await signInWithPasskey({
-      baseUrl: passkeyBaseUrl,
-      handle: passkeyHandle,
-      useHandle: Boolean(passkeyHandle),
-    });
-    if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token, { deviceRegistered: true });
-    setPasskeyStatus("ok", "Passkey signed in");
-    postAuthRelayResult(result);
-  } catch (error) {
-    setSignedInState(false);
-    setPasskeyStatus("bad", formatPasskeyLoginError(error));
-  } finally {
-    passkeyLoginBtn.disabled = false;
-    passkeyRegisterBtn.disabled = false;
-  }
+passkeyLoginBtn.addEventListener("click", () => {
+  void runPasskeyLogin();
 });
 
 passkeyRegisterBtn.addEventListener("click", async () => {
@@ -7166,7 +7408,9 @@ viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashM
 viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
 
 globalThis.setInterval(() => {
-  if (currentAdminView === "providers" && document.visibilityState === "visible") void loadProviders();
+  if (currentAdminView !== "providers" || document.visibilityState !== "visible") return;
+  void loadProviders();
+  void loadProviderCapacity({ live: false });
 }, 30_000);
 
 createKeyBtn.addEventListener("click", () => {
@@ -7287,17 +7531,12 @@ const startAuthRelayIfRequested = async () => {
   setAuthWidgetOpen(true);
   passkeyRegisterBtn.hidden = true;
   setAuthBadge("unknown", "Relay sign-in");
-  setPasskeyStatus("unknown", "Checking signed-in session...");
+  setPasskeyStatus("unknown", "Starting passkey sign-in...");
   passkeyLoginBtn.disabled = true;
   try {
-    const cachedAuth = await getValidCachedRelayAuth();
-    if (cachedAuth) {
-      postAuthRelayResult(cachedAuth);
-      return;
-    }
-    setPasskeyStatus("unknown", "Use the sign-in button to continue.");
+    await runPasskeyLogin({ automatic: true });
   } catch (error) {
-    setPasskeyStatus("bad", `${error?.message ?? "Passkey sign-in failed"} Use the sign-in button to try again.`);
+    setPasskeyStatus("bad", `${formatPasskeyLoginError(error)} Click the sign-in button to continue.`);
   } finally {
     passkeyLoginBtn.disabled = false;
   }
