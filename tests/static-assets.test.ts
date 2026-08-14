@@ -4,6 +4,7 @@ import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts"
 import adminHtml from "../static/admin.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
 import authScript from "../static/auth.js" with { type: "text" };
+import openApiText from "../static/openapi.json" with { type: "text" };
 
 Deno.test("static assets register frontend module dependencies", () => {
   for (
@@ -87,8 +88,8 @@ Deno.test("static assets register autonomous agent discovery documents", () => {
   }
 });
 
-Deno.test("OpenAPI discovery contract describes the public inference API", async () => {
-  const document = JSON.parse(await Deno.readTextFile(new URL("../static/openapi.json", import.meta.url)));
+Deno.test("OpenAPI discovery contract describes the public inference API", () => {
+  const document = JSON.parse(openApiText);
 
   assert.equal(document.openapi, "3.1.0");
   assert.equal(document.servers[0].url, "https://ai.ubq.fi");

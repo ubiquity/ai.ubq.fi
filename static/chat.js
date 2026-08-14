@@ -71,7 +71,7 @@ const sendBtn = mustGet("send");
 const panels = Array.from(document.querySelectorAll("details[data-chat-panel][data-panel-key]"));
 
 const DEFAULT_MODEL = "";
-const STREAM_UNSUPPORTED_MODELS = new Set(["gpt-oss-120b"]);
+const STREAM_UNSUPPORTED_MODELS = new Set(["cerebras/gpt-oss-120b"]);
 
 const setAuthBadge = (state, text) => {
   authBadge.dataset.state = state;

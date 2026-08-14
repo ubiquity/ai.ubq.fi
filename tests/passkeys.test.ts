@@ -117,7 +117,9 @@ const {
   saveVerifiedPasskeyRegistration,
   updatePasskeyCredentialSignCount,
 } = await import("../src/passkeys.ts");
-const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
+const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth, requireSuperAdminAuth } = await import(
+  "../src/auth.ts"
+);
 const { YUNWU_QUOTA_FRESH_MS, YUNWU_QUOTA_STATE_KEY } = await import("../src/yunwu_quota.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
@@ -324,6 +326,18 @@ Deno.test("passkey session authenticates as client and admin", async () => {
 
   const adminError = await requireAdminAuth(req);
   assert.equal(adminError, null);
+
+  const superAdminError = await requireSuperAdminAuth(req);
+  assert.equal(superAdminError?.status, 403);
+
+  const { default: handler } = await import("../src/handler.ts");
+  const cacheScopeExperiment = await handler(
+    new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  );
+  assert.equal(cacheScopeExperiment.status, 403);
 
   const whoami = await handleV1Auth(req);
   assert.equal(whoami.status, 200);

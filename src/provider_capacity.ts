@@ -65,6 +65,7 @@ export type ProviderCapacityAdditionalRateLimit = Readonly<{
   }>;
 }>;
 
+/** Provider capacity observations for the two active Codex routing slots. */
 export type ProviderCapacitySource =
   | Readonly<{
     source: "codex";
@@ -1077,8 +1078,11 @@ const persistCapacitySnapshot = async (
   } catch {
     // A missing prior point should not prevent the live snapshot from being stored.
   }
-  const recoverySlots = snapshot.sources.flatMap((source) => {
-    if (source.source !== "codex" || source.state === "unavailable") return [];
+  const recoverySlots = snapshot.sources.flatMap<1 | 2>((source) => {
+    if (
+      source.source !== "codex" || source.state === "unavailable" ||
+      (source.slot !== 1 && source.slot !== 2)
+    ) return [];
     const previousSource = previousSnapshot?.sources.find(
       (candidate): candidate is ProviderCapacityCodexSource =>
         candidate.source === "codex" && candidate.slot === source.slot,
@@ -1108,7 +1112,10 @@ const persistCapacitySnapshot = async (
     });
   }
   for (const source of snapshot.sources) {
-    if (source.source !== "codex" || source.state !== "available") continue;
+    if (
+      source.source !== "codex" || source.state !== "available" ||
+      (source.slot !== 1 && source.slot !== 2)
+    ) continue;
     operation = operation.set(
       providerCapacityLastAvailableKey(source.slot),
       { sampled_at_ms: snapshot.snapshot_at_ms, source },
