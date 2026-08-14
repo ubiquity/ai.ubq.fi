@@ -3,6 +3,8 @@ import {
   claimCodexRoutingProbe,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   type CodexProbeCircuit,
+  codexQuotaBlockForModel,
+  codexQuotaClassForModel,
   getCodexQuotaBlockFence,
   isCodexQuotaBlockFenceCurrent,
   markCodexCredentialInvalid,
@@ -744,7 +746,8 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
 
   const current = await getStrongAuthPoolEntryForCacheScopeExperiment();
   const auth = cacheScopeExperimentAccount(options.session, current, options.slot);
-  const selected = await selectCodexRoutingAccounts(current.pool, [auth]);
+  const requestedModel = isRecord(body) ? getString(body.model) : null;
+  const selected = await selectCodexRoutingAccounts(current.pool, [auth], Date.now(), requestedModel);
   if (selected.kind !== "eligible" || selected.accounts.length !== 1) {
     throw new CodexCacheScopeExperimentError(
       "The requested Codex slot is not eligible for the prompt-cache scope experiment.",
@@ -1789,9 +1792,13 @@ export const fetchCodexResponses = async (
         typeof account.routingGeneration === "number" &&
         slot.generation === account.routingGeneration &&
         slot.invalid_credential_version !== account.credentialVersion &&
-        slot.quota_blocked_until_ms === null &&
+        (codexQuotaBlockForModel(slot, account.requestedModel)?.blocked_until_ms ?? 0) <= cohort.observedAtMs &&
         (slot.upstream_timeout_blocked_until_ms ?? 0) <= cohort.observedAtMs &&
-        (slot.probe_lease?.expires_at_ms ?? 0) <= cohort.observedAtMs;
+        ((slot.probe_lease?.circuit === "quota" && slot.probe_lease.quota_class !== undefined &&
+            slot.probe_lease.quota_class !== null &&
+            slot.probe_lease.quota_class !== codexQuotaClassForModel(account.requestedModel))
+          ? true
+          : (slot.probe_lease?.expires_at_ms ?? 0) <= cohort.observedAtMs);
     });
   };
 
