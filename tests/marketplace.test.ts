@@ -221,6 +221,44 @@ Deno.test("marketplace public catalog is routed and omits owner credentials", as
   }
 });
 
+Deno.test("marketplace public catalog validates and bounds pagination", async () => {
+  const kv = new CountingKv();
+  for (let index = 0; index < 3; index += 1) {
+    kv.seed(authAccountKey(`auth_${index}`), {
+      id: `auth_${index}`,
+      ownerUserId: `passkey-user:${index}`,
+      provider: "chatgpt_codex",
+      encryptedAuthJson: "ciphertext",
+      status: "enabled",
+      pricing: null,
+      maxConcurrent: null,
+      health: null,
+      enabled: true,
+      labels: null,
+      createdAt: index,
+      updatedAt: index,
+    });
+  }
+
+  const page = await handleMarketplacePublicCatalog(
+    new Request("https://ai.ubq.fi/marketplace/auths?limit=2&cursor=opaque-cursor"),
+    { kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(page.status, 200);
+  const pageBody = await page.json() as { auths: unknown[]; next_cursor: string | null };
+  assert.equal(pageBody.auths.length, 2);
+  assert.equal(pageBody.next_cursor, null);
+
+  for (const value of ["0", "101", "1.5", "invalid"]) {
+    const invalid = await handleMarketplacePublicCatalog(
+      new Request(`https://ai.ubq.fi/marketplace/auths?limit=${value}`),
+      { kv: kv as unknown as Deno.Kv },
+    );
+    assert.equal(invalid.status, 400, value);
+    assert.equal((await invalid.json() as { error?: { param?: string } }).error?.param, "limit");
+  }
+});
+
 Deno.test("marketplace routes reject malformed ids without throwing", async () => {
   const response = await handler(new Request("https://ai.ubq.fi/marketplace/auths/%E0%A4%A", { method: "PATCH" }));
   assert.equal(response.status, 400);

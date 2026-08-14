@@ -7649,7 +7649,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
                 id: "chatcmpl_cerebras_fixture",
                 object: "chat.completion",
                 created: 1_728_000_000,
-                model: "cerebras/gpt-oss-120b",
+                model: "gpt-oss-120b",
                 choices: [{
                   index: 0,
                   message: {
@@ -7692,7 +7692,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
 
         assert.equal(response.status, 200);
         assert.deepEqual(upstreamCalls.map((call) => call.url), ["https://api.cerebras.ai/v1/chat/completions"]);
-        assert.deepEqual(upstreamCalls[0]?.body, canonicalBody);
+        assert.deepEqual(upstreamCalls[0]?.body, { ...canonicalBody, model: "gpt-oss-120b" });
         assert.equal(upstreamCalls[0]?.headers.get("Authorization"), `Bearer ${fakeApiKey}`);
         assert.equal(upstreamCalls[0]?.headers.get("Content-Type"), "application/json");
         const payload = await response.json() as {
@@ -7733,7 +7733,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         id: "chatcmpl_cerebras_delayed_body",
         object: "chat.completion",
         created: 1_728_000_000,
-        model: "cerebras/gpt-oss-120b",
+        model: "gpt-oss-120b",
         choices: [{
           index: 0,
           message: { role: "assistant", content: "Ready" },
@@ -7783,7 +7783,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
               id: "chatcmpl_cerebras_default_reasoning",
               object: "chat.completion",
               created: 1_728_000_001,
-              model: "cerebras/gpt-oss-120b",
+              model: "gpt-oss-120b",
               choices: [{
                 index: 0,
                 message: { role: "assistant", content: "Ready" },
@@ -7818,7 +7818,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
               id: "chatcmpl_cerebras_buffered_stream",
               object: "chat.completion",
               created: 1_728_000_004,
-              model: "cerebras/gpt-oss-120b",
+              model: "gpt-oss-120b",
               choices: [{
                 index: 0,
                 message: { role: "assistant", content: "Ready" },
@@ -7858,7 +7858,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
               id: "chatcmpl_cerebras_responses_bridge",
               object: "chat.completion",
               created: 1_728_000_005,
-              model: "cerebras/gpt-oss-120b",
+              model: "gpt-oss-120b",
               choices: [{
                 index: 0,
                 message: { role: "assistant", content: "Ready from Responses" },
@@ -7897,6 +7897,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.match(responsesText, /response\.completed/);
       assert.doesNotMatch(responsesText, /data: \[DONE\]/);
       assert.deepEqual(responsesUpstreamBodies[0]?.messages, [{ role: "user", content: "ping" }]);
+      assert.equal(responsesUpstreamBodies[0]?.model, "gpt-oss-120b");
       assert.equal(responsesUpstreamBodies[0]?.stream, false);
       assert.equal(responsesUpstreamBodies[0]?.reasoning_effort, "low");
       assert.equal(cerebrasCalls, 2);
@@ -7951,7 +7952,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
             id: "chatcmpl_cerebras_null_output_limit",
             object: "chat.completion",
             created: 1_728_000_006,
-            model: "cerebras/gpt-oss-120b",
+            model: "gpt-oss-120b",
             choices: [{
               index: 0,
               message: { role: "assistant", content: "Ready" },
@@ -7993,7 +7994,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
               id: "chatcmpl_cerebras_default_reasoning",
               object: "chat.completion",
               created: 1_728_000_007,
-              model: "cerebras/gpt-oss-120b",
+              model: "gpt-oss-120b",
               choices: [{
                 index: 0,
                 message: { role: "assistant", content: "Ready" },

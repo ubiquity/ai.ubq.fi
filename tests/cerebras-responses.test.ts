@@ -80,6 +80,15 @@ Deno.test("GPT-OSS Responses translation rejects multimodal input and unsupporte
   assert.equal(nestedFunction.ok, false);
   if (nestedFunction.ok) throw new Error("expected nested Chat tool rejection");
   assert.equal(nestedFunction.param, "tools[0].function");
+
+  const nestedToolChoice = buildCerebrasResponsesTranslation(
+    [{ type: "message", role: "user", content: [{ type: "input_text", text: "status" }] }],
+    undefined,
+    { tool_choice: { type: "function", function: { name: "status" } } },
+  );
+  assert.equal(nestedToolChoice.ok, false);
+  if (nestedToolChoice.ok) throw new Error("expected nested Chat tool-choice rejection");
+  assert.equal(nestedToolChoice.param, "tool_choice.function");
 });
 
 Deno.test("GPT-OSS Chat output becomes a Responses body and complete SSE", () => {

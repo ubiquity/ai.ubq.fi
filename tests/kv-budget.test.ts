@@ -1438,7 +1438,7 @@ Deno.test("unlimited GPT-OSS requests expose gateway timing without writing the 
       id: "chatcmpl_gateway_timing",
       object: "chat.completion",
       created: 1_728_000_000,
-      model: "cerebras/gpt-oss-120b",
+      model: "gpt-oss-120b",
       choices: [{
         index: 0,
         message: { role: "assistant", content: "Ready." },

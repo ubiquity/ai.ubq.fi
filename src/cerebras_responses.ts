@@ -230,8 +230,14 @@ export const responsesToolChoiceToChatToolChoice = (
   if (getString(value.type) !== "function") {
     return { ok: false, message: "tool_choice.type must be function", param: "tool_choice.type" };
   }
-  const nested = isRecord(value.function) && !Array.isArray(value.function) ? value.function : null;
-  const name = getString(value.name)?.trim() ?? getString(nested?.name)?.trim();
+  if (value.function !== undefined) {
+    return {
+      ok: false,
+      message: "tool_choice.function is not supported; use the flat Responses function choice shape",
+      param: "tool_choice.function",
+    };
+  }
+  const name = getString(value.name)?.trim();
   if (!name) return { ok: false, message: "tool_choice.name must be a non-empty string", param: "tool_choice.name" };
   return { ok: true, value: { type: "function", function: { name } } };
 };

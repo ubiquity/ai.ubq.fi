@@ -36,6 +36,8 @@ type MarketplaceDeps = Readonly<{
 
 const MUTABLE_FIELDS = new Set(["pricing", "maxConcurrent", "status", "enabled", "labels"]);
 const MARKETPLACE_AUTH_STATUSES = new Set(["enabled", "disabled", "error"]);
+const DEFAULT_PUBLIC_CATALOG_LIMIT = 50;
+const MAX_PUBLIC_CATALOG_LIMIT = 100;
 
 export const authAccountKey = (id: string) => ["ubq_ai", "marketplace", "auth_accounts", id] as const;
 export const authAccountByOwnerKey = (ownerUserId: string, id: string) =>
@@ -254,17 +256,31 @@ export const handleMarketplaceDisableAuth = async (
 };
 
 export const handleMarketplacePublicCatalog = async (
-  _req: Request,
+  req: Request,
   deps: MarketplaceDeps = {},
 ): Promise<Response> => {
+  const url = new URL(req.url);
+  const rawLimit = url.searchParams.get("limit");
+  const limit = rawLimit === null ? DEFAULT_PUBLIC_CATALOG_LIMIT : Number(rawLimit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PUBLIC_CATALOG_LIMIT) {
+    return withCors(
+      openaiError(
+        400,
+        `limit must be an integer between 1 and ${MAX_PUBLIC_CATALOG_LIMIT}`,
+        "invalid_request_error",
+        { param: "limit" },
+      ),
+    );
+  }
+  const cursor = url.searchParams.get("cursor")?.trim() || undefined;
   const kv = await resolveKv(deps);
   if (!kv) return unavailableKv();
   const accounts: Array<Record<string, unknown>> = [];
-  for await (
-    const entry of kv.list<MarketplaceAuthAccount>({
-      prefix: ["ubq_ai", "marketplace", "auth_accounts"],
-    })
-  ) {
+  const entries = kv.list<MarketplaceAuthAccount>(
+    { prefix: ["ubq_ai", "marketplace", "auth_accounts"] },
+    { limit, ...(cursor ? { cursor } : {}) },
+  );
+  for await (const entry of entries) {
     const account = entry.value;
     accounts.push({
       id: account.id,
@@ -276,6 +292,10 @@ export const handleMarketplacePublicCatalog = async (
       enabled: account.enabled,
       labels: account.labels,
     });
+    if (accounts.length >= limit) break;
   }
-  return withCors(json(200, { auths: accounts }));
+  return withCors(json(200, {
+    auths: accounts,
+    next_cursor: accounts.length === limit && entries.cursor ? entries.cursor : null,
+  }));
 };

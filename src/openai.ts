@@ -18,6 +18,7 @@ import {
 } from "./codex.ts";
 import {
   CEREBRAS_GPT_OSS_120B_MODEL,
+  CEREBRAS_GPT_OSS_120B_PROVIDER_MODEL,
   CerebrasError,
   fetchCerebrasChatCompletions,
   getCerebrasProviderRequestId,
@@ -6666,7 +6667,7 @@ const handleCerebrasChatCompletions = async (
   }
   const cerebrasBody: Record<string, unknown> = {
     ...rawRecord,
-    model: CEREBRAS_GPT_OSS_120B_MODEL,
+    model: CEREBRAS_GPT_OSS_120B_PROVIDER_MODEL,
     reasoning_effort: reasoning,
     stream: false,
     ...(typeof rawRecord.max_completion_tokens !== "number" && typeof rawRecord.max_tokens !== "number"
@@ -6760,7 +6761,7 @@ const handleCerebrasChatCompletions = async (
       { type: "server_error", headers: cerebrasResponseHeaders(providerRequestId) },
     );
   }
-  const normalized = normalizeCerebrasChatCompletion(payload, CEREBRAS_GPT_OSS_120B_MODEL);
+  const normalized = normalizeCerebrasChatCompletion(payload, CEREBRAS_GPT_OSS_120B_PROVIDER_MODEL);
   if (!normalized.ok) {
     recordStreamTerminalType(usageContext, "error");
     void recordCerebrasProviderHealth("upstream_error", upstream.status);
@@ -6772,6 +6773,7 @@ const handleCerebrasChatCompletions = async (
       { type: "server_error", headers: cerebrasResponseHeaders(providerRequestId) },
     );
   }
+  normalized.value.model = CEREBRAS_GPT_OSS_120B_MODEL;
 
   providerRequestId ??= normalizeCerebrasProviderRequestId(normalized.value.id);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
@@ -6866,7 +6868,7 @@ const handleCerebrasResponses = async (
   }
 
   const cerebrasBody: Record<string, unknown> = {
-    model: CEREBRAS_GPT_OSS_120B_MODEL,
+    model: CEREBRAS_GPT_OSS_120B_PROVIDER_MODEL,
     messages: translation.value.messages,
     reasoning_effort: reasoning,
     stream: false,
@@ -6981,7 +6983,7 @@ const handleCerebrasResponses = async (
       warnings,
     );
   }
-  const normalized = normalizeCerebrasChatCompletion(payload, CEREBRAS_GPT_OSS_120B_MODEL);
+  const normalized = normalizeCerebrasChatCompletion(payload, CEREBRAS_GPT_OSS_120B_PROVIDER_MODEL);
   if (!normalized.ok) {
     recordStreamTerminalType(usageContext, "error");
     void recordCerebrasProviderHealth("upstream_error", upstream.status);
@@ -6999,6 +7001,7 @@ const handleCerebrasResponses = async (
       warnings,
     );
   }
+  normalized.value.model = CEREBRAS_GPT_OSS_120B_MODEL;
 
   providerRequestId ??= normalizeCerebrasProviderRequestId(normalized.value.id);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
