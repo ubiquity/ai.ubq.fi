@@ -29,6 +29,19 @@ const ROUTING_CACHE_REVALIDATE_MS = 5_000;
 
 export type CodexQuotaBlockSource = "body_resets_at" | "header_retry_after";
 export type CodexProbeCircuit = "quota" | "upstream_timeout";
+export type CodexQuotaClass = "spark" | "gpt_oss_120b" | "standard" | "unknown";
+
+export type CodexQuotaClassBlock = Readonly<{
+  blocked_until_ms: number;
+  source: CodexQuotaBlockSource;
+  /** True when this entry is the synthetic fallback copied from legacy slot state. */
+  legacy_fallback: boolean;
+  quota_signal_observed_at_ms: number | null;
+  observed_reset_at_ms: number | null;
+  observed_reset_at_is_stable: boolean;
+  banked_reset_generation_ambiguous: boolean;
+  banked_reset_recovery_probe_pending: boolean;
+}>;
 
 export type CodexRoutingSlot = Readonly<{
   /** Opaque account-scope hash; durable state never stores a raw account id. */
@@ -36,6 +49,10 @@ export type CodexRoutingSlot = Readonly<{
   credential_version: string;
   quota_blocked_until_ms: number | null;
   quota_block_source: CodexQuotaBlockSource | null;
+  /** Separately metered model classes exhausted during the current quota circuit. */
+  quota_blocked_classes?: readonly string[];
+  /** Independent deadlines for each separately metered model class. */
+  quota_blocks_by_class?: Readonly<Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>>>;
   invalid_credential_version: string | null;
   primary_used_percent: number | null;
   secondary_used_percent: number | null;
@@ -65,6 +82,7 @@ export type CodexRoutingSlot = Readonly<{
       expires_at_ms: number;
       generation: number;
       circuit: CodexProbeCircuit;
+      quota_class?: CodexQuotaClass | null;
     }>
     | null;
 }>;
@@ -91,6 +109,8 @@ export type RoutingAccount = Readonly<{
   probeCircuit?: CodexProbeCircuit | null;
   /** Durable routing generation observed when this account was selected. */
   routingGeneration?: number;
+  /** Exact incoming model id used to keep separately metered pools independent. */
+  requestedModel?: string | null;
 }>;
 
 export type CodexCapacityRoutingWindow = Readonly<{
@@ -183,6 +203,40 @@ const hasUnresolvedLegacyResetIdentity = (state: CodexAccountRoutingState | null
   state?.banked_reset_legacy_identity_unresolved === true ||
   state?.slots.some(isLegacyStableResetIdentity) === true;
 
+const quotaClassBlockFieldsMatch = (left: Record<string, unknown>, right: Record<string, unknown>): boolean =>
+  left.blocked_until_ms === right.blocked_until_ms &&
+  left.source === right.source &&
+  left.quota_signal_observed_at_ms === right.quota_signal_observed_at_ms &&
+  left.observed_reset_at_ms === right.observed_reset_at_ms &&
+  left.observed_reset_at_is_stable === right.observed_reset_at_is_stable &&
+  left.banked_reset_generation_ambiguous === right.banked_reset_generation_ambiguous &&
+  left.banked_reset_recovery_probe_pending === right.banked_reset_recovery_probe_pending;
+
+/**
+ * The previous class-migration release copied an unclassified slot fence into
+ * every class, including `unknown`, without a marker. Recognize that exact
+ * all-class shape so a later class recovery does not retain a synthetic
+ * fallback forever. Explicitly marked entries are always authoritative.
+ */
+const hasUnmarkedSyntheticLegacyUnknown = (rawClassBlocks: Record<string, unknown>): boolean => {
+  const unknown = rawClassBlocks.unknown;
+  if (!isRecord(unknown) || "legacy_fallback" in unknown) return false;
+  const knownClassKeys = ["spark", "gpt_oss_120b", "standard"] as const;
+  if (
+    !knownClassKeys.every((key) => {
+      const candidate = rawClassBlocks[key];
+      return isRecord(candidate) && !("legacy_fallback" in candidate);
+    })
+  ) return false;
+  // The preceding migration copied one unmarked block into all four entries.
+  // Require every known entry to retain that exact shape; one matching class
+  // is not enough because independent 429s can share a deadline by chance.
+  return knownClassKeys.every((key) => {
+    const candidate = rawClassBlocks[key];
+    return isRecord(candidate) && quotaClassBlockFieldsMatch(candidate, unknown);
+  });
+};
+
 const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRoutingSlot | null => {
   if (!isRecord(value) || typeof value.credential_version !== "string") return null;
   const source = value.quota_block_source;
@@ -201,6 +255,10 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
       expires_at_ms: lease.expires_at_ms,
       generation: lease.generation,
       circuit: leaseCircuit,
+      quota_class: lease.quota_class === "spark" || lease.quota_class === "gpt_oss_120b" ||
+          lease.quota_class === "standard" || lease.quota_class === "unknown"
+        ? lease.quota_class as CodexQuotaClass
+        : null,
     }
     : null;
   if (lease !== null && !parsedLease) return null;
@@ -264,11 +322,48 @@ const parseSlot = (value: unknown, allowLegacyNeutralRepair: boolean): CodexRout
     ? false
     : value.banked_reset_generation_ambiguous !== false;
   const bankedResetRecoveryProbePending = value.banked_reset_recovery_probe_pending === true;
+  const quotaBlockedClasses = Array.isArray(value.quota_blocked_classes) &&
+      value.quota_blocked_classes.every((entry) => typeof entry === "string")
+    ? [...new Set(value.quota_blocked_classes as string[])]
+    : [];
+  const rawClassBlocks = isRecord(value.quota_blocks_by_class) ? value.quota_blocks_by_class : {};
+  const unmarkedSyntheticLegacyUnknown = hasUnmarkedSyntheticLegacyUnknown(rawClassBlocks);
+  const quotaBlocksByClass: Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>> = {};
+  for (const quotaClassKey of ["spark", "gpt_oss_120b", "standard", "unknown"] as const) {
+    const block = rawClassBlocks[quotaClassKey];
+    if (
+      isRecord(block) && isSafeMs(block.blocked_until_ms) &&
+      (block.source === "body_resets_at" || block.source === "header_retry_after")
+    ) {
+      quotaBlocksByClass[quotaClassKey] = {
+        blocked_until_ms: block.blocked_until_ms,
+        source: block.source,
+        legacy_fallback: block.legacy_fallback === true ||
+          (quotaClassKey === "unknown" && unmarkedSyntheticLegacyUnknown),
+        quota_signal_observed_at_ms: isSafeMs(block.quota_signal_observed_at_ms)
+          ? block.quota_signal_observed_at_ms
+          : null,
+        observed_reset_at_ms: isSafeMs(block.observed_reset_at_ms)
+          ? block.observed_reset_at_ms
+          : block.blocked_until_ms === observedResetAtMs && observedResetAtIsStable
+          ? observedResetAtMs
+          : null,
+        observed_reset_at_is_stable: block.observed_reset_at_is_stable === true ||
+          (block.blocked_until_ms === observedResetAtMs && observedResetAtIsStable),
+        banked_reset_generation_ambiguous: block.banked_reset_generation_ambiguous === true ||
+          (block.blocked_until_ms === observedResetAtMs && bankedResetGenerationAmbiguous),
+        banked_reset_recovery_probe_pending: block.banked_reset_recovery_probe_pending === true ||
+          (block.blocked_until_ms === observedResetAtMs && bankedResetRecoveryProbePending),
+      };
+    }
+  }
   return {
     account_id_hash: accountIdHash,
     credential_version: value.credential_version,
     quota_blocked_until_ms: quotaBlockedUntilMs,
     quota_block_source: source as CodexQuotaBlockSource | null,
+    quota_blocked_classes: quotaBlockedClasses,
+    quota_blocks_by_class: quotaBlocksByClass,
     invalid_credential_version: invalidCredentialVersion,
     primary_used_percent: typeof value.primary_used_percent === "number" && Number.isFinite(value.primary_used_percent)
       ? value.primary_used_percent
@@ -338,6 +433,8 @@ const neutralSlot = (credentialVersion: string, accountIdHash: string | null): C
   credential_version: credentialVersion,
   quota_blocked_until_ms: null,
   quota_block_source: null,
+  quota_blocked_classes: [],
+  quota_blocks_by_class: {},
   invalid_credential_version: null,
   primary_used_percent: null,
   secondary_used_percent: null,
@@ -367,19 +464,40 @@ const rotateCredentialForSameAccount = (
   identity: CodexRoutingAccountIdentity,
 ): CodexRoutingSlot => {
   const generation = slot.generation + 1;
+  const preservedBlock = Object.values(slot.quota_blocks_by_class ?? {}).reduce<CodexQuotaClassBlock | null>(
+    (latest, block) => !latest || block.blocked_until_ms > latest.blocked_until_ms ? block : latest,
+    slot.observed_reset_at_ms !== null && slot.quota_block_source !== null
+      ? {
+        blocked_until_ms: slot.quota_blocked_until_ms ?? slot.observed_reset_at_ms,
+        source: slot.quota_block_source,
+        legacy_fallback: true,
+        quota_signal_observed_at_ms: slot.quota_signal_observed_at_ms,
+        observed_reset_at_ms: slot.observed_reset_at_ms,
+        observed_reset_at_is_stable: slot.observed_reset_at_is_stable,
+        banked_reset_generation_ambiguous: slot.banked_reset_generation_ambiguous,
+        banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending,
+      }
+      : null,
+  );
   return {
     ...slot,
     account_id_hash: identity.accountIdHash,
     credential_version: identity.credentialVersion,
     quota_blocked_until_ms: null,
     quota_block_source: null,
+    quota_blocked_classes: [],
+    quota_blocks_by_class: {},
     invalid_credential_version: null,
     primary_used_percent: null,
     secondary_used_percent: null,
     quota_signal_observed_at_ms: null,
     capacity_observed_at_ms: null,
-    banked_reset_generation_ambiguous: preservesStableResetIdentity(slot),
-    banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending,
+    observed_reset_at_ms: preservedBlock?.observed_reset_at_ms ?? null,
+    observed_reset_at_is_stable: preservedBlock?.observed_reset_at_is_stable ?? false,
+    banked_reset_generation_ambiguous: preservesStableResetIdentity(slot) ||
+      preservedBlock?.banked_reset_generation_ambiguous === true,
+    banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending ||
+      preservedBlock?.banked_reset_recovery_probe_pending === true,
     generation,
     // A refresh does not end an already-dispatched half-open probe. Transfer
     // its lease to the new credential and fence completions to this generation.
@@ -600,7 +718,10 @@ const probeLeaseMatchesRoutingAccount = (slot: CodexRoutingSlot, account: Routin
   slot.generation === account.probeGeneration &&
   slot.probe_lease?.generation === account.probeGeneration &&
   slot.probe_lease?.token === account.probeToken &&
-  slot.probe_lease?.circuit === routingProbeCircuit(account);
+  slot.probe_lease?.circuit === routingProbeCircuit(account) &&
+  (routingProbeCircuit(account) !== "quota" ||
+    slot.probe_lease?.quota_class === null || slot.probe_lease?.quota_class === undefined ||
+    slot.probe_lease.quota_class === quotaClass(account.requestedModel));
 
 const withSlot = (
   state: CodexAccountRoutingState,
@@ -695,6 +816,219 @@ const capacityHeadroomForWindows = (
 
 const normalizeQuotaLabel = (value: string | null | undefined): string =>
   typeof value === "string" ? value.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+
+const quotaClass = (model: string | null | undefined): CodexQuotaClass => {
+  const normalized = typeof model === "string" ? model.trim().toLowerCase() : "";
+  if (normalized === "gpt-5.3-codex-spark") return "spark";
+  if (normalized === "gpt-oss-120b") return "gpt_oss_120b";
+  return normalized ? "standard" : "unknown";
+};
+
+export const codexQuotaClassForModel = quotaClass;
+
+const quotaBlockForClass = (
+  slot: CodexRoutingSlot,
+  quotaClassKey: CodexQuotaClass,
+): CodexQuotaClassBlock | null => {
+  const exact = slot.quota_blocks_by_class?.[quotaClassKey];
+  const unknown = quotaClassKey === "unknown" ? null : slot.quota_blocks_by_class?.unknown;
+  const legacyClasses = slot.quota_blocked_classes ?? [];
+  const hasClassMap = Object.keys(slot.quota_blocks_by_class ?? {}).length > 0;
+  // Records written before class-aware routing have only a slot-wide deadline
+  // plus the classes observed so far. Preserve those named blocks during the
+  // one-time migration instead of dispatching directly into a known circuit.
+  const legacy = !hasClassMap && slot.quota_blocked_until_ms !== null && slot.quota_block_source !== null &&
+      (legacyClasses.length === 0 || quotaClassKey === "unknown" || legacyClasses.includes("unknown") ||
+        legacyClasses.includes(quotaClassKey))
+    ? {
+      blocked_until_ms: slot.quota_blocked_until_ms,
+      source: slot.quota_block_source,
+      legacy_fallback: true,
+      quota_signal_observed_at_ms: slot.quota_signal_observed_at_ms,
+      observed_reset_at_ms: slot.observed_reset_at_ms,
+      observed_reset_at_is_stable: slot.observed_reset_at_is_stable,
+      banked_reset_generation_ambiguous: slot.banked_reset_generation_ambiguous,
+      banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending,
+    }
+    : null;
+  return [exact, unknown, legacy].filter((block): block is CodexQuotaClassBlock =>
+    block !== null && block !== undefined
+  )
+    .reduce<CodexQuotaClassBlock | null>(
+      (latest, block) => !latest || block.blocked_until_ms > latest.blocked_until_ms ? block : latest,
+      null,
+    );
+};
+
+const quotaClassKeys = ["spark", "gpt_oss_120b", "standard", "unknown"] as const;
+
+const isQuotaClassKey = (value: string): value is CodexQuotaClass =>
+  (quotaClassKeys as readonly string[]).includes(value);
+
+const quotaBlocksIncludingLegacy = (
+  slot: CodexRoutingSlot,
+): Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>> => {
+  const blocks = { ...slot.quota_blocks_by_class };
+  if (slot.quota_blocked_until_ms === null || slot.quota_block_source === null) return blocks;
+  const legacyClasses = (slot.quota_blocked_classes ?? []).filter(isQuotaClassKey);
+  // An unclassified legacy deadline is conservatively copied to every quota
+  // class so clearing one class cannot release the other separately metered
+  // pools. The synthetic unknown entry remains the slot-wide fallback for
+  // callers that do not provide a model.
+  const classes = legacyClasses.length ? legacyClasses : quotaClassKeys;
+  const legacyBlock: CodexQuotaClassBlock = {
+    blocked_until_ms: slot.quota_blocked_until_ms,
+    source: slot.quota_block_source,
+    legacy_fallback: true,
+    quota_signal_observed_at_ms: slot.quota_signal_observed_at_ms,
+    observed_reset_at_ms: slot.observed_reset_at_ms,
+    observed_reset_at_is_stable: slot.observed_reset_at_is_stable,
+    banked_reset_generation_ambiguous: slot.banked_reset_generation_ambiguous,
+    banked_reset_recovery_probe_pending: slot.banked_reset_recovery_probe_pending,
+  };
+  for (const quotaClassKey of classes) {
+    if (blocks[quotaClassKey] === undefined) blocks[quotaClassKey] = legacyBlock;
+  }
+  return blocks;
+};
+
+const withLegacyQuotaClassMap = (slot: CodexRoutingSlot): CodexRoutingSlot => {
+  const quotaBlocksByClass = quotaBlocksIncludingLegacy(slot);
+  return Object.keys(quotaBlocksByClass).length === 0 ? slot : {
+    ...slot,
+    quota_blocks_by_class: quotaBlocksByClass,
+    quota_blocked_classes: Object.keys(quotaBlocksByClass),
+  };
+};
+
+const quotaBlocksForClass = (
+  slot: CodexRoutingSlot,
+  quotaClassKey: CodexQuotaClass,
+): readonly CodexQuotaClassBlock[] => {
+  const classAwareSlot = withLegacyQuotaClassMap(slot);
+  const candidates = [
+    classAwareSlot.quota_blocks_by_class?.[quotaClassKey],
+    quotaClassKey === "unknown" ? undefined : classAwareSlot.quota_blocks_by_class?.unknown,
+  ].filter((block): block is CodexQuotaClassBlock => block !== undefined);
+  return candidates.filter((block, index) => candidates.indexOf(block) === index);
+};
+
+const quotaSignalObservedAtForClass = (
+  slot: CodexRoutingSlot,
+  quotaClassKey: CodexQuotaClass,
+): number | null => {
+  const signals = quotaBlocksForClass(slot, quotaClassKey)
+    .map((block) => block.quota_signal_observed_at_ms ?? slot.quota_signal_observed_at_ms)
+    .filter((value): value is number => value !== null);
+  return signals.length ? Math.max(...signals) : slot.quota_signal_observed_at_ms;
+};
+
+const quotaBlockKeyForClass = (
+  slot: CodexRoutingSlot,
+  quotaClassKey: CodexQuotaClass,
+): CodexQuotaClass | null => {
+  const block = quotaBlockForClass(slot, quotaClassKey);
+  if (!block) return null;
+  const blocks = slot.quota_blocks_by_class ?? {};
+  if (blocks[quotaClassKey] === block) return quotaClassKey;
+  // An independent unknown fence protects every model class. A known-class
+  // recovery can release the shared fallback only when migration marked it as
+  // a synthetic copy of the legacy slot-wide fence.
+  if (quotaClassKey !== "unknown" && blocks.unknown === block && block.legacy_fallback === true) return "unknown";
+  return null;
+};
+
+export const codexQuotaBlockForModel = (
+  slot: CodexRoutingSlot,
+  model: string | null | undefined,
+): CodexQuotaClassBlock | null => quotaBlockForClass(slot, quotaClass(model));
+
+const withoutQuotaClass = (slot: CodexRoutingSlot, quotaClassKey: CodexQuotaClass): CodexRoutingSlot => {
+  const quotaBlocksByClass = { ...slot.quota_blocks_by_class };
+  const unknownBlock = quotaBlocksByClass.unknown;
+  delete quotaBlocksByClass[quotaClassKey];
+  if (quotaClassKey !== "unknown" && unknownBlock?.legacy_fallback === true) {
+    delete quotaBlocksByClass.unknown;
+  }
+  const remaining = Object.values(quotaBlocksByClass);
+  const latest = remaining.reduce<CodexQuotaClassBlock | null>(
+    (candidate, block) => !candidate || block.blocked_until_ms > candidate.blocked_until_ms ? block : candidate,
+    null,
+  );
+  const observedQuotaSignals = remaining
+    .map((block) => block.quota_signal_observed_at_ms)
+    .filter((value): value is number => value !== null);
+  const latestQuotaSignalObservedAtMs = observedQuotaSignals.length
+    ? Math.max(...observedQuotaSignals)
+    : slot.quota_signal_observed_at_ms;
+  return {
+    ...slot,
+    quota_blocks_by_class: quotaBlocksByClass,
+    quota_blocked_classes: Object.keys(quotaBlocksByClass),
+    quota_blocked_until_ms: latest?.blocked_until_ms ?? null,
+    quota_block_source: latest?.source ?? null,
+    quota_signal_observed_at_ms: latestQuotaSignalObservedAtMs,
+    observed_reset_at_ms: latest?.observed_reset_at_ms ?? null,
+    observed_reset_at_is_stable: latest?.observed_reset_at_is_stable ?? false,
+    banked_reset_generation_ambiguous: remaining.some((block) => block.banked_reset_generation_ambiguous),
+    banked_reset_recovery_probe_pending: remaining.some((block) => block.banked_reset_recovery_probe_pending),
+  };
+};
+
+const recheckQuotaClasses = (slot: CodexRoutingSlot, recheckAtMs: number): CodexRoutingSlot => {
+  if (Object.keys(slot.quota_blocks_by_class ?? {}).length === 0) {
+    return {
+      ...slot,
+      // Preserve the legacy class list until a model-specific transition can
+      // migrate it. Rechecking must not erase the only evidence that names
+      // which old quota pool was blocked.
+      quota_blocked_until_ms: slot.quota_blocked_until_ms === null ? null : recheckAtMs,
+      banked_reset_generation_ambiguous: slot.quota_blocked_until_ms !== null ||
+        slot.banked_reset_generation_ambiguous,
+    };
+  }
+  const quotaBlocksByClass = Object.fromEntries(
+    Object.entries(slot.quota_blocks_by_class ?? {}).map(([key, block]) => [
+      key,
+      {
+        ...block,
+        blocked_until_ms: recheckAtMs,
+        quota_signal_observed_at_ms: recheckAtMs,
+        banked_reset_generation_ambiguous: true,
+      },
+    ]),
+  ) as Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>>;
+  const latest = Object.values(quotaBlocksByClass).reduce<CodexQuotaClassBlock | null>(
+    (candidate, block) => !candidate || block.blocked_until_ms > candidate.blocked_until_ms ? block : candidate,
+    null,
+  );
+  return {
+    ...slot,
+    quota_blocked_until_ms: latest?.blocked_until_ms ?? (slot.quota_blocked_until_ms ? recheckAtMs : null),
+    quota_block_source: latest?.source ?? slot.quota_block_source,
+    quota_blocked_classes: Object.keys(quotaBlocksByClass),
+    quota_blocks_by_class: quotaBlocksByClass,
+    observed_reset_at_ms: latest?.observed_reset_at_ms ?? slot.observed_reset_at_ms,
+    observed_reset_at_is_stable: latest?.observed_reset_at_is_stable ?? slot.observed_reset_at_is_stable,
+  };
+};
+
+const releaseQuotaClassProbe = (slot: CodexRoutingSlot, quotaClassKey: CodexQuotaClass): CodexRoutingSlot => {
+  const classAwareSlot = withLegacyQuotaClassMap(slot);
+  const block = quotaBlockForClass(classAwareSlot, quotaClassKey);
+  const released = withoutQuotaClass(
+    classAwareSlot,
+    quotaBlockKeyForClass(classAwareSlot, quotaClassKey) ?? quotaClassKey,
+  );
+  if (!classAwareSlot.banked_reset_recovery_probe_pending) return released;
+  return {
+    ...released,
+    observed_reset_at_ms: block?.observed_reset_at_ms ?? slot.observed_reset_at_ms,
+    observed_reset_at_is_stable: block?.observed_reset_at_is_stable ?? slot.observed_reset_at_is_stable,
+    banked_reset_generation_ambiguous: true,
+    banked_reset_recovery_probe_pending: released.banked_reset_recovery_probe_pending,
+  };
+};
 
 const capacityHeadroomForObservation = (
   observation: CodexCapacityRoutingObservation,
@@ -908,30 +1242,48 @@ const applyCapacityObservation = (
   ) return null;
   const fresh = capacityObservationIsFresh(observation, now);
   const capacityPositive = fresh && capacityHasAnyPositiveHeadroom(observation, model);
-  const newerQuotaSignal = current.quota_signal_observed_at_ms !== null &&
-    current.quota_signal_observed_at_ms >= observation.snapshot_at_ms;
+  const requestedQuotaClass = quotaClass(model);
+  const classAwareCurrent = withLegacyQuotaClassMap(current);
+  const classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareCurrent, requestedQuotaClass);
+  const newerQuotaSignal = classQuotaSignalObservedAtMs !== null &&
+    classQuotaSignalObservedAtMs >= observation.snapshot_at_ms;
   const clearCircuit = capacityPositive && !newerQuotaSignal;
   const preserveResetSafety = current.banked_reset_generation_ambiguous ||
     current.banked_reset_recovery_probe_pending || current.probe_lease !== null;
+  const capacityClearedSlot = clearCircuit
+    ? withoutQuotaClass(
+      classAwareCurrent,
+      quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass) ?? requestedQuotaClass,
+    )
+    : current;
+  const clearedAllQuotaClasses = Object.keys(capacityClearedSlot.quota_blocks_by_class ?? {}).length === 0;
   const nextSlot: CodexRoutingSlot = {
-    ...current,
+    ...capacityClearedSlot,
     primary_used_percent: observation.windows.primary?.used_percent ?? null,
     secondary_used_percent: observation.windows.secondary?.used_percent ?? null,
     capacity_observed_at_ms: observation.snapshot_at_ms,
     ...(clearCircuit
       ? {
         account_id_hash: observation.account_id_hash,
-        quota_blocked_until_ms: null,
-        quota_block_source: null,
         invalid_credential_version: null,
-        ...(preserveResetSafety ? {} : {
-          observed_reset_at_ms: null,
-          observed_reset_at_is_stable: false,
-          banked_reset_generation_ambiguous: false,
-          banked_reset_recovery_probe_pending: false,
-          generation: current.generation + 1,
-          probe_lease: null,
-        }),
+        ...(preserveResetSafety
+          ? {
+            observed_reset_at_ms: current.observed_reset_at_ms,
+            observed_reset_at_is_stable: current.observed_reset_at_is_stable,
+            banked_reset_generation_ambiguous: current.banked_reset_generation_ambiguous,
+            banked_reset_recovery_probe_pending: current.banked_reset_recovery_probe_pending,
+            probe_lease: current.probe_lease,
+          }
+          : !clearedAllQuotaClasses
+          ? {}
+          : {
+            observed_reset_at_ms: null,
+            observed_reset_at_is_stable: false,
+            banked_reset_generation_ambiguous: false,
+            banked_reset_recovery_probe_pending: false,
+            generation: current.generation + 1,
+            probe_lease: null,
+          }),
       }
       : {}),
   };
@@ -1291,13 +1643,18 @@ const markCodexQuotaBlockedWithMode = async (
           !slotMatchesRoutingAccount(current, account) ||
           !probeLeaseMatchesRoutingAccount(current, account)
         ) return null;
+        const released = routingProbeCircuit(account) === "quota"
+          ? releaseQuotaClassProbe(current, quotaClass(account.requestedModel))
+          : current;
         return withSlot(state, account.slot, {
-          ...current,
+          ...released,
           account_id_hash: account.accountIdHash,
-          quota_blocked_until_ms: null,
-          quota_block_source: null,
-          upstream_timeout_blocked_until_ms: null,
-          banked_reset_recovery_probe_pending: false,
+          upstream_timeout_blocked_until_ms: routingProbeCircuit(account) === "upstream_timeout"
+            ? null
+            : current.upstream_timeout_blocked_until_ms,
+          banked_reset_recovery_probe_pending: routingProbeCircuit(account) === "quota"
+            ? released.banked_reset_recovery_probe_pending
+            : current.banked_reset_recovery_probe_pending,
           probe_lease: null,
         });
       });
@@ -1307,11 +1664,21 @@ const markCodexQuotaBlockedWithMode = async (
   await updateRoutingState((state) => {
     const current = slotFor(state, account);
     if (!slotMatchesRoutingAccount(current, account)) return null;
+    const blockedQuotaClass = quotaClass(account.requestedModel);
+    const foreignQuotaProbe = account.probeGeneration === null &&
+      current.probe_lease?.circuit === "quota" &&
+      current.probe_lease.quota_class !== null &&
+      current.probe_lease.quota_class !== undefined &&
+      current.probe_lease.quota_class !== blockedQuotaClass;
     // An ordinary request can predate a foreign half-open claim. It must not
     // replace that lease or admit a parallel probe.
-    if (account.probeGeneration === null && current.probe_lease !== null) return null;
+    if (account.probeGeneration === null && current.probe_lease !== null && !foreignQuotaProbe) return null;
     if (account.probeGeneration !== null && !probeLeaseMatchesRoutingAccount(current, account)) return null;
-    const priorDeadline = current.quota_blocked_until_ms ?? 0;
+    const quotaBlocksBeforeUpdate = quotaBlocksIncludingLegacy(current);
+    const classAwareCurrent = { ...current, quota_blocks_by_class: quotaBlocksBeforeUpdate };
+    const priorClassBlock = quotaBlockForClass(classAwareCurrent, blockedQuotaClass);
+    const priorDeadline = priorClassBlock?.blocked_until_ms ?? 0;
+    const hasClassBlocks = Object.keys(quotaBlocksBeforeUpdate).length > 0;
     const priorTimeout = current.upstream_timeout_blocked_until_ms ?? 0;
     const boundedRecoveryProbe = recoveryProbe ||
       (current.banked_reset_recovery_probe_pending && account.probeGeneration !== null);
@@ -1322,7 +1689,11 @@ const markCodexQuotaBlockedWithMode = async (
     // record prevents this path from spending another reset for the same quota
     // episode.
     const deadline = boundedRecoveryProbe ? now + CODEX_HALF_OPEN_LEASE_MS : Math.max(priorDeadline, retryAtMs);
-    const hasStableObservation = current.observed_reset_at_ms !== null && current.observed_reset_at_is_stable;
+    const priorObservedResetAtMs = priorClassBlock?.observed_reset_at_ms ??
+      (!hasClassBlocks ? current.observed_reset_at_ms : null);
+    const priorObservedResetIsStable = priorClassBlock?.observed_reset_at_is_stable ??
+      (!hasClassBlocks && current.observed_reset_at_is_stable);
+    const hasStableObservation = priorObservedResetAtMs !== null && priorObservedResetIsStable;
     // A stable absolute deadline is not by itself a provider-proven new
     // quota-window generation.
     // Once a stable observation exists, a changed date *or any later relative
@@ -1330,41 +1701,66 @@ const markCodexQuotaBlockedWithMode = async (
     // stable observation lookup-only and fence claims until a successful
     // half-open probe clears it. Expiry and administrative rechecks are not
     // proof that the provider advanced the quota generation.
-    const generationAmbiguous = boundedRecoveryProbe || current.banked_reset_generation_ambiguous ||
+    const generationAmbiguous = boundedRecoveryProbe || priorClassBlock?.banked_reset_generation_ambiguous === true ||
+      (!hasClassBlocks && current.banked_reset_generation_ambiguous) ||
       parsed.resetDeadlineConflict ||
       (hasStableObservation &&
-        (!parsed.resetDeadlineIsStable || retryAtMs !== current.observed_reset_at_ms));
+        (!parsed.resetDeadlineIsStable || retryAtMs !== priorObservedResetAtMs));
     const preserveStableObservation = hasStableObservation && generationAmbiguous;
     // The reset observation must describe the actual circuit deadline. A
     // shorter later Retry-After cannot overwrite the identity of an earlier,
     // longer block and thereby let a stale reset clear that longer circuit.
     const observedResetAtMs = preserveStableObservation
-      ? current.observed_reset_at_ms
+      ? priorObservedResetAtMs
       : retryAtMs >= priorDeadline
       ? retryAtMs
-      : current.observed_reset_at_ms;
+      : priorObservedResetAtMs;
     const observedResetAtIsStable = preserveStableObservation
-      ? current.observed_reset_at_is_stable
+      ? priorObservedResetIsStable
       : retryAtMs >= priorDeadline
       ? parsed.resetDeadlineIsStable
-      : current.observed_reset_at_is_stable;
+      : priorObservedResetIsStable;
+    const quotaBlocksByClass = {
+      ...quotaBlocksBeforeUpdate,
+      [blockedQuotaClass]: {
+        blocked_until_ms: deadline,
+        source: quotaBlockSource,
+        legacy_fallback: false,
+        quota_signal_observed_at_ms: now,
+        observed_reset_at_ms: observedResetAtMs,
+        observed_reset_at_is_stable: observedResetAtIsStable,
+        banked_reset_generation_ambiguous: generationAmbiguous,
+        banked_reset_recovery_probe_pending: priorClassBlock?.banked_reset_recovery_probe_pending === true ||
+          recoveryProbe,
+      },
+    };
+    const latestClassBlock = Object.values(quotaBlocksByClass).reduce<CodexQuotaClassBlock>(
+      (latest, block) => block.blocked_until_ms > latest.blocked_until_ms ? block : latest,
+      quotaBlocksByClass[blockedQuotaClass]!,
+    );
     const nextSlot: CodexRoutingSlot = {
       ...current,
       account_id_hash: account.accountIdHash,
-      quota_blocked_until_ms: deadline,
-      quota_block_source: quotaBlockSource,
+      quota_blocked_until_ms: latestClassBlock.blocked_until_ms,
+      quota_block_source: latestClassBlock.source,
+      quota_blocked_classes: Object.keys(quotaBlocksByClass),
+      quota_blocks_by_class: quotaBlocksByClass,
       upstream_timeout_blocked_until_ms: priorTimeout > now ? priorTimeout : null,
       quota_signal_observed_at_ms: now,
       primary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-primary-used-percent")) ??
         current.primary_used_percent,
       secondary_used_percent: parseFinitePercent(parsed.response.headers.get("x-codex-secondary-used-percent")) ??
         current.secondary_used_percent,
-      observed_reset_at_ms: observedResetAtMs,
-      observed_reset_at_is_stable: observedResetAtIsStable,
-      banked_reset_generation_ambiguous: generationAmbiguous,
-      banked_reset_recovery_probe_pending: current.banked_reset_recovery_probe_pending || recoveryProbe,
-      generation: current.generation + 1,
-      probe_lease: null,
+      observed_reset_at_ms: latestClassBlock.observed_reset_at_ms,
+      observed_reset_at_is_stable: latestClassBlock.observed_reset_at_is_stable,
+      banked_reset_generation_ambiguous: Object.values(quotaBlocksByClass).some((block) =>
+        block.banked_reset_generation_ambiguous
+      ),
+      banked_reset_recovery_probe_pending: Object.values(quotaBlocksByClass).some((block) =>
+        block.banked_reset_recovery_probe_pending
+      ),
+      generation: foreignQuotaProbe ? current.generation : current.generation + 1,
+      probe_lease: foreignQuotaProbe ? current.probe_lease : null,
     };
     return withSlot(state, account.slot, nextSlot);
   });
@@ -1425,6 +1821,8 @@ export const markCodexCredentialInvalid = async (account: RoutingAccount): Promi
       account_id_hash: account.accountIdHash,
       quota_blocked_until_ms: null,
       quota_block_source: null,
+      quota_blocked_classes: [],
+      quota_blocks_by_class: {},
       upstream_timeout_blocked_until_ms: null,
       invalid_credential_version: account.credentialVersion,
       quota_signal_observed_at_ms: now,
@@ -1498,12 +1896,15 @@ export const releaseCodexRoutingProbe = async (account: RoutingAccount): Promise
       !slotMatchesRoutingAccount(current, account) ||
       !probeLeaseMatchesRoutingAccount(current, account)
     ) return null;
+    const released = routingProbeCircuit(account) === "quota"
+      ? releaseQuotaClassProbe(current, quotaClass(account.requestedModel))
+      : current;
     return withSlot(state, account.slot, {
-      ...current,
+      ...released,
       account_id_hash: account.accountIdHash,
-      quota_blocked_until_ms: null,
-      quota_block_source: null,
-      upstream_timeout_blocked_until_ms: null,
+      upstream_timeout_blocked_until_ms: routingProbeCircuit(account) === "upstream_timeout"
+        ? null
+        : current.upstream_timeout_blocked_until_ms,
       probe_lease: null,
     });
   });
@@ -1518,16 +1919,25 @@ export const markCodexSuccess = async (account: RoutingAccount): Promise<void> =
       !slotMatchesRoutingAccount(current, account) ||
       !probeLeaseMatchesRoutingAccount(current, account)
     ) return null;
+    const classAwareCurrent = withLegacyQuotaClassMap(current);
+    const released = routingProbeCircuit(account) === "quota"
+      ? withoutQuotaClass(
+        classAwareCurrent,
+        quotaBlockKeyForClass(classAwareCurrent, quotaClass(account.requestedModel)) ??
+          quotaClass(account.requestedModel),
+      )
+      : current;
+    const hasOtherQuotaClasses = Object.keys(released.quota_blocks_by_class ?? {}).length > 0;
     return withSlot(state, account.slot, {
-      ...current,
+      ...released,
       account_id_hash: account.accountIdHash,
-      quota_blocked_until_ms: null,
-      quota_block_source: null,
-      upstream_timeout_blocked_until_ms: null,
-      observed_reset_at_ms: null,
-      observed_reset_at_is_stable: false,
-      banked_reset_generation_ambiguous: false,
-      banked_reset_recovery_probe_pending: false,
+      upstream_timeout_blocked_until_ms: routingProbeCircuit(account) === "upstream_timeout"
+        ? null
+        : current.upstream_timeout_blocked_until_ms,
+      observed_reset_at_ms: hasOtherQuotaClasses ? released.observed_reset_at_ms : null,
+      observed_reset_at_is_stable: hasOtherQuotaClasses ? released.observed_reset_at_is_stable : false,
+      banked_reset_generation_ambiguous: hasOtherQuotaClasses ? released.banked_reset_generation_ambiguous : false,
+      banked_reset_recovery_probe_pending: hasOtherQuotaClasses ? released.banked_reset_recovery_probe_pending : false,
       probe_lease: null,
     });
   });
@@ -1550,14 +1960,16 @@ export const isCodexQuotaBlockFenceCurrent = (
   ) return false;
   const state = parseCodexAccountRoutingState(value);
   const current = state?.slots[account.slot];
+  const classBlock = current ? quotaBlockForClass(current, quotaClass(account.requestedModel)) : null;
   return !hasUnresolvedLegacyResetIdentity(state) && current?.credential_version === account.credentialVersion &&
     current.account_id_hash === account.accountIdHash &&
     current.generation === routingGeneration &&
-    (current.quota_block_source === "body_resets_at" || current.quota_block_source === "header_retry_after") &&
-    current.observed_reset_at_ms === quotaResetAtMs &&
-    current.observed_reset_at_is_stable === true &&
-    current.banked_reset_generation_ambiguous === false &&
-    current.quota_blocked_until_ms === quotaResetAtMs;
+    classBlock !== null &&
+    (classBlock.source === "body_resets_at" || classBlock.source === "header_retry_after") &&
+    classBlock.observed_reset_at_ms === quotaResetAtMs &&
+    classBlock.observed_reset_at_is_stable === true &&
+    classBlock.banked_reset_generation_ambiguous === false &&
+    classBlock.blocked_until_ms === quotaResetAtMs;
 };
 
 /**
@@ -1681,17 +2093,24 @@ const reconcileCodexQuotaAfterProbe = async (
         expires_at_ms: probeExpiresAtMs,
         generation: nextGeneration,
         circuit: "quota" as const,
+        quota_class: quotaClass(account.requestedModel),
       };
+      const requestedQuotaClass = quotaClass(account.requestedModel);
+      const classAwareCurrent = withLegacyQuotaClassMap(current);
+      const releasedClassBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
+      const released = withoutQuotaClass(
+        classAwareCurrent,
+        quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass) ?? requestedQuotaClass,
+      );
       const next = withSlot(state, account.slot, {
-        ...current,
-        quota_blocked_until_ms: null,
-        quota_block_source: null,
+        ...released,
         // The verified reset makes normal routing eligible, but an absolute
         // Retry-After cannot prove whether a delayed response names this old
         // window or a new one. Keep the observation lookup-only until a
         // recovery probe independently proves the circuit healthy.
-        observed_reset_at_ms: current.observed_reset_at_ms,
-        observed_reset_at_is_stable: current.observed_reset_at_is_stable,
+        observed_reset_at_ms: releasedClassBlock?.observed_reset_at_ms ?? current.observed_reset_at_ms,
+        observed_reset_at_is_stable: releasedClassBlock?.observed_reset_at_is_stable ??
+          current.observed_reset_at_is_stable,
         banked_reset_generation_ambiguous: true,
         banked_reset_recovery_probe_pending: true,
         generation: nextGeneration,
@@ -1761,11 +2180,15 @@ export const reconcileCodexQuotaAfterStaleVerifiedReset = async (
       current.credential_version === account.credentialVersion &&
       current.generation === input.routingGeneration &&
       current.invalid_credential_version !== account.credentialVersion &&
-      current.quota_blocked_until_ms !== null &&
-      current.quota_blocked_until_ms >= input.quotaResetAtMs &&
-      current.observed_reset_at_ms === input.quotaResetAtMs &&
-      current.observed_reset_at_is_stable &&
-      (current.quota_block_source === "body_resets_at" || current.quota_block_source === "header_retry_after") &&
+      (() => {
+        const requestedClass = quotaClass(account.requestedModel);
+        const classBlock = quotaBlockForClass(current, requestedClass);
+        const legacyDeadline = requestedClass === "unknown" ? current.quota_blocked_until_ms ?? 0 : 0;
+        return classBlock !== null && Math.max(classBlock.blocked_until_ms, legacyDeadline) >= input.quotaResetAtMs &&
+          classBlock.observed_reset_at_ms === input.quotaResetAtMs &&
+          classBlock.observed_reset_at_is_stable &&
+          (classBlock.source === "body_resets_at" || classBlock.source === "header_retry_after");
+      })() &&
       (current.probe_lease?.expires_at_ms ?? 0) <= nowMs,
   );
 };
@@ -1779,18 +2202,23 @@ const claimExpiredProbe = async (
     base: CodexAccountRoutingState,
   ): { next: CodexAccountRoutingState; lease: CodexRoutingSlot["probe_lease"] } | null => {
     const current = slotFor(base, account);
+    const circuit = routingProbeCircuit(account);
+    const requestedQuotaClass = quotaClass(account.requestedModel);
+    const circuitDeadline = circuit === "upstream_timeout"
+      ? current.upstream_timeout_blocked_until_ms
+      : quotaBlockForClass(current, requestedQuotaClass)?.blocked_until_ms;
     if (
       !slotMatchesRoutingAccount(current, account) ||
       current.invalid_credential_version === account.credentialVersion ||
-      (!current.quota_blocked_until_ms && !current.upstream_timeout_blocked_until_ms) ||
-      Math.max(current.quota_blocked_until_ms ?? 0, current.upstream_timeout_blocked_until_ms ?? 0) > now ||
+      !circuitDeadline || circuitDeadline > now ||
       (current.probe_lease?.expires_at_ms ?? 0) > now
     ) return null;
     const lease = {
       token: crypto.randomUUID(),
       expires_at_ms: now + CODEX_HALF_OPEN_LEASE_MS,
       generation: current.generation,
-      circuit: routingProbeCircuit(account),
+      circuit,
+      quota_class: circuit === "quota" ? requestedQuotaClass : null,
     };
     return {
       next: withSlot(base, account.slot, {
@@ -1897,18 +2325,23 @@ const selectCodexRoutingAccountsFromState = async (
       probeGeneration: null,
       probeToken: null,
       probeCircuit: null,
+      requestedModel: model,
     };
     const storedSlot = slotFor(state, account);
     const slot = slotMatchesRoutingAccount(storedSlot, account)
       ? storedSlot
       : neutralSlot(account.credentialVersion, account.accountIdHash);
+    const requestedQuotaClass = quotaClass(model);
+    const classAwareSlot = withLegacyQuotaClassMap(slot);
+    const requestedClassBlock = quotaBlockForClass(classAwareSlot, requestedQuotaClass);
     const capacityObservation = observationsByAccount.get(account.accountIdHash);
     const freshCapacity = capacityObservation !== undefined && capacityObservationIsFresh(capacityObservation, now);
     const observedCapacityHeadroom = freshCapacity ? capacityHeadroomForObservation(capacityObservation!, model) : null;
     const quotaHeadroom = freshCapacity ? observedCapacityHeadroom : quotaHeadroomFor(slot);
+    const classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareSlot, requestedQuotaClass);
     const quotaSignalNewer = capacityObservation?.snapshot_at_ms !== undefined &&
-      slot.quota_signal_observed_at_ms !== null &&
-      slot.quota_signal_observed_at_ms >= capacityObservation.snapshot_at_ms;
+      classQuotaSignalObservedAtMs !== null &&
+      classQuotaSignalObservedAtMs >= capacityObservation.snapshot_at_ms;
     // This is the last in-memory guard after the durable reconciliation CAS.
     // It prevents a stale local circuit from suppressing a fresh, positive
     // account observation that lost a concurrent write race.
@@ -1927,18 +2360,23 @@ const selectCodexRoutingAccountsFromState = async (
         : Math.min(retryAt, slot.upstream_timeout_blocked_until_ms);
       continue;
     }
-    if (slot.quota_blocked_until_ms && slot.quota_blocked_until_ms > now && !capacityOverride) {
+    if (
+      requestedClassBlock && requestedClassBlock.blocked_until_ms > now &&
+      !capacityOverride
+    ) {
       skipped.push(mapped.slot + 1);
       hasQuotaBlock = true;
-      retryAt = retryAt === null ? slot.quota_blocked_until_ms : Math.min(retryAt, slot.quota_blocked_until_ms);
+      retryAt = retryAt === null
+        ? requestedClassBlock.blocked_until_ms
+        : Math.min(retryAt, requestedClassBlock.blocked_until_ms);
       if (
-        (slot.quota_block_source === "body_resets_at" || slot.quota_block_source === "header_retry_after") &&
-        slot.observed_reset_at_ms !== null &&
-        slot.observed_reset_at_is_stable
+        (requestedClassBlock.source === "body_resets_at" || requestedClassBlock.source === "header_retry_after") &&
+        requestedClassBlock.observed_reset_at_ms !== null &&
+        requestedClassBlock.observed_reset_at_is_stable
       ) {
         blockedAccounts.push({
           ...routedAccount,
-          quotaResetAtMs: slot.observed_reset_at_ms,
+          quotaResetAtMs: requestedClassBlock.observed_reset_at_ms,
           routingGeneration: slot.generation,
         });
       }
@@ -1947,7 +2385,10 @@ const selectCodexRoutingAccountsFromState = async (
     // A verified banked reset releases the quota deadline but retains its
     // recovery-probe lease. Ordinary routing stays unavailable until that
     // exact fenced probe succeeds, fails, or expires.
-    if ((slot.probe_lease?.expires_at_ms ?? 0) > now) {
+    const leaseBlocksRequest = slot.probe_lease?.circuit === "upstream_timeout" ||
+      slot.probe_lease?.quota_class === null || slot.probe_lease?.quota_class === undefined ||
+      slot.probe_lease?.quota_class === requestedQuotaClass;
+    if ((slot.probe_lease?.expires_at_ms ?? 0) > now && leaseBlocksRequest) {
       skipped.push(mapped.slot + 1);
       if (slot.probe_lease!.circuit === "upstream_timeout") {
         hasUpstreamTimeoutBlock = true;
@@ -1957,7 +2398,7 @@ const selectCodexRoutingAccountsFromState = async (
       retryAt = retryAt === null ? slot.probe_lease!.expires_at_ms : Math.min(retryAt, slot.probe_lease!.expires_at_ms);
       continue;
     }
-    if (slot.quota_blocked_until_ms) {
+    if (requestedClassBlock) {
       // Claim the half-open lease only if request execution actually reaches
       // this slot. This preserves first/second order without abandoning a
       // secondary lease when the healthy first account returns directly.
@@ -2087,14 +2528,16 @@ export const recheckCodexRoutingSlot = async (slotNumber: number): Promise<boole
         cachedStateLoadedAtMs = Date.now();
         return true;
       }
+      const rechecked = recheckQuotaClasses(current, recheckAtMs);
       const next = withSlot(state, index, {
-        ...current,
-        quota_blocked_until_ms: recheckAtMs,
+        ...rechecked,
         quota_signal_observed_at_ms: recheckAtMs,
         // An administrative deadline mutation is not provider proof of the
         // same quota generation. A later recovery probe is required before a
         // stable identity may authorize a banked claim again.
-        banked_reset_generation_ambiguous: current.banked_reset_generation_ambiguous ||
+        banked_reset_generation_ambiguous: rechecked.banked_reset_generation_ambiguous ||
+          rechecked.quota_blocked_until_ms !== null ||
+          current.banked_reset_generation_ambiguous ||
           (current.observed_reset_at_ms !== null && current.observed_reset_at_is_stable),
         generation: current.generation + 1,
         probe_lease: null,
@@ -2115,11 +2558,13 @@ export const recheckCodexRoutingSlot = async (slotNumber: number): Promise<boole
   const index = slotNumber - 1;
   const current = state.slots[index]!;
   if (!current.quota_blocked_until_ms) return true;
+  const rechecked = recheckQuotaClasses(current, recheckAtMs);
   cachedState = withSlot(state, index, {
-    ...current,
-    quota_blocked_until_ms: recheckAtMs,
+    ...rechecked,
     quota_signal_observed_at_ms: recheckAtMs,
-    banked_reset_generation_ambiguous: current.banked_reset_generation_ambiguous ||
+    banked_reset_generation_ambiguous: rechecked.banked_reset_generation_ambiguous ||
+      rechecked.quota_blocked_until_ms !== null ||
+      current.banked_reset_generation_ambiguous ||
       (current.observed_reset_at_ms !== null && current.observed_reset_at_is_stable),
     generation: current.generation + 1,
     probe_lease: null,

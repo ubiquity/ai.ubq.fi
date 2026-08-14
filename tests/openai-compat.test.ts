@@ -537,7 +537,7 @@ const liveBankedResetFixtureConfig = (accountId: string): CodexBankedResetConfig
 const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> => {
   const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
   const now = Date.now();
-  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now, DEFAULT_TEST_MODEL);
   if (selection.kind !== "eligible") throw new Error(`Expected an eligible fixture account, got ${selection.kind}.`);
   const routing = selection.accounts[0]!;
   const blocked = await markCodexQuotaBlocked(
@@ -618,7 +618,7 @@ const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> =>
 const createUnknownBankedResetFixture = async (): Promise<readonly string[]> => {
   const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
   const now = Date.now();
-  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+  const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now, DEFAULT_TEST_MODEL);
   if (selection.kind !== "eligible") throw new Error(`Expected an eligible fixture account, got ${selection.kind}.`);
   const routing = selection.accounts[0]!;
   const blocked = await markCodexQuotaBlocked(
@@ -742,7 +742,12 @@ Deno.test("openai: verified banked reset recovers the fenced account before Resp
             // is not proof of successful recovery.
             const responseBody = await response.text();
             const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
-            const routingAfterRecovery = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+            const routingAfterRecovery = await selectCodexRoutingAccounts(
+              authPool,
+              authPool.accounts,
+              Date.now(),
+              DEFAULT_TEST_MODEL,
+            );
             return {
               responseStatus,
               responseContentType,
@@ -8689,7 +8694,29 @@ Deno.test("openai: streamed Responses force the SSE content type", async () => {
 Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", async () => {
   const primaryBody = JSON.stringify({
     model: DEFAULT_TEST_MODEL,
-    input: "ping",
+    input: [
+      {
+        id: "msg_failover_fixture",
+        type: "message",
+        status: "completed",
+        role: "assistant",
+        content: [{
+          type: "output_text",
+          text:
+            "⚠ Failover active: this response is from `openrouter:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
+        }],
+      },
+      {
+        type: "message",
+        role: "assistant",
+        content: [{
+          type: "output_text",
+          text:
+            "⚠ Failover active: this response is from `openrouter:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
+        }],
+      },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "ping" }] },
+    ],
     stream: true,
     reasoning: { effort: "ultra" },
     max_output_tokens: 256,
@@ -8768,6 +8795,10 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   assert.equal(typeof sent.session_id, "string");
   assert.doesNotMatch(String(sent.session_id), /raw-session-id|test-principal/);
   assert.equal(JSON.stringify(sent).includes("raw-session-id"), false);
+  assert.deepEqual(
+    (sent.input as Array<Record<string, unknown>>).map((item) => item.role),
+    ["assistant", "user"],
+  );
   assert.equal(openRouterAuthorization, "Bearer or-test-key");
   assert.equal(openRouterMetadata, "enabled");
 
@@ -8797,6 +8828,69 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   assert.equal((terminalOutput[0] as { role?: unknown } | undefined)?.role, "assistant");
   assert.equal(getResponseTelemetry(response)?.provider, "openrouter");
   assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["chatgpt_codex", "openrouter"]);
+});
+
+Deno.test("openai: five Kimi failover turns replay conversation without gateway warnings", async () => {
+  const openRouterInputs: Array<Array<Record<string, unknown>>> = [];
+  let openRouterCall = 0;
+  const requestFor = (input: unknown) =>
+    new Request("https://ai.ubq.fi/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input, stream: true }),
+    });
+
+  await withFetchMock(
+    (url, bodyText) => {
+      if (url !== "https://openrouter.ai/api/v1/responses") {
+        return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const body = JSON.parse(bodyText ?? "{}") as { input?: unknown };
+      assert.ok(Array.isArray(body.input));
+      openRouterInputs.push(body.input as Array<Record<string, unknown>>);
+      openRouterCall += 1;
+      return sseResponse(openRouterTextSseChunks({
+        responseId: `resp_openrouter_${openRouterCall}`,
+        model: "moonshotai/kimi-k3",
+        text: `Kimi fallback answer ${openRouterCall}`,
+      }));
+    },
+    async () => {
+      const conversation: unknown[] = [];
+      for (let turn = 1; turn <= 5; turn += 1) {
+        const prompt = `Kimi follow-up turn ${turn}`;
+        const response = await handleResponses(requestFor([
+          ...conversation,
+          { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] },
+        ]));
+        assert.equal(response.status, 200);
+        const events = [...(await response.text()).matchAll(/^data: (.+)$/gm)]
+          .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+        const terminal = events.find((event) => event.type === "response.completed");
+        const output = (terminal?.response as { output?: unknown[] } | undefined)?.output;
+        assert.ok(Array.isArray(output));
+        assert.match(
+          JSON.stringify(output),
+          /⚠ Failover active: this response is from `openrouter:moonshotai\/kimi-k3`/,
+        );
+        assert.match(JSON.stringify(output), new RegExp(`Kimi fallback answer ${turn}`));
+        conversation.push(...output);
+      }
+    },
+    { openRouterApiKey: "or-test-key" },
+  );
+
+  assert.equal(openRouterInputs.length, 5);
+  for (const [index, replay] of openRouterInputs.entries()) {
+    assert.equal(replay.some((item) => String(item.id).startsWith("msg_failover_")), false);
+    assert.match(JSON.stringify(replay), new RegExp(`Kimi follow-up turn ${index + 1}`));
+    for (let priorTurn = 1; priorTurn <= index; priorTurn += 1) {
+      assert.match(JSON.stringify(replay), new RegExp(`Kimi fallback answer ${priorTurn}`));
+    }
+  }
 });
 
 Deno.test("openai: OpenRouter handler failover covers precommit failures and commitment barriers", async (t) => {

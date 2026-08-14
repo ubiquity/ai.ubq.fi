@@ -85,6 +85,7 @@ import { recordOpenRouterTelemetry } from "./openrouter_telemetry.ts";
 import {
   appendResponsesPrecommitEvent,
   createOwnedResponsesStream,
+  isGatewayFailoverWarningItem,
   isSyntheticResponsesFailureEvent,
   type PreparedResponsesStream,
   prepareResponsesStreamForCommit,
@@ -7494,6 +7495,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       const param = `input[${index}]`;
       const messageType = isRecord(msg) && !Array.isArray(msg) ? getString(msg.type) : null;
       if (messageType === "message" || (messageType === null && isRecord(msg) && "role" in msg)) {
+        if (isGatewayFailoverWarningItem(msg)) continue;
         const mapped = normalizeResponseMessageItem(msg, param);
         if (!mapped.ok) {
           return openaiError(400, mapped.message, "invalid_request_error", { param: mapped.param });
