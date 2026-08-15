@@ -152,10 +152,6 @@ jobs:
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
         (
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        ) ||
-        (
           github.ref != 'refs/heads/development' &&
           github.event_name == 'workflow_dispatch' &&
           github.event.inputs.deploy_preview == 'true'
@@ -211,7 +207,6 @@ jobs:
             '
 
           deno deploy env load \
-            --replace \
             --json \
             --non-interactive \
             --org ubiquity-dao \
@@ -230,7 +225,10 @@ jobs:
       always() &&
       needs.validate.result == 'success' &&
       needs.verify-artifact.result == 'success' &&
-      needs.configure-secrets.result == 'success' &&
+      (
+        needs.configure-secrets.result == 'success' ||
+        (github.event_name == 'pull_request' && needs.configure-secrets.result == 'skipped')
+      ) &&
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
         (
