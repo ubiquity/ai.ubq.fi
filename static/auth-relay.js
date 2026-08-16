@@ -13,6 +13,17 @@ const isAiGatewayDeployHost = (hostname) =>
   new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.deno\\.dev$`).test(hostname) ||
   new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.ubiquity-dao\\.deno\\.net$`).test(hostname);
 
+export const isAiGatewayPreviewOrigin = (value) => {
+  try {
+    const url = new URL(String(value ?? ""));
+    return url.protocol === "https:" &&
+      (new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.deno\\.dev$`).test(url.hostname.toLowerCase()) ||
+        new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.ubiquity-dao\\.deno\\.net$`).test(url.hostname.toLowerCase()));
+  } catch {
+    return false;
+  }
+};
+
 export const parseTrustedAuthRelayOrigin = (value) => {
   const raw = String(value ?? "").trim();
   if (!raw) return "";

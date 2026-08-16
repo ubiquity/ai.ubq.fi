@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 
-import { parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "../static/auth-relay.js";
+import { isAiGatewayPreviewOrigin, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "../static/auth-relay.js";
+
+Deno.test("auth relay identifies only ai gateway preview origins", () => {
+  assert.equal(isAiGatewayPreviewOrigin("https://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net"), true);
+  assert.equal(isAiGatewayPreviewOrigin("https://ai-ubq-fi-ejc9p6zmdjxt.deno.dev"), true);
+  assert.equal(isAiGatewayPreviewOrigin("https://ai.ubq.fi"), false);
+  assert.equal(isAiGatewayPreviewOrigin("http://ai-ubq-fi-cv5fc93pzb5a.deno.dev"), false);
+  assert.equal(isAiGatewayPreviewOrigin("https://example.com"), false);
+});
 
 Deno.test("auth relay accepts local development origins", () => {
   assert.equal(parseTrustedAuthRelayOrigin("http://localhost:8000"), "http://localhost:8000");
