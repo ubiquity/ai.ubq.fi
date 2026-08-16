@@ -64,7 +64,7 @@ const readAdminResponseCache = (url) => {
   return value;
 };
 
-const refreshAdminResponseCache = async (input, init, url, key) => {
+const refreshAdminResponseCache = async (input, init, key) => {
   try {
     const response = await nativeFetch(input, init);
     if (!response.ok) return;
@@ -81,7 +81,7 @@ globalThis.fetch = async (input, init) => {
   const key = adminResponseCacheKey(url);
   const cached = readAdminResponseCache(url);
   if (cached) {
-    void refreshAdminResponseCache(input, init, url, key);
+    void refreshAdminResponseCache(input, init, key);
     return new Response(JSON.stringify(cached.payload), {
       status: 200,
       headers: { "Content-Type": "application/json", "X-UOS-Browser-Cache": "hit" },
@@ -228,7 +228,6 @@ let keysLoadedAt = 0;
 let providersLoading = false;
 let providersLoadId = 0;
 let providersLoadedAt = 0;
-let debugRoutingLoadedAt = 0;
 let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
 let latestProviderCapacityChartState = null;
@@ -2099,7 +2098,6 @@ const loadDebugRouting = async () => {
       payload.routing.scenario === "normal" ? "ok" : "unknown",
       payload.routing.scenario === "normal" ? "Normal" : "Active",
     );
-    debugRoutingLoadedAt = Date.now();
   } catch (error) {
     setBadge(debugRoutingBadge, "bad", "Unavailable");
     debugRoutingStatus.textContent = error instanceof Error ? error.message : "Debug routing unavailable";
