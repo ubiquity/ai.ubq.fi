@@ -40,6 +40,6 @@
   },
   "deploy": {
     "org": "ubiquity-dao",
-    "app": "ai-ubq-fi"
+    "app": "p-ai-ubq-fi"
   }
 }

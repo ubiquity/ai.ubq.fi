@@ -5,8 +5,6 @@ import {
   getCachedMeteredQuotaSnapshot,
   getMeteredQuotaSnapshot,
   invalidateMeteredQuotaSnapshot,
-  readMeteredAccountCredentials,
-  updateMeteredQuotaState,
   METERED_QUOTA_FRESH_MS,
   METERED_QUOTA_INVALIDATION_KEY,
   METERED_QUOTA_RETENTION_MS,
@@ -16,6 +14,8 @@ import {
   type MeteredQuotaObservation,
   type MeteredQuotaSnapshot,
   type MeteredQuotaState,
+  readMeteredAccountCredentials,
+  updateMeteredQuotaState,
 } from "../src/metered_quota.ts";
 
 const keyString = (key: Deno.KvKey): string => JSON.stringify(key);

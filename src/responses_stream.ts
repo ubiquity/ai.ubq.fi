@@ -24,11 +24,17 @@ export type ResponsesStreamFailureKind =
 
 export const MAX_RESPONSES_SSE_EVENT_BYTES = 16 * 1024 * 1024;
 
+// Keep serverless and proxy connections active while the provider is thinking.
+// SSE comments are ignored by OpenAI clients and do not change the wire schema.
+export const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
+const SSE_KEEPALIVE_FRAME = new TextEncoder().encode(": keepalive\n\n");
+
 export type ResponsesStreamIterator = AsyncGenerator<ResponsesStreamEvent, unknown, unknown>;
 
 export type PreflightedResponsesStream = Readonly<{
   first: ResponsesStreamEvent;
   iterator: ResponsesStreamIterator;
+  cancel: (reason?: unknown) => Promise<void>;
 }>;
 
 export class ResponsesStreamError extends Error {
@@ -71,7 +77,11 @@ const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
     });
   }
   if (
-    (type === "error" && !isRecord(value.error)) ||
+    (type === "error" && !isRecord(value.error) && !(
+      (value.code === null || (typeof value.code === "string" && value.code.trim())) &&
+      typeof value.message === "string" && value.message.trim() &&
+      (value.param === null || typeof value.param === "string")
+    )) ||
     (type !== "error" && RESPONSES_TERMINAL_EVENT_TYPES.has(type) && !isRecord(value.response))
   ) {
     throw new ResponsesStreamError("Upstream emitted a Responses terminal event with an invalid payload.", {
@@ -246,7 +256,13 @@ export const preflightResponsesStream = async (
   upstream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
 ): Promise<PreflightedResponsesStream> => {
-  const iterator = readResponsesStream(upstream, signal);
+  const cancellation = new AbortController();
+  const streamSignal = signal ? AbortSignal.any([signal, cancellation.signal]) : cancellation.signal;
+  const iterator = readResponsesStream(upstream, streamSignal);
+  const cancel = async (reason?: unknown): Promise<void> => {
+    if (!cancellation.signal.aborted) cancellation.abort(reason);
+    await iterator.return(reason).catch(() => {});
+  };
   try {
     const next = await iterator.next();
     if (next.done || !next.value) {
@@ -257,9 +273,10 @@ export const preflightResponsesStream = async (
     return {
       first: next.value,
       iterator,
+      cancel,
     };
   } catch (error) {
-    await iterator.return(error).catch(() => {});
+    await cancel(error);
     throw error;
   }
 };
@@ -336,6 +353,79 @@ export const proxyResponsesStreamIterator = (
       invoke(() => options.onCancel?.(reason));
       localAbort.abort(reason);
       void iterator.return(reason).catch(() => {});
+    },
+  });
+};
+
+/**
+ * Adds protocol-level SSE comments while an upstream stream is quiet. The
+ * source remains incremental: provider bytes are forwarded as soon as they
+ * arrive, and the heartbeat is only a small connection-preserving burst.
+ */
+export const withSseKeepalive = (
+  source: ReadableStream<Uint8Array>,
+  options: Readonly<{ intervalMs?: number }> = {},
+): ReadableStream<Uint8Array> => {
+  const reader = source.getReader();
+  const configuredIntervalMs = options.intervalMs ?? SSE_KEEPALIVE_INTERVAL_MS;
+  const intervalMs = Number.isFinite(configuredIntervalMs) && configuredIntervalMs > 0 ? configuredIntervalMs : 0;
+  let closed = false;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
+  let resolveHeartbeat: (() => void) | null = null;
+  const heartbeat = (): Promise<"heartbeat"> =>
+    new Promise((resolve) => {
+      resolveHeartbeat = () => resolve("heartbeat");
+      heartbeatTimer = setTimeout(() => {
+        heartbeatTimer = null;
+        resolveHeartbeat = null;
+        resolve("heartbeat");
+      }, intervalMs);
+    });
+  const stopHeartbeat = (): void => {
+    if (heartbeatTimer !== null) clearTimeout(heartbeatTimer);
+    heartbeatTimer = null;
+    resolveHeartbeat?.();
+    resolveHeartbeat = null;
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (closed) return;
+      try {
+        pendingRead ??= reader.read();
+        const outcome = intervalMs > 0
+          ? await Promise.race([
+            pendingRead.then((result) => ({ kind: "read" as const, result })),
+            heartbeat().then((kind) => ({ kind })),
+          ])
+          : { kind: "read" as const, result: await pendingRead };
+        if (outcome.kind === "heartbeat") {
+          controller.enqueue(SSE_KEEPALIVE_FRAME.slice());
+          return;
+        }
+        stopHeartbeat();
+        pendingRead = null;
+        const { value, done } = outcome.result;
+        if (closed) return;
+        if (done) {
+          closed = true;
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        if (closed) return;
+        closed = true;
+        stopHeartbeat();
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      if (closed) return;
+      closed = true;
+      stopHeartbeat();
+      void reader.cancel(reason).catch(() => {});
     },
   });
 };

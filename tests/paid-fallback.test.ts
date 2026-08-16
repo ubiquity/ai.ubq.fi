@@ -38,6 +38,8 @@ class MemoryKv {
   enqueueFailure: Error | null = null;
   beforeAtomicCommit: (() => void) | null = null;
   atomicCommitFailures = 0;
+  getCalls = 0;
+  listCalls = 0;
   #version = 0;
 
   clear(): void {
@@ -46,6 +48,8 @@ class MemoryKv {
     this.enqueueFailure = null;
     this.beforeAtomicCommit = null;
     this.atomicCommitFailures = 0;
+    this.getCalls = 0;
+    this.listCalls = 0;
     this.#version = 0;
   }
 
@@ -90,6 +94,7 @@ class MemoryKv {
   }
 
   get<T = unknown>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+    this.getCalls += 1;
     this.#purgeExpired();
     const entry = this.entries.get(encodeKey(key));
     return Promise.resolve({
@@ -126,6 +131,7 @@ class MemoryKv {
     selector: Deno.KvListSelector,
     options: Deno.KvListOptions = {},
   ): Deno.KvListIterator<T> {
+    this.listCalls += 1;
     this.#purgeExpired();
     let entries = [...this.entries.values()]
       .filter((entry) => {
@@ -232,10 +238,12 @@ const {
   getPaidFallbackWindowProjectionV3,
   listPaidFallbackRequestsV3,
   paidFallbackDeletionGuardV3Key,
+  paidFallbackReconciliationGateV3Key,
   paidFallbackRequestV3Key,
   paidFallbackPendingV3Key,
   paidFallbackReconciliationLeaseV3Key,
   paidFallbackWindowV3Key,
+  markPaidFallbackTerminalV3,
   reconcileDuePaidFallbacksV3,
   reconcilePaidFallbackV3,
   recordPaidFallbackTerminalV3,
@@ -535,6 +543,155 @@ Deno.test("V3 admits concurrent bounded requests without a single reservation sl
   assert.equal(typeof pending.value?.next_reconciliation_at_ms, "number");
 });
 
+Deno.test("V3 idle reconciliation gate avoids pending scans and Metered billing reads", async () => {
+  memoryKv.clear();
+  await memoryKv.set(paidFallbackReconciliationGateV3Key(), { next_due_at_ms: null });
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    return Promise.reject(new Error("idle reconciliation must not contact Metered"));
+  };
+  try {
+    assert.equal(await reconcileDuePaidFallbacksV3(Date.now(), kv), 0);
+    assert.equal(memoryKv.getCalls, 1);
+    assert.equal(memoryKv.listCalls, 0);
+    assert.equal(fetchCalls, 0);
+    assert.deepEqual(
+      (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value,
+      { next_due_at_ms: null },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("V3 reconciliation gate arms at dispatch boundaries and clears after settlement", async () => {
+  memoryKv.clear();
+  const originalFetch = globalThis.fetch;
+  const providerRequestId = "provider-gate-dispatch";
+  let fetchCalls = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    return Promise.resolve(
+      Response.json({
+        success: true,
+        data: [{
+          request_id: providerRequestId,
+          quota: 10_000,
+          prompt_tokens: 1,
+          completion_tokens: 2,
+          model_name: "gpt-5-codex",
+          created_at: Math.trunc(Date.now() / 1_000),
+        }],
+      }),
+    );
+  };
+  try {
+    await withMeteredApiKey(async () => {
+      const admission = await admitPaidFallbackV3(v3AdmissionInput("gate-dispatch", "gate-dispatch-request", {
+        dispatchIntent: true,
+        limitMicrocredits: -1,
+        maximumExposureMicrocredits: null,
+      }));
+      assert.equal(admission.kind, "reserved");
+      if (admission.kind !== "reserved") throw new Error("expected reservation");
+      const armed = await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key());
+      assert.equal(typeof armed.value?.next_due_at_ms, "number");
+
+      await updatePaidFallbackRequestV3(admission.reservation, {
+        provider_request_id: providerRequestId,
+        dispatch_state: "dispatched",
+      });
+      assert.equal(await reconcileDuePaidFallbacksV3(Date.now() + 1_000, kv), 1);
+      assert.equal(fetchCalls, 1);
+      assert.deepEqual(
+        (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value,
+        { next_due_at_ms: null },
+      );
+
+      const transition = await admitPaidFallbackV3(v3AdmissionInput("gate-transition", "gate-transition-request", {
+        limitMicrocredits: -1,
+        maximumExposureMicrocredits: null,
+      }));
+      assert.equal(transition.kind, "reserved");
+      if (transition.kind !== "reserved") throw new Error("expected reservation");
+      assert.deepEqual(
+        (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value,
+        { next_due_at_ms: null },
+      );
+      await updatePaidFallbackRequestV3(transition.reservation, {
+        provider_request_id: providerRequestId,
+        dispatch_state: "dispatched",
+      });
+      assert.equal(
+        typeof (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value
+          ?.next_due_at_ms,
+        "number",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("V3 missing reconciliation gate bootstraps the earliest legacy marker", async () => {
+  memoryKv.clear();
+  const keyId = "gate-legacy";
+  const requestId = "gate-legacy-request";
+  const admission = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
+  assert.equal(admission.kind, "reserved");
+  const dueAtMs = Date.now() + 60_000;
+  await memoryKv.set(paidFallbackPendingV3Key(keyId, requestId), {
+    created_at_ms: Date.now(),
+    next_reconciliation_at_ms: dueAtMs,
+  });
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    return Promise.reject(new Error("future legacy work must not contact Metered"));
+  };
+  try {
+    assert.equal(await reconcileDuePaidFallbacksV3(Date.now(), kv), 0);
+    assert.equal(memoryKv.listCalls, 1);
+    assert.equal(fetchCalls, 0);
+    assert.deepEqual(
+      (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value,
+      { next_due_at_ms: dueAtMs },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("V3 concurrent dispatch-intent admissions retain every reservation and gate arm", async () => {
+  memoryKv.clear();
+  const decisions = await Promise.all(
+    Array.from(
+      { length: 32 },
+      (_, index) =>
+        admitPaidFallbackV3(v3AdmissionInput("gate-concurrent", `gate-concurrent-${index}`, {
+          limitMicrocredits: -1,
+          maximumExposureMicrocredits: null,
+          dispatchIntent: true,
+        })),
+    ),
+  );
+  assert.deepEqual(decisions.map((decision) => decision.kind), Array(32).fill("reserved"));
+  const requests = await Promise.all(
+    Array.from(
+      { length: 32 },
+      (_, index) => memoryKv.get(paidFallbackRequestV3Key("gate-concurrent", `gate-concurrent-${index}`)),
+    ),
+  );
+  assert.equal(requests.filter((entry) => entry.value !== null).length, 32);
+  assert.equal(
+    typeof (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value?.next_due_at_ms,
+    "number",
+  );
+});
+
 Deno.test("paid fallback admission re-reads policy when a committed disable races its CAS", async () => {
   memoryKv.clear();
   const record = await seedStrictKey({ id: "key-policy-cas-barrier", hash: "hash-policy-cas-barrier" });
@@ -765,9 +922,24 @@ Deno.test("V3 terminal delivery expedites a request deferred before provider bil
       assert.equal(await reconcilePaidFallbackV3(keyId, deferredAtMs, kv), 0);
       const deferred = await memoryKv.get<Record<string, unknown>>(paidFallbackPendingV3Key(keyId, requestId));
       assert.equal(deferred.value?.next_reconciliation_at_ms, deferredAtMs + 5_000);
+      assert.equal(
+        Number(
+          (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value?.next_due_at_ms,
+        ) >
+          deferredAtMs,
+        true,
+      );
 
       billingVisible = true;
-      assert.equal(await recordPaidFallbackTerminalV3(decision.reservation, "completed"), 1);
+      await markPaidFallbackTerminalV3(decision.reservation, "completed");
+      assert.equal(
+        Number(
+          (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value?.next_due_at_ms,
+        ) <=
+          Date.now(),
+        true,
+      );
+      assert.equal(await reconcilePaidFallbackV3(keyId, Date.now(), kv), 1);
       const settled = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, requestId));
       assert.equal(settled.value?.billing_state, "settled");
       assert.equal(settled.value?.terminal_state, "completed");
@@ -777,6 +949,37 @@ Deno.test("V3 terminal delivery expedites a request deferred before provider bil
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("V3 expedite versions an already-due gate against stale recomputation", async () => {
+  memoryKv.clear();
+  const keyId = "v3-expedite-gate-version";
+  const requestId = "expedite-gate-version";
+  const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
+  assert.equal(decision.kind, "reserved");
+  if (decision.kind !== "reserved") throw new Error("expected reservation");
+
+  const gateKey = paidFallbackReconciliationGateV3Key();
+  const pendingKey = paidFallbackPendingV3Key(keyId, requestId);
+  const now = Date.now();
+  await memoryKv.set(gateKey, { next_due_at_ms: now });
+  await memoryKv.set(pendingKey, {
+    created_at_ms: now,
+    next_reconciliation_at_ms: now + 60_000,
+  });
+  const before = memoryKv.versionstamp(gateKey);
+
+  await markPaidFallbackTerminalV3(decision.reservation, "completed");
+
+  assert.notEqual(memoryKv.versionstamp(gateKey), before);
+  assert.equal(
+    Number((await memoryKv.get<Record<string, unknown>>(gateKey)).value?.next_due_at_ms) <= Date.now(),
+    true,
+  );
+  assert.equal(
+    Number((await memoryKv.get<Record<string, unknown>>(pendingKey)).value?.next_reconciliation_at_ms) <= Date.now(),
+    true,
+  );
 });
 
 Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and retain final-call overshoot", async () => {
@@ -1152,6 +1355,7 @@ Deno.test("V3 undispatched release is idempotent and cannot erase dispatched exp
   memoryKv.clear();
   const keyId = "v3-release";
   const resetAtMs = Date.now() + 60_000;
+  await memoryKv.set(paidFallbackReconciliationGateV3Key(), { next_due_at_ms: Date.now() + 60_000 });
   const released = await admitPaidFallbackV3(
     v3AdmissionInput(keyId, "release-before-dispatch", { windowResetAtMs: resetAtMs }),
   );
@@ -1166,6 +1370,13 @@ Deno.test("V3 undispatched release is idempotent and cannot erase dispatched exp
   assert.equal(releasedRequest.value?.dispatch_state, "not_dispatched");
   assert.equal(releasedRequest.value?.terminal_state, "cancelled");
   assert.equal(typeof releasedRequest.value?.terminal_at_ms, "number");
+  assert.equal(
+    Number(
+      (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value?.next_due_at_ms,
+    ) <=
+      Date.now(),
+    true,
+  );
 
   const dispatched = await admitPaidFallbackV3(
     v3AdmissionInput(keyId, "release-after-dispatch", { windowResetAtMs: resetAtMs }),

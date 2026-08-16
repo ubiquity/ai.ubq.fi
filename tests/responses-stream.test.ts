@@ -5,6 +5,7 @@ import {
   proxyResponsesStream,
   readResponsesStream,
   ResponsesStreamError,
+  withSseKeepalive,
 } from "../src/responses_stream.ts";
 
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
@@ -93,6 +94,36 @@ Deno.test("Responses parser rejects terminal events without their protocol paylo
   });
   assert.ok(error instanceof ResponsesStreamError);
   assert.equal(error.kind, "malformed_event");
+});
+
+Deno.test("Responses parser accepts an official flat error terminal", async () => {
+  const events = [];
+  for await (
+    const event of readResponsesStream(
+      chunked(
+        'data: {"type":"error","code":"provider_error","message":"Provider stopped.","param":null}\n\n',
+        [],
+      ),
+    )
+  ) events.push(event);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.type, "error");
+  assert.equal(events[0]?.value.code, "provider_error");
+});
+
+Deno.test("Responses parser accepts a nullable code in an official flat error terminal", async () => {
+  const events = [];
+  for await (
+    const event of readResponsesStream(
+      chunked(
+        'data: {"type":"error","code":null,"message":"Provider stopped.","param":"input"}\n\n',
+        [],
+      ),
+    )
+  ) events.push(event);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.value.code, null);
+  assert.equal(events[0]?.value.param, "input");
 });
 
 Deno.test("Responses preflight surfaces immediate failures before a stream response is created", async () => {
@@ -271,6 +302,35 @@ Deno.test("Responses proxy emits an official error event after premature EOF", a
   assert.match(output, /response.output_text.delta/);
   assert.match(output, /event: error/);
   assert.doesNotMatch(output, /response.completed/);
+});
+
+Deno.test("SSE keepalive emits short comment bursts while the provider is quiet", async () => {
+  const encoder = new TextEncoder();
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      void gate.then(() => {
+        controller.enqueue(encoder.encode('data: {"type":"response.completed","response":{"status":"completed"}}\n\n'));
+        controller.close();
+      });
+    },
+  });
+  const reader = withSseKeepalive(source, { intervalMs: 5 }).getReader();
+  const heartbeat = await Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("keepalive was delayed")), 100)),
+  ]);
+  assert.equal(heartbeat.done, false);
+  assert.equal(new TextDecoder().decode(heartbeat.value), ": keepalive\n\n");
+
+  release();
+  const terminal = await reader.read();
+  assert.equal(terminal.done, false);
+  assert.match(new TextDecoder().decode(terminal.value), /response.completed/);
+  assert.equal((await reader.read()).done, true);
 });
 
 Deno.test("Responses proxy does not wait for lifecycle callbacks before terminal delivery", async () => {

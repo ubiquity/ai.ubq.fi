@@ -19,12 +19,15 @@ import {
 import { decodeBase64ToString } from "./utils.ts";
 import type { CodexAuthPoolState } from "./types.ts";
 import { readMeteredApiKey } from "./metered.ts";
+import { readOpenRouterApiKey } from "./openrouter.ts";
+import { getOpenRouterCircuitView } from "./openrouter_circuit.ts";
+import { getOpenRouterTelemetryView } from "./openrouter_telemetry.ts";
 import {
   fetchMeteredQuotaObservation,
   getCachedConfiguredMeteredQuotaSnapshot,
-  readMeteredAccountCredentials,
   type MeteredAccountCredentials,
   type MeteredQuotaSnapshot,
+  readMeteredAccountCredentials,
 } from "./metered_quota.ts";
 
 const AUTH_REFRESH_WINDOW_MS = 2 * 60_000;
@@ -219,12 +222,16 @@ export const getPassiveProviderHealthSnapshot = async (
 ): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
-  const [cerebrasHealth, codexHealth, meteredHealth, meteredQuota] = await Promise.all([
-    getCerebrasProviderHealth(),
-    Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
-    getMeteredProviderHealth(),
-    getCachedConfiguredMeteredQuotaSnapshot(),
-  ]);
+  const [cerebrasHealth, codexHealth, meteredHealth, meteredQuota, openRouterCircuit, openRouterTelemetry] =
+    await Promise
+      .all([
+        getCerebrasProviderHealth(),
+        Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
+        getMeteredProviderHealth(),
+        getCachedConfiguredMeteredQuotaSnapshot(),
+        getOpenRouterCircuitView(),
+        getOpenRouterTelemetryView(),
+      ]);
   const codexAccounts = auth.accounts.map((account, index) => ({
     ...account,
     health: codexHealth[index],
@@ -256,6 +263,11 @@ export const getPassiveProviderHealthSnapshot = async (
           observed_at_ms: meteredQuota?.state.observed_at_ms ?? null,
         },
       }),
+    },
+    openrouter: {
+      configured: readOpenRouterApiKey() !== null,
+      circuit: openRouterCircuit,
+      telemetry: openRouterTelemetry,
     },
   };
 };

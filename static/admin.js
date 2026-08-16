@@ -137,6 +137,9 @@ const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
+const openRouterFailoverBadge = mustGet("openrouter-failover-badge");
+const openRouterFailoverObserved = mustGet("openrouter-failover-observed");
+const openRouterFailoverFacts = mustGet("openrouter-failover-facts");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -151,6 +154,7 @@ let allKeys = [];
 let keysLoading = false;
 let keysLoadedAt = 0;
 let providersLoading = false;
+let providersLoadId = 0;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
@@ -701,12 +705,61 @@ const appendProviderFact = (list, label, value) => {
   list.appendChild(item);
 };
 
+const resetOpenRouterFailover = (message = "Waiting for snapshot") => {
+  setBadge(openRouterFailoverBadge, "unknown", "Not loaded");
+  openRouterFailoverObserved.textContent = message;
+  openRouterFailoverFacts.replaceChildren();
+};
+
+const renderOpenRouterFailover = (openRouter) => {
+  openRouterFailoverFacts.replaceChildren();
+  if (!openRouter || typeof openRouter !== "object") {
+    setBadge(openRouterFailoverBadge, "bad", "Unavailable");
+    openRouterFailoverObserved.textContent = "Snapshot unavailable";
+    appendProviderFact(openRouterFailoverFacts, "Configured", "Unknown");
+    appendProviderFact(openRouterFailoverFacts, "Circuit", "Unknown");
+    return;
+  }
+  const circuit = openRouter.circuit ?? {};
+  const telemetry = openRouter.telemetry ?? {};
+  const configured = openRouter.configured === true;
+  const circuitState = formatOptionalText(circuit.state);
+  const available = circuit.available !== false;
+  const state = !configured || !available ? "bad" : circuitState === "closed" ? "ok" : "unknown";
+  const label = !configured ? "Not configured" : !available ? "State unavailable" : `Circuit ${circuitState}`;
+  setBadge(openRouterFailoverBadge, state, label);
+  openRouterFailoverObserved.textContent = typeof telemetry.observed_at_ms === "number"
+    ? `Observed ${formatDate(telemetry.observed_at_ms)}`
+    : "No failover observed";
+  appendProviderFact(openRouterFailoverFacts, "Configured", configured ? "Yes" : "No");
+  appendProviderFact(openRouterFailoverFacts, "Circuit", circuitState);
+  appendProviderFact(
+    openRouterFailoverFacts,
+    "Open until",
+    typeof circuit.open_until_ms === "number" ? formatDate(circuit.open_until_ms) : "Not open",
+  );
+  appendProviderFact(
+    openRouterFailoverFacts,
+    "Recent failures",
+    typeof circuit.recent_failures === "number" ? formatNumber(circuit.recent_failures) : "Unknown",
+  );
+  appendProviderFact(openRouterFailoverFacts, "Probe", circuit.probe_active === true ? "Active" : "Inactive");
+  appendProviderFact(openRouterFailoverFacts, "Attempted", formatOptionalText(telemetry.attempted_provider));
+  appendProviderFact(openRouterFailoverFacts, "Trigger", formatOptionalText(telemetry.trigger_class));
+  appendProviderFact(openRouterFailoverFacts, "Transition", formatOptionalText(telemetry.circuit_transition));
+  appendProviderFact(openRouterFailoverFacts, "Selected model", formatOptionalText(telemetry.selected_model));
+  appendProviderFact(openRouterFailoverFacts, "Task", formatOptionalText(telemetry.task_type));
+  appendProviderFact(openRouterFailoverFacts, "Latency", formatLatency(telemetry.latency_ms));
+  appendProviderFact(openRouterFailoverFacts, "Terminal", formatOptionalText(telemetry.terminal_status));
+  appendProviderFact(openRouterFailoverFacts, "Commitment", formatOptionalText(telemetry.semantic_commitment));
+};
+
 const capacityBadgeState = (state) => state === "available" ? "ok" : state === "stale" ? "unknown" : "bad";
 
 const capacityStateLabel = (state) => {
   if (state === "available") return "Live";
-  if (state === "stale") return "Stale";
-  return "Unavailable";
+  if (state === "stale") return "Quota stale";
+  return "Quota unavailable";
 };
 
 const formatCapacityTimestamp = (value, unavailable = "Not reported") =>
@@ -794,9 +847,9 @@ const capacityProviderStatus = (source, provider) => {
   const state = provider?.configured === false ? "unconfigured" : health?.state;
   const hasState = typeof state === "string" && state.trim().length > 0;
   let badgeState = capacityBadgeState(source.state);
-  if (source.state !== "unavailable" && hasState) {
+  if (hasState) {
     badgeState = providerBadgeState(state);
-    if (source.state === "stale" && badgeState === "ok") badgeState = "unknown";
+    if (source.state !== "available" && badgeState === "ok") badgeState = "unknown";
   }
   const healthLabel = hasState ? providerStateLabel({ ...health, state }) : "";
   return {
@@ -852,7 +905,9 @@ const renderCodexCapacitySource = (source, provider = null) => {
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
-  title.textContent = `Codex account ${source.slot}`;
+  title.textContent = typeof source.label === "string" && source.label.trim()
+    ? source.label.trim()
+    : `Codex account ${source.slot}`;
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   const status = capacityProviderStatus(source, provider);
@@ -961,6 +1016,7 @@ const CAPACITY_CHART_PLOT_LEFT = 48;
 const CAPACITY_CHART_PLOT_TOP = 24;
 const CAPACITY_CHART_PLOT_RIGHT = 12;
 const CAPACITY_CHART_PLOT_BOTTOM = 56;
+const CAPACITY_CHART_BUCKET_MS = 15 * CAPACITY_CHART_MINUTE_MS;
 const CAPACITY_CHART_MAX_PIXELS_PER_PERCENT = 4;
 const CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT = 2;
 const CAPACITY_CHART_MIN_PIXELS_PER_PERCENT = 1;
@@ -981,6 +1037,65 @@ const CAPACITY_CHART_SERIES = [
   { key: "available-capacity", label: "Codex capacity", source: "aggregate" },
   { key: "metered-refill", label: "Metered refill", source: "metered", valueKey: "refill_cycle_remaining_percent" },
 ];
+
+const capacityChartFailureIsDowntime = (source) =>
+  source?.source === "codex" &&
+  source?.state === "unavailable" &&
+  (source.failure_kind === "upstream_error" || source.failure_kind === "unreachable") &&
+  (source.failure_kind === "unreachable" ||
+    (typeof source.failure_status === "number" && Number.isFinite(source.failure_status) &&
+      source.failure_status >= 500 && source.failure_status <= 599));
+
+const capacityChartSampleIsDowntime = (sample) => {
+  if (!Array.isArray(sample?.sources)) return false;
+  const codexSources = sample.sources.filter((source) => source?.source === "codex");
+  const configuredCodexSources = codexSources.filter((source) => source?.failure_kind !== "not_configured");
+  // A single failed account is still provider-side degradation. Do not let a
+  // healthy sibling account hide the outage: the aggregate white path should
+  // break for this sample and the red bridge should connect the surrounding
+  // observed values.
+  return configuredCodexSources.length > 0 && configuredCodexSources.some(capacityChartFailureIsDowntime);
+};
+
+const capacityChartDowntimeEventIsDowntime = (event) => {
+  if (event?.provider !== "openai") return false;
+  if (event.failure_kind === "unreachable") return true;
+  return event.failure_kind === "upstream_error" &&
+    typeof event.status === "number" && Number.isFinite(event.status) &&
+    event.status >= 500 && event.status <= 599;
+};
+
+const capacityChartDowntimeEventTimes = (events, displayInterval) =>
+  (Array.isArray(events) ? events : [])
+    .filter((event) =>
+      capacityChartDowntimeEventIsDowntime(event) &&
+      typeof event.observed_at_ms === "number" && Number.isFinite(event.observed_at_ms) &&
+      (!displayInterval ||
+        (event.observed_at_ms >= displayInterval.startAtMs && event.observed_at_ms <= displayInterval.resetAtMs))
+    )
+    .map((event) => event.observed_at_ms)
+    .sort((left, right) => left - right);
+
+const capacityChartDowntimeEventBetween = (eventTimes, startAtMs, endAtMs) =>
+  eventTimes.some((eventAtMs) => eventAtMs > startAtMs && eventAtMs <= endAtMs);
+
+const capacityChartSampleBucketStart = (sample) => {
+  if (typeof sample?.bucket_start_at_ms === "number" && Number.isFinite(sample.bucket_start_at_ms)) {
+    return sample.bucket_start_at_ms;
+  }
+  const sampledAtMs = typeof sample?.sampled_at_ms === "number" ? sample.sampled_at_ms : sample?.sampledAtMs;
+  if (typeof sampledAtMs === "number" && Number.isFinite(sampledAtMs)) {
+    return Math.floor(sampledAtMs / CAPACITY_CHART_BUCKET_MS) * CAPACITY_CHART_BUCKET_MS;
+  }
+  return null;
+};
+
+const capacityChartSampleGapBetween = (left, right) => {
+  const leftBucket = capacityChartSampleBucketStart(left);
+  const rightBucket = capacityChartSampleBucketStart(right);
+  return typeof leftBucket === "number" && typeof rightBucket === "number" &&
+    rightBucket - leftBucket > CAPACITY_CHART_BUCKET_MS;
+};
 
 const capacityChartSvgElement = (name, attributes = {}) => {
   const element = document.createElementNS(CAPACITY_CHART_SVG_NS, name);
@@ -1167,10 +1282,16 @@ const renderCapacitySpendSummary = (pacing, chartWindow) => {
   return summary;
 };
 
-const capacityChartPoint = (sample, series, activeInterval = null, chartWindow = null) => {
+const capacityChartPoint = (
+  sample,
+  series,
+  activeInterval = null,
+  chartWindow = null,
+) => {
   if (series.source === "aggregate") {
     const displayInterval = chartWindow ?? activeInterval;
     const sampledAtMs = sample?.sampled_at_ms;
+    if (capacityChartSampleIsDowntime(sample)) return null;
     const remainingPercent = capacityChartCodexAggregateRemainingPercent(sample);
     if (
       !displayInterval ||
@@ -1246,21 +1367,39 @@ const capacityChartSeriesPoints = (
   currentPoint,
   nowMs,
   resetEvents,
+  downtimeEvents,
 ) => {
+  const eventTimes = series.source === "aggregate"
+    ? capacityChartDowntimeEventTimes(downtimeEvents, chartWindow ?? activeInterval)
+    : [];
   const runs = [];
   let run = [];
+  let previousSample = null;
   const pushRun = () => {
     if (run.length) runs.push(run);
     run = [];
   };
-  for (const sample of history) {
+  for (const sample of [...history].sort((left, right) => (left?.sampled_at_ms ?? 0) - (right?.sampled_at_ms ?? 0))) {
+    const sampledAtMs = sample?.sampled_at_ms;
+    if (
+      previousSample && typeof sampledAtMs === "number" &&
+      (capacityChartSampleGapBetween(previousSample, sample) ||
+        capacityChartDowntimeEventBetween(eventTimes, previousSample.sampled_at_ms, sampledAtMs))
+    ) pushRun();
     const point = capacityChartPoint(sample, series, activeInterval, chartWindow);
     if (!point) {
       pushRun();
+      previousSample = typeof sampledAtMs === "number" ? sample : previousSample;
       continue;
     }
-    run.push({ sampledAtMs: sample.sampled_at_ms, point, synthetic: false });
+    run.push({ sampledAtMs, point, synthetic: false });
+    previousSample = typeof sampledAtMs === "number" ? sample : previousSample;
   }
+  if (
+    currentPoint && previousSample &&
+    (capacityChartSampleGapBetween(previousSample, { sampled_at_ms: nowMs }) ||
+      capacityChartDowntimeEventBetween(eventTimes, previousSample.sampled_at_ms, nowMs))
+  ) pushRun();
   if (currentPoint) run.push({ sampledAtMs: nowMs, point: currentPoint, synthetic: false });
   pushRun();
 
@@ -1293,6 +1432,89 @@ const capacityChartSeriesPoints = (
     ...(index === 0 ? [] : [null]),
     ...candidate.map(({ point }) => point),
   ]);
+};
+
+const capacityChartDowntimeBridges = (
+  history,
+  series,
+  activeInterval,
+  chartWindow,
+  currentPoint,
+  nowMs,
+  downtimeEvents,
+) => {
+  if (series.source !== "aggregate") return [];
+  const displayInterval = chartWindow ?? activeInterval;
+  const samples = [...history].sort((left, right) => (left?.sampled_at_ms ?? 0) - (right?.sampled_at_ms ?? 0)).map((
+    sample,
+  ) => ({
+    sampledAtMs: sample?.sampled_at_ms,
+    downtime: capacityChartSampleIsDowntime(sample),
+    point: capacityChartPoint(sample, series, activeInterval, chartWindow),
+  }));
+  if (currentPoint) samples.push({ sampledAtMs: nowMs, downtime: false, point: currentPoint });
+
+  const validSamples = samples.filter((sample) =>
+    typeof sample.sampledAtMs === "number" && sample.point &&
+    (!displayInterval ||
+      (sample.sampledAtMs >= displayInterval.startAtMs && sample.sampledAtMs <= displayInterval.resetAtMs))
+  );
+  const markerTimes = [
+    ...samples
+      .filter((sample) =>
+        sample.downtime && typeof sample.sampledAtMs === "number" &&
+        (!displayInterval ||
+          (sample.sampledAtMs >= displayInterval.startAtMs && sample.sampledAtMs <= displayInterval.resetAtMs))
+      )
+      .map((sample) => sample.sampledAtMs),
+    ...capacityChartDowntimeEventTimes(downtimeEvents, displayInterval),
+  ].sort((left, right) => left - right);
+
+  const bridges = [];
+  const seen = new Set();
+  const addBridge = (left, right) => {
+    if (!left?.point || !right?.point) return;
+    const key = `${left.sampledAtMs}:${right.sampledAtMs}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    bridges.push([left.point, right.point]);
+  };
+
+  // A missing 15-minute bucket is an unobserved interval. Keep it out of the
+  // white path and show the connecting segment in the outage colour, even if
+  // the older sample predates explicit downtime event recording.
+  for (let index = 1; index < validSamples.length; index += 1) {
+    const left = validSamples[index - 1];
+    const right = validSamples[index];
+    if (capacityChartSampleGapBetween(left, right)) addBridge(left, right);
+  }
+
+  for (const markerAtMs of markerTimes) {
+    const left = [...validSamples].reverse().find((sample) => sample.sampledAtMs < markerAtMs);
+    const right = validSamples.find((sample) => sample.sampledAtMs > markerAtMs);
+    addBridge(left, right);
+  }
+  return bridges;
+};
+
+const capacityChartBridgePath = (bridges, plot) =>
+  bridges.map(([from, to]) => {
+    const fromX = plot.left + (from.elapsedPercent / 100) * plot.width;
+    const fromY = plot.top + ((100 - from.remainingPercent) / 100) * plot.height;
+    const toX = plot.left + (to.elapsedPercent / 100) * plot.width;
+    const toY = plot.top + ((100 - to.remainingPercent) / 100) * plot.height;
+    return `M${fromX.toFixed(2)} ${fromY.toFixed(2)} L${toX.toFixed(2)} ${toY.toFixed(2)}`;
+  }).join(" ");
+
+const capacityChartDowntimeBandCoordinates = (bridge, plot) => {
+  const [from, to] = bridge ?? [];
+  if (!from || !to) return null;
+  const fromX = plot.left + (from.elapsedPercent / 100) * plot.width;
+  const toX = plot.left + (to.elapsedPercent / 100) * plot.width;
+  const left = Math.max(plot.left, Math.min(fromX, toX));
+  const right = Math.min(plot.left + plot.width, Math.max(fromX, toX));
+  if (!Number.isFinite(left) || !Number.isFinite(right) || right <= left) return null;
+  return { x: left, width: right - left };
 };
 
 const capacityChartPath = (points, plot, options = {}) => {
@@ -1389,6 +1611,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   for (
     const series of [
       ...CAPACITY_CHART_SERIES,
+      { key: "openai-downtime", label: "OpenAI downtime" },
       { key: "optimal-spend", label: "Optimal token spend" },
     ]
   ) {
@@ -1413,6 +1636,59 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
+
+  const currentSample = { sampled_at_ms: nowMs, sources };
+  const aggregateDowntimeBridges = capacityChartDowntimeBridges(
+    history,
+    CAPACITY_CHART_SERIES[0],
+    chartWindow,
+    chartWindow,
+    capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
+    nowMs,
+    snapshot?.downtime_events,
+  );
+  const defs = capacityChartSvgElement("defs");
+  const downtimePattern = capacityChartSvgElement("pattern", {
+    id: "capacity-chart-downtime-stripes",
+    width: 12,
+    height: 12,
+    patternUnits: "userSpaceOnUse",
+  });
+  const downtimeStripe = capacityChartSvgElement("path", {
+    d: "M-3 -3L15 15 M-3 9L3 15 M9 -3L15 3",
+    fill: "none",
+    stroke: "#ff5f56",
+    "stroke-opacity": 0.3,
+    "stroke-width": 1.25,
+  });
+  downtimePattern.appendChild(downtimeStripe);
+  defs.appendChild(downtimePattern);
+  svg.appendChild(defs);
+
+  for (const bridge of aggregateDowntimeBridges) {
+    const band = capacityChartDowntimeBandCoordinates(bridge, plot);
+    if (!band) continue;
+    const background = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "#ff5f56",
+      "fill-opacity": 0.055,
+    });
+    background.dataset.capacityDowntimeBand = "openai";
+    background.setAttribute("aria-hidden", "true");
+    const stripes = capacityChartSvgElement("rect", {
+      x: band.x,
+      y: plot.top,
+      width: band.width,
+      height: plot.height,
+      fill: "url(#capacity-chart-downtime-stripes)",
+    });
+    stripes.dataset.capacityDowntimeBand = "openai";
+    stripes.setAttribute("aria-hidden", "true");
+    svg.append(background, stripes);
+  }
 
   for (const remaining of [100, 75, 50, 25, 0]) {
     const y = plot.top + ((100 - remaining) / 100) * plot.height;
@@ -1485,7 +1761,6 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   reticule.setAttribute("aria-label", "Current time in usage period");
   svg.appendChild(reticule);
 
-  const currentSample = { sampled_at_ms: nowMs, sources };
   for (const series of CAPACITY_CHART_SERIES) {
     const activeInterval = chartWindow;
     const shouldRender = true;
@@ -1499,6 +1774,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
         currentPoint,
         nowMs,
         snapshot?.reset_events,
+        snapshot?.downtime_events,
       )
       : [];
     const path = capacityChartSvgElement("path", {
@@ -1512,6 +1788,26 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     path.dataset.capacitySeries = series.key;
     path.setAttribute("aria-label", series.label);
     svg.appendChild(path);
+
+    const downtimeBridges = series.source === "aggregate" ? aggregateDowntimeBridges : capacityChartDowntimeBridges(
+      history,
+      series,
+      activeInterval,
+      chartWindow,
+      currentPoint,
+      nowMs,
+      snapshot?.downtime_events,
+    );
+    if (downtimeBridges.length) {
+      const downtimePath = capacityChartSvgElement("path", {
+        d: capacityChartBridgePath(downtimeBridges, plot),
+        fill: "none",
+      });
+      downtimePath.style.fill = "none";
+      downtimePath.dataset.capacityDowntime = "openai";
+      downtimePath.setAttribute("aria-label", "OpenAI downtime between observed capacity samples");
+      svg.appendChild(downtimePath);
+    }
   }
 
   const chartBody = document.createElement("div");
@@ -1530,11 +1826,23 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const resetSuffix = resetEvents.length
     ? ` · ${resetEvents.length} verified reset${resetEvents.length === 1 ? "" : "s"}`
     : "";
+  const downtimeBridgeCount = capacityChartDowntimeBridges(
+    history,
+    CAPACITY_CHART_SERIES[0],
+    chartWindow,
+    chartWindow,
+    capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
+    nowMs,
+    snapshot?.downtime_events,
+  ).length;
+  const downtimeSuffix = downtimeBridgeCount
+    ? ` · ${downtimeBridgeCount} OpenAI downtime bridge${downtimeBridgeCount === 1 ? "" : "s"}`
+    : "";
   caption.textContent = samples.length
     ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
       formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
-    } · ${samples.length} sample${samples.length === 1 ? "" : "s"}${resetSuffix}${staleSuffix}`
-    : `No retained samples yet · current Codex usage period${resetSuffix}${staleSuffix}`;
+    } · ${samples.length} sample${samples.length === 1 ? "" : "s"}${resetSuffix}${downtimeSuffix}${staleSuffix}`
+    : `No retained samples yet · current Codex usage period${resetSuffix}${downtimeSuffix}${staleSuffix}`;
   figure.appendChild(caption);
   providerCapacityChart.replaceChildren(figure);
 };
@@ -1556,11 +1864,11 @@ const renderProviderCapacity = (snapshot) => {
   const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
   const staleCount = sources.filter((source) => source.state === "stale").length;
   if (unavailableCount === sources.length) {
-    setBadge(providerCapacityBadge, "bad", "Unavailable");
+    setBadge(providerCapacityBadge, "unknown", "Quota unavailable");
   } else if (unavailableCount > 0) {
-    setBadge(providerCapacityBadge, "unknown", `Partial · ${unavailableCount} unavailable`);
+    setBadge(providerCapacityBadge, "unknown", `Partial quota · ${unavailableCount} unavailable`);
   } else if (staleCount > 0) {
-    setBadge(providerCapacityBadge, "unknown", `Stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
+    setBadge(providerCapacityBadge, "unknown", `Quota stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
   } else {
     setBadge(providerCapacityBadge, "ok", "Live");
   }
@@ -1620,6 +1928,7 @@ const loadProviders = async () => {
   if (!adminAccessState.isAdmin || !token) {
     return;
   }
+  const loadId = ++providersLoadId;
   providersLoading = true;
   try {
     const response = await fetch(apiUrl("/admin/providers"), {
@@ -1627,21 +1936,26 @@ const loadProviders = async () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     const payload = await response.json().catch(() => null);
+    if (loadId !== providersLoadId) return;
     if (!response.ok || !payload) {
       latestProviderHealth = null;
+      renderOpenRouterFailover(null);
       if (latestProviderCapacityChartState?.sources) {
         renderProviderCapacityList(latestProviderCapacityChartState.sources);
       }
       return;
     }
     latestProviderHealth = payload;
+    renderOpenRouterFailover(payload.openrouter);
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
     providersLoadedAt = Date.now();
   } catch {
+    if (loadId !== providersLoadId) return;
     latestProviderHealth = null;
+    renderOpenRouterFailover(null);
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
   } finally {
-    providersLoading = false;
+    if (loadId === providersLoadId) providersLoading = false;
   }
 };
 
@@ -6310,6 +6624,7 @@ setKernelNewBadge("unknown", "Idle");
 setKernelQueueBadge("unknown", "Not loaded");
 setKernelPubKeysBadge("unknown", "Not loaded");
 setKernelPubKeyCreateBadge("unknown", "Idle");
+resetOpenRouterFailover();
 setKeyListMessage("Paste an admin token to load API keys.");
 setPasskeyUsersMessage("Paste a fallback admin token to manage passkey users.");
 setKernelListMessage(getKernelListMissingTokenMessage());
@@ -6364,11 +6679,14 @@ tokenInput.addEventListener("input", () => {
   kernelQueueLoadedAt = 0;
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
+  providersLoadId += 1;
+  providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
+  resetOpenRouterFailover();
   clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
@@ -6579,11 +6897,14 @@ baseSelect.addEventListener("change", () => {
   kernelPubKeys = [];
   kernelPubKeysLoadedAt = 0;
   accessUpstreamLoadedAt = 0;
+  providersLoadId += 1;
+  providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
+  resetOpenRouterFailover("Target changed. Waiting for snapshot");
   resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {

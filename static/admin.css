@@ -435,6 +435,11 @@ body[data-page="admin"] [data-capacity-legend-item="optimal-spend"] [data-capaci
   border-top-style: dashed;
 }
 
+body[data-page="admin"] [data-capacity-legend-item="openai-downtime"] [data-capacity-legend-swatch] {
+  border-top-color: #ff5f56;
+  border-top-width: 3px;
+}
+
 body[data-page="admin"] [data-capacity-chart-body] {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);
@@ -478,6 +483,13 @@ body[data-page="admin"] [data-capacity-series="metered-refill"] {
   stroke: rgba(133, 216, 201, 0.92);
   stroke-dasharray: 6 4;
   stroke-width: 1.5;
+}
+
+body[data-page="admin"] [data-capacity-downtime="openai"] {
+  stroke: #ff5f56;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 body[data-page="admin"] [data-capacity-trend="optimal-spend"] {

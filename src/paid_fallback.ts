@@ -9,7 +9,7 @@ import { loadFullCodexModelsSnapshot } from "./codex.ts";
 import { getKv } from "./kv.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
-import { initializeMeteredPricing, readMeteredApiKey, MeteredError } from "./metered.ts";
+import { initializeMeteredPricing, MeteredError, readMeteredApiKey } from "./metered.ts";
 
 export type PaidFallbackPolicyFields = Pick<
   ApiKeyRecord,
