@@ -209,6 +209,7 @@ jobs:
           deno deploy env load \
             --json \
             --non-interactive \
+            --replace \
             --org ubiquity-dao \
             --app "$TARGET_PROJECT" \
             --token "$DENO_DEPLOY_TOKEN" \
