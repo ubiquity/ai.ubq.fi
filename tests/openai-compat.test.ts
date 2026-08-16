@@ -2115,7 +2115,7 @@ Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering 
         display_name: "GPT-OSS 120B",
         upstream_provider: "cerebras",
         supported_endpoints: ["/v1/chat/completions"],
-        supported_reasoning_levels: ["medium"],
+        supported_reasoning_levels: ["low", "medium", "high"],
         default_reasoning_effort: "medium",
         reasoning_effort_wire_map: {},
         context_window_tokens: null,
