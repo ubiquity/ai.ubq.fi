@@ -282,7 +282,7 @@ body[data-page="admin"] [data-card-body] {
   gap: 10px;
 }
 
-body[data-page="admin"] [data-yunwu-quota-summary] {
+body[data-page="admin"] [data-metered-quota-summary] {
   display: grid;
   gap: 6px;
   padding: 14px;
@@ -290,18 +290,18 @@ body[data-page="admin"] [data-yunwu-quota-summary] {
   background: rgba(255, 255, 255, 0.045);
 }
 
-body[data-page="admin"] [data-yunwu-quota-summary] strong {
+body[data-page="admin"] [data-metered-quota-summary] strong {
   font-size: clamp(28px, 4vw, 42px);
   line-height: 1;
   letter-spacing: -0.04em;
 }
 
-body[data-page="admin"] [data-yunwu-quota-summary] span {
+body[data-page="admin"] [data-metered-quota-summary] span {
   color: var(--muted);
   font-size: 12px;
 }
 
-body[data-page="admin"] #yunwu-quota-progress {
+body[data-page="admin"] #metered-quota-progress {
   width: 100%;
   height: 6px;
   margin-top: 6px;
@@ -312,17 +312,17 @@ body[data-page="admin"] #yunwu-quota-progress {
   background: rgba(255, 255, 255, 0.08);
 }
 
-body[data-page="admin"] #yunwu-quota-progress::-webkit-progress-bar {
+body[data-page="admin"] #metered-quota-progress::-webkit-progress-bar {
   border-radius: inherit;
   background: rgba(255, 255, 255, 0.08);
 }
 
-body[data-page="admin"] #yunwu-quota-progress::-webkit-progress-value {
+body[data-page="admin"] #metered-quota-progress::-webkit-progress-value {
   border-radius: inherit;
   background: rgba(255, 255, 255, 0.82);
 }
 
-body[data-page="admin"] #yunwu-quota-progress::-moz-progress-bar {
+body[data-page="admin"] #metered-quota-progress::-moz-progress-bar {
   border-radius: inherit;
   background: rgba(255, 255, 255, 0.82);
 }
@@ -425,7 +425,7 @@ body[data-page="admin"] [data-capacity-legend-swatch] {
   border-top: 2px solid #ffffff;
 }
 
-body[data-page="admin"] [data-capacity-legend-item="yunwu-refill"] [data-capacity-legend-swatch] {
+body[data-page="admin"] [data-capacity-legend-item="metered-refill"] [data-capacity-legend-swatch] {
   border-top-color: rgba(133, 216, 201, 0.92);
   border-top-style: dashed;
 }
@@ -479,7 +479,7 @@ body[data-page="admin"] [data-capacity-series="available-capacity"] {
   background: #ffffff;
 }
 
-body[data-page="admin"] [data-capacity-series="yunwu-refill"] {
+body[data-page="admin"] [data-capacity-series="metered-refill"] {
   stroke: rgba(133, 216, 201, 0.92);
   stroke-dasharray: 6 4;
   stroke-width: 1.5;

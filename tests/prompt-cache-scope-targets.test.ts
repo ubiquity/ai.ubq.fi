@@ -55,7 +55,7 @@ const derive = async (overrides: Partial<Parameters<typeof derivePromptCacheScop
     catalogVersionstamp: "catalog-v1",
     codexAuthPool: makePool(2),
     codexAuthPoolVersionstamp: "auth-v1",
-    yunwuFallbackRoster: { status: "unknown" },
+    meteredFallbackRoster: { status: "unknown" },
     ...overrides,
   });
 
@@ -186,29 +186,29 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
   assert.deepEqual(explicitOptionsOnly?.probeability, { status: "probeable", adapter: "codex_two_slot" });
 });
 
-Deno.test("an authoritative Yunwu roster creates only catalog intersections and reports the rest", async () => {
+Deno.test("an authoritative metered roster creates only catalog intersections and reports the rest", async () => {
   const inventory = await derive({
-    yunwuFallbackRoster: { status: "authoritative", model_ids: ["missing", "gpt-5.6-mini", "gpt-5.6-mini"] },
+    meteredFallbackRoster: { status: "authoritative", model_ids: ["missing", "gpt-5.6-mini", "gpt-5.6-mini"] },
   });
-  const yunwuTargets = inventory.targets.filter((target) => target.provider === "yunwu");
+  const meteredTargets = inventory.targets.filter((target) => target.provider === "metered");
 
-  assert.deepEqual(yunwuTargets.map((target) => target.model), ["gpt-5.6-mini"]);
-  assert.deepEqual(inventory.yunwu_fallback_roster, {
+  assert.deepEqual(meteredTargets.map((target) => target.model), ["gpt-5.6-mini"]);
+  assert.deepEqual(inventory.metered_fallback_roster, {
     status: "authoritative",
     model_ids: ["gpt-5.6-mini", "missing"],
     non_catalog_model_ids: ["missing"],
   });
 });
 
-Deno.test("Yunwu targets describe their single-credential topology and current adapter boundary", async () => {
+Deno.test("Metered targets describe their single-credential topology and current adapter boundary", async () => {
   const inventory = await derive({
-    yunwuFallbackRoster: { status: "authoritative", model_ids: ["gpt-5.6"] },
+    meteredFallbackRoster: { status: "authoritative", model_ids: ["gpt-5.6"] },
   });
-  const target = inventory.targets.find((candidate) => candidate.provider === "yunwu");
+  const target = inventory.targets.find((candidate) => candidate.provider === "metered");
 
   assert.ok(target);
-  assert.equal(target.provider, "yunwu");
-  assert.equal(target.telemetry_provider, "yunwu");
+  assert.equal(target.provider, "metered");
+  assert.equal(target.telemetry_provider, "metered");
   assert.deepEqual(target.topology, { kind: "single_credential" });
   assert.deepEqual(target.probeability, {
     status: "unprobeable",
@@ -218,20 +218,20 @@ Deno.test("Yunwu targets describe their single-credential topology and current a
   assert.equal(target.codex_auth_pool_identity_fingerprint, null);
 });
 
-Deno.test("the same exact model has isolated Codex and Yunwu target identities", async () => {
+Deno.test("the same exact model has isolated Codex and metered target identities", async () => {
   const inventory = await derive({
-    yunwuFallbackRoster: { status: "authoritative", model_ids: ["gpt-5.6"] },
+    meteredFallbackRoster: { status: "authoritative", model_ids: ["gpt-5.6"] },
   });
   const codex = inventory.targets.find((target) => target.provider === "codex_chatgpt" && target.model === "gpt-5.6");
-  const yunwu = inventory.targets.find((target) => target.provider === "yunwu" && target.model === "gpt-5.6");
+  const metered = inventory.targets.find((target) => target.provider === "metered" && target.model === "gpt-5.6");
 
   assert.ok(codex);
-  assert.ok(yunwu);
-  assert.notEqual(codex.id, yunwu.id);
-  assert.notEqual(codex.capability_fingerprint, yunwu.capability_fingerprint);
-  assert.notEqual(codex.telemetry_provider, yunwu.telemetry_provider);
-  assert.notEqual(codex.topology.kind, yunwu.topology.kind);
-  assert.equal(yunwu.probeability.status, "unprobeable");
+  assert.ok(metered);
+  assert.notEqual(codex.id, metered.id);
+  assert.notEqual(codex.capability_fingerprint, metered.capability_fingerprint);
+  assert.notEqual(codex.telemetry_provider, metered.telemetry_provider);
+  assert.notEqual(codex.topology.kind, metered.topology.kind);
+  assert.equal(metered.probeability.status, "unprobeable");
   assert.deepEqual(
     inventory.targets.filter((target) => target.probeability.status === "probeable").map((target) => target.provider),
     ["codex_chatgpt", "codex_chatgpt"],
@@ -276,11 +276,11 @@ Deno.test("published scope evidence does not change the dispatch capability or i
   assert.equal(published.inventory_fingerprint, baseline.inventory_fingerprint);
 });
 
-Deno.test("an unknown Yunwu roster fails closed with no Yunwu targets", async () => {
-  const inventory = await derive({ yunwuFallbackRoster: { status: "unknown" } });
+Deno.test("an unknown metered roster fails closed with no metered targets", async () => {
+  const inventory = await derive({ meteredFallbackRoster: { status: "unknown" } });
 
-  assert.equal(inventory.yunwu_fallback_roster.status, "unknown");
-  assert.deepEqual(inventory.targets.filter((target) => target.provider === "yunwu"), []);
+  assert.equal(inventory.metered_fallback_roster.status, "unknown");
+  assert.deepEqual(inventory.targets.filter((target) => target.provider === "metered"), []);
 });
 
 Deno.test("the inventory loader has a two-key read-only KV footprint", async () => {

@@ -35,7 +35,7 @@ export type ProviderHealthView = Readonly<{
   last_refresh_succeeded: boolean | null;
 }>;
 
-type RecordProvider = "cerebras" | "codex" | "yunwu";
+type RecordProvider = "cerebras" | "codex" | "metered";
 
 const PROVIDER_RECORDS = [
   "current",
@@ -185,11 +185,11 @@ export const recordCodexProviderHealth = (
   now: () => number = Date.now,
 ): Promise<void> => recordProviderHealth("codex", accountId, event, status, now);
 
-export const recordYunwuProviderHealth = (
+export const recordMeteredProviderHealth = (
   event: ProviderHealthEvent,
   status: number | null = null,
   now: () => number = Date.now,
-): Promise<void> => recordProviderHealth("yunwu", "default", event, status, now);
+): Promise<void> => recordProviderHealth("metered", "default", event, status, now);
 
 export const recordCerebrasProviderHealth = (
   event: ProviderHealthEvent,
@@ -280,9 +280,9 @@ export const getCodexProviderHealth = (
   now: () => number = Date.now,
 ): Promise<ProviderHealthView> => readProviderHealth("codex", accountId, now);
 
-export const getYunwuProviderHealth = (
+export const getMeteredProviderHealth = (
   now: () => number = Date.now,
-): Promise<ProviderHealthView> => readProviderHealth("yunwu", "default", now);
+): Promise<ProviderHealthView> => readProviderHealth("metered", "default", now);
 
 export const getCerebrasProviderHealth = (
   now: () => number = Date.now,

@@ -537,7 +537,7 @@ Deno.test("KV incident migration preserves a valid unlimited reservation and req
   const pendingLedger = {
     id: requestId,
     key_id: id,
-    provider: "yunwu",
+    provider: "metered",
     billing_status: "pending",
     created_at_ms: now,
   };
@@ -565,7 +565,7 @@ Deno.test("KV incident migration permits matching terminal ledgers but rejects d
   const pendingLedger = {
     id: requestId,
     key_id: id,
-    provider: "yunwu",
+    provider: "metered",
     billing_status: "pending",
     created_at_ms: now,
   };
@@ -617,7 +617,7 @@ Deno.test("KV incident migration projects settled spend and unresolved exposure 
   const settledLegacy = {
     id: settledRequestId,
     key_id: keyId,
-    provider: "yunwu",
+    provider: "metered",
     route: "responses",
     path: "/v1/responses",
     method: "POST",
@@ -760,7 +760,7 @@ Deno.test("KV incident migration resumes concurrent phase one and retains postde
     store.set(keyToString(["ubq_ai", "api_keys", "request_log", id, now, requestId]), {
       id: requestId,
       key_id: id,
-      provider: "yunwu",
+      provider: "metered",
       billing_status: billingStatus,
       created_at_ms: now,
     });

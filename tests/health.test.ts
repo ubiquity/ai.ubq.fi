@@ -71,7 +71,7 @@ const {
   getCodexProviderHealth,
   recordCerebrasProviderHealth,
   recordCodexProviderHealth,
-  recordYunwuProviderHealth,
+  recordMeteredProviderHealth,
   resetProviderHealthThrottleForTest,
 } = await import("../src/provider_health.ts");
 resetAuthCache = resetCodexAuthCacheForTest;
@@ -112,7 +112,7 @@ Deno.test("passive provider health returns every Codex slot without contacting u
   );
   await recordCodexProviderHealth("private-account-a", "quota_exhausted", 429, () => 1_000);
   await recordCodexProviderHealth("private-account-b", "refresh_failed", 401, () => 2_000);
-  await recordYunwuProviderHealth("success", 200, () => 3_000);
+  await recordMeteredProviderHealth("success", 200, () => 3_000);
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () => {
@@ -128,7 +128,7 @@ Deno.test("passive provider health returns every Codex slot without contacting u
         state?: string;
         accounts?: Array<{ slot?: number; health?: { state?: string; last_status?: number | null } }>;
       };
-      yunwu?: { health?: { state?: string; last_status?: number | null }; quota?: { balance_credits?: unknown } };
+      metered?: { health?: { state?: string; last_status?: number | null }; quota?: { balance_credits?: unknown } };
     };
 
     assert.equal(response.status, 200);
@@ -139,8 +139,8 @@ Deno.test("passive provider health returns every Codex slot without contacting u
       payload.codex?.accounts?.map((account) => [account.slot, account.health?.state, account.health?.last_status]),
       [[1, "exhausted", 429], [2, "invalid", 401]],
     );
-    assert.equal(payload.yunwu?.health?.state, "healthy");
-    assert.equal("balance_credits" in (payload.yunwu?.quota ?? {}), false);
+    assert.equal(payload.metered?.health?.state, "healthy");
+    assert.equal("balance_credits" in (payload.metered?.quota ?? {}), false);
     assert.equal(text.includes("private-account-a"), false);
     assert.equal(text.includes("private-account-b"), false);
   } finally {
@@ -185,10 +185,12 @@ Deno.test("admin provider health includes cached quota fields without an active 
   };
   try {
     const response = await handleHealthProviders({ includeQuota: true });
-    const payload = await response.json() as { yunwu?: { quota?: { available?: boolean; balance_credits?: unknown } } };
+    const payload = await response.json() as {
+      metered?: { quota?: { available?: boolean; balance_credits?: unknown } };
+    };
     assert.equal(response.status, 200);
-    assert.equal(typeof payload.yunwu?.quota?.available, "boolean");
-    assert.equal("balance_credits" in (payload.yunwu?.quota ?? {}), true);
+    assert.equal(typeof payload.metered?.quota?.available, "boolean");
+    assert.equal("balance_credits" in (payload.metered?.quota ?? {}), true);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -434,11 +436,11 @@ Deno.test("active upstream health retains detailed failure diagnostics", async (
 });
 
 Deno.test("active upstream health preserves the provider that finishes before the shared deadline", async () => {
-  const originalToken = Deno.env.get("YUNWU_SYSTEM_TOKEN");
-  const originalUserId = Deno.env.get("YUNWU_USER_ID");
+  const originalToken = Deno.env.get("METERED_SYSTEM_TOKEN");
+  const originalUserId = Deno.env.get("METERED_USER_ID");
   const originalFetch = globalThis.fetch;
-  Deno.env.set("YUNWU_SYSTEM_TOKEN", "system-token");
-  Deno.env.set("YUNWU_USER_ID", "717235");
+  Deno.env.set("METERED_SYSTEM_TOKEN", "system-token");
+  Deno.env.set("METERED_USER_ID", "717235");
   setActiveUpstreamHealthTimeoutMsForTest(20);
 
   const restoreEnv = (key: string, value: string | undefined): void => {
@@ -459,13 +461,13 @@ Deno.test("active upstream health preserves the provider that finishes before th
     new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
 
   try {
-    for (const stalledProvider of ["codex", "yunwu"] as const) {
+    for (const stalledProvider of ["codex", "metered"] as const) {
       kvStore.clear();
       kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
       globalThis.fetch = (input, init) => {
         const url = new URL(input instanceof Request ? input.url : input.toString());
         const isCodex = url.hostname === "chatgpt.com";
-        if ((stalledProvider === "codex" && isCodex) || (stalledProvider === "yunwu" && !isCodex)) {
+        if ((stalledProvider === "codex" && isCodex) || (stalledProvider === "metered" && !isCodex)) {
           return waitForAbort(init?.signal);
         }
         if (isCodex) return Promise.resolve(jsonResponse({ models: [{ slug: "gpt-health" }] }));
@@ -482,24 +484,24 @@ Deno.test("active upstream health preserves the provider that finishes before th
       const payload = await response.json() as {
         probes?: {
           codex?: { status?: number; error?: string };
-          yunwu_quota?: { status?: number; error?: string } | null;
+          metered_quota?: { status?: number; error?: string } | null;
         };
       };
       assert.equal(response.status, 503, stalledProvider);
       if (stalledProvider === "codex") {
         assert.equal(payload.probes?.codex?.status, 503);
         assert.equal(payload.probes?.codex?.error, "Codex models probe timed out.");
-        assert.equal(payload.probes?.yunwu_quota?.status, 200);
+        assert.equal(payload.probes?.metered_quota?.status, 200);
       } else {
         assert.equal(payload.probes?.codex?.status, 200);
-        assert.equal(payload.probes?.yunwu_quota?.status, 503);
-        assert.equal(payload.probes?.yunwu_quota?.error, "YunWu quota probe timed out.");
+        assert.equal(payload.probes?.metered_quota?.status, 503);
+        assert.equal(payload.probes?.metered_quota?.error, "Metered quota probe timed out.");
       }
     }
   } finally {
     globalThis.fetch = originalFetch;
     setActiveUpstreamHealthTimeoutMsForTest(null);
-    restoreEnv("YUNWU_SYSTEM_TOKEN", originalToken);
-    restoreEnv("YUNWU_USER_ID", originalUserId);
+    restoreEnv("METERED_SYSTEM_TOKEN", originalToken);
+    restoreEnv("METERED_USER_ID", originalUserId);
   }
 });

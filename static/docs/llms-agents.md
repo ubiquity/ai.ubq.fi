@@ -179,29 +179,29 @@ upstream accepts them.
 
 ## Codex quota reporting
 
-After an inference response, stock Codex terminal and GUI clients can show the YunWu wallet in `/status` and emit their
+After an inference response, stock Codex terminal and GUI clients can show the Metered wallet in `/status` and emit their
 built-in 25%, 10%, and 5% remaining warnings. The gateway publishes only the canonical `x-codex-*` family, named
-`YunWu balance`.
+`Metered balance`.
 
 Codex 0.144.6 parses multiple response-header families but persists only one response-derived rate-limit snapshot. Named
-OpenAI and YunWu families therefore overwrite one another instead of remaining independent. The gateway strips every
-parseable upstream quota family and prioritizes the client-relevant YunWu balance. It does not combine YunWu with the
+OpenAI and Metered families therefore overwrite one another instead of remaining independent. The gateway strips every
+parseable upstream quota family and prioritizes the client-relevant Metered balance. It does not combine Metered with the
 shared ChatGPT subscription percentage because OpenAI provides no absolute token denominator and the shared account is
 not an individual AI.UBQ client's truthful capacity.
 
-The YunWu wallet is not a weekly quota. The gateway does not emit a synthetic `primary-window-minutes` or
+The Metered wallet is not a weekly quota. The gateway does not emit a synthetic `primary-window-minutes` or
 `primary-reset-at` value for it. A client that opens `/status` before its first inference response may still say that
-limit data is unavailable because Codex learns these headers from inference responses. If no valid YunWu snapshot is
+limit data is unavailable because Codex learns these headers from inference responses. If no valid Metered snapshot is
 available, the gateway emits no quota percentage.
 
-The YunWu percentage uses a Deno KV-backed refill cycle rather than adding all historical top-ups. Its first baseline is
+The Metered percentage uses a Deno KV-backed refill cycle rather than adding all historical top-ups. Its first baseline is
 the larger of the observed wallet balance and latest successful top-up. Later credits are inferred from wallet movement
 and the account usage counter; a new top-up record always starts a new cycle. If the usage counter also advanced, known
 inter-observation debits are restored to the observed balance before choosing that cycle's capacity so post-refill spend
 does not shrink the denominator. Snapshots are fresh for five minutes, retained for 24 hours, protected by a durable
 refresh lease, and served stale during temporary account API failures. Inference never waits for a slow account refresh:
-it uses only a snapshot that is already available. YunWu-routed responses invalidate their pre-debit observation so the
-next request refreshes it. `GET /admin/defaults` exposes non-secret diagnostics in `yunwu_quota`; credentials are never
+it uses only a snapshot that is already available. Metered-routed responses invalidate their pre-debit observation so the
+next request refreshes it. `GET /admin/defaults` exposes non-secret diagnostics in `metered_quota`; credentials are never
 returned.
 
 Observed integration behavior:
@@ -518,12 +518,12 @@ token, a KV API key, an admin token, a passkey session, or a GitHub/kernel token
 ## Health
 
 - `GET /health` is a public passive release-liveness check. It makes no upstream or KV calls.
-- `GET /health/providers` returns passive, last-known Codex-slot and YunWu health from Deno KV. It never sends an
+- `GET /health/providers` returns passive, last-known Codex-slot and Metered health from Deno KV. It never sends an
   upstream or inference request and never exposes Codex account identifiers. It requires admin authentication.
-- `GET /health/upstream` is an admin-only active probe of Codex models and the configured non-billable YunWu quota
+- `GET /health/upstream` is an admin-only active probe of Codex models and the configured non-billable Metered quota
   endpoint. It never sends inference and never returns upstream bodies.
 
-The authenticated `GET /admin/providers` view adds cached YunWu wallet diagnostics to the passive provider state. The
+The authenticated `GET /admin/providers` view adds cached Metered wallet diagnostics to the passive provider state. The
 admin Providers tab refreshes this cached view automatically. A stale state means ordinary traffic has not exercised
 that provider recently; opening either view does not verify or spend a model request.
 

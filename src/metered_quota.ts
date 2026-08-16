@@ -1,53 +1,53 @@
 import { getKv } from "./kv.ts";
 import { getString, isRecord } from "./utils.ts";
-import { YUNWU_BASE_URL, type YunwuFetch } from "./yunwu.ts";
+import { METERED_BASE_URL, type MeteredFetch } from "./metered.ts";
 
-export const YUNWU_QUOTA_FRESH_MS = 5 * 60_000;
-export const YUNWU_QUOTA_RETENTION_MS = 24 * 60 * 60_000;
-export const YUNWU_QUOTA_REFRESH_LEASE_MS = 15_000;
-export const YUNWU_QUOTA_COLD_WAIT_MS = 2_000;
-export const YUNWU_QUOTA_FETCH_TIMEOUT_MS = 10_000;
+export const METERED_QUOTA_FRESH_MS = 5 * 60_000;
+export const METERED_QUOTA_RETENTION_MS = 24 * 60 * 60_000;
+export const METERED_QUOTA_REFRESH_LEASE_MS = 15_000;
+export const METERED_QUOTA_COLD_WAIT_MS = 2_000;
+export const METERED_QUOTA_FETCH_TIMEOUT_MS = 10_000;
 
-export const YUNWU_SYSTEM_TOKEN_ENV = "YUNWU_SYSTEM_TOKEN";
-export const YUNWU_USER_ID_ENV = "YUNWU_USER_ID";
+export const METERED_SYSTEM_TOKEN_ENV = "METERED_SYSTEM_TOKEN";
+export const METERED_USER_ID_ENV = "METERED_USER_ID";
 
-export const YUNWU_QUOTA_STATE_KEY = ["uos_ai", "yunwu_quota", "v1", "state"] as const;
-export const YUNWU_QUOTA_REFRESH_LEASE_KEY = ["uos_ai", "yunwu_quota", "v1", "refresh_lease"] as const;
-export const YUNWU_QUOTA_INVALIDATION_KEY = ["uos_ai", "yunwu_quota", "v1", "invalidation"] as const;
+export const METERED_QUOTA_STATE_KEY = ["uos_ai", "metered_quota", "v1", "state"] as const;
+export const METERED_QUOTA_REFRESH_LEASE_KEY = ["uos_ai", "metered_quota", "v1", "refresh_lease"] as const;
+export const METERED_QUOTA_INVALIDATION_KEY = ["uos_ai", "metered_quota", "v1", "invalidation"] as const;
 
-const YUNWU_ACCOUNT_URL = `${YUNWU_BASE_URL}/api/user/self`;
-const YUNWU_TOPUP_RECORDS_URL = `${YUNWU_BASE_URL}/api/user/topuprecords?page=1&page_size=10`;
-const YUNWU_STATUS_URL = `${YUNWU_BASE_URL}/api/status`;
+const METERED_ACCOUNT_URL = `${METERED_BASE_URL}/api/user/self`;
+const METERED_TOPUP_RECORDS_URL = `${METERED_BASE_URL}/api/user/topuprecords?page=1&page_size=10`;
+const METERED_STATUS_URL = `${METERED_BASE_URL}/api/status`;
 
-export type YunwuAccountCredentials = Readonly<{
+export type MeteredAccountCredentials = Readonly<{
   systemToken: string;
   userId: string;
 }>;
 
-export type YunwuRefillObservation = Readonly<{
+export type MeteredRefillObservation = Readonly<{
   id: string;
   amount_credits: number;
   completed_at_ms: number;
 }>;
 
-export type YunwuQuotaObservation = Readonly<{
+export type MeteredQuotaObservation = Readonly<{
   balance_quota: number;
   used_quota: number;
   quota_per_credit: number;
   observed_at_ms: number;
-  latest_refill: YunwuRefillObservation | null;
+  latest_refill: MeteredRefillObservation | null;
 }>;
 
-export type YunwuQuotaConfidence = "provisional" | "refill_observed" | "inferred_adjustment";
+export type MeteredQuotaConfidence = "provisional" | "refill_observed" | "inferred_adjustment";
 
-export type YunwuQuotaState = Readonly<{
+export type MeteredQuotaState = Readonly<{
   current_balance_quota: number;
   post_refill_baseline_quota: number;
   last_observed_used_quota: number;
   quota_per_credit: number;
   observed_at_ms: number;
   cycle_started_at_ms: number;
-  confidence: YunwuQuotaConfidence;
+  confidence: MeteredQuotaConfidence;
   last_known_debits_quota: number;
   last_inferred_credit_quota: number;
   last_credit_at_ms: number | null;
@@ -56,11 +56,11 @@ export type YunwuQuotaState = Readonly<{
   latest_refill_completed_at_ms: number | null;
 }>;
 
-export type YunwuQuotaCacheState = "fresh" | "refreshed" | "stale" | "wait";
+export type MeteredQuotaCacheState = "fresh" | "refreshed" | "stale" | "wait";
 
-export type YunwuQuotaSnapshot = Readonly<{
-  state: YunwuQuotaState;
-  cache_state: YunwuQuotaCacheState;
+export type MeteredQuotaSnapshot = Readonly<{
+  state: MeteredQuotaState;
+  cache_state: MeteredQuotaCacheState;
   balance_credits: number;
   baseline_credits: number;
   last_inferred_credit_credits: number;
@@ -68,11 +68,11 @@ export type YunwuQuotaSnapshot = Readonly<{
   used_percent: number | null;
 }>;
 
-export type YunwuQuotaDiagnostics = Readonly<{
+export type MeteredQuotaDiagnostics = Readonly<{
   configured: boolean;
   available: boolean;
-  cache_state: YunwuQuotaCacheState | null;
-  confidence: YunwuQuotaConfidence | null;
+  cache_state: MeteredQuotaCacheState | null;
+  confidence: MeteredQuotaConfidence | null;
   balance_credits: number | null;
   baseline_credits: number | null;
   remaining_percent: number | null;
@@ -87,9 +87,9 @@ export type YunwuQuotaDiagnostics = Readonly<{
   latest_refill_completed_at_ms: number | null;
 }>;
 
-export type GetYunwuQuotaSnapshotOptions = Readonly<{
+export type GetMeteredQuotaSnapshotOptions = Readonly<{
   kv?: Deno.Kv | null;
-  fetcher?: YunwuFetch;
+  fetcher?: MeteredFetch;
   now?: () => number;
   signal?: AbortSignal;
   forceRefresh?: boolean;
@@ -116,13 +116,13 @@ const isPositiveSafeInteger = (value: unknown): value is number => isSafeInteger
 const isNonNegativeFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
 
-const isConfidence = (value: unknown): value is YunwuQuotaConfidence =>
+const isConfidence = (value: unknown): value is MeteredQuotaConfidence =>
   value === "provisional" || value === "refill_observed" || value === "inferred_adjustment";
 
 const isQuotaInvalidation = (value: unknown): value is QuotaInvalidation =>
   isRecord(value) && isNonNegativeSafeInteger(value.invalidated_at_ms);
 
-const parseCredentials = (credentials: YunwuAccountCredentials): YunwuAccountCredentials | null => {
+const parseCredentials = (credentials: MeteredAccountCredentials): MeteredAccountCredentials | null => {
   const systemToken = credentials.systemToken.trim();
   const userId = credentials.userId.trim();
   if (!systemToken || /\s/.test(systemToken)) return null;
@@ -138,13 +138,13 @@ const getEnv = (key: string): string | undefined => {
   }
 };
 
-export const readYunwuAccountCredentials = (): YunwuAccountCredentials | null =>
+export const readMeteredAccountCredentials = (): MeteredAccountCredentials | null =>
   parseCredentials({
-    systemToken: getEnv(YUNWU_SYSTEM_TOKEN_ENV) ?? "",
-    userId: getEnv(YUNWU_USER_ID_ENV) ?? "",
+    systemToken: getEnv(METERED_SYSTEM_TOKEN_ENV) ?? "",
+    userId: getEnv(METERED_USER_ID_ENV) ?? "",
   });
 
-const authenticatedHeaders = (credentials: YunwuAccountCredentials): Headers => {
+const authenticatedHeaders = (credentials: MeteredAccountCredentials): Headers => {
   const headers = new Headers({
     Accept: "application/json",
     Authorization: `Bearer ${credentials.systemToken}`,
@@ -160,7 +160,7 @@ const successfulEnvelopeData = (value: unknown): JsonRecord | null => {
 
 const fetchJson = async (
   url: string,
-  fetcher: YunwuFetch,
+  fetcher: MeteredFetch,
   headers: Headers,
   signal: AbortSignal,
 ): Promise<unknown> => {
@@ -170,19 +170,19 @@ const fetchJson = async (
     redirect: "manual",
     signal,
   });
-  if (!response.ok) throw new Error(`YunWu account API returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`Metered account API returned HTTP ${response.status}`);
   const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
-  if (!contentType.includes("application/json")) throw new Error("YunWu account API returned non-JSON data");
+  if (!contentType.includes("application/json")) throw new Error("Metered account API returned non-JSON data");
   try {
     return await response.json() as unknown;
   } catch {
-    throw new Error("YunWu account API returned invalid JSON");
+    throw new Error("Metered account API returned invalid JSON");
   }
 };
 
-const parseLatestRefill = (data: JsonRecord): YunwuRefillObservation | null => {
+const parseLatestRefill = (data: JsonRecord): MeteredRefillObservation | null => {
   if (!Array.isArray(data.records)) return null;
-  const refills: YunwuRefillObservation[] = [];
+  const refills: MeteredRefillObservation[] = [];
   for (const value of data.records) {
     if (!isRecord(value) || getString(value.status)?.toLowerCase() !== "success") continue;
     const id = typeof value.id === "string" ? value.id.trim() : isSafeInteger(value.id) ? String(value.id) : "";
@@ -201,40 +201,40 @@ const parseLatestRefill = (data: JsonRecord): YunwuRefillObservation | null => {
 };
 
 const combinedSignal = (signal: AbortSignal | undefined): AbortSignal => {
-  const timeout = AbortSignal.timeout(YUNWU_QUOTA_FETCH_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(METERED_QUOTA_FETCH_TIMEOUT_MS);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 };
 
-export const fetchYunwuQuotaObservation = async (
-  credentialsInput: YunwuAccountCredentials,
+export const fetchMeteredQuotaObservation = async (
+  credentialsInput: MeteredAccountCredentials,
   options: Readonly<{
-    fetcher?: YunwuFetch;
+    fetcher?: MeteredFetch;
     now?: () => number;
     signal?: AbortSignal;
   }> = {},
-): Promise<YunwuQuotaObservation> => {
+): Promise<MeteredQuotaObservation> => {
   const credentials = parseCredentials(credentialsInput);
-  if (!credentials) throw new Error("YunWu account credentials are invalid");
+  if (!credentials) throw new Error("Metered account credentials are invalid");
   const fetcher = options.fetcher ?? fetch;
   const signal = combinedSignal(options.signal);
   const [accountEnvelope, topupsEnvelope, statusEnvelope] = await Promise.all([
-    fetchJson(YUNWU_ACCOUNT_URL, fetcher, authenticatedHeaders(credentials), signal),
-    fetchJson(YUNWU_TOPUP_RECORDS_URL, fetcher, authenticatedHeaders(credentials), signal),
-    fetchJson(YUNWU_STATUS_URL, fetcher, new Headers({ Accept: "application/json" }), signal),
+    fetchJson(METERED_ACCOUNT_URL, fetcher, authenticatedHeaders(credentials), signal),
+    fetchJson(METERED_TOPUP_RECORDS_URL, fetcher, authenticatedHeaders(credentials), signal),
+    fetchJson(METERED_STATUS_URL, fetcher, new Headers({ Accept: "application/json" }), signal),
   ]);
   const account = successfulEnvelopeData(accountEnvelope);
   const topups = successfulEnvelopeData(topupsEnvelope);
   const status = successfulEnvelopeData(statusEnvelope);
-  if (!account || !topups || !status) throw new Error("YunWu account API returned an invalid envelope");
+  if (!account || !topups || !status) throw new Error("Metered account API returned an invalid envelope");
   if (
     !isSafeInteger(account.quota) ||
     !isNonNegativeSafeInteger(account.used_quota) ||
     !isPositiveSafeInteger(status.quota_per_unit)
   ) {
-    throw new Error("YunWu account API returned invalid quota data");
+    throw new Error("Metered account API returned invalid quota data");
   }
   const observedAtMs = Math.trunc((options.now ?? Date.now)());
-  if (!isNonNegativeSafeInteger(observedAtMs)) throw new Error("YunWu quota observation clock is invalid");
+  if (!isNonNegativeSafeInteger(observedAtMs)) throw new Error("Metered quota observation clock is invalid");
   return {
     balance_quota: account.quota,
     used_quota: account.used_quota,
@@ -244,10 +244,10 @@ export const fetchYunwuQuotaObservation = async (
   };
 };
 
-export const updateYunwuQuotaState = (
-  previous: YunwuQuotaState | null,
-  observation: YunwuQuotaObservation,
-): YunwuQuotaState => {
+export const updateMeteredQuotaState = (
+  previous: MeteredQuotaState | null,
+  observation: MeteredQuotaObservation,
+): MeteredQuotaState => {
   if (!previous) {
     const refillBaselineQuota = observation.latest_refill
       ? Math.round(observation.latest_refill.amount_credits * observation.quota_per_credit)
@@ -318,7 +318,7 @@ export const updateYunwuQuotaState = (
   };
 };
 
-export const isYunwuQuotaState = (value: unknown): value is YunwuQuotaState => {
+export const isMeteredQuotaState = (value: unknown): value is MeteredQuotaState => {
   if (!isRecord(value)) return false;
   return isSafeInteger(value.current_balance_quota) &&
     isSafeInteger(value.post_refill_baseline_quota) &&
@@ -336,7 +336,7 @@ export const isYunwuQuotaState = (value: unknown): value is YunwuQuotaState => {
       isNonNegativeSafeInteger(value.latest_refill_completed_at_ms));
 };
 
-const toSnapshot = (state: YunwuQuotaState, cacheState: YunwuQuotaCacheState): YunwuQuotaSnapshot => {
+const toSnapshot = (state: MeteredQuotaState, cacheState: MeteredQuotaCacheState): MeteredQuotaSnapshot => {
   const balanceCredits = state.current_balance_quota / state.quota_per_credit;
   const baselineCredits = state.post_refill_baseline_quota / state.quota_per_credit;
   const remainingPercent = state.post_refill_baseline_quota > 0
@@ -356,19 +356,19 @@ const toSnapshot = (state: YunwuQuotaState, cacheState: YunwuQuotaCacheState): Y
 const loadRetainedState = async (
   kv: Deno.Kv,
   nowMs: number,
-): Promise<Deno.KvEntryMaybe<YunwuQuotaState> | null> => {
-  const entry = await kv.get<YunwuQuotaState>(YUNWU_QUOTA_STATE_KEY);
-  if (!isYunwuQuotaState(entry.value)) return null;
-  if (nowMs - entry.value.observed_at_ms >= YUNWU_QUOTA_RETENTION_MS) return null;
+): Promise<Deno.KvEntryMaybe<MeteredQuotaState> | null> => {
+  const entry = await kv.get<MeteredQuotaState>(METERED_QUOTA_STATE_KEY);
+  if (!isMeteredQuotaState(entry.value)) return null;
+  if (nowMs - entry.value.observed_at_ms >= METERED_QUOTA_RETENTION_MS) return null;
   return entry;
 };
 
 const loadInvalidation = (kv: Deno.Kv): Promise<Deno.KvEntryMaybe<unknown>> =>
-  Promise.resolve(kv.get<unknown>(YUNWU_QUOTA_INVALIDATION_KEY));
+  Promise.resolve(kv.get<unknown>(METERED_QUOTA_INVALIDATION_KEY));
 
 const quotaInvalidationValue = (value: unknown): QuotaInvalidation | null => isQuotaInvalidation(value) ? value : null;
 
-const isInvalidated = (state: YunwuQuotaState, invalidation: QuotaInvalidation | null): boolean =>
+const isInvalidated = (state: MeteredQuotaState, invalidation: QuotaInvalidation | null): boolean =>
   Boolean(invalidation && invalidation.invalidated_at_ms >= state.observed_at_ms);
 
 const acquireRefreshLease = async (
@@ -376,28 +376,28 @@ const acquireRefreshLease = async (
   owner: string,
   nowMs: number,
 ): Promise<boolean> => {
-  const entry = await kv.get<RefreshLease>(YUNWU_QUOTA_REFRESH_LEASE_KEY);
+  const entry = await kv.get<RefreshLease>(METERED_QUOTA_REFRESH_LEASE_KEY);
   if (entry.value && entry.value.lease_until_ms > nowMs) return false;
-  const lease: RefreshLease = { owner, lease_until_ms: nowMs + YUNWU_QUOTA_REFRESH_LEASE_MS };
+  const lease: RefreshLease = { owner, lease_until_ms: nowMs + METERED_QUOTA_REFRESH_LEASE_MS };
   return (await kv.atomic()
     .check(entry)
-    .set(YUNWU_QUOTA_REFRESH_LEASE_KEY, lease, { expireIn: YUNWU_QUOTA_REFRESH_LEASE_MS * 2 })
+    .set(METERED_QUOTA_REFRESH_LEASE_KEY, lease, { expireIn: METERED_QUOTA_REFRESH_LEASE_MS * 2 })
     .commit()).ok;
 };
 
 const releaseRefreshLease = async (kv: Deno.Kv, owner: string): Promise<void> => {
   try {
-    const entry = await kv.get<RefreshLease>(YUNWU_QUOTA_REFRESH_LEASE_KEY);
+    const entry = await kv.get<RefreshLease>(METERED_QUOTA_REFRESH_LEASE_KEY);
     if (entry.value?.owner === owner) {
-      await kv.atomic().check(entry).delete(YUNWU_QUOTA_REFRESH_LEASE_KEY).commit();
+      await kv.atomic().check(entry).delete(METERED_QUOTA_REFRESH_LEASE_KEY).commit();
     }
   } catch (error) {
-    console.warn("[ai.ubq.fi] YunWu quota refresh lease release failed:", error);
+    console.warn("[ai.ubq.fi] Metered quota refresh lease release failed:", error);
   }
 };
 
-const waitForColdState = async (kv: Deno.Kv): Promise<YunwuQuotaState | null> => {
-  const deadline = Date.now() + YUNWU_QUOTA_COLD_WAIT_MS;
+const waitForColdState = async (kv: Deno.Kv): Promise<MeteredQuotaState | null> => {
+  const deadline = Date.now() + METERED_QUOTA_COLD_WAIT_MS;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
     const entry = await loadRetainedState(kv, Date.now());
@@ -406,21 +406,21 @@ const waitForColdState = async (kv: Deno.Kv): Promise<YunwuQuotaState | null> =>
   return null;
 };
 
-export const getYunwuQuotaSnapshot = async (
-  credentials: YunwuAccountCredentials,
-  options: GetYunwuQuotaSnapshotOptions = {},
-): Promise<YunwuQuotaSnapshot | null> => {
+export const getMeteredQuotaSnapshot = async (
+  credentials: MeteredAccountCredentials,
+  options: GetMeteredQuotaSnapshotOptions = {},
+): Promise<MeteredQuotaSnapshot | null> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv || !parseCredentials(credentials)) return null;
   const now = options.now ?? Date.now;
   const nowMs = Math.trunc(now());
   const [cachedEntry, cachedInvalidationEntry] = await Promise.all([
     loadRetainedState(kv, nowMs).catch((error) => {
-      console.warn("[ai.ubq.fi] YunWu quota cache read failed:", error);
+      console.warn("[ai.ubq.fi] Metered quota cache read failed:", error);
       return null;
     }),
     loadInvalidation(kv).catch((error) => {
-      console.warn("[ai.ubq.fi] YunWu quota invalidation read failed:", error);
+      console.warn("[ai.ubq.fi] Metered quota invalidation read failed:", error);
       return null;
     }),
   ]);
@@ -432,14 +432,14 @@ export const getYunwuQuotaSnapshot = async (
     cached &&
     !options.forceRefresh &&
     !cachedInvalidated &&
-    nowMs - cached.observed_at_ms < YUNWU_QUOTA_FRESH_MS
+    nowMs - cached.observed_at_ms < METERED_QUOTA_FRESH_MS
   ) {
     return toSnapshot(cached, "fresh");
   }
 
   const owner = (options.createLeaseOwner ?? (() => crypto.randomUUID()))();
   const acquired = await acquireRefreshLease(kv, owner, nowMs).catch((error) => {
-    console.warn("[ai.ubq.fi] YunWu quota refresh lease acquisition failed:", error);
+    console.warn("[ai.ubq.fi] Metered quota refresh lease acquisition failed:", error);
     return false;
   });
   if (!acquired) {
@@ -450,28 +450,28 @@ export const getYunwuQuotaSnapshot = async (
 
   try {
     const [stateEntry, refreshInvalidationEntry] = await Promise.all([
-      kv.get<YunwuQuotaState>(YUNWU_QUOTA_STATE_KEY),
+      kv.get<MeteredQuotaState>(METERED_QUOTA_STATE_KEY),
       loadInvalidation(kv),
     ]);
-    const observation = await fetchYunwuQuotaObservation(credentials, {
+    const observation = await fetchMeteredQuotaObservation(credentials, {
       fetcher: options.fetcher,
       now,
       signal: options.signal,
     });
-    const leaseEntry = await kv.get<RefreshLease>(YUNWU_QUOTA_REFRESH_LEASE_KEY);
+    const leaseEntry = await kv.get<RefreshLease>(METERED_QUOTA_REFRESH_LEASE_KEY);
     if (leaseEntry.value?.owner !== owner || leaseEntry.value.lease_until_ms <= observation.observed_at_ms) {
       const replacement = await loadRetainedState(kv, Date.now()).catch(() => null);
       return replacement?.value ? toSnapshot(replacement.value, "stale") : cached ? toSnapshot(cached, "stale") : null;
     }
-    const previous = isYunwuQuotaState(stateEntry.value) ? stateEntry.value : null;
-    const state = updateYunwuQuotaState(previous, observation);
+    const previous = isMeteredQuotaState(stateEntry.value) ? stateEntry.value : null;
+    const state = updateMeteredQuotaState(previous, observation);
     const committed = await kv.atomic()
       .check(stateEntry)
       .check(refreshInvalidationEntry)
       .check(leaseEntry)
-      .set(YUNWU_QUOTA_STATE_KEY, state, { expireIn: YUNWU_QUOTA_RETENTION_MS })
-      .delete(YUNWU_QUOTA_INVALIDATION_KEY)
-      .delete(YUNWU_QUOTA_REFRESH_LEASE_KEY)
+      .set(METERED_QUOTA_STATE_KEY, state, { expireIn: METERED_QUOTA_RETENTION_MS })
+      .delete(METERED_QUOTA_INVALIDATION_KEY)
+      .delete(METERED_QUOTA_REFRESH_LEASE_KEY)
       .commit();
     if (committed.ok) return toSnapshot(state, "refreshed");
     const replacement = await loadRetainedState(kv, Date.now()).catch(() => null);
@@ -479,7 +479,7 @@ export const getYunwuQuotaSnapshot = async (
   } catch (error) {
     if (options.signal?.aborted) throw error;
     console.warn(
-      "[ai.ubq.fi] YunWu quota refresh failed:",
+      "[ai.ubq.fi] Metered quota refresh failed:",
       error instanceof Error ? error.message : String(error),
     );
     return cached ? toSnapshot(cached, "stale") : null;
@@ -488,9 +488,9 @@ export const getYunwuQuotaSnapshot = async (
   }
 };
 
-export const getCachedYunwuQuotaSnapshot = async (
-  options: Pick<GetYunwuQuotaSnapshotOptions, "kv" | "now"> = {},
-): Promise<YunwuQuotaSnapshot | null> => {
+export const getCachedMeteredQuotaSnapshot = async (
+  options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {},
+): Promise<MeteredQuotaSnapshot | null> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) return null;
   const nowMs = Math.trunc((options.now ?? Date.now)());
@@ -502,50 +502,50 @@ export const getCachedYunwuQuotaSnapshot = async (
     const state = stateEntry?.value ?? null;
     if (!state) return null;
     const fresh = !isInvalidated(state, quotaInvalidationValue(invalidationEntry.value)) &&
-      nowMs - state.observed_at_ms < YUNWU_QUOTA_FRESH_MS;
+      nowMs - state.observed_at_ms < METERED_QUOTA_FRESH_MS;
     return toSnapshot(state, fresh ? "fresh" : "stale");
   } catch (error) {
-    console.warn("[ai.ubq.fi] YunWu quota cache peek failed:", error);
+    console.warn("[ai.ubq.fi] Metered quota cache peek failed:", error);
     return null;
   }
 };
 
-export const invalidateYunwuQuotaSnapshot = async (
-  options: Pick<GetYunwuQuotaSnapshotOptions, "kv" | "now"> = {},
+export const invalidateMeteredQuotaSnapshot = async (
+  options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {},
 ): Promise<void> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) return;
   const invalidatedAtMs = Math.trunc((options.now ?? Date.now)());
-  if (!isNonNegativeSafeInteger(invalidatedAtMs)) throw new Error("YunWu quota invalidation clock is invalid");
+  if (!isNonNegativeSafeInteger(invalidatedAtMs)) throw new Error("Metered quota invalidation clock is invalid");
   const committed = await kv.atomic()
     .set(
-      YUNWU_QUOTA_INVALIDATION_KEY,
+      METERED_QUOTA_INVALIDATION_KEY,
       { invalidated_at_ms: invalidatedAtMs } satisfies QuotaInvalidation,
-      { expireIn: YUNWU_QUOTA_RETENTION_MS },
+      { expireIn: METERED_QUOTA_RETENTION_MS },
     )
     .commit();
-  if (!committed.ok) throw new Error("Deno KV could not invalidate the YunWu quota snapshot");
+  if (!committed.ok) throw new Error("Deno KV could not invalidate the Metered quota snapshot");
 };
 
-export const getConfiguredYunwuQuotaSnapshot = async (
-  options: GetYunwuQuotaSnapshotOptions = {},
-): Promise<YunwuQuotaSnapshot | null> => {
-  const credentials = readYunwuAccountCredentials();
-  return credentials ? await getYunwuQuotaSnapshot(credentials, options) : null;
+export const getConfiguredMeteredQuotaSnapshot = async (
+  options: GetMeteredQuotaSnapshotOptions = {},
+): Promise<MeteredQuotaSnapshot | null> => {
+  const credentials = readMeteredAccountCredentials();
+  return credentials ? await getMeteredQuotaSnapshot(credentials, options) : null;
 };
 
-export const getCachedConfiguredYunwuQuotaSnapshot = async (
-  options: Pick<GetYunwuQuotaSnapshotOptions, "kv" | "now"> = {},
-): Promise<YunwuQuotaSnapshot | null> =>
-  readYunwuAccountCredentials() ? await getCachedYunwuQuotaSnapshot(options) : null;
+export const getCachedConfiguredMeteredQuotaSnapshot = async (
+  options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {},
+): Promise<MeteredQuotaSnapshot | null> =>
+  readMeteredAccountCredentials() ? await getCachedMeteredQuotaSnapshot(options) : null;
 
-export const invalidateConfiguredYunwuQuotaSnapshot = async (
-  options: Pick<GetYunwuQuotaSnapshotOptions, "kv" | "now"> = {},
+export const invalidateConfiguredMeteredQuotaSnapshot = async (
+  options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {},
 ): Promise<void> => {
-  if (readYunwuAccountCredentials()) await invalidateYunwuQuotaSnapshot(options);
+  if (readMeteredAccountCredentials()) await invalidateMeteredQuotaSnapshot(options);
 };
 
-const unavailableDiagnostics = (configured: boolean): YunwuQuotaDiagnostics => ({
+const unavailableDiagnostics = (configured: boolean): MeteredQuotaDiagnostics => ({
   configured,
   available: false,
   cache_state: null,
@@ -564,12 +564,12 @@ const unavailableDiagnostics = (configured: boolean): YunwuQuotaDiagnostics => (
   latest_refill_completed_at_ms: null,
 });
 
-export const getYunwuQuotaDiagnostics = async (
-  options: GetYunwuQuotaSnapshotOptions = {},
-): Promise<YunwuQuotaDiagnostics> => {
-  const credentials = readYunwuAccountCredentials();
+export const getMeteredQuotaDiagnostics = async (
+  options: GetMeteredQuotaSnapshotOptions = {},
+): Promise<MeteredQuotaDiagnostics> => {
+  const credentials = readMeteredAccountCredentials();
   if (!credentials) return unavailableDiagnostics(false);
-  const snapshot = await getYunwuQuotaSnapshot(credentials, options);
+  const snapshot = await getMeteredQuotaSnapshot(credentials, options);
   if (!snapshot) return unavailableDiagnostics(true);
   return {
     configured: true,

@@ -14,7 +14,7 @@ LLM and app integration notes live in [`static/docs/llms-agents.md`](static/docs
   - For upstream requests, it uses a durable pool of up to two **Codex CLI ChatGPT auth** accounts. The first local seed
     can come from `CODEX_AUTH_JSON_B64` (base64 of `~/.codex/auth.json`); admin uploads populate the durable pool.
   - Requests are distributed between the configured OpenAI accounts. An account-level `401` or `429` is retried on every
-    other account before the gateway returns the error or considers paid Yunwu fallback. Rejected OAuth refresh
+    other account before the gateway returns the error or considers paid metered fallback. Rejected OAuth refresh
     credentials count as an account-level `401`; transient refresh-network failures do not.
   - Upstream usage/limits are tied to those OpenAI accounts and plans; client-provided OpenAI API keys are ignored.
   - The OAuth `client_id` used for refresh-token rotation is **public** (not a secret); the secrets are the tokens in
@@ -151,19 +151,19 @@ curl -sS https://ai.ubq.fi/v1/responses \
 
 ## Codex quota reporting
 
-Successful inference responses let unmodified Codex terminal and GUI clients show the YunWu wallet in `/status` and emit
+Successful inference responses let unmodified Codex terminal and GUI clients show the Metered wallet in `/status` and emit
 their built-in 25%, 10%, and 5% remaining warnings. The gateway publishes the wallet as the sole canonical family:
-`x-codex-limit-name: YunWu balance` and `x-codex-primary-used-percent`.
+`x-codex-limit-name: Metered balance` and `x-codex-primary-used-percent`.
 
 Codex 0.144.6 parses multiple response-header families but persists only one response-derived rate-limit snapshot, so
-named OpenAI and YunWu families overwrite one another instead of remaining independent. AI.UBQ therefore strips every
-parseable upstream quota family and prioritizes the client-relevant YunWu balance. It does not combine that percentage
+named OpenAI and Metered families overwrite one another instead of remaining independent. AI.UBQ therefore strips every
+parseable upstream quota family and prioritizes the client-relevant Metered balance. It does not combine that percentage
 with the shared ChatGPT subscription percentage: OpenAI does not provide an absolute token denominator, and the shared
 account is not an individual AI.UBQ client's truthful capacity.
 
-YunWu does not publish a weekly allowance, so the gateway never fabricates a window or reset time. A Codex client
+Metered does not publish a weekly allowance, so the gateway never fabricates a window or reset time. A Codex client
 receives the update after its first inference response; opening `/status` before sending a message can therefore show
-`Limits: data not available yet`. If no valid YunWu snapshot is available, the gateway emits no quota percentage.
+`Limits: data not available yet`. If no valid Metered snapshot is available, the gateway emits no quota percentage.
 
 The denominator is a durable refill-cycle baseline, not the sum of lifetime purchases. The first observation uses the
 larger of the current wallet balance and the latest successful top-up. Later observations infer account credits as
@@ -174,11 +174,11 @@ that may have been spent after the refill. The remaining percentage is `current_
 observation is marked provisional in the admin diagnostics until a later refill or inferred adjustment is observed.
 
 The account snapshot is cached in Deno KV for five minutes, guarded by a durable refresh lease, retained for 24 hours,
-and served stale during temporary YunWu failures. Refresh work runs alongside inference and never delays response
-headers; the gateway uses only an already available fresh or retained snapshot for that response. A YunWu-routed
+and served stale during temporary Metered failures. Refresh work runs alongside inference and never delays response
+headers; the gateway uses only an already available fresh or retained snapshot for that response. A Metered-routed
 response durably invalidates the pre-debit observation so the next request refreshes it instead of reusing it as fresh
 for five minutes. Admins can inspect the balance, baseline, confidence, latest refill, inferred credit, and cache state
-in the Defaults view or the `yunwu_quota` object returned by `GET /admin/defaults`.
+in the Defaults view or the `metered_quota` object returned by `GET /admin/defaults`.
 
 Embeddings (UOS text contract):
 
@@ -375,9 +375,9 @@ ubq-ai admin keys list | jq
   `gpt-oss-120b`. It is never accepted from clients or exposed by health responses.
 - `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
   Deno KV at `["uos_ai","voyage_api_key"]`.
-- `YUNWU_SYSTEM_TOKEN` (required for Codex quota reporting): YunWu System Access Token used only by the server to read
+- `METERED_SYSTEM_TOKEN` (required for Codex quota reporting): Metered System Access Token used only by the server to read
   the account balance and top-up records. It is never sent to gateway clients or inference upstreams.
-- `YUNWU_USER_ID` (required for Codex quota reporting): Numeric YunWu account ID sent as `New-API-User` with the system
+- `METERED_USER_ID` (required for Codex quota reporting): Numeric Metered account ID sent as `New-API-User` with the system
   token.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.

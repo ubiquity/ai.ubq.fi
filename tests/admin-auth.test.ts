@@ -433,12 +433,12 @@ Deno.test("admin Codex model update rejects a catalog whose compact runtime reco
   assert.equal(kvStore.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
 });
 
-Deno.test("admin defaults includes serializable YunWu quota diagnostics without credentials", async () => {
+Deno.test("admin defaults includes serializable Metered quota diagnostics without credentials", async () => {
   kvStore.clear();
   const response = await handleAdminDefaults(
     new Request("https://ai.ubq.fi/admin/defaults"),
     {
-      getYunwuQuotaDiagnostics: () =>
+      getMeteredQuotaDiagnostics: () =>
         Promise.resolve({
           configured: true,
           available: true,
@@ -462,13 +462,13 @@ Deno.test("admin defaults includes serializable YunWu quota diagnostics without 
 
   assert.equal(response.status, 200);
   const payload = await response.json() as Record<string, unknown> & {
-    yunwu_quota?: Record<string, unknown>;
+    metered_quota?: Record<string, unknown>;
   };
   assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
-  assert.equal(payload.yunwu_quota?.remaining_percent, 75);
-  assert.equal(payload.yunwu_quota?.latest_refill_id, "refill-2");
-  assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "system_token"), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(payload.yunwu_quota ?? {}, "user_id"), false);
+  assert.equal(payload.metered_quota?.remaining_percent, 75);
+  assert.equal(payload.metered_quota?.latest_refill_id, "refill-2");
+  assert.equal(Object.prototype.hasOwnProperty.call(payload.metered_quota ?? {}, "system_token"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload.metered_quota ?? {}, "user_id"), false);
 });
 
 Deno.test("admin defaults permits kernel-only updates without runtime configuration", async () => {
@@ -611,8 +611,8 @@ Deno.test("admin kernel quota policies preserve usage until an explicit reset an
   assert.equal(snapshot?.record.usage_limit_requests, 9);
 });
 
-const yunwuMetadataResponse = (url: string): Response => {
-  if (url === "https://yunwu.ai/api/ratio_config") {
+const meteredMetadataResponse = (url: string): Response => {
+  if (url === "https://api.openlux.ai/api/ratio_config") {
     return new Response(
       JSON.stringify({
         success: true,
@@ -627,7 +627,7 @@ const yunwuMetadataResponse = (url: string): Response => {
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   }
-  if (url === "https://yunwu.ai/api/status") {
+  if (url === "https://api.openlux.ai/api/status") {
     return new Response(
       JSON.stringify({
         success: true,
@@ -636,7 +636,7 @@ const yunwuMetadataResponse = (url: string): Response => {
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   }
-  throw new Error(`Unexpected YunWu metadata URL: ${url}`);
+  throw new Error(`Unexpected Metered metadata URL: ${url}`);
 };
 
 Deno.test("admin codex auth stores live upstream model catalog as source of truth", async () => {
@@ -1174,13 +1174,13 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
   });
 
   const originalFetch = globalThis.fetch;
-  const originalApiKey = Deno.env.get("YUNWU_API_KEY");
+  const originalApiKey = Deno.env.get("METERED_API_KEY");
   const metadataUrls: string[] = [];
-  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     metadataUrls.push(url);
-    return Promise.resolve(yunwuMetadataResponse(url));
+    return Promise.resolve(meteredMetadataResponse(url));
   };
 
   try {
@@ -1217,8 +1217,8 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
     );
     assert.equal(enableResponse.status, 200);
     assert.deepEqual(metadataUrls.sort(), [
-      "https://yunwu.ai/api/ratio_config",
-      "https://yunwu.ai/api/status",
+      "https://api.openlux.ai/api/ratio_config",
+      "https://api.openlux.ai/api/status",
     ]);
     const enabled = await enableResponse.json() as {
       paid_fallback_enabled: boolean;
@@ -1270,13 +1270,13 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
     );
     assert.equal(reenableResponse.status, 200);
     assert.deepEqual(metadataUrls.sort(), [
-      "https://yunwu.ai/api/ratio_config",
-      "https://yunwu.ai/api/status",
+      "https://api.openlux.ai/api/ratio_config",
+      "https://api.openlux.ai/api/status",
     ]);
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-    else Deno.env.set("YUNWU_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalApiKey);
   }
 });
 
@@ -1326,13 +1326,13 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
   });
 
   const originalFetch = globalThis.fetch;
-  const originalApiKey = Deno.env.get("YUNWU_API_KEY");
-  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  const originalApiKey = Deno.env.get("METERED_API_KEY");
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
   let metadataCalls = 0;
   globalThis.fetch = (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     metadataCalls += 1;
-    return Promise.resolve(yunwuMetadataResponse(url));
+    return Promise.resolve(meteredMetadataResponse(url));
   };
 
   try {
@@ -1389,7 +1389,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
       if (url.endsWith("/api/status")) {
         return Promise.resolve(new Response("upstream unavailable", { status: 503 }));
       }
-      return Promise.resolve(yunwuMetadataResponse(url));
+      return Promise.resolve(meteredMetadataResponse(url));
     };
     const failedEnable = await handleAdminApiKeysUpdate(
       new Request("https://ai.ubq.fi/admin/api-keys", {
@@ -1407,8 +1407,8 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
     assert.equal(stored.paid_fallback_pricing_checked_at_ms, null);
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-    else Deno.env.set("YUNWU_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalApiKey);
   }
 });
 
@@ -1518,7 +1518,7 @@ Deno.test("admin paid fallback history exposes V3 request lifecycle and billing 
   assert.equal(payload.data?.[0]?.request_id, settledRequest.request_id);
   assert.equal(payload.data?.[0]?.model, "gpt-5.6-sol");
   assert.equal(payload.data?.[0]?.reasoning, "max");
-  assert.equal(payload.data?.[0]?.provider, "yunwu");
+  assert.equal(payload.data?.[0]?.provider, "metered");
   assert.equal(payload.data?.[0]?.reserved_microcredits, 125_000);
   assert.equal(payload.data?.[0]?.dispatch_state, "dispatched");
   assert.equal(payload.data?.[0]?.terminal_state, "completed");

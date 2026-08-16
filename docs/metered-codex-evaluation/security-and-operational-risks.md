@@ -4,21 +4,21 @@ Date observed: 2026-07-19
 
 ## Credential exposure
 
-During testing, a complete Yunwu bearer token was pasted into a conversation. It must be treated as compromised and
+During testing, a complete metered bearer token was pasted into a conversation. It must be treated as compromised and
 revoked.
 
 The replacement should be:
 
 - stored in an environment variable or secret manager;
 - excluded from shell history, screenshots, logs, and source control;
-- scoped by balance, expiration, or quota if Yunwu supports those controls; and
+- scoped by balance, expiration, or quota if metered supports those controls; and
 - rotated immediately if it appears in a URL or third-party page.
 
 No secret values are included in these reports.
 
 ## Third-party key transmission
 
-Clicking Yunwu's console “Chat” action unexpectedly opened:
+Clicking Metered's console “Chat” action unexpectedly opened:
 
 ```text
 web.apiplus.org
@@ -40,7 +40,7 @@ only briefly.
 
 ## Prompt and code confidentiality
 
-Yunwu is an intermediary between the client and the upstream model. It can technically observe:
+Metered is an intermediary between the client and the upstream model. It can technically observe:
 
 - prompts and system instructions;
 - source code and repository context;
@@ -56,7 +56,7 @@ Recommended boundary:
 - do not send production secrets, private keys, customer data, credentials, or unreleased proprietary code;
 - use redacted or synthetic fixtures for evaluation;
 - prefer direct OpenAI or an approved internal gateway for sensitive work;
-- isolate the Yunwu credential from other provider credentials.
+- isolate the metered credential from other provider credentials.
 
 ## Routing and supply risk
 
@@ -75,7 +75,7 @@ Operational risks include:
 - terms-of-service or payment-fraud exposure elsewhere in the supply chain.
 
 The cited Hacker News discussion describes allegations about the broader Chinese token-resale market. It is useful
-context but is not proof of Yunwu's specific sourcing:
+context but is not proof of Metered's specific sourcing:
 
 - [Hacker News discussion](https://news.ycombinator.com/item?id=48667495)
 - [ChinaTalk: How to Buy Cheap Claude Tokens in China](https://www.chinatalk.media/p/how-to-buy-cheap-claude-tokens-in)
@@ -83,7 +83,7 @@ context but is not proof of Yunwu's specific sourcing:
 ## Safer operating model
 
 1. Keep the official Codex subscription as the default route.
-2. Use Yunwu only for non-sensitive overflow.
+2. Use metered only for non-sensitive overflow.
 3. Maintain a small prepaid balance rather than a large stored balance.
 4. Log route, model, input/output tokens, charge, latency, and failures locally.
 5. Alert when the selected group or multiplier differs from the expected Codex-specific route.
@@ -92,5 +92,5 @@ context but is not proof of Yunwu's specific sourcing:
 
 ## Evidence boundary
 
-The testing established real billing, latency, protocol, and browser behavior. It did not establish Yunwu's corporate
+The testing established real billing, latency, protocol, and browser behavior. It did not establish Metered's corporate
 controls, upstream contracts, data retention policy, physical serving region, or source-account legitimacy.

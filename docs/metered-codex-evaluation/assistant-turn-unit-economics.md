@@ -21,19 +21,19 @@ A practical initial schedule is:
 The application can present this as one credit for ordinary chat and “additional credits for deep Agent work,” rather
 than exposing raw tokens to customers.
 
-## Live Yunwu Terra rates
+## Live metered Terra rates
 
-On 2026-07-21, Yunwu's live model catalog displayed the following `gpt-5.6-terra` rates before the token-group
+On 2026-07-21, Metered's live model catalog displayed the following `gpt-5.6-terra` rates before the token-group
 multiplier:
 
-| Token type   | Yunwu credits per million |
+| Token type   | metered credits per million |
 | ------------ | ------------------------: |
 | Input        |                    0.5000 |
 | Cached input |                    0.0500 |
 | Completion   |                    3.0000 |
 
-The live catalog displayed the `Codex专属` group at `0.8x`. The measured recharge exchange rate was 100 Yunwu credits
-for 49.5 CNY. Using 6.7767 CNY/USD gives approximately $0.07304 per Yunwu credit and these effective rates:
+The live catalog displayed the `Codex专属` group at `0.8x`. The measured recharge exchange rate was 100 metered credits
+for 49.5 CNY. Using 6.7767 CNY/USD gives approximately $0.07304 per metered credit and these effective rates:
 
 | Token type   | Effective USD per million |
 | ------------ | ------------------------: |
@@ -59,12 +59,12 @@ That makes official OpenAI API long-context pricing:
 | Cached input |                     $0.50 |
 | Output       |                    $22.50 |
 
-The earlier catalog-only estimate assumed Yunwu would retain the cheap `Codex专属` group above 272K. A live test on
+The earlier catalog-only estimate assumed metered would retain the cheap `Codex专属` group above 272K. A live test on
 2026-07-26 disproved that assumption.
 
 ### Measured 600K long-context test
 
-A synthetic prompt contained unique markers at approximately 300K, 500K, and 580K tokens. Yunwu returned every marker
+A synthetic prompt contained unique markers at approximately 300K, 500K, and 580K tokens. metered returned every marker
 exactly:
 
 ```text
@@ -81,26 +81,26 @@ The Responses result and billing console reported:
 | Output          | 65 tokens, including 26 reasoning tokens      |
 | End-to-end time | 326.2 seconds; console rounded to 324 seconds |
 | Retrieval       | All three markers recovered                   |
-| Yunwu group     | `官转`, not the cheap `Codex专属` group       |
+| metered group     | `官转`, not the cheap `Codex专属` group       |
 | Model ratio     | 1.25                                          |
 | Group ratio     | 3                                             |
 | Tier multiplier | Input 2; output 1.5                           |
-| Deduction       | 9.005678 Yunwu credits                        |
+| Deduction       | 9.005678 metered credits                        |
 
 The console displayed this exact billing formula:
 
 ```text
 (600086 / 1M × 2.5 × 2 + 65 / 1M × 15 × 1.5) × 3
-= 9.005678 Yunwu credits
+= 9.005678 metered credits
 ```
 
-At 0.495 CNY per Yunwu credit and 6.7722 CNY/USD, this cost approximately $0.6583. The same uncached usage at OpenAI
-retail is approximately $3.0019. Yunwu's measured long-context route therefore cost **21.93% of OpenAI retail**, or
+At 0.495 CNY per metered credit and 6.7722 CNY/USD, this cost approximately $0.6583. The same uncached usage at OpenAI
+retail is approximately $3.0019. Metered's measured long-context route therefore cost **21.93% of OpenAI retail**, or
 **4.56x less**, rather than the 85.5x discount observed or projected for the subscription-backed short-context route.
 
 The measured effective long-context rates are:
 
-| Token type | OpenAI retail | Yunwu `官转` | OpenAI/Yunwu |
+| Token type | OpenAI retail | metered `官转` | OpenAI/Metered |
 | ---------- | ------------: | -----------: | -----------: |
 | Input      |       $5.00/M |    $1.0964/M |        4.56x |
 | Output     |      $22.50/M |    $4.9338/M |        4.56x |
@@ -114,17 +114,17 @@ unavailability, and recommends allowing timeouts up to 15 minutes for lengthy pr
 
 For the measured request:
 
-| Route                 | Equivalent cost | Relative to Yunwu |
+| Route                 | Equivalent cost | Relative to metered |
 | --------------------- | --------------: | ----------------: |
 | OpenAI standard       |         $3.0019 |             4.56x |
 | OpenAI public Flex    |         $1.5009 |             2.28x |
-| Yunwu measured `官转` |         $0.6583 |             1.00x |
+| metered measured `官转` |         $0.6583 |             1.00x |
 
-The 326-second response time is consistent with Flex-like processing. If Yunwu injected `service_tier: "flex"` upstream,
-public Flex pricing explains the first 50% discount. Yunwu would then still be charging only 43.86% of public Flex
+The 326-second response time is consistent with Flex-like processing. If metered injected `service_tier: "flex"` upstream,
+public Flex pricing explains the first 50% discount. metered would then still be charging only 43.86% of public Flex
 pricing, requiring another 56.14% reduction or subsidy.
 
-This remains an inference: the original Yunwu result was not saved with its full `service_tier` field, Yunwu does not
+This remains an inference: the original metered result was not saved with its full `service_tier` field, metered does not
 support retrieving the completed response by ID, and the billing console does not display the upstream service tier.
 
 ### Grey-market profitability model
@@ -150,9 +150,9 @@ This makes a blended grey-market pool economically coherent without requiring Op
 discount. Reported mechanisms in the broader Chinese relay market include farming free or promotional credits,
 subdividing fixed-price subscriptions where applicable, stolen credentials or payment cards, corporate discounts, model
 substitution, and treating collected prompts and outputs as the economically valuable product. Those reports are
-evidence about the market, not proof of Yunwu's specific supply chain.
+evidence about the market, not proof of Metered's specific supply chain.
 
-For Yunwu's verified long-context route, subscription subdivision cannot explain inputs above 272K. The remaining
+For Metered's verified long-context route, subscription subdivision cannot explain inputs above 272K. The remaining
 credible sources are API-class Flex or contracted capacity combined with discounted, promotional, fraudulently funded,
 or data-subsidized supply.
 
@@ -168,11 +168,11 @@ Input token count (1252901) exceeds system limit (1000000)
 ```
 
 The successful 600K test proves genuine processing well beyond the Codex subscription model's 272K window, but the
-rejection means Yunwu does not expose OpenAI's documented 1.05M/922K API envelope verbatim. The maximum usable payload
-needs further calibration and may depend on Yunwu's preprocessing or reserved context.
+rejection means metered does not expose OpenAI's documented 1.05M/922K API envelope verbatim. The maximum usable payload
+needs further calibration and may depend on Metered's preprocessing or reserved context.
 
 The synthetic filler was `" x"` repeated. It encodes as exactly one token under both `o200k_base` and `cl100k_base`.
-Local `o200k_base` tokenization counted 600,080 tokens for the successful request; Yunwu's completed response reported
+Local `o200k_base` tokenization counted 600,080 tokens for the successful request; Metered's completed response reported
 600,086, a difference of only six wrapper tokens (0.001%). Therefore the successful request's positions and billing
 count are empirically validated and do not depend on guessing the model tokenizer. The rejected 870K request's
 1,252,901-token preflight count is inconsistent with this near-exact match and points instead to a different or faulty
@@ -188,7 +188,7 @@ The authenticated Codex CLI model catalog cached on the test machine advertised 
 context window and a 95% effective window. This is direct runtime evidence against assuming that pooled ordinary Codex
 subscriptions can supply inputs above 272K.
 
-The live test shows that Yunwu switches long-context traffic to the separate `官转` group and applies substantially
+The live test shows that metered switches long-context traffic to the separate `官转` group and applies substantially
 higher pricing. That group can process at least 600K input tokens. Its exact upstream supply remains unverified;
 plausible explanations include:
 
@@ -218,9 +218,9 @@ Assistant margin.
 ## Estimated cost by turn shape
 
 The following estimates conservatively treat all input as uncached. Completion counts include visible output and any
-reasoning tokens included in Yunwu's billed completion usage.
+reasoning tokens included in Metered's billed completion usage.
 
-| Turn shape                   | Cumulative input | Cumulative completion | Yunwu cost | Cost in cents |
+| Turn shape                   | Cumulative input | Cumulative completion | metered cost | Cost in cents |
 | ---------------------------- | ---------------: | --------------------: | ---------: | ------------: |
 | Brief, one call              |            5,000 |                   750 |  $0.000278 |        0.028c |
 | Ordinary, one call           |           27,000 |                 1,500 |  $0.001052 |        0.105c |
@@ -241,7 +241,7 @@ uncached-input-equivalent tokens for every model call belonging to one user acti
 equivalent tokens = uncached input + 0.1 x cached input + 6 x completion
 ```
 
-At the live `0.8x` Yunwu rate:
+At the live `0.8x` metered rate:
 
 ```text
 provider cost ≈ equivalent tokens / 1,000,000 x $0.02922
@@ -266,7 +266,7 @@ provider cost in USD =
     + output / 1M × 15 × 1.5
   )
   × group ratio 3
-  × $0.07309 per Yunwu credit
+  × $0.07309 per metered credit
 
 application credits at 80% gross margin =
   ceil(provider cost in USD / $0.0025)
@@ -298,5 +298,5 @@ attached-record Agent work rather than promising every user action for one fixed
 - [OpenAI Codex plan usage limits and context-dependent allowance consumption](https://learn.chatgpt.com/docs/pricing#what-are-the-usage-limits-for-my-plan)
 - [ChinaTalk investigation of the Chinese relay market](https://www.chinatalk.media/p/how-to-buy-cheap-claude-tokens-in)
 - [Summary of reported relay-market sourcing and data harvesting](https://www.tomshardware.com/tech-industry/artificial-intelligence/chinese-grey-market-sells-claude-api-access-at-90-percent-off-through-proxy-networks-that-harvest-user-data)
-- Yunwu model catalog snapshot observed on 2026-07-21; the public pricing route returned 404 on 2026-07-26
+- metered model catalog snapshot observed on 2026-07-21; the public pricing route returned 404 on 2026-07-26
 - Application seed pricing in `src/credits.ts` of the AI Prospecting Agent worktree

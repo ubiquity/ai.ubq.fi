@@ -108,10 +108,10 @@ denoWithKv.openKv = () => Promise.resolve(kv);
 
 const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api_keys.ts");
 const {
-  recordYunwuAmbiguousFailure,
-  recordYunwuTerminal,
-  recordYunwuUndispatchedCancellation,
-  recordYunwuUpstreamResponse,
+  recordMeteredAmbiguousFailure,
+  recordMeteredTerminal,
+  recordMeteredUndispatchedCancellation,
+  recordMeteredUpstreamResponse,
   reservePaidFallback,
 } = await import("../src/paid_fallback.ts");
 const {
@@ -175,7 +175,7 @@ const assertLegacyStateUnchanged = async (expected: ApiKeyRecord): Promise<void>
   assert.equal(await countPrefix(legacyRequestLogPrefix), 0);
 };
 
-Deno.test("Yunwu runtime lifecycle hard-cuts legacy counters and request logs in favor of V3", async () => {
+Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs in favor of V3", async () => {
   const now = Date.now();
   const record: ApiKeyRecord = {
     id: keyId,
@@ -220,17 +220,17 @@ Deno.test("Yunwu runtime lifecycle hard-cuts legacy counters and request logs in
 
   const originalEnvGet = Deno.env.get;
   Deno.env.get = (name: string): string | undefined =>
-    name === "YUNWU_API_KEY" ? "test-yunwu-key" : originalEnvGet.call(Deno.env, name);
+    name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name);
   try {
     const terminalReservation = await reserve("terminal-missing-id", now);
     assert.equal(terminalReservation.reserved_microcredits, 250_000);
     assert.equal(terminalReservation.quota_used_percent, 0);
-    await recordYunwuUpstreamResponse(
+    await recordMeteredUpstreamResponse(
       terminalReservation,
       new Response(null, { status: 502 }),
       null,
     );
-    await recordYunwuTerminal(terminalReservation, "incomplete");
+    await recordMeteredTerminal(terminalReservation, "incomplete");
     const terminal = await readRequest("terminal-missing-id");
     assert.equal(terminal.dispatch_state, "dispatched");
     assert.equal(terminal.terminal_state, "incomplete");
@@ -241,7 +241,7 @@ Deno.test("Yunwu runtime lifecycle hard-cuts legacy counters and request logs in
     assert.ok((await memoryKv.get(paidFallbackPendingV3Key(keyId, terminal.request_id))).value);
 
     const ambiguousReservation = await reserve("ambiguous", now + 1);
-    await recordYunwuAmbiguousFailure(ambiguousReservation);
+    await recordMeteredAmbiguousFailure(ambiguousReservation);
     const ambiguous = await readRequest("ambiguous");
     assert.equal(ambiguous.dispatch_state, "dispatched");
     assert.equal(ambiguous.terminal_state, "ambiguous");
@@ -250,7 +250,7 @@ Deno.test("Yunwu runtime lifecycle hard-cuts legacy counters and request logs in
     assert.ok((await memoryKv.get(paidFallbackPendingV3Key(keyId, ambiguous.request_id))).value);
 
     const dispatchedReservation = await reserve("dispatched-http-error", now + 2);
-    await recordYunwuUpstreamResponse(
+    await recordMeteredUpstreamResponse(
       dispatchedReservation,
       new Response(null, { status: 503 }),
       "provider-request-id",
@@ -263,7 +263,7 @@ Deno.test("Yunwu runtime lifecycle hard-cuts legacy counters and request logs in
     assert.equal(dispatched.reserved_microcredits, 250_000);
 
     const cancelledReservation = await reserve("cancelled-before-dispatch", now + 3);
-    await recordYunwuUndispatchedCancellation(cancelledReservation);
+    await recordMeteredUndispatchedCancellation(cancelledReservation);
     const cancelled = await readRequest("cancelled-before-dispatch");
     assert.equal(cancelled.dispatch_state, "not_dispatched");
     assert.equal(cancelled.terminal_state, "cancelled");

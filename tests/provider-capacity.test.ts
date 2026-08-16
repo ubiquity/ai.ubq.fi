@@ -27,7 +27,7 @@ import {
   PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX,
   recordProviderCapacityDowntimeEvent,
 } from "../src/provider_capacity_events.ts";
-import { YUNWU_QUOTA_STATE_KEY } from "../src/yunwu_quota.ts";
+import { METERED_QUOTA_STATE_KEY } from "../src/metered_quota.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
 
 type StoredValue = {
@@ -134,7 +134,7 @@ const seed = (): void => {
     ],
     updated_at_ms: nowMs,
   });
-  kvStore.put(YUNWU_QUOTA_STATE_KEY, {
+  kvStore.put(METERED_QUOTA_STATE_KEY, {
     current_balance_quota: 750,
     post_refill_baseline_quota: 1_000,
     last_observed_used_quota: 250,
@@ -149,8 +149,8 @@ const seed = (): void => {
     latest_refill_amount_credits: 10,
     latest_refill_completed_at_ms: nowMs - 5_000,
   });
-  Deno.env.set("YUNWU_SYSTEM_TOKEN", "test-system-token");
-  Deno.env.set("YUNWU_USER_ID", "123456");
+  Deno.env.set("METERED_SYSTEM_TOKEN", "test-system-token");
+  Deno.env.set("METERED_USER_ID", "123456");
 };
 
 const codexUsageBody = (primaryUsed: number, secondaryUsed: number) => ({
@@ -200,7 +200,7 @@ const codexSparkUsageBody = (
 const createFetcher = (
   calls: Array<{ account: string | null; authorization: string | null; url: string }>,
   failureAccount: string | null = null,
-  yunwu: Readonly<{
+  metered: Readonly<{
     balance_quota?: number;
     used_quota?: number;
     quota_per_unit?: number;
@@ -219,30 +219,30 @@ const createFetcher = (
   const url = String(input);
   const account = headers.get("ChatGPT-Account-ID");
   calls.push({ account, authorization: headers.get("Authorization"), url });
-  if (url === "https://yunwu.ai/api/user/self") {
+  if (url === "https://api.openlux.ai/api/user/self") {
     return Promise.resolve(
       new Response(
         JSON.stringify({
           success: true,
           data: {
-            quota: yunwu.balance_quota ?? 750,
-            used_quota: yunwu.used_quota ?? 250,
+            quota: metered.balance_quota ?? 750,
+            used_quota: metered.used_quota ?? 250,
           },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
   }
-  if (url === "https://yunwu.ai/api/user/topuprecords?page=1&page_size=10") {
+  if (url === "https://api.openlux.ai/api/user/topuprecords?page=1&page_size=10") {
     return Promise.resolve(
       new Response(
         JSON.stringify({
           success: true,
           data: {
             records: [{
-              id: yunwu.refill_id ?? "refill-one",
-              amount: yunwu.refill_amount ?? 10,
-              complete_time: yunwu.refill_completed_at ?? (nowMs - 5_000) / 1_000,
+              id: metered.refill_id ?? "refill-one",
+              amount: metered.refill_amount ?? 10,
+              complete_time: metered.refill_completed_at ?? (nowMs - 5_000) / 1_000,
               status: "success",
             }],
           },
@@ -251,12 +251,12 @@ const createFetcher = (
       ),
     );
   }
-  if (url === "https://yunwu.ai/api/status") {
+  if (url === "https://api.openlux.ai/api/status") {
     return Promise.resolve(
       new Response(
         JSON.stringify({
           success: true,
-          data: { quota_per_unit: yunwu.quota_per_unit ?? 100 },
+          data: { quota_per_unit: metered.quota_per_unit ?? 100 },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -440,9 +440,9 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   assert.equal(live.cache_state, "live");
   assert.equal(calls.length, 5);
   const codexCalls = calls.filter((call) => call.url.endsWith("/backend-api/wham/usage"));
-  const yunwuCalls = calls.filter((call) => call.url.startsWith("https://yunwu.ai/api/"));
+  const meteredCalls = calls.filter((call) => call.url.startsWith("https://api.openlux.ai/api/"));
   assert.equal(codexCalls.length, 2);
-  assert.equal(yunwuCalls.length, 3);
+  assert.equal(meteredCalls.length, 3);
   assert.deepEqual(codexCalls.map((call) => call.account).sort(), ["account-one", "account-two"]);
   assert.deepEqual(codexCalls.map((call) => call.authorization).sort(), ["Bearer token-one", "Bearer token-two"]);
   assert.equal(live.history.length, 1);
@@ -454,7 +454,7 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   assert.equal(live.history[0]?.sources[0]?.windows.primary?.limit_window_seconds, 10_800);
   assert.equal(live.history[0]?.sources[0]?.windows.primary?.used_percent, 12.5);
   assert.equal(live.history[0]?.sources[1]?.windows.secondary?.reset_at_ms, 1_800_020_000_000);
-  assert.equal(live.sources.find((source) => source.source === "yunwu")?.wallet.reset_at_ms, null);
+  assert.equal(live.sources.find((source) => source.source === "metered")?.wallet.reset_at_ms, null);
 
   const callsInSameBucket: Array<{ account: string | null; authorization: string | null; url: string }> = [];
   const second = await refreshProviderCapacity({
@@ -478,7 +478,7 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   }
 });
 
-Deno.test("sampler refresh observes a YunWu top-up and raises its refill series", async () => {
+Deno.test("sampler refresh observes a Metered top-up and raises its refill series", async () => {
   seed();
   const initial = await refreshProviderCapacity({
     kv: kvStub,
@@ -499,7 +499,7 @@ Deno.test("sampler refresh observes a YunWu top-up and raises its refill series"
     }),
     now: () => nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
   });
-  const current = topup.sources.find((source) => source.source === "yunwu");
+  const current = topup.sources.find((source) => source.source === "metered");
   assert.equal(current?.state, "available");
   assert.equal(current?.wallet.refill_cycle_remaining_percent, 100);
   assert.equal(topup.history.length, 2);
@@ -751,7 +751,7 @@ Deno.test("persisted Codex data becomes stale after the missed-run allowance", a
   });
   assert.equal(stale.cache_state, "stale");
   assert.equal(stale.sources.find((source) => source.source === "codex" && source.slot === 1)?.state, "stale");
-  assert.equal(stale.sources.find((source) => source.source === "yunwu")?.state, "stale");
+  assert.equal(stale.sources.find((source) => source.source === "metered")?.state, "stale");
   assert.equal(stale.history[0]?.sources[0]?.state, "available");
 });
 
@@ -773,7 +773,7 @@ const seedCountingCapacityKv = (kv: CountingKv): void => {
     ],
     updated_at_ms: nowMs,
   });
-  kv.seed(YUNWU_QUOTA_STATE_KEY, {
+  kv.seed(METERED_QUOTA_STATE_KEY, {
     current_balance_quota: 750,
     post_refill_baseline_quota: 1_000,
     last_observed_used_quota: 250,
@@ -791,20 +791,20 @@ const seedCountingCapacityKv = (kv: CountingKv): void => {
 };
 
 const withCountingCapacityEnvironment = async (run: () => Promise<void>): Promise<void> => {
-  const originalSystemToken = Deno.env.get("YUNWU_SYSTEM_TOKEN");
-  const originalUserId = Deno.env.get("YUNWU_USER_ID");
-  Deno.env.set("YUNWU_SYSTEM_TOKEN", "test-system-token");
-  Deno.env.set("YUNWU_USER_ID", "123456");
+  const originalSystemToken = Deno.env.get("METERED_SYSTEM_TOKEN");
+  const originalUserId = Deno.env.get("METERED_USER_ID");
+  Deno.env.set("METERED_SYSTEM_TOKEN", "test-system-token");
+  Deno.env.set("METERED_USER_ID", "123456");
   try {
     await run();
   } finally {
     setKvForTest(kvStub);
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
-    if (originalSystemToken === undefined) Deno.env.delete("YUNWU_SYSTEM_TOKEN");
-    else Deno.env.set("YUNWU_SYSTEM_TOKEN", originalSystemToken);
-    if (originalUserId === undefined) Deno.env.delete("YUNWU_USER_ID");
-    else Deno.env.set("YUNWU_USER_ID", originalUserId);
+    if (originalSystemToken === undefined) Deno.env.delete("METERED_SYSTEM_TOKEN");
+    else Deno.env.set("METERED_SYSTEM_TOKEN", originalSystemToken);
+    if (originalUserId === undefined) Deno.env.delete("METERED_USER_ID");
+    else Deno.env.set("METERED_USER_ID", originalUserId);
   }
 };
 

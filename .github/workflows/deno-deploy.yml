@@ -166,8 +166,8 @@ jobs:
       CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY }}
-      YUNWU_API_KEY: ${{ secrets.YUNWU_API_KEY }}
-      YUNWU_SYSTEM_TOKEN: ${{ secrets.YUNWU_SYSTEM_TOKEN }}
+      METERED_API_KEY: ${{ secrets.METERED_API_KEY }}
+      METERED_SYSTEM_TOKEN: ${{ secrets.METERED_SYSTEM_TOKEN }}
     steps:
       - uses: denoland/setup-deno@v2
         with:
@@ -180,17 +180,17 @@ jobs:
           [ -n "$DENO_DEPLOY_TOKEN" ]
           [ -n "$UOS_AI_TOKEN" ]
           [ -n "$OPENROUTER_API_KEY" ]
-          [ -n "$YUNWU_API_KEY" ]
+          [ -n "$METERED_API_KEY" ]
           echo "::add-mask::$DENO_DEPLOY_TOKEN"
 
           deno eval \
             '
-              const required = ["UOS_AI_TOKEN", "OPENROUTER_API_KEY", "YUNWU_API_KEY"];
+              const required = ["UOS_AI_TOKEN", "OPENROUTER_API_KEY", "METERED_API_KEY"];
               const optional = [
                 "UOS_AI_KERNEL_PUBLIC_KEY",
                 "CEREBRAS_API_KEY",
                 "VOYAGEAI_API_KEY",
-                "YUNWU_SYSTEM_TOKEN",
+                "METERED_SYSTEM_TOKEN",
               ];
               const lines = [];
               for (const name of [...required, ...optional]) {
@@ -267,7 +267,7 @@ jobs:
       # was minified and validated by the prior sync path; the pinned reusable
       # workflow cannot safely transform the raw repository secret.
       runtime_env: |
-        YUNWU_USER_ID=${{ vars.YUNWU_USER_ID || '' }}
+        METERED_USER_ID=${{ vars.METERED_USER_ID || '' }}
       forward_all_secrets: false
       index_html_path: static/docs.html
       extra_paths: |
@@ -363,7 +363,7 @@ jobs:
             ' "$body" >/dev/null 2>&1; then
               # An exhausted Codex account is an accepted preview/production
               # state: the request path must observe this authoritative 429
-              # before it can exercise Yunwu fallback. Keep every deployment
+              # before it can exercise Metered fallback. Keep every deployment
               # identity check below mandatory.
               attestable_health=true
             fi

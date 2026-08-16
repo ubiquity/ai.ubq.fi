@@ -185,7 +185,7 @@
               <section data-paid-fallback-create aria-labelledby="create-paid-fallback-label">
                 <label data-check data-paid-fallback-toggle>
                   <span id="create-paid-fallback-label">
-                    <strong>YunWu paid overflow</strong>
+                    <strong>Metered paid overflow</strong>
                     <small>Use once Codex returns its final rate-limit response.</small>
                   </span>
                   <input
@@ -210,7 +210,7 @@
                     />
                   </label>
                   <p id="key-paid-fallback-warning" data-paid-fallback-warning>
-                    Enabling fallback can send prompts, code, tools, and attachments to YunWu.
+                    Enabling fallback can send prompts, code, tools, and attachments to Metered.
                     Pricing is checked only when this key is enabled; re-enabling checks it again.
                     Ordinary requests never recheck it.
                   </p>
@@ -502,54 +502,54 @@
             </div>
           </article>
 
-          <article data-card data-span="half" aria-labelledby="card-yunwu-quota">
+          <article data-card data-span="half" aria-labelledby="card-metered-quota">
             <header>
-              <h2 id="card-yunwu-quota">YunWu refill cycle</h2>
+              <h2 id="card-metered-quota">Metered refill cycle</h2>
               <p>
                 Wallet availability since the latest observed refill. This is a balance cycle, not a weekly limit, so
                 no reset time is fabricated.
               </p>
             </header>
             <div data-card-body>
-              <span id="yunwu-quota-badge" data-badge data-state="unknown">Idle</span>
-              <div data-yunwu-quota-summary>
-                <strong id="yunwu-quota-remaining">—</strong>
+              <span id="metered-quota-badge" data-badge data-state="unknown">Idle</span>
+              <div data-metered-quota-summary>
+                <strong id="metered-quota-remaining">—</strong>
                 <span>remaining in the current refill cycle</span>
-                <progress id="yunwu-quota-progress" max="100" value="0" aria-label="YunWu quota remaining" hidden>
+                <progress id="metered-quota-progress" max="100" value="0" aria-label="Metered quota remaining" hidden>
                 </progress>
               </div>
               <dl data-quota-diagnostics>
                 <div>
                   <dt>Balance</dt>
-                  <dd id="yunwu-quota-balance">—</dd>
+                  <dd id="metered-quota-balance">—</dd>
                 </div>
                 <div>
                   <dt>Cycle baseline</dt>
-                  <dd id="yunwu-quota-baseline">—</dd>
+                  <dd id="metered-quota-baseline">—</dd>
                 </div>
                 <div>
                   <dt>Latest refill</dt>
-                  <dd id="yunwu-quota-latest-refill">—</dd>
+                  <dd id="metered-quota-latest-refill">—</dd>
                 </div>
                 <div>
                   <dt>Inferred credit</dt>
-                  <dd id="yunwu-quota-inferred-credit">—</dd>
+                  <dd id="metered-quota-inferred-credit">—</dd>
                 </div>
                 <div>
                   <dt>Cache</dt>
-                  <dd id="yunwu-quota-cache">—</dd>
+                  <dd id="metered-quota-cache">—</dd>
                 </div>
                 <div>
                   <dt>Confidence</dt>
-                  <dd id="yunwu-quota-confidence">—</dd>
+                  <dd id="metered-quota-confidence">—</dd>
                 </div>
                 <div>
                   <dt>Observed</dt>
-                  <dd id="yunwu-quota-observed">—</dd>
+                  <dd id="metered-quota-observed">—</dd>
                 </div>
                 <div>
                   <dt>Cycle started</dt>
-                  <dd id="yunwu-quota-cycle-started">—</dd>
+                  <dd id="metered-quota-cycle-started">—</dd>
                 </div>
               </dl>
             </div>
@@ -567,7 +567,7 @@
           <article data-card aria-labelledby="card-provider-capacity">
             <header>
               <h2 id="card-provider-capacity">Available capacity</h2>
-              <p>Usage windows, provider health, and the sampled YunWu refill cycle in one view. The chart keeps Codex capacity and YunWu refill as separate series; cards preserve each provider's value.</p>
+              <p>Usage windows, provider health, and the sampled Metered refill cycle in one view. The chart keeps Codex capacity and Metered refill as separate series; cards preserve each provider's value.</p>
             </header>
             <div data-card-body>
               <div data-provider-heading>

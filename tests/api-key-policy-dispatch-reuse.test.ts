@@ -149,7 +149,7 @@ Deno.test("V3 retry and upstream failure retain one dispatch while completion st
   firstDispatch.markTransportStarted();
 
   const beforeRetry = kv.commands.length;
-  const retryDispatch = await reservation.beforeProviderDispatch("yunwu");
+  const retryDispatch = await reservation.beforeProviderDispatch("metered");
   assert.equal(retryDispatch, undefined, "a retry must not commit another dispatch");
   assert.equal(
     kv.commands.length - beforeRetry,

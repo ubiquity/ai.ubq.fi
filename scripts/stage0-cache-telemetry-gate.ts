@@ -26,7 +26,7 @@ const USAGE_TELEMETRY_STATUSES = new Set(["missing", "partial", "reported", "inv
 // A Responses or Chat inference terminal is emitted only by these in-process
 // transports. Keeping this vocabulary closed means a forged or newly added
 // provider cannot silently become a Stage 0 or outcome cohort.
-const INFERENCE_PROVIDERS = new Set(["chatgpt_codex", "yunwu"] as const);
+const INFERENCE_PROVIDERS = new Set(["chatgpt_codex", "metered"] as const);
 const PROMPT_CACHE_MODE_VALUES = ["implicit", "explicit", "legacy_retention", "unspecified"] as const;
 const PROMPT_CACHE_MODES = new Set(PROMPT_CACHE_MODE_VALUES);
 const AFFINITY_OUTCOME_VALUES = ["none", "preferred", "failover", "shadow_only"] as const;
@@ -393,7 +393,7 @@ const requireNullableReleaseString = (
 
 const requireInferenceProvider = (record: Record<string, unknown>, lineNumber: number): string => {
   const provider = requireNonEmptyString(record, "provider", lineNumber);
-  if (!INFERENCE_PROVIDERS.has(provider as "chatgpt_codex" | "yunwu")) {
+  if (!INFERENCE_PROVIDERS.has(provider as "chatgpt_codex" | "metered")) {
     return fail(lineNumber, "inference terminal event has an unsupported provider field");
   }
   return provider;
@@ -402,7 +402,7 @@ const requireInferenceProvider = (record: Record<string, unknown>, lineNumber: n
 const optionalInferenceProvider = (record: Record<string, unknown>): string | null => {
   const provider = record.provider;
   if (typeof provider !== "string" || provider.trim().length === 0) return null;
-  return INFERENCE_PROVIDERS.has(provider as "chatgpt_codex" | "yunwu") ? provider : null;
+  return INFERENCE_PROVIDERS.has(provider as "chatgpt_codex" | "metered") ? provider : null;
 };
 
 const requireBoundedModelLabel = (record: Record<string, unknown>, lineNumber: number): string => {

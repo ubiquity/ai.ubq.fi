@@ -1,7 +1,7 @@
 import { MICROCREDITS_PER_CREDIT, PAID_FALLBACK_NO_LIMIT } from "./api_keys.ts";
 import { getKv } from "./kv.ts";
 import type { PaidFallbackRequestV3, PaidFallbackWindowV3 } from "./types.ts";
-import { fetchYunwuTokenLogs, type YunwuTokenLogEntry } from "./yunwu.ts";
+import { fetchMeteredTokenLogs, type MeteredTokenLogEntry } from "./metered.ts";
 
 const PREFIX = ["uos_ai", "paid_fallback", "v3"] as const;
 const MAX_CAS_ATTEMPTS = 128;
@@ -828,7 +828,7 @@ const settlePaidFallbackRequestV3 = async (
   kv: Deno.Kv,
   keyId: string,
   requestId: string,
-  providerLog: YunwuTokenLogEntry,
+  providerLog: MeteredTokenLogEntry,
   now: number,
 ): Promise<Readonly<{ settled: boolean; retry_delay_ms: number | null }>> => {
   const requestKey = paidFallbackRequestV3Key(keyId, requestId);
@@ -945,10 +945,10 @@ export const reconcilePaidFallbackV3 = async (
     const providerRequestIds = candidates
       .map((requestEntry) => requestEntry.value.provider_request_id)
       .filter((requestId): requestId is string => requestId !== null);
-    let logs: readonly YunwuTokenLogEntry[] = [];
+    let logs: readonly MeteredTokenLogEntry[] = [];
     try {
       logs = providerRequestIds.length
-        ? await fetchYunwuTokenLogs({
+        ? await fetchMeteredTokenLogs({
           requestIds: providerRequestIds,
           startAtMs: Math.min(...candidates.map((requestEntry) => requestEntry.value.created_at_ms)) - 60_000,
           endAtMs: now + 60_000,
