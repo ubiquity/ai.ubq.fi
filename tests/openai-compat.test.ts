@@ -113,7 +113,7 @@ const {
 } = await import("../src/openai.ts");
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
-const { setOpenRouterApiKeyForTest } = await import("../src/openrouter.ts");
+const { setRemovedProviderApiKeyForTest } = await import("../src/removed_provider.ts");
 const {
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
@@ -129,7 +129,9 @@ const {
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
 const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
-const { OPENROUTER_CIRCUIT_KEY, parseOpenRouterCircuitState } = await import("../src/openrouter_circuit.ts");
+const { REMOVED_PROVIDER_CIRCUIT_KEY, parseRemovedProviderCircuitState } = await import(
+  "../src/removed_provider_circuit.ts"
+);
 const {
   ApiKeyQuotaDispatchError,
   apiKeyPolicyFromHashRecord,
@@ -198,7 +200,7 @@ const baseSseChunks = () => [
   }\n\n`,
 ];
 
-const openRouterTextSseChunks = (
+const removedProviderTextSseChunks = (
   options: Readonly<{
     model?: string | null;
     responseId?: string;
@@ -207,9 +209,9 @@ const openRouterTextSseChunks = (
   }> = {},
 ): string[] => {
   const model = options.model === undefined ? "google/gemini-2.5-pro" : options.model;
-  const responseId = options.responseId ?? "resp_openrouter_fixture";
+  const responseId = options.responseId ?? "resp_removed_provider_fixture";
   const text = options.text ?? "pong";
-  const messageId = "msg_openrouter_fixture";
+  const messageId = "msg_removed_provider_fixture";
   const response = {
     id: responseId,
     object: "response",
@@ -277,7 +279,7 @@ const openRouterTextSseChunks = (
   return chunks;
 };
 
-const openRouterResponsesRequest = (
+const removedProviderResponsesRequest = (
   body: Record<string, unknown> = {},
   signal?: AbortSignal,
 ): Request =>
@@ -387,22 +389,22 @@ const waitForPaidFallbackTerminal = async (
   );
 };
 
-const openRouterCircuitState = (): ReturnType<typeof parseOpenRouterCircuitState> =>
-  parseOpenRouterCircuitState(kvStore.get(keyToString(OPENROUTER_CIRCUIT_KEY)));
+const removedProviderCircuitState = (): ReturnType<typeof parseRemovedProviderCircuitState> =>
+  parseRemovedProviderCircuitState(kvStore.get(keyToString(REMOVED_PROVIDER_CIRCUIT_KEY)));
 
-const waitForOpenRouterCircuit = async (
-  predicate: (state: NonNullable<ReturnType<typeof parseOpenRouterCircuitState>>) => boolean,
-): Promise<NonNullable<ReturnType<typeof parseOpenRouterCircuitState>>> => {
+const waitForRemovedProviderCircuit = async (
+  predicate: (state: NonNullable<ReturnType<typeof parseRemovedProviderCircuitState>>) => boolean,
+): Promise<NonNullable<ReturnType<typeof parseRemovedProviderCircuitState>>> => {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const state = openRouterCircuitState();
+    const state = removedProviderCircuitState();
     if (state && predicate(state)) return state;
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
-  const state = openRouterCircuitState();
-  assert.fail(`OpenRouter circuit did not reach the expected state: ${JSON.stringify(state)}`);
+  const state = removedProviderCircuitState();
+  assert.fail(`RemovedProvider circuit did not reach the expected state: ${JSON.stringify(state)}`);
 };
 
-const seedOpenRouterCircuit = (
+const seedRemovedProviderCircuit = (
   state: Readonly<{
     phase: "open" | "half_open";
     openUntilMs: number;
@@ -417,7 +419,7 @@ const seedOpenRouterCircuit = (
       | null;
   }>,
 ): void => {
-  kvStore.set(keyToString(OPENROUTER_CIRCUIT_KEY), {
+  kvStore.set(keyToString(REMOVED_PROVIDER_CIRCUIT_KEY), {
     v: 1,
     phase: state.phase,
     failure_at_ms: [Date.now() - 1_000, Date.now() - 500],
@@ -468,7 +470,7 @@ const fetchMockQueue: FetchMockQueue = (() => {
 const withFetchMock = async <T>(
   handler: (url: string, bodyText: string | null, init?: RequestInit) => Response | Promise<Response>,
   fn: () => Promise<T>,
-  options: Readonly<{ openRouterApiKey?: string }> = {},
+  options: Readonly<{ removedProviderApiKey?: string }> = {},
 ): Promise<T> => {
   const prev = fetchMockQueue.chain;
   let release = () => {};
@@ -498,11 +500,11 @@ const withFetchMock = async <T>(
   // Each mocked exchange is an independent gateway isolate/request fixture.
   // Circuit behavior itself is covered by codex-account-routing.test.ts.
   kvStore.delete(keyToString(["uos_ai", "codex_account_routing", "v2"]));
-  kvStore.delete(keyToString(["uos_ai", "openrouter_failover", "circuit", "v1"]));
-  kvStore.delete(keyToString(["uos_ai", "openrouter_failover", "telemetry", "v1"]));
+  kvStore.delete(keyToString(["uos_ai", "removed_provider_failover", "circuit", "v1"]));
+  kvStore.delete(keyToString(["uos_ai", "removed_provider_failover", "telemetry", "v1"]));
   resetCodexAuthCacheForTest();
 
-  setOpenRouterApiKeyForTest(options.openRouterApiKey ?? null);
+  setRemovedProviderApiKeyForTest(options.removedProviderApiKey ?? null);
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -514,7 +516,7 @@ const withFetchMock = async <T>(
     return await fn();
   } finally {
     globalThis.fetch = originalFetch;
-    setOpenRouterApiKeyForTest(undefined);
+    setRemovedProviderApiKeyForTest(undefined);
     release();
   }
 };
@@ -2812,7 +2814,7 @@ Deno.test("openai: streaming Responses clear their absolute deadline after seman
           }),
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
         ),
-      () => handleResponses(openRouterResponsesRequest()),
+      () => handleResponses(removedProviderResponsesRequest()),
     );
     assert.equal(response.status, 200);
     const values = parseResponsesSseValues(await response.text());
@@ -2874,10 +2876,10 @@ Deno.test("openai: Codex pre-header gateway deadlines use server_error on both s
 Deno.test("openai: buffered Responses stop after the overall gateway deadline", async () => {
   setStreamFirstEventDeadlineMsForTest(10);
   try {
-    let openRouterCalls = 0;
+    let removedProviderCalls = 0;
     const response = await withFetchMock(
       (url, _bodyText, init) => {
-        if (url === "https://openrouter.ai/api/v1/responses") openRouterCalls += 1;
+        if (url === "https://removed_provider.ai/api/v1/responses") removedProviderCalls += 1;
         return new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal;
           if (!signal) return reject(new Error("provider request did not receive a gateway deadline signal"));
@@ -2886,27 +2888,27 @@ Deno.test("openai: buffered Responses stop after the overall gateway deadline", 
           else signal.addEventListener("abort", rejectWithAbortReason, { once: true });
         });
       },
-      () => handleResponses(openRouterResponsesRequest({ stream: false })),
-      { openRouterApiKey: "or-test-key" },
+      () => handleResponses(removedProviderResponsesRequest({ stream: false })),
+      { removedProviderApiKey: "or-test-key" },
     );
     const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
     assert.equal(response.status, 504);
     assert.equal(payload.error?.type, "server_error");
     assert.equal(payload.error?.code, "gateway_timeout");
-    assert.equal(openRouterCalls, 1);
+    assert.equal(removedProviderCalls, 1);
   } finally {
     setStreamFirstEventDeadlineMsForTest(null);
   }
 });
 
-Deno.test("openai: buffered OpenRouter recovery preserves the overall gateway deadline", async () => {
+Deno.test("openai: buffered RemovedProvider recovery preserves the overall gateway deadline", async () => {
   setStreamFirstEventDeadlineMsForTest(20);
   try {
     const urls: string[] = [];
     const response = await withFetchMock(
       (url, _bodyText, init) => {
         urls.push(url);
-        if (url === "https://openrouter.ai/api/v1/responses") throw new TypeError("OpenRouter unavailable");
+        if (url === "https://removed_provider.ai/api/v1/responses") throw new TypeError("RemovedProvider unavailable");
         return new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal;
           if (!signal) return reject(new Error("recovery did not receive a gateway deadline signal"));
@@ -2916,20 +2918,20 @@ Deno.test("openai: buffered OpenRouter recovery preserves the overall gateway de
         });
       },
       () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-        return handleResponses(openRouterResponsesRequest({ stream: false }));
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+        return handleResponses(removedProviderResponsesRequest({ stream: false }));
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
     const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
     assert.equal(response.status, 504);
     assert.equal(payload.error?.type, "server_error");
     assert.equal(payload.error?.code, "gateway_timeout");
     assert.deepEqual(urls, [
-      "https://openrouter.ai/api/v1/responses",
+      "https://removed_provider.ai/api/v1/responses",
       "https://chatgpt.com/backend-api/codex/responses",
     ]);
-    assert.equal(openRouterCircuitState()?.probe, null);
+    assert.equal(removedProviderCircuitState()?.probe, null);
   } finally {
     setStreamFirstEventDeadlineMsForTest(null);
   }
@@ -5738,13 +5740,13 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       firstSseEventMs: null,
       streamTerminalMs: null,
       attemptedProviders: ["chatgpt_codex"],
-      openRouterTriggerClass: null,
-      openRouterCircuitTransition: null,
-      openRouterSelectedModel: null,
-      openRouterTaskType: null,
-      openRouterSemanticCommitment: null,
-      openRouterLatencyMs: null,
-      openRouterTerminalStatus: null,
+      removedProviderTriggerClass: null,
+      removedProviderCircuitTransition: null,
+      removedProviderSelectedModel: null,
+      removedProviderTaskType: null,
+      removedProviderSemanticCommitment: null,
+      removedProviderLatencyMs: null,
+      removedProviderTerminalStatus: null,
     });
   });
 
@@ -7361,7 +7363,7 @@ Deno.test("openai: buffered Responses preserve nested response.output items", as
         `data: ${JSON.stringify({ type: "response.output", response: { output: [item] } })}\n\n`,
         `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
       ]),
-    () => handleResponses(openRouterResponsesRequest({ stream: false })),
+    () => handleResponses(removedProviderResponsesRequest({ stream: false })),
   );
   const payload = await response.json() as { output?: unknown[] };
   assert.equal(response.status, 200);
@@ -8193,7 +8195,7 @@ Deno.test("openai: streamed Responses force the SSE content type", async () => {
   assert.match(await response.text(), /response.completed/);
 });
 
-Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", async () => {
+Deno.test("openai: eligible Responses failure replays through RemovedProvider Auto", async () => {
   const primaryBody = JSON.stringify({
     model: DEFAULT_TEST_MODEL,
     input: "ping",
@@ -8214,23 +8216,23 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
     parallel_tool_calls: true,
   });
   const urls: string[] = [];
-  let openRouterBody: Record<string, unknown> | null = null;
-  let openRouterAuthorization: string | null = null;
-  let openRouterMetadata: string | null = null;
+  let removedProviderBody: Record<string, unknown> | null = null;
+  let removedProviderAuthorization: string | null = null;
+  let removedProviderMetadata: string | null = null;
   const response = await withFetchMock(
     (url, bodyText, init) => {
       urls.push(url);
-      if (url !== "https://openrouter.ai/api/v1/responses") {
+      if (url !== "https://removed_provider.ai/api/v1/responses") {
         return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
           status: 503,
           headers: { "Content-Type": "application/json" },
         });
       }
-      openRouterBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      removedProviderBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
       const headers = new Headers(init?.headers);
-      openRouterAuthorization = headers.get("Authorization");
-      openRouterMetadata = headers.get("X-OpenRouter-Metadata");
-      return sseResponse(openRouterTextSseChunks());
+      removedProviderAuthorization = headers.get("Authorization");
+      removedProviderMetadata = headers.get("X-RemovedProvider-Metadata");
+      return sseResponse(removedProviderTextSseChunks());
     },
     () =>
       handleResponses(
@@ -8246,17 +8248,17 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
           idempotencyPrincipal: "api-key:test-principal",
         },
       ),
-    { openRouterApiKey: "or-test-key" },
+    { removedProviderApiKey: "or-test-key" },
   );
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("x-uos-upstream"), "openrouter");
+  assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
   assert.deepEqual(urls, [
     "https://chatgpt.com/backend-api/codex/responses",
-    "https://openrouter.ai/api/v1/responses",
+    "https://removed_provider.ai/api/v1/responses",
   ]);
-  assert.ok(openRouterBody);
-  const sent = openRouterBody as Record<string, unknown>;
+  assert.ok(removedProviderBody);
+  const sent = removedProviderBody as Record<string, unknown>;
   assert.equal(sent.model, "deepseek/deepseek-v4-flash-0731");
   assert.deepEqual(sent.plugins, [{
     id: "auto-router",
@@ -8275,8 +8277,8 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   assert.equal(typeof sent.session_id, "string");
   assert.doesNotMatch(String(sent.session_id), /raw-session-id|test-principal/);
   assert.equal(JSON.stringify(sent).includes("raw-session-id"), false);
-  assert.equal(openRouterAuthorization, "Bearer or-test-key");
-  assert.equal(openRouterMetadata, "enabled");
+  assert.equal(removedProviderAuthorization, "Bearer or-test-key");
+  assert.equal(removedProviderMetadata, "enabled");
 
   const text = await response.text();
   const events = [...text.matchAll(/^data: (.+)$/gm)]
@@ -8287,7 +8289,7 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   );
   assert.equal(
     warning?.delta,
-    "⚠ Failover active: this response is from `openrouter:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
+    "⚠ Failover active: this response is from `removed_provider:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
   );
   const providerDelta = events.find((event) => event.delta === "pong");
   assert.equal(providerDelta?.output_index, 1);
@@ -8302,11 +8304,11 @@ Deno.test("openai: eligible Responses failure replays through OpenRouter Auto", 
   const terminalOutput = (terminal?.response as { output?: unknown[] } | undefined)?.output ?? [];
   assert.equal(terminalOutput.length, 2);
   assert.equal((terminalOutput[0] as { role?: unknown } | undefined)?.role, "assistant");
-  assert.equal(getResponseTelemetry(response)?.provider, "openrouter");
-  assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["chatgpt_codex", "openrouter"]);
+  assert.equal(getResponseTelemetry(response)?.provider, "removed_provider");
+  assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["chatgpt_codex", "removed_provider"]);
 });
 
-Deno.test("openai: OpenRouter handler failover covers precommit failures and commitment barriers", async (t) => {
+Deno.test("openai: RemovedProvider handler failover covers precommit failures and commitment barriers", async (t) => {
   const scenarios = [
     {
       name: "missing body",
@@ -8365,19 +8367,19 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
       const response = await withFetchMock(
         (url) => {
           urls.push(url);
-          return url === "https://openrouter.ai/api/v1/responses"
-            ? sseResponse(openRouterTextSseChunks())
+          return url === "https://removed_provider.ai/api/v1/responses"
+            ? sseResponse(removedProviderTextSseChunks())
             : scenario.primary();
         },
-        () => handleResponses(openRouterResponsesRequest()),
-        { openRouterApiKey: "or-test-key" },
+        () => handleResponses(removedProviderResponsesRequest()),
+        { removedProviderApiKey: "or-test-key" },
       );
       assert.equal(response.status, 200);
       assert.deepEqual(urls, [
         "https://chatgpt.com/backend-api/codex/responses",
-        "https://openrouter.ai/api/v1/responses",
+        "https://removed_provider.ai/api/v1/responses",
       ]);
-      assert.equal(getResponseTelemetry(response)?.openRouterTriggerClass, scenario.trigger);
+      assert.equal(getResponseTelemetry(response)?.removedProviderTriggerClass, scenario.trigger);
       assert.match(await response.text(), /Failover active/);
     });
   }
@@ -8385,13 +8387,13 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
   await t.step("semantic timeout", async () => {
     setStreamFirstEventDeadlineMsForTest(10);
     try {
-      let openRouterCalls = 0;
+      let removedProviderCalls = 0;
       let primaryCancelled = false;
       const response = await withFetchMock(
         (url) => {
-          if (url === "https://openrouter.ai/api/v1/responses") {
-            openRouterCalls += 1;
-            return sseResponse(openRouterTextSseChunks());
+          if (url === "https://removed_provider.ai/api/v1/responses") {
+            removedProviderCalls += 1;
+            return sseResponse(removedProviderTextSseChunks());
           }
           return new Response(
             new ReadableStream<Uint8Array>({
@@ -8407,13 +8409,13 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
             { status: 200, headers: { "Content-Type": "text/event-stream" } },
           );
         },
-        () => handleResponses(openRouterResponsesRequest()),
-        { openRouterApiKey: "or-test-key" },
+        () => handleResponses(removedProviderResponsesRequest()),
+        { removedProviderApiKey: "or-test-key" },
       );
       assert.equal(response.status, 200);
-      assert.equal(openRouterCalls, 1);
+      assert.equal(removedProviderCalls, 1);
       assert.equal(primaryCancelled, true);
-      assert.equal(getResponseTelemetry(response)?.openRouterTriggerClass, "semantic_timeout");
+      assert.equal(getResponseTelemetry(response)?.removedProviderTriggerClass, "semantic_timeout");
       assert.match(await response.text(), /Failover active/);
     } finally {
       setStreamFirstEventDeadlineMsForTest(null);
@@ -8478,12 +8480,12 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
   ] as const;
   for (const scenario of committed) {
     await t.step(`no replay after ${scenario.name}`, async () => {
-      let openRouterCalls = 0;
+      let removedProviderCalls = 0;
       const response = await withFetchMock(
         (url) => {
-          if (url === "https://openrouter.ai/api/v1/responses") {
-            openRouterCalls += 1;
-            return sseResponse(openRouterTextSseChunks());
+          if (url === "https://removed_provider.ai/api/v1/responses") {
+            removedProviderCalls += 1;
+            return sseResponse(removedProviderTextSseChunks());
           }
           return sseResponse([
             `data: ${
@@ -8495,24 +8497,24 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
             `data: ${JSON.stringify(scenario.event)}\n\n`,
           ]);
         },
-        () => handleResponses(openRouterResponsesRequest()),
-        { openRouterApiKey: "or-test-key" },
+        () => handleResponses(removedProviderResponsesRequest()),
+        { removedProviderApiKey: "or-test-key" },
       );
       assert.equal(response.status, 200);
       const values = parseResponsesSseValues(await response.text());
-      assert.equal(openRouterCalls, 0);
+      assert.equal(removedProviderCalls, 0);
       assert.equal(values.filter((event) => event.type === "response.failed").length, 1);
       assert.equal(values.some((event) => JSON.stringify(event).includes("Failover active")), false);
     });
   }
 
   await t.step("missing response template uses an official error event", async () => {
-    let openRouterCalls = 0;
+    let removedProviderCalls = 0;
     const response = await withFetchMock(
       (url) => {
-        if (url === "https://openrouter.ai/api/v1/responses") {
-          openRouterCalls += 1;
-          return sseResponse(openRouterTextSseChunks());
+        if (url === "https://removed_provider.ai/api/v1/responses") {
+          removedProviderCalls += 1;
+          return sseResponse(removedProviderTextSseChunks());
         }
         return sseResponse([
           `data: ${
@@ -8527,11 +8529,11 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
           }\n\n`,
         ]);
       },
-      () => handleResponses(openRouterResponsesRequest()),
-      { openRouterApiKey: "or-test-key" },
+      () => handleResponses(removedProviderResponsesRequest()),
+      { removedProviderApiKey: "or-test-key" },
     );
     const values = parseResponsesSseValues(await response.text());
-    assert.equal(openRouterCalls, 0);
+    assert.equal(removedProviderCalls, 0);
     assert.equal(values.filter((event) => event.type === "response.failed").length, 0);
     const error = values.find((event) => event.type === "error");
     assert.equal(error?.code, "server_error");
@@ -8540,7 +8542,7 @@ Deno.test("openai: OpenRouter handler failover covers precommit failures and com
   });
 });
 
-Deno.test("openai: OpenRouter pre-output rejection restores the authoritative primary error", async (t) => {
+Deno.test("openai: RemovedProvider pre-output rejection restores the authoritative primary error", async (t) => {
   for (
     const model of [
       null,
@@ -8554,14 +8556,14 @@ Deno.test("openai: OpenRouter pre-output rejection restores the authoritative pr
     await t.step(String(model), async () => {
       const response = await withFetchMock(
         (url) =>
-          url === "https://openrouter.ai/api/v1/responses"
-            ? sseResponse(openRouterTextSseChunks({ model }))
+          url === "https://removed_provider.ai/api/v1/responses"
+            ? sseResponse(removedProviderTextSseChunks({ model }))
             : new Response(JSON.stringify({ error: { message: "Primary unavailable", code: "primary_fixture" } }), {
               status: 503,
               headers: { "Content-Type": "application/json", "Retry-After": "17" },
             }),
-        () => handleResponses(openRouterResponsesRequest()),
-        { openRouterApiKey: "or-test-key" },
+        () => handleResponses(removedProviderResponsesRequest()),
+        { removedProviderApiKey: "or-test-key" },
       );
       assert.equal(response.status, 503);
       assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
@@ -8575,7 +8577,7 @@ Deno.test("openai: OpenRouter pre-output rejection restores the authoritative pr
   await t.step("fallback 5xx", async () => {
     const response = await withFetchMock(
       (url) =>
-        url === "https://openrouter.ai/api/v1/responses"
+        url === "https://removed_provider.ai/api/v1/responses"
           ? new Response(JSON.stringify({ error: { message: "fallback failed" } }), {
             status: 502,
             headers: { "Content-Type": "application/json" },
@@ -8584,38 +8586,38 @@ Deno.test("openai: OpenRouter pre-output rejection restores the authoritative pr
             status: 503,
             headers: { "Content-Type": "application/json" },
           }),
-      () => handleResponses(openRouterResponsesRequest()),
-      { openRouterApiKey: "or-test-key" },
+      () => handleResponses(removedProviderResponsesRequest()),
+      { removedProviderApiKey: "or-test-key" },
     );
     assert.equal(response.status, 503);
     assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "primary_fixture");
     assert.equal(getResponseTelemetry(response)?.provider, "chatgpt_codex");
-    const persisted = kvStore.get(keyToString(["uos_ai", "openrouter_failover", "telemetry", "v1"])) as
+    const persisted = kvStore.get(keyToString(["uos_ai", "removed_provider_failover", "telemetry", "v1"])) as
       | Record<string, unknown>
       | undefined;
-    assert.equal(persisted?.attempted_provider, "chatgpt_codex,openrouter");
+    assert.equal(persisted?.attempted_provider, "chatgpt_codex,removed_provider");
     assert.equal(persisted?.terminal_status, "failed_before_commit");
     assert.equal(persisted?.trigger_class, "http_5xx");
   });
 });
 
-Deno.test("openai: OpenRouter post-release failures own one synthetic terminal", async (t) => {
+Deno.test("openai: RemovedProvider post-release failures own one synthetic terminal", async (t) => {
   for (const scenario of ["eof", "malformed"] as const) {
     await t.step(scenario, async () => {
       const response = await withFetchMock(
         (url) => {
-          if (url !== "https://openrouter.ai/api/v1/responses") {
+          if (url !== "https://removed_provider.ai/api/v1/responses") {
             return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
               status: 503,
               headers: { "Content-Type": "application/json" },
             });
           }
-          const chunks = openRouterTextSseChunks({ terminal: false });
+          const chunks = removedProviderTextSseChunks({ terminal: false });
           if (scenario === "malformed") chunks.push('data: {"type":\n\n');
           return sseResponse(chunks);
         },
-        () => handleResponses(openRouterResponsesRequest()),
-        { openRouterApiKey: "or-test-key" },
+        () => handleResponses(removedProviderResponsesRequest()),
+        { removedProviderApiKey: "or-test-key" },
       );
       assert.equal(response.status, 200);
       const values = parseResponsesSseValues(await response.text());
@@ -8632,27 +8634,27 @@ Deno.test("openai: OpenRouter post-release failures own one synthetic terminal",
         values.map((_, index) => index),
       );
       assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.failed");
-      assert.equal(getResponseTelemetry(response)?.openRouterTerminalStatus, "response.failed");
+      assert.equal(getResponseTelemetry(response)?.removedProviderTerminalStatus, "response.failed");
       assert.equal(getResponseTelemetry(response)?.completed, false);
     });
   }
 });
 
 Deno.test("openai: buffered fallback keeps provider deltas when terminal output is empty", async () => {
-  const chunks = openRouterTextSseChunks();
+  const chunks = removedProviderTextSseChunks();
   const terminal = JSON.parse(chunks.at(-1)!.match(/^data: (.+)\n\n$/)![1]!) as Record<string, unknown>;
   (terminal.response as Record<string, unknown>).output = [];
   chunks[chunks.length - 1] = `data: ${JSON.stringify(terminal)}\n\n`;
   const response = await withFetchMock(
     (url) =>
-      url === "https://openrouter.ai/api/v1/responses"
+      url === "https://removed_provider.ai/api/v1/responses"
         ? sseResponse(chunks)
         : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
           status: 503,
           headers: { "Content-Type": "application/json" },
         }),
-    () => handleResponses(openRouterResponsesRequest({ stream: false })),
-    { openRouterApiKey: "or-test-key" },
+    () => handleResponses(removedProviderResponsesRequest({ stream: false })),
+    { removedProviderApiKey: "or-test-key" },
   );
   assert.equal(response.status, 200);
   const payload = await response.json() as Record<string, unknown>;
@@ -8663,7 +8665,7 @@ Deno.test("openai: buffered fallback keeps provider deltas when terminal output 
 });
 
 Deno.test("openai: buffered fallback reconciles done-only text with prior deltas", async () => {
-  const chunks = openRouterTextSseChunks();
+  const chunks = removedProviderTextSseChunks();
   const outputItemDone = JSON.parse(chunks[3]!.match(/^data: (.+)\n\n$/)![1]!) as Record<string, unknown>;
   (outputItemDone.item as Record<string, unknown>).content = [];
   chunks[3] = `data: ${JSON.stringify(outputItemDone)}\n\n`;
@@ -8673,8 +8675,8 @@ Deno.test("openai: buffered fallback reconciles done-only text with prior deltas
     `data: ${
       JSON.stringify({
         type: "response.output_text.done",
-        response_id: "resp_openrouter_fixture",
-        item_id: "msg_openrouter_fixture",
+        response_id: "resp_removed_provider_fixture",
+        item_id: "msg_removed_provider_fixture",
         output_index: 0,
         content_index: 0,
         text: "pong",
@@ -8686,21 +8688,21 @@ Deno.test("openai: buffered fallback reconciles done-only text with prior deltas
   chunks[chunks.length - 1] = `data: ${JSON.stringify(terminal)}\n\n`;
   const response = await withFetchMock(
     (url) =>
-      url === "https://openrouter.ai/api/v1/responses"
+      url === "https://removed_provider.ai/api/v1/responses"
         ? sseResponse(chunks)
         : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), { status: 503 }),
-    () => handleResponses(openRouterResponsesRequest({ stream: false })),
-    { openRouterApiKey: "or-test-key" },
+    () => handleResponses(removedProviderResponsesRequest({ stream: false })),
+    { removedProviderApiKey: "or-test-key" },
   );
   const payload = await response.json() as Record<string, unknown>;
   assert.equal(JSON.stringify(payload.output).match(/pong/g)?.length, 1);
 });
 
-Deno.test("openai: OpenRouter preserves a first-semantic incomplete terminal", async () => {
-  const responseId = "resp_openrouter_incomplete";
+Deno.test("openai: RemovedProvider preserves a first-semantic incomplete terminal", async () => {
+  const responseId = "resp_removed_provider_incomplete";
   const response = await withFetchMock(
     (url) => {
-      if (url !== "https://openrouter.ai/api/v1/responses") {
+      if (url !== "https://removed_provider.ai/api/v1/responses") {
         return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
           status: 503,
           headers: { "Content-Type": "application/json" },
@@ -8731,7 +8733,7 @@ Deno.test("openai: OpenRouter preserves a first-semantic incomplete terminal", a
               model: "google/gemini-2.5-pro",
               incomplete_details: { reason: "max_output_tokens" },
               output: [{
-                id: "msg_openrouter_incomplete",
+                id: "msg_removed_provider_incomplete",
                 type: "message",
                 status: "incomplete",
                 role: "assistant",
@@ -8743,8 +8745,8 @@ Deno.test("openai: OpenRouter preserves a first-semantic incomplete terminal", a
         }\n\n`,
       ]);
     },
-    () => handleResponses(openRouterResponsesRequest()),
-    { openRouterApiKey: "or-test-key" },
+    () => handleResponses(removedProviderResponsesRequest()),
+    { removedProviderApiKey: "or-test-key" },
   );
   assert.equal(response.status, 200);
   const values = parseResponsesSseValues(await response.text());
@@ -8755,13 +8757,13 @@ Deno.test("openai: OpenRouter preserves a first-semantic incomplete terminal", a
   assert.equal(values.filter((event) => event.type === "response.failed").length, 0);
 });
 
-Deno.test("openai: successful OpenRouter failover preserves primary remediation warnings", async (t) => {
+Deno.test("openai: successful RemovedProvider failover preserves primary remediation warnings", async (t) => {
   for (const stream of [false, true]) {
     await t.step(stream ? "streamed" : "buffered", async () => {
       const response = await withFetchMock(
         (url) =>
-          url === "https://openrouter.ai/api/v1/responses"
-            ? sseResponse(openRouterTextSseChunks())
+          url === "https://removed_provider.ai/api/v1/responses"
+            ? sseResponse(removedProviderTextSseChunks())
             : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
               status: 503,
               headers: {
@@ -8769,8 +8771,8 @@ Deno.test("openai: successful OpenRouter failover preserves primary remediation 
                 "x-uos-warning": CODEX_AUTH_REAUTH_WARNING,
               },
             }),
-        () => handleResponses(openRouterResponsesRequest({ stream })),
-        { openRouterApiKey: "or-test-key" },
+        () => handleResponses(removedProviderResponsesRequest({ stream })),
+        { removedProviderApiKey: "or-test-key" },
       );
       assert.equal(response.status, 200);
       assert.ok(parseWarnings(response.headers.get("x-uos-warning")).includes(CODEX_AUTH_REAUTH_WARNING));
@@ -8798,10 +8800,10 @@ Deno.test("openai: invalid route-dependent Responses fields fail before dispatch
             return sseResponse(baseSseChunks());
           },
           async () => {
-            if (circuit === "open") seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-            return await handleResponses(openRouterResponsesRequest({ [scenario.param]: scenario.value }));
+            if (circuit === "open") seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+            return await handleResponses(removedProviderResponsesRequest({ [scenario.param]: scenario.value }));
           },
-          { openRouterApiKey: "or-test-key" },
+          { removedProviderApiKey: "or-test-key" },
         );
         assert.equal(response.status, 400);
         assert.equal((await response.json() as { error?: { param?: unknown } }).error?.param, scenario.param);
@@ -8811,18 +8813,18 @@ Deno.test("openai: invalid route-dependent Responses fields fail before dispatch
   }
 });
 
-Deno.test("openai: OpenRouter quota dispatch errors propagate for outer status conversion", async () => {
+Deno.test("openai: RemovedProvider quota dispatch errors propagate for outer status conversion", async () => {
   let fetches = 0;
   await assert.rejects(
     () =>
       withFetchMock(
         () => {
           fetches += 1;
-          return sseResponse(openRouterTextSseChunks());
+          return sseResponse(removedProviderTextSseChunks());
         },
         async () => {
-          seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-          return await handleResponses(openRouterResponsesRequest(), {
+          seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+          return await handleResponses(removedProviderResponsesRequest(), {
             keyId: "quota-fixture",
             kernelRepo: null,
             kernelOrg: null,
@@ -8837,7 +8839,7 @@ Deno.test("openai: OpenRouter quota dispatch errors propagate for outer status c
               ),
           });
         },
-        { openRouterApiKey: "or-test-key" },
+        { removedProviderApiKey: "or-test-key" },
       ),
     (error: unknown) => {
       assert.ok(error instanceof ApiKeyQuotaDispatchError);
@@ -8851,14 +8853,14 @@ Deno.test("openai: OpenRouter quota dispatch errors propagate for outer status c
   assert.equal(fetches, 0);
 });
 
-Deno.test("openai: OpenRouter keeps native custom-tool events and identities", async () => {
-  const responseId = "resp_openrouter_custom";
-  const itemId = "ctc_openrouter_custom";
-  const callId = "call_openrouter_custom";
+Deno.test("openai: RemovedProvider keeps native custom-tool events and identities", async () => {
+  const responseId = "resp_removed_provider_custom";
+  const itemId = "ctc_removed_provider_custom";
+  const callId = "call_removed_provider_custom";
   let fallbackBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
     (url, bodyText) => {
-      if (url !== "https://openrouter.ai/api/v1/responses") {
+      if (url !== "https://removed_provider.ai/api/v1/responses") {
         return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
           status: 503,
           headers: { "Content-Type": "application/json" },
@@ -8942,11 +8944,11 @@ Deno.test("openai: OpenRouter keeps native custom-tool events and identities", a
       ]);
     },
     () =>
-      handleResponses(openRouterResponsesRequest({
+      handleResponses(removedProviderResponsesRequest({
         tools: [{ type: "custom", name: "exec", description: "Run a command", format: { type: "text" } }],
         input: [{ type: "custom_tool_call_output", call_id: "prior_call", output: "prior result" }],
       })),
-    { openRouterApiKey: "or-test-key" },
+    { removedProviderApiKey: "or-test-key" },
   );
 
   assert.equal(response.status, 200);
@@ -8984,9 +8986,9 @@ Deno.test("openai: OpenRouter keeps native custom-tool events and identities", a
   assert.equal((output[1] as { call_id?: unknown } | undefined)?.call_id, callId);
 });
 
-Deno.test("openai: Codex and Metered remain ahead of one OpenRouter rescue", async () => {
-  const keyId = "openrouter-after-metered";
-  const requestId = "request-openrouter-after-metered";
+Deno.test("openai: Codex and Metered remain ahead of one RemovedProvider rescue", async () => {
+  const keyId = "removed_provider-after-metered";
+  const requestId = "request-removed_provider-after-metered";
   const previousMeteredKey = Deno.env.get("METERED_API_KEY");
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   seedPaidFallbackKey(keyId);
@@ -8995,15 +8997,15 @@ Deno.test("openai: Codex and Metered remain ahead of one OpenRouter rescue", asy
     const response = await withFetchMock(
       (url) => {
         urls.push(url);
-        if (url === "https://openrouter.ai/api/v1/responses") {
-          return sseResponse(openRouterTextSseChunks());
+        if (url === "https://removed_provider.ai/api/v1/responses") {
+          return sseResponse(removedProviderTextSseChunks());
         }
         if (url === "https://api.openlux.ai/v1/responses") {
           return new Response(JSON.stringify({ error: { message: "Metered unavailable" } }), {
             status: 503,
             headers: {
               "Content-Type": "application/json",
-              "X-Oneapi-Request-Id": "metered-openrouter-order-fixture",
+              "X-Oneapi-Request-Id": "metered-removed_provider-order-fixture",
             },
           });
         }
@@ -9013,7 +9015,7 @@ Deno.test("openai: Codex and Metered remain ahead of one OpenRouter rescue", asy
         });
       },
       async () => {
-        const response = await handleResponses(openRouterResponsesRequest(), {
+        const response = await handleResponses(removedProviderResponsesRequest(), {
           keyId,
           kernelRepo: null,
           kernelOrg: null,
@@ -9023,52 +9025,56 @@ Deno.test("openai: Codex and Metered remain ahead of one OpenRouter rescue", asy
         await response.text();
         return response;
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-uos-upstream"), "openrouter");
+    assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
     assert.deepEqual(urls, [
       "https://chatgpt.com/backend-api/codex/responses",
       "https://chatgpt.com/backend-api/codex/responses",
       "https://api.openlux.ai/v1/responses",
-      "https://openrouter.ai/api/v1/responses",
+      "https://removed_provider.ai/api/v1/responses",
     ]);
     assert.equal(urls.filter((url) => url === "https://api.openlux.ai/v1/responses").length, 1);
-    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["chatgpt_codex", "metered", "openrouter"]);
+    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, [
+      "chatgpt_codex",
+      "metered",
+      "removed_provider",
+    ]);
     const stored = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
     assert.equal(stored.dispatch_state, "dispatched");
     assert.equal(stored.billing_state, "pending");
-    assert.equal(stored.provider_request_id, "metered-openrouter-order-fixture");
+    assert.equal(stored.provider_request_id, "metered-removed_provider-order-fixture");
   } finally {
     if (previousMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
     else Deno.env.set("METERED_API_KEY", previousMeteredKey);
   }
 });
 
-Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic boundaries", async (t) => {
-  await t.step("active open circuit dispatches only OpenRouter", async () => {
+Deno.test("openai: RemovedProvider circuit routes and recovers at handler semantic boundaries", async (t) => {
+  await t.step("active open circuit dispatches only RemovedProvider", async () => {
     const urls: string[] = [];
     const response = await withFetchMock(
       (url) => {
         urls.push(url);
-        assert.equal(url, "https://openrouter.ai/api/v1/responses");
-        return sseResponse(openRouterTextSseChunks());
+        assert.equal(url, "https://removed_provider.ai/api/v1/responses");
+        return sseResponse(removedProviderTextSseChunks());
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-        const response = await handleResponses(openRouterResponsesRequest());
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+        const response = await handleResponses(removedProviderResponsesRequest());
         await response.text();
         return response;
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-uos-upstream"), "openrouter");
-    assert.deepEqual(urls, ["https://openrouter.ai/api/v1/responses"]);
-    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["openrouter"]);
-    assert.equal(openRouterCircuitState()?.phase, "open");
+    assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
+    assert.deepEqual(urls, ["https://removed_provider.ai/api/v1/responses"]);
+    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["removed_provider"]);
+    assert.equal(removedProviderCircuitState()?.phase, "open");
   });
 
   await t.step("expired open circuit closes on the half-open Codex semantic event", async () => {
@@ -9080,20 +9086,20 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
         return sseResponse(baseSseChunks());
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
-        const response = await handleResponses(openRouterResponsesRequest());
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+        const response = await handleResponses(removedProviderResponsesRequest());
         await response.text();
         return response;
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
-    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "closed");
+    const state = await waitForRemovedProviderCircuit((candidate) => candidate.phase === "closed");
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     assert.deepEqual(urls, ["https://chatgpt.com/backend-api/codex/responses"]);
     assert.equal(state.probe, null);
-    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
+    assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, "closed");
   });
 
   await t.step("semantic failed half-open Codex probe reopens the circuit", async () => {
@@ -9128,19 +9134,21 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
         ]);
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
-        const response = await handleResponses(openRouterResponsesRequest());
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+        const response = await handleResponses(removedProviderResponsesRequest());
         await response.text();
         return response;
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
-    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "open" && candidate.probe === null);
+    const state = await waitForRemovedProviderCircuit((candidate) =>
+      candidate.phase === "open" && candidate.probe === null
+    );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     assert.ok((state.open_until_ms ?? 0) > Date.now());
-    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "reopened");
+    assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, "reopened");
   });
 
   await t.step("expired open circuit closes on an empty Codex completion", async () => {
@@ -9178,19 +9186,19 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
         ]);
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
-        const response = await handleResponses(openRouterResponsesRequest());
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+        const response = await handleResponses(removedProviderResponsesRequest());
         await response.text();
         return response;
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
-    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "closed");
+    const state = await waitForRemovedProviderCircuit((candidate) => candidate.phase === "closed");
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     assert.equal(state.probe, null);
-    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
+    assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, "closed");
   });
 
   await t.step("expired open circuit closes on an empty Codex incomplete terminal", async () => {
@@ -9229,24 +9237,24 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
         ]);
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
-        const response = await handleResponses(openRouterResponsesRequest());
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+        const response = await handleResponses(removedProviderResponsesRequest());
         await response.text();
         return response;
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
-    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "closed");
+    const state = await waitForRemovedProviderCircuit((candidate) => candidate.phase === "closed");
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     assert.equal(state.probe, null);
-    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
+    assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, "closed");
   });
 
   await t.step("half-open Metered semantic output releases rather than closes the Codex circuit", async () => {
-    const keyId = "openrouter-half-open-metered";
-    const requestId = "request-openrouter-half-open-metered";
+    const keyId = "removed_provider-half-open-metered";
+    const requestId = "request-removed_provider-half-open-metered";
     const previousMeteredKey = Deno.env.get("METERED_API_KEY");
     Deno.env.set("METERED_API_KEY", "metered-test-key");
     seedPaidFallbackKey(keyId);
@@ -9262,8 +9270,8 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
           });
         },
         async () => {
-          seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
-          const response = await handleResponses(openRouterResponsesRequest(), {
+          seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+          const response = await handleResponses(removedProviderResponsesRequest(), {
             keyId,
             kernelRepo: null,
             kernelOrg: null,
@@ -9273,69 +9281,75 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
           await response.text();
           return response;
         },
-        { openRouterApiKey: "or-test-key" },
+        { removedProviderApiKey: "or-test-key" },
       );
 
-      const state = await waitForOpenRouterCircuit((candidate) =>
+      const state = await waitForRemovedProviderCircuit((candidate) =>
         candidate.phase === "open" && candidate.probe === null
       );
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("x-uos-upstream"), "metered");
       assert.equal(urls.includes("https://api.openlux.ai/v1/responses"), true);
-      assert.equal(urls.includes("https://openrouter.ai/api/v1/responses"), false);
+      assert.equal(urls.includes("https://removed_provider.ai/api/v1/responses"), false);
       assert.ok((state.open_until_ms ?? Number.MAX_SAFE_INTEGER) <= Date.now());
-      assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "released");
+      assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, "released");
     } finally {
       if (previousMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
       else Deno.env.set("METERED_API_KEY", previousMeteredKey);
     }
   });
 
-  await t.step("direct OpenRouter failure claims one successful early Codex recovery", async () => {
+  await t.step("direct RemovedProvider failure claims one successful early Codex recovery", async () => {
     const urls: string[] = [];
     const response = await withFetchMock(
       (url) => {
         urls.push(url);
-        if (url === "https://openrouter.ai/api/v1/responses") {
-          return new Response(JSON.stringify({ error: { message: "OpenRouter unavailable", code: "or_fixture" } }), {
-            status: 502,
-            headers: { "Content-Type": "application/json" },
-          });
+        if (url === "https://removed_provider.ai/api/v1/responses") {
+          return new Response(
+            JSON.stringify({ error: { message: "RemovedProvider unavailable", code: "or_fixture" } }),
+            {
+              status: 502,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         }
         return sseResponse(baseSseChunks());
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-        const response = await handleResponses(openRouterResponsesRequest());
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+        const response = await handleResponses(removedProviderResponsesRequest());
         await response.text();
         return response;
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
-    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "closed");
+    const state = await waitForRemovedProviderCircuit((candidate) => candidate.phase === "closed");
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     assert.deepEqual(urls, [
-      "https://openrouter.ai/api/v1/responses",
+      "https://removed_provider.ai/api/v1/responses",
       "https://chatgpt.com/backend-api/codex/responses",
     ]);
     assert.equal(state.probe, null);
-    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["openrouter", "chatgpt_codex"]);
-    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "closed");
+    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["removed_provider", "chatgpt_codex"]);
+    assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, "closed");
   });
 
-  await t.step("failed early Codex recovery restores the OpenRouter error and reopens", async () => {
+  await t.step("failed early Codex recovery restores the RemovedProvider error and reopens", async () => {
     const urls: string[] = [];
     const startedAtMs = Date.now();
     const response = await withFetchMock(
       (url) => {
         urls.push(url);
-        if (url === "https://openrouter.ai/api/v1/responses") {
-          return new Response(JSON.stringify({ error: { message: "OpenRouter unavailable", code: "or_fixture" } }), {
-            status: 502,
-            headers: { "Content-Type": "application/json", "Retry-After": "19" },
-          });
+        if (url === "https://removed_provider.ai/api/v1/responses") {
+          return new Response(
+            JSON.stringify({ error: { message: "RemovedProvider unavailable", code: "or_fixture" } }),
+            {
+              status: 502,
+              headers: { "Content-Type": "application/json", "Retry-After": "19" },
+            },
+          );
         }
         return new Response(JSON.stringify({ error: { message: "Codex still unavailable" } }), {
           status: 503,
@@ -9343,39 +9357,44 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
         });
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-        return await handleResponses(openRouterResponsesRequest());
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+        return await handleResponses(removedProviderResponsesRequest());
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
     const payload = await response.json() as { error?: { message?: string; code?: string } };
-    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "open" && candidate.probe === null);
+    const state = await waitForRemovedProviderCircuit((candidate) =>
+      candidate.phase === "open" && candidate.probe === null
+    );
     assert.equal(response.status, 502);
-    assert.equal(response.headers.get("x-uos-upstream"), "openrouter");
+    assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
     assert.equal(response.headers.get("Retry-After"), "19");
-    assert.equal(payload.error?.message, "OpenRouter unavailable");
+    assert.equal(payload.error?.message, "RemovedProvider unavailable");
     assert.equal(payload.error?.code, "or_fixture");
     assert.deepEqual(urls, [
-      "https://openrouter.ai/api/v1/responses",
+      "https://removed_provider.ai/api/v1/responses",
       "https://chatgpt.com/backend-api/codex/responses",
     ]);
     assert.ok((state.open_until_ms ?? 0) >= startedAtMs + 119_000);
     assert.ok((state.open_until_ms ?? 0) <= Date.now() + 120_000);
-    assert.equal(getResponseTelemetry(response)?.provider, "openrouter");
-    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "reopened");
+    assert.equal(getResponseTelemetry(response)?.provider, "removed_provider");
+    assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, "reopened");
   });
 
-  await t.step("noneligible early Codex recovery restores the OpenRouter error and releases", async () => {
+  await t.step("noneligible early Codex recovery restores the RemovedProvider error and releases", async () => {
     const urls: string[] = [];
     const response = await withFetchMock(
       (url) => {
         urls.push(url);
-        if (url === "https://openrouter.ai/api/v1/responses") {
-          return new Response(JSON.stringify({ error: { message: "OpenRouter unavailable", code: "or_fixture" } }), {
-            status: 502,
-            headers: { "Content-Type": "application/json", "Retry-After": "23" },
-          });
+        if (url === "https://removed_provider.ai/api/v1/responses") {
+          return new Response(
+            JSON.stringify({ error: { message: "RemovedProvider unavailable", code: "or_fixture" } }),
+            {
+              status: 502,
+              headers: { "Content-Type": "application/json", "Retry-After": "23" },
+            },
+          );
         }
         return new Response(JSON.stringify({ error: { message: "Codex request invalid", code: "codex_fixture" } }), {
           status: 400,
@@ -9383,26 +9402,28 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
         });
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-        return await handleResponses(openRouterResponsesRequest());
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+        return await handleResponses(removedProviderResponsesRequest());
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
     const payload = await response.json() as { error?: { message?: string; code?: string } };
-    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "open" && candidate.probe === null);
+    const state = await waitForRemovedProviderCircuit((candidate) =>
+      candidate.phase === "open" && candidate.probe === null
+    );
     assert.equal(response.status, 502);
-    assert.equal(response.headers.get("x-uos-upstream"), "openrouter");
+    assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
     assert.equal(response.headers.get("Retry-After"), "23");
-    assert.equal(payload.error?.message, "OpenRouter unavailable");
+    assert.equal(payload.error?.message, "RemovedProvider unavailable");
     assert.equal(payload.error?.code, "or_fixture");
     assert.deepEqual(urls, [
-      "https://openrouter.ai/api/v1/responses",
+      "https://removed_provider.ai/api/v1/responses",
       "https://chatgpt.com/backend-api/codex/responses",
     ]);
     assert.ok((state.open_until_ms ?? Number.MAX_SAFE_INTEGER) <= Date.now());
-    assert.equal(getResponseTelemetry(response)?.provider, "openrouter");
-    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, "released");
+    assert.equal(getResponseTelemetry(response)?.provider, "removed_provider");
+    assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, "released");
   });
 
   await t.step("request cancellation releases a claimed half-open probe", async () => {
@@ -9428,28 +9449,30 @@ Deno.test("openai: OpenRouter circuit routes and recovers at handler semantic bo
         );
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
-        const responsePromise = handleResponses(openRouterResponsesRequest({}, controller.signal));
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() - 1 });
+        const responsePromise = handleResponses(removedProviderResponsesRequest({}, controller.signal));
         await dispatched.promise;
         controller.abort(new DOMException("fixture cancellation", "AbortError"));
         return await responsePromise;
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
-    const state = await waitForOpenRouterCircuit((candidate) => candidate.phase === "open" && candidate.probe === null);
+    const state = await waitForRemovedProviderCircuit((candidate) =>
+      candidate.phase === "open" && candidate.probe === null
+    );
     assert.equal(response.status, 502);
     assert.equal(state.probe, null);
     assert.equal(upstreamCancelled, true);
   });
 });
 
-Deno.test("openai: direct OpenRouter dispatch commits the API-key provider", async () => {
+Deno.test("openai: direct RemovedProvider dispatch commits the API-key provider", async () => {
   const nowMs = Date.now();
-  const tokenHash = "openrouter-direct-dispatch-hash";
-  const requestId = "openrouter-direct-dispatch-request";
+  const tokenHash = "removed_provider-direct-dispatch-hash";
+  const requestId = "removed_provider-direct-dispatch-request";
   const record: ApiKeyHashRecord = {
-    id: "openrouter-direct-dispatch-key",
+    id: "removed_provider-direct-dispatch-key",
     expires_at_ms: -1,
     revoked_at_ms: null,
     usage_limit_requests: 2,
@@ -9473,12 +9496,12 @@ Deno.test("openai: direct OpenRouter dispatch commits the API-key provider", asy
   try {
     const response = await withFetchMock(
       (url) => {
-        assert.equal(url, "https://openrouter.ai/api/v1/responses");
-        return sseResponse(openRouterTextSseChunks());
+        assert.equal(url, "https://removed_provider.ai/api/v1/responses");
+        return sseResponse(removedProviderTextSseChunks());
       },
       async () => {
-        seedOpenRouterCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-        const response = await handleResponses(openRouterResponsesRequest(), {
+        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
+        const response = await handleResponses(removedProviderResponsesRequest(), {
           keyId: policy.key_id,
           kernelRepo: null,
           kernelOrg: null,
@@ -9489,7 +9512,7 @@ Deno.test("openai: direct OpenRouter dispatch commits the API-key provider", asy
         await response.text();
         return response;
       },
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
 
     const request = kvStore.get(keyToString(apiKeyUsageV3RequestKey(policy, requestId))) as
@@ -9499,9 +9522,9 @@ Deno.test("openai: direct OpenRouter dispatch commits the API-key provider", asy
       | { committed_requests?: number; reserved_requests?: number }
       | undefined;
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-uos-upstream"), "openrouter");
+    assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
     assert.equal(request?.state, "dispatched");
-    assert.equal(request?.provider, "openrouter");
+    assert.equal(request?.provider, "removed_provider");
     assert.equal(window?.committed_requests, 1);
     assert.equal(window?.reserved_requests, 0);
   } finally {
@@ -9517,7 +9540,7 @@ Deno.test("openai: buffered Responses observe each real or synthetic terminal on
     const response = await withFetchMock(
       () => sseResponse(baseSseChunks()),
       () =>
-        handleResponses(openRouterResponsesRequest({ stream: false }), {
+        handleResponses(removedProviderResponsesRequest({ stream: false }), {
           keyId: null,
           kernelRepo: null,
           kernelOrg: null,
@@ -9536,14 +9559,14 @@ Deno.test("openai: buffered Responses observe each real or synthetic terminal on
     const observations: Array<{ completed: boolean; totalTokens: number | null }> = [];
     const response = await withFetchMock(
       (url) =>
-        url === "https://openrouter.ai/api/v1/responses"
-          ? sseResponse(openRouterTextSseChunks({ terminal: false }))
+        url === "https://removed_provider.ai/api/v1/responses"
+          ? sseResponse(removedProviderTextSseChunks({ terminal: false }))
           : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
             status: 503,
             headers: { "Content-Type": "application/json" },
           }),
       () =>
-        handleResponses(openRouterResponsesRequest({ stream: false }), {
+        handleResponses(removedProviderResponsesRequest({ stream: false }), {
           keyId: null,
           kernelRepo: null,
           kernelOrg: null,
@@ -9553,7 +9576,7 @@ Deno.test("openai: buffered Responses observe each real or synthetic terminal on
               totalTokens: usage?.totalTokens ?? null,
             }),
         }),
-      { openRouterApiKey: "or-test-key" },
+      { removedProviderApiKey: "or-test-key" },
     );
     await response.text();
     assert.deepEqual(observations, [{ completed: false, totalTokens: null }]);
@@ -9568,15 +9591,15 @@ Deno.test("openai: buffered committed Responses failures use the official server
         ...baseSseChunks().slice(0, -1),
         'data: {"type":\n\n',
       ]),
-    () => handleResponses(openRouterResponsesRequest({ stream: false })),
+    () => handleResponses(removedProviderResponsesRequest({ stream: false })),
   );
   assert.equal(response.status, 502);
   const payload = await response.json() as { error?: { code?: string } };
   assert.equal(payload.error?.code, "server_error");
 });
 
-Deno.test("openai: missing OpenRouter key leaves the global circuit untouched", async () => {
-  const circuitKey = keyToString(["uos_ai", "openrouter_failover", "circuit", "v1"]);
+Deno.test("openai: missing RemovedProvider key leaves the global circuit untouched", async () => {
+  const circuitKey = keyToString(["uos_ai", "removed_provider_failover", "circuit", "v1"]);
   for (let request = 0; request < 2; request += 1) {
     const response = await withFetchMock(
       () =>
@@ -9584,10 +9607,10 @@ Deno.test("openai: missing OpenRouter key leaves the global circuit untouched", 
           status: 503,
           headers: { "Content-Type": "application/json" },
         }),
-      () => handleResponses(openRouterResponsesRequest()),
+      () => handleResponses(removedProviderResponsesRequest()),
     );
     assert.equal(response.status, 503);
-    assert.equal(getResponseTelemetry(response)?.openRouterCircuitTransition, null);
+    assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, null);
     assert.equal(kvStore.has(circuitKey), false);
   }
 });

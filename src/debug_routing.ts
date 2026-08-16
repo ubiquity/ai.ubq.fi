@@ -7,7 +7,7 @@ export const DEBUG_ROUTING_MAX_DURATION_MS = 60 * 60_000;
 export type DebugRoutingScenario =
   | "normal"
   | "metered_first"
-  | "openrouter_first"
+  | "removed_provider_first"
   | "codex_401"
   | "codex_403"
   | "codex_429";
@@ -21,7 +21,7 @@ export type DebugRoutingConfig = Readonly<{
 const SCENARIOS = new Set<DebugRoutingScenario>([
   "normal",
   "metered_first",
-  "openrouter_first",
+  "removed_provider_first",
   "codex_401",
   "codex_403",
   "codex_429",

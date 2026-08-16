@@ -20,18 +20,18 @@ Deno.test("static assets register frontend module dependencies", () => {
   }
 });
 
-Deno.test("admin provider view declares and renders the OpenRouter failover card", () => {
+Deno.test("admin provider view declares and renders the RemovedProvider failover card", () => {
   for (
     const id of [
-      "card-openrouter-failover",
-      "openrouter-failover-badge",
-      "openrouter-failover-observed",
-      "openrouter-failover-facts",
+      "card-removed_provider-failover",
+      "removed_provider-failover-badge",
+      "removed_provider-failover-observed",
+      "removed_provider-failover-facts",
     ]
   ) assert.match(adminHtml, new RegExp(`id=["']${id}["']`));
 
   assert.match(adminHtml, /admin\.js\?v=browser-cache-20260816-v1/);
-  assert.match(adminScript, /renderOpenRouterFailover\(payload\.openrouter\)/);
+  assert.match(adminScript, /renderRemovedProviderFailover\(payload\.removed_provider\)/);
   assert.match(adminScript, /const loadId = \+\+providersLoadId/);
   assert.match(adminScript, /if \(loadId !== providersLoadId\) return/);
   assert.match(adminScript, /cache: "no-store"/);

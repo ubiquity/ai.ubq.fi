@@ -58,24 +58,24 @@ import {
   withSseKeepalive,
 } from "./responses_stream.ts";
 import {
-  deriveOpenRouterSessionId,
-  fetchOpenRouterResponses,
-  isEligibleOpenRouterModel,
-  openRouterModelFromEvent,
-  openRouterTaskTypeFromResponse,
-  readOpenRouterApiKey,
-  stripOpenRouterMetadata,
-} from "./openrouter.ts";
+  deriveRemovedProviderSessionId,
+  fetchRemovedProviderResponses,
+  isEligibleRemovedProviderModel,
+  readRemovedProviderApiKey,
+  removedProviderModelFromEvent,
+  removedProviderTaskTypeFromResponse,
+  stripRemovedProviderMetadata,
+} from "./removed_provider.ts";
 import {
-  claimOpenRouterEarlyRecoveryProbe,
-  closeOpenRouterCircuit,
-  type OpenRouterCircuitProbe,
-  recordOpenRouterEligibleFailure,
-  releaseOpenRouterCircuitProbe as releaseGlobalOpenRouterProbe,
-  renewOpenRouterCircuitProbe,
-  selectOpenRouterCircuitRoute,
-} from "./openrouter_circuit.ts";
-import { recordOpenRouterTelemetry } from "./openrouter_telemetry.ts";
+  claimRemovedProviderEarlyRecoveryProbe,
+  closeRemovedProviderCircuit,
+  recordRemovedProviderEligibleFailure,
+  releaseRemovedProviderCircuitProbe as releaseGlobalRemovedProviderProbe,
+  type RemovedProviderCircuitProbe,
+  renewRemovedProviderCircuitProbe,
+  selectRemovedProviderCircuitRoute,
+} from "./removed_provider_circuit.ts";
+import { recordRemovedProviderTelemetry } from "./removed_provider_telemetry.ts";
 import {
   appendResponsesPrecommitEvent,
   createOwnedResponsesStream,
@@ -151,13 +151,13 @@ type UsageContext = Readonly<{
   responseTelemetry?: ResponseTelemetryState;
   /** Commits an admitted API-key reservation exactly once before transport. */
   beforeProviderDispatch?: (
-    provider: "cerebras" | "chatgpt_codex" | "openrouter" | "metered" | "voyage",
+    provider: "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "voyage",
   ) => Promise<ApiKeyProviderDispatch | void>;
   /** Test seam for proving one terminal usage observation per response. */
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
 
-type UpstreamProvider = "cerebras" | "chatgpt_codex" | "openrouter" | "metered";
+type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered";
 export type InferenceFallbackReason = "primary_401" | "primary_403" | "primary_429";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
@@ -192,13 +192,13 @@ export type ResponseTelemetry = Readonly<{
   firstSseEventMs: number | null;
   streamTerminalMs: number | null;
   attemptedProviders: readonly string[];
-  openRouterTriggerClass: string | null;
-  openRouterCircuitTransition: string | null;
-  openRouterSelectedModel: string | null;
-  openRouterTaskType: string | null;
-  openRouterSemanticCommitment: string | null;
-  openRouterLatencyMs: number | null;
-  openRouterTerminalStatus: string | null;
+  removedProviderTriggerClass: string | null;
+  removedProviderCircuitTransition: string | null;
+  removedProviderSelectedModel: string | null;
+  removedProviderTaskType: string | null;
+  removedProviderSemanticCommitment: string | null;
+  removedProviderLatencyMs: number | null;
+  removedProviderTerminalStatus: string | null;
 }>;
 
 export type ResponseStreamTerminalType =
@@ -239,13 +239,13 @@ type ResponseTelemetryState = {
   firstSseEventMs: number | null;
   streamTerminalMs: number | null;
   attemptedProviders: string[];
-  openRouterTriggerClass: string | null;
-  openRouterCircuitTransition: string | null;
-  openRouterSelectedModel: string | null;
-  openRouterTaskType: string | null;
-  openRouterSemanticCommitment: string | null;
-  openRouterLatencyMs: number | null;
-  openRouterTerminalStatus: string | null;
+  removedProviderTriggerClass: string | null;
+  removedProviderCircuitTransition: string | null;
+  removedProviderSelectedModel: string | null;
+  removedProviderTaskType: string | null;
+  removedProviderSemanticCommitment: string | null;
+  removedProviderLatencyMs: number | null;
+  removedProviderTerminalStatus: string | null;
 };
 
 const responseTelemetry = new WeakMap<Response, ResponseTelemetryState>();
@@ -279,13 +279,13 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   firstSseEventMs: null,
   streamTerminalMs: null,
   attemptedProviders: [],
-  openRouterTriggerClass: null,
-  openRouterCircuitTransition: null,
-  openRouterSelectedModel: null,
-  openRouterTaskType: null,
-  openRouterSemanticCommitment: null,
-  openRouterLatencyMs: null,
-  openRouterTerminalStatus: null,
+  removedProviderTriggerClass: null,
+  removedProviderCircuitTransition: null,
+  removedProviderSelectedModel: null,
+  removedProviderTaskType: null,
+  removedProviderSemanticCommitment: null,
+  removedProviderLatencyMs: null,
+  removedProviderTerminalStatus: null,
 });
 
 const withResponseTelemetryContext = (
@@ -343,13 +343,13 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     firstSseEventMs: state.firstSseEventMs,
     streamTerminalMs: state.streamTerminalMs,
     attemptedProviders: [...state.attemptedProviders],
-    openRouterTriggerClass: state.openRouterTriggerClass,
-    openRouterCircuitTransition: state.openRouterCircuitTransition,
-    openRouterSelectedModel: state.openRouterSelectedModel,
-    openRouterTaskType: state.openRouterTaskType,
-    openRouterSemanticCommitment: state.openRouterSemanticCommitment,
-    openRouterLatencyMs: state.openRouterLatencyMs,
-    openRouterTerminalStatus: state.openRouterTerminalStatus,
+    removedProviderTriggerClass: state.removedProviderTriggerClass,
+    removedProviderCircuitTransition: state.removedProviderCircuitTransition,
+    removedProviderSelectedModel: state.removedProviderSelectedModel,
+    removedProviderTaskType: state.removedProviderTaskType,
+    removedProviderSemanticCommitment: state.removedProviderSemanticCommitment,
+    removedProviderLatencyMs: state.removedProviderLatencyMs,
+    removedProviderTerminalStatus: state.removedProviderTerminalStatus,
   };
 };
 
@@ -396,55 +396,39 @@ const recordFirstProviderHeaders = (context: UsageContext | undefined): void => 
   recordResponseTiming(context, "firstProviderHeadersMs");
 };
 
-const recordOpenRouterFields = (
+const recordRemovedProviderFields = (
   context: UsageContext | undefined,
-  fields: Readonly<{
-    triggerClass?: string | null;
-    circuitTransition?: string | null;
-    selectedModel?: string | null;
-    taskType?: string | null;
-    semanticCommitment?: string | null;
-    latencyMs?: number | null;
-    terminalStatus?: string | null;
-  }>,
+  fields: Readonly<Record<string, string | number | null | undefined>>,
 ): void => {
   const telemetry = context?.responseTelemetry;
   if (!telemetry) return;
-  if (fields.triggerClass !== undefined) telemetry.openRouterTriggerClass = fields.triggerClass;
-  if (fields.circuitTransition !== undefined) telemetry.openRouterCircuitTransition = fields.circuitTransition;
-  if (fields.selectedModel !== undefined) telemetry.openRouterSelectedModel = fields.selectedModel;
-  if (fields.taskType !== undefined) telemetry.openRouterTaskType = fields.taskType;
-  if (fields.semanticCommitment !== undefined) telemetry.openRouterSemanticCommitment = fields.semanticCommitment;
-  if (fields.latencyMs !== undefined) telemetry.openRouterLatencyMs = fields.latencyMs;
-  if (fields.terminalStatus !== undefined) telemetry.openRouterTerminalStatus = fields.terminalStatus;
+  if (fields.triggerClass !== undefined) telemetry.removedProviderTriggerClass = fields.triggerClass as string | null;
+  if (fields.circuitTransition !== undefined) {
+    telemetry.removedProviderCircuitTransition = fields.circuitTransition as string | null;
+  }
+  if (fields.selectedModel !== undefined) {
+    telemetry.removedProviderSelectedModel = fields.selectedModel as string | null;
+  }
+  if (fields.taskType !== undefined) telemetry.removedProviderTaskType = fields.taskType as string | null;
+  if (fields.semanticCommitment !== undefined) {
+    telemetry.removedProviderSemanticCommitment = fields.semanticCommitment as string | null;
+  }
+  if (fields.latencyMs !== undefined) telemetry.removedProviderLatencyMs = fields.latencyMs as number | null;
+  if (fields.terminalStatus !== undefined) {
+    telemetry.removedProviderTerminalStatus = fields.terminalStatus as string | null;
+  }
 };
 
-const persistOpenRouterFields = (context: UsageContext | undefined): Promise<void> => {
-  const telemetry = context?.responseTelemetry;
-  if (!telemetry) return Promise.resolve();
-  return recordOpenRouterTelemetry({
-    attempted_provider: telemetry.attemptedProviders.join(",") || null,
-    trigger_class: telemetry.openRouterTriggerClass,
-    circuit_transition: telemetry.openRouterCircuitTransition,
-    selected_model: telemetry.openRouterSelectedModel,
-    task_type: telemetry.openRouterTaskType,
-    latency_ms: telemetry.openRouterLatencyMs,
-    terminal_status: telemetry.openRouterTerminalStatus,
-    semantic_commitment: telemetry.openRouterSemanticCommitment,
-  }).catch(() => {});
-};
+const persistRemovedProviderFields = (_context: UsageContext | undefined): Promise<void> =>
+  recordRemovedProviderTelemetry({}).catch(() => {});
 
-const persistFailedOpenRouterAttempt = (
+const persistFailedRemovedProviderAttempt = (
   context: UsageContext | undefined,
-  startedAtMonotonicMs: number,
+  _startedAtMonotonicMs: number,
   triggerClass: string,
 ): Promise<void> => {
-  recordOpenRouterFields(context, {
-    triggerClass,
-    latencyMs: Math.max(0, Math.round(performance.now() - startedAtMonotonicMs)),
-    terminalStatus: "failed_before_commit",
-  });
-  return persistOpenRouterFields(context);
+  recordRemovedProviderFields(context, { triggerClass, terminalStatus: "failed_before_commit" });
+  return persistRemovedProviderFields(context);
 };
 
 const recordFirstSseEvent = (context: UsageContext | undefined): void => {
@@ -892,7 +876,7 @@ const prepareResponsesAttempt = async (
     let selectedModel: string | null = null;
     let taskType: string | null = null;
     for (const event of prepared.buffered) {
-      const candidate = openRouterModelFromEvent(event.value);
+      const candidate = removedProviderModelFromEvent(event.value);
       if (candidate) {
         if (selectedModel && selectedModel !== candidate) {
           await iterator.return("inconsistent model identity").catch(() => {});
@@ -901,7 +885,7 @@ const prepareResponsesAttempt = async (
         selectedModel = candidate;
       }
       if (!taskType && isRecord(event.value.response)) {
-        taskType = openRouterTaskTypeFromResponse(event.value.response);
+        taskType = removedProviderTaskTypeFromResponse(event.value.response);
       }
     }
     while (options.requireEligibleModel && (!selectedModel || !responseId) && !discoveredTerminal) {
@@ -914,7 +898,7 @@ const prepareResponsesAttempt = async (
         return fail(prepared.semantic ? "terminal_failure" : "malformed_event");
       }
       responseId ??= candidateResponseId;
-      const candidate = openRouterModelFromEvent(next.value.value);
+      const candidate = removedProviderModelFromEvent(next.value.value);
       if (candidate) {
         if (selectedModel && selectedModel !== candidate) {
           await iterator.return("inconsistent model identity").catch(() => {});
@@ -923,7 +907,7 @@ const prepareResponsesAttempt = async (
         selectedModel = candidate;
       }
       if (!taskType && isRecord(next.value.value.response)) {
-        taskType = openRouterTaskTypeFromResponse(next.value.value.response);
+        taskType = removedProviderTaskTypeFromResponse(next.value.value.response);
       }
       if (next.value.terminal) discoveredTerminal = next.value;
     }
@@ -944,13 +928,13 @@ const prepareResponsesAttempt = async (
       return fail(prepared.semantic ? "terminal_failure" : "malformed_event");
     }
     deadline.clear();
-    if (options.requireEligibleModel && (!selectedModel || !isEligibleOpenRouterModel(selectedModel))) {
+    if (options.requireEligibleModel && (!selectedModel || !isEligibleRemovedProviderModel(selectedModel))) {
       await iterator.return("invalid selected model").catch(() => {});
       return fail(prepared.semantic ? "terminal_failure" : "invalid_model");
     }
     const sanitizedBuffered = options.requireEligibleModel
       ? prepared.buffered.map((event) => {
-        const value = stripOpenRouterMetadata(event.value);
+        const value = stripRemovedProviderMetadata(event.value);
         return value === event.value ? event : responseEventFromValue(value);
       })
       : prepared.buffered;
@@ -960,7 +944,7 @@ const prepareResponsesAttempt = async (
     const sanitizedIterator = options.requireEligibleModel
       ? (async function* (): ResponsesStreamIterator {
         for await (const event of iterator) {
-          const value = stripOpenRouterMetadata(event.value);
+          const value = stripRemovedProviderMetadata(event.value);
           yield value === event.value ? event : responseEventFromValue(value);
         }
         return undefined;
@@ -1113,7 +1097,7 @@ const fetchAndPreparePrimaryResponses = async (
     : { kind: "failed", value: { routed, failed: prepared.attempt, lifecycle } };
 };
 
-const fetchAndPrepareOpenRouterResponses = async (
+const fetchAndPrepareRemovedProviderResponses = async (
   body: Record<string, unknown>,
   options: Readonly<{
     usageContext?: UsageContext;
@@ -1124,11 +1108,11 @@ const fetchAndPrepareOpenRouterResponses = async (
   }>,
 ): Promise<ResponsesAttemptResult> => {
   const deadline = options.attemptDeadline;
-  recordAttemptedProvider(options.usageContext, "openrouter");
-  if (options.usageContext?.responseTelemetry) options.usageContext.responseTelemetry.provider = "openrouter";
+  recordAttemptedProvider(options.usageContext, "removed_provider");
+  if (options.usageContext?.responseTelemetry) options.usageContext.responseTelemetry.provider = "removed_provider";
   let response: Response;
   try {
-    const result = await fetchOpenRouterResponses(body, {
+    const result = await fetchRemovedProviderResponses(body, {
       apiKey: options.apiKey,
       sessionId: options.sessionId,
       signal: deadline.signal,
@@ -1136,7 +1120,7 @@ const fetchAndPrepareOpenRouterResponses = async (
         onDispatch: () => recordFirstProviderDispatch(options.usageContext),
         onHeaders: () => recordFirstProviderHeaders(options.usageContext),
       },
-      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("openrouter") ?? Promise.resolve(),
+      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("removed_provider") ?? Promise.resolve(),
     });
     response = result.response;
   } catch (error) {
@@ -1146,12 +1130,12 @@ const fetchAndPrepareOpenRouterResponses = async (
     return {
       kind: "failed",
       attempt: {
-        provider: "openrouter",
+        provider: "removed_provider",
         response: streamErrorResponse(
           502,
-          "OpenRouter request failed before response headers were received.",
+          "RemovedProvider request failed before response headers were received.",
           "server_error",
-          "openrouter",
+          "removed_provider",
           [],
         ),
         trigger: triggerForResponsesError(error, deadline.signal),
@@ -1162,7 +1146,7 @@ const fetchAndPrepareOpenRouterResponses = async (
   }
   return await prepareResponsesAttempt(
     response,
-    "openrouter",
+    "removed_provider",
     deadline,
     options.requestSignal,
     [],
@@ -1190,18 +1174,18 @@ const finalizeAbandonedPrimaryAttempt = (
 
 const markPrimarySemanticRecovery = (
   routed: RoutedResponsesUpstream,
-  circuitProbe: OpenRouterCircuitProbe | null,
+  circuitProbe: RemovedProviderCircuitProbe | null,
   usageContext?: UsageContext,
   terminalType?: string | null,
 ): void => {
   if (!circuitProbe) return;
   const transition = routed.provider === "chatgpt_codex"
     ? terminalType === "response.failed"
-      ? recordOpenRouterEligibleFailure(circuitProbe)
-      : closeOpenRouterCircuit(circuitProbe)
-    : releaseGlobalOpenRouterProbe(circuitProbe);
+      ? recordRemovedProviderEligibleFailure(circuitProbe)
+      : closeRemovedProviderCircuit(circuitProbe)
+    : releaseGlobalRemovedProviderProbe(circuitProbe);
   void transition.then((value) => {
-    if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+    if (value !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: value });
   }).catch(() => {});
 };
 
@@ -7296,8 +7280,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   codexBody.input = input;
   codexBody.stream = true;
   codexBody.store = false;
-  const openRouterBody = { ...codexBody };
-  // Preserve official controls supported by OpenRouter even when Codex does
+  const removedProviderBody = { ...codexBody };
+  // Preserve official controls supported by RemovedProvider even when Codex does
   // not currently accept them on its compatibility transport.
   for (
     const key of [
@@ -7312,7 +7296,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       "user",
     ]
   ) {
-    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) openRouterBody[key] = rawRecord[key];
+    if (Object.prototype.hasOwnProperty.call(rawRecord, key)) removedProviderBody[key] = rawRecord[key];
   }
 
   await recordRequestUsage(usageContext, {
@@ -7326,22 +7310,22 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   });
   const requestInferenceSignal = clientWantsStream ? req.signal : inferenceSignal(req);
   const preHeaderDeadline = createStreamFirstEventDeadline(requestInferenceSignal);
-  const apiKey = readOpenRouterApiKey();
+  const apiKey = readRemovedProviderApiKey();
   const debugRoutingScenario = (await loadDebugRoutingConfig()).scenario;
-  const circuit = apiKey ? await selectOpenRouterCircuitRoute() : null;
+  const circuit = apiKey ? await selectRemovedProviderCircuitRoute() : null;
   if (circuit && circuit.transition !== "none") {
-    recordOpenRouterFields(usageContext, { circuitTransition: circuit.transition });
+    recordRemovedProviderFields(usageContext, { circuitTransition: circuit.transition });
   }
   const sessionId = apiKey
-    ? await deriveOpenRouterSessionId(usageContext?.idempotencyPrincipal, rawRecord.client_metadata)
+    ? await deriveRemovedProviderSessionId(usageContext?.idempotencyPrincipal, rawRecord.client_metadata)
     : null;
-  let route: "codex" | "openrouter" = debugRoutingScenario === "openrouter_first" && apiKey
-    ? "openrouter"
+  let route: "codex" | "removed_provider" = debugRoutingScenario === "removed_provider_first" && apiKey
+    ? "removed_provider"
     : circuit?.route ?? "codex";
-  let globalProbe: OpenRouterCircuitProbe | null = circuit?.probe ?? null;
+  let globalProbe: RemovedProviderCircuitProbe | null = circuit?.probe ?? null;
   let primaryFailureResponse: Response | null = null;
   let primaryResult: ResponsesRouteAttempt | null = null;
-  let openRouterAttempt: PreparedResponsesAttempt | null = null;
+  let removedProviderAttempt: PreparedResponsesAttempt | null = null;
   let selectedModel: string | null = null;
   let fallbackStartedAt = 0;
 
@@ -7381,11 +7365,11 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           const terminalType = responseFailureTerminalType(failed.trigger, failed.signal, req.signal);
           recordStreamTerminalType(usageContext, terminalType);
           if (routed.gatewayResponse && !isEligibleResponsesAttemptStatus(failed.response)) {
-            if (globalProbe) void releaseGlobalOpenRouterProbe(globalProbe).catch(() => {});
+            if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
           }
           if (!isEligibleResponsesAttemptStatus(failed.response) && failed.trigger === "read_error") {
-            if (globalProbe) void releaseGlobalOpenRouterProbe(globalProbe).catch(() => {});
+            if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             lifecycle.terminal("response.failed");
             return failed.response;
           }
@@ -7393,22 +7377,22 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
             finalizeAbandonedPrimaryAttempt(routed, lifecycle, { failureTrigger: failed.trigger });
           }
           if (!apiKey) return failed.response;
-          const transition = await recordOpenRouterEligibleFailure(globalProbe);
-          if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
-          recordOpenRouterFields(usageContext, { triggerClass: failed.trigger });
-          route = "openrouter";
+          const transition = await recordRemovedProviderEligibleFailure(globalProbe);
+          if (transition !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: transition });
+          recordRemovedProviderFields(usageContext, { triggerClass: failed.trigger });
+          route = "removed_provider";
         }
       } catch (error) {
-        if (globalProbe) void releaseGlobalOpenRouterProbe(globalProbe).catch(() => {});
+        if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
         logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
         await recordErrorUsage(usageContext);
         return toCodexErrorResponse(error, usageContext?.responseTelemetry?.provider);
       }
     }
 
-    if (route === "openrouter" && apiKey) {
+    if (route === "removed_provider" && apiKey) {
       fallbackStartedAt = performance.now();
-      const openRouter = await fetchAndPrepareOpenRouterResponses(openRouterBody, {
+      const removedProvider = await fetchAndPrepareRemovedProviderResponses(removedProviderBody, {
         usageContext,
         requestSignal: requestInferenceSignal,
         sessionId,
@@ -7418,28 +7402,28 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           Math.ceil(preHeaderDeadline.remainingMs()),
         ),
       });
-      if (openRouter.kind === "ready") {
-        openRouterAttempt = openRouter.attempt;
-        selectedModel = openRouter.attempt.selectedModel;
-        recordOpenRouterFields(usageContext, {
+      if (removedProvider.kind === "ready") {
+        removedProviderAttempt = removedProvider.attempt;
+        selectedModel = removedProvider.attempt.selectedModel;
+        recordRemovedProviderFields(usageContext, {
           selectedModel,
-          taskType: openRouter.attempt.taskType,
-          semanticCommitment: openRouter.attempt.prepared.semanticKind ??
-            (openRouter.attempt.prepared.terminal?.type === "response.completed" ? "terminal_completed" : null),
+          taskType: removedProvider.attempt.taskType,
+          semanticCommitment: removedProvider.attempt.prepared.semanticKind ??
+            (removedProvider.attempt.prepared.terminal?.type === "response.completed" ? "terminal_completed" : null),
         });
       } else {
-        void persistFailedOpenRouterAttempt(usageContext, fallbackStartedAt, openRouter.attempt.trigger);
-        if (primaryFailureResponse || openRouter.attempt.trigger === "terminal_failure") {
+        void persistFailedRemovedProviderAttempt(usageContext, fallbackStartedAt, removedProvider.attempt.trigger);
+        if (primaryFailureResponse || removedProvider.attempt.trigger === "terminal_failure") {
           if (usageContext?.responseTelemetry) {
             usageContext.responseTelemetry.provider = primaryFailureResponse?.headers.get("x-uos-upstream") ||
-              (primaryFailureResponse ? "chatgpt_codex" : "openrouter");
+              (primaryFailureResponse ? "chatgpt_codex" : "removed_provider");
           }
-          return primaryFailureResponse ?? openRouter.attempt.response;
+          return primaryFailureResponse ?? removedProvider.attempt.response;
         }
-        let recoveryProbe = await claimOpenRouterEarlyRecoveryProbe();
+        let recoveryProbe = await claimRemovedProviderEarlyRecoveryProbe();
         if (!recoveryProbe) {
-          const recoveryRoute = await selectOpenRouterCircuitRoute();
-          if (recoveryRoute.route !== "codex") return openRouter.attempt.response;
+          const recoveryRoute = await selectRemovedProviderCircuitRoute();
+          if (recoveryRoute.route !== "codex") return removedProvider.attempt.response;
           recoveryProbe = recoveryRoute.probe;
         }
         globalProbe = recoveryProbe;
@@ -7460,29 +7444,29 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
             rejectPresemanticFailureTerminal: true,
           });
         } catch (error) {
-          const transition = recoveryProbe ? await releaseGlobalOpenRouterProbe(recoveryProbe) : "none";
-          if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
+          const transition = recoveryProbe ? await releaseGlobalRemovedProviderProbe(recoveryProbe) : "none";
+          if (transition !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: transition });
           if (requestInferenceSignal.aborted) throw requestInferenceSignal.reason ?? error;
-          if (usageContext?.responseTelemetry) usageContext.responseTelemetry.provider = "openrouter";
-          return openRouter.attempt.response;
+          if (usageContext?.responseTelemetry) usageContext.responseTelemetry.provider = "removed_provider";
+          return removedProvider.attempt.response;
         }
         if (recovery.kind === "failed") {
           finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle, {
             failureTrigger: recovery.value.failed.trigger,
           });
           if (recovery.value.failed.trigger === "semantic_timeout") {
-            const transition = recoveryProbe ? await releaseGlobalOpenRouterProbe(recoveryProbe) : "none";
-            if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
+            const transition = recoveryProbe ? await releaseGlobalRemovedProviderProbe(recoveryProbe) : "none";
+            if (transition !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: transition });
             return recovery.value.failed.response;
           }
           const transition = isEligibleResponsesAttemptStatus(recovery.value.failed.response)
-            ? await recordOpenRouterEligibleFailure(recoveryProbe)
+            ? await recordRemovedProviderEligibleFailure(recoveryProbe)
             : recoveryProbe
-            ? await releaseGlobalOpenRouterProbe(recoveryProbe)
+            ? await releaseGlobalRemovedProviderProbe(recoveryProbe)
             : "none";
-          if (transition !== "none") recordOpenRouterFields(usageContext, { circuitTransition: transition });
-          if (usageContext?.responseTelemetry) usageContext.responseTelemetry.provider = "openrouter";
-          return openRouter.attempt.response;
+          if (transition !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: transition });
+          if (usageContext?.responseTelemetry) usageContext.responseTelemetry.provider = "removed_provider";
+          return removedProvider.attempt.response;
         }
         primaryResult = recovery.value;
         if (
@@ -7502,7 +7486,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     preHeaderDeadline.clear();
   }
 
-  const ready = openRouterAttempt ?? primaryResult?.prepared;
+  const ready = removedProviderAttempt ?? primaryResult?.prepared;
   if (!ready) {
     return primaryFailureResponse ?? streamErrorResponse(
       502,
@@ -7514,7 +7498,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
   const lifecycle = primaryResult?.lifecycle ?? createMeteredTransportLifecycle(null);
   const routed = primaryResult?.routed ?? null;
-  const forwardedOpenRouterControls = new Set([
+  const forwardedRemovedProviderControls = new Set([
     "max_output_tokens",
     "max_tool_calls",
     "metadata",
@@ -7530,20 +7514,20 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     ...(primaryFailureResponse ? responseWarnings(primaryFailureResponse) : []),
     ...responseWarnings(ready.response),
   ].filter((warning) => {
-    if (!openRouterAttempt) return true;
-    return ![...forwardedOpenRouterControls].some((key) =>
+    if (!removedProviderAttempt) return true;
+    return ![...forwardedRemovedProviderControls].some((key) =>
       Object.prototype.hasOwnProperty.call(rawRecord, key) &&
       warning === (WARNING_KEY_MAP.get(key) ?? `${key}_ignored`)
     );
   });
   const structuredTextOutput = isRecord(rawRecord.text) && isRecord(rawRecord.text.format) &&
     (rawRecord.text.format.type === "json_schema" || rawRecord.text.format.type === "json_object");
-  const warningModel = openRouterAttempt && !structuredTextOutput ? selectedModel : null;
+  const warningModel = removedProviderAttempt && !structuredTextOutput ? selectedModel : null;
   if (globalProbe && ready.prepared.semantic) {
-    void renewOpenRouterCircuitProbe(globalProbe).catch(() => {});
+    void renewRemovedProviderCircuitProbe(globalProbe).catch(() => {});
   }
   const probeRenewal = globalProbe && ready.prepared.semantic
-    ? setInterval(() => void renewOpenRouterCircuitProbe(globalProbe).catch(() => {}), 60_000)
+    ? setInterval(() => void renewRemovedProviderCircuitProbe(globalProbe).catch(() => {}), 60_000)
     : null;
   const clearProbeRenewal = (): void => {
     if (probeRenewal !== null) clearInterval(probeRenewal);
@@ -7555,32 +7539,34 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     }
     if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
     if (globalProbe && routed?.provider === "metered") {
-      void releaseGlobalOpenRouterProbe(globalProbe).then((value) => {
-        if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+      void releaseGlobalRemovedProviderProbe(globalProbe).then((value) => {
+        if (value !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: value });
       }).catch(() => {});
     } else if (routed?.provider === "chatgpt_codex") {
       const transition = terminalType === "cancelled"
-        ? globalProbe ? releaseGlobalOpenRouterProbe(globalProbe) : Promise.resolve("none" as const)
-        : recordOpenRouterEligibleFailure(globalProbe);
+        ? globalProbe ? releaseGlobalRemovedProviderProbe(globalProbe) : Promise.resolve("none" as const)
+        : recordRemovedProviderEligibleFailure(globalProbe);
       void transition.then((value) => {
-        if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+        if (value !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: value });
       }).catch(() => {});
     }
-    if (openRouterAttempt && usageContext?.responseTelemetry?.openRouterTerminalStatus !== "response.failed") {
-      recordOpenRouterFields(usageContext, {
+    if (
+      removedProviderAttempt && usageContext?.responseTelemetry?.removedProviderTerminalStatus !== "response.failed"
+    ) {
+      recordRemovedProviderFields(usageContext, {
         latencyMs: Math.max(0, Math.round(performance.now() - fallbackStartedAt)),
         terminalStatus: terminalType,
       });
-      persistOpenRouterFields(usageContext);
+      persistRemovedProviderFields(usageContext);
     }
     void recordErrorUsage(usageContext);
   };
-  const validateOpenRouterEvent = (event: ResponsesStreamEvent): void => {
-    if (!openRouterAttempt || !selectedModel) return;
-    const candidate = openRouterModelFromEvent(event.value);
+  const validateRemovedProviderEvent = (event: ResponsesStreamEvent): void => {
+    if (!removedProviderAttempt || !selectedModel) return;
+    const candidate = removedProviderModelFromEvent(event.value);
     if (!candidate) return;
-    if (candidate !== selectedModel || !isEligibleOpenRouterModel(candidate)) {
-      throw new ResponsesStreamError("OpenRouter changed the selected model after stream release.", {
+    if (candidate !== selectedModel || !isEligibleRemovedProviderModel(candidate)) {
+      throw new ResponsesStreamError("RemovedProvider changed the selected model after stream release.", {
         kind: "malformed_event",
       });
     }
@@ -7600,37 +7586,37 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       if (globalProbe) {
         const transition = routed.provider === "chatgpt_codex"
           ? event.type === "response.completed" || event.type === "response.incomplete"
-            ? closeOpenRouterCircuit(globalProbe)
+            ? closeRemovedProviderCircuit(globalProbe)
             : event.type === "response.failed" || event.type === "error"
-            ? recordOpenRouterEligibleFailure(globalProbe)
-            : releaseGlobalOpenRouterProbe(globalProbe)
-          : releaseGlobalOpenRouterProbe(globalProbe);
+            ? recordRemovedProviderEligibleFailure(globalProbe)
+            : releaseGlobalRemovedProviderProbe(globalProbe)
+          : releaseGlobalRemovedProviderProbe(globalProbe);
         void transition.then((value) => {
-          if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+          if (value !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: value });
         }).catch(() => {});
       } else if (
         routed.provider === "chatgpt_codex" && (event.type === "response.failed" || event.type === "error")
       ) {
-        void recordOpenRouterEligibleFailure(null).then((value) => {
-          if (value !== "none") recordOpenRouterFields(usageContext, { circuitTransition: value });
+        void recordRemovedProviderEligibleFailure(null).then((value) => {
+          if (value !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: value });
         }).catch(() => {});
       }
     }
     // A synthetic failure is the client-visible terminal owner after a
     // committed stream breaks. For an abandoned Codex/Metered attempt, keep the
     // underlying EOF/read classification in telemetry so paid-fallback
-    // reconciliation retains its diagnostic cause. OpenRouter owns its
+    // reconciliation retains its diagnostic cause. RemovedProvider owns its
     // synthetic terminal because no later provider can take over after the
     // failover notice has been released.
-    if (!syntheticFailure || openRouterAttempt) {
+    if (!syntheticFailure || removedProviderAttempt) {
       recordResponsesTerminal(event, usageContext);
     }
-    if (openRouterAttempt) {
-      recordOpenRouterFields(usageContext, {
+    if (removedProviderAttempt) {
+      recordRemovedProviderFields(usageContext, {
         latencyMs: Math.max(0, Math.round(performance.now() - fallbackStartedAt)),
         terminalStatus: event.type,
       });
-      persistOpenRouterFields(usageContext);
+      persistRemovedProviderFields(usageContext);
     }
   };
 
@@ -7639,7 +7625,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       warningModel,
       usageContext,
       onTerminal,
-      validateEvent: validateOpenRouterEvent,
+      validateEvent: validateRemovedProviderEvent,
       onFailure: (error) => {
         reconcileCommittedFailure(classifyStreamFailure(error, ready.signal, req.signal));
       },
@@ -7657,7 +7643,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     downstreamSignal: req.signal,
     abortUpstream: ready.abort,
     onEvent: onTerminal,
-    validateEvent: validateOpenRouterEvent,
+    validateEvent: validateRemovedProviderEvent,
     onFailure: (error) => {
       const terminalType = classifyStreamFailure(error, ready.signal, req.signal);
       reconcileCommittedFailure(terminalType);

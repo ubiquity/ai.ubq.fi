@@ -935,13 +935,13 @@ Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates"
     assert.equal((await handleResponses(kernelRequest(), kernelContext)).status, 200);
     kv.resetCounts();
     assert.equal((await handleResponses(kernelRequest(), kernelContext)).status, 200);
-    // A warm request may read debug-routing and OpenRouter circuit control
+    // A warm request may read debug-routing and RemovedProvider circuit control
     // state, but it must not read or write ordinary usage data.
     assert.equal(kv.writes, 0);
     assert.ok(
       kv.readKeys.every((key) =>
         JSON.stringify(key) === JSON.stringify(["uos_ai", "debug_routing", "v1"]) ||
-        JSON.stringify(key) === JSON.stringify(["uos_ai", "openrouter_failover", "circuit", "v1"])
+        JSON.stringify(key) === JSON.stringify(["uos_ai", "removed_provider_failover", "circuit", "v1"])
       ),
     );
   } finally {
@@ -1022,13 +1022,13 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       provider_request_id: null,
       fallback_reason: null,
       attempted_providers: ["chatgpt_codex"],
-      openrouter_trigger_class: null,
-      openrouter_circuit_transition: null,
-      openrouter_selected_model: null,
-      openrouter_task_type: null,
-      openrouter_latency_ms: null,
-      openrouter_terminal_status: null,
-      openrouter_semantic_commitment: null,
+      removed_provider_trigger_class: null,
+      removed_provider_circuit_transition: null,
+      removed_provider_selected_model: null,
+      removed_provider_task_type: null,
+      removed_provider_latency_ms: null,
+      removed_provider_terminal_status: null,
+      removed_provider_semantic_commitment: null,
       stream: false,
       stream_terminal_type: "response.completed",
       git_sha: "unknown",

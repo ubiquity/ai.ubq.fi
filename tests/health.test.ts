@@ -65,7 +65,7 @@ const {
 const { default: handler } = await import("../src/handler.ts");
 const { config } = await import("../src/config.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
-const { setOpenRouterApiKeyForTest } = await import("../src/openrouter.ts");
+const { setRemovedProviderApiKeyForTest } = await import("../src/removed_provider.ts");
 const {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
@@ -196,10 +196,10 @@ Deno.test("admin provider health includes cached quota fields without an active 
   }
 });
 
-Deno.test("passive provider health exposes only bounded OpenRouter circuit and telemetry fields", async () => {
+Deno.test("passive provider health exposes only bounded RemovedProvider circuit and telemetry fields", async () => {
   kvStore.clear();
-  setOpenRouterApiKeyForTest("openrouter-secret-must-not-leak");
-  kvStore.set(keyToString(["uos_ai", "openrouter_failover", "circuit", "v1"]), {
+  setRemovedProviderApiKeyForTest("removed_provider-secret-must-not-leak");
+  kvStore.set(keyToString(["uos_ai", "removed_provider_failover", "circuit", "v1"]), {
     v: 1,
     phase: "half_open",
     failure_at_ms: [1_000, 2_000],
@@ -213,9 +213,9 @@ Deno.test("passive provider health exposes only bounded OpenRouter circuit and t
     },
     updated_at_ms: 2_000,
   });
-  kvStore.set(keyToString(["uos_ai", "openrouter_failover", "telemetry", "v1"]), {
+  kvStore.set(keyToString(["uos_ai", "removed_provider_failover", "telemetry", "v1"]), {
     v: 1,
-    attempted_provider: "chatgpt_codex,openrouter",
+    attempted_provider: "chatgpt_codex,removed_provider",
     trigger_class: "http_5xx",
     circuit_transition: "probe_claimed",
     selected_model: "google/gemini-2.5-pro",
@@ -229,24 +229,24 @@ Deno.test("passive provider health exposes only bounded OpenRouter circuit and t
     const response = await handleHealthProviders();
     const text = await response.text();
     const payload = JSON.parse(text) as {
-      openrouter?: {
+      removed_provider?: {
         configured?: boolean;
         circuit?: Record<string, unknown>;
         telemetry?: Record<string, unknown>;
       };
     };
     assert.equal(response.status, 200);
-    assert.equal(payload.openrouter?.configured, true);
-    assert.deepEqual(Object.keys(payload.openrouter?.circuit ?? {}).sort(), [
+    assert.equal(payload.removed_provider?.configured, true);
+    assert.deepEqual(Object.keys(payload.removed_provider?.circuit ?? {}).sort(), [
       "available",
       "open_until_ms",
       "probe_active",
       "recent_failures",
       "state",
     ]);
-    assert.equal(payload.openrouter?.circuit?.state, "half_open");
-    assert.equal(payload.openrouter?.circuit?.probe_active, true);
-    assert.deepEqual(Object.keys(payload.openrouter?.telemetry ?? {}).sort(), [
+    assert.equal(payload.removed_provider?.circuit?.state, "half_open");
+    assert.equal(payload.removed_provider?.circuit?.probe_active, true);
+    assert.deepEqual(Object.keys(payload.removed_provider?.telemetry ?? {}).sort(), [
       "attempted_provider",
       "available",
       "circuit_transition",
@@ -259,11 +259,11 @@ Deno.test("passive provider health exposes only bounded OpenRouter circuit and t
       "trigger_class",
       "v",
     ]);
-    assert.equal(payload.openrouter?.telemetry?.selected_model, "google/gemini-2.5-pro");
-    assert.equal(text.includes("openrouter-secret-must-not-leak"), false);
+    assert.equal(payload.removed_provider?.telemetry?.selected_model, "google/gemini-2.5-pro");
+    assert.equal(text.includes("removed_provider-secret-must-not-leak"), false);
     assert.equal(text.includes("private-probe-token"), false);
   } finally {
-    setOpenRouterApiKeyForTest(undefined);
+    setRemovedProviderApiKeyForTest(undefined);
   }
 });
 
@@ -398,9 +398,9 @@ Deno.test("authenticated admin provider route is private and not cacheable", asy
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("Cache-Control"), "no-store");
-    const payload = await response.json() as { mode?: unknown; openrouter?: unknown };
+    const payload = await response.json() as { mode?: unknown; removed_provider?: unknown };
     assert.equal(payload.mode, "passive");
-    assert.equal(typeof payload.openrouter, "object");
+    assert.equal(typeof payload.removed_provider, "object");
   } finally {
     adminTokens.delete(token);
   }

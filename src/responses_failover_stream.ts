@@ -242,7 +242,7 @@ export const buildFailoverWarningEvents = (
 ): Readonly<{ item: Record<string, unknown>; events: ResponsesStreamEvent[] }> => {
   const itemId = `msg_failover_${crypto.randomUUID().replace(/-/g, "")}`;
   const text =
-    `⚠ Failover active: this response is from \`openrouter:${actualModel}\` because the Codex upstream was unavailable.`;
+    `⚠ Failover active: this response is from \`removed_provider:${actualModel}\` because the Codex upstream was unavailable.`;
   const content = { type: "output_text", text, annotations: [] };
   const item: Record<string, unknown> = {
     id: itemId,
@@ -417,11 +417,13 @@ export const createOwnedResponsesStream = (
 
   if (options.warning) {
     if (!responseId) {
-      throw new ResponsesStreamError("OpenRouter stream omitted a response identifier.", { kind: "malformed_event" });
+      throw new ResponsesStreamError("RemovedProvider stream omitted a response identifier.", {
+        kind: "malformed_event",
+      });
     }
     const createdIndex = initial.findIndex((event) => event.type === "response.created");
     if (createdIndex < 0) {
-      throw new ResponsesStreamError("OpenRouter stream omitted response.created.", { kind: "malformed_event" });
+      throw new ResponsesStreamError("RemovedProvider stream omitted response.created.", { kind: "malformed_event" });
     }
     const created = initial.splice(createdIndex, 1)[0]!;
     options.validateEvent?.(created);

@@ -142,9 +142,9 @@ const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
-const openRouterFailoverBadge = mustGet("openrouter-failover-badge");
-const openRouterFailoverObserved = mustGet("openrouter-failover-observed");
-const openRouterFailoverFacts = mustGet("openrouter-failover-facts");
+const removedProviderFailoverBadge = mustGet("removed_provider-failover-badge");
+const removedProviderFailoverObserved = mustGet("removed_provider-failover-observed");
+const removedProviderFailoverFacts = mustGet("removed_provider-failover-facts");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -744,53 +744,53 @@ const appendProviderFact = (list, label, value) => {
   list.appendChild(item);
 };
 
-const resetOpenRouterFailover = (message = "Waiting for snapshot") => {
-  setBadge(openRouterFailoverBadge, "unknown", "Not loaded");
-  openRouterFailoverObserved.textContent = message;
-  openRouterFailoverFacts.replaceChildren();
+const resetRemovedProviderFailover = (message = "Waiting for snapshot") => {
+  setBadge(removedProviderFailoverBadge, "unknown", "Not loaded");
+  removedProviderFailoverObserved.textContent = message;
+  removedProviderFailoverFacts.replaceChildren();
 };
 
-const renderOpenRouterFailover = (openRouter) => {
-  openRouterFailoverFacts.replaceChildren();
-  if (!openRouter || typeof openRouter !== "object") {
-    setBadge(openRouterFailoverBadge, "bad", "Unavailable");
-    openRouterFailoverObserved.textContent = "Snapshot unavailable";
-    appendProviderFact(openRouterFailoverFacts, "Configured", "Unknown");
-    appendProviderFact(openRouterFailoverFacts, "Circuit", "Unknown");
+const renderRemovedProviderFailover = (removedProvider) => {
+  removedProviderFailoverFacts.replaceChildren();
+  if (!removedProvider || typeof removedProvider !== "object") {
+    setBadge(removedProviderFailoverBadge, "bad", "Unavailable");
+    removedProviderFailoverObserved.textContent = "Snapshot unavailable";
+    appendProviderFact(removedProviderFailoverFacts, "Configured", "Unknown");
+    appendProviderFact(removedProviderFailoverFacts, "Circuit", "Unknown");
     return;
   }
-  const circuit = openRouter.circuit ?? {};
-  const telemetry = openRouter.telemetry ?? {};
-  const configured = openRouter.configured === true;
+  const circuit = removedProvider.circuit ?? {};
+  const telemetry = removedProvider.telemetry ?? {};
+  const configured = removedProvider.configured === true;
   const circuitState = formatOptionalText(circuit.state);
   const available = circuit.available !== false;
   const state = !configured || !available ? "bad" : circuitState === "closed" ? "ok" : "unknown";
   const label = !configured ? "Not configured" : !available ? "State unavailable" : `Circuit ${circuitState}`;
-  setBadge(openRouterFailoverBadge, state, label);
-  openRouterFailoverObserved.textContent = typeof telemetry.observed_at_ms === "number"
+  setBadge(removedProviderFailoverBadge, state, label);
+  removedProviderFailoverObserved.textContent = typeof telemetry.observed_at_ms === "number"
     ? `Observed ${formatDate(telemetry.observed_at_ms)}`
     : "No failover observed";
-  appendProviderFact(openRouterFailoverFacts, "Configured", configured ? "Yes" : "No");
-  appendProviderFact(openRouterFailoverFacts, "Circuit", circuitState);
+  appendProviderFact(removedProviderFailoverFacts, "Configured", configured ? "Yes" : "No");
+  appendProviderFact(removedProviderFailoverFacts, "Circuit", circuitState);
   appendProviderFact(
-    openRouterFailoverFacts,
+    removedProviderFailoverFacts,
     "Open until",
     typeof circuit.open_until_ms === "number" ? formatDate(circuit.open_until_ms) : "Not open",
   );
   appendProviderFact(
-    openRouterFailoverFacts,
+    removedProviderFailoverFacts,
     "Recent failures",
     typeof circuit.recent_failures === "number" ? formatNumber(circuit.recent_failures) : "Unknown",
   );
-  appendProviderFact(openRouterFailoverFacts, "Probe", circuit.probe_active === true ? "Active" : "Inactive");
-  appendProviderFact(openRouterFailoverFacts, "Attempted", formatOptionalText(telemetry.attempted_provider));
-  appendProviderFact(openRouterFailoverFacts, "Trigger", formatOptionalText(telemetry.trigger_class));
-  appendProviderFact(openRouterFailoverFacts, "Transition", formatOptionalText(telemetry.circuit_transition));
-  appendProviderFact(openRouterFailoverFacts, "Selected model", formatOptionalText(telemetry.selected_model));
-  appendProviderFact(openRouterFailoverFacts, "Task", formatOptionalText(telemetry.task_type));
-  appendProviderFact(openRouterFailoverFacts, "Latency", formatLatency(telemetry.latency_ms));
-  appendProviderFact(openRouterFailoverFacts, "Terminal", formatOptionalText(telemetry.terminal_status));
-  appendProviderFact(openRouterFailoverFacts, "Commitment", formatOptionalText(telemetry.semantic_commitment));
+  appendProviderFact(removedProviderFailoverFacts, "Probe", circuit.probe_active === true ? "Active" : "Inactive");
+  appendProviderFact(removedProviderFailoverFacts, "Attempted", formatOptionalText(telemetry.attempted_provider));
+  appendProviderFact(removedProviderFailoverFacts, "Trigger", formatOptionalText(telemetry.trigger_class));
+  appendProviderFact(removedProviderFailoverFacts, "Transition", formatOptionalText(telemetry.circuit_transition));
+  appendProviderFact(removedProviderFailoverFacts, "Selected model", formatOptionalText(telemetry.selected_model));
+  appendProviderFact(removedProviderFailoverFacts, "Task", formatOptionalText(telemetry.task_type));
+  appendProviderFact(removedProviderFailoverFacts, "Latency", formatLatency(telemetry.latency_ms));
+  appendProviderFact(removedProviderFailoverFacts, "Terminal", formatOptionalText(telemetry.terminal_status));
+  appendProviderFact(removedProviderFailoverFacts, "Commitment", formatOptionalText(telemetry.semantic_commitment));
 };
 
 const capacityBadgeState = (state) => state === "available" ? "ok" : state === "stale" ? "unknown" : "bad";
@@ -2447,20 +2447,20 @@ const loadProviders = async () => {
     if (loadId !== providersLoadId) return;
     if (!response.ok || !payload) {
       latestProviderHealth = null;
-      renderOpenRouterFailover(null);
+      renderRemovedProviderFailover(null);
       if (latestProviderCapacityChartState?.sources) {
         renderProviderCapacityList(latestProviderCapacityChartState.sources);
       }
       return;
     }
     latestProviderHealth = payload;
-    renderOpenRouterFailover(payload.openrouter);
+    renderRemovedProviderFailover(payload.removed_provider);
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
     providersLoadedAt = Date.now();
   } catch {
     if (loadId !== providersLoadId) return;
     latestProviderHealth = null;
-    renderOpenRouterFailover(null);
+    renderRemovedProviderFailover(null);
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
   } finally {
     if (loadId === providersLoadId) providersLoading = false;
@@ -7147,7 +7147,7 @@ setKernelNewBadge("unknown", "Idle");
 setKernelQueueBadge("unknown", "Not loaded");
 setKernelPubKeysBadge("unknown", "Not loaded");
 setKernelPubKeyCreateBadge("unknown", "Idle");
-resetOpenRouterFailover();
+resetRemovedProviderFailover();
 setKeyListMessage("Paste an admin token to load API keys.");
 setPasskeyUsersMessage("Paste a fallback admin token to manage passkey users.");
 setKernelListMessage(getKernelListMissingTokenMessage());
@@ -7209,7 +7209,7 @@ tokenInput.addEventListener("input", () => {
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
-  resetOpenRouterFailover();
+  resetRemovedProviderFailover();
   clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
@@ -7398,7 +7398,7 @@ baseSelect.addEventListener("change", () => {
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
-  resetOpenRouterFailover("Target changed. Waiting for snapshot");
+  resetRemovedProviderFailover("Target changed. Waiting for snapshot");
   resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {

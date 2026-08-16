@@ -5,6 +5,17 @@ set -eu
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
+format_files=""
+for file in $(git diff --cached --name-only --diff-filter=ACMR); do
+  case "$file" in
+    *.ts|*.tsx|*.js|*.jsx|*.json|*.jsonc|*.md) format_files="$format_files $file" ;;
+  esac
+done
+if [ -n "$format_files" ]; then
+  # Repair staged formatting before the remaining commit checks run.
+  deno fmt $format_files
+  git add -- $format_files
+fi
 deno fmt --check
 deno lint
 deno task build
