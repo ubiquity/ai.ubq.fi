@@ -2075,9 +2075,9 @@ const formatDebugRoutingStatus = (routing) => {
 };
 
 const loadDebugRouting = async () => {
-  if (!adminAccessState.isSuperAdmin) {
-    setBadge(debugRoutingBadge, "unknown", "Super admin required");
-    debugRoutingStatus.textContent = "Only a super admin can change routing scenarios.";
+  if (!adminAccessState.isAdmin) {
+    setBadge(debugRoutingBadge, "unknown", "Admin required");
+    debugRoutingStatus.textContent = "Only an administrator can change routing scenarios.";
     debugRoutingApply.disabled = true;
     debugRoutingReset.disabled = true;
     return;
@@ -2106,7 +2106,7 @@ const loadDebugRouting = async () => {
 
 const updateDebugRouting = async (scenario, durationMs) => {
   const token = getAdminToken();
-  if (!token || !adminAccessState.isSuperAdmin) return;
+  if (!token || !adminAccessState.isAdmin) return;
   debugRoutingApply.disabled = true;
   debugRoutingReset.disabled = true;
   setBadge(debugRoutingBadge, "unknown", "Saving");
@@ -2135,7 +2135,7 @@ debugRoutingApply.addEventListener("click", () => {
 });
 debugRoutingReset.addEventListener("click", () => {
   const token = getAdminToken();
-  if (!token || !adminAccessState.isSuperAdmin) return;
+  if (!token || !adminAccessState.isAdmin) return;
   debugRoutingApply.disabled = true;
   debugRoutingReset.disabled = true;
   setBadge(debugRoutingBadge, "unknown", "Resetting");

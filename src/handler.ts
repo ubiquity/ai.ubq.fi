@@ -478,7 +478,7 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   if ((req.method === "GET" || req.method === "POST" || req.method === "DELETE") && path === "/admin/debug/routing") {
-    const authError = await requireSuperAdminAuth(req);
+    const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminDebugRouting(req));
   }
