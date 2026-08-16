@@ -1,6 +1,6 @@
 :root {
   color-scheme: dark;
-  --bg: #0a0c11;
+  --bg: #000;
   --surface: linear-gradient(165deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
   --surface-2: rgba(255, 255, 255, 0.06);
   --surface-3: rgba(255, 255, 255, 0.1);
