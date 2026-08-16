@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { CodexBankedResetConfig } from "../src/codex_banked_reset.ts";
 import type { CodexUsageResetProvider } from "../src/codex_banked_reset_provider.ts";
-import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, CodexAuthPoolState } from "../src/types.ts";
+import type { CodexAuthPoolState } from "../src/types.ts";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
 import { setStreamFirstEventDeadlineMsForTest } from "../src/inference_deadline.ts";
 import { RELEASE_GIT_SHA } from "../src/release.ts";
@@ -113,7 +113,6 @@ const {
 } = await import("../src/openai.ts");
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
-const { setRemovedProviderApiKeyForTest } = await import("../src/removed_provider.ts");
 const {
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
@@ -129,16 +128,6 @@ const {
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
 const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
-const { REMOVED_PROVIDER_CIRCUIT_KEY, parseRemovedProviderCircuitState } = await import(
-  "../src/removed_provider_circuit.ts"
-);
-const {
-  ApiKeyQuotaDispatchError,
-  apiKeyPolicyFromHashRecord,
-  apiKeyUsageV3RequestKey,
-  apiKeyUsageV3WindowKey,
-  reserveApiKeyUsageV3,
-} = await import("../src/api_key_policy.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 const utf8ByteLength = (value: string): number => TEXT_ENCODER.encode(value).byteLength;
@@ -200,86 +189,7 @@ const baseSseChunks = () => [
   }\n\n`,
 ];
 
-const removedProviderTextSseChunks = (
-  options: Readonly<{
-    model?: string | null;
-    responseId?: string;
-    text?: string;
-    terminal?: boolean;
-  }> = {},
-): string[] => {
-  const model = options.model === undefined ? "google/gemini-2.5-pro" : options.model;
-  const responseId = options.responseId ?? "resp_removed_provider_fixture";
-  const text = options.text ?? "pong";
-  const messageId = "msg_removed_provider_fixture";
-  const response = {
-    id: responseId,
-    object: "response",
-    status: "in_progress",
-    ...(model === null ? {} : { model }),
-    output: [],
-  };
-  const chunks = [
-    `data: ${JSON.stringify({ type: "response.created", sequence_number: 0, response })}\n\n`,
-    `data: ${
-      JSON.stringify({
-        type: "response.output_item.added",
-        sequence_number: 1,
-        response_id: responseId,
-        output_index: 0,
-        item: { id: messageId, type: "message", status: "in_progress", role: "assistant", content: [] },
-      })
-    }\n\n`,
-    `data: ${
-      JSON.stringify({
-        type: "response.output_text.delta",
-        sequence_number: 2,
-        response_id: responseId,
-        item_id: messageId,
-        output_index: 0,
-        content_index: 0,
-        delta: text,
-      })
-    }\n\n`,
-    `data: ${
-      JSON.stringify({
-        type: "response.output_item.done",
-        sequence_number: 3,
-        response_id: responseId,
-        output_index: 0,
-        item: {
-          id: messageId,
-          type: "message",
-          status: "completed",
-          role: "assistant",
-          content: [{ type: "output_text", text, annotations: [] }],
-        },
-      })
-    }\n\n`,
-  ];
-  if (options.terminal === false) return chunks;
-  chunks.push(`data: ${
-    JSON.stringify({
-      type: "response.completed",
-      sequence_number: 4,
-      response: {
-        ...response,
-        status: "completed",
-        output: [{
-          id: messageId,
-          type: "message",
-          status: "completed",
-          role: "assistant",
-          content: [{ type: "output_text", text, annotations: [] }],
-        }],
-        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-      },
-    })
-  }\n\n`);
-  return chunks;
-};
-
-const removedProviderResponsesRequest = (
+const responsesRequest = (
   body: Record<string, unknown> = {},
   signal?: AbortSignal,
 ): Request =>
@@ -389,35 +299,6 @@ const waitForPaidFallbackTerminal = async (
   );
 };
 
-const removedProviderCircuitState = (): ReturnType<typeof parseRemovedProviderCircuitState> =>
-  parseRemovedProviderCircuitState(kvStore.get(keyToString(REMOVED_PROVIDER_CIRCUIT_KEY)));
-
-const seedRemovedProviderCircuit = (
-  state: Readonly<{
-    phase: "open" | "half_open";
-    openUntilMs: number;
-    generation?: number;
-    probe?:
-      | Readonly<{
-        token: string;
-        generation: number;
-        lease_until_ms: number;
-        source: "expiry" | "early_recovery";
-      }>
-      | null;
-  }>,
-): void => {
-  kvStore.set(keyToString(REMOVED_PROVIDER_CIRCUIT_KEY), {
-    v: 1,
-    phase: state.phase,
-    failure_at_ms: [Date.now() - 1_000, Date.now() - 500],
-    open_until_ms: state.openUntilMs,
-    generation: state.generation ?? 1,
-    probe: state.probe ?? null,
-    updated_at_ms: Date.now(),
-  });
-};
-
 const parseWarnings = (value: string | null): string[] =>
   value ? value.split(",").map((entry) => entry.trim()).filter(Boolean) : [];
 
@@ -458,7 +339,7 @@ const fetchMockQueue: FetchMockQueue = (() => {
 const withFetchMock = async <T>(
   handler: (url: string, bodyText: string | null, init?: RequestInit) => Response | Promise<Response>,
   fn: () => Promise<T>,
-  options: Readonly<{ removedProviderApiKey?: string }> = {},
+  _options: Readonly<Record<never, never>> = {},
 ): Promise<T> => {
   const prev = fetchMockQueue.chain;
   let release = () => {};
@@ -488,11 +369,7 @@ const withFetchMock = async <T>(
   // Each mocked exchange is an independent gateway isolate/request fixture.
   // Circuit behavior itself is covered by codex-account-routing.test.ts.
   kvStore.delete(keyToString(["uos_ai", "codex_account_routing", "v2"]));
-  kvStore.delete(keyToString(["uos_ai", "removed_provider_failover", "circuit", "v1"]));
-  kvStore.delete(keyToString(["uos_ai", "removed_provider_failover", "telemetry", "v1"]));
   resetCodexAuthCacheForTest();
-
-  setRemovedProviderApiKeyForTest(options.removedProviderApiKey ?? null);
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -504,7 +381,6 @@ const withFetchMock = async <T>(
     return await fn();
   } finally {
     globalThis.fetch = originalFetch;
-    setRemovedProviderApiKeyForTest(undefined);
     release();
   }
 };
@@ -2802,7 +2678,7 @@ Deno.test("openai: streaming Responses clear their absolute deadline after seman
           }),
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
         ),
-      () => handleResponses(removedProviderResponsesRequest()),
+      () => handleResponses(responsesRequest()),
     );
     assert.equal(response.status, 200);
     const values = parseResponsesSseValues(await response.text());
@@ -2856,70 +2732,6 @@ Deno.test("openai: Codex pre-header gateway deadlines use server_error on both s
         },
       );
     }
-  } finally {
-    setStreamFirstEventDeadlineMsForTest(null);
-  }
-});
-
-Deno.test("openai: buffered Responses stop after the overall gateway deadline", async () => {
-  setStreamFirstEventDeadlineMsForTest(10);
-  try {
-    let removedProviderCalls = 0;
-    const response = await withFetchMock(
-      (url, _bodyText, init) => {
-        if (url === "https://removed_provider.ai/api/v1/responses") removedProviderCalls += 1;
-        return new Promise<Response>((_resolve, reject) => {
-          const signal = init?.signal;
-          if (!signal) return reject(new Error("provider request did not receive a gateway deadline signal"));
-          const rejectWithAbortReason = () => reject(signal.reason);
-          if (signal.aborted) rejectWithAbortReason();
-          else signal.addEventListener("abort", rejectWithAbortReason, { once: true });
-        });
-      },
-      () => handleResponses(removedProviderResponsesRequest({ stream: false })),
-      { removedProviderApiKey: "or-test-key" },
-    );
-    const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
-    assert.equal(response.status, 504);
-    assert.equal(payload.error?.type, "server_error");
-    assert.equal(payload.error?.code, "gateway_timeout");
-    assert.equal(removedProviderCalls, 1);
-  } finally {
-    setStreamFirstEventDeadlineMsForTest(null);
-  }
-});
-
-Deno.test("openai: buffered RemovedProvider recovery preserves the overall gateway deadline", async () => {
-  setStreamFirstEventDeadlineMsForTest(20);
-  try {
-    const urls: string[] = [];
-    const response = await withFetchMock(
-      (url, _bodyText, init) => {
-        urls.push(url);
-        if (url === "https://removed_provider.ai/api/v1/responses") throw new TypeError("RemovedProvider unavailable");
-        return new Promise<Response>((_resolve, reject) => {
-          const signal = init?.signal;
-          if (!signal) return reject(new Error("recovery did not receive a gateway deadline signal"));
-          const rejectWithAbortReason = () => reject(signal.reason);
-          if (signal.aborted) rejectWithAbortReason();
-          else signal.addEventListener("abort", rejectWithAbortReason, { once: true });
-        });
-      },
-      () => {
-        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-        return handleResponses(removedProviderResponsesRequest({ stream: false }));
-      },
-      { removedProviderApiKey: "or-test-key" },
-    );
-    const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
-    assert.equal(response.status, 504);
-    assert.equal(payload.error?.type, "server_error");
-    assert.equal(payload.error?.code, "gateway_timeout");
-    assert.deepEqual(urls, [
-      "https://removed_provider.ai/api/v1/responses",
-      "https://chatgpt.com/backend-api/codex/responses",
-    ]);
-    assert.equal(removedProviderCircuitState(), null);
   } finally {
     setStreamFirstEventDeadlineMsForTest(null);
   }
@@ -7351,7 +7163,7 @@ Deno.test("openai: buffered Responses preserve nested response.output items", as
         `data: ${JSON.stringify({ type: "response.output", response: { output: [item] } })}\n\n`,
         `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
       ]),
-    () => handleResponses(removedProviderResponsesRequest({ stream: false })),
+    () => handleResponses(responsesRequest({ stream: false })),
   );
   const payload = await response.json() as { output?: unknown[] };
   assert.equal(response.status, 200);
@@ -8183,592 +7995,6 @@ Deno.test("openai: streamed Responses force the SSE content type", async () => {
   assert.match(await response.text(), /response.completed/);
 });
 
-Deno.test("openai: eligible Responses failure replays through RemovedProvider Auto", async () => {
-  const primaryBody = JSON.stringify({
-    model: DEFAULT_TEST_MODEL,
-    input: "ping",
-    stream: true,
-    reasoning: { effort: "ultra" },
-    max_output_tokens: 256,
-    client_metadata: { session_id: "raw-session-id" },
-    tools: [
-      {
-        type: "function",
-        name: "lookup",
-        description: "Look up a value",
-        parameters: { type: "object", properties: {}, additionalProperties: false },
-      },
-      { type: "custom", name: "exec", description: "Run a command", format: { type: "text" } },
-    ],
-    tool_choice: "auto",
-    parallel_tool_calls: true,
-  });
-  const urls: string[] = [];
-  let removedProviderBody: Record<string, unknown> | null = null;
-  let removedProviderAuthorization: string | null = null;
-  let removedProviderMetadata: string | null = null;
-  const response = await withFetchMock(
-    (url, bodyText, init) => {
-      urls.push(url);
-      if (url !== "https://removed_provider.ai/api/v1/responses") {
-        return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
-          status: 503,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      removedProviderBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
-      const headers = new Headers(init?.headers);
-      removedProviderAuthorization = headers.get("Authorization");
-      removedProviderMetadata = headers.get("X-RemovedProvider-Metadata");
-      return sseResponse(removedProviderTextSseChunks());
-    },
-    () =>
-      handleResponses(
-        new Request("https://ai.ubq.fi/v1/responses", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: primaryBody,
-        }),
-        {
-          keyId: null,
-          kernelRepo: null,
-          kernelOrg: null,
-          idempotencyPrincipal: "api-key:test-principal",
-        },
-      ),
-    { removedProviderApiKey: "or-test-key" },
-  );
-
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
-  assert.deepEqual(urls, [
-    "https://chatgpt.com/backend-api/codex/responses",
-    "https://removed_provider.ai/api/v1/responses",
-  ]);
-  assert.ok(removedProviderBody);
-  const sent = removedProviderBody as Record<string, unknown>;
-  assert.equal(sent.model, "deepseek/deepseek-v4-flash-0731");
-  assert.deepEqual(sent.plugins, [{
-    id: "auto-router",
-    cost_tier: "max",
-    excluded_models: [
-      "openai/*",
-      "~openai/*",
-      "anthropic/*",
-      "~anthropic/*",
-      "*/gpt-*",
-      "*/claude-*",
-    ],
-  }]);
-  assert.deepEqual(sent.reasoning, { effort: "max" });
-  assert.equal(sent.max_output_tokens, 256);
-  assert.equal(typeof sent.session_id, "string");
-  assert.doesNotMatch(String(sent.session_id), /raw-session-id|test-principal/);
-  assert.equal(JSON.stringify(sent).includes("raw-session-id"), false);
-  assert.equal(removedProviderAuthorization, "Bearer or-test-key");
-  assert.equal(removedProviderMetadata, "enabled");
-
-  const text = await response.text();
-  const events = [...text.matchAll(/^data: (.+)$/gm)]
-    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
-  const warning = events.find((event) =>
-    event.type === "response.output_text.delta" &&
-    String(event.delta).includes("Failover active")
-  );
-  assert.equal(
-    warning?.delta,
-    "⚠ Failover active: this response is from `removed_provider:google/gemini-2.5-pro` because the Codex upstream was unavailable.",
-  );
-  const providerDelta = events.find((event) => event.delta === "pong");
-  assert.equal(providerDelta?.output_index, 1);
-  assert.deepEqual(events.map((event) => event.sequence_number), events.map((_, index) => index));
-  assert.equal(events.filter((event) => event.type === "response.completed").length, 1);
-  assert.equal(events.filter((event) => event.type === "response.failed").length, 0);
-  assert.equal(
-    parseWarnings(response.headers.get("x-uos-warning")).includes("max_output_tokens_ignored"),
-    false,
-  );
-  const terminal = events.find((event) => event.type === "response.completed");
-  const terminalOutput = (terminal?.response as { output?: unknown[] } | undefined)?.output ?? [];
-  assert.equal(terminalOutput.length, 2);
-  assert.equal((terminalOutput[0] as { role?: unknown } | undefined)?.role, "assistant");
-  assert.equal(getResponseTelemetry(response)?.provider, "removed_provider");
-  assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["chatgpt_codex", "removed_provider"]);
-});
-
-Deno.test("openai: RemovedProvider handler failover covers precommit failures and commitment barriers", async (t) => {
-  const scenarios = [
-    {
-      name: "missing body",
-      primary: () => new Response(null, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
-      trigger: "missing_body",
-    },
-    {
-      name: "malformed SSE",
-      primary: () => sseResponse(['data: {"type":\n\n']),
-      trigger: "malformed_event",
-    },
-    {
-      name: "premature EOF",
-      primary: () =>
-        sseResponse([
-          `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_primary_setup" } })}\n\n`,
-        ]),
-      trigger: "premature_eof",
-    },
-    {
-      name: "response.failed terminal",
-      primary: () =>
-        sseResponse([
-          `data: ${
-            JSON.stringify({
-              type: "response.failed",
-              response: {
-                id: "resp_primary_failed",
-                object: "response",
-                status: "failed",
-                error: { type: "server_error", code: "provider_error", message: "primary failed" },
-                output: [],
-              },
-            })
-          }\n\n`,
-        ]),
-      trigger: "terminal_failure",
-    },
-    {
-      name: "error terminal",
-      primary: () =>
-        sseResponse([
-          `data: ${
-            JSON.stringify({
-              type: "error",
-              error: { type: "server_error", code: "provider_error", message: "primary failed" },
-            })
-          }\n\n`,
-        ]),
-      trigger: "terminal_failure",
-    },
-  ] as const;
-  for (const scenario of scenarios) {
-    await t.step(scenario.name, async () => {
-      const urls: string[] = [];
-      const response = await withFetchMock(
-        (url) => {
-          urls.push(url);
-          return url === "https://removed_provider.ai/api/v1/responses"
-            ? sseResponse(removedProviderTextSseChunks())
-            : scenario.primary();
-        },
-        () => handleResponses(removedProviderResponsesRequest()),
-        { removedProviderApiKey: "or-test-key" },
-      );
-      assert.equal(response.status, 200);
-      assert.deepEqual(urls, [
-        "https://chatgpt.com/backend-api/codex/responses",
-        "https://removed_provider.ai/api/v1/responses",
-      ]);
-      assert.equal(getResponseTelemetry(response)?.removedProviderTriggerClass, scenario.trigger);
-      assert.match(await response.text(), /Failover active/);
-    });
-  }
-
-  await t.step("semantic timeout", async () => {
-    setStreamFirstEventDeadlineMsForTest(10);
-    try {
-      let removedProviderCalls = 0;
-      let primaryCancelled = false;
-      const response = await withFetchMock(
-        (url) => {
-          if (url === "https://removed_provider.ai/api/v1/responses") {
-            removedProviderCalls += 1;
-            return sseResponse(removedProviderTextSseChunks());
-          }
-          return new Response(
-            new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.enqueue(TEXT_ENCODER.encode(
-                  `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_setup" } })}\n\n`,
-                ));
-              },
-              cancel() {
-                primaryCancelled = true;
-              },
-            }),
-            { status: 200, headers: { "Content-Type": "text/event-stream" } },
-          );
-        },
-        () => handleResponses(removedProviderResponsesRequest()),
-        { removedProviderApiKey: "or-test-key" },
-      );
-      assert.equal(response.status, 200);
-      assert.equal(removedProviderCalls, 1);
-      assert.equal(primaryCancelled, true);
-      assert.equal(getResponseTelemetry(response)?.removedProviderTriggerClass, "semantic_timeout");
-      assert.match(await response.text(), /Failover active/);
-    } finally {
-      setStreamFirstEventDeadlineMsForTest(null);
-    }
-  });
-
-  const committed = [
-    {
-      name: "text",
-      event: {
-        type: "response.output_text.delta",
-        response_id: "resp_primary",
-        item_id: "msg_primary",
-        output_index: 0,
-        content_index: 0,
-        delta: "primary text",
-      },
-    },
-    {
-      name: "reasoning",
-      event: {
-        type: "response.reasoning_summary_text.delta",
-        response_id: "resp_primary",
-        item_id: "rs_primary",
-        output_index: 0,
-        summary_index: 0,
-        delta: "primary reasoning",
-      },
-    },
-    {
-      name: "function call",
-      event: {
-        type: "response.output_item.done",
-        response_id: "resp_primary",
-        output_index: 0,
-        item: {
-          id: "fc_primary",
-          type: "function_call",
-          status: "completed",
-          call_id: "call_primary",
-          name: "lookup",
-          arguments: "{}",
-        },
-      },
-    },
-    {
-      name: "custom tool",
-      event: {
-        type: "response.output_item.done",
-        response_id: "resp_primary",
-        output_index: 0,
-        item: {
-          id: "ctc_primary",
-          type: "custom_tool_call",
-          status: "completed",
-          call_id: "call_custom_primary",
-          name: "exec",
-          input: "pwd",
-        },
-      },
-    },
-  ] as const;
-  for (const scenario of committed) {
-    await t.step(`no replay after ${scenario.name}`, async () => {
-      let removedProviderCalls = 0;
-      const response = await withFetchMock(
-        (url) => {
-          if (url === "https://removed_provider.ai/api/v1/responses") {
-            removedProviderCalls += 1;
-            return sseResponse(removedProviderTextSseChunks());
-          }
-          return sseResponse([
-            `data: ${
-              JSON.stringify({
-                type: "response.created",
-                response: { id: "resp_primary", object: "response", status: "in_progress", output: [] },
-              })
-            }\n\n`,
-            `data: ${JSON.stringify(scenario.event)}\n\n`,
-          ]);
-        },
-        () => handleResponses(removedProviderResponsesRequest()),
-        { removedProviderApiKey: "or-test-key" },
-      );
-      assert.equal(response.status, 200);
-      const values = parseResponsesSseValues(await response.text());
-      assert.equal(removedProviderCalls, 0);
-      assert.equal(values.filter((event) => event.type === "response.failed").length, 1);
-      assert.equal(values.some((event) => JSON.stringify(event).includes("Failover active")), false);
-    });
-  }
-
-  await t.step("missing response template uses an official error event", async () => {
-    let removedProviderCalls = 0;
-    const response = await withFetchMock(
-      (url) => {
-        if (url === "https://removed_provider.ai/api/v1/responses") {
-          removedProviderCalls += 1;
-          return sseResponse(removedProviderTextSseChunks());
-        }
-        return sseResponse([
-          `data: ${
-            JSON.stringify({
-              type: "response.output_text.delta",
-              response_id: "resp_primary_without_created",
-              item_id: "msg_primary_without_created",
-              output_index: 0,
-              content_index: 0,
-              delta: "primary text",
-            })
-          }\n\n`,
-        ]);
-      },
-      () => handleResponses(removedProviderResponsesRequest()),
-      { removedProviderApiKey: "or-test-key" },
-    );
-    const values = parseResponsesSseValues(await response.text());
-    assert.equal(removedProviderCalls, 0);
-    assert.equal(values.filter((event) => event.type === "response.failed").length, 0);
-    const error = values.find((event) => event.type === "error");
-    assert.equal(error?.code, "server_error");
-    assert.equal(error?.param, null);
-    assert.equal(Object.prototype.hasOwnProperty.call(error ?? {}, "response"), false);
-  });
-});
-
-Deno.test("openai: RemovedProvider pre-output rejection restores the authoritative primary error", async (t) => {
-  for (
-    const model of [
-      null,
-      "deepseek/deepseek-v4-flash-0731",
-      "openai/gpt-5",
-      "anthropic/claude-sonnet-4",
-      "vendor/gpt-oss-120b",
-      "malformed",
-    ]
-  ) {
-    await t.step(String(model), async () => {
-      const response = await withFetchMock(
-        (url) =>
-          url === "https://removed_provider.ai/api/v1/responses"
-            ? sseResponse(removedProviderTextSseChunks({ model }))
-            : new Response(JSON.stringify({ error: { message: "Primary unavailable", code: "primary_fixture" } }), {
-              status: 503,
-              headers: { "Content-Type": "application/json", "Retry-After": "17" },
-            }),
-        () => handleResponses(removedProviderResponsesRequest()),
-        { removedProviderApiKey: "or-test-key" },
-      );
-      assert.equal(response.status, 503);
-      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
-      assert.equal(response.headers.get("Retry-After"), "17");
-      const payload = await response.json() as { error?: { message?: string; code?: string } };
-      assert.equal(payload.error?.message, "Primary unavailable");
-      assert.equal(payload.error?.code, "primary_fixture");
-    });
-  }
-
-  await t.step("fallback 5xx", async () => {
-    const response = await withFetchMock(
-      (url) =>
-        url === "https://removed_provider.ai/api/v1/responses"
-          ? new Response(JSON.stringify({ error: { message: "fallback failed" } }), {
-            status: 502,
-            headers: { "Content-Type": "application/json" },
-          })
-          : new Response(JSON.stringify({ error: { message: "Primary unavailable", code: "primary_fixture" } }), {
-            status: 503,
-            headers: { "Content-Type": "application/json" },
-          }),
-      () => handleResponses(removedProviderResponsesRequest()),
-      { removedProviderApiKey: "or-test-key" },
-    );
-    assert.equal(response.status, 503);
-    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "primary_fixture");
-    assert.equal(getResponseTelemetry(response)?.provider, "chatgpt_codex");
-    const persisted = kvStore.get(keyToString(["uos_ai", "removed_provider_failover", "telemetry", "v1"])) as
-      | Record<string, unknown>
-      | undefined;
-    assert.equal(persisted?.attempted_provider, "chatgpt_codex,removed_provider");
-    assert.equal(persisted?.terminal_status, "failed_before_commit");
-    assert.equal(persisted?.trigger_class, "http_5xx");
-  });
-});
-
-Deno.test("openai: RemovedProvider post-release failures own one synthetic terminal", async (t) => {
-  for (const scenario of ["eof", "malformed"] as const) {
-    await t.step(scenario, async () => {
-      const response = await withFetchMock(
-        (url) => {
-          if (url !== "https://removed_provider.ai/api/v1/responses") {
-            return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
-              status: 503,
-              headers: { "Content-Type": "application/json" },
-            });
-          }
-          const chunks = removedProviderTextSseChunks({ terminal: false });
-          if (scenario === "malformed") chunks.push('data: {"type":\n\n');
-          return sseResponse(chunks);
-        },
-        () => handleResponses(removedProviderResponsesRequest()),
-        { removedProviderApiKey: "or-test-key" },
-      );
-      assert.equal(response.status, 200);
-      const values = parseResponsesSseValues(await response.text());
-      assert.equal(values.filter((event) => event.type === "response.failed").length, 1);
-      assert.equal(values.filter((event) => event.type === "response.completed").length, 0);
-      assert.equal(values.filter((event) => event.type === "error").length, 0);
-      assert.equal(values.some((event) => JSON.stringify(event).includes("Failover active")), true);
-      const terminal = values.find((event) => event.type === "response.failed")!;
-      const terminalResponse = terminal.response as Record<string, unknown>;
-      assert.equal(terminalResponse.model, "google/gemini-2.5-pro");
-      assert.match(JSON.stringify(terminalResponse.output), /pong/);
-      assert.deepEqual(
-        values.map((event) => event.sequence_number),
-        values.map((_, index) => index),
-      );
-      assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.failed");
-      assert.equal(getResponseTelemetry(response)?.removedProviderTerminalStatus, "response.failed");
-      assert.equal(getResponseTelemetry(response)?.completed, false);
-    });
-  }
-});
-
-Deno.test("openai: buffered fallback keeps provider deltas when terminal output is empty", async () => {
-  const chunks = removedProviderTextSseChunks();
-  const terminal = JSON.parse(chunks.at(-1)!.match(/^data: (.+)\n\n$/)![1]!) as Record<string, unknown>;
-  (terminal.response as Record<string, unknown>).output = [];
-  chunks[chunks.length - 1] = `data: ${JSON.stringify(terminal)}\n\n`;
-  const response = await withFetchMock(
-    (url) =>
-      url === "https://removed_provider.ai/api/v1/responses"
-        ? sseResponse(chunks)
-        : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
-          status: 503,
-          headers: { "Content-Type": "application/json" },
-        }),
-    () => handleResponses(removedProviderResponsesRequest({ stream: false })),
-    { removedProviderApiKey: "or-test-key" },
-  );
-  assert.equal(response.status, 200);
-  const payload = await response.json() as Record<string, unknown>;
-  const output = payload.output as Array<Record<string, unknown>>;
-  assert.equal(output.length, 2);
-  assert.match(JSON.stringify(output[0]), /Failover active/);
-  assert.match(JSON.stringify(output[1]), /pong/);
-});
-
-Deno.test("openai: buffered fallback reconciles done-only text with prior deltas", async () => {
-  const chunks = removedProviderTextSseChunks();
-  const outputItemDone = JSON.parse(chunks[3]!.match(/^data: (.+)\n\n$/)![1]!) as Record<string, unknown>;
-  (outputItemDone.item as Record<string, unknown>).content = [];
-  chunks[3] = `data: ${JSON.stringify(outputItemDone)}\n\n`;
-  chunks.splice(
-    4,
-    0,
-    `data: ${
-      JSON.stringify({
-        type: "response.output_text.done",
-        response_id: "resp_removed_provider_fixture",
-        item_id: "msg_removed_provider_fixture",
-        output_index: 0,
-        content_index: 0,
-        text: "pong",
-      })
-    }\n\n`,
-  );
-  const terminal = JSON.parse(chunks.at(-1)!.match(/^data: (.+)\n\n$/)![1]!) as Record<string, unknown>;
-  (terminal.response as Record<string, unknown>).output = [];
-  chunks[chunks.length - 1] = `data: ${JSON.stringify(terminal)}\n\n`;
-  const response = await withFetchMock(
-    (url) =>
-      url === "https://removed_provider.ai/api/v1/responses"
-        ? sseResponse(chunks)
-        : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), { status: 503 }),
-    () => handleResponses(removedProviderResponsesRequest({ stream: false })),
-    { removedProviderApiKey: "or-test-key" },
-  );
-  const payload = await response.json() as Record<string, unknown>;
-  assert.equal(JSON.stringify(payload.output).match(/pong/g)?.length, 1);
-});
-
-Deno.test("openai: RemovedProvider preserves a first-semantic incomplete terminal", async () => {
-  const responseId = "resp_removed_provider_incomplete";
-  const response = await withFetchMock(
-    (url) => {
-      if (url !== "https://removed_provider.ai/api/v1/responses") {
-        return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
-          status: 503,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      return sseResponse([
-        `data: ${
-          JSON.stringify({
-            type: "response.created",
-            sequence_number: 0,
-            response: {
-              id: responseId,
-              object: "response",
-              status: "in_progress",
-              model: "google/gemini-2.5-pro",
-              output: [],
-            },
-          })
-        }\n\n`,
-        `data: ${
-          JSON.stringify({
-            type: "response.incomplete",
-            sequence_number: 1,
-            response: {
-              id: responseId,
-              object: "response",
-              status: "incomplete",
-              model: "google/gemini-2.5-pro",
-              incomplete_details: { reason: "max_output_tokens" },
-              output: [{
-                id: "msg_removed_provider_incomplete",
-                type: "message",
-                status: "incomplete",
-                role: "assistant",
-                content: [{ type: "output_text", text: "partial", annotations: [] }],
-              }],
-              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-            },
-          })
-        }\n\n`,
-      ]);
-    },
-    () => handleResponses(removedProviderResponsesRequest()),
-    { removedProviderApiKey: "or-test-key" },
-  );
-  assert.equal(response.status, 200);
-  const values = parseResponsesSseValues(await response.text());
-  const terminal = values.find((event) => event.type === "response.incomplete");
-  assert.ok(terminal);
-  assert.match(JSON.stringify(terminal), /partial/);
-  assert.match(JSON.stringify(terminal), /max_output_tokens/);
-  assert.equal(values.filter((event) => event.type === "response.failed").length, 0);
-});
-
-Deno.test("openai: successful RemovedProvider failover preserves primary remediation warnings", async (t) => {
-  for (const stream of [false, true]) {
-    await t.step(stream ? "streamed" : "buffered", async () => {
-      const response = await withFetchMock(
-        (url) =>
-          url === "https://removed_provider.ai/api/v1/responses"
-            ? sseResponse(removedProviderTextSseChunks())
-            : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
-              status: 503,
-              headers: {
-                "Content-Type": "application/json",
-                "x-uos-warning": CODEX_AUTH_REAUTH_WARNING,
-              },
-            }),
-        () => handleResponses(removedProviderResponsesRequest({ stream })),
-        { removedProviderApiKey: "or-test-key" },
-      );
-      assert.equal(response.status, 200);
-      assert.ok(parseWarnings(response.headers.get("x-uos-warning")).includes(CODEX_AUTH_REAUTH_WARNING));
-      await response.body?.cancel();
-    });
-  }
-});
-
 Deno.test("openai: invalid route-dependent Responses fields fail before dispatch", async (t) => {
   const cases = [
     { param: "max_output_tokens", value: 0 },
@@ -8778,332 +8004,20 @@ Deno.test("openai: invalid route-dependent Responses fields fail before dispatch
     { param: "parallel_tool_calls", value: "true" },
     { param: "parallel_tool_calls", value: 1 },
   ] as const;
-  for (const circuit of ["closed", "open"] as const) {
-    for (const scenario of cases) {
-      await t.step(`${circuit} ${scenario.param}=${String(scenario.value)}`, async () => {
-        let fetches = 0;
-        const response = await withFetchMock(
-          () => {
-            fetches += 1;
-            return sseResponse(baseSseChunks());
-          },
-          async () => {
-            if (circuit === "open") seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-            return await handleResponses(removedProviderResponsesRequest({ [scenario.param]: scenario.value }));
-          },
-          { removedProviderApiKey: "or-test-key" },
-        );
-        assert.equal(response.status, 400);
-        assert.equal((await response.json() as { error?: { param?: unknown } }).error?.param, scenario.param);
-        assert.equal(fetches, 0);
-      });
-    }
-  }
-});
-
-Deno.test("openai: RemovedProvider quota dispatch errors propagate for outer status conversion", async () => {
-  let fetches = 0;
-  await assert.rejects(
-    () =>
-      withFetchMock(
+  for (const scenario of cases) {
+    await t.step(`${scenario.param}=${String(scenario.value)}`, async () => {
+      let fetches = 0;
+      const response = await withFetchMock(
         () => {
           fetches += 1;
-          return sseResponse(removedProviderTextSseChunks());
+          return sseResponse(baseSseChunks());
         },
-        async () => {
-          seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-          return await handleResponses(removedProviderResponsesRequest(), {
-            keyId: "quota-fixture",
-            kernelRepo: null,
-            kernelOrg: null,
-            beforeProviderDispatch: () =>
-              Promise.reject(
-                new ApiKeyQuotaDispatchError("Fixture quota exhausted", {
-                  status: 429,
-                  code: "rate_limit_exceeded",
-                  errorType: "rate_limit_error",
-                  retryAfter: "17",
-                }),
-              ),
-          });
-        },
-        { removedProviderApiKey: "or-test-key" },
-      ),
-    (error: unknown) => {
-      assert.ok(error instanceof ApiKeyQuotaDispatchError);
-      assert.equal(error.status, 429);
-      assert.equal(error.code, "rate_limit_exceeded");
-      assert.equal(error.errorType, "rate_limit_error");
-      assert.equal(error.retryAfter, "17");
-      return true;
-    },
-  );
-  assert.equal(fetches, 0);
-});
-
-Deno.test("openai: RemovedProvider keeps native custom-tool events and identities", async () => {
-  const responseId = "resp_removed_provider_custom";
-  const itemId = "ctc_removed_provider_custom";
-  const callId = "call_removed_provider_custom";
-  let fallbackBody: Record<string, unknown> | null = null;
-  const response = await withFetchMock(
-    (url, bodyText) => {
-      if (url !== "https://removed_provider.ai/api/v1/responses") {
-        return new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
-          status: 503,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      fallbackBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
-      const item = {
-        id: itemId,
-        type: "custom_tool_call",
-        status: "completed",
-        call_id: callId,
-        name: "exec",
-        input: "pwd",
-      };
-      return sseResponse([
-        `data: ${
-          JSON.stringify({
-            type: "response.created",
-            sequence_number: 0,
-            response: {
-              id: responseId,
-              object: "response",
-              status: "in_progress",
-              model: "google/gemini-2.5-pro",
-              output: [],
-            },
-          })
-        }\n\n`,
-        `data: ${
-          JSON.stringify({
-            type: "response.output_item.added",
-            sequence_number: 1,
-            response_id: responseId,
-            output_index: 0,
-            item: { ...item, status: "in_progress", input: "" },
-          })
-        }\n\n`,
-        `data: ${
-          JSON.stringify({
-            type: "response.custom_tool_call_input.delta",
-            sequence_number: 2,
-            response_id: responseId,
-            item_id: itemId,
-            output_index: 0,
-            delta: "pwd",
-          })
-        }\n\n`,
-        `data: ${
-          JSON.stringify({
-            type: "response.custom_tool_call_input.done",
-            sequence_number: 3,
-            response_id: responseId,
-            item_id: itemId,
-            output_index: 0,
-            input: "pwd",
-          })
-        }\n\n`,
-        `data: ${
-          JSON.stringify({
-            type: "response.output_item.done",
-            sequence_number: 4,
-            response_id: responseId,
-            output_index: 0,
-            item,
-          })
-        }\n\n`,
-        `data: ${
-          JSON.stringify({
-            type: "response.completed",
-            sequence_number: 5,
-            response: {
-              id: responseId,
-              object: "response",
-              status: "completed",
-              model: "google/gemini-2.5-pro",
-              output: [item],
-              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-            },
-          })
-        }\n\n`,
-      ]);
-    },
-    () =>
-      handleResponses(removedProviderResponsesRequest({
-        tools: [{ type: "custom", name: "exec", description: "Run a command", format: { type: "text" } }],
-        input: [{ type: "custom_tool_call_output", call_id: "prior_call", output: "prior result" }],
-      })),
-    { removedProviderApiKey: "or-test-key" },
-  );
-
-  assert.equal(response.status, 200);
-  const sentFallbackBody = fallbackBody as unknown as Record<string, unknown>;
-  assert.deepEqual(sentFallbackBody.tools, [{
-    type: "custom",
-    name: "exec",
-    description: "Run a command",
-    format: { type: "text" },
-  }]);
-  assert.deepEqual(sentFallbackBody.input, [{
-    type: "custom_tool_call_output",
-    call_id: "prior_call",
-    output: "prior result",
-  }]);
-  const values = parseResponsesSseValues(await response.text());
-  const delta = values.find((event) => event.type === "response.custom_tool_call_input.delta");
-  const done = values.find((event) => event.type === "response.custom_tool_call_input.done");
-  const itemDone = values.find((event) =>
-    event.type === "response.output_item.done" &&
-    (event.item as { id?: unknown } | undefined)?.id === itemId
-  );
-  assert.equal(delta?.item_id, itemId);
-  assert.equal(delta?.output_index, 1);
-  assert.equal(done?.item_id, itemId);
-  assert.equal(done?.input, "pwd");
-  assert.equal((itemDone?.item as { call_id?: unknown } | undefined)?.call_id, callId);
-  assert.equal((itemDone?.item as { name?: unknown } | undefined)?.name, "exec");
-  assert.equal((itemDone?.item as { input?: unknown } | undefined)?.input, "pwd");
-  assert.equal(itemDone?.output_index, 1);
-  const terminal = values.find((event) => event.type === "response.completed");
-  const output = (terminal?.response as { output?: unknown[] } | undefined)?.output ?? [];
-  assert.equal(output.length, 2);
-  assert.equal((output[1] as { id?: unknown } | undefined)?.id, itemId);
-  assert.equal((output[1] as { call_id?: unknown } | undefined)?.call_id, callId);
-});
-
-Deno.test("openai: Codex and Metered remain ahead of one RemovedProvider rescue", async () => {
-  const keyId = "removed_provider-after-metered";
-  const requestId = "request-removed_provider-after-metered";
-  const previousMeteredKey = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
-  seedPaidFallbackKey(keyId);
-  const urls: string[] = [];
-  try {
-    const response = await withFetchMock(
-      (url) => {
-        urls.push(url);
-        if (url === "https://removed_provider.ai/api/v1/responses") {
-          return sseResponse(removedProviderTextSseChunks());
-        }
-        if (url === "https://api.openlux.ai/v1/responses") {
-          return new Response(JSON.stringify({ error: { message: "Metered unavailable" } }), {
-            status: 503,
-            headers: {
-              "Content-Type": "application/json",
-              "X-Oneapi-Request-Id": "metered-removed_provider-order-fixture",
-            },
-          });
-        }
-        return new Response(JSON.stringify({ error: { message: "Codex limited" } }), {
-          status: 429,
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-      async () => {
-        const response = await handleResponses(removedProviderResponsesRequest(), {
-          keyId,
-          kernelRepo: null,
-          kernelOrg: null,
-          requestId,
-          startedAtMs: Date.now(),
-        });
-        await response.text();
-        return response;
-      },
-      { removedProviderApiKey: "or-test-key" },
-    );
-
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
-    assert.deepEqual(urls, [
-      "https://chatgpt.com/backend-api/codex/responses",
-      "https://chatgpt.com/backend-api/codex/responses",
-      "https://api.openlux.ai/v1/responses",
-      "https://removed_provider.ai/api/v1/responses",
-    ]);
-    assert.equal(urls.filter((url) => url === "https://api.openlux.ai/v1/responses").length, 1);
-    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, [
-      "chatgpt_codex",
-      "metered",
-      "removed_provider",
-    ]);
-    const stored = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
-    assert.equal(stored.dispatch_state, "dispatched");
-    assert.equal(stored.billing_state, "pending");
-    assert.equal(stored.provider_request_id, "metered-removed_provider-order-fixture");
-  } finally {
-    if (previousMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", previousMeteredKey);
-  }
-});
-
-Deno.test("openai: direct RemovedProvider dispatch commits the API-key provider", async () => {
-  const nowMs = Date.now();
-  const tokenHash = "removed_provider-direct-dispatch-hash";
-  const requestId = "removed_provider-direct-dispatch-request";
-  const record: ApiKeyHashRecord = {
-    id: "removed_provider-direct-dispatch-key",
-    expires_at_ms: -1,
-    revoked_at_ms: null,
-    usage_limit_requests: 2,
-    usage_requests: 0,
-    usage_reset_at_ms: nowMs + 60 * 60_000,
-    window_ms: 60 * 60_000,
-    usage_quota_version: 3,
-    paid_fallback_enabled: false,
-    paid_fallback_limit_microcredits: 0,
-    paid_fallback_spent_microcredits: 0,
-    paid_fallback_reserved_microcredits: 0,
-    paid_fallback_reservation_request_id: null,
-  };
-  const policy = apiKeyPolicyFromHashRecord(tokenHash, record, nowMs);
-  assert.ok(policy);
-  kvStore.set(keyToString(["ubq_ai", "api_keys", "hash", tokenHash]), record);
-  const decision = await reserveApiKeyUsageV3(policy, requestId, "responses", { kv: kvStub, nowMs });
-  assert.equal(decision.ok, true);
-  if (!decision.ok) return;
-
-  try {
-    const response = await withFetchMock(
-      (url) => {
-        assert.equal(url, "https://removed_provider.ai/api/v1/responses");
-        return sseResponse(removedProviderTextSseChunks());
-      },
-      async () => {
-        seedRemovedProviderCircuit({ phase: "open", openUntilMs: Date.now() + 60_000 });
-        const response = await handleResponses(removedProviderResponsesRequest(), {
-          keyId: policy.key_id,
-          kernelRepo: null,
-          kernelOrg: null,
-          requestId,
-          startedAtMs: nowMs,
-          beforeProviderDispatch: decision.reservation.beforeProviderDispatch,
-        });
-        await response.text();
-        return response;
-      },
-      { removedProviderApiKey: "or-test-key" },
-    );
-
-    const request = kvStore.get(keyToString(apiKeyUsageV3RequestKey(policy, requestId))) as
-      | ApiKeyUsageRequestV3
-      | undefined;
-    const window = kvStore.get(keyToString(apiKeyUsageV3WindowKey(policy))) as
-      | { committed_requests?: number; reserved_requests?: number }
-      | undefined;
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
-    assert.equal(request?.state, "dispatched");
-    assert.equal(request?.provider, "removed_provider");
-    assert.equal(window?.committed_requests, 1);
-    assert.equal(window?.reserved_requests, 0);
-  } finally {
-    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", tokenHash]));
-    kvStore.delete(keyToString(apiKeyUsageV3RequestKey(policy, requestId)));
-    kvStore.delete(keyToString(apiKeyUsageV3WindowKey(policy)));
+        () => handleResponses(responsesRequest({ [scenario.param]: scenario.value })),
+      );
+      assert.equal(response.status, 400);
+      assert.equal((await response.json() as { error?: { param?: unknown } }).error?.param, scenario.param);
+      assert.equal(fetches, 0);
+    });
   }
 });
 
@@ -9113,7 +8027,7 @@ Deno.test("openai: buffered Responses observe each real or synthetic terminal on
     const response = await withFetchMock(
       () => sseResponse(baseSseChunks()),
       () =>
-        handleResponses(removedProviderResponsesRequest({ stream: false }), {
+        handleResponses(responsesRequest({ stream: false }), {
           keyId: null,
           kernelRepo: null,
           kernelOrg: null,
@@ -9127,34 +8041,6 @@ Deno.test("openai: buffered Responses observe each real or synthetic terminal on
     await response.text();
     assert.deepEqual(observations, [{ completed: true, totalTokens: 2 }]);
   });
-
-  await t.step("synthetic response.failed usage", async () => {
-    const observations: Array<{ completed: boolean; totalTokens: number | null }> = [];
-    const response = await withFetchMock(
-      (url) =>
-        url === "https://removed_provider.ai/api/v1/responses"
-          ? sseResponse(removedProviderTextSseChunks({ terminal: false }))
-          : new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
-            status: 503,
-            headers: { "Content-Type": "application/json" },
-          }),
-      () =>
-        handleResponses(removedProviderResponsesRequest({ stream: false }), {
-          keyId: null,
-          kernelRepo: null,
-          kernelOrg: null,
-          onTerminalUsage: (usage, completed) =>
-            observations.push({
-              completed,
-              totalTokens: usage?.totalTokens ?? null,
-            }),
-        }),
-      { removedProviderApiKey: "or-test-key" },
-    );
-    await response.text();
-    assert.deepEqual(observations, [{ completed: false, totalTokens: null }]);
-    assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.failed");
-  });
 });
 
 Deno.test("openai: buffered committed Responses failures use the official server_error code", async () => {
@@ -9164,28 +8050,11 @@ Deno.test("openai: buffered committed Responses failures use the official server
         ...baseSseChunks().slice(0, -1),
         'data: {"type":\n\n',
       ]),
-    () => handleResponses(removedProviderResponsesRequest({ stream: false })),
+    () => handleResponses(responsesRequest({ stream: false })),
   );
   assert.equal(response.status, 502);
   const payload = await response.json() as { error?: { code?: string } };
   assert.equal(payload.error?.code, "server_error");
-});
-
-Deno.test("openai: missing RemovedProvider key leaves the global circuit untouched", async () => {
-  const circuitKey = keyToString(["uos_ai", "removed_provider_failover", "circuit", "v1"]);
-  for (let request = 0; request < 2; request += 1) {
-    const response = await withFetchMock(
-      () =>
-        new Response(JSON.stringify({ error: { message: "Primary unavailable" } }), {
-          status: 503,
-          headers: { "Content-Type": "application/json" },
-        }),
-      () => handleResponses(removedProviderResponsesRequest()),
-    );
-    assert.equal(response.status, 503);
-    assert.equal(getResponseTelemetry(response)?.removedProviderCircuitTransition, null);
-    assert.equal(kvStore.has(circuitKey), false);
-  }
 });
 
 Deno.test("auth: kernel attestation tokens are reusable within TTL", async () => {
