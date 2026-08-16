@@ -54,7 +54,6 @@ export type CodexBankedResetMode = "disabled" | "shadow" | "live";
 export type CodexBankedResetConfig = Readonly<{
   enabled: boolean;
   mode: CodexBankedResetMode;
-  accountAllowlist: ReadonlySet<string>;
   maxGlobalPerDay: number;
   maxPerAccountPerWindow: number;
 }>;
@@ -92,14 +91,6 @@ const parseMode = (value: string | undefined): CodexBankedResetMode => {
   }
 };
 
-const parseAllowlist = (value: string | undefined): ReadonlySet<string> =>
-  new Set(
-    (value ?? "")
-      .split(/[\n,]/g)
-      .map((part) => part.trim())
-      .filter(Boolean),
-  );
-
 /**
  * This is intentionally read at use time rather than module load time. A
  * configuration update can kill new claims immediately without deleting an
@@ -108,12 +99,10 @@ const parseAllowlist = (value: string | undefined): ReadonlySet<string> =>
 export const parseCodexBankedResetConfig = (
   readEnv: (key: string) => string | undefined = getEnv,
 ): CodexBankedResetConfig => ({
-  // Shadow telemetry may read an allowlisted blocked account's inventory, but
-  // it never consumes a credit. A spend still requires explicit live mode,
-  // caps, an allowlist, and an approved provider contract.
+  // Shadow telemetry never consumes a credit. A spend still requires
+  // explicit live mode, valid caps, and an approved provider contract.
   enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), true),
   mode: parseMode(readEnv("CODEX_BANKED_RESET_MODE")),
-  accountAllowlist: parseAllowlist(readEnv("CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST")),
   maxGlobalPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY"), 0),
   maxPerAccountPerWindow: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW"), 1),
 });
@@ -427,21 +416,14 @@ const safeOwnerToken = (source: () => string): string | null => {
   }
 };
 
-const policyReason = (config: CodexBankedResetConfig, context: ResetContext): string | null => {
+const policyReason = (config: CodexBankedResetConfig): string | null => {
   try {
     if (!config.enabled) return "feature_disabled";
     if (config.mode === "disabled") return "mode_disabled";
     // This single-candidate state-machine seam makes no provider call in
-    // shadow. The production cohort evaluator separately requires an
-    // allowlist and positive cap before its bounded inventory reads.
+    // shadow. The production cohort evaluator requires a positive cap before
+    // its bounded inventory reads.
     if (config.mode === "shadow") return null;
-    if (config.accountAllowlist.size === 0) return "account_allowlist_required";
-    if (
-      !config.accountAllowlist.has(context.account.accountId) &&
-      !config.accountAllowlist.has(context.account.accountIdHash)
-    ) {
-      return "account_not_allowlisted";
-    }
     if (config.maxGlobalPerDay <= 0) return "global_limit_disabled";
     // The non-negotiable at-most-once rule is stronger than a mutable setting.
     if (config.maxPerAccountPerWindow !== 1) return "per_account_window_limit_invalid";
@@ -1117,14 +1099,12 @@ const unknownOutcome = (
 
 const liveSubmissionPolicyReason = (
   dependencies: CodexBankedResetDependencies,
-  context: ResetContext,
 ): string | null => {
-  return loadLiveSubmissionConfig(dependencies, context).reason;
+  return loadLiveSubmissionConfig(dependencies).reason;
 };
 
 const loadLiveSubmissionConfig = (
   dependencies: CodexBankedResetDependencies,
-  context: ResetContext,
 ): Readonly<{ config: CodexBankedResetConfig; reason: null }> | Readonly<{ config: null; reason: string }> => {
   let config: CodexBankedResetConfig;
   try {
@@ -1132,7 +1112,7 @@ const loadLiveSubmissionConfig = (
   } catch {
     return { config: null, reason: "configuration_unavailable" };
   }
-  const reason = policyReason(config, context) ?? providerPolicyReason(config, dependencies.provider);
+  const reason = policyReason(config) ?? providerPolicyReason(config, dependencies.provider);
   return reason || config.mode !== "live"
     ? { config: null, reason: reason ?? "mode_not_live" }
     : { config, reason: null };
@@ -1306,7 +1286,7 @@ const submitClaimed = async (
   clock: () => number,
   telemetry: CodexBankedResetTelemetry,
 ): Promise<CodexBankedResetOutcome> => {
-  const initialPolicy = liveSubmissionPolicyReason(dependencies, context);
+  const initialPolicy = liveSubmissionPolicyReason(dependencies);
   if (initialPolicy) return outcome("pending", `new_submission_${initialPolicy}`, context, record);
   const nowBeforeInventory = readClock(clock);
   if (nowBeforeInventory === null) return outcome("pending", "invalid_clock", context, record);
@@ -1402,7 +1382,7 @@ const submitClaimed = async (
   }
   // Re-read the kill switch after inventory and immediately before the fenced
   // side-effect boundary. A disable leaves `claimed` intact and makes no call.
-  const finalConfig = loadLiveSubmissionConfig(dependencies, context);
+  const finalConfig = loadLiveSubmissionConfig(dependencies);
   if (finalConfig.config === null) return outcome("pending", `new_submission_${finalConfig.reason}`, context, record);
   if (candidate.signal?.aborted) {
     const rejected = await rejectOwned(kv, context, record, nowAfterInventory, "client_aborted_before_submission");
@@ -1437,7 +1417,7 @@ const submitClaimed = async (
   // kill switch after that durable transition. A disable visible at this
   // final pre-renewal check leaves the conservative `submitted` record
   // available for non-submitting recovery and makes no provider call.
-  const beforeRedeemPolicy = liveSubmissionPolicyReason(dependencies, context);
+  const beforeRedeemPolicy = liveSubmissionPolicyReason(dependencies);
   if (beforeRedeemPolicy) return outcome("pending", `new_submission_${beforeRedeemPolicy}`, context, prepared.record);
   if (candidate.signal?.aborted) {
     const nowMs = readClock(clock);
@@ -1451,7 +1431,7 @@ const submitClaimed = async (
   // synchronously after it returns so a disable that landed during that final
   // renewal cannot proceed to the provider call. `reloadConfig` is
   // deliberately synchronous; do not introduce an await after this point.
-  const afterRenewalPolicy = liveSubmissionPolicyReason(dependencies, context);
+  const afterRenewalPolicy = liveSubmissionPolicyReason(dependencies);
   if (afterRenewalPolicy) {
     return outcome("pending", `new_submission_${afterRenewalPolicy}`, context, renewed.record);
   }
@@ -1636,7 +1616,7 @@ const attemptInternal = async (
     } catch {
       return outcome("skipped", "configuration_unavailable", context);
     }
-    const reason = policyReason(configForClaim, context);
+    const reason = policyReason(configForClaim);
     if (reason) return outcome("skipped", reason, context);
     const providerReason = providerPolicyReason(configForClaim, dependencies.provider);
     if (providerReason) return outcome("skipped", providerReason, context);
@@ -1651,7 +1631,7 @@ const attemptInternal = async (
     allowNewSubmission = true;
   } else if (existing.record.state === "claimed") {
     if (reconcileOnly) return outcome("pending", "unsubmitted_transaction", context, existing.record);
-    const reason = liveSubmissionPolicyReason(dependencies, context);
+    const reason = liveSubmissionPolicyReason(dependencies);
     if (reason) return outcome("pending", `new_submission_${reason}`, context, existing.record);
     allowNewSubmission = true;
   }
@@ -1793,7 +1773,6 @@ const loadCurrentPoolConfig = (
     const config = dependencies.reloadConfig?.() ?? dependencies.config;
     if (!config.enabled) return { config: null, reason: "feature_disabled" };
     if (config.mode === "disabled") return { config: null, reason: "mode_disabled" };
-    if (config.accountAllowlist.size === 0) return { config: null, reason: "account_allowlist_required" };
     if (config.maxGlobalPerDay <= 0) return { config: null, reason: "global_limit_disabled" };
     if (config.maxPerAccountPerWindow !== 1) return { config: null, reason: "per_account_window_limit_invalid" };
     return { config, reason: null };
@@ -2030,13 +2009,6 @@ export const evaluateCodexBankedResetPool = async (
       if (selection.kind === "no_eligible_credit") decisionReason = "inventory_no_eligible_codex_credit";
       continue;
     }
-    const context = result.resolvedCandidate.context;
-    if (
-      !config.accountAllowlist.has(context.account.accountId) &&
-      !config.accountAllowlist.has(context.account.accountIdHash)
-    ) {
-      continue;
-    }
     const creditIdHash = await hash(`uos_ai\u0000codex_reset_credit\u0000${selection.credit.id}`);
     if (!isNonEmptyText(creditIdHash)) return poolOutcome("skipped", "credit_hash_unavailable");
     selectedCredits.push({ resolved: result.resolvedCandidate, credit: selection.credit, creditIdHash });
@@ -2049,7 +2021,7 @@ export const evaluateCodexBankedResetPool = async (
   });
   const selected = selectedCredits[0] ?? null;
   if (selected) decisionReason = "selected";
-  else if (decisionReason === "inventory_empty") decisionReason = "no_allowlisted_eligible_credit";
+  else if (decisionReason === "inventory_empty") decisionReason = "no_eligible_credit";
 
   const episodeExpiresAtMs = Math.min(
     ...fences.map((fence) => fence.quota_reset_at_ms),

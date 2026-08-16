@@ -6,9 +6,13 @@ repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
 format_files=""
+lint_files=""
 for file in $(git diff --cached --name-only --diff-filter=ACMR); do
   case "$file" in
     *.ts|*.tsx|*.js|*.jsx|*.json|*.jsonc|*.md) format_files="$format_files $file" ;;
+  esac
+  case "$file" in
+    *.ts|*.tsx|*.js|*.jsx) lint_files="$lint_files $file" ;;
   esac
 done
 if [ -n "$format_files" ]; then
@@ -16,8 +20,13 @@ if [ -n "$format_files" ]; then
   deno fmt $format_files
   git add -- $format_files
 fi
+if [ -n "$lint_files" ]; then
+  # Apply Deno's safe lint repairs to staged source before validation.
+  deno lint --fix $lint_files
+  git add -- $lint_files
+  deno lint $lint_files
+fi
 deno fmt --check
-deno lint
 deno task build
 # Keep commits fast while checking the same test TypeScript program that CI
 # compiles before running. The full runtime suite remains a CI responsibility.

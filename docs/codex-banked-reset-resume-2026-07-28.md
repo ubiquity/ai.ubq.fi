@@ -29,9 +29,8 @@ later live-decision evidence.
 ## Current continuation for the expiring-credit canary
 
 Production was rechecked on 2026-07-30 at `2b437eb11744e59c9e54dfeb4e1eac51991a24a7` / deployment `k72eejpydv8g`. It
-remained in `shadow` with both caps set to `1`, the secret allowlist present, one exhausted account, one healthy
-account, and an empty shadow-decision ledger. The old full-pool trigger therefore did **not** fire and no credit was
-consumed.
+remained in `shadow` with both caps set to `1`, one exhausted account, one healthy account, and an empty shadow-decision
+ledger. The old full-pool trigger therefore did **not** fire and no credit was consumed.
 
 The continuation broadens selection to a complete blocked cohort: every current auth slot must be either a stable
 blocked account or a healthy non-probing sibling, but only blocked accounts reach inventory or redemption. Shadow still

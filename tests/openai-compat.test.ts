@@ -392,10 +392,9 @@ const clearBankedResetRecords = (): void => {
   }
 };
 
-const liveBankedResetFixtureConfig = (accountId: string): CodexBankedResetConfig => ({
+const liveBankedResetFixtureConfig = (): CodexBankedResetConfig => ({
   enabled: true,
   mode: "live",
-  accountAllowlist: new Set([accountId]),
   maxGlobalPerDay: 1,
   maxPerAccountPerWindow: 1,
 });
@@ -463,7 +462,7 @@ const createVerifiedBankedResetFixture = async (): Promise<readonly string[]> =>
       requestId: "openai-compat-verified-reset-fixture",
     },
     {
-      config: liveBankedResetFixtureConfig(routing.auth.account_id),
+      config: liveBankedResetFixtureConfig(),
       provider,
       kv: kvStub,
       now: () => now,
@@ -544,7 +543,7 @@ const createUnknownBankedResetFixture = async (): Promise<readonly string[]> => 
       requestId: "openai-compat-unknown-reset-fixture",
     },
     {
-      config: liveBankedResetFixtureConfig(routing.auth.account_id),
+      config: liveBankedResetFixtureConfig(),
       provider,
       kv: kvStub,
       now: () => now,
@@ -1006,7 +1005,7 @@ Deno.test("openai: public handlers wait for verified banked redemption before on
           async () => {
             clearBankedResetRecords();
             setCodexBankedResetOptionsForTest({
-              config: liveBankedResetFixtureConfig("acct"),
+              config: liveBankedResetFixtureConfig(),
               provider,
               kv: kvStub,
               now: () => Date.now(),

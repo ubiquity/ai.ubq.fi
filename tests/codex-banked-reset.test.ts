@@ -376,7 +376,6 @@ const hasKey = (keys: readonly Deno.KvKey[], expected: Deno.KvKey): boolean =>
 const config = (overrides: Partial<CodexBankedResetConfig> = {}): CodexBankedResetConfig => ({
   enabled: true,
   mode: "live",
-  accountAllowlist: new Set(["test-account-a"]),
   maxGlobalPerDay: 5,
   maxPerAccountPerWindow: 1,
   ...overrides,
@@ -445,14 +444,9 @@ Deno.test("banked reset disabled, shadow, and invalid limits make zero provider 
     },
     {
       name: "global shadow",
-      configured: config({ mode: "shadow", accountAllowlist: new Set(), maxGlobalPerDay: 0 }),
+      configured: config({ mode: "shadow", maxGlobalPerDay: 0 }),
       reason: "shadow",
       expectShadowEvent: true,
-    },
-    {
-      name: "live allowlist required",
-      configured: config({ mode: "live", accountAllowlist: new Set() }),
-      reason: "account_allowlist_required",
     },
     {
       name: "shadow",
@@ -489,28 +483,17 @@ Deno.test("banked reset disabled, shadow, and invalid limits make zero provider 
   }
 });
 
-Deno.test("banked reset requires an exact allowlisted account ID or stable account hash", async () => {
+Deno.test("banked reset accepts any account ID or stable account hash", async () => {
   const clock = new TestClock();
   const reset = candidate();
   const accountIdHash = await testHash(reset.accountId);
-
-  const rejectedKv = new MemoryKv();
-  const rejectedProvider = new FakeCodexUsageResetProvider();
-  const rejected = await attemptCodexBankedReset(
-    reset,
-    dependencies(rejectedKv, rejectedProvider, clock, config({ accountAllowlist: new Set(["other-account"]) })),
-  );
-  assert.equal(rejected.kind, "skipped");
-  assert.equal(rejected.reason, "account_not_allowlisted");
-  assert.equal(rejectedProvider.callCount, 0);
-  assert.equal(rejectedProvider.commitCount, 0);
 
   const allowedKv = new MemoryKv();
   const allowedProvider = new FakeCodexUsageResetProvider();
   await seedFences(allowedKv, reset);
   const allowed = await attemptCodexBankedReset(
     reset,
-    dependencies(allowedKv, allowedProvider, clock, config({ accountAllowlist: new Set([accountIdHash]) })),
+    dependencies(allowedKv, allowedProvider, clock, config({})),
   );
   assert.equal(allowed.kind, "verified");
   assert.equal(allowed.accountIdHash, accountIdHash);
@@ -1155,7 +1138,7 @@ Deno.test("banked-reset telemetry retains only safe correlation fields", async (
 
   const result = await attemptCodexBankedReset(
     reset,
-    dependencies(kv, provider, clock, config({ accountAllowlist: new Set([reset.accountId]) }), {
+    dependencies(kv, provider, clock, config({}), {
       event: (event, fields) => events.push({ event, fields }),
       metric: (_metric, _value, fields) => metrics.push(fields),
     }),
@@ -1470,7 +1453,7 @@ Deno.test("seeded state-machine invariant: one account/window never reaches more
     const provider = new FakeCodexUsageResetProvider();
     const clock = new TestClock();
     await seedFences(kv, reset);
-    const deps = dependencies(kv, provider, clock, config({ accountAllowlist: new Set([accountId]) }));
+    const deps = dependencies(kv, provider, clock, config({}));
     const scenario = caseSeed % 3;
 
     if (scenario === 1) {
@@ -1570,7 +1553,6 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
     const configured = config({
       mode,
       enabled: mode === "live" || mode === "shadow",
-      accountAllowlist: new Set([accountId]),
     });
     const deps = dependencies(kv, provider, clock, configured);
     await seedFences(kv, reset);
@@ -1698,7 +1680,7 @@ Deno.test("global daily cap stops a second account before it reaches the provide
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
-  const configured = config({ accountAllowlist: new Set(["test-account-a", "test-account-b"]), maxGlobalPerDay: 1 });
+  const configured = config({ maxGlobalPerDay: 1 });
   const deps = dependencies(kv, provider, clock, configured);
   const firstCandidate = candidate();
   const secondCandidate = candidate({ accountId: "test-account-b", requestId: "second-account" });
@@ -1721,7 +1703,7 @@ Deno.test("an inventory failure leaves the global daily submission budget availa
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
-  const configured = config({ accountAllowlist: new Set(["test-account-a", "test-account-b"]), maxGlobalPerDay: 1 });
+  const configured = config({ maxGlobalPerDay: 1 });
   const firstCandidate = candidate();
   const secondCandidate = candidate({ accountId: "test-account-b", requestId: "after-inventory-failure" });
   await seedFences(kv, firstCandidate);
@@ -1758,7 +1740,7 @@ Deno.test("a claim held across UTC midnight cannot bypass the next day's global 
     kv,
     provider,
     clock,
-    config({ accountAllowlist: new Set([firstCandidate.accountId, secondCandidate.accountId]), maxGlobalPerDay: 1 }),
+    config({ maxGlobalPerDay: 1 }),
   );
   const inventoryGate = new Deferred<void>();
   const inventoryEntered = new Deferred<void>();
@@ -2447,7 +2429,7 @@ Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing 
         kv,
         provider,
         clock,
-        config({ mode: "shadow", accountAllowlist: new Set([reset.accountId]), maxGlobalPerDay: 1 }),
+        config({ mode: "shadow", maxGlobalPerDay: 1 }),
       ),
     );
     await inventoryEntered.promise;
@@ -2478,7 +2460,6 @@ Deno.test("full-pool shadow reads each account inventory, selects the earliest e
   const events: string[] = [];
   const shadow = config({
     mode: "shadow",
-    accountAllowlist: new Set(["test-account-a", "test-account-b"]),
     maxGlobalPerDay: 1,
   });
 
@@ -2515,7 +2496,6 @@ Deno.test("a new persistent-live episode auto-arms without spending, then consum
   const events: string[] = [];
   const live = config({
     mode: "live",
-    accountAllowlist: new Set([reset.accountId]),
     maxGlobalPerDay: 1,
   });
   const deps = dependencies(kv, provider, clock, live, {
@@ -2576,7 +2556,6 @@ Deno.test("concurrent initial persistent-live evaluations only arm before a late
   const pool = [{ slot: 0, candidate: reset, provider }] as const;
   const live = config({
     mode: "live",
-    accountAllowlist: new Set([reset.accountId]),
     maxGlobalPerDay: 1,
   });
   const deps = dependencies(kv, provider, clock, live);
@@ -2660,7 +2639,6 @@ Deno.test("invalid or ineligible live inventory cannot arm or consume", async (t
       const events: string[] = [];
       const live = config({
         mode: "live",
-        accountAllowlist: new Set([reset.accountId]),
         maxGlobalPerDay: 1,
       });
 
@@ -2693,7 +2671,6 @@ Deno.test("sequential shadow duplicates skip inventory only after current strong
   secondProvider.inventory = inventory("credit-b", clock.nowMs + 20_000);
   const shadow = config({
     mode: "shadow",
-    accountAllowlist: new Set(["test-account-a", "test-account-b"]),
     maxGlobalPerDay: 1,
   });
   const pool = fullPool(first, firstProvider, second, secondProvider);
@@ -2734,7 +2711,6 @@ Deno.test("concurrent shadow observations deduplicate one episode, and live cons
   const telemetry: string[] = [];
   const shadow = config({
     mode: "shadow",
-    accountAllowlist: new Set(["test-account-a", "test-account-b"]),
     maxGlobalPerDay: 1,
   });
   const pool = fullPool(first, firstProvider, second, secondProvider);
@@ -2753,7 +2729,6 @@ Deno.test("concurrent shadow observations deduplicate one episode, and live cons
 
   const live = config({
     mode: "live",
-    accountAllowlist: new Set(["test-account-a", "test-account-b"]),
     maxGlobalPerDay: 1,
   });
   const liveResult = await evaluateCodexBankedResetPool(
@@ -2783,7 +2758,6 @@ Deno.test("one blocked candidate promotes from shadow to one concurrent live red
   const pool = [{ slot: 0, candidate: reset, provider }] as const;
   const shadow = config({
     mode: "shadow",
-    accountAllowlist: new Set([reset.accountId]),
     maxGlobalPerDay: 1,
   });
 
@@ -2797,7 +2771,6 @@ Deno.test("one blocked candidate promotes from shadow to one concurrent live red
 
   const live = config({
     mode: "live",
-    accountAllowlist: new Set([reset.accountId]),
     maxGlobalPerDay: 1,
   });
   const redeemEntered = new Deferred<void>();
@@ -2839,7 +2812,6 @@ Deno.test("incomplete, duplicate, expired, and changed inventories never select 
       secondProvider.inventory = inventory("credit-b", clock.nowMs + 20_000);
       const shadow = config({
         mode: "shadow",
-        accountAllowlist: new Set(["test-account-a", "test-account-b"]),
         maxGlobalPerDay: 1,
       });
       const pool = fullPool(first, firstProvider, second, secondProvider);
@@ -2876,7 +2848,6 @@ Deno.test("incomplete, duplicate, expired, and changed inventories never select 
         }
         const live = config({
           mode: "live",
-          accountAllowlist: new Set(["test-account-a", "test-account-b"]),
           maxGlobalPerDay: 1,
         });
         const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, live));
@@ -2894,24 +2865,21 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
     {
       enabled: defaults.enabled,
       mode: defaults.mode,
-      allowlist: [...defaults.accountAllowlist],
       maxGlobalPerDay: defaults.maxGlobalPerDay,
       maxPerAccountPerWindow: defaults.maxPerAccountPerWindow,
     },
-    { enabled: true, mode: "shadow", allowlist: [], maxGlobalPerDay: 0, maxPerAccountPerWindow: 1 },
+    { enabled: true, mode: "shadow", maxGlobalPerDay: 0, maxPerAccountPerWindow: 1 },
   );
 
   const environment = new Map<string, string>([
     ["CODEX_BANKED_RESET_ENABLED", " true "],
     ["CODEX_BANKED_RESET_MODE", " LIVE "],
-    ["CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST", " account-a, hash-a\naccount-b "],
     ["CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY", "2"],
     ["CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW", "1"],
   ]);
   const parsedConfig = parseCodexBankedResetConfig((key) => environment.get(key));
   assert.equal(parsedConfig.enabled, true);
   assert.equal(parsedConfig.mode, "live");
-  assert.deepEqual([...parsedConfig.accountAllowlist], ["account-a", "hash-a", "account-b"]);
   assert.equal(parsedConfig.maxGlobalPerDay, 2);
   assert.equal(parsedConfig.maxPerAccountPerWindow, 1);
   assert.equal(parseCodexBankedResetConfig(() => "1").enabled, false);

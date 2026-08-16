@@ -1533,18 +1533,16 @@ Deno.test("a valid persisted Codex pool is not overlaid by a local configured se
   }
 });
 
-const liveBankedResetConfig = (accountId = "account-one"): CodexBankedResetConfig => ({
+const liveBankedResetConfig = (): CodexBankedResetConfig => ({
   enabled: true,
   mode: "live",
-  accountAllowlist: new Set([accountId]),
   maxGlobalPerDay: 1,
   maxPerAccountPerWindow: 1,
 });
 
-const shadowBankedResetConfig = (...accountIds: string[]): CodexBankedResetConfig => ({
+const shadowBankedResetConfig = (): CodexBankedResetConfig => ({
   ...liveBankedResetConfig(),
   mode: "shadow",
-  accountAllowlist: new Set(accountIds.length ? accountIds : ["account-one"]),
 });
 
 const stableBankedResetRetryAfter = new Date(fixedStartMs + 60_000).toUTCString();
@@ -1752,7 +1750,7 @@ Deno.test("the default upstream adapter shadows and redeems one partial blocked 
       clientVersion: "0.145.0",
       requestId,
       bankedReset: {
-        config: shadowBankedResetConfig("account-one", "account-two"),
+        config: shadowBankedResetConfig(),
         kv: kv as unknown as Deno.Kv,
         now: () => fixedStartMs,
         newOwnerToken: () => `owner-${requestId}`,
@@ -1929,7 +1927,6 @@ Deno.test("persistent live auto-arms an all-blocked cohort before one later cons
   const consumeBodies: unknown[] = [];
   const persistentLiveConfig: CodexBankedResetConfig = {
     ...liveBankedResetConfig(),
-    accountAllowlist: new Set(["account-one", "account-two"]),
   };
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = true;
@@ -2383,7 +2380,7 @@ Deno.test("an auth-pool slot reorder during a claimed reset fences submission be
       { input: "banked-reset-slot-reorder" },
       {
         bankedReset: {
-          config: liveBankedResetConfig("account-two"),
+          config: liveBankedResetConfig(),
           provider: reset.provider,
           kv: kv as unknown as Deno.Kv,
           now: () => fixedStartMs,
@@ -3152,7 +3149,7 @@ Deno.test("an earlier allowlisted exhausted account is redeemed after a later si
       { input: "banked-reset-earlier-allowlisted" },
       {
         bankedReset: {
-          config: liveBankedResetConfig("account-one"),
+          config: liveBankedResetConfig(),
           provider: reset.provider,
           kv: kv as unknown as Deno.Kv,
           now: () => fixedStartMs,
@@ -3216,7 +3213,7 @@ Deno.test("a 403 during the bounded retry blocks a full-pool redemption", async 
       {
         retrySleep: () => Promise.resolve(),
         bankedReset: {
-          config: liveBankedResetConfig("account-two"),
+          config: liveBankedResetConfig(),
           provider: reset.provider,
           kv: kv as unknown as Deno.Kv,
           now: () => fixedStartMs,

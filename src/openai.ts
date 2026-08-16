@@ -158,7 +158,7 @@ type UsageContext = Readonly<{
 }>;
 
 type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered";
-export type InferenceFallbackReason = "primary_401" | "primary_403" | "primary_429";
+export type InferenceFallbackReason = "primary_401" | "primary_403" | "primary_429" | "primary_quota_blocked";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 export type AffinityOutcome = "none" | "preferred" | "failover" | "shadow_only";
@@ -1840,7 +1840,7 @@ const fetchResponsesWithPaidFallback = async (
     : primaryStatus === 403
     ? "primary_403"
     : primaryStatus === 429
-    ? "primary_429"
+    ? routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ? "primary_quota_blocked" : "primary_429"
     : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
   if (

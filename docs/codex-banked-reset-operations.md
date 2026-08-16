@@ -70,13 +70,12 @@ After a verified reset, the original inference request is the one recovery probe
 
 Settings are re-read on each gateway request and immediately before the consume boundary.
 
-| Variable                                        | Safe default | Canary requirement                                                       |
-| ----------------------------------------------- | ------------ | ------------------------------------------------------------------------ |
-| `CODEX_BANKED_RESET_ENABLED`                    | `true`       | `true` during shadow/live; `false` for fail-closed rollback.             |
-| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | Canary: `shadow` -> `live` -> `shadow`; persistent rollout: `live`.      |
-| `CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST`          | empty        | Stable hashes for every approved current account; never raw credentials. |
-| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Exactly `1`; terminal-only live rejects every other value.               |
-| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Exactly `1`; every other value fails closed.                             |
+| Variable                                        | Safe default | Canary requirement                                                  |
+| ----------------------------------------------- | ------------ | ------------------------------------------------------------------- |
+| `CODEX_BANKED_RESET_ENABLED`                    | `true`       | `true` during shadow/live; `false` for fail-closed rollback.        |
+| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | Canary: `shadow` -> `live` -> `shadow`; persistent rollout: `live`. |
+| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Exactly `1`; terminal-only live rejects every other value.          |
+| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Exactly `1`; every other value fails closed.                        |
 
 Shadow mode may GET inventory for stable blocked accounts and writes one redacted, deduplicated decision for that
 blocked episode. It makes zero consume calls. A repeated selected decision returns `already_would_spend_once` without a
@@ -94,8 +93,7 @@ Never clear routing KV, shadow decisions, the redemption ledger, or daily-cap re
 2. Verify both `/health` endpoints serve the same candidate SHA and routed deployment ID:
    - `https://ai-ubq-fi.ubiquity-dao.deno.net/health`
    - `https://ai.ubq.fi/health`
-3. Verify the effective configuration remains enabled, in `shadow`, capped at exactly one, and has the secret allowlist
-   present.
+3. Verify the effective configuration remains enabled, in `shadow`, and capped at exactly one.
 4. Confirm `/health/providers` still shows the intended stable exhausted account and a healthy non-probing sibling.
 5. Send one controlled normal inference request. Do not call the reset-credit endpoint directly.
 6. Read `GET /admin/providers/codex/banked-resets/shadow-decisions` and require a current record with:
@@ -128,8 +126,8 @@ production live mode. Only after the shadow proof above:
    ```
 
 2. The environment update restarts isolates without creating a new build. Re-read the effective configuration without
-   printing the secret allowlist, require mode `live`, both caps `1`, and the allowlist present, then re-attest both
-   health domains at the unchanged candidate SHA and deployment ID.
+   require mode `live` and both caps `1`, then re-attest both health domains at the unchanged candidate SHA and
+   deployment ID.
 3. Send exactly one controlled normal inference request.
 4. Expect at most:
    - one fresh account-bound inventory GET for the blocked account;
@@ -161,12 +159,12 @@ response.
 
 ## Persistent production live
 
-After the historical canary is accepted, mode may remain `live` with both caps fixed at `1` and the full approved
-account allowlist intact. Do not call the consume route directly. Ordinary inference traffic drives both phases:
+After the historical canary is accepted, mode may remain `live` with both caps fixed at `1` and the full approved Do not
+call the consume route directly. Ordinary inference traffic drives both phases:
 
 1. The first eligible request for a new quota episode strongly reads every cohort fence, performs the bounded
    account-bound inventory reads, then strongly checks every fence again.
-2. If one exact allowlisted credit is eligible, that request atomically writes one redacted decision and returns
+2. If one exact eligible credit is available, that request atomically writes one redacted decision and returns
    `live_armed`. It creates no redemption claim, reserves no daily capacity, sends no consume request, and starts no
    post-reset inference probe. Concurrent first evaluations deduplicate on the same decision and also do not consume.
 3. With a healthy sibling, the arm request continues through ordinary routing on that sibling. With every account

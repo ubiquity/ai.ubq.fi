@@ -11,7 +11,7 @@ retry. Development and automated tests must never call the live redemption endpo
 ## Non-negotiable safety rules
 
 1. The feature must be disabled by default.
-2. It must require an explicit account allowlist in addition to the global feature flag.
+2. It must require the global feature flag and valid redemption caps.
 3. Only a fully parsed upstream `429` whose OpenAI error type is exactly `usage_limit_reached` may make an account
    eligible.
 4. A malformed, truncated, ambiguous, or ordinary rate-limit response must never redeem a reset.
@@ -68,7 +68,7 @@ mark that account quota-blocked using existing routing behavior
 all suitable accounts exhausted or unavailable
         |
         v
-check global flag + account allowlist + inventory eligibility
+check global flag + redemption caps + inventory eligibility
         |
         v
 atomically claim durable redemption transaction
@@ -264,7 +264,6 @@ Add explicit configuration with safe defaults:
 ```text
 CODEX_BANKED_RESET_ENABLED=false
 CODEX_BANKED_RESET_MODE=disabled|shadow|live
-CODEX_BANKED_RESET_ACCOUNT_ALLOWLIST=<account ids or stable hashes>
 CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY=0
 CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW=1
 ```
@@ -275,10 +274,9 @@ Recommended rollout:
 
 1. **Offline:** provider fake only; all tests pass.
 2. **Shadow:** production detects candidates and records what it would do, but provider redemption is impossible.
-3. **Canary:** one explicitly allowlisted account, a global limit of one, active operator observation, and a prewritten
-   rollback command.
-4. **Controlled expansion:** increase allowlist and limits only after auditing the canary receipt, verification, retry,
-   and reset inventory.
+3. **Canary:** one account, a global limit of one, active operator observation, and a prewritten rollback command.
+4. **Controlled expansion:** increase limits only after auditing the canary receipt, verification, retry, and reset
+   inventory.
 
 Rollback disables new claims and submissions while preserving `submitted` and `unknown` records for reconciliation.
 
@@ -360,7 +358,8 @@ It should support barriers so tests can pause two isolates at exact state transi
 
 - Disabled mode makes zero provider calls.
 - Shadow mode makes zero redemption calls and emits the candidate decision.
-- Live mode without account allowlisting makes zero redemption calls.
+- Live mode with a nonzero global cap may redeem any eligible account, subject to routing fences and durable
+  at-most-once checks.
 - Global and per-account limits fail closed.
 - A healthy fallback account prevents redemption.
 
@@ -480,7 +479,7 @@ The one permitted real-reset canary should happen only after:
 - The provider contract and sanitized fixtures have been reviewed.
 - Idempotency and status lookup behavior are confirmed.
 - The target account has exactly the expected inventory.
-- Only one account is allowlisted.
+- Any currently routed account may be selected when its inventory is eligible.
 - Global live redemption limit is exactly one.
 - An operator is watching structured logs and KV state.
 - The kill switch and rollback procedure have been rehearsed without a live call.
@@ -510,7 +509,7 @@ Immediately disable live mode after the first canary and audit all records befor
 - Existing Codex account routing tests still pass.
 - New trigger, policy, failure, race, streaming, property, and contract tests pass.
 - Shadow mode is deployable independently of live mode.
-- Live mode defaults off and requires both an allowlist and a nonzero global cap.
+- Live mode defaults off and requires a nonzero global cap.
 - Operator documentation covers alerts, reconciliation, kill switch, and rollback.
 - No real banked reset has been consumed during implementation or automated validation.
 
