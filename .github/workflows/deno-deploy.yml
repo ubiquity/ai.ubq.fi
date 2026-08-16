@@ -164,7 +164,6 @@ jobs:
       UOS_AI_TOKEN: ${{ secrets.UBIQUITY_AI_USER_TOKEN }}
       UOS_AI_KERNEL_PUBLIC_KEY: ${{ secrets.UBIQUITY_AI_KERNEL_PUBLIC_KEY }}
       CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-      REMOVED_PROVIDER_API_KEY: ${{ secrets.REMOVED_PROVIDER_API_KEY }}
       VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY }}
       METERED_API_KEY: ${{ secrets.METERED_API_KEY }}
       METERED_SYSTEM_TOKEN: ${{ secrets.METERED_SYSTEM_TOKEN }}
@@ -179,13 +178,12 @@ jobs:
           set -euo pipefail
           [ -n "$DENO_DEPLOY_TOKEN" ]
           [ -n "$UOS_AI_TOKEN" ]
-          [ -n "$REMOVED_PROVIDER_API_KEY" ]
           [ -n "$METERED_API_KEY" ]
           echo "::add-mask::$DENO_DEPLOY_TOKEN"
 
           deno eval \
             '
-              const required = ["UOS_AI_TOKEN", "REMOVED_PROVIDER_API_KEY", "METERED_API_KEY"];
+              const required = ["UOS_AI_TOKEN", "METERED_API_KEY"];
               const optional = [
                 "UOS_AI_KERNEL_PUBLIC_KEY",
                 "CEREBRAS_API_KEY",
