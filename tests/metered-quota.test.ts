@@ -182,6 +182,17 @@ Deno.test("Metered account observation reads wallet balance and latest successfu
   assert.equal(calls[0]?.headers.has("Cookie"), false);
 });
 
+Deno.test("Metered token usage preserves provider totals, including negative available values", async () => {
+  const result = await fetchMeteredQuotaObservation(credentials, {
+    fetcher: meteredFetcher([]),
+    now: () => 2_000_000,
+  });
+  assert.equal(result.unlimited_quota, true);
+  assert.equal(result.total_available, -53_413);
+  assert.equal(result.total_granted, -545);
+  assert.equal(result.total_used, 52_868);
+});
+
 Deno.test("Metered quota seeds a provisional baseline from the first observation", () => {
   const next = updateMeteredQuotaState(null, observation());
   assert.equal(next.current_balance_quota, 50_000_000);

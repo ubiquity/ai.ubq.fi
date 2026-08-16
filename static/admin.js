@@ -202,6 +202,7 @@ const meteredQuotaBadge = mustGet("metered-quota-badge");
 const meteredQuotaRemaining = mustGet("metered-quota-remaining");
 const meteredQuotaProgress = mustGet("metered-quota-progress");
 const meteredQuotaBalance = mustGet("metered-quota-balance");
+const meteredQuotaGranted = mustGet("metered-quota-granted");
 const meteredQuotaTokenUsage = mustGet("metered-quota-token-usage");
 const meteredQuotaBaseline = mustGet("metered-quota-baseline");
 const meteredQuotaLatestRefill = mustGet("metered-quota-latest-refill");
@@ -927,12 +928,17 @@ const renderMeteredCapacitySource = (source, provider = null) => {
   const wallet = source.wallet ?? {};
   appendProviderFact(
     facts,
-    "Balance",
-    wallet.unlimited_quota === true
-      ? "Unlimited"
-      : wallet.balance_credits === null
-      ? "Not available"
-      : formatCredits(wallet.balance_credits),
+    "Available tokens",
+    typeof wallet.total_available === "number" && Number.isFinite(wallet.total_available)
+      ? numberFormatter.format(wallet.total_available)
+      : "Not reported",
+  );
+  appendProviderFact(
+    facts,
+    "Granted tokens",
+    typeof wallet.total_granted === "number" && Number.isFinite(wallet.total_granted)
+      ? numberFormatter.format(wallet.total_granted)
+      : "Not reported",
   );
   appendProviderFact(
     facts,
@@ -950,9 +956,9 @@ const renderMeteredCapacitySource = (source, provider = null) => {
   );
   appendProviderFact(
     facts,
-    "Token usage",
+    "Used tokens",
     typeof wallet.total_used === "number" && Number.isFinite(wallet.total_used)
-      ? `${numberFormatter.format(wallet.total_used)} used`
+      ? numberFormatter.format(wallet.total_used)
       : "Not reported",
   );
   appendProviderFact(facts, "Confidence", wallet.confidence ?? "Not available");
@@ -6689,6 +6695,7 @@ const clearMeteredQuotaDiagnostics = () => {
   meteredQuotaProgress.value = 0;
   meteredQuotaProgress.removeAttribute("aria-valuetext");
   meteredQuotaBalance.textContent = "—";
+  meteredQuotaGranted.textContent = "—";
   meteredQuotaTokenUsage.textContent = "—";
   meteredQuotaBaseline.textContent = "—";
   meteredQuotaLatestRefill.textContent = "—";
@@ -6726,7 +6733,11 @@ const renderMeteredQuotaDiagnostics = (diagnostics) => {
     return;
   }
 
-  const remaining = typeof diagnostics.remaining_percent === "number" && Number.isFinite(diagnostics.remaining_percent)
+  const tokenUsage = typeof diagnostics.total_available === "number" ||
+    typeof diagnostics.total_granted === "number" ||
+    typeof diagnostics.total_used === "number";
+  const remaining = !tokenUsage && typeof diagnostics.remaining_percent === "number" &&
+      Number.isFinite(diagnostics.remaining_percent)
     ? Math.min(100, Math.max(0, diagnostics.remaining_percent))
     : null;
   if (remaining !== null) {
@@ -6738,19 +6749,27 @@ const renderMeteredQuotaDiagnostics = (diagnostics) => {
   }
 
   const unlimited = diagnostics.unlimited_quota === true;
-  if (unlimited) {
-    meteredQuotaRemaining.textContent = "Unlimited";
-    meteredQuotaBalance.textContent = "Unlimited";
+  if (tokenUsage) {
+    meteredQuotaRemaining.textContent = unlimited ? "Unlimited quota" : "Reported quota";
+    meteredQuotaBalance.textContent = formatQuotaTokens(diagnostics.total_available);
+    meteredQuotaGranted.textContent = formatQuotaTokens(diagnostics.total_granted);
+    meteredQuotaBaseline.textContent = "Not applicable";
+    meteredQuotaInferredCredit.textContent = "Not applicable";
+  } else if (unlimited) {
+    meteredQuotaRemaining.textContent = "Unlimited quota";
+    meteredQuotaBalance.textContent = "—";
+    meteredQuotaGranted.textContent = "—";
     meteredQuotaBaseline.textContent = "Not applicable";
     meteredQuotaInferredCredit.textContent = "Not applicable";
   } else {
     meteredQuotaBalance.textContent = formatQuotaCredits(diagnostics.balance_credits);
+    meteredQuotaGranted.textContent = "—";
     meteredQuotaBaseline.textContent = formatQuotaCredits(diagnostics.baseline_credits);
     meteredQuotaInferredCredit.textContent = formatQuotaCredits(diagnostics.last_inferred_credit_credits);
   }
   meteredQuotaTokenUsage.textContent = diagnostics.total_used === null || diagnostics.total_used === undefined
     ? "—"
-    : `${formatQuotaTokens(diagnostics.total_used)} used`;
+    : formatQuotaTokens(diagnostics.total_used);
   meteredQuotaCache.textContent = formatQuotaLabel(diagnostics.cache_state);
   meteredQuotaConfidence.textContent = formatQuotaLabel(diagnostics.confidence);
   meteredQuotaObserved.textContent = typeof diagnostics.observed_at_ms === "number"
