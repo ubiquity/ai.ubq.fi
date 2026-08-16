@@ -8,3 +8,5 @@ cd "$repo_root"
 deno fmt --check
 deno lint
 deno task build
+deno test --env --allow-net=127.0.0.1 --allow-env=CEREBRAS_API_KEY,VOYAGEAI_API_KEY,METERED_API_KEY,METERED_SYSTEM_TOKEN,METERED_USER_ID,GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID --ignore=lib/codex --ignore=tests/failover-stress-http.test.ts --ignore=tests/usage-optimization-measurement.test.ts tests
+deno task test:measurement

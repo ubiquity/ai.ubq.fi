@@ -13,7 +13,8 @@ Enable the repository pre-commit hook once per checkout:
 git config core.hooksPath .githooks
 ```
 
-The hook runs `deno fmt --check` and blocks commits containing unformatted code.
+The hook runs formatting, lint, build, and the deterministic repository test suites. It does not run the external
+Metered stress test; that 100-request load test remains a CI-only check.
 
 ## How auth works
 

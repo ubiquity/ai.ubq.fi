@@ -935,7 +935,15 @@ Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates"
     assert.equal((await handleResponses(kernelRequest(), kernelContext)).status, 200);
     kv.resetCounts();
     assert.equal((await handleResponses(kernelRequest(), kernelContext)).status, 200);
-    assert.deepEqual({ reads: kv.reads, writes: kv.writes }, { reads: 0, writes: 0 });
+    // A warm request may read debug-routing and OpenRouter circuit control
+    // state, but it must not read or write ordinary usage data.
+    assert.equal(kv.writes, 0);
+    assert.ok(
+      kv.readKeys.every((key) =>
+        JSON.stringify(key) === JSON.stringify(["uos_ai", "debug_routing", "v1"]) ||
+        JSON.stringify(key) === JSON.stringify(["uos_ai", "openrouter_failover", "circuit", "v1"])
+      ),
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
