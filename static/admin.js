@@ -6025,6 +6025,7 @@ const setAdminAccessState = (next) => {
     : "none";
   updateLoadingAuthStatus();
   updateViewAccess();
+  void loadDebugRouting();
   let prefetchPromise = null;
   if (adminAccessState.isAdmin) {
     closeAutoOpenedAuthWidget();
