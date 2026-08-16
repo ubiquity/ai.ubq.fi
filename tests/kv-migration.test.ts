@@ -9,6 +9,7 @@ import {
   migrateKvReadIncidentV2,
   validateKvMigrationTarget,
 } from "../src/kv_migration.ts";
+import { paidFallbackReconciliationGateV3Key } from "../src/paid_fallback_ledger.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
@@ -36,6 +37,15 @@ const entryLine = (key: Deno.KvKey, value: unknown): string =>
     value: simpleValueToJson(value),
     versionstamp: "00000000000000000000",
   });
+
+const paidFallbackGateDueAtMs = (store: Map<string, unknown>): number => {
+  const value = store.get(keyToString(paidFallbackReconciliationGateV3Key())) as
+    | { next_due_at_ms?: unknown }
+    | undefined;
+  const dueAtMs = value?.next_due_at_ms;
+  if (typeof dueAtMs !== "number") throw new Error("expected a numeric paid fallback gate timestamp");
+  return dueAtMs;
+};
 
 type KvSetOptions = Readonly<{ expireIn?: number }>;
 
@@ -661,6 +671,7 @@ Deno.test("KV incident migration projects settled spend and unresolved exposure 
   assert.equal((store.get(requestKey(requestId)) as Record<string, unknown>).billing_state, "unresolved");
   assert.equal((store.get(requestKey(requestId)) as Record<string, unknown>).reserved_microcredits, 100_000);
   assert.equal(store.has(pendingKey), true);
+  assert.equal(paidFallbackGateDueAtMs(store) <= Date.now(), true);
 
   const second = await migrateKvReadIncidentV2(makeKvStub(store));
   assert.equal(second.paid_fallback_records, 1);
@@ -670,12 +681,14 @@ Deno.test("KV incident migration projects settled spend and unresolved exposure 
   // legacy source rows without adding a second copy of settled spend.
   store.delete(windowKey);
   store.delete(pendingKey);
+  store.set(keyToString(paidFallbackReconciliationGateV3Key()), { next_due_at_ms: Date.now() + 60_000 });
   await migrateKvReadIncidentV2(makeKvStub(store));
   const repairedWindow = store.get(windowKey) as Record<string, unknown>;
   assert.equal(repairedWindow.settled_microcredits, 25_000);
   assert.equal(repairedWindow.reserved_microcredits, 100_000);
   assert.equal(repairedWindow.pending_count, 1);
   assert.equal(store.has(pendingKey), true);
+  assert.equal(paidFallbackGateDueAtMs(store) <= Date.now(), true);
   assert.deepEqual((await validateKvMigrationTarget(makeKvStub(store))).errors, []);
 
   store.set(windowKey, { ...repairedWindow, settled_microcredits: 25_001 });

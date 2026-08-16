@@ -21,7 +21,12 @@ import {
   refreshProviderCapacity,
   sampleProviderCapacityForCron,
 } from "../src/provider_capacity.ts";
-import { PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX } from "../src/provider_capacity_events.ts";
+import {
+  listProviderCapacityDowntimeEvents,
+  PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX,
+  PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX,
+  recordProviderCapacityDowntimeEvent,
+} from "../src/provider_capacity_events.ts";
 import { YUNWU_QUOTA_STATE_KEY } from "../src/yunwu_quota.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
 
@@ -206,6 +211,8 @@ const createFetcher = (
   codexUsage: ((account: string | null) => readonly [number, number]) | null = null,
   codexSpark = false,
   codexSparkResetAt = 1_800_011_000,
+  failureStatus = 503,
+  codexSparkForAccount: ((account: string | null) => boolean) | null = null,
 ) =>
 (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const headers = new Headers(init?.headers);
@@ -255,12 +262,15 @@ const createFetcher = (
       ),
     );
   }
-  if (account === failureAccount) return Promise.resolve(new Response("upstream-secret-body", { status: 503 }));
+  if (account === failureAccount) {
+    return Promise.resolve(new Response("upstream-secret-body", { status: failureStatus }));
+  }
   const used = codexUsage?.(account) ?? (account === "account-one" ? [12.5, 38] : [67, 81.25]);
+  const includeCodexSpark = codexSparkForAccount ? codexSparkForAccount(account) : codexSpark;
   return Promise.resolve(
     new Response(
       JSON.stringify(
-        codexSpark ? codexSparkUsageBody(used[0], used[1], codexSparkResetAt) : codexUsageBody(used[0], used[1]),
+        includeCodexSpark ? codexSparkUsageBody(used[0], used[1], codexSparkResetAt) : codexUsageBody(used[0], used[1]),
       ),
       {
         status: 200,
@@ -280,6 +290,9 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
   const accountOne = live.sources.find(
     (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
   );
+  const accountTwo = live.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2,
+  );
   assert.equal(accountOne?.windows.secondary, null);
   assert.deepEqual(accountOne?.additional_rate_limits, [{
     limit_name: "GPT-5.3-Codex-Spark",
@@ -293,12 +306,28 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
       secondary: null,
     },
   }]);
+  assert.deepEqual(accountTwo?.additional_rate_limits, [{
+    limit_name: "GPT-5.3-Codex-Spark",
+    metered_feature: "codex_bengalfox",
+    windows: {
+      primary: {
+        limit_window_seconds: 18_000,
+        used_percent: 81.25,
+        reset_at_ms: 1_800_011_000_000,
+      },
+      secondary: null,
+    },
+  }]);
 
   const persisted = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs });
   const persistedAccount = persisted.sources.find(
     (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
   );
+  const persistedAccountTwo = persisted.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2,
+  );
   assert.deepEqual(persistedAccount?.additional_rate_limits, accountOne?.additional_rate_limits);
+  assert.deepEqual(persistedAccountTwo?.additional_rate_limits, accountTwo?.additional_rate_limits);
   assert.equal(JSON.stringify(live).includes("must-not-escape"), false);
   const routingObservation = JSON.stringify(kvStore.get(keyToString(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)));
   assert.equal(routingObservation.includes("account-one"), false);
@@ -306,7 +335,7 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
   assert.equal(routingObservation.includes("GPT-5.3-Codex-Spark"), true);
 });
 
-Deno.test("sampler defers unused additional limits with full-window resets", async () => {
+Deno.test("sampler keeps unused additional limits visible while deferring them from routing", async () => {
   seed();
   const live = await refreshProviderCapacity({
     kv: kvStub,
@@ -316,7 +345,59 @@ Deno.test("sampler defers unused additional limits with full-window resets", asy
   const accountOne = live.sources.find(
     (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
   );
-  assert.deepEqual(accountOne?.additional_rate_limits, []);
+  assert.deepEqual(accountOne?.additional_rate_limits, [{
+    limit_name: "GPT-5.3-Codex-Spark",
+    metered_feature: "codex_bengalfox",
+    windows: {
+      primary: {
+        limit_window_seconds: 18_000,
+        used_percent: 0,
+        reset_at_ms: nowMs + 18_000_000,
+      },
+      secondary: null,
+    },
+  }]);
+  const routingObservation = JSON.stringify(kvStore.get(keyToString(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)));
+  assert.equal(routingObservation.includes("GPT-5.3-Codex-Spark"), false);
+});
+
+Deno.test("sampler mirrors a reported Spark limit to an available sibling for the admin view", async () => {
+  seed();
+  const live = await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher: createFetcher([], null, {}, null, true, 1_800_011_000, 503, (account) => account === "account-one"),
+    now: () => nowMs,
+  });
+  const accountOne = live.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1,
+  );
+  const accountTwo = live.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2,
+  );
+  assert.equal(accountOne?.additional_rate_limits.length, 1);
+  assert.deepEqual(accountTwo?.additional_rate_limits, accountOne?.additional_rate_limits);
+
+  const storedSnapshot = kvStore.get(keyToString(PROVIDER_CAPACITY_SNAPSHOT_KEY))?.value as {
+    sources?: readonly { source: string; slot?: number; additional_rate_limits?: readonly unknown[] }[];
+  } | undefined;
+  assert.deepEqual(
+    storedSnapshot?.sources?.find((source) => source.source === "codex" && source.slot === 2)
+      ?.additional_rate_limits,
+    [],
+  );
+
+  const persisted = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs });
+  const persistedAccountTwo = persisted.sources.find(
+    (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2,
+  );
+  assert.deepEqual(persistedAccountTwo?.additional_rate_limits, accountTwo?.additional_rate_limits);
+  const routingStore = kvStore.get(keyToString(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY))?.value as {
+    observations?: readonly { slot: number; additional_rate_limits: readonly unknown[] }[];
+  } | undefined;
+  assert.deepEqual(
+    routingStore?.observations?.map((observation) => [observation.slot, observation.additional_rate_limits.length]),
+    [[0, 1], [1, 0]],
+  );
 });
 
 const historySource = (slot: 1 | 2, sampledAtMs: number, state: "available" | "unavailable" = "available") => ({
@@ -602,14 +683,14 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
   assert.equal(kvStore.get(keyToString(PROVIDER_CAPACITY_LEASE_KEY)), undefined);
 });
 
-Deno.test("partial sampler failures stay unavailable and produce graph gaps", async () => {
+Deno.test("partial sampler failures retain redacted downtime evidence for graph bridges", async () => {
   seed();
   const firstCalls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
   await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher(firstCalls), now: () => nowMs });
   const secondCalls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
   const partial = await refreshProviderCapacity({
     kv: kvStub,
-    fetcher: createFetcher(secondCalls, "account-one"),
+    fetcher: createFetcher(secondCalls, "account-one", {}, null, false, 1_800_011_000, 504),
     now: () => nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
   });
   const accountOne = partial.sources.find((source) => source.source === "codex" && source.slot === 1);
@@ -618,9 +699,47 @@ Deno.test("partial sampler failures stay unavailable and produce graph gaps", as
   assert.equal(accountTwo?.state, "available");
   assert.equal(partial.history.length, 2);
   assert.equal(partial.history[1]?.sources[0]?.state, "unavailable");
+  assert.equal(partial.history[1]?.sources[0]?.failure_kind, "upstream_error");
+  assert.equal(partial.history[1]?.sources[0]?.failure_status, 504);
+  assert.equal(partial.history[1]?.sources[0]?.source_observed_at_ms, nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS);
   assert.equal(partial.history[1]?.sources[0]?.windows.primary, null);
   assert.equal(partial.history[1]?.sources[1]?.windows.secondary?.used_percent, 81.25);
   assert.equal(JSON.stringify(partial).includes("upstream-secret-body"), false);
+});
+
+Deno.test("downtime evidence is redacted, deduplicated per chart bucket, and retained in the view", async () => {
+  seed();
+  const firstObservedAtMs = nowMs + 1_000;
+  assert.equal(
+    await recordProviderCapacityDowntimeEvent({
+      failure_kind: "upstream_error",
+      status: 504,
+      observed_at_ms: firstObservedAtMs,
+    }, kvStub),
+    true,
+  );
+  assert.equal(
+    await recordProviderCapacityDowntimeEvent({
+      failure_kind: "unreachable",
+      status: null,
+      observed_at_ms: firstObservedAtMs + 1_000,
+    }, kvStub),
+    true,
+  );
+  const events = await listProviderCapacityDowntimeEvents({ kv: kvStub, now: () => firstObservedAtMs + 1_000 });
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.provider, "openai");
+  assert.equal(events[0]?.status, 504);
+  assert.equal([...kvStore.keys()].some((key) => key.includes("upstream-secret-body")), false);
+  assert.equal(
+    [...kvStore.keys()].filter((key) => {
+      const parsed = JSON.parse(key) as Deno.KvKey;
+      return PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX.every((part, index) => parsed[index] === part);
+    }).length,
+    1,
+  );
+  const view = await getPersistedProviderCapacityView({ kv: kvStub, now: () => firstObservedAtMs + 1_000 });
+  assert.deepEqual(view.downtime_events, events);
 });
 
 Deno.test("persisted Codex data becomes stale after the missed-run allowance", async () => {

@@ -6,7 +6,12 @@ import {
   type CodexCapacityRoutingObservationInput,
   recordCodexCapacityRoutingObservations,
 } from "./codex_account_routing.ts";
-import { listProviderCapacityResetEvents, type ProviderCapacityResetEvent } from "./provider_capacity_events.ts";
+import {
+  listProviderCapacityDowntimeEvents,
+  listProviderCapacityResetEvents,
+  type ProviderCapacityDowntimeEvent,
+  type ProviderCapacityResetEvent,
+} from "./provider_capacity_events.ts";
 import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
 import { getConfiguredYunwuQuotaSnapshot, YUNWU_QUOTA_FRESH_MS, type YunwuQuotaSnapshot } from "./yunwu_quota.ts";
 import { isRecord } from "./utils.ts";
@@ -25,9 +30,19 @@ export const PROVIDER_CAPACITY_SOURCE_STALE_MS = 30 * 60_000;
 export const PROVIDER_CAPACITY_CODEX_TIMEOUT_MS = 8_000;
 
 const ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS = 60_000;
+const CODEX_SPARK_LIMIT_NAME = "GPT-5.3-Codex-Spark";
+
+const codexAccountLabel = (slot: number, email: string | null = null): string =>
+  email?.trim() || `Codex account ${slot}`;
 
 type CapacityState = "available" | "stale" | "unavailable";
 export type ProviderCapacityViewState = "live" | "persisted" | "stale" | "unavailable";
+export type ProviderCapacityFailureKind =
+  | "not_configured"
+  | "http_error"
+  | "upstream_error"
+  | "unreachable"
+  | "invalid_response";
 
 export type ProviderCapacityWindow = Readonly<{
   limit_window_seconds: number | null;
@@ -52,6 +67,8 @@ export type ProviderCapacitySource =
     state: CapacityState;
     source_observed_at_ms: number | null;
     snapshot_at_ms: number;
+    failure_kind: ProviderCapacityFailureKind | null;
+    failure_status: number | null;
     windows: Readonly<{
       primary: ProviderCapacityWindow | null;
       secondary: ProviderCapacityWindow | null;
@@ -97,6 +114,7 @@ export type ProviderCapacityView = Readonly<
     cache_state: ProviderCapacityViewState;
     history: readonly ProviderCapacityHistoryPoint[];
     reset_events: readonly ProviderCapacityResetEvent[];
+    downtime_events: readonly ProviderCapacityDowntimeEvent[];
   }
 >;
 
@@ -172,10 +190,7 @@ const isUnanchoredAdditionalWindow = (window: ProviderCapacityWindow | null, sna
     Math.abs(window.reset_at_ms - expectedResetAtMs) <= ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS;
 };
 
-const parseCodexAdditionalRateLimit = (
-  value: unknown,
-  snapshotAtMs: number,
-): ProviderCapacityAdditionalRateLimit | null => {
+const parseCodexAdditionalRateLimit = (value: unknown): ProviderCapacityAdditionalRateLimit | null => {
   if (!isRecord(value)) return null;
   const limitName = typeof value.limit_name === "string" ? value.limit_name.trim() : "";
   if (!limitName) return null;
@@ -183,20 +198,67 @@ const parseCodexAdditionalRateLimit = (
   const rateLimit = isRecord(value.rate_limit) ? value.rate_limit : null;
   const parsedPrimary = parseCodexWindow(rateLimit?.primary_window);
   const parsedSecondary = parseCodexWindow(rateLimit?.secondary_window);
-  const primary = isUnanchoredAdditionalWindow(parsedPrimary, snapshotAtMs) ? null : parsedPrimary;
-  const secondary = isUnanchoredAdditionalWindow(parsedSecondary, snapshotAtMs) ? null : parsedSecondary;
-  if (!primary && !secondary) return null;
+  if (!parsedPrimary && !parsedSecondary) return null;
   return {
     limit_name: limitName,
     metered_feature: meteredFeature,
     windows: {
-      primary,
-      secondary,
+      // Keep OpenAI's unused model window for the admin card. Routing filters
+      // this unanchored value separately because its reset is not evidence of
+      // a shared quota cycle.
+      primary: parsedPrimary,
+      secondary: parsedSecondary,
     },
   };
 };
 
-const parseCodexUsage = (value: unknown, snapshotAtMs: number):
+const additionalRateLimitsForRouting = (
+  limits: readonly ProviderCapacityAdditionalRateLimit[],
+  snapshotAtMs: number,
+): readonly ProviderCapacityAdditionalRateLimit[] =>
+  limits.flatMap((limit) => {
+    const primary = isUnanchoredAdditionalWindow(limit.windows.primary, snapshotAtMs) ? null : limit.windows.primary;
+    const secondary = isUnanchoredAdditionalWindow(limit.windows.secondary, snapshotAtMs)
+      ? null
+      : limit.windows.secondary;
+    if (!primary && !secondary) return [];
+    return [{
+      ...limit,
+      windows: { primary, secondary },
+    }];
+  });
+
+const isCodexSparkLimit = (limit: ProviderCapacityAdditionalRateLimit): boolean =>
+  limit.limit_name.trim().toLowerCase() === CODEX_SPARK_LIMIT_NAME.toLowerCase();
+
+/**
+ * OpenAI can omit the named Spark window from one account in a pool even when
+ * a reachable sibling reports it. Keep the admin snapshot's model rows
+ * aligned for the account pool. Routing continues to use only the account's
+ * own upstream observation, so this display projection cannot change model
+ * selection or quota admission.
+ */
+const fillMissingCodexSparkLimitForAdmin = (
+  sources: readonly ProviderCapacityCodexSource[],
+): readonly ProviderCapacityCodexSource[] => {
+  const sharedSparkLimit = sources
+    .filter((source) => source.state !== "unavailable")
+    .flatMap((source) => source.additional_rate_limits)
+    .find(isCodexSparkLimit);
+  if (!sharedSparkLimit) return sources;
+  return sources.map((source) => {
+    if (
+      source.state === "unavailable" ||
+      source.additional_rate_limits.some(isCodexSparkLimit)
+    ) return source;
+    return {
+      ...source,
+      additional_rate_limits: [...source.additional_rate_limits, sharedSparkLimit],
+    };
+  });
+};
+
+const parseCodexUsage = (value: unknown):
   | Readonly<{
     primary: ProviderCapacityWindow | null;
     secondary: ProviderCapacityWindow | null;
@@ -206,7 +268,7 @@ const parseCodexUsage = (value: unknown, snapshotAtMs: number):
   if (!isRecord(value) || !isRecord(value.rate_limit)) return null;
   const additionalRateLimits = Array.isArray(value.additional_rate_limits)
     ? value.additional_rate_limits.flatMap((candidate) => {
-      const parsed = parseCodexAdditionalRateLimit(candidate, snapshotAtMs);
+      const parsed = parseCodexAdditionalRateLimit(candidate);
       return parsed ? [parsed] : [];
     })
     : [];
@@ -222,13 +284,22 @@ const emptyWindows = (): Readonly<{
   secondary: null;
 }> => ({ primary: null, secondary: null });
 
-const unavailableCodexSource = (slot: 1 | 2, snapshotAtMs: number): ProviderCapacityCodexSource => ({
+const unavailableCodexSource = (
+  slot: 1 | 2,
+  snapshotAtMs: number,
+  failureKind: ProviderCapacityFailureKind = "not_configured",
+  failureStatus: number | null = null,
+  observed = false,
+  label = codexAccountLabel(slot),
+): ProviderCapacityCodexSource => ({
   source: "codex",
-  label: "Codex account " + slot,
+  label,
   slot,
   state: "unavailable",
-  source_observed_at_ms: null,
+  source_observed_at_ms: observed ? snapshotAtMs : null,
   snapshot_at_ms: snapshotAtMs,
+  failure_kind: failureKind,
+  failure_status: failureStatus,
   windows: emptyWindows(),
   additional_rate_limits: [],
 });
@@ -282,23 +353,48 @@ const fetchCodexCapacitySource = async (
     });
     if (!response.ok) {
       cancelResponseBody(response);
-      return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs);
+      return unavailableCodexSource(
+        account.slot as 1 | 2,
+        snapshotAtMs,
+        response.status >= 500 ? "upstream_error" : "http_error",
+        response.status,
+        true,
+        codexAccountLabel(account.slot, account.email),
+      );
     }
     let payload: unknown;
     try {
       payload = await response.json();
     } catch {
-      return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs);
+      return unavailableCodexSource(
+        account.slot as 1 | 2,
+        snapshotAtMs,
+        "invalid_response",
+        response.status,
+        true,
+        codexAccountLabel(account.slot, account.email),
+      );
     }
-    const windows = parseCodexUsage(payload, snapshotAtMs);
-    if (!windows) return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs);
+    const windows = parseCodexUsage(payload);
+    if (!windows) {
+      return unavailableCodexSource(
+        account.slot as 1 | 2,
+        snapshotAtMs,
+        "invalid_response",
+        response.status,
+        true,
+        codexAccountLabel(account.slot, account.email),
+      );
+    }
     return {
       source: "codex",
-      label: "Codex account " + account.slot,
+      label: codexAccountLabel(account.slot, account.email),
       slot: account.slot as 1 | 2,
       state: "available",
       source_observed_at_ms: snapshotAtMs,
       snapshot_at_ms: snapshotAtMs,
+      failure_kind: null,
+      failure_status: null,
       windows: {
         primary: windows.primary,
         secondary: windows.secondary,
@@ -306,7 +402,14 @@ const fetchCodexCapacitySource = async (
       additional_rate_limits: windows.additional_rate_limits,
     };
   } catch {
-    return unavailableCodexSource(account.slot as 1 | 2, snapshotAtMs);
+    return unavailableCodexSource(
+      account.slot as 1 | 2,
+      snapshotAtMs,
+      "unreachable",
+      null,
+      true,
+      codexAccountLabel(account.slot, account.email),
+    );
   }
 };
 
@@ -380,7 +483,7 @@ const captureProviderCapacitySnapshot = async (
       source_observed_at_ms: source.source_observed_at_ms,
       snapshot_at_ms: source.snapshot_at_ms,
       windows: source.windows,
-      additional_rate_limits: source.additional_rate_limits,
+      additional_rate_limits: additionalRateLimitsForRouting(source.additional_rate_limits, snapshotAtMs),
     });
   }
   await recordCodexCapacityRoutingObservations(routingObservations, snapshotAtMs);
@@ -441,15 +544,31 @@ const readStoredCodexSource = (
   const observed = value.source_observed_at_ms;
   const snapshotAtMs = value.snapshot_at_ms === undefined ? fallbackSnapshotAtMs : value.snapshot_at_ms;
   if (!state || !(observed === null || isSafeTimestamp(observed)) || !isSafeTimestamp(snapshotAtMs)) return null;
+  const failureKind = value.failure_kind === null || value.failure_kind === undefined
+    ? state === "unavailable" ? "not_configured" : null
+    : value.failure_kind;
+  const failureStatus = value.failure_status === null || value.failure_status === undefined
+    ? null
+    : typeof value.failure_status === "number" && Number.isSafeInteger(value.failure_status) &&
+        value.failure_status >= 100 && value.failure_status <= 599
+    ? value.failure_status
+    : null;
+  if (
+    !(failureKind === null || failureKind === "not_configured" || failureKind === "http_error" ||
+      failureKind === "upstream_error" || failureKind === "unreachable" || failureKind === "invalid_response") ||
+    (state === "available" && (failureKind !== null || failureStatus !== null))
+  ) return null;
   const windows = isRecord(value.windows) ? value.windows : null;
   if (!windows) return null;
   return {
     source: "codex",
-    label: "Codex account " + value.slot,
+    label: typeof value.label === "string" && value.label.trim() ? value.label.trim() : codexAccountLabel(value.slot),
     slot: value.slot,
     state,
     source_observed_at_ms: observed,
     snapshot_at_ms: snapshotAtMs,
+    failure_kind: state === "available" ? null : failureKind,
+    failure_status: state === "available" ? null : failureStatus,
     windows: {
       primary: readStoredWindow(windows.primary),
       secondary: readStoredWindow(windows.secondary),
@@ -641,15 +760,24 @@ const toCapacityView = (
   requestedState: Exclude<ProviderCapacityViewState, "unavailable">,
   history: readonly ProviderCapacityHistoryPoint[],
   resetEvents: readonly ProviderCapacityResetEvent[],
+  downtimeEvents: readonly ProviderCapacityDowntimeEvent[],
   nowMs: number,
 ): ProviderCapacityView => {
   const current = staleProviderSnapshot(snapshot, nowMs);
-  const stale = current.sources.some((source) => source.state === "stale");
-  return {
+  const codexSources = fillMissingCodexSparkLimitForAdmin(
+    current.sources.filter((source): source is ProviderCapacityCodexSource => source.source === "codex"),
+  );
+  const projected = {
     ...current,
+    sources: [codexSources[0] ?? current.sources[0], codexSources[1] ?? current.sources[1], current.sources[2]],
+  } as ProviderCapacitySnapshot;
+  const stale = projected.sources.some((source) => source.state === "stale");
+  return {
+    ...projected,
     cache_state: stale ? "stale" : requestedState,
     history,
     reset_events: resetEvents,
+    downtime_events: downtimeEvents,
   };
 };
 
@@ -667,11 +795,13 @@ const unavailableView = (
   snapshotAtMs: number,
   history: readonly ProviderCapacityHistoryPoint[],
   resetEvents: readonly ProviderCapacityResetEvent[],
+  downtimeEvents: readonly ProviderCapacityDowntimeEvent[],
 ): ProviderCapacityView => ({
   ...unavailableSnapshot(snapshotAtMs),
   cache_state: "unavailable",
   history,
   reset_events: resetEvents,
+  downtime_events: downtimeEvents,
 });
 
 const acquireCapacityLease = async (
@@ -797,15 +927,16 @@ export const getPersistedProviderCapacityView = async (
 ): Promise<ProviderCapacityView> => {
   const nowMs = safeNow(options.now ?? Date.now);
   const kv = options.kv === undefined ? await getKv() : options.kv;
-  if (!kv) return unavailableView(nowMs, [], []);
-  const [snapshot, history, resetEvents] = await Promise.all([
+  if (!kv) return unavailableView(nowMs, [], [], []);
+  const [snapshot, history, resetEvents, downtimeEvents] = await Promise.all([
     readCapacitySnapshot(kv),
     readCapacityHistory(kv, nowMs),
     listProviderCapacityResetEvents({ kv, now: () => nowMs }),
+    listProviderCapacityDowntimeEvents({ kv, now: () => nowMs }),
   ]);
   return snapshot
-    ? toCapacityView(snapshot, "persisted", history, resetEvents, nowMs)
-    : unavailableView(nowMs, history, resetEvents);
+    ? toCapacityView(snapshot, "persisted", history, resetEvents, downtimeEvents, nowMs)
+    : unavailableView(nowMs, history, resetEvents, downtimeEvents);
 };
 
 export const refreshProviderCapacity = async (
@@ -815,13 +946,14 @@ export const refreshProviderCapacity = async (
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) {
     const snapshot = await captureProviderCapacitySnapshot(options, nowMs, null);
-    return toCapacityView(snapshot, "live", [historyPointForSnapshot(snapshot)], [], nowMs);
+    return toCapacityView(snapshot, "live", [historyPointForSnapshot(snapshot)], [], [], nowMs);
   }
 
-  const [cached, historyBefore, resetEventsBefore] = await Promise.all([
+  const [cached, historyBefore, resetEventsBefore, downtimeEventsBefore] = await Promise.all([
     readCapacitySnapshot(kv),
     readCapacityHistory(kv, nowMs),
     listProviderCapacityResetEvents({ kv, now: () => nowMs }),
+    listProviderCapacityDowntimeEvents({ kv, now: () => nowMs }),
   ]);
   const owner = (options.createLeaseOwner ?? (() => crypto.randomUUID()))();
   const lease = await acquireCapacityLease(kv, owner, nowMs).catch(() => ({
@@ -833,9 +965,12 @@ export const refreshProviderCapacity = async (
     const snapshot = coalesced ?? cached;
     const history = await readCapacityHistory(kv, nowMs).catch(() => historyBefore);
     const resetEvents = await listProviderCapacityResetEvents({ kv, now: () => nowMs }).catch(() => resetEventsBefore);
+    const downtimeEvents = await listProviderCapacityDowntimeEvents({ kv, now: () => nowMs }).catch(() =>
+      downtimeEventsBefore
+    );
     return snapshot
-      ? toCapacityView(snapshot, "persisted", history, resetEvents, nowMs)
-      : unavailableView(nowMs, history, resetEvents);
+      ? toCapacityView(snapshot, "persisted", history, resetEvents, downtimeEvents, nowMs)
+      : unavailableView(nowMs, history, resetEvents, downtimeEvents);
   }
 
   try {
@@ -843,11 +978,15 @@ export const refreshProviderCapacity = async (
     const persisted = await persistCapacitySnapshot(kv, lease.entry, snapshot).catch(() => false);
     const history = await readCapacityHistory(kv, nowMs).catch(() => historyBefore);
     const resetEvents = await listProviderCapacityResetEvents({ kv, now: () => nowMs }).catch(() => resetEventsBefore);
+    const downtimeEvents = await listProviderCapacityDowntimeEvents({ kv, now: () => nowMs }).catch(() =>
+      downtimeEventsBefore
+    );
     return toCapacityView(
       snapshot,
       "live",
       persisted ? history : mergeHistoryPoints(history, historyPointForSnapshot(snapshot)),
       resetEvents,
+      downtimeEvents,
       nowMs,
     );
   } finally {
@@ -910,6 +1049,6 @@ export const handleProviderCapacity = async (
     const view = live ? await refreshProviderCapacity(options) : await getPersistedProviderCapacityView(options);
     return json(200, view, { "Cache-Control": "no-store" });
   } catch {
-    return json(200, unavailableView(Date.now(), [], []), { "Cache-Control": "no-store" });
+    return json(200, unavailableView(Date.now(), [], [], []), { "Cache-Control": "no-store" });
   }
 };
