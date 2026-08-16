@@ -5,6 +5,16 @@ OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
 LLM and app integration notes live in [`static/docs/llms-agents.md`](static/docs/llms-agents.md) and are served at
 `https://ai.ubq.fi/docs/llms-agents.md`.
 
+## Development hooks
+
+Enable the repository pre-commit hook once per checkout:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook runs `deno fmt --check` and blocks commits containing unformatted code.
+
 ## How auth works
 
 - Clients authenticate to `ai.ubq.fi` with a **UOS gateway token**: `Authorization: Bearer <token>`.

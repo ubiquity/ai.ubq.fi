@@ -1954,7 +1954,10 @@ const mergeProviderCapacitySnapshots = (cached, latest) => {
   if (!cached || typeof cached !== "object") return latest;
   if (!latest || typeof latest !== "object") return cached;
   const mergeTimedRows = (key) => {
-    const rows = [...(Array.isArray(cached[key]) ? cached[key] : []), ...(Array.isArray(latest[key]) ? latest[key] : [])];
+    const rows = [
+      ...(Array.isArray(cached[key]) ? cached[key] : []),
+      ...(Array.isArray(latest[key]) ? latest[key] : []),
+    ];
     const byTime = new Map();
     rows.forEach((row) => {
       const timestamp = [row?.sampled_at_ms, row?.reset_at_ms, row?.occurred_at_ms]
@@ -2091,7 +2094,11 @@ const loadDebugRouting = async () => {
     if (!response.ok || !payload?.routing) throw new Error(payload?.error?.message ?? "Debug routing unavailable");
     debugRoutingScenario.value = payload.routing.scenario;
     debugRoutingStatus.textContent = formatDebugRoutingStatus(payload.routing);
-    setBadge(debugRoutingBadge, payload.routing.scenario === "normal" ? "ok" : "unknown", payload.routing.scenario === "normal" ? "Normal" : "Active");
+    setBadge(
+      debugRoutingBadge,
+      payload.routing.scenario === "normal" ? "ok" : "unknown",
+      payload.routing.scenario === "normal" ? "Normal" : "Active",
+    );
     debugRoutingLoadedAt = Date.now();
   } catch (error) {
     setBadge(debugRoutingBadge, "bad", "Unavailable");
