@@ -65,7 +65,6 @@ const {
 const { default: handler } = await import("../src/handler.ts");
 const { config } = await import("../src/config.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
-const { setRemovedProviderApiKeyForTest } = await import("../src/removed_provider.ts");
 const {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
@@ -193,77 +192,6 @@ Deno.test("admin provider health includes cached quota fields without an active 
     assert.equal("balance_credits" in (payload.metered?.quota ?? {}), true);
   } finally {
     globalThis.fetch = originalFetch;
-  }
-});
-
-Deno.test("passive provider health exposes only bounded RemovedProvider circuit and telemetry fields", async () => {
-  kvStore.clear();
-  setRemovedProviderApiKeyForTest("removed_provider-secret-must-not-leak");
-  kvStore.set(keyToString(["uos_ai", "removed_provider_failover", "circuit", "v1"]), {
-    v: 1,
-    phase: "half_open",
-    failure_at_ms: [1_000, 2_000],
-    open_until_ms: Date.now() + 120_000,
-    generation: 4,
-    probe: {
-      token: "private-probe-token",
-      generation: 4,
-      lease_until_ms: Date.now() + 150_000,
-      source: "expiry",
-    },
-    updated_at_ms: 2_000,
-  });
-  kvStore.set(keyToString(["uos_ai", "removed_provider_failover", "telemetry", "v1"]), {
-    v: 1,
-    attempted_provider: "chatgpt_codex,removed_provider",
-    trigger_class: "http_5xx",
-    circuit_transition: "probe_claimed",
-    selected_model: "google/gemini-2.5-pro",
-    task_type: "coding",
-    latency_ms: 42,
-    terminal_status: "response.completed",
-    semantic_commitment: "tool_call",
-    observed_at_ms: 3_000,
-  });
-  try {
-    const response = await handleHealthProviders();
-    const text = await response.text();
-    const payload = JSON.parse(text) as {
-      removed_provider?: {
-        configured?: boolean;
-        circuit?: Record<string, unknown>;
-        telemetry?: Record<string, unknown>;
-      };
-    };
-    assert.equal(response.status, 200);
-    assert.equal(payload.removed_provider?.configured, true);
-    assert.deepEqual(Object.keys(payload.removed_provider?.circuit ?? {}).sort(), [
-      "available",
-      "open_until_ms",
-      "probe_active",
-      "recent_failures",
-      "state",
-    ]);
-    assert.equal(payload.removed_provider?.circuit?.state, "half_open");
-    assert.equal(payload.removed_provider?.circuit?.probe_active, true);
-    assert.deepEqual(Object.keys(payload.removed_provider?.telemetry ?? {}).sort(), [
-      "attempted_provider",
-      "available",
-      "circuit_transition",
-      "latency_ms",
-      "observed_at_ms",
-      "selected_model",
-      "semantic_commitment",
-      "task_type",
-      "terminal_status",
-      "trigger_class",
-      "v",
-    ]);
-    assert.equal(payload.removed_provider?.telemetry?.selected_model, "google/gemini-2.5-pro");
-    assert.equal(text.includes("removed_provider-secret-must-not-leak"), false);
-    assert.equal(text.includes("private-probe-token"), false);
-  } finally {
-    setRemovedProviderApiKeyForTest(undefined);
   }
 });
 
@@ -398,9 +326,8 @@ Deno.test("authenticated admin provider route is private and not cacheable", asy
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("Cache-Control"), "no-store");
-    const payload = await response.json() as { mode?: unknown; removed_provider?: unknown };
+    const payload = await response.json() as { mode?: unknown };
     assert.equal(payload.mode, "passive");
-    assert.equal(typeof payload.removed_provider, "object");
   } finally {
     adminTokens.delete(token);
   }
