@@ -436,11 +436,9 @@ Deno.test("active upstream health retains detailed failure diagnostics", async (
 });
 
 Deno.test("active upstream health preserves the provider that finishes before the shared deadline", async () => {
-  const originalToken = Deno.env.get("METERED_SYSTEM_TOKEN");
-  const originalUserId = Deno.env.get("METERED_USER_ID");
+  const originalApiKey = Deno.env.get("METERED_API_KEY");
   const originalFetch = globalThis.fetch;
-  Deno.env.set("METERED_SYSTEM_TOKEN", "system-token");
-  Deno.env.set("METERED_USER_ID", "717235");
+  Deno.env.set("METERED_API_KEY", "metered-api-key");
   setActiveUpstreamHealthTimeoutMsForTest(20);
 
   const restoreEnv = (key: string, value: string | undefined): void => {
@@ -471,13 +469,18 @@ Deno.test("active upstream health preserves the provider that finishes before th
           return waitForAbort(init?.signal);
         }
         if (isCodex) return Promise.resolve(jsonResponse({ models: [{ slug: "gpt-health" }] }));
-        if (url.pathname === "/api/user/self") {
-          return Promise.resolve(jsonResponse({ success: true, data: { quota: 1_000_000, used_quota: 10 } }));
+        if (url.pathname === "/api/usage/token/") {
+          return Promise.resolve(jsonResponse({
+            success: true,
+            data: {
+              total_available: 1_000_000,
+              total_granted: 1_000_000,
+              total_used: 10,
+              unlimited_quota: false,
+            },
+          }));
         }
-        if (url.pathname === "/api/user/topuprecords") {
-          return Promise.resolve(jsonResponse({ success: true, data: { records: [] } }));
-        }
-        return Promise.resolve(jsonResponse({ success: true, data: { quota_per_unit: 500_000 } }));
+        throw new Error(`Unexpected Metered URL: ${url}`);
       };
 
       const response = await handleHealthUpstream();
@@ -501,7 +504,6 @@ Deno.test("active upstream health preserves the provider that finishes before th
   } finally {
     globalThis.fetch = originalFetch;
     setActiveUpstreamHealthTimeoutMsForTest(null);
-    restoreEnv("METERED_SYSTEM_TOKEN", originalToken);
-    restoreEnv("METERED_USER_ID", originalUserId);
+    restoreEnv("METERED_API_KEY", originalApiKey);
   }
 });

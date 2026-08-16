@@ -1,5 +1,5 @@
 import { getKv } from "./kv.ts";
-import { getString, isRecord } from "./utils.ts";
+import { isRecord } from "./utils.ts";
 import { METERED_BASE_URL, type MeteredFetch } from "./metered.ts";
 
 export const METERED_QUOTA_FRESH_MS = 5 * 60_000;
@@ -8,20 +8,16 @@ export const METERED_QUOTA_REFRESH_LEASE_MS = 15_000;
 export const METERED_QUOTA_COLD_WAIT_MS = 2_000;
 export const METERED_QUOTA_FETCH_TIMEOUT_MS = 10_000;
 
-export const METERED_SYSTEM_TOKEN_ENV = "METERED_SYSTEM_TOKEN";
-export const METERED_USER_ID_ENV = "METERED_USER_ID";
+export const METERED_API_KEY_ENV = "METERED_API_KEY";
 
 export const METERED_QUOTA_STATE_KEY = ["uos_ai", "metered_quota", "v1", "state"] as const;
 export const METERED_QUOTA_REFRESH_LEASE_KEY = ["uos_ai", "metered_quota", "v1", "refresh_lease"] as const;
 export const METERED_QUOTA_INVALIDATION_KEY = ["uos_ai", "metered_quota", "v1", "invalidation"] as const;
 
-const METERED_ACCOUNT_URL = `${METERED_BASE_URL}/api/user/self`;
-const METERED_TOPUP_RECORDS_URL = `${METERED_BASE_URL}/api/user/topuprecords?page=1&page_size=10`;
-const METERED_STATUS_URL = `${METERED_BASE_URL}/api/status`;
+const METERED_TOKEN_USAGE_URL = `${METERED_BASE_URL}/api/usage/token/`;
 
 export type MeteredAccountCredentials = Readonly<{
-  systemToken: string;
-  userId: string;
+  apiKey: string;
 }>;
 
 export type MeteredRefillObservation = Readonly<{
@@ -31,11 +27,15 @@ export type MeteredRefillObservation = Readonly<{
 }>;
 
 export type MeteredQuotaObservation = Readonly<{
-  balance_quota: number;
-  used_quota: number;
-  quota_per_credit: number;
+  balance_quota: number | null;
+  used_quota: number | null;
+  quota_per_credit: number | null;
   observed_at_ms: number;
   latest_refill: MeteredRefillObservation | null;
+  unlimited_quota?: boolean;
+  total_available?: number;
+  total_granted?: number;
+  total_used?: number;
 }>;
 
 export type MeteredQuotaConfidence = "provisional" | "refill_observed" | "inferred_adjustment";
@@ -54,6 +54,10 @@ export type MeteredQuotaState = Readonly<{
   latest_refill_id: string | null;
   latest_refill_amount_credits: number | null;
   latest_refill_completed_at_ms: number | null;
+  unlimited_quota?: boolean;
+  total_available?: number | null;
+  total_granted?: number | null;
+  total_used?: number | null;
 }>;
 
 export type MeteredQuotaCacheState = "fresh" | "refreshed" | "stale" | "wait";
@@ -61,11 +65,15 @@ export type MeteredQuotaCacheState = "fresh" | "refreshed" | "stale" | "wait";
 export type MeteredQuotaSnapshot = Readonly<{
   state: MeteredQuotaState;
   cache_state: MeteredQuotaCacheState;
-  balance_credits: number;
-  baseline_credits: number;
-  last_inferred_credit_credits: number;
+  balance_credits: number | null;
+  baseline_credits: number | null;
+  last_inferred_credit_credits: number | null;
   remaining_percent: number | null;
   used_percent: number | null;
+  unlimited_quota: boolean;
+  total_available: number | null;
+  total_granted: number | null;
+  total_used: number | null;
 }>;
 
 export type MeteredQuotaDiagnostics = Readonly<{
@@ -85,6 +93,10 @@ export type MeteredQuotaDiagnostics = Readonly<{
   latest_refill_id: string | null;
   latest_refill_amount_credits: number | null;
   latest_refill_completed_at_ms: number | null;
+  unlimited_quota?: boolean | null;
+  total_available?: number | null;
+  total_granted?: number | null;
+  total_used?: number | null;
 }>;
 
 export type GetMeteredQuotaSnapshotOptions = Readonly<{
@@ -123,11 +135,9 @@ const isQuotaInvalidation = (value: unknown): value is QuotaInvalidation =>
   isRecord(value) && isNonNegativeSafeInteger(value.invalidated_at_ms);
 
 const parseCredentials = (credentials: MeteredAccountCredentials): MeteredAccountCredentials | null => {
-  const systemToken = credentials.systemToken.trim();
-  const userId = credentials.userId.trim();
-  if (!systemToken || /\s/.test(systemToken)) return null;
-  if (!/^\d+$/.test(userId)) return null;
-  return { systemToken, userId };
+  const apiKey = credentials.apiKey.trim();
+  if (!apiKey || /\s/.test(apiKey)) return null;
+  return { apiKey };
 };
 
 const getEnv = (key: string): string | undefined => {
@@ -140,15 +150,13 @@ const getEnv = (key: string): string | undefined => {
 
 export const readMeteredAccountCredentials = (): MeteredAccountCredentials | null =>
   parseCredentials({
-    systemToken: getEnv(METERED_SYSTEM_TOKEN_ENV) ?? "",
-    userId: getEnv(METERED_USER_ID_ENV) ?? "",
+    apiKey: getEnv(METERED_API_KEY_ENV) ?? "",
   });
 
 const authenticatedHeaders = (credentials: MeteredAccountCredentials): Headers => {
   const headers = new Headers({
     Accept: "application/json",
-    Authorization: `Bearer ${credentials.systemToken}`,
-    "New-API-User": credentials.userId,
+    Authorization: `Bearer ${credentials.apiKey}`,
   });
   return headers;
 };
@@ -180,26 +188,6 @@ const fetchJson = async (
   }
 };
 
-const parseLatestRefill = (data: JsonRecord): MeteredRefillObservation | null => {
-  if (!Array.isArray(data.records)) return null;
-  const refills: MeteredRefillObservation[] = [];
-  for (const value of data.records) {
-    if (!isRecord(value) || getString(value.status)?.toLowerCase() !== "success") continue;
-    const id = typeof value.id === "string" ? value.id.trim() : isSafeInteger(value.id) ? String(value.id) : "";
-    const completedAtSeconds = value.complete_time;
-    if (!id || !isNonNegativeFiniteNumber(value.amount) || !isPositiveSafeInteger(completedAtSeconds)) continue;
-    const completedAtMs = completedAtSeconds * 1000;
-    if (!Number.isSafeInteger(completedAtMs)) continue;
-    refills.push({
-      id,
-      amount_credits: value.amount,
-      completed_at_ms: completedAtMs,
-    });
-  }
-  refills.sort((left, right) => right.completed_at_ms - left.completed_at_ms || right.id.localeCompare(left.id));
-  return refills[0] ?? null;
-};
-
 const combinedSignal = (signal: AbortSignal | undefined): AbortSignal => {
   const timeout = AbortSignal.timeout(METERED_QUOTA_FETCH_TIMEOUT_MS);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -217,30 +205,27 @@ export const fetchMeteredQuotaObservation = async (
   if (!credentials) throw new Error("Metered account credentials are invalid");
   const fetcher = options.fetcher ?? fetch;
   const signal = combinedSignal(options.signal);
-  const [accountEnvelope, topupsEnvelope, statusEnvelope] = await Promise.all([
-    fetchJson(METERED_ACCOUNT_URL, fetcher, authenticatedHeaders(credentials), signal),
-    fetchJson(METERED_TOPUP_RECORDS_URL, fetcher, authenticatedHeaders(credentials), signal),
-    fetchJson(METERED_STATUS_URL, fetcher, new Headers({ Accept: "application/json" }), signal),
-  ]);
-  const account = successfulEnvelopeData(accountEnvelope);
-  const topups = successfulEnvelopeData(topupsEnvelope);
-  const status = successfulEnvelopeData(statusEnvelope);
-  if (!account || !topups || !status) throw new Error("Metered account API returned an invalid envelope");
+  const usageEnvelope = await fetchJson(METERED_TOKEN_USAGE_URL, fetcher, authenticatedHeaders(credentials), signal);
+  const usage = successfulEnvelopeData(usageEnvelope);
+  if (!usage) throw new Error("Metered account API returned an invalid envelope");
   if (
-    !isSafeInteger(account.quota) ||
-    !isNonNegativeSafeInteger(account.used_quota) ||
-    !isPositiveSafeInteger(status.quota_per_unit)
-  ) {
-    throw new Error("Metered account API returned invalid quota data");
-  }
+    typeof usage.unlimited_quota !== "boolean" ||
+    !isSafeInteger(usage.total_available) ||
+    !isSafeInteger(usage.total_granted) ||
+    !isSafeInteger(usage.total_used)
+  ) throw new Error("Metered account API returned invalid token usage data");
   const observedAtMs = Math.trunc((options.now ?? Date.now)());
   if (!isNonNegativeSafeInteger(observedAtMs)) throw new Error("Metered quota observation clock is invalid");
   return {
-    balance_quota: account.quota,
-    used_quota: account.used_quota,
-    quota_per_credit: status.quota_per_unit,
+    balance_quota: null,
+    used_quota: null,
+    quota_per_credit: null,
     observed_at_ms: observedAtMs,
-    latest_refill: parseLatestRefill(topups),
+    latest_refill: null,
+    unlimited_quota: usage.unlimited_quota,
+    total_available: usage.total_available,
+    total_granted: usage.total_granted,
+    total_used: usage.total_used,
   };
 };
 
@@ -248,6 +233,42 @@ export const updateMeteredQuotaState = (
   previous: MeteredQuotaState | null,
   observation: MeteredQuotaObservation,
 ): MeteredQuotaState => {
+  const tokenUsageObservation = observation.unlimited_quota !== undefined ||
+    observation.total_available !== undefined || observation.total_granted !== undefined ||
+    observation.total_used !== undefined;
+  if (tokenUsageObservation) {
+    if (
+      typeof observation.unlimited_quota !== "boolean" ||
+      !isSafeInteger(observation.total_available) ||
+      !isSafeInteger(observation.total_granted) ||
+      !isSafeInteger(observation.total_used)
+    ) throw new Error("Metered token usage observation is incomplete");
+    return {
+      // Token usage is not a wallet refill cycle. Keep the legacy numeric
+      // fields neutral so signed totals cannot become spendable credits.
+      current_balance_quota: 0,
+      post_refill_baseline_quota: 0,
+      last_observed_used_quota: 0,
+      quota_per_credit: 1,
+      observed_at_ms: observation.observed_at_ms,
+      cycle_started_at_ms: observation.observed_at_ms,
+      confidence: "provisional",
+      last_known_debits_quota: 0,
+      last_inferred_credit_quota: 0,
+      last_credit_at_ms: null,
+      latest_refill_id: null,
+      latest_refill_amount_credits: null,
+      latest_refill_completed_at_ms: null,
+      unlimited_quota: observation.unlimited_quota,
+      total_available: observation.total_available,
+      total_granted: observation.total_granted,
+      total_used: observation.total_used,
+    };
+  }
+  if (
+    observation.balance_quota === null || observation.used_quota === null ||
+    observation.quota_per_credit === null
+  ) throw new Error("Metered wallet observation is incomplete");
   if (!previous) {
     const refillBaselineQuota = observation.latest_refill
       ? Math.round(observation.latest_refill.amount_credits * observation.quota_per_credit)
@@ -333,13 +354,21 @@ export const isMeteredQuotaState = (value: unknown): value is MeteredQuotaState 
     (value.latest_refill_id === null || typeof value.latest_refill_id === "string") &&
     (value.latest_refill_amount_credits === null || isNonNegativeFiniteNumber(value.latest_refill_amount_credits)) &&
     (value.latest_refill_completed_at_ms === null ||
-      isNonNegativeSafeInteger(value.latest_refill_completed_at_ms));
+      isNonNegativeSafeInteger(value.latest_refill_completed_at_ms)) &&
+    (value.unlimited_quota === undefined || typeof value.unlimited_quota === "boolean") &&
+    (value.total_available === undefined || value.total_available === null || isSafeInteger(value.total_available)) &&
+    (value.total_granted === undefined || value.total_granted === null || isSafeInteger(value.total_granted)) &&
+    (value.total_used === undefined || value.total_used === null || isSafeInteger(value.total_used));
 };
 
 const toSnapshot = (state: MeteredQuotaState, cacheState: MeteredQuotaCacheState): MeteredQuotaSnapshot => {
-  const balanceCredits = state.current_balance_quota / state.quota_per_credit;
-  const baselineCredits = state.post_refill_baseline_quota / state.quota_per_credit;
-  const remainingPercent = state.post_refill_baseline_quota > 0
+  const tokenUsage = state.unlimited_quota !== undefined || state.total_available !== undefined ||
+    state.total_granted !== undefined || state.total_used !== undefined;
+  const balanceCredits = tokenUsage ? null : state.current_balance_quota / state.quota_per_credit;
+  const baselineCredits = tokenUsage ? null : state.post_refill_baseline_quota / state.quota_per_credit;
+  const remainingPercent = tokenUsage
+    ? null
+    : state.post_refill_baseline_quota > 0
     ? Math.min(100, Math.max(0, state.current_balance_quota / state.post_refill_baseline_quota * 100))
     : null;
   return {
@@ -347,9 +376,13 @@ const toSnapshot = (state: MeteredQuotaState, cacheState: MeteredQuotaCacheState
     cache_state: cacheState,
     balance_credits: balanceCredits,
     baseline_credits: baselineCredits,
-    last_inferred_credit_credits: state.last_inferred_credit_quota / state.quota_per_credit,
+    last_inferred_credit_credits: tokenUsage ? null : state.last_inferred_credit_quota / state.quota_per_credit,
     remaining_percent: remainingPercent,
     used_percent: remainingPercent === null ? null : 100 - remainingPercent,
+    unlimited_quota: tokenUsage ? state.unlimited_quota === true : false,
+    total_available: tokenUsage && typeof state.total_available === "number" ? state.total_available : null,
+    total_granted: tokenUsage && typeof state.total_granted === "number" ? state.total_granted : null,
+    total_used: tokenUsage && typeof state.total_used === "number" ? state.total_used : null,
   };
 };
 
@@ -562,6 +595,10 @@ const unavailableDiagnostics = (configured: boolean): MeteredQuotaDiagnostics =>
   latest_refill_id: null,
   latest_refill_amount_credits: null,
   latest_refill_completed_at_ms: null,
+  unlimited_quota: null,
+  total_available: null,
+  total_granted: null,
+  total_used: null,
 });
 
 export const getMeteredQuotaDiagnostics = async (
@@ -571,22 +608,29 @@ export const getMeteredQuotaDiagnostics = async (
   if (!credentials) return unavailableDiagnostics(false);
   const snapshot = await getMeteredQuotaSnapshot(credentials, options);
   if (!snapshot) return unavailableDiagnostics(true);
+  const tokenUsage = snapshot.unlimited_quota || snapshot.total_available !== null || snapshot.total_used !== null;
   return {
     configured: true,
     available: true,
     cache_state: snapshot.cache_state,
-    confidence: snapshot.state.confidence,
+    confidence: tokenUsage ? null : snapshot.state.confidence,
     balance_credits: snapshot.balance_credits,
     baseline_credits: snapshot.baseline_credits,
     remaining_percent: snapshot.remaining_percent,
     used_percent: snapshot.used_percent,
     observed_at_ms: snapshot.state.observed_at_ms,
-    cycle_started_at_ms: snapshot.state.cycle_started_at_ms,
-    last_known_debits_credits: snapshot.state.last_known_debits_quota / snapshot.state.quota_per_credit,
+    cycle_started_at_ms: tokenUsage ? null : snapshot.state.cycle_started_at_ms,
+    last_known_debits_credits: tokenUsage
+      ? null
+      : snapshot.state.last_known_debits_quota / snapshot.state.quota_per_credit,
     last_inferred_credit_credits: snapshot.last_inferred_credit_credits,
-    last_credit_at_ms: snapshot.state.last_credit_at_ms,
+    last_credit_at_ms: tokenUsage ? null : snapshot.state.last_credit_at_ms,
     latest_refill_id: snapshot.state.latest_refill_id,
     latest_refill_amount_credits: snapshot.state.latest_refill_amount_credits,
     latest_refill_completed_at_ms: snapshot.state.latest_refill_completed_at_ms,
+    unlimited_quota: snapshot.unlimited_quota,
+    total_available: snapshot.total_available,
+    total_granted: snapshot.total_granted,
+    total_used: snapshot.total_used,
   };
 };

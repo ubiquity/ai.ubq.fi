@@ -149,8 +149,7 @@ const seed = (): void => {
     latest_refill_amount_credits: 10,
     latest_refill_completed_at_ms: nowMs - 5_000,
   });
-  Deno.env.set("METERED_SYSTEM_TOKEN", "test-system-token");
-  Deno.env.set("METERED_USER_ID", "123456");
+  Deno.env.set("METERED_API_KEY", "metered-api-key");
 };
 
 const codexUsageBody = (primaryUsed: number, secondaryUsed: number) => ({
@@ -201,12 +200,10 @@ const createFetcher = (
   calls: Array<{ account: string | null; authorization: string | null; url: string }>,
   failureAccount: string | null = null,
   metered: Readonly<{
-    balance_quota?: number;
-    used_quota?: number;
-    quota_per_unit?: number;
-    refill_id?: string;
-    refill_amount?: number;
-    refill_completed_at?: number;
+    total_available?: number;
+    total_granted?: number;
+    total_used?: number;
+    unlimited_quota?: boolean;
   }> = {},
   codexUsage: ((account: string | null) => readonly [number, number]) | null = null,
   codexSpark = false,
@@ -219,44 +216,17 @@ const createFetcher = (
   const url = String(input);
   const account = headers.get("ChatGPT-Account-ID");
   calls.push({ account, authorization: headers.get("Authorization"), url });
-  if (url === "https://api.openlux.ai/api/user/self") {
+  if (url === "https://api.openlux.ai/api/usage/token/") {
     return Promise.resolve(
       new Response(
         JSON.stringify({
           success: true,
           data: {
-            quota: metered.balance_quota ?? 750,
-            used_quota: metered.used_quota ?? 250,
+            total_available: metered.total_available ?? 750,
+            total_granted: metered.total_granted ?? 1_000,
+            total_used: metered.total_used ?? 250,
+            unlimited_quota: metered.unlimited_quota ?? false,
           },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-  }
-  if (url === "https://api.openlux.ai/api/user/topuprecords?page=1&page_size=10") {
-    return Promise.resolve(
-      new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            records: [{
-              id: metered.refill_id ?? "refill-one",
-              amount: metered.refill_amount ?? 10,
-              complete_time: metered.refill_completed_at ?? (nowMs - 5_000) / 1_000,
-              status: "success",
-            }],
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-  }
-  if (url === "https://api.openlux.ai/api/status") {
-    return Promise.resolve(
-      new Response(
-        JSON.stringify({
-          success: true,
-          data: { quota_per_unit: metered.quota_per_unit ?? 100 },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -438,11 +408,11 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   const calls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
   const live = await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher(calls), now: () => nowMs });
   assert.equal(live.cache_state, "live");
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 3);
   const codexCalls = calls.filter((call) => call.url.endsWith("/backend-api/wham/usage"));
   const meteredCalls = calls.filter((call) => call.url.startsWith("https://api.openlux.ai/api/"));
   assert.equal(codexCalls.length, 2);
-  assert.equal(meteredCalls.length, 3);
+  assert.equal(meteredCalls.length, 1);
   assert.deepEqual(codexCalls.map((call) => call.account).sort(), ["account-one", "account-two"]);
   assert.deepEqual(codexCalls.map((call) => call.authorization).sort(), ["Bearer token-one", "Bearer token-two"]);
   assert.equal(live.history.length, 1);
@@ -462,7 +432,7 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
     fetcher: createFetcher(callsInSameBucket),
     now: () => nowMs + 1_000,
   });
-  assert.equal(callsInSameBucket.length, 5);
+  assert.equal(callsInSameBucket.length, 3);
   assert.equal(second.history.length, 1);
   const historyKeyCount = [...kvStore.keys()]
     .map((key) => JSON.parse(key) as Deno.KvKey)
@@ -478,34 +448,33 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   }
 });
 
-Deno.test("sampler refresh observes a Metered top-up and raises its refill series", async () => {
+Deno.test("sampler refresh observes Metered token usage", async () => {
   seed();
   const initial = await refreshProviderCapacity({
     kv: kvStub,
     fetcher: createFetcher([]),
     now: () => nowMs,
   });
-  assert.equal(initial.history[0]?.sources[2]?.wallet.refill_cycle_remaining_percent, 75);
+  assert.equal(initial.history[0]?.sources[2]?.wallet.total_available, 750);
 
   const topupCalls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
   const topup = await refreshProviderCapacity({
     kv: kvStub,
     fetcher: createFetcher(topupCalls, null, {
-      balance_quota: 1_750,
-      used_quota: 250,
-      refill_id: "refill-two",
-      refill_amount: 10,
-      refill_completed_at: (nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS - 1_000) / 1_000,
+      total_available: 1_750,
+      total_granted: 2_000,
+      total_used: 250,
     }),
     now: () => nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
   });
   const current = topup.sources.find((source) => source.source === "metered");
   assert.equal(current?.state, "available");
-  assert.equal(current?.wallet.refill_cycle_remaining_percent, 100);
+  assert.equal(current?.wallet.total_available, 1_750);
+  assert.equal(current?.wallet.total_used, 250);
   assert.equal(topup.history.length, 2);
-  assert.equal(topup.history[0]?.sources[2]?.wallet.refill_cycle_remaining_percent, 75);
-  assert.equal(topup.history[1]?.sources[2]?.wallet.refill_cycle_remaining_percent, 100);
-  assert.equal(topupCalls.length, 5);
+  assert.equal(topup.history[0]?.sources[2]?.wallet.total_available, 750);
+  assert.equal(topup.history[1]?.sources[2]?.wallet.total_available, 1_750);
+  assert.equal(topupCalls.length, 3);
 });
 
 Deno.test("sampler preserves an exhaustion point when a reset refills the same bucket", async () => {
@@ -628,7 +597,7 @@ Deno.test("capacity endpoint reads persisted state by default and probes only fo
   );
   assert.equal(live.status, 200);
   assert.equal((await live.json() as { cache_state?: string }).cache_state, "live");
-  assert.equal(calls, 5);
+  assert.equal(calls, 3);
 
   const persisted = await handleProviderCapacity(
     new Request("https://ai.ubq.fi/admin/providers/capacity"),
@@ -641,7 +610,7 @@ Deno.test("capacity endpoint reads persisted state by default and probes only fo
   const persistedBody = await persisted.json() as { cache_state?: string; history?: unknown[] };
   assert.equal(persistedBody.cache_state, "persisted");
   assert.equal(persistedBody.history?.length, 1);
-  assert.equal(calls, 5);
+  assert.equal(calls, 3);
 });
 
 Deno.test("concurrent live refreshes coalesce through the durable lease", async () => {
@@ -665,7 +634,7 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
     createLeaseOwner: () => "sampler",
   });
   const waitDeadline = Date.now() + 2_000;
-  while (calls.length < 5) {
+  while (calls.length < 3) {
     assert.ok(Date.now() < waitDeadline, "first refresh did not issue all provider calls");
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
@@ -677,7 +646,7 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
   });
   releaseFetch();
   const [first, second] = await Promise.all([firstPromise, secondPromise]);
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 3);
   assert.equal(first.history.length, 1);
   assert.equal(second.history.length, 1);
   assert.equal(kvStore.get(keyToString(PROVIDER_CAPACITY_LEASE_KEY)), undefined);
@@ -791,20 +760,16 @@ const seedCountingCapacityKv = (kv: CountingKv): void => {
 };
 
 const withCountingCapacityEnvironment = async (run: () => Promise<void>): Promise<void> => {
-  const originalSystemToken = Deno.env.get("METERED_SYSTEM_TOKEN");
-  const originalUserId = Deno.env.get("METERED_USER_ID");
-  Deno.env.set("METERED_SYSTEM_TOKEN", "test-system-token");
-  Deno.env.set("METERED_USER_ID", "123456");
+  const originalApiKey = Deno.env.get("METERED_API_KEY");
+  Deno.env.set("METERED_API_KEY", "metered-api-key");
   try {
     await run();
   } finally {
     setKvForTest(kvStub);
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
-    if (originalSystemToken === undefined) Deno.env.delete("METERED_SYSTEM_TOKEN");
-    else Deno.env.set("METERED_SYSTEM_TOKEN", originalSystemToken);
-    if (originalUserId === undefined) Deno.env.delete("METERED_USER_ID");
-    else Deno.env.set("METERED_USER_ID", originalUserId);
+    if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalApiKey);
   }
 };
 
@@ -825,7 +790,7 @@ Deno.test("cron sampler persists capacity without building the discarded admin p
 
     const samplerBudget = samplerKv.budgets()[0];
     assert.ok(samplerBudget);
-    assert.equal(samplerCalls.length, 5);
+    assert.equal(samplerCalls.length, 3);
     assert.equal(
       samplerKv.commands.filter((command) =>
         command.scenario === "background:capacity_sampler" && command.command === "list"
@@ -867,7 +832,7 @@ Deno.test("cron sampler persists capacity without building the discarded admin p
 
     const liveRefreshBudget = liveRefreshKv.budgets()[0];
     assert.ok(liveRefreshBudget);
-    assert.equal(liveRefreshCalls.length, 5);
+    assert.equal(liveRefreshCalls.length, 3);
     assert.ok(
       liveRefreshKv.commands.filter((command) =>
         command.scenario === "background:capacity_view" && command.command === "list"
@@ -909,7 +874,7 @@ Deno.test("cron sampler preserves a same-bucket reset transition", async () => {
       kv: countingKv as unknown as Deno.Kv,
       now: () => nowMs + 1_000,
     });
-    assert.equal(calls.length, 10);
+    assert.equal(calls.length, 6);
     assert.deepEqual(view.history.map((point) => point.sampled_at_ms), [nowMs, nowMs + 1_000]);
     assert.equal(view.history[0]?.sources[0]?.windows.primary?.used_percent, 100);
     assert.equal(view.history[1]?.sources[0]?.windows.primary?.used_percent, 0);
@@ -940,7 +905,7 @@ Deno.test("concurrent cron samplers keep one provider probe under the durable le
       createLeaseOwner: () => "first-cron",
     });
     const waitDeadline = Date.now() + 2_000;
-    while (calls.length < 5) {
+    while (calls.length < 3) {
       assert.ok(Date.now() < waitDeadline, "first cron sampler did not issue all provider calls");
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
@@ -953,7 +918,7 @@ Deno.test("concurrent cron samplers keep one provider probe under the durable le
     releaseFetch();
     await Promise.all([first, second]);
 
-    assert.equal(calls.length, 5);
+    assert.equal(calls.length, 3);
     assert.equal((await countingKv.get(PROVIDER_CAPACITY_LEASE_KEY)).value, null);
     assert.equal(countingKv.commands.filter((command) => command.command === "list").length, 0);
   });

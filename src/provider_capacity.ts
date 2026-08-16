@@ -90,6 +90,10 @@ export type ProviderCapacitySource =
       baseline_credits: number | null;
       refill_cycle_remaining_percent: number | null;
       refill_cycle_used_percent: number | null;
+      unlimited_quota: boolean | null;
+      total_available: number | null;
+      total_granted: number | null;
+      total_used: number | null;
       cycle_started_at_ms: number | null;
       last_credit_at_ms: number | null;
       confidence: MeteredQuotaSnapshot["state"]["confidence"] | null;
@@ -319,6 +323,10 @@ const unavailableMeteredSource = (snapshotAtMs: number): ProviderCapacityMetered
     baseline_credits: null,
     refill_cycle_remaining_percent: null,
     refill_cycle_used_percent: null,
+    unlimited_quota: null,
+    total_available: null,
+    total_granted: null,
+    total_used: null,
     cycle_started_at_ms: null,
     last_credit_at_ms: null,
     confidence: null,
@@ -424,6 +432,7 @@ const meteredCapacitySource = (
   if (!snapshot) return unavailableMeteredSource(snapshotAtMs);
   const sourceObservedAtMs = snapshot.state.observed_at_ms;
   const stale = snapshot.cache_state === "stale" || snapshotAtMs - sourceObservedAtMs >= METERED_QUOTA_FRESH_MS;
+  const tokenUsage = snapshot.unlimited_quota || snapshot.total_available !== null || snapshot.total_used !== null;
   return {
     source: "metered",
     label: "Metered fallback",
@@ -435,9 +444,13 @@ const meteredCapacitySource = (
       baseline_credits: snapshot.baseline_credits,
       refill_cycle_remaining_percent: snapshot.remaining_percent,
       refill_cycle_used_percent: snapshot.used_percent,
-      cycle_started_at_ms: snapshot.state.cycle_started_at_ms,
-      last_credit_at_ms: snapshot.state.last_credit_at_ms,
-      confidence: snapshot.state.confidence,
+      unlimited_quota: snapshot.unlimited_quota,
+      total_available: snapshot.total_available,
+      total_granted: snapshot.total_granted,
+      total_used: snapshot.total_used,
+      cycle_started_at_ms: tokenUsage ? null : snapshot.state.cycle_started_at_ms,
+      last_credit_at_ms: tokenUsage ? null : snapshot.state.last_credit_at_ms,
+      confidence: tokenUsage ? null : snapshot.state.confidence,
       cache_state: snapshot.cache_state,
       // Metered exposes a refill cycle, not a scheduled reset window.
       reset_at_ms: null,
@@ -614,6 +627,14 @@ const readStoredMeteredSource = (
       baseline_credits: optionalNumber(wallet.baseline_credits),
       refill_cycle_remaining_percent: optionalNumber(wallet.refill_cycle_remaining_percent),
       refill_cycle_used_percent: optionalNumber(wallet.refill_cycle_used_percent),
+      unlimited_quota: wallet.unlimited_quota === null || wallet.unlimited_quota === undefined
+        ? null
+        : typeof wallet.unlimited_quota === "boolean"
+        ? wallet.unlimited_quota
+        : null,
+      total_available: optionalNumber(wallet.total_available),
+      total_granted: optionalNumber(wallet.total_granted),
+      total_used: optionalNumber(wallet.total_used),
       cycle_started_at_ms: optionalTimestamp(wallet.cycle_started_at_ms),
       last_credit_at_ms: optionalTimestamp(wallet.last_credit_at_ms),
       confidence,

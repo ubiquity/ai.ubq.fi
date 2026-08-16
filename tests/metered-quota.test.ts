@@ -5,12 +5,11 @@ import {
   getCachedMeteredQuotaSnapshot,
   getMeteredQuotaSnapshot,
   invalidateMeteredQuotaSnapshot,
+  METERED_API_KEY_ENV,
   METERED_QUOTA_FRESH_MS,
   METERED_QUOTA_INVALIDATION_KEY,
   METERED_QUOTA_RETENTION_MS,
   METERED_QUOTA_STATE_KEY,
-  METERED_SYSTEM_TOKEN_ENV,
-  METERED_USER_ID_ENV,
   type MeteredQuotaObservation,
   type MeteredQuotaSnapshot,
   type MeteredQuotaState,
@@ -74,30 +73,26 @@ class MemoryKv {
   }
 }
 
-const credentials = { systemToken: "system-token", userId: "717235" };
+const credentials = { apiKey: "metered-api-key" };
 
 const restoreEnv = (key: string, value: string | undefined): void => {
   if (value === undefined) Deno.env.delete(key);
   else Deno.env.set(key, value);
 };
 
-Deno.test("Metered account credentials require a system token and numeric user id", () => {
-  const originalToken = Deno.env.get(METERED_SYSTEM_TOKEN_ENV);
-  const originalUserId = Deno.env.get(METERED_USER_ID_ENV);
+Deno.test("Metered account credentials require a non-whitespace API key", () => {
+  const originalApiKey = Deno.env.get(METERED_API_KEY_ENV);
   try {
-    Deno.env.set(METERED_SYSTEM_TOKEN_ENV, "system-token");
-    Deno.env.set(METERED_USER_ID_ENV, "717235");
+    Deno.env.set(METERED_API_KEY_ENV, credentials.apiKey);
     assert.deepEqual(readMeteredAccountCredentials(), credentials);
 
-    Deno.env.set(METERED_USER_ID_ENV, "not-numeric");
+    Deno.env.set(METERED_API_KEY_ENV, "");
     assert.equal(readMeteredAccountCredentials(), null);
 
-    Deno.env.set(METERED_SYSTEM_TOKEN_ENV, "contains whitespace");
-    Deno.env.set(METERED_USER_ID_ENV, "717235");
+    Deno.env.set(METERED_API_KEY_ENV, "contains whitespace");
     assert.equal(readMeteredAccountCredentials(), null);
   } finally {
-    restoreEnv(METERED_SYSTEM_TOKEN_ENV, originalToken);
-    restoreEnv(METERED_USER_ID_ENV, originalUserId);
+    restoreEnv(METERED_API_KEY_ENV, originalApiKey);
   }
 });
 
@@ -143,26 +138,21 @@ const meteredFetcher =
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const headers = new Headers(init?.headers);
     calls.push({ url, headers });
-    if (url === "https://api.openlux.ai/api/user/self") {
-      return Promise.resolve(jsonResponse({ success: true, data: { quota: 49_956_296, used_quota: 143_704 } }));
-    }
-    if (url === "https://api.openlux.ai/api/user/topuprecords?page=1&page_size=10") {
+    if (url === "https://api.openlux.ai/api/usage/token/") {
       return Promise.resolve(jsonResponse({
         success: true,
         data: {
-          page: 1,
-          page_size: 10,
-          total: 3,
-          records: [
-            { id: 10, amount: 100, complete_time: 1_784_494_386, status: "success" },
-            { id: 11, amount: 200, complete_time: 0, status: "pending" },
-            { id: 9, amount: 50, complete_time: 1_700_000_000, status: "success" },
-          ],
+          expires_at: 0,
+          model_limits: {},
+          model_limits_enabled: false,
+          name: "business-key",
+          object: "token_usage",
+          total_available: -53_413,
+          total_granted: -545,
+          total_used: 52_868,
+          unlimited_quota: true,
         },
       }));
-    }
-    if (url === "https://api.openlux.ai/api/status") {
-      return Promise.resolve(jsonResponse({ success: true, data: { quota_per_unit: 500_000 } }));
     }
     throw new Error(`Unexpected URL: ${url}`);
   };
@@ -175,24 +165,21 @@ Deno.test("Metered account observation reads wallet balance and latest successfu
   });
 
   assert.deepEqual(result, {
-    balance_quota: 49_956_296,
-    used_quota: 143_704,
-    quota_per_credit: 500_000,
+    balance_quota: null,
+    used_quota: null,
+    quota_per_credit: null,
     observed_at_ms: 2_000_000,
-    latest_refill: {
-      id: "10",
-      amount_credits: 100,
-      completed_at_ms: 1_784_494_386_000,
-    },
+    latest_refill: null,
+    unlimited_quota: true,
+    total_available: -53_413,
+    total_granted: -545,
+    total_used: 52_868,
   });
-  assert.equal(calls.length, 3);
-  for (const call of calls.filter((entry) => entry.url.includes("/api/user/"))) {
-    assert.equal(call.headers.get("Authorization"), "Bearer system-token");
-    assert.equal(call.headers.get("New-API-User"), "717235");
-    assert.equal(call.headers.has("Cookie"), false);
-  }
-  const statusCall = calls.find((entry) => entry.url.endsWith("/api/status"));
-  assert.equal(statusCall?.headers.has("Authorization"), false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.url, "https://api.openlux.ai/api/usage/token/");
+  assert.equal(calls[0]?.headers.get("Authorization"), "Bearer metered-api-key");
+  assert.equal(calls[0]?.headers.has("New-API-User"), false);
+  assert.equal(calls[0]?.headers.has("Cookie"), false);
 });
 
 Deno.test("Metered quota seeds a provisional baseline from the first observation", () => {
@@ -394,7 +381,7 @@ Deno.test("Metered quota forced refresh bypasses a fresh cached state", async ()
     createLeaseOwner: () => "forced-refresh-owner",
   });
   assert.equal(snapshot?.cache_state, "refreshed");
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 1);
 });
 
 Deno.test("Metered quota cache marks an invalidated observation stale", async () => {
@@ -430,7 +417,7 @@ Deno.test("Metered quota invalidation forces a fresh account observation", async
   });
 
   assert.equal(snapshot?.cache_state, "refreshed");
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 1);
   assert.equal(kv.value(METERED_QUOTA_INVALIDATION_KEY), null);
 });
 
@@ -455,10 +442,12 @@ Deno.test("Metered quota refresh stores a new observation and computes its perce
     createLeaseOwner: () => "refresh-owner",
   });
   assert.equal(snapshot?.cache_state, "refreshed");
-  assert.equal(snapshot?.state.current_balance_quota, 49_956_296);
-  assert.equal(snapshot?.state.last_known_debits_quota, 43_704);
-  assert.ok(Math.abs((snapshot?.used_percent ?? 0) - 0.087408) < 1e-9);
-  assert.equal(calls.length, 3);
+  assert.equal(snapshot?.unlimited_quota, true);
+  assert.equal(snapshot?.state.total_available, -53_413);
+  assert.equal(snapshot?.total_used, 52_868);
+  assert.equal(snapshot?.balance_credits, null);
+  assert.equal(snapshot?.remaining_percent, null);
+  assert.equal(calls.length, 1);
 });
 
 Deno.test("Metered quota serves stale state on refresh failure and drops expired state", async () => {
@@ -508,7 +497,7 @@ Deno.test("Metered quota refresh lease permits only one upstream refresh", async
   await Promise.resolve();
   releaseFetch();
   const snapshots = await Promise.all(requests);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 1);
   assert.equal(snapshots.filter((snapshot) => snapshot?.cache_state === "refreshed").length, 1);
   assert.equal(snapshots.filter((snapshot) => snapshot?.cache_state === "stale").length, 11);
 });
@@ -562,6 +551,10 @@ const quotaSnapshot = (usedPercent: number): MeteredQuotaSnapshot => ({
   last_inferred_credit_credits: 0,
   remaining_percent: 100 - usedPercent,
   used_percent: usedPercent,
+  unlimited_quota: false,
+  total_available: null,
+  total_granted: null,
+  total_used: null,
 });
 
 Deno.test("Codex quota headers replace every parseable upstream family with canonical Metered", () => {

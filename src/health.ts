@@ -190,21 +190,9 @@ const aggregateProviderStates = (states: readonly ProviderHealthState[]): Provid
   return "degraded";
 };
 
-const quotaView = (snapshot: MeteredQuotaSnapshot | null) =>
-  snapshot
-    ? {
-      available: true,
-      cache_state: snapshot.cache_state,
-      balance_credits: snapshot.balance_credits,
-      baseline_credits: snapshot.baseline_credits,
-      remaining_percent: snapshot.remaining_percent,
-      used_percent: snapshot.used_percent,
-      observed_at_ms: snapshot.state.observed_at_ms,
-      confidence: snapshot.state.confidence,
-      cycle_started_at_ms: snapshot.state.cycle_started_at_ms,
-      last_credit_at_ms: snapshot.state.last_credit_at_ms,
-    }
-    : {
+const quotaView = (snapshot: MeteredQuotaSnapshot | null) => {
+  if (!snapshot) {
+    return {
       available: false,
       cache_state: null,
       balance_credits: null,
@@ -215,7 +203,30 @@ const quotaView = (snapshot: MeteredQuotaSnapshot | null) =>
       confidence: null,
       cycle_started_at_ms: null,
       last_credit_at_ms: null,
+      unlimited_quota: null,
+      total_available: null,
+      total_granted: null,
+      total_used: null,
     };
+  }
+  const tokenUsage = snapshot.unlimited_quota || snapshot.total_available !== null || snapshot.total_used !== null;
+  return {
+    available: true,
+    cache_state: snapshot.cache_state,
+    balance_credits: snapshot.balance_credits,
+    baseline_credits: snapshot.baseline_credits,
+    remaining_percent: snapshot.remaining_percent,
+    used_percent: snapshot.used_percent,
+    observed_at_ms: snapshot.state.observed_at_ms,
+    confidence: tokenUsage ? null : snapshot.state.confidence,
+    cycle_started_at_ms: tokenUsage ? null : snapshot.state.cycle_started_at_ms,
+    last_credit_at_ms: tokenUsage ? null : snapshot.state.last_credit_at_ms,
+    unlimited_quota: snapshot.unlimited_quota,
+    total_available: snapshot.total_available,
+    total_granted: snapshot.total_granted,
+    total_used: snapshot.total_used,
+  };
+};
 
 export const getPassiveProviderHealthSnapshot = async (
   options: Readonly<{ includeQuota?: boolean }> = {},

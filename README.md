@@ -177,20 +177,12 @@ Metered does not publish a weekly allowance, so the gateway never fabricates a w
 receives the update after its first inference response; opening `/status` before sending a message can therefore show
 `Limits: data not available yet`. If no valid Metered snapshot is available, the gateway emits no quota percentage.
 
-The denominator is a durable refill-cycle baseline, not the sum of lifetime purchases. The first observation uses the
-larger of the current wallet balance and the latest successful top-up. Later observations infer account credits as
-`balance_now - (balance_previous - used_quota_delta)`, and a newly observed top-up record starts a new cycle even when
-intervening usage hides a net balance increase. When that new record arrives with a higher usage counter, the known
-inter-observation debits are added back to the observed balance before choosing the cycle baseline, preserving capacity
-that may have been spent after the refill. The remaining percentage is `current_balance / cycle_baseline`; the first
-observation is marked provisional in the admin diagnostics until a later refill or inferred adjustment is observed.
-
-The account snapshot is cached in Deno KV for five minutes, guarded by a durable refresh lease, retained for 24 hours,
-and served stale during temporary Metered failures. Refresh work runs alongside inference and never delays response
-headers; the gateway uses only an already available fresh or retained snapshot for that response. A Metered-routed
-response durably invalidates the pre-debit observation so the next request refreshes it instead of reusing it as fresh
-for five minutes. Admins can inspect the balance, baseline, confidence, latest refill, inferred credit, and cache state
-in the Defaults view or the `metered_quota` object returned by `GET /admin/defaults`.
+Quota monitoring uses the non-billable OpenLux `GET /api/usage/token/` endpoint with the existing `METERED_API_KEY`
+(`Authorization: Bearer ...`). It does not send `New-Api-User` or make inference requests. The reported token totals are
+cached in Deno KV for five minutes, guarded by a durable refresh lease, retained for 24 hours, and served stale during
+temporary Metered failures. Signed `total_available` and `total_granted` values are kept as token usage data and are
+never converted into refill-cycle credits. When `unlimited_quota` is true, the admin diagnostics show Unlimited, total
+usage, and the observation time instead of a fabricated balance or reset window.
 
 Embeddings (UOS text contract):
 
@@ -387,10 +379,8 @@ ubq-ai admin keys list | jq
   `gpt-oss-120b`. It is never accepted from clients or exposed by health responses.
 - `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
   Deno KV at `["uos_ai","voyage_api_key"]`.
-- `METERED_SYSTEM_TOKEN` (required for Codex quota reporting): Metered System Access Token used only by the server to
-  read the account balance and top-up records. It is never sent to gateway clients or inference upstreams.
-- `METERED_USER_ID` (required for Codex quota reporting): Numeric Metered account ID sent as `New-API-User` with the
-  system token.
+- `METERED_API_KEY` (optional): OpenLux business API key used only by the server for paid fallback and the non-billable
+  token-usage quota snapshot. It is never sent to gateway clients.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.

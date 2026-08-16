@@ -201,17 +201,18 @@ const defaultsKernelWindowPreset1h = mustGet("defaults-kernel-window-1h");
 const defaultsKernelWindowPreset1d = mustGet("defaults-kernel-window-1d");
 const defaultsKernelWindowPreset1w = mustGet("defaults-kernel-window-1w");
 const defaultsBadge = mustGet("defaults-badge");
-const yunwuQuotaBadge = mustGet("yunwu-quota-badge");
-const yunwuQuotaRemaining = mustGet("yunwu-quota-remaining");
-const yunwuQuotaProgress = mustGet("yunwu-quota-progress");
-const yunwuQuotaBalance = mustGet("yunwu-quota-balance");
-const yunwuQuotaBaseline = mustGet("yunwu-quota-baseline");
-const yunwuQuotaLatestRefill = mustGet("yunwu-quota-latest-refill");
-const yunwuQuotaInferredCredit = mustGet("yunwu-quota-inferred-credit");
-const yunwuQuotaCache = mustGet("yunwu-quota-cache");
-const yunwuQuotaConfidence = mustGet("yunwu-quota-confidence");
-const yunwuQuotaObserved = mustGet("yunwu-quota-observed");
-const yunwuQuotaCycleStarted = mustGet("yunwu-quota-cycle-started");
+const meteredQuotaBadge = mustGet("metered-quota-badge");
+const meteredQuotaRemaining = mustGet("metered-quota-remaining");
+const meteredQuotaProgress = mustGet("metered-quota-progress");
+const meteredQuotaBalance = mustGet("metered-quota-balance");
+const meteredQuotaTokenUsage = mustGet("metered-quota-token-usage");
+const meteredQuotaBaseline = mustGet("metered-quota-baseline");
+const meteredQuotaLatestRefill = mustGet("metered-quota-latest-refill");
+const meteredQuotaInferredCredit = mustGet("metered-quota-inferred-credit");
+const meteredQuotaCache = mustGet("metered-quota-cache");
+const meteredQuotaConfidence = mustGet("metered-quota-confidence");
+const meteredQuotaObserved = mustGet("metered-quota-observed");
+const meteredQuotaCycleStarted = mustGet("metered-quota-cycle-started");
 let defaultsLoaded = false;
 let defaultsSaving = false;
 let defaultsModelMap = new Map();
@@ -348,7 +349,7 @@ const setCreateBadge = (state, text) => setBadge(createBadge, state, text);
 const setKeysBadge = (state, text) => setBadge(keysBadge, state, text);
 const setPasskeyUsersBadge = (state, text) => setBadge(passkeyUsersBadge, state, text);
 const setDefaultsBadge = (state, text) => setBadge(defaultsBadge, state, text);
-const setYunwuQuotaBadge = (state, text) => setBadge(yunwuQuotaBadge, state, text);
+const setMeteredQuotaBadge = (state, text) => setBadge(meteredQuotaBadge, state, text);
 const setKernelListBadge = (state, text) => setBadge(kernelListBadge, state, text);
 const setKernelNewBadge = (state, text) => setBadge(kernelNewBadge, state, text);
 const setKernelQueueBadge = (state, text) => setBadge(kernelQueueBadge, state, text);
@@ -922,7 +923,7 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
         ? `Failed · ${formatDate(health.last_refresh_at_ms)}`
         : "Not observed",
     );
-  } else if (source.source === "yunwu") {
+  } else if (source.source === "metered") {
     const status = capacityProviderStatus(source, provider);
     appendProviderFact(facts, "Inference", status.health ? providerStateLabel(status.health) : "Not observed");
     appendProviderFact(facts, "Last response", formatDate(status.health?.last_observed_at_ms));
@@ -963,15 +964,15 @@ const renderCodexCapacitySource = (source, provider = null) => {
   return row;
 };
 
-const renderYunwuCapacitySource = (source, provider = null) => {
+const renderMeteredCapacitySource = (source, provider = null) => {
   const row = document.createElement("article");
-  row.dataset.capacitySource = "yunwu";
+  row.dataset.capacitySource = "metered";
   row.dataset.state = source.state;
   row.setAttribute("role", "listitem");
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
-  title.textContent = "YunWu fallback";
+  title.textContent = "Metered fallback";
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   const status = capacityProviderStatus(source, provider);
@@ -984,13 +985,32 @@ const renderYunwuCapacitySource = (source, provider = null) => {
   appendProviderFact(
     facts,
     "Balance",
-    wallet.balance_credits === null ? "Not available" : formatCredits(wallet.balance_credits),
+    wallet.unlimited_quota === true
+      ? "Unlimited"
+      : wallet.balance_credits === null
+      ? "Not available"
+      : formatCredits(wallet.balance_credits),
   );
-  appendProviderFact(facts, "Refill remaining", formatCapacityPercent(wallet.refill_cycle_remaining_percent));
+  appendProviderFact(
+    facts,
+    "Refill remaining",
+    wallet.unlimited_quota === true ? "Not applicable" : formatCapacityPercent(wallet.refill_cycle_remaining_percent),
+  );
   appendProviderFact(
     facts,
     "Refill baseline",
-    wallet.baseline_credits === null ? "Not available" : formatCredits(wallet.baseline_credits),
+    wallet.unlimited_quota === true
+      ? "Not applicable"
+      : wallet.baseline_credits === null
+      ? "Not available"
+      : formatCredits(wallet.baseline_credits),
+  );
+  appendProviderFact(
+    facts,
+    "Token usage",
+    typeof wallet.total_used === "number" && Number.isFinite(wallet.total_used)
+      ? `${numberFormatter.format(wallet.total_used)} used`
+      : "Not reported",
   );
   appendProviderFact(facts, "Confidence", wallet.confidence ?? "Not available");
   appendProviderFact(facts, "Cycle started", formatCapacityTimestamp(wallet.cycle_started_at_ms));
@@ -1009,17 +1029,17 @@ const renderProviderCapacityList = (sources) => {
   providerCapacityList.replaceChildren();
   for (const source of sources) {
     providerCapacityList.appendChild(
-      source.source === "yunwu"
-        ? renderYunwuCapacitySource(source, latestProviderHealth?.yunwu)
+      source.source === "metered"
+        ? renderMeteredCapacitySource(source, latestProviderHealth?.metered)
         : renderCodexCapacitySource(source, providerForCodexSlot(source.slot)),
     );
   }
 };
 
 const unavailableCapacitySource = (source, slot = null) =>
-  source === "yunwu"
+  source === "metered"
     ? {
-      source: "yunwu",
+      source: "metered",
       state: "unavailable",
       source_observed_at_ms: null,
       snapshot_at_ms: null,
@@ -1028,6 +1048,10 @@ const unavailableCapacitySource = (source, slot = null) =>
         baseline_credits: null,
         refill_cycle_remaining_percent: null,
         refill_cycle_used_percent: null,
+        unlimited_quota: null,
+        total_available: null,
+        total_granted: null,
+        total_used: null,
         cycle_started_at_ms: null,
         last_credit_at_ms: null,
         confidence: null,
@@ -1078,7 +1102,7 @@ const CAPACITY_CHART_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
 });
 const CAPACITY_CHART_SERIES = [
   { key: "available-capacity", label: "Codex capacity", source: "aggregate" },
-  { key: "yunwu-refill", label: "YunWu refill", source: "yunwu", valueKey: "refill_cycle_remaining_percent" },
+  { key: "metered-refill", label: "Metered refill", source: "metered", valueKey: "refill_cycle_remaining_percent" },
 ];
 
 const capacityChartFailureIsDowntime = (source) =>
@@ -1228,7 +1252,7 @@ const capacityChartPlotHeight = () => {
   return CAPACITY_CHART_PLOT_HEIGHT * pixelsPerPercent;
 };
 
-// Keep the Codex pool and YunWu's wallet on separate series. Their percentages
+// Keep the Codex pool and Metered wallet on separate series. Their percentages
 // use different quota systems and must not be averaged into one value.
 const capacityChartCodexAggregateRemainingPercent = (sample) => {
   const sources = Array.isArray(sample?.sources) ? sample.sources : [];
@@ -1362,14 +1386,14 @@ const capacityChartPoint = (
   }
   const source = Array.isArray(sample?.sources)
     ? sample.sources.find((candidate) =>
-      candidate?.source === series.source && (series.source === "yunwu" || candidate.slot === series.slot)
+      candidate?.source === series.source && (series.source === "metered" || candidate.slot === series.slot)
     )
     : null;
   const window = series.source === "codex" ? source?.windows?.[series.windowKey] : null;
-  const interval = series.source === "yunwu" ? chartWindow : activeInterval ?? capacityChartWindow(window);
+  const interval = series.source === "metered" ? chartWindow : activeInterval ?? capacityChartWindow(window);
   const displayInterval = chartWindow ?? interval;
-  const reportedPercent = series.source === "yunwu" ? source?.wallet?.[series.valueKey] : window?.used_percent;
-  const remainingPercent = series.source === "yunwu" ? reportedPercent : capacityRemainingPercent(reportedPercent);
+  const reportedPercent = series.source === "metered" ? source?.wallet?.[series.valueKey] : window?.used_percent;
+  const remainingPercent = series.source === "metered" ? reportedPercent : capacityRemainingPercent(reportedPercent);
   const sampledAtMs = sample?.sampled_at_ms;
   if (
     !source ||
@@ -1901,7 +1925,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     viewBox: `0 0 ${width} ${height}`,
     preserveAspectRatio: "none",
     role: "img",
-    "aria-label": "Codex and YunWu available capacity over the trailing seven days, including rate-limit resets",
+    "aria-label": "Codex and Metered available capacity over the trailing seven days, including rate-limit resets",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
@@ -2157,7 +2181,9 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   svg.appendChild(reticule);
 
   for (const series of CAPACITY_CHART_SERIES) {
-    const activeInterval = series.source === "aggregate" || series.source === "yunwu" ? chartWindow : activeUsageWindow;
+    const activeInterval = series.source === "aggregate" || series.source === "metered"
+      ? chartWindow
+      : activeUsageWindow;
     const shouldRender = true;
     const currentPoint = shouldRender ? capacityChartPoint(currentSample, series, activeInterval, chartWindow) : null;
     const chartPoints = shouldRender
@@ -2294,7 +2320,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
   const staleNotes = [
     sources.some((source) => source?.source === "codex" && source?.state === "stale") ? "Codex samples stale" : null,
-    sources.some((source) => source?.source === "yunwu" && source?.state === "stale") ? "YunWu sample stale" : null,
+    sources.some((source) => source?.source === "metered" && source?.state === "stale") ? "Metered sample stale" : null,
   ].filter((note) => note !== null);
   const staleSuffix = staleNotes.length ? ` · ${staleNotes.join(" · ")}` : "";
   const resetEvents = Array.isArray(snapshot?.reset_events) ? snapshot.reset_events : [];
@@ -2337,7 +2363,7 @@ const renderProviderCapacity = (snapshot) => {
   const sources = [
     sourceForSlot(1),
     sourceForSlot(2),
-    rawSources.find((source) => source?.source === "yunwu") ?? unavailableCapacitySource("yunwu"),
+    rawSources.find((source) => source?.source === "metered") ?? unavailableCapacitySource("metered"),
   ];
   latestProviderCapacityChartState = { snapshot, sources };
   renderProviderCapacityChart(snapshot, sources);
@@ -4672,14 +4698,14 @@ const buildUsageSummary = (usage) => {
   });
   appendUsagePill(summary, "Last", formatDate(usage.last_seen_at_ms));
 
-  if (Object.prototype.hasOwnProperty.call(usage, "yunwu_fallback_requests")) {
-    appendUsagePill(summary, "YunWu", formatCompactNumber(usage.yunwu_fallback_requests), {
-      title: `${formatNumber(usage.yunwu_fallback_requests)} fallback requests`,
+  if (Object.prototype.hasOwnProperty.call(usage, "metered_fallback_requests")) {
+    appendUsagePill(summary, "Metered", formatCompactNumber(usage.metered_fallback_requests), {
+      title: `${formatNumber(usage.metered_fallback_requests)} fallback requests`,
     });
   }
-  if (Object.prototype.hasOwnProperty.call(usage, "yunwu_spend_microcredits")) {
-    appendUsagePill(summary, "Spend", formatMicrocreditsAsCredits(usage.yunwu_spend_microcredits), {
-      title: `${formatNumber(usage.yunwu_spend_microcredits)} microcredits`,
+  if (Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")) {
+    appendUsagePill(summary, "Spend", formatMicrocreditsAsCredits(usage.metered_spend_microcredits), {
+      title: `${formatNumber(usage.metered_spend_microcredits)} microcredits`,
     });
   }
 
@@ -4731,18 +4757,18 @@ const buildUsageDetails = (usage, options = {}) => {
   if (sparkline) usageSection.appendChild(sparkline);
   appendUsageSeries(
     usageSection,
-    "Daily YunWu fallbacks",
+    "Daily Metered fallbacks",
     buildUsageSparkline(usage, {
-      dailyKey: "daily_yunwu_fallback_requests",
-      ariaLabel: "YunWu fallback requests",
+      dailyKey: "daily_metered_fallback_requests",
+      ariaLabel: "Metered fallback requests",
     }),
   );
   appendUsageSeries(
     usageSection,
-    "Daily YunWu spend",
+    "Daily Metered spend",
     buildUsageSparkline(usage, {
-      dailyKey: "daily_yunwu_spend_microcredits",
-      ariaLabel: "YunWu spend",
+      dailyKey: "daily_metered_spend_microcredits",
+      ariaLabel: "Metered spend",
       formatScaleMax: formatMicrocreditsAsCredits,
     }),
   );
@@ -4783,24 +4809,24 @@ const buildUsageDetails = (usage, options = {}) => {
     appendMetaItem(usageList, "Last model", formatOptionalText(usage.last_model), { mono: true });
     appendMetaItem(usageList, "Last reasoning", formatOptionalText(usage.last_reasoning), { mono: true });
     appendMetaItem(usageList, "Last route", formatOptionalText(usage.last_route));
-    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_fallback_requests")) {
-      appendMetaItem(usageList, "YunWu fallbacks", formatNumber(usage.yunwu_fallback_requests));
+    if (Object.prototype.hasOwnProperty.call(usage, "metered_fallback_requests")) {
+      appendMetaItem(usageList, "Metered fallbacks", formatNumber(usage.metered_fallback_requests));
     }
-    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_input_tokens")) {
-      appendMetaItem(usageList, "YunWu tokens in", formatNumber(usage.yunwu_input_tokens));
+    if (Object.prototype.hasOwnProperty.call(usage, "metered_input_tokens")) {
+      appendMetaItem(usageList, "Metered tokens in", formatNumber(usage.metered_input_tokens));
     }
-    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_output_tokens")) {
-      appendMetaItem(usageList, "YunWu tokens out", formatNumber(usage.yunwu_output_tokens));
+    if (Object.prototype.hasOwnProperty.call(usage, "metered_output_tokens")) {
+      appendMetaItem(usageList, "Metered tokens out", formatNumber(usage.metered_output_tokens));
     }
-    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_total_tokens")) {
-      appendMetaItem(usageList, "YunWu tokens total", formatNumber(usage.yunwu_total_tokens));
+    if (Object.prototype.hasOwnProperty.call(usage, "metered_total_tokens")) {
+      appendMetaItem(usageList, "Metered tokens total", formatNumber(usage.metered_total_tokens));
     }
-    if (Object.prototype.hasOwnProperty.call(usage, "yunwu_spend_microcredits")) {
+    if (Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")) {
       appendMetaItem(
         usageList,
-        "YunWu spend",
-        formatMicrocreditsAsCredits(usage.yunwu_spend_microcredits),
-        { title: `${formatNumber(usage.yunwu_spend_microcredits)} microcredits` },
+        "Metered spend",
+        formatMicrocreditsAsCredits(usage.metered_spend_microcredits),
+        { title: `${formatNumber(usage.metered_spend_microcredits)} microcredits` },
       );
     }
     usageSection.appendChild(usageList);
@@ -5231,7 +5257,7 @@ const renderKeys = (keys, view = "all") => {
     paidFallbackHeader.dataset.paidFallbackHeader = "header";
     const paidFallbackTitle = document.createElement("span");
     paidFallbackTitle.dataset.paidFallbackTitle = "title";
-    paidFallbackTitle.textContent = "YunWu paid overflow";
+    paidFallbackTitle.textContent = "Metered paid overflow";
     const paidFallbackStatus = document.createElement("span");
     paidFallbackStatus.dataset.badge = "status";
     paidFallbackHeader.appendChild(paidFallbackTitle);
@@ -5266,12 +5292,12 @@ const renderKeys = (keys, view = "all") => {
       paidReservedInfo.valueEl.textContent = formatCredits(reserved);
       paidResetInfo.valueEl.textContent = formatDate(key.usage_reset_at_ms);
       lifetimeSpendInfo.valueEl.textContent = usage &&
-          Object.prototype.hasOwnProperty.call(usage, "yunwu_spend_microcredits")
-        ? formatMicrocreditsAsCredits(usage.yunwu_spend_microcredits)
+          Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")
+        ? formatMicrocreditsAsCredits(usage.metered_spend_microcredits)
         : "unknown";
       fallbackCountInfo.valueEl.textContent = usage &&
-          Object.prototype.hasOwnProperty.call(usage, "yunwu_fallback_requests")
-        ? formatNumber(usage.yunwu_fallback_requests)
+          Object.prototype.hasOwnProperty.call(usage, "metered_fallback_requests")
+        ? formatNumber(usage.metered_fallback_requests)
         : "unknown";
 
       if (enabled && limit !== -1 && limit <= 0) {
@@ -5414,7 +5440,7 @@ const renderKeys = (keys, view = "all") => {
     paidFallbackToggle.dataset.paidFallbackToggle = "toggle";
     const paidFallbackToggleCopy = document.createElement("span");
     const paidFallbackToggleTitle = document.createElement("strong");
-    paidFallbackToggleTitle.textContent = "YunWu paid overflow";
+    paidFallbackToggleTitle.textContent = "Metered paid overflow";
     const paidFallbackToggleHint = document.createElement("small");
     paidFallbackToggleHint.textContent = "Fallback after the final Codex 429.";
     paidFallbackToggleCopy.appendChild(paidFallbackToggleTitle);
@@ -5448,7 +5474,7 @@ const renderKeys = (keys, view = "all") => {
     const paidFallbackWarning = document.createElement("p");
     paidFallbackWarning.dataset.paidFallbackWarning = "warning";
     paidFallbackWarning.textContent =
-      "Enabling fallback can send prompts, code, tools, and attachments to YunWu. Pricing is checked only when this key is enabled; re-enabling checks it again. Ordinary requests never recheck it.";
+      "Enabling fallback can send prompts, code, tools, and attachments to Metered. Pricing is checked only when this key is enabled; re-enabling checks it again. Ordinary requests never recheck it.";
 
     paidFallbackSettings.appendChild(paidFallbackLimitField);
     paidFallbackSettings.appendChild(paidFallbackWarning);
@@ -5698,7 +5724,7 @@ const renderKeys = (keys, view = "all") => {
       const initializingPaidFallback = payload.paid_fallback_enabled === true &&
         editSnapshot.paid_fallback_enabled === false;
       editSaving = true;
-      setEditBadge("unknown", initializingPaidFallback ? "Initializing YunWu..." : "Saving...");
+      setEditBadge("unknown", initializingPaidFallback ? "Initializing Metered..." : "Saving...");
       try {
         const res = await fetch(apiUrl("/admin/api-keys"), {
           method: "PATCH",
@@ -6506,7 +6532,7 @@ const createKey = async () => {
   if (windowResult.value !== null) payload.window_ms = windowResult.value;
 
   clearCreateResult();
-  setCreateBadge("unknown", paidFallbackEnabled ? "Initializing YunWu..." : "Creating...");
+  setCreateBadge("unknown", paidFallbackEnabled ? "Initializing Metered..." : "Creating...");
   createKeyBtn.disabled = true;
 
   try {
@@ -6770,42 +6796,46 @@ const extractCachedDefaults = (cached) => {
   return { model, reasoning_effort: reasoning, kernel_policy_limit_requests: limit, kernel_policy_window_ms: windowMs };
 };
 
-const clearYunwuQuotaDiagnostics = () => {
-  yunwuQuotaRemaining.textContent = "—";
-  yunwuQuotaProgress.hidden = true;
-  yunwuQuotaProgress.value = 0;
-  yunwuQuotaProgress.removeAttribute("aria-valuetext");
-  yunwuQuotaBalance.textContent = "—";
-  yunwuQuotaBaseline.textContent = "—";
-  yunwuQuotaLatestRefill.textContent = "—";
-  yunwuQuotaLatestRefill.removeAttribute("title");
-  yunwuQuotaInferredCredit.textContent = "—";
-  yunwuQuotaCache.textContent = "—";
-  yunwuQuotaConfidence.textContent = "—";
-  yunwuQuotaObserved.textContent = "—";
-  yunwuQuotaCycleStarted.textContent = "—";
+const clearMeteredQuotaDiagnostics = () => {
+  meteredQuotaRemaining.textContent = "—";
+  meteredQuotaProgress.hidden = true;
+  meteredQuotaProgress.value = 0;
+  meteredQuotaProgress.removeAttribute("aria-valuetext");
+  meteredQuotaBalance.textContent = "—";
+  meteredQuotaTokenUsage.textContent = "—";
+  meteredQuotaBaseline.textContent = "—";
+  meteredQuotaLatestRefill.textContent = "—";
+  meteredQuotaLatestRefill.removeAttribute("title");
+  meteredQuotaInferredCredit.textContent = "—";
+  meteredQuotaCache.textContent = "—";
+  meteredQuotaConfidence.textContent = "—";
+  meteredQuotaObserved.textContent = "—";
+  meteredQuotaCycleStarted.textContent = "—";
 };
 
 const formatQuotaCredits = (value) =>
   typeof value === "number" && Number.isFinite(value) ? `${creditFormatter.format(value)} credits` : "—";
+
+const formatQuotaTokens = (value) =>
+  typeof value === "number" && Number.isFinite(value) ? numberFormatter.format(value) : "—";
 
 const formatQuotaLabel = (value) => {
   if (typeof value !== "string" || !value) return "—";
   return value.replaceAll("_", " ").replace(/^./, (first) => first.toUpperCase());
 };
 
-const renderYunwuQuotaDiagnostics = (diagnostics) => {
-  clearYunwuQuotaDiagnostics();
+const renderMeteredQuotaDiagnostics = (diagnostics) => {
+  clearMeteredQuotaDiagnostics();
   if (!diagnostics || typeof diagnostics !== "object") {
-    setYunwuQuotaBadge("bad", "Unavailable");
+    setMeteredQuotaBadge("bad", "Unavailable");
     return;
   }
   if (diagnostics.configured !== true) {
-    setYunwuQuotaBadge("unknown", "Not configured");
+    setMeteredQuotaBadge("unknown", "Not configured");
     return;
   }
   if (diagnostics.available !== true) {
-    setYunwuQuotaBadge("bad", "Unavailable");
+    setMeteredQuotaBadge("bad", "Unavailable");
     return;
   }
 
@@ -6814,21 +6844,32 @@ const renderYunwuQuotaDiagnostics = (diagnostics) => {
     : null;
   if (remaining !== null) {
     const formatted = quotaPercentFormatter.format(remaining);
-    yunwuQuotaRemaining.textContent = `${formatted}%`;
-    yunwuQuotaProgress.value = remaining;
-    yunwuQuotaProgress.hidden = false;
-    yunwuQuotaProgress.setAttribute("aria-valuetext", `${formatted}% remaining`);
+    meteredQuotaRemaining.textContent = `${formatted}%`;
+    meteredQuotaProgress.value = remaining;
+    meteredQuotaProgress.hidden = false;
+    meteredQuotaProgress.setAttribute("aria-valuetext", `${formatted}% remaining`);
   }
 
-  yunwuQuotaBalance.textContent = formatQuotaCredits(diagnostics.balance_credits);
-  yunwuQuotaBaseline.textContent = formatQuotaCredits(diagnostics.baseline_credits);
-  yunwuQuotaInferredCredit.textContent = formatQuotaCredits(diagnostics.last_inferred_credit_credits);
-  yunwuQuotaCache.textContent = formatQuotaLabel(diagnostics.cache_state);
-  yunwuQuotaConfidence.textContent = formatQuotaLabel(diagnostics.confidence);
-  yunwuQuotaObserved.textContent = typeof diagnostics.observed_at_ms === "number"
+  const unlimited = diagnostics.unlimited_quota === true;
+  if (unlimited) {
+    meteredQuotaRemaining.textContent = "Unlimited";
+    meteredQuotaBalance.textContent = "Unlimited";
+    meteredQuotaBaseline.textContent = "Not applicable";
+    meteredQuotaInferredCredit.textContent = "Not applicable";
+  } else {
+    meteredQuotaBalance.textContent = formatQuotaCredits(diagnostics.balance_credits);
+    meteredQuotaBaseline.textContent = formatQuotaCredits(diagnostics.baseline_credits);
+    meteredQuotaInferredCredit.textContent = formatQuotaCredits(diagnostics.last_inferred_credit_credits);
+  }
+  meteredQuotaTokenUsage.textContent = diagnostics.total_used === null || diagnostics.total_used === undefined
+    ? "—"
+    : `${formatQuotaTokens(diagnostics.total_used)} used`;
+  meteredQuotaCache.textContent = formatQuotaLabel(diagnostics.cache_state);
+  meteredQuotaConfidence.textContent = formatQuotaLabel(diagnostics.confidence);
+  meteredQuotaObserved.textContent = typeof diagnostics.observed_at_ms === "number"
     ? formatDate(diagnostics.observed_at_ms)
     : "—";
-  yunwuQuotaCycleStarted.textContent = typeof diagnostics.cycle_started_at_ms === "number"
+  meteredQuotaCycleStarted.textContent = typeof diagnostics.cycle_started_at_ms === "number"
     ? formatDate(diagnostics.cycle_started_at_ms)
     : "—";
 
@@ -6836,15 +6877,15 @@ const renderYunwuQuotaDiagnostics = (diagnostics) => {
   const refillTime = typeof diagnostics.latest_refill_completed_at_ms === "number"
     ? formatDate(diagnostics.latest_refill_completed_at_ms)
     : "—";
-  yunwuQuotaLatestRefill.textContent = refillAmount === "—" && refillTime === "—"
+  meteredQuotaLatestRefill.textContent = refillAmount === "—" && refillTime === "—"
     ? "—"
     : `${refillAmount} · ${refillTime}`;
   if (typeof diagnostics.latest_refill_id === "string" && diagnostics.latest_refill_id) {
-    yunwuQuotaLatestRefill.title = `Refill ${diagnostics.latest_refill_id}`;
+    meteredQuotaLatestRefill.title = `Refill ${diagnostics.latest_refill_id}`;
   }
 
   const stale = diagnostics.cache_state === "stale";
-  setYunwuQuotaBadge(stale ? "unknown" : "ok", stale ? "Stale cache" : "Available");
+  setMeteredQuotaBadge(stale ? "unknown" : "ok", stale ? "Stale cache" : unlimited ? "Unlimited" : "Available");
 };
 
 const applyDefaultsSnapshot = (snapshot, defaults, options = {}) => {
@@ -6916,8 +6957,8 @@ const loadDefaults = async (options = {}) => {
   const token = getAdminToken();
   if (!token) {
     setDefaultsBadge("bad", "Missing token");
-    clearYunwuQuotaDiagnostics();
-    setYunwuQuotaBadge("unknown", "Not loaded");
+    clearMeteredQuotaDiagnostics();
+    setMeteredQuotaBadge("unknown", "Not loaded");
     return;
   }
 
@@ -6926,7 +6967,7 @@ const loadDefaults = async (options = {}) => {
   if (!preserveInputs) defaultsTouched = false;
   defaultsLoaded = false;
   setDefaultsBadge("unknown", "Loading...");
-  setYunwuQuotaBadge("unknown", "Loading...");
+  setMeteredQuotaBadge("unknown", "Loading...");
   let cacheApplied = false;
   const cachedDefaults = extractCachedDefaults(readStorageJson(STORAGE_KEYS.defaultsSnapshot));
   const cachedModels = extractCachedModels(readStorageJson(STORAGE_KEYS.defaultsModels));
@@ -6972,10 +7013,10 @@ const loadDefaults = async (options = {}) => {
     const defaultsPayload = await defaultsRes.json().catch(() => null);
     if (!defaultsRes.ok) {
       setDefaultsBadge("bad", defaultsPayload?.error?.message ?? "Error");
-      renderYunwuQuotaDiagnostics(null);
+      renderMeteredQuotaDiagnostics(null);
       return;
     }
-    renderYunwuQuotaDiagnostics(defaultsPayload?.yunwu_quota);
+    renderMeteredQuotaDiagnostics(defaultsPayload?.metered_quota);
 
     if (!models.length) {
       setDefaultsBadge("bad", "No models");
@@ -7010,7 +7051,7 @@ const loadDefaults = async (options = {}) => {
     }
   } catch {
     setDefaultsBadge("bad", "Offline");
-    renderYunwuQuotaDiagnostics(null);
+    renderMeteredQuotaDiagnostics(null);
   }
 };
 
@@ -7099,8 +7140,8 @@ setCreateBadge("unknown", "Idle");
 setKeysBadge("unknown", "Not loaded");
 setPasskeyUsersBadge("unknown", "Not loaded");
 setDefaultsBadge("unknown", "Idle");
-clearYunwuQuotaDiagnostics();
-setYunwuQuotaBadge("unknown", "Idle");
+clearMeteredQuotaDiagnostics();
+setMeteredQuotaBadge("unknown", "Idle");
 setKernelListBadge("unknown", "Not loaded");
 setKernelNewBadge("unknown", "Idle");
 setKernelQueueBadge("unknown", "Not loaded");

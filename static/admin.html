@@ -504,17 +504,16 @@
 
           <article data-card data-span="half" aria-labelledby="card-metered-quota">
             <header>
-              <h2 id="card-metered-quota">Metered refill cycle</h2>
+              <h2 id="card-metered-quota">Metered token usage</h2>
               <p>
-                Wallet availability since the latest observed refill. This is a balance cycle, not a weekly limit, so
-                no reset time is fabricated.
+                Non-billable token totals from OpenLux. Unlimited accounts do not expose a refill cycle or reset time.
               </p>
             </header>
             <div data-card-body>
               <span id="metered-quota-badge" data-badge data-state="unknown">Idle</span>
               <div data-metered-quota-summary>
                 <strong id="metered-quota-remaining">—</strong>
-                <span>remaining in the current refill cycle</span>
+                <span>reported quota status</span>
                 <progress id="metered-quota-progress" max="100" value="0" aria-label="Metered quota remaining" hidden>
                 </progress>
               </div>
@@ -522,6 +521,10 @@
                 <div>
                   <dt>Balance</dt>
                   <dd id="metered-quota-balance">—</dd>
+                </div>
+                <div>
+                  <dt>Token usage</dt>
+                  <dd id="metered-quota-token-usage">—</dd>
                 </div>
                 <div>
                   <dt>Cycle baseline</dt>

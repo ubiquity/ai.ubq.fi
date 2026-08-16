@@ -172,7 +172,7 @@ Deno.test("inference handler omits synthetic quota headers for passkey sessions"
     latest_refill_completed_at_ms: now - 60_000,
   });
 
-  await withEnv({ METERED_SYSTEM_TOKEN: "system-token", METERED_USER_ID: "717235" }, async () => {
+  await withEnv({ METERED_API_KEY: "metered-api-key" }, async () => {
     const { default: handler } = await import("../src/handler.ts");
     for (const path of ["/v1/responses", "/v1/chat/completions"]) {
       const response = await handler(
@@ -218,7 +218,7 @@ Deno.test("passkey inference does not read a retained Metered snapshot", async (
     latest_refill_completed_at_ms: now - 60_000,
   });
 
-  await withEnv({ METERED_SYSTEM_TOKEN: "system-token", METERED_USER_ID: "717235" }, async () => {
+  await withEnv({ METERED_API_KEY: "metered-api-key" }, async () => {
     const { default: handler } = await import("../src/handler.ts");
     kvGetDelayMs = 10;
     const response = await handler(
@@ -268,7 +268,7 @@ Deno.test("passkey inference never waits for a Metered quota refresh", async () 
       );
     });
   try {
-    await withEnv({ METERED_SYSTEM_TOKEN: "system-token", METERED_USER_ID: "717235" }, async () => {
+    await withEnv({ METERED_API_KEY: "metered-api-key" }, async () => {
       const { default: handler } = await import("../src/handler.ts");
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
