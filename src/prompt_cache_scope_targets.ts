@@ -15,23 +15,23 @@ import { getString, isRecord, sha256Hex } from "./utils.ts";
  * telemetry transport identity. The latter is exposed on each target too.
  */
 export const PROMPT_CACHE_SCOPE_TARGET_CODEX_PROVIDER = CODEX_CHATGPT_PROMPT_CACHE_PROVIDER;
-export const PROMPT_CACHE_SCOPE_TARGET_YUNWU_PROVIDER = "yunwu" as const;
+export const PROMPT_CACHE_SCOPE_TARGET_METERED_PROVIDER = "metered" as const;
 export const PROMPT_CACHE_SCOPE_TARGET_CODEX_TELEMETRY_PROVIDER = "chatgpt_codex" as const;
-export const PROMPT_CACHE_SCOPE_TARGET_YUNWU_TELEMETRY_PROVIDER = "yunwu" as const;
+export const PROMPT_CACHE_SCOPE_TARGET_METERED_TELEMETRY_PROVIDER = "metered" as const;
 
 export type PromptCacheScopeTargetProvider =
   | typeof PROMPT_CACHE_SCOPE_TARGET_CODEX_PROVIDER
-  | typeof PROMPT_CACHE_SCOPE_TARGET_YUNWU_PROVIDER;
+  | typeof PROMPT_CACHE_SCOPE_TARGET_METERED_PROVIDER;
 
 export type PromptCacheScopeTargetTelemetryProvider =
   | typeof PROMPT_CACHE_SCOPE_TARGET_CODEX_TELEMETRY_PROVIDER
-  | typeof PROMPT_CACHE_SCOPE_TARGET_YUNWU_TELEMETRY_PROVIDER;
+  | typeof PROMPT_CACHE_SCOPE_TARGET_METERED_TELEMETRY_PROVIDER;
 
 /**
- * Yunwu model policy is tenant-key-specific. The inventory must only consume
+ * metered model policy is tenant-key-specific. The inventory must only consume
  * an explicitly supplied, authoritative roster; it never discovers one.
  */
-export type YunwuFallbackRoster =
+export type MeteredFallbackRoster =
   | Readonly<{ status: "unknown" }>
   | Readonly<{ status: "authoritative"; model_ids: readonly string[] }>;
 
@@ -76,7 +76,7 @@ export type PromptCacheScopeTarget = Readonly<{
   catalog_versionstamp: string | null;
   /** The exact catalog client-version binding forwarded by the Codex probe transport. */
   catalog_client_version: string | null;
-  /** Dynamic KV fence for Codex targets; Yunwu does not use the Codex auth pool. */
+  /** Dynamic KV fence for Codex targets; metered does not use the Codex auth pool. */
   codex_auth_pool_versionstamp: string | null;
   /**
    * Opaque, ordered-pool identity. It changes when an account is added,
@@ -87,8 +87,8 @@ export type PromptCacheScopeTarget = Readonly<{
   capability_fingerprint: string;
 }>;
 
-export type PromptCacheScopeTargetYunwuRosterDiagnostic = Readonly<{
-  status: YunwuFallbackRoster["status"];
+export type PromptCacheScopeTargetMeteredRosterDiagnostic = Readonly<{
+  status: MeteredFallbackRoster["status"];
   /** Sorted, de-duplicated authoritative IDs; empty when the roster is unknown. */
   model_ids: readonly string[];
   /** Authoritative roster IDs absent from the current canonical Codex catalog. */
@@ -100,7 +100,7 @@ export type PromptCacheScopeTargetInventory = Readonly<{
   reason: "ready" | "catalog_unavailable" | "catalog_invalid" | "kv_unavailable" | "auth_pool_unavailable";
   /** Always sorted by stable target identity. Empty means fail closed or no eligible roster intersection. */
   targets: readonly PromptCacheScopeTarget[];
-  yunwu_fallback_roster: PromptCacheScopeTargetYunwuRosterDiagnostic;
+  metered_fallback_roster: PromptCacheScopeTargetMeteredRosterDiagnostic;
   /**
    * Stable inventory definition fingerprint. It deliberately excludes mutable
    * KV versionstamps, which are exposed separately for a dispatch-time fence.
@@ -115,13 +115,13 @@ export type DerivePromptCacheScopeTargetInventoryInput = Readonly<{
   catalogVersionstamp: string | null | undefined;
   codexAuthPool: unknown;
   codexAuthPoolVersionstamp: string | null | undefined;
-  yunwuFallbackRoster: YunwuFallbackRoster | undefined;
+  meteredFallbackRoster: MeteredFallbackRoster | undefined;
 }>;
 
 export type LoadPromptCacheScopeTargetInventoryOptions = Readonly<{
   /** Injection keeps the loader deterministic in focused tests. */
   kv?: Deno.Kv | null;
-  yunwuFallbackRoster?: YunwuFallbackRoster;
+  meteredFallbackRoster?: MeteredFallbackRoster;
 }>;
 
 type CatalogModel = Readonly<{
@@ -138,7 +138,7 @@ type CodexAuthPoolBinding = Readonly<{
   identityFingerprint: string | null;
 }>;
 
-const UNKNOWN_YUNWU_ROSTER: YunwuFallbackRoster = { status: "unknown" };
+const UNKNOWN_METERED_ROSTER: MeteredFallbackRoster = { status: "unknown" };
 const FINGERPRINT_VERSION = "prompt-cache-scope-targets-v3";
 const AUTH_POOL_IDENTITY_FINGERPRINT_VERSION = "codex-auth-pool-identity-v1";
 
@@ -174,13 +174,13 @@ const canonicalJson = (value: unknown, ancestors = new WeakSet<object>()): strin
   return JSON.stringify(typeof value);
 };
 
-const normalizeYunwuFallbackRoster = (value: YunwuFallbackRoster | undefined): YunwuFallbackRoster => {
-  if (!value || value.status !== "authoritative" || !Array.isArray(value.model_ids)) return UNKNOWN_YUNWU_ROSTER;
+const normalizeMeteredFallbackRoster = (value: MeteredFallbackRoster | undefined): MeteredFallbackRoster => {
+  if (!value || value.status !== "authoritative" || !Array.isArray(value.model_ids)) return UNKNOWN_METERED_ROSTER;
   const modelIds = new Set<string>();
   for (const rawModelId of value.model_ids) {
     const modelId = normalizedString(rawModelId);
     // A malformed purportedly-authoritative input is not authority.
-    if (!modelId) return UNKNOWN_YUNWU_ROSTER;
+    if (!modelId) return UNKNOWN_METERED_ROSTER;
     modelIds.add(modelId);
   }
   return { status: "authoritative", model_ids: [...modelIds].sort() };
@@ -264,14 +264,14 @@ const codexProbeability = (
 
 const unavailableInventory = (
   reason: Exclude<PromptCacheScopeTargetInventory["reason"], "ready">,
-  roster: YunwuFallbackRoster,
+  roster: MeteredFallbackRoster,
 ): PromptCacheScopeTargetInventory => {
-  const normalizedRoster = normalizeYunwuFallbackRoster(roster);
+  const normalizedRoster = normalizeMeteredFallbackRoster(roster);
   return {
     status: "unavailable",
     reason,
     targets: [],
-    yunwu_fallback_roster: {
+    metered_fallback_roster: {
       status: normalizedRoster.status,
       model_ids: normalizedRoster.status === "authoritative" ? normalizedRoster.model_ids : [],
       non_catalog_model_ids: [],
@@ -324,7 +324,7 @@ const targetCapabilityFingerprint = async (
 export const derivePromptCacheScopeTargetInventory = async (
   input: DerivePromptCacheScopeTargetInventoryInput,
 ): Promise<PromptCacheScopeTargetInventory> => {
-  const roster = normalizeYunwuFallbackRoster(input.yunwuFallbackRoster);
+  const roster = normalizeMeteredFallbackRoster(input.meteredFallbackRoster);
   const catalog = normalizeCatalog(input.snapshot);
   if (!catalog) return unavailableInventory(input.snapshot ? "catalog_invalid" : "catalog_unavailable", roster);
 
@@ -333,10 +333,10 @@ export const derivePromptCacheScopeTargetInventory = async (
   const authPoolVersionstamp = normalizedVersionstamp(input.codexAuthPoolVersionstamp);
   const authPool = await inspectCodexAuthPoolBinding(input.codexAuthPool);
   const catalogIds = new Set(catalog.models.map((model) => model.id));
-  const yunwuModelIds = roster.status === "authoritative"
+  const meteredModelIds = roster.status === "authoritative"
     ? roster.model_ids.filter((model) => catalogIds.has(model))
     : [];
-  const nonCatalogYunwuModelIds = roster.status === "authoritative"
+  const nonCatalogMeteredModelIds = roster.status === "authoritative"
     ? roster.model_ids.filter((model) => !catalogIds.has(model))
     : [];
 
@@ -359,15 +359,15 @@ export const derivePromptCacheScopeTargetInventory = async (
       qualification,
     });
   }
-  for (const modelId of yunwuModelIds) {
+  for (const modelId of meteredModelIds) {
     const model = catalog.models.find((candidate) => candidate.id === modelId);
     if (!model) continue;
     const qualification = !model.ambiguous && isCodexModelPromptCacheScopeExperimentEligible(catalog.snapshot, model.id)
       ? "qualified"
       : "unqualified";
     targetDrafts.push({
-      provider: PROMPT_CACHE_SCOPE_TARGET_YUNWU_PROVIDER,
-      telemetryProvider: PROMPT_CACHE_SCOPE_TARGET_YUNWU_TELEMETRY_PROVIDER,
+      provider: PROMPT_CACHE_SCOPE_TARGET_METERED_PROVIDER,
+      telemetryProvider: PROMPT_CACHE_SCOPE_TARGET_METERED_TELEMETRY_PROVIDER,
       model,
       qualification,
     });
@@ -440,10 +440,10 @@ export const derivePromptCacheScopeTargetInventory = async (
   const inventoryMaterial = canonicalJson({
     version: FINGERPRINT_VERSION,
     probe_profile: PROMPT_CACHE_SCOPE_PROBE_PROFILE,
-    yunwu_fallback_roster: {
+    metered_fallback_roster: {
       status: roster.status,
       model_ids: roster.status === "authoritative" ? roster.model_ids : [],
-      non_catalog_model_ids: nonCatalogYunwuModelIds,
+      non_catalog_model_ids: nonCatalogMeteredModelIds,
     },
     targets: targets.map((target) => ({
       id: target.id,
@@ -476,10 +476,10 @@ export const derivePromptCacheScopeTargetInventory = async (
     status: "ready",
     reason: "ready",
     targets,
-    yunwu_fallback_roster: {
+    metered_fallback_roster: {
       status: roster.status,
       model_ids: roster.status === "authoritative" ? roster.model_ids : [],
-      non_catalog_model_ids: nonCatalogYunwuModelIds,
+      non_catalog_model_ids: nonCatalogMeteredModelIds,
     },
     inventory_fingerprint: `sha256:${await sha256Hex(inventoryMaterial)}`,
     binding_fingerprint: `sha256:${await sha256Hex(bindingMaterial)}`,
@@ -488,12 +488,12 @@ export const derivePromptCacheScopeTargetInventory = async (
 
 /**
  * The loader is deliberately limited to two strong point reads. In particular,
- * it does not list tenant API-key policy records to invent a Yunwu roster.
+ * it does not list tenant API-key policy records to invent a metered roster.
  */
 export const loadPromptCacheScopeTargetInventory = async (
   options: LoadPromptCacheScopeTargetInventoryOptions = {},
 ): Promise<PromptCacheScopeTargetInventory> => {
-  const roster = options.yunwuFallbackRoster ?? UNKNOWN_YUNWU_ROSTER;
+  const roster = options.meteredFallbackRoster ?? UNKNOWN_METERED_ROSTER;
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) return unavailableInventory("kv_unavailable", roster);
 
@@ -513,6 +513,6 @@ export const loadPromptCacheScopeTargetInventory = async (
     catalogVersionstamp: catalogEntry.versionstamp,
     codexAuthPool: authPoolEntry.value,
     codexAuthPoolVersionstamp: authPoolEntry.versionstamp,
-    yunwuFallbackRoster: roster,
+    meteredFallbackRoster: roster,
   });
 };

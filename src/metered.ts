@@ -1,93 +1,93 @@
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 
-export const YUNWU_BASE_URL = "https://yunwu.ai";
+export const METERED_BASE_URL = "https://api.openlux.ai";
 
-const YUNWU_API_KEY_ENV = "YUNWU_API_KEY";
-const YUNWU_RATIO_CONFIG_URL = `${YUNWU_BASE_URL}/api/ratio_config`;
-const YUNWU_STATUS_URL = `${YUNWU_BASE_URL}/api/status`;
-const YUNWU_RESPONSES_URL = `${YUNWU_BASE_URL}/v1/responses`;
-const YUNWU_TOKEN_LOGS_URL = `${YUNWU_BASE_URL}/api/log/token`;
+const METERED_API_KEY_ENV = "METERED_API_KEY";
+const METERED_RATIO_CONFIG_URL = `${METERED_BASE_URL}/api/ratio_config`;
+const METERED_STATUS_URL = `${METERED_BASE_URL}/api/status`;
+const METERED_RESPONSES_URL = `${METERED_BASE_URL}/v1/responses`;
+const METERED_TOKEN_LOGS_URL = `${METERED_BASE_URL}/api/log/token`;
 // Billing reconciliation runs after the client response and must not hold a
 // queue delivery indefinitely when the provider stalls.
-export const YUNWU_FETCH_TIMEOUT_MS = 10_000;
-export const YUNWU_TOKEN_LOG_FETCH_TIMEOUT_MS = YUNWU_FETCH_TIMEOUT_MS;
+export const METERED_FETCH_TIMEOUT_MS = 10_000;
+export const METERED_TOKEN_LOG_FETCH_TIMEOUT_MS = METERED_FETCH_TIMEOUT_MS;
 
-export type YunwuFetch = (
+export type MeteredFetch = (
   input: RequestInfo | URL,
   init?: RequestInit,
 ) => Promise<Response>;
 
-export type YunwuErrorCode =
-  | "yunwu_api_key_missing"
-  | "yunwu_pricing_unavailable"
-  | "yunwu_pricing_invalid"
-  | "yunwu_status_unavailable"
-  | "yunwu_status_invalid"
-  | "yunwu_request_invalid"
-  | "yunwu_upstream_unreachable"
-  | "yunwu_logs_unavailable"
-  | "yunwu_logs_invalid";
+export type MeteredErrorCode =
+  | "metered_api_key_missing"
+  | "metered_pricing_unavailable"
+  | "metered_pricing_invalid"
+  | "metered_status_unavailable"
+  | "metered_status_invalid"
+  | "metered_request_invalid"
+  | "metered_upstream_unreachable"
+  | "metered_logs_unavailable"
+  | "metered_logs_invalid";
 
-export class YunwuError extends Error {
-  readonly code: YunwuErrorCode;
+export class MeteredError extends Error {
+  readonly code: MeteredErrorCode;
   readonly status: number;
   readonly upstream_status: number | null;
 
   constructor(
     message: string,
-    code: YunwuErrorCode,
+    code: MeteredErrorCode,
     status: number,
     upstreamStatus: number | null = null,
   ) {
     super(message);
-    this.name = "YunwuError";
+    this.name = "MeteredError";
     this.code = code;
     this.status = status;
     this.upstream_status = upstreamStatus;
   }
 }
 
-export type YunwuPricingSnapshot = Readonly<{
+export type MeteredPricingSnapshot = Readonly<{
   eligible_model_ids: readonly string[];
   quota_per_credit: number;
   model_quota_coefficients: Readonly<Record<string, number>>;
   checked_at_ms: number;
 }>;
 
-export type InitializeYunwuPricingOptions = Readonly<{
+export type InitializeMeteredPricingOptions = Readonly<{
   codexModelIds: readonly string[];
-  fetcher?: YunwuFetch;
+  fetcher?: MeteredFetch;
   now?: () => number;
   signal?: AbortSignal;
 }>;
 
-export type YunwuAuthenticatedFetchOptions = Readonly<{
+export type MeteredAuthenticatedFetchOptions = Readonly<{
   apiKey?: string | null;
-  fetcher?: YunwuFetch;
+  fetcher?: MeteredFetch;
   signal?: AbortSignal;
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
 }>;
 
-export type YunwuTokenLogFetchOptions =
-  & YunwuAuthenticatedFetchOptions
+export type MeteredTokenLogFetchOptions =
+  & MeteredAuthenticatedFetchOptions
   & Readonly<{
     requestIds?: readonly string[];
     startAtMs?: number;
     endAtMs?: number;
   }>;
 
-export type YunwuResponsesResult = Readonly<{
+export type MeteredResponsesResult = Readonly<{
   response: Response;
   request_id: string | null;
 }>;
 
-const YUNWU_REASONING_SUFFIX_MODELS = new Set(["gpt-5.6-sol"]);
+const METERED_REASONING_SUFFIX_MODELS = new Set(["gpt-5.6-sol"]);
 
-const toYunwuResponsesBody = (body: JsonRecord): JsonRecord => {
+const toMeteredResponsesBody = (body: JsonRecord): JsonRecord => {
   const model = nonEmptyString(body.model);
   const reasoning = isRecord(body.reasoning) ? nonEmptyString(body.reasoning.effort) : null;
-  if (!model || !reasoning || !YUNWU_REASONING_SUFFIX_MODELS.has(model)) return body;
+  if (!model || !reasoning || !METERED_REASONING_SUFFIX_MODELS.has(model)) return body;
 
   const suffix = reasoning === "none" || reasoning === "minimal" ? "low" : reasoning === "ultra" ? "max" : reasoning;
   if (!["low", "medium", "high", "xhigh", "max"].includes(suffix)) return body;
@@ -97,7 +97,7 @@ const toYunwuResponsesBody = (body: JsonRecord): JsonRecord => {
   return result;
 };
 
-export type YunwuTokenLogEntry = Readonly<{
+export type MeteredTokenLogEntry = Readonly<{
   request_id: string;
   quota: number;
   prompt_tokens: number;
@@ -128,7 +128,7 @@ const rethrowCancellation = (error: unknown, signal: AbortSignal | undefined): v
 };
 
 const boundedTokenLogSignal = (signal: AbortSignal | undefined): AbortSignal => {
-  const timeout = AbortSignal.timeout(YUNWU_FETCH_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(METERED_FETCH_TIMEOUT_MS);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 };
 
@@ -155,20 +155,20 @@ const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Prom
     );
   });
 
-export const readYunwuApiKey = (): string | null => {
+export const readMeteredApiKey = (): string | null => {
   try {
-    return nonEmptyString(Deno.env.get(YUNWU_API_KEY_ENV));
+    return nonEmptyString(Deno.env.get(METERED_API_KEY_ENV));
   } catch {
     return null;
   }
 };
 
-const requireYunwuApiKey = (supplied: string | null | undefined): string => {
-  const apiKey = supplied === undefined ? readYunwuApiKey() : nonEmptyString(supplied);
+const requireMeteredApiKey = (supplied: string | null | undefined): string => {
+  const apiKey = supplied === undefined ? readMeteredApiKey() : nonEmptyString(supplied);
   if (apiKey) return apiKey;
-  throw new YunwuError(
-    "YunWu paid fallback is unavailable because YUNWU_API_KEY is not configured.",
-    "yunwu_api_key_missing",
+  throw new MeteredError(
+    "Metered paid fallback is unavailable because METERED_API_KEY is not configured.",
+    "metered_api_key_missing",
     503,
   );
 };
@@ -188,10 +188,10 @@ const authenticatedHeaders = (apiKey: string, accept: string): Headers => {
 
 const fetchMetadataJson = async (
   url: string,
-  fetcher: YunwuFetch,
+  fetcher: MeteredFetch,
   signal: AbortSignal | undefined,
-  unavailableCode: "yunwu_pricing_unavailable" | "yunwu_status_unavailable",
-  invalidCode: "yunwu_pricing_invalid" | "yunwu_status_invalid",
+  unavailableCode: "metered_pricing_unavailable" | "metered_status_unavailable",
+  invalidCode: "metered_pricing_invalid" | "metered_status_invalid",
 ): Promise<unknown> => {
   let response: Response;
   try {
@@ -203,16 +203,16 @@ const fetchMetadataJson = async (
     });
   } catch (error) {
     rethrowCancellation(error, signal);
-    throw new YunwuError(
-      "YunWu pricing initialization could not reach the metadata service.",
+    throw new MeteredError(
+      "Metered pricing initialization could not reach the metadata service.",
       unavailableCode,
       502,
     );
   }
 
   if (!response.ok) {
-    throw new YunwuError(
-      "YunWu pricing initialization received an unsuccessful metadata response.",
+    throw new MeteredError(
+      "Metered pricing initialization received an unsuccessful metadata response.",
       unavailableCode,
       502,
       response.status,
@@ -222,8 +222,8 @@ const fetchMetadataJson = async (
   try {
     return await response.json() as unknown;
   } catch {
-    throw new YunwuError(
-      "YunWu pricing initialization received invalid metadata.",
+    throw new MeteredError(
+      "Metered pricing initialization received invalid metadata.",
       invalidCode,
       502,
       response.status,
@@ -233,11 +233,11 @@ const fetchMetadataJson = async (
 
 const unwrapSuccessfulEnvelope = (
   value: unknown,
-  code: "yunwu_pricing_invalid" | "yunwu_status_invalid",
+  code: "metered_pricing_invalid" | "metered_status_invalid",
 ): JsonRecord => {
   if (!isRecord(value) || value.success !== true || !isRecord(value.data)) {
-    throw new YunwuError(
-      "YunWu pricing initialization received an invalid metadata envelope.",
+    throw new MeteredError(
+      "Metered pricing initialization received an invalid metadata envelope.",
       code,
       502,
     );
@@ -249,9 +249,9 @@ const pricedModelIds = (pricing: JsonRecord): Set<string> => {
   const ratioMap = pricing.model_ratio;
   const fixedPriceMap = pricing.model_price;
   if (!isRecord(ratioMap) || !isRecord(fixedPriceMap)) {
-    throw new YunwuError(
-      "YunWu pricing initialization received an invalid pricing configuration.",
-      "yunwu_pricing_invalid",
+    throw new MeteredError(
+      "Metered pricing initialization received an invalid pricing configuration.",
+      "metered_pricing_invalid",
       502,
     );
   }
@@ -270,9 +270,9 @@ const modelQuotaCoefficients = (pricing: JsonRecord): Record<string, number> => 
   const fixedPrices = pricing.model_price;
   const completionRatios = pricing.completion_ratio;
   if (!isRecord(ratios) || !isRecord(fixedPrices)) {
-    throw new YunwuError(
-      "YunWu pricing initialization received an invalid pricing configuration.",
-      "yunwu_pricing_invalid",
+    throw new MeteredError(
+      "Metered pricing initialization received an invalid pricing configuration.",
+      "metered_pricing_invalid",
       502,
     );
   }
@@ -293,9 +293,9 @@ const modelQuotaCoefficients = (pricing: JsonRecord): Record<string, number> => 
 
 const normalizeCodexModelIds = (value: readonly string[]): string[] => {
   if (!Array.isArray(value)) {
-    throw new YunwuError(
-      "YunWu pricing initialization requires the current Codex model catalog.",
-      "yunwu_pricing_invalid",
+    throw new MeteredError(
+      "Metered pricing initialization requires the current Codex model catalog.",
+      "metered_pricing_invalid",
       502,
     );
   }
@@ -305,9 +305,9 @@ const normalizeCodexModelIds = (value: readonly string[]): string[] => {
   for (const rawModelId of value) {
     const modelId = nonEmptyString(rawModelId);
     if (!modelId) {
-      throw new YunwuError(
-        "YunWu pricing initialization received an invalid Codex model identifier.",
-        "yunwu_pricing_invalid",
+      throw new MeteredError(
+        "Metered pricing initialization received an invalid Codex model identifier.",
+        "metered_pricing_invalid",
         502,
       );
     }
@@ -318,36 +318,36 @@ const normalizeCodexModelIds = (value: readonly string[]): string[] => {
   return result;
 };
 
-export const initializeYunwuPricing = async (
-  options: InitializeYunwuPricingOptions,
-): Promise<YunwuPricingSnapshot> => {
+export const initializeMeteredPricing = async (
+  options: InitializeMeteredPricingOptions,
+): Promise<MeteredPricingSnapshot> => {
   const fetcher = options.fetcher ?? fetch;
   const [pricingEnvelope, statusEnvelope] = await Promise.all([
     fetchMetadataJson(
-      YUNWU_RATIO_CONFIG_URL,
+      METERED_RATIO_CONFIG_URL,
       fetcher,
       options.signal,
-      "yunwu_pricing_unavailable",
-      "yunwu_pricing_invalid",
+      "metered_pricing_unavailable",
+      "metered_pricing_invalid",
     ),
     fetchMetadataJson(
-      YUNWU_STATUS_URL,
+      METERED_STATUS_URL,
       fetcher,
       options.signal,
-      "yunwu_status_unavailable",
-      "yunwu_status_invalid",
+      "metered_status_unavailable",
+      "metered_status_invalid",
     ),
   ]);
 
-  const pricing = unwrapSuccessfulEnvelope(pricingEnvelope, "yunwu_pricing_invalid");
-  const status = unwrapSuccessfulEnvelope(statusEnvelope, "yunwu_status_invalid");
+  const pricing = unwrapSuccessfulEnvelope(pricingEnvelope, "metered_pricing_invalid");
+  const status = unwrapSuccessfulEnvelope(statusEnvelope, "metered_status_invalid");
   if (
     status.setup !== true || !isPositiveFiniteNumber(status.quota_per_unit) ||
     !Number.isSafeInteger(status.quota_per_unit)
   ) {
-    throw new YunwuError(
-      "YunWu pricing initialization received an invalid quota conversion.",
-      "yunwu_status_invalid",
+    throw new MeteredError(
+      "Metered pricing initialization received an invalid quota conversion.",
+      "metered_status_invalid",
       502,
     );
   }
@@ -358,9 +358,9 @@ export const initializeYunwuPricing = async (
     .filter((modelId) => availableModelIds.has(modelId));
   const checkedAtMs = Math.trunc((options.now ?? Date.now)());
   if (!Number.isSafeInteger(checkedAtMs) || checkedAtMs < 0) {
-    throw new YunwuError(
-      "YunWu pricing initialization received an invalid clock value.",
-      "yunwu_status_invalid",
+    throw new MeteredError(
+      "Metered pricing initialization received an invalid clock value.",
+      "metered_status_invalid",
       502,
     );
   }
@@ -375,44 +375,44 @@ export const initializeYunwuPricing = async (
   };
 };
 
-export const fetchYunwuResponses = async (
+export const fetchMeteredResponses = async (
   body: unknown,
-  options: YunwuAuthenticatedFetchOptions = {},
-): Promise<YunwuResponsesResult> => {
+  options: MeteredAuthenticatedFetchOptions = {},
+): Promise<MeteredResponsesResult> => {
   if (!isRecord(body)) {
-    throw new YunwuError(
-      "YunWu Responses requests must use a canonical JSON object body.",
-      "yunwu_request_invalid",
+    throw new MeteredError(
+      "Metered Responses requests must use a canonical JSON object body.",
+      "metered_request_invalid",
       400,
     );
   }
 
   let encodedBody: string;
   try {
-    encodedBody = JSON.stringify(toYunwuResponsesBody(body));
+    encodedBody = JSON.stringify(toMeteredResponsesBody(body));
   } catch {
-    throw new YunwuError(
-      "YunWu Responses requests must use a JSON-serializable body.",
-      "yunwu_request_invalid",
+    throw new MeteredError(
+      "Metered Responses requests must use a JSON-serializable body.",
+      "metered_request_invalid",
       400,
     );
   }
   if (typeof encodedBody !== "string") {
-    throw new YunwuError(
-      "YunWu Responses requests must use a JSON-serializable body.",
-      "yunwu_request_invalid",
+    throw new MeteredError(
+      "Metered Responses requests must use a JSON-serializable body.",
+      "metered_request_invalid",
       400,
     );
   }
 
-  const apiKey = requireYunwuApiKey(options.apiKey);
+  const apiKey = requireMeteredApiKey(options.apiKey);
   const headers = authenticatedHeaders(apiKey, "text/event-stream");
   headers.set("Content-Type", "application/json");
 
   let response: Response;
   const headersDeadline = new AbortController();
   const headersTimer = setTimeout(
-    () => headersDeadline.abort(new DOMException("YunWu response headers timed out.", "TimeoutError")),
+    () => headersDeadline.abort(new DOMException("Metered response headers timed out.", "TimeoutError")),
     STREAM_FIRST_EVENT_DEADLINE_MS,
   );
   const signal = options.signal ? AbortSignal.any([options.signal, headersDeadline.signal]) : headersDeadline.signal;
@@ -429,7 +429,7 @@ export const fetchYunwuResponses = async (
       throw signal.reason ?? new DOMException("The request was aborted.", "AbortError");
     }
     dispatch?.markTransportStarted();
-    response = await (options.fetcher ?? fetch)(YUNWU_RESPONSES_URL, {
+    response = await (options.fetcher ?? fetch)(METERED_RESPONSES_URL, {
       method: "POST",
       headers,
       body: encodedBody,
@@ -441,9 +441,9 @@ export const fetchYunwuResponses = async (
     if (options.signal?.aborted) throw options.signal.reason ?? error;
     if (headersDeadline.signal.aborted) throw headersDeadline.signal.reason ?? error;
     rethrowCancellation(error, signal);
-    throw new YunwuError(
-      "YunWu Responses request could not reach the upstream service.",
-      "yunwu_upstream_unreachable",
+    throw new MeteredError(
+      "Metered Responses request could not reach the upstream service.",
+      "metered_upstream_unreachable",
       502,
     );
   } finally {
@@ -461,7 +461,7 @@ export const fetchYunwuResponses = async (
   };
 };
 
-const normalizeTokenLogEntry = (value: unknown): YunwuTokenLogEntry | null => {
+const normalizeTokenLogEntry = (value: unknown): MeteredTokenLogEntry | null => {
   if (!isRecord(value)) return null;
   let requestId = nonEmptyString(value.request_id);
   if (!requestId && typeof value.other === "string") {
@@ -494,18 +494,18 @@ const normalizeTokenLogEntry = (value: unknown): YunwuTokenLogEntry | null => {
   };
 };
 
-export const fetchYunwuTokenLogs = async (
-  options: YunwuTokenLogFetchOptions = {},
-): Promise<readonly YunwuTokenLogEntry[]> => {
-  const apiKey = requireYunwuApiKey(options.apiKey);
+export const fetchMeteredTokenLogs = async (
+  options: MeteredTokenLogFetchOptions = {},
+): Promise<readonly MeteredTokenLogEntry[]> => {
+  const apiKey = requireMeteredApiKey(options.apiKey);
   const signal = boundedTokenLogSignal(options.signal);
   const requestedIds = new Set(options.requestIds?.map((id) => id.trim()).filter(Boolean) ?? []);
   const foundIds = new Set<string>();
-  const logs: YunwuTokenLogEntry[] = [];
+  const logs: MeteredTokenLogEntry[] = [];
   const pageSize = 100;
 
   for (let page = 1; page <= 100; page += 1) {
-    const url = new URL(YUNWU_TOKEN_LOGS_URL);
+    const url = new URL(METERED_TOKEN_LOGS_URL);
     url.searchParams.set("key", apiKey);
     url.searchParams.set("page", String(page));
     url.searchParams.set("page_size", String(pageSize));
@@ -530,17 +530,17 @@ export const fetchYunwuTokenLogs = async (
       );
     } catch (error) {
       rethrowCancellation(error, signal);
-      throw new YunwuError(
-        "YunWu billing logs could not be reached.",
-        "yunwu_logs_unavailable",
+      throw new MeteredError(
+        "Metered billing logs could not be reached.",
+        "metered_logs_unavailable",
         502,
       );
     }
 
     if (!response.ok) {
-      throw new YunwuError(
-        "YunWu billing logs returned an unsuccessful response.",
-        "yunwu_logs_unavailable",
+      throw new MeteredError(
+        "Metered billing logs returned an unsuccessful response.",
+        "metered_logs_unavailable",
         502,
         response.status,
       );
@@ -551,17 +551,17 @@ export const fetchYunwuTokenLogs = async (
       envelope = await awaitWithAbort(response.json(), signal) as unknown;
     } catch (error) {
       rethrowCancellation(error, signal);
-      throw new YunwuError(
-        "YunWu billing logs returned invalid JSON.",
-        "yunwu_logs_invalid",
+      throw new MeteredError(
+        "Metered billing logs returned invalid JSON.",
+        "metered_logs_invalid",
         502,
         response.status,
       );
     }
     if (!isRecord(envelope) || envelope.success !== true) {
-      throw new YunwuError(
-        "YunWu billing logs returned an invalid response envelope.",
-        "yunwu_logs_invalid",
+      throw new MeteredError(
+        "Metered billing logs returned an invalid response envelope.",
+        "metered_logs_invalid",
         502,
         response.status,
       );
@@ -569,9 +569,9 @@ export const fetchYunwuTokenLogs = async (
     const data = envelope.data;
     const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
     if (!items) {
-      throw new YunwuError(
-        "YunWu billing logs returned an invalid response envelope.",
-        "yunwu_logs_invalid",
+      throw new MeteredError(
+        "Metered billing logs returned an invalid response envelope.",
+        "metered_logs_invalid",
         502,
         response.status,
       );

@@ -116,7 +116,7 @@ const {
   updatePasskeyCredentialSignCount,
 } = await import("../src/passkeys.ts");
 const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
-const { YUNWU_QUOTA_FRESH_MS, YUNWU_QUOTA_STATE_KEY } = await import("../src/yunwu_quota.ts");
+const { METERED_QUOTA_FRESH_MS, METERED_QUOTA_STATE_KEY } = await import("../src/metered_quota.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
   const originalGet = Deno.env.get;
@@ -156,7 +156,7 @@ Deno.test("inference handler omits synthetic quota headers for passkey sessions"
   kvStore.clear();
   const { token } = seedPasskeySession();
   const now = Date.now();
-  kvStore.set(keyToString(YUNWU_QUOTA_STATE_KEY), {
+  kvStore.set(keyToString(METERED_QUOTA_STATE_KEY), {
     current_balance_quota: 25_000_000,
     post_refill_baseline_quota: 50_000_000,
     last_observed_used_quota: 25_000_000,
@@ -172,7 +172,7 @@ Deno.test("inference handler omits synthetic quota headers for passkey sessions"
     latest_refill_completed_at_ms: now - 60_000,
   });
 
-  await withEnv({ YUNWU_SYSTEM_TOKEN: "system-token", YUNWU_USER_ID: "717235" }, async () => {
+  await withEnv({ METERED_SYSTEM_TOKEN: "system-token", METERED_USER_ID: "717235" }, async () => {
     const { default: handler } = await import("../src/handler.ts");
     for (const path of ["/v1/responses", "/v1/chat/completions"]) {
       const response = await handler(
@@ -192,17 +192,17 @@ Deno.test("inference handler omits synthetic quota headers for passkey sessions"
       assert.equal(response.headers.has("x-codex-primary-reset-at"), false);
       const exposedHeaders = response.headers.get("access-control-expose-headers") ?? "";
       assert.match(exposedHeaders, /(?:^|,)x-codex-primary-used-percent(?:,|$)/i);
-      assert.doesNotMatch(exposedHeaders, /(?:^|,)x-yunwu-primary-used-percent(?:,|$)/i);
+      assert.doesNotMatch(exposedHeaders, /(?:^|,)x-metered-primary-used-percent(?:,|$)/i);
       assert.doesNotMatch(exposedHeaders, /(?:^|,)x-openai-subscription-primary-used-percent(?:,|$)/i);
     }
   });
 });
 
-Deno.test("passkey inference does not read a retained YunWu snapshot", async () => {
+Deno.test("passkey inference does not read a retained Metered snapshot", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession();
   const now = Date.now();
-  kvStore.set(keyToString(YUNWU_QUOTA_STATE_KEY), {
+  kvStore.set(keyToString(METERED_QUOTA_STATE_KEY), {
     current_balance_quota: 25_000_000,
     post_refill_baseline_quota: 50_000_000,
     last_observed_used_quota: 25_000_000,
@@ -218,7 +218,7 @@ Deno.test("passkey inference does not read a retained YunWu snapshot", async () 
     latest_refill_completed_at_ms: now - 60_000,
   });
 
-  await withEnv({ YUNWU_SYSTEM_TOKEN: "system-token", YUNWU_USER_ID: "717235" }, async () => {
+  await withEnv({ METERED_SYSTEM_TOKEN: "system-token", METERED_USER_ID: "717235" }, async () => {
     const { default: handler } = await import("../src/handler.ts");
     kvGetDelayMs = 10;
     const response = await handler(
@@ -237,16 +237,16 @@ Deno.test("passkey inference does not read a retained YunWu snapshot", async () 
   });
 });
 
-Deno.test("passkey inference never waits for a YunWu quota refresh", async () => {
+Deno.test("passkey inference never waits for a Metered quota refresh", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession();
   const now = Date.now();
-  kvStore.set(keyToString(YUNWU_QUOTA_STATE_KEY), {
+  kvStore.set(keyToString(METERED_QUOTA_STATE_KEY), {
     current_balance_quota: 25_000_000,
     post_refill_baseline_quota: 50_000_000,
     last_observed_used_quota: 25_000_000,
     quota_per_credit: 500_000,
-    observed_at_ms: now - YUNWU_QUOTA_FRESH_MS,
+    observed_at_ms: now - METERED_QUOTA_FRESH_MS,
     cycle_started_at_ms: now - 60_000,
     confidence: "refill_observed",
     last_known_debits_quota: 1_000_000,
@@ -268,7 +268,7 @@ Deno.test("passkey inference never waits for a YunWu quota refresh", async () =>
       );
     });
   try {
-    await withEnv({ YUNWU_SYSTEM_TOKEN: "system-token", YUNWU_USER_ID: "717235" }, async () => {
+    await withEnv({ METERED_SYSTEM_TOKEN: "system-token", METERED_USER_ID: "717235" }, async () => {
       const { default: handler } = await import("../src/handler.ts");
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -285,7 +285,7 @@ Deno.test("passkey inference never waits for a YunWu quota refresh", async () =>
             }),
           ),
           new Promise<never>((_resolve, reject) => {
-            timeout = setTimeout(() => reject(new Error("handler waited for YunWu quota refresh")), 500);
+            timeout = setTimeout(() => reject(new Error("handler waited for Metered quota refresh")), 500);
           }),
         ]);
         assert.equal(response.status, 503);

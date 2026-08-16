@@ -1,22 +1,22 @@
 import assert from "node:assert/strict";
-import { buildCodexQuotaHeaders, YUNWU_CODEX_LIMIT_NAME } from "../src/codex_quota.ts";
+import { buildCodexQuotaHeaders, METERED_CODEX_LIMIT_NAME } from "../src/codex_quota.ts";
 import {
-  fetchYunwuQuotaObservation,
-  getCachedYunwuQuotaSnapshot,
-  getYunwuQuotaSnapshot,
-  invalidateYunwuQuotaSnapshot,
-  readYunwuAccountCredentials,
-  updateYunwuQuotaState,
-  YUNWU_QUOTA_FRESH_MS,
-  YUNWU_QUOTA_INVALIDATION_KEY,
-  YUNWU_QUOTA_RETENTION_MS,
-  YUNWU_QUOTA_STATE_KEY,
-  YUNWU_SYSTEM_TOKEN_ENV,
-  YUNWU_USER_ID_ENV,
-  type YunwuQuotaObservation,
-  type YunwuQuotaSnapshot,
-  type YunwuQuotaState,
-} from "../src/yunwu_quota.ts";
+  fetchMeteredQuotaObservation,
+  getCachedMeteredQuotaSnapshot,
+  getMeteredQuotaSnapshot,
+  invalidateMeteredQuotaSnapshot,
+  readMeteredAccountCredentials,
+  updateMeteredQuotaState,
+  METERED_QUOTA_FRESH_MS,
+  METERED_QUOTA_INVALIDATION_KEY,
+  METERED_QUOTA_RETENTION_MS,
+  METERED_QUOTA_STATE_KEY,
+  METERED_SYSTEM_TOKEN_ENV,
+  METERED_USER_ID_ENV,
+  type MeteredQuotaObservation,
+  type MeteredQuotaSnapshot,
+  type MeteredQuotaState,
+} from "../src/metered_quota.ts";
 
 const keyString = (key: Deno.KvKey): string => JSON.stringify(key);
 
@@ -81,27 +81,27 @@ const restoreEnv = (key: string, value: string | undefined): void => {
   else Deno.env.set(key, value);
 };
 
-Deno.test("YunWu account credentials require a system token and numeric user id", () => {
-  const originalToken = Deno.env.get(YUNWU_SYSTEM_TOKEN_ENV);
-  const originalUserId = Deno.env.get(YUNWU_USER_ID_ENV);
+Deno.test("Metered account credentials require a system token and numeric user id", () => {
+  const originalToken = Deno.env.get(METERED_SYSTEM_TOKEN_ENV);
+  const originalUserId = Deno.env.get(METERED_USER_ID_ENV);
   try {
-    Deno.env.set(YUNWU_SYSTEM_TOKEN_ENV, "system-token");
-    Deno.env.set(YUNWU_USER_ID_ENV, "717235");
-    assert.deepEqual(readYunwuAccountCredentials(), credentials);
+    Deno.env.set(METERED_SYSTEM_TOKEN_ENV, "system-token");
+    Deno.env.set(METERED_USER_ID_ENV, "717235");
+    assert.deepEqual(readMeteredAccountCredentials(), credentials);
 
-    Deno.env.set(YUNWU_USER_ID_ENV, "not-numeric");
-    assert.equal(readYunwuAccountCredentials(), null);
+    Deno.env.set(METERED_USER_ID_ENV, "not-numeric");
+    assert.equal(readMeteredAccountCredentials(), null);
 
-    Deno.env.set(YUNWU_SYSTEM_TOKEN_ENV, "contains whitespace");
-    Deno.env.set(YUNWU_USER_ID_ENV, "717235");
-    assert.equal(readYunwuAccountCredentials(), null);
+    Deno.env.set(METERED_SYSTEM_TOKEN_ENV, "contains whitespace");
+    Deno.env.set(METERED_USER_ID_ENV, "717235");
+    assert.equal(readMeteredAccountCredentials(), null);
   } finally {
-    restoreEnv(YUNWU_SYSTEM_TOKEN_ENV, originalToken);
-    restoreEnv(YUNWU_USER_ID_ENV, originalUserId);
+    restoreEnv(METERED_SYSTEM_TOKEN_ENV, originalToken);
+    restoreEnv(METERED_USER_ID_ENV, originalUserId);
   }
 });
 
-const observation = (overrides: Partial<YunwuQuotaObservation> = {}): YunwuQuotaObservation => ({
+const observation = (overrides: Partial<MeteredQuotaObservation> = {}): MeteredQuotaObservation => ({
   balance_quota: 50_000_000,
   used_quota: 100_000,
   quota_per_credit: 500_000,
@@ -114,7 +114,7 @@ const observation = (overrides: Partial<YunwuQuotaObservation> = {}): YunwuQuota
   ...overrides,
 });
 
-const state = (overrides: Partial<YunwuQuotaState> = {}): YunwuQuotaState => ({
+const state = (overrides: Partial<MeteredQuotaState> = {}): MeteredQuotaState => ({
   current_balance_quota: 50_000_000,
   post_refill_baseline_quota: 50_000_000,
   last_observed_used_quota: 100_000,
@@ -137,16 +137,16 @@ const jsonResponse = (body: unknown): Response =>
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
 
-const yunwuFetcher =
+const meteredFetcher =
   (calls: Array<{ url: string; headers: Headers }>) =>
   (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const headers = new Headers(init?.headers);
     calls.push({ url, headers });
-    if (url === "https://yunwu.ai/api/user/self") {
+    if (url === "https://api.openlux.ai/api/user/self") {
       return Promise.resolve(jsonResponse({ success: true, data: { quota: 49_956_296, used_quota: 143_704 } }));
     }
-    if (url === "https://yunwu.ai/api/user/topuprecords?page=1&page_size=10") {
+    if (url === "https://api.openlux.ai/api/user/topuprecords?page=1&page_size=10") {
       return Promise.resolve(jsonResponse({
         success: true,
         data: {
@@ -161,16 +161,16 @@ const yunwuFetcher =
         },
       }));
     }
-    if (url === "https://yunwu.ai/api/status") {
+    if (url === "https://api.openlux.ai/api/status") {
       return Promise.resolve(jsonResponse({ success: true, data: { quota_per_unit: 500_000 } }));
     }
     throw new Error(`Unexpected URL: ${url}`);
   };
 
-Deno.test("YunWu account observation reads wallet balance and latest successful top-up", async () => {
+Deno.test("Metered account observation reads wallet balance and latest successful top-up", async () => {
   const calls: Array<{ url: string; headers: Headers }> = [];
-  const result = await fetchYunwuQuotaObservation(credentials, {
-    fetcher: yunwuFetcher(calls),
+  const result = await fetchMeteredQuotaObservation(credentials, {
+    fetcher: meteredFetcher(calls),
     now: () => 2_000_000,
   });
 
@@ -195,24 +195,24 @@ Deno.test("YunWu account observation reads wallet balance and latest successful 
   assert.equal(statusCall?.headers.has("Authorization"), false);
 });
 
-Deno.test("YunWu quota seeds a provisional baseline from the first observation", () => {
-  const next = updateYunwuQuotaState(null, observation());
+Deno.test("Metered quota seeds a provisional baseline from the first observation", () => {
+  const next = updateMeteredQuotaState(null, observation());
   assert.equal(next.current_balance_quota, 50_000_000);
   assert.equal(next.post_refill_baseline_quota, 50_000_000);
   assert.equal(next.confidence, "provisional");
   assert.equal(next.last_inferred_credit_quota, 0);
 });
 
-Deno.test("YunWu quota seeds a partially spent first cycle from the latest refill amount", () => {
-  const next = updateYunwuQuotaState(null, observation({ balance_quota: 40_000_000 }));
+Deno.test("Metered quota seeds a partially spent first cycle from the latest refill amount", () => {
+  const next = updateMeteredQuotaState(null, observation({ balance_quota: 40_000_000 }));
   assert.equal(next.current_balance_quota, 40_000_000);
   assert.equal(next.post_refill_baseline_quota, 50_000_000);
   assert.equal(next.confidence, "provisional");
 });
 
-Deno.test("YunWu quota keeps the refill baseline across known and external debits", () => {
+Deno.test("Metered quota keeps the refill baseline across known and external debits", () => {
   const previous = state();
-  const next = updateYunwuQuotaState(
+  const next = updateMeteredQuotaState(
     previous,
     observation({
       balance_quota: 48_500_000,
@@ -226,13 +226,13 @@ Deno.test("YunWu quota keeps the refill baseline across known and external debit
   assert.equal(next.confidence, "provisional");
 });
 
-Deno.test("YunWu quota detects a refill despite intervening debits and starts a new baseline", () => {
+Deno.test("Metered quota detects a refill despite intervening debits and starts a new baseline", () => {
   const previous = state({
     current_balance_quota: 20_000_000,
     post_refill_baseline_quota: 50_000_000,
     last_observed_used_quota: 30_000_000,
   });
-  const next = updateYunwuQuotaState(
+  const next = updateMeteredQuotaState(
     previous,
     observation({
       balance_quota: 44_000_000,
@@ -253,13 +253,13 @@ Deno.test("YunWu quota detects a refill despite intervening debits and starts a 
   assert.equal(next.latest_refill_amount_credits, 50);
 });
 
-Deno.test("YunWu quota restores post-refill debits when the wallet carries a prior balance", () => {
+Deno.test("Metered quota restores post-refill debits when the wallet carries a prior balance", () => {
   const previous = state({
     current_balance_quota: 10_000_000,
     post_refill_baseline_quota: 50_000_000,
     last_observed_used_quota: 30_000_000,
   });
-  const next = updateYunwuQuotaState(
+  const next = updateMeteredQuotaState(
     previous,
     observation({
       balance_quota: 30_000_000,
@@ -278,12 +278,12 @@ Deno.test("YunWu quota restores post-refill debits when the wallet carries a pri
   assert.equal(next.post_refill_baseline_quota, 35_000_000);
 });
 
-Deno.test("YunWu quota keeps reconstructed refill capacity within safe integer bounds", () => {
+Deno.test("Metered quota keeps reconstructed refill capacity within safe integer bounds", () => {
   const previous = state({
     current_balance_quota: Number.MAX_SAFE_INTEGER,
     last_observed_used_quota: 100_000,
   });
-  const next = updateYunwuQuotaState(
+  const next = updateMeteredQuotaState(
     previous,
     observation({
       balance_quota: Number.MAX_SAFE_INTEGER,
@@ -300,13 +300,13 @@ Deno.test("YunWu quota keeps reconstructed refill capacity within safe integer b
   assert.equal(Number.isSafeInteger(next.post_refill_baseline_quota), true);
 });
 
-Deno.test("YunWu quota never starts a refill cycle below the observed top-up amount", () => {
+Deno.test("Metered quota never starts a refill cycle below the observed top-up amount", () => {
   const previous = state({
     current_balance_quota: 20_000_000,
     post_refill_baseline_quota: 50_000_000,
     last_observed_used_quota: 30_000_000,
   });
-  const next = updateYunwuQuotaState(
+  const next = updateMeteredQuotaState(
     previous,
     observation({
       balance_quota: 20_000_000,
@@ -324,9 +324,9 @@ Deno.test("YunWu quota never starts a refill cycle below the observed top-up amo
   assert.equal(next.confidence, "refill_observed");
 });
 
-Deno.test("YunWu quota treats an unlisted positive adjustment as an inferred credit", () => {
+Deno.test("Metered quota treats an unlisted positive adjustment as an inferred credit", () => {
   const previous = state({ current_balance_quota: 10_000_000 });
-  const next = updateYunwuQuotaState(
+  const next = updateMeteredQuotaState(
     previous,
     observation({
       balance_quota: 11_000_000,
@@ -339,9 +339,9 @@ Deno.test("YunWu quota treats an unlisted positive adjustment as an inferred cre
   assert.equal(next.confidence, "inferred_adjustment");
 });
 
-Deno.test("YunWu quota ignores a reset used counter unless the wallet itself rises", () => {
+Deno.test("Metered quota ignores a reset used counter unless the wallet itself rises", () => {
   const previous = state({ current_balance_quota: 10_000_000, last_observed_used_quota: 5_000_000 });
-  const debit = updateYunwuQuotaState(
+  const debit = updateMeteredQuotaState(
     previous,
     observation({
       balance_quota: 9_000_000,
@@ -352,7 +352,7 @@ Deno.test("YunWu quota ignores a reset used counter unless the wallet itself ris
   assert.equal(debit.last_inferred_credit_quota, 0);
   assert.equal(debit.post_refill_baseline_quota, 50_000_000);
 
-  const credit = updateYunwuQuotaState(
+  const credit = updateMeteredQuotaState(
     previous,
     observation({
       balance_quota: 12_000_000,
@@ -363,12 +363,12 @@ Deno.test("YunWu quota ignores a reset used counter unless the wallet itself ris
   assert.equal(credit.last_inferred_credit_quota, 2_000_000);
 });
 
-Deno.test("YunWu quota cache serves fresh state without an upstream request", async () => {
+Deno.test("Metered quota cache serves fresh state without an upstream request", async () => {
   const kv = new MemoryKv();
   const now = 10_000_000;
-  kv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now - YUNWU_QUOTA_FRESH_MS + 1 }));
+  kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - METERED_QUOTA_FRESH_MS + 1 }));
   let fetches = 0;
-  const snapshot = await getYunwuQuotaSnapshot(credentials, {
+  const snapshot = await getMeteredQuotaSnapshot(credentials, {
     kv: kv as unknown as Deno.Kv,
     now: () => now,
     fetcher: () => {
@@ -381,15 +381,15 @@ Deno.test("YunWu quota cache serves fresh state without an upstream request", as
   assert.equal(snapshot?.remaining_percent, 100);
 });
 
-Deno.test("YunWu quota forced refresh bypasses a fresh cached state", async () => {
+Deno.test("Metered quota forced refresh bypasses a fresh cached state", async () => {
   const kv = new MemoryKv();
   const now = 11_000_000;
-  kv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now - 1_000 }));
+  kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - 1_000 }));
   const calls: Array<{ url: string; headers: Headers }> = [];
-  const snapshot = await getYunwuQuotaSnapshot(credentials, {
+  const snapshot = await getMeteredQuotaSnapshot(credentials, {
     kv: kv as unknown as Deno.Kv,
     now: () => now,
-    fetcher: yunwuFetcher(calls),
+    fetcher: meteredFetcher(calls),
     forceRefresh: true,
     createLeaseOwner: () => "forced-refresh-owner",
   });
@@ -397,13 +397,13 @@ Deno.test("YunWu quota forced refresh bypasses a fresh cached state", async () =
   assert.equal(calls.length, 3);
 });
 
-Deno.test("YunWu quota cache marks an invalidated observation stale", async () => {
+Deno.test("Metered quota cache marks an invalidated observation stale", async () => {
   const kv = new MemoryKv();
   const now = 15_000_000;
-  kv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now }));
-  kv.seed(YUNWU_QUOTA_INVALIDATION_KEY, { invalidated_at_ms: now });
+  kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now }));
+  kv.seed(METERED_QUOTA_INVALIDATION_KEY, { invalidated_at_ms: now });
 
-  const snapshot = await getCachedYunwuQuotaSnapshot({
+  const snapshot = await getCachedMeteredQuotaSnapshot({
     kv: kv as unknown as Deno.Kv,
     now: () => now,
   });
@@ -412,46 +412,46 @@ Deno.test("YunWu quota cache marks an invalidated observation stale", async () =
   assert.equal(snapshot?.remaining_percent, 100);
 });
 
-Deno.test("YunWu quota invalidation forces a fresh account observation", async () => {
+Deno.test("Metered quota invalidation forces a fresh account observation", async () => {
   const kv = new MemoryKv();
   const now = 16_000_000;
-  kv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now }));
-  await invalidateYunwuQuotaSnapshot({
+  kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now }));
+  await invalidateMeteredQuotaSnapshot({
     kv: kv as unknown as Deno.Kv,
     now: () => now,
   });
   const calls: Array<{ url: string; headers: Headers }> = [];
 
-  const snapshot = await getYunwuQuotaSnapshot(credentials, {
+  const snapshot = await getMeteredQuotaSnapshot(credentials, {
     kv: kv as unknown as Deno.Kv,
     now: () => now,
-    fetcher: yunwuFetcher(calls),
+    fetcher: meteredFetcher(calls),
     createLeaseOwner: () => "invalidation-refresh-owner",
   });
 
   assert.equal(snapshot?.cache_state, "refreshed");
   assert.equal(calls.length, 3);
-  assert.equal(kv.value(YUNWU_QUOTA_INVALIDATION_KEY), null);
+  assert.equal(kv.value(METERED_QUOTA_INVALIDATION_KEY), null);
 });
 
-Deno.test("YunWu quota refresh stores a new observation and computes its percentage", async () => {
+Deno.test("Metered quota refresh stores a new observation and computes its percentage", async () => {
   const kv = new MemoryKv();
   const now = 20_000_000;
   kv.seed(
-    YUNWU_QUOTA_STATE_KEY,
+    METERED_QUOTA_STATE_KEY,
     state({
       current_balance_quota: 50_000_000,
       post_refill_baseline_quota: 50_000_000,
       last_observed_used_quota: 100_000,
-      observed_at_ms: now - YUNWU_QUOTA_FRESH_MS,
+      observed_at_ms: now - METERED_QUOTA_FRESH_MS,
       latest_refill_id: "10",
     }),
   );
   const calls: Array<{ url: string; headers: Headers }> = [];
-  const snapshot = await getYunwuQuotaSnapshot(credentials, {
+  const snapshot = await getMeteredQuotaSnapshot(credentials, {
     kv: kv as unknown as Deno.Kv,
     now: () => now,
-    fetcher: yunwuFetcher(calls),
+    fetcher: meteredFetcher(calls),
     createLeaseOwner: () => "refresh-owner",
   });
   assert.equal(snapshot?.cache_state, "refreshed");
@@ -461,11 +461,11 @@ Deno.test("YunWu quota refresh stores a new observation and computes its percent
   assert.equal(calls.length, 3);
 });
 
-Deno.test("YunWu quota serves stale state on refresh failure and drops expired state", async () => {
+Deno.test("Metered quota serves stale state on refresh failure and drops expired state", async () => {
   const now = 30_000_000;
   const staleKv = new MemoryKv();
-  staleKv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now - YUNWU_QUOTA_FRESH_MS }));
-  const stale = await getYunwuQuotaSnapshot(credentials, {
+  staleKv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - METERED_QUOTA_FRESH_MS }));
+  const stale = await getMeteredQuotaSnapshot(credentials, {
     kv: staleKv as unknown as Deno.Kv,
     now: () => now,
     fetcher: () => Promise.reject(new Error("temporary outage")),
@@ -473,8 +473,8 @@ Deno.test("YunWu quota serves stale state on refresh failure and drops expired s
   assert.equal(stale?.cache_state, "stale");
 
   const expiredKv = new MemoryKv();
-  expiredKv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now - YUNWU_QUOTA_RETENTION_MS }));
-  const expired = await getYunwuQuotaSnapshot(credentials, {
+  expiredKv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - METERED_QUOTA_RETENTION_MS }));
+  const expired = await getMeteredQuotaSnapshot(credentials, {
     kv: expiredKv as unknown as Deno.Kv,
     now: () => now,
     fetcher: () => Promise.reject(new Error("temporary outage")),
@@ -482,23 +482,23 @@ Deno.test("YunWu quota serves stale state on refresh failure and drops expired s
   assert.equal(expired, null);
 });
 
-Deno.test("YunWu quota refresh lease permits only one upstream refresh", async () => {
+Deno.test("Metered quota refresh lease permits only one upstream refresh", async () => {
   const kv = new MemoryKv();
   const now = 40_000_000;
-  kv.seed(YUNWU_QUOTA_STATE_KEY, state({ observed_at_ms: now - YUNWU_QUOTA_FRESH_MS }));
+  kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - METERED_QUOTA_FRESH_MS }));
   const calls: Array<{ url: string; headers: Headers }> = [];
   let releaseFetch = (): void => {};
   const gate = new Promise<void>((resolve) => {
     releaseFetch = resolve;
   });
-  const baseFetcher = yunwuFetcher(calls);
+  const baseFetcher = meteredFetcher(calls);
   const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     await gate;
     return await baseFetcher(input, init);
   };
   let owner = 0;
   const requests = Array.from({ length: 12 }, () =>
-    getYunwuQuotaSnapshot(credentials, {
+    getMeteredQuotaSnapshot(credentials, {
       kv: kv as unknown as Deno.Kv,
       now: () => now,
       fetcher,
@@ -513,11 +513,11 @@ Deno.test("YunWu quota refresh lease permits only one upstream refresh", async (
   assert.equal(snapshots.filter((snapshot) => snapshot?.cache_state === "stale").length, 11);
 });
 
-Deno.test("YunWu quota invalidation rejects an in-flight pre-debit refresh", async () => {
+Deno.test("Metered quota invalidation rejects an in-flight pre-debit refresh", async () => {
   const kv = new MemoryKv();
   const now = 50_000_000;
-  const previous = state({ observed_at_ms: now - YUNWU_QUOTA_FRESH_MS });
-  kv.seed(YUNWU_QUOTA_STATE_KEY, previous);
+  const previous = state({ observed_at_ms: now - METERED_QUOTA_FRESH_MS });
+  kv.seed(METERED_QUOTA_STATE_KEY, previous);
   let releaseFetch = (): void => {};
   let markFetchStarted = (): void => {};
   const fetchStarted = new Promise<void>((resolve) => {
@@ -526,20 +526,20 @@ Deno.test("YunWu quota invalidation rejects an in-flight pre-debit refresh", asy
   const gate = new Promise<void>((resolve) => {
     releaseFetch = resolve;
   });
-  const baseFetcher = yunwuFetcher([]);
+  const baseFetcher = meteredFetcher([]);
   const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     markFetchStarted();
     await gate;
     return await baseFetcher(input, init);
   };
-  const pending = getYunwuQuotaSnapshot(credentials, {
+  const pending = getMeteredQuotaSnapshot(credentials, {
     kv: kv as unknown as Deno.Kv,
     now: () => now,
     fetcher,
     createLeaseOwner: () => "pre-debit-refresh-owner",
   });
   await fetchStarted;
-  await invalidateYunwuQuotaSnapshot({
+  await invalidateMeteredQuotaSnapshot({
     kv: kv as unknown as Deno.Kv,
     now: () => now + 1,
   });
@@ -547,11 +547,11 @@ Deno.test("YunWu quota invalidation rejects an in-flight pre-debit refresh", asy
 
   const snapshot = await pending;
   assert.equal(snapshot?.cache_state, "stale");
-  assert.deepEqual(kv.value(YUNWU_QUOTA_STATE_KEY), previous);
-  assert.deepEqual(kv.value(YUNWU_QUOTA_INVALIDATION_KEY), { invalidated_at_ms: now + 1 });
+  assert.deepEqual(kv.value(METERED_QUOTA_STATE_KEY), previous);
+  assert.deepEqual(kv.value(METERED_QUOTA_INVALIDATION_KEY), { invalidated_at_ms: now + 1 });
 });
 
-const quotaSnapshot = (usedPercent: number): YunwuQuotaSnapshot => ({
+const quotaSnapshot = (usedPercent: number): MeteredQuotaSnapshot => ({
   state: state({
     current_balance_quota: Math.round((100 - usedPercent) * 500_000),
     post_refill_baseline_quota: 50_000_000,
@@ -564,7 +564,7 @@ const quotaSnapshot = (usedPercent: number): YunwuQuotaSnapshot => ({
   used_percent: usedPercent,
 });
 
-Deno.test("Codex quota headers replace every parseable upstream family with canonical YunWu", () => {
+Deno.test("Codex quota headers replace every parseable upstream family with canonical Metered", () => {
   const headers = buildCodexQuotaHeaders(
     new Headers({
       "x-codex-primary-used-percent": "96.5",
@@ -584,8 +584,8 @@ Deno.test("Codex quota headers replace every parseable upstream family with cano
       "x-codex-spark-primary-reset-at": "1785100000",
       "x-openai-subscription-limit-name": "OpenAI subscription",
       "x-openai-subscription-primary-used-percent": "96.5",
-      "x-yunwu-limit-name": "stale YunWu family",
-      "x-yunwu-primary-used-percent": "40",
+      "x-metered-limit-name": "stale Metered family",
+      "x-metered-primary-used-percent": "40",
       "x-codex-model": "gpt-5.6-sol",
       "x-codex-plan-type": "pro",
       "x-codex-safety-identifier": "safety-id",
@@ -594,7 +594,7 @@ Deno.test("Codex quota headers replace every parseable upstream family with cano
     quotaSnapshot(95),
   );
 
-  assert.equal(headers.get("x-codex-limit-name"), YUNWU_CODEX_LIMIT_NAME);
+  assert.equal(headers.get("x-codex-limit-name"), METERED_CODEX_LIMIT_NAME);
   assert.equal(headers.get("x-codex-primary-used-percent"), "95");
   assert.equal(headers.has("x-codex-primary-window-minutes"), false);
   assert.equal(headers.has("x-codex-primary-reset-at"), false);
@@ -607,8 +607,8 @@ Deno.test("Codex quota headers replace every parseable upstream family with cano
   assert.equal(headers.has("x-codex-spark-primary-reset-at"), false);
   assert.equal(headers.has("x-openai-subscription-limit-name"), false);
   assert.equal(headers.has("x-openai-subscription-primary-used-percent"), false);
-  assert.equal(headers.has("x-yunwu-limit-name"), false);
-  assert.equal(headers.has("x-yunwu-primary-used-percent"), false);
+  assert.equal(headers.has("x-metered-limit-name"), false);
+  assert.equal(headers.has("x-metered-primary-used-percent"), false);
   assert.equal(headers.has("x-codex-credits-has-credits"), false);
   assert.equal(headers.has("x-codex-rate-limit-reached-type"), false);
   assert.equal(headers.get("x-codex-model"), "gpt-5.6-sol");
@@ -617,27 +617,27 @@ Deno.test("Codex quota headers replace every parseable upstream family with cano
   assert.equal(headers.get("x-uos-router-revision"), "routing-revision");
 });
 
-Deno.test("Codex quota headers publish a healthy YunWu balance canonically", () => {
+Deno.test("Codex quota headers publish a healthy Metered balance canonically", () => {
   const headers = buildCodexQuotaHeaders({}, quotaSnapshot(50));
-  assert.equal(headers.get("x-codex-limit-name"), YUNWU_CODEX_LIMIT_NAME);
+  assert.equal(headers.get("x-codex-limit-name"), METERED_CODEX_LIMIT_NAME);
   assert.equal(headers.get("x-codex-primary-used-percent"), "50");
   assert.equal(headers.has("x-codex-primary-window-minutes"), false);
   assert.equal(headers.has("x-codex-primary-reset-at"), false);
 });
 
-Deno.test("Codex quota headers emit no percentage and strip every family without YunWu state", () => {
+Deno.test("Codex quota headers emit no percentage and strip every family without Metered state", () => {
   const headers = buildCodexQuotaHeaders({
     "x-codex-primary-used-percent": "42",
     "x-codex-primary-window-minutes": "300",
     "x-codex-spark-primary-used-percent": "25",
     "x-openai-subscription-primary-used-percent": "42",
-    "x-yunwu-primary-used-percent": "50",
+    "x-metered-primary-used-percent": "50",
     "x-codex-model": "gpt-5.6-sol",
   }, null);
   assert.equal(headers.has("x-codex-primary-used-percent"), false);
   assert.equal(headers.has("x-codex-primary-window-minutes"), false);
   assert.equal(headers.has("x-codex-spark-primary-used-percent"), false);
   assert.equal(headers.has("x-openai-subscription-primary-used-percent"), false);
-  assert.equal(headers.has("x-yunwu-primary-used-percent"), false);
+  assert.equal(headers.has("x-metered-primary-used-percent"), false);
   assert.equal(headers.get("x-codex-model"), "gpt-5.6-sol");
 });

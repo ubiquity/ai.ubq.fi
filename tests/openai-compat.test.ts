@@ -1954,7 +1954,7 @@ Deno.test("openai: prompt-cache capability records are UOS-only and keep provide
         },
       },
       {
-        id: "yunwu",
+        id: "metered",
         controls: {
           key: false,
           source: "inferred",
@@ -2678,10 +2678,10 @@ Deno.test("openai: upstream fetch logs redact provider error payloads", async ()
   }
 });
 
-Deno.test("openai: an all-blocked Codex response continues through paid YunWu fallback", async () => {
+Deno.test("openai: an all-blocked Codex response continues through paid Metered fallback", async () => {
   const authKey = keyToString(["ubq_ai", "codex_auth"]);
   const previousAuth = kvStore.get(authKey);
-  const previousYunwuKey = Deno.env.get("YUNWU_API_KEY");
+  const previousMeteredKey = Deno.env.get("METERED_API_KEY");
   const keyId = "fallback-gateway-codex-quota";
   const requestId = "request-gateway-codex-quota";
   const now = Date.now();
@@ -2700,15 +2700,15 @@ Deno.test("openai: an all-blocked Codex response continues through paid YunWu fa
     }],
     updated_at_ms: now,
   };
-  let yunwuCalls = 0;
-  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  let meteredCalls = 0;
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
   seedPaidFallbackKey(keyId);
 
   try {
     await withFetchMock(
       (url) => {
-        if (url === "https://yunwu.ai/v1/responses") {
-          yunwuCalls += 1;
+        if (url === "https://api.openlux.ai/v1/responses") {
+          meteredCalls += 1;
           return sseResponse(baseSseChunks());
         }
         throw new Error(`Unexpected upstream dispatch in all-blocked routing test: ${url}`);
@@ -2752,8 +2752,8 @@ Deno.test("openai: an all-blocked Codex response continues through paid YunWu fa
 
         assert.equal(response.status, 200);
         assert.equal(response.headers.get("x-uos-codex-routing-error"), null);
-        assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
-        assert.equal(yunwuCalls, 1);
+        assert.equal(response.headers.get("x-uos-upstream"), "metered");
+        assert.equal(meteredCalls, 1);
         assert.equal(
           kvStore.has(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, requestId])),
           true,
@@ -2766,14 +2766,14 @@ Deno.test("openai: an all-blocked Codex response continues through paid YunWu fa
     kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
     kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
     resetCodexAuthCacheForTest();
-    if (previousYunwuKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-    else Deno.env.set("YUNWU_API_KEY", previousYunwuKey);
+    if (previousMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", previousMeteredKey);
   }
 });
 
-Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
-  const originalApiKey = Deno.env.get("YUNWU_API_KEY");
-  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
+  const originalApiKey = Deno.env.get("METERED_API_KEY");
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
   try {
     await t.step("already-loaded disabled policy bypasses paid fallback reservation", async () => {
       const keyId = "fallback-policy-bypass";
@@ -2917,7 +2917,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("primary errors and network failures other than 429 never dispatch YunWu", async () => {
+    await t.step("primary errors and network failures other than 429 never dispatch Metered", async () => {
       for (const scenario of ["http_500", "network"] as const) {
         const keyId = `fallback-${scenario}`;
         seedPaidFallbackKey(keyId);
@@ -2952,24 +2952,24 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("primary 403 selects YunWu once and emits only safe selection fields", async () => {
+    await t.step("primary 403 selects Metered once and emits only safe selection fields", async () => {
       const keyId = "fallback-primary-403";
       const requestId = "request-fallback-primary-403";
       seedPaidFallbackKey(keyId);
       const infoLogs: unknown[][] = [];
       const originalInfo = console.info;
       let codexCalls = 0;
-      let yunwuCalls = 0;
-      let selectionObservedBeforeYunwu = false;
+      let meteredCalls = 0;
+      let selectionObservedBeforeMetered = false;
       let primaryCancellationStarted = false;
       console.info = (...args: unknown[]) => infoLogs.push(args);
       const response = await (async () => {
         try {
           return await withFetchMock(
             (url) => {
-              if (url === "https://yunwu.ai/v1/responses") {
-                yunwuCalls += 1;
-                selectionObservedBeforeYunwu = infoLogs.some((entry) => entry[0] === "[ai.ubq.fi] yunwu_selected");
+              if (url === "https://api.openlux.ai/v1/responses") {
+                meteredCalls += 1;
+                selectionObservedBeforeMetered = infoLogs.some((entry) => entry[0] === "[ai.ubq.fi] metered_selected");
                 return sseResponse(baseSseChunks());
               }
               codexCalls += 1;
@@ -3011,13 +3011,13 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       })();
 
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
       assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_403");
       assert.equal(codexCalls, 1);
-      assert.equal(yunwuCalls, 1);
+      assert.equal(meteredCalls, 1);
       assert.equal(primaryCancellationStarted, true);
-      assert.equal(selectionObservedBeforeYunwu, true);
-      const selectionLogs = infoLogs.filter((entry) => entry[0] === "[ai.ubq.fi] yunwu_selected");
+      assert.equal(selectionObservedBeforeMetered, true);
+      const selectionLogs = infoLogs.filter((entry) => entry[0] === "[ai.ubq.fi] metered_selected");
       assert.equal(selectionLogs.length, 1);
       assert.equal(typeof selectionLogs[0]?.[1], "string");
       const selectionPayload = JSON.parse(selectionLogs[0]?.[1] as string) as Record<string, unknown>;
@@ -3031,11 +3031,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       seedPaidFallbackKey(keyId);
       const controller = new AbortController();
       let codexCalls = 0;
-      let yunwuCalls = 0;
+      let meteredCalls = 0;
       const response = await withFetchMock(
         (url) => {
-          if (url === "https://yunwu.ai/v1/responses") {
-            yunwuCalls += 1;
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
             return sseResponse(baseSseChunks());
           }
           codexCalls += 1;
@@ -3073,7 +3073,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       );
       assert.equal(response.status, 502);
       assert.equal(codexCalls, 1);
-      assert.equal(yunwuCalls, 0);
+      assert.equal(meteredCalls, 0);
       assert.equal(getResponseTelemetry(response)?.provider, "chatgpt_codex");
       const stored = getStoredPaidFallbackRequest(keyId, requestId);
       assert.equal(stored, null);
@@ -3086,7 +3086,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       assert.equal(window, undefined);
     });
 
-    await t.step("Responses sends the same canonical payload to YunWu exactly once", async () => {
+    await t.step("Responses sends the same canonical payload to Metered exactly once", async () => {
       const keyId = "fallback-responses-success";
       seedPaidFallbackKey(keyId);
       const bodies: Record<string, unknown>[] = [];
@@ -3095,18 +3095,18 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         (url, bodyText, init) => {
           urls.push(url);
           if (bodyText) bodies.push(JSON.parse(bodyText) as Record<string, unknown>);
-          if (url === "https://yunwu.ai/v1/responses") {
+          if (url === "https://api.openlux.ai/v1/responses") {
             const stored = getStoredPaidFallbackRequest(
               keyId,
               "request-fallback-responses-success",
             );
             assert.equal(stored?.dispatch_state, "dispatched");
-            assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer yunwu-test-key");
+            assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer metered-test-key");
             return new Response(sseResponse(baseSseChunks()).body, {
               status: 200,
               headers: {
                 "Content-Type": "text/event-stream",
-                "X-Oneapi-Request-Id": "yunwu-responses-request",
+                "X-Oneapi-Request-Id": "metered-responses-request",
               },
             });
           }
@@ -3136,13 +3136,13 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           ),
       );
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
       assert.equal(getResponseTelemetry(response)?.quotaUsedPercent, 0);
       assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_429");
       assert.deepEqual(urls, [
         "https://chatgpt.com/backend-api/codex/responses",
         "https://chatgpt.com/backend-api/codex/responses",
-        "https://yunwu.ai/v1/responses",
+        "https://api.openlux.ai/v1/responses",
       ]);
       assert.equal(bodies.length, 3);
       assert.deepEqual(bodies[1], bodies[0]);
@@ -3151,7 +3151,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
     });
 
     await t.step(
-      "streaming Responses closes after YunWu's terminal event even when its socket stays open",
+      "streaming Responses closes after Metered's terminal event even when its socket stays open",
       async () => {
         const keyId = "fallback-responses-hanging-socket";
         seedPaidFallbackKey(keyId);
@@ -3167,7 +3167,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
 
         const responseText = await withFetchMock(
           (url) => {
-            if (url === "https://yunwu.ai/v1/responses") {
+            if (url === "https://api.openlux.ai/v1/responses") {
               const body = new ReadableStream<Uint8Array>({
                 start(controller) {
                   for (const chunk of chunks) controller.enqueue(TEXT_ENCODER.encode(chunk));
@@ -3180,11 +3180,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
                 status: 200,
                 headers: {
                   "Content-Type": "text/event-stream",
-                  "X-Oneapi-Request-Id": "yunwu-hanging-socket-request",
+                  "X-Oneapi-Request-Id": "metered-hanging-socket-request",
                 },
               });
             }
-            if (url === "https://yunwu.ai/api/log/token") {
+            if (url === "https://api.openlux.ai/api/log/token") {
               return new Response(JSON.stringify({ success: true, data: [] }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },
@@ -3211,7 +3211,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
               },
             );
             assert.equal(response.status, 200);
-            assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+            assert.equal(response.headers.get("x-uos-upstream"), "metered");
             return await response.text();
           },
         );
@@ -3222,19 +3222,19 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       },
     );
 
-    await t.step("Chat Completions also falls back through YunWu Responses once", async () => {
+    await t.step("Chat Completions also falls back through Metered Responses once", async () => {
       const keyId = "fallback-chat-success";
       seedPaidFallbackKey(keyId);
       const urls: string[] = [];
       const response = await withFetchMock(
         (url) => {
           urls.push(url);
-          if (url === "https://yunwu.ai/v1/responses") {
+          if (url === "https://api.openlux.ai/v1/responses") {
             return new Response(sseResponse(baseSseChunks()).body, {
               status: 200,
               headers: {
                 "Content-Type": "text/event-stream",
-                "X-Oneapi-Request-Id": "yunwu-chat-request",
+                "X-Oneapi-Request-Id": "metered-chat-request",
               },
             });
           }
@@ -3263,11 +3263,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           ),
       );
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
       assert.deepEqual(urls, [
         "https://chatgpt.com/backend-api/codex/responses",
         "https://chatgpt.com/backend-api/codex/responses",
-        "https://yunwu.ai/v1/responses",
+        "https://api.openlux.ai/v1/responses",
       ]);
     });
 
@@ -3311,7 +3311,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
 
           await withFetchMock(
             (url) => {
-              if (url === "https://yunwu.ai/v1/responses") {
+              if (url === "https://api.openlux.ai/v1/responses") {
                 return new Response(
                   sseResponse([`data: ${JSON.stringify(terminalValue)}\n\n`]).body,
                   {
@@ -3323,7 +3323,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
                   },
                 );
               }
-              if (url.startsWith("https://yunwu.ai/api/log/token?")) {
+              if (url.startsWith("https://api.openlux.ai/api/log/token?")) {
                 return new Response(JSON.stringify({ success: true, data: { items: [] } }), {
                   status: 200,
                   headers: { "Content-Type": "application/json" },
@@ -3383,7 +3383,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("YunWu network ambiguity returns an attributed 502 without retrying", async () => {
+    await t.step("Metered network ambiguity returns an attributed 502 without retrying", async () => {
       const routeCases = [
         { route: "responses", stream: false },
         { route: "responses", stream: true },
@@ -3395,11 +3395,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         const keyId = `fallback-network-error-${suffix}`;
         const requestId = `request-${keyId}`;
         seedPaidFallbackKey(keyId);
-        let yunwuAttempts = 0;
+        let meteredAttempts = 0;
         await withFetchMock(
           (url) => {
-            if (url === "https://yunwu.ai/v1/responses") {
-              yunwuAttempts += 1;
+            if (url === "https://api.openlux.ai/v1/responses") {
+              meteredAttempts += 1;
               throw new TypeError("network connection reset before response headers");
             }
             return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
@@ -3441,13 +3441,13 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
                 context,
               );
             assert.equal(response.status, 502, suffix);
-            assert.equal(response.headers.get("x-uos-upstream"), "yunwu", suffix);
-            assert.equal(yunwuAttempts, 1, suffix);
+            assert.equal(response.headers.get("x-uos-upstream"), "metered", suffix);
+            assert.equal(meteredAttempts, 1, suffix);
             const payload = await response.json() as {
               error?: { type?: unknown; code?: unknown };
             };
             assert.equal(payload.error?.type, "server_error", suffix);
-            assert.equal(payload.error?.code, "yunwu_upstream_unreachable", suffix);
+            assert.equal(payload.error?.code, "metered_upstream_unreachable", suffix);
             const stored = await waitForPaidFallbackTerminal(keyId, requestId, "ambiguous");
             assert.equal(stored.dispatch_state, "dispatched", suffix);
             assert.equal(stored.provider_request_id, null, suffix);
@@ -3457,7 +3457,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("YunWu pre-header deadlines return an attributed 504 without retrying", async () => {
+    await t.step("Metered pre-header deadlines return an attributed 504 without retrying", async () => {
       const routeCases = [
         { route: "responses", stream: false },
         { route: "responses", stream: true },
@@ -3470,11 +3470,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         const requestId = `request-${keyId}`;
         seedPaidFallbackKey(keyId);
         const controller = new AbortController();
-        let yunwuAttempts = 0;
+        let meteredAttempts = 0;
         await withFetchMock(
           (url) => {
-            if (url === "https://yunwu.ai/v1/responses") {
-              yunwuAttempts += 1;
+            if (url === "https://api.openlux.ai/v1/responses") {
+              meteredAttempts += 1;
               controller.abort(new DOMException("gateway deadline exceeded", "TimeoutError"));
               throw controller.signal.reason;
             }
@@ -3519,8 +3519,8 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
                 context,
               );
             assert.equal(response.status, 504, suffix);
-            assert.equal(response.headers.get("x-uos-upstream"), "yunwu", suffix);
-            assert.equal(yunwuAttempts, 1, suffix);
+            assert.equal(response.headers.get("x-uos-upstream"), "metered", suffix);
+            assert.equal(meteredAttempts, 1, suffix);
             const payload = await response.json() as {
               error?: { type?: unknown; code?: unknown };
             };
@@ -3535,7 +3535,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("missing YunWu bodies are recorded as ambiguous across routes and stream modes", async () => {
+    await t.step("missing Metered bodies are recorded as ambiguous across routes and stream modes", async () => {
       const routeCases = [
         { route: "responses", stream: false },
         { route: "responses", stream: true },
@@ -3549,7 +3549,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         seedPaidFallbackKey(keyId);
         await withFetchMock(
           (url) => {
-            if (url === "https://yunwu.ai/v1/responses") {
+            if (url === "https://api.openlux.ai/v1/responses") {
               return new Response(null, {
                 status: 200,
                 headers: {
@@ -3644,7 +3644,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           seedPaidFallbackKey(keyId);
           await withFetchMock(
             (url) => {
-              if (url === "https://yunwu.ai/v1/responses") {
+              if (url === "https://api.openlux.ai/v1/responses") {
                 return new Response(failureCase.body(), {
                   status: 200,
                   headers: {
@@ -3722,7 +3722,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         let upstreamCancelCount = 0;
         await withFetchMock(
           (url) => {
-            if (url === "https://yunwu.ai/v1/responses") {
+            if (url === "https://api.openlux.ai/v1/responses") {
               const body = new ReadableStream<Uint8Array>({
                 start(controller) {
                   controller.enqueue(
@@ -3825,7 +3825,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
 
       await withFetchMock(
         (url) => {
-          if (url === "https://yunwu.ai/v1/responses") {
+          if (url === "https://api.openlux.ai/v1/responses") {
             const body = new ReadableStream<Uint8Array>({
               pull(controller) {
                 const chunk = providerChunks[upstreamPullCount];
@@ -3886,16 +3886,16 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       assert.equal(upstreamCancelCount, 1);
     });
 
-    await t.step("YunWu HTTP errors use OpenAI envelopes without changing routing", async (t) => {
+    await t.step("Metered HTTP errors use OpenAI envelopes without changing routing", async (t) => {
       const cases = [
         {
           name: "responses preserves an existing error envelope and 429",
           route: "responses",
           status: 429,
-          statusText: "YunWu Rate Limited",
+          statusText: "Metered Rate Limited",
           body: JSON.stringify({
             error: {
-              message: "YunWu is rate limited.",
+              message: "Metered is rate limited.",
               type: "rate_limit_error",
               code: "provider_rate_limit",
               param: null,
@@ -3904,7 +3904,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           }),
           retryAfter: "17",
           expectedError: {
-            message: "YunWu is rate limited.",
+            message: "Metered is rate limited.",
             type: "rate_limit_error",
             code: "provider_rate_limit",
             param: null,
@@ -3914,16 +3914,16 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           name: "chat completions parses a provider-root message and preserves 502",
           route: "chat.completions",
           status: 502,
-          statusText: "YunWu Bad Gateway",
+          statusText: "Metered Bad Gateway",
           body: JSON.stringify({
-            message: "YunWu could not reach its model backend.",
+            message: "Metered could not reach its model backend.",
             type: "server_error",
             code: "provider_unavailable",
             opaque: { drop: true },
           }),
           retryAfter: null,
           expectedError: {
-            message: "YunWu could not reach its model backend.",
+            message: "Metered could not reach its model backend.",
             type: "server_error",
             code: "provider_unavailable",
           },
@@ -3932,11 +3932,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           name: "chat completions converts plain text and preserves 401",
           route: "chat.completions",
           status: 401,
-          statusText: "YunWu Unauthorized",
-          body: "YunWu rejected the configured credential.",
+          statusText: "Metered Unauthorized",
+          body: "Metered rejected the configured credential.",
           retryAfter: null,
           expectedError: {
-            message: "YunWu rejected the configured credential.",
+            message: "Metered rejected the configured credential.",
             type: "invalid_request_error",
             code: "upstream_error",
           },
@@ -3945,11 +3945,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           name: "responses classifies an untyped upstream 429 as rate limited",
           route: "responses",
           status: 429,
-          statusText: "YunWu Rate Limited",
-          body: JSON.stringify({ detail: "YunWu has no capacity." }),
+          statusText: "Metered Rate Limited",
+          body: JSON.stringify({ detail: "Metered has no capacity." }),
           retryAfter: "3",
           expectedError: {
-            message: "YunWu has no capacity.",
+            message: "Metered has no capacity.",
             type: "rate_limit_error",
             code: "upstream_error",
           },
@@ -3958,18 +3958,18 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
 
       for (const [index, testCase] of cases.entries()) {
         await t.step(testCase.name, async () => {
-          const keyId = `fallback-yunwu-normalized-${index}`;
-          const requestId = `request-fallback-yunwu-normalized-${index}`;
+          const keyId = `fallback-metered-normalized-${index}`;
+          const requestId = `request-fallback-metered-normalized-${index}`;
           seedPaidFallbackKey(keyId);
           let codexCalls = 0;
-          let yunwuCalls = 0;
+          let meteredCalls = 0;
           const response = await withFetchMock(
             (url) => {
-              if (url === "https://yunwu.ai/v1/responses") {
-                yunwuCalls += 1;
+              if (url === "https://api.openlux.ai/v1/responses") {
+                meteredCalls += 1;
                 const headers = new Headers({
                   "Content-Type": "application/problem+json",
-                  "X-Yunwu-Diagnostic": "drop-me",
+                  "X-Metered-Diagnostic": "drop-me",
                 });
                 if (testCase.retryAfter) headers.set("Retry-After", testCase.retryAfter);
                 return new Response(testCase.body, {
@@ -4022,22 +4022,22 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           assert.equal(response.status, testCase.status);
           assert.equal(response.statusText, "");
           assert.equal(response.headers.get("Content-Type"), "application/json");
-          assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+          assert.equal(response.headers.get("x-uos-upstream"), "metered");
           assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
-          assert.equal(response.headers.get("X-Yunwu-Diagnostic"), null);
+          assert.equal(response.headers.get("X-Metered-Diagnostic"), null);
           assert.deepEqual(await response.json(), { error: testCase.expectedError });
           assert.equal(codexCalls, 1);
-          assert.equal(yunwuCalls, 1);
+          assert.equal(meteredCalls, 1);
           const failed = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
           assert.equal(failed.terminal_state, "failed");
         });
       }
     });
 
-    await t.step("a ledger write failure after YunWu accepts preserves the usable response", async () => {
+    await t.step("a ledger write failure after Metered accepts preserves the usable response", async () => {
       const keyId = "fallback-ledger-write-failure";
       const requestId = "request-fallback-ledger-write-failure";
-      const providerRequestId = "yunwu-ledger-write-failure";
+      const providerRequestId = "metered-ledger-write-failure";
       seedPaidFallbackKey(keyId);
       atomicCommitFailure = (ops) =>
         ops.some((op) => {
@@ -4050,7 +4050,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       try {
         const response = await withFetchMock(
           (url) => {
-            if (url === "https://yunwu.ai/v1/responses") {
+            if (url === "https://api.openlux.ai/v1/responses") {
               return new Response(sseResponse(baseSseChunks()).body, {
                 status: 200,
                 headers: {
@@ -4109,11 +4109,11 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
           const suffix = `${testCase.route}-${testCase.stream ? "stream" : "nonstream"}`;
           const keyId = `fallback-reconcile-${suffix}`;
           const requestId = `request-fallback-reconcile-${suffix}`;
-          const providerRequestId = `yunwu-reconcile-${suffix}`;
+          const providerRequestId = `metered-reconcile-${suffix}`;
           seedPaidFallbackKey(keyId);
           const result = await withFetchMock(
             (url) => {
-              if (url === "https://yunwu.ai/v1/responses") {
+              if (url === "https://api.openlux.ai/v1/responses") {
                 return new Response(sseResponse(baseSseChunks()).body, {
                   status: 200,
                   headers: {
@@ -4122,7 +4122,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
                   },
                 });
               }
-              if (url === "https://yunwu.ai/api/log/token") {
+              if (url === "https://api.openlux.ai/api/log/token") {
                 return new Response(
                   JSON.stringify({
                     success: true,
@@ -4193,10 +4193,10 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("reconciliation failure does not replace the original YunWu error", async () => {
+    await t.step("reconciliation failure does not replace the original Metered error", async () => {
       const keyId = "fallback-error-reconcile-failure";
       const requestId = "request-fallback-error-reconcile-failure";
-      const providerRequestId = "yunwu-error-reconcile-failure";
+      const providerRequestId = "metered-error-reconcile-failure";
       seedPaidFallbackKey(keyId);
       exposePaidFallbackLedgerEntries = true;
       atomicCommitFailure = (ops) =>
@@ -4206,8 +4206,8 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
       try {
         const response = await withFetchMock(
           (url) => {
-            if (url === "https://yunwu.ai/v1/responses") {
-              return new Response(JSON.stringify({ error: { message: "YunWu original error" } }), {
+            if (url === "https://api.openlux.ai/v1/responses") {
+              return new Response(JSON.stringify({ error: { message: "Metered original error" } }), {
                 status: 503,
                 headers: {
                   "Content-Type": "application/json",
@@ -4215,7 +4215,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
                 },
               });
             }
-            if (url === "https://yunwu.ai/api/log/token") {
+            if (url === "https://api.openlux.ai/api/log/token") {
               return new Response(
                 JSON.stringify({
                   success: true,
@@ -4254,7 +4254,7 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
         );
         assert.equal(response.status, 503);
         const payload = await response.json() as { error?: { message?: string } };
-        assert.equal(payload.error?.message, "YunWu original error");
+        assert.equal(payload.error?.message, "Metered original error");
       } finally {
         atomicCommitFailure = null;
         exposePaidFallbackLedgerEntries = false;
@@ -4263,8 +4263,8 @@ Deno.test("openai: YunWu paid fallback routing matrix", async (t) => {
   } finally {
     atomicCommitFailure = null;
     exposePaidFallbackLedgerEntries = false;
-    if (originalApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-    else Deno.env.set("YUNWU_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalApiKey);
   }
 });
 
@@ -6478,7 +6478,7 @@ Deno.test("openai: active provider cache capabilities reject only known unsuppor
         version: 1,
         providers: [
           { id: "codex_chatgpt", controls: controls({}) },
-          { id: "yunwu", controls: controls({ key: false, explicit_breakpoints: false }) },
+          { id: "metered", controls: controls({ key: false, explicit_breakpoints: false }) },
         ],
       });
 

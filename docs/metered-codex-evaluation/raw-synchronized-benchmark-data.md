@@ -5,10 +5,10 @@ Date measured: 2026-07-19
 This table contains the 20 measured rounds used by [Latency and network benchmark](./latency-and-network-benchmark.md).
 All three provider calls and the ICMP probe began together in each round.
 
-`Outputs` lists completion tokens in Yunwu / `ai.ubq.fi` / direct-Codex order. `Loss` means the single ICMP probe to
+`Outputs` lists completion tokens in metered / `ai.ubq.fi` / direct-Codex order. `Loss` means the single ICMP probe to
 `1.1.1.1` did not return within the probe window; it does not imply that the three HTTPS requests failed.
 
-| Round | Yunwu ms | `ai.ubq.fi` ms | Direct Codex ms | Probe ms |         Outputs |
+| Round | metered ms | `ai.ubq.fi` ms | Direct Codex ms | Probe ms |         Outputs |
 | ----: | -------: | -------------: | --------------: | -------: | --------------: |
 |     1 |   10,027 |          8,560 |           5,737 |   22.876 | 292 / 239 / 249 |
 |     2 |    7,417 |          6,453 |           6,421 |   19.440 | 329 / 230 / 227 |
@@ -35,7 +35,7 @@ All three provider calls and the ICMP probe began together in each round.
 
 | Route        | Samples | Median ms | p95 ms | Mean ms | Min ms | Max ms | Median output tokens |
 | ------------ | ------: | --------: | -----: | ------: | -----: | -----: | -------------------: |
-| Yunwu        |      20 |     7,104 |  9,380 |   6,727 |  4,310 | 10,027 |                304.5 |
+| metered        |      20 |     7,104 |  9,380 |   6,727 |  4,310 | 10,027 |                304.5 |
 | `ai.ubq.fi`  |      20 |     6,782 |  9,147 |   7,284 |  6,042 | 12,631 |                  238 |
 | Direct Codex |      20 |     5,750 |  7,454 |   6,161 |  5,255 | 11,486 |                245.5 |
 
@@ -49,8 +49,8 @@ sorted_values[ceil(0.95 × 20) - 1]
 
 | Pair                       | Pearson correlation |
 | -------------------------- | ------------------: |
-| Yunwu ↔ `ai.ubq.fi`        |             -0.1336 |
-| Yunwu ↔ direct Codex       |             +0.3511 |
+| metered ↔ `ai.ubq.fi`        |             -0.1336 |
+| metered ↔ direct Codex       |             +0.3511 |
 | `ai.ubq.fi` ↔ direct Codex |             -0.2011 |
 
 ## Probe summary

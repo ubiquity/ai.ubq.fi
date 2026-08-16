@@ -12,7 +12,7 @@ export const PROMPT_CACHE_TELEMETRY_MIN_COMPLETED = 10_000;
 export const PROMPT_CACHE_TELEMETRY_MIN_COMPLETED_PER_ROUTE = 1_000;
 export const PROMPT_CACHE_TELEMETRY_MIN_REPORTED_COVERAGE = 0.995;
 
-export const PROMPT_CACHE_TELEMETRY_PROVIDERS = ["chatgpt_codex", "yunwu"] as const;
+export const PROMPT_CACHE_TELEMETRY_PROVIDERS = ["chatgpt_codex", "metered"] as const;
 export const PROMPT_CACHE_TELEMETRY_ROUTES = ["responses", "chat.completions"] as const;
 
 export type PromptCacheTelemetryProvider = typeof PROMPT_CACHE_TELEMETRY_PROVIDERS[number];

@@ -9,7 +9,7 @@ import { loadFullCodexModelsSnapshot } from "./codex.ts";
 import { getKv } from "./kv.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
-import { initializeYunwuPricing, readYunwuApiKey, YunwuError } from "./yunwu.ts";
+import { initializeMeteredPricing, readMeteredApiKey, MeteredError } from "./metered.ts";
 
 export type PaidFallbackPolicyFields = Pick<
   ApiKeyRecord,
@@ -154,10 +154,10 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
     | "paid_fallback_max_exposure_microcredits"
   >
 > => {
-  if (!readYunwuApiKey()) {
-    throw new YunwuError(
-      "YunWu paid fallback cannot be enabled because YUNWU_API_KEY is not configured.",
-      "yunwu_api_key_missing",
+  if (!readMeteredApiKey()) {
+    throw new MeteredError(
+      "Metered paid fallback cannot be enabled because METERED_API_KEY is not configured.",
+      "metered_api_key_missing",
       503,
     );
   }
@@ -179,18 +179,18 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
     if (context.length) contextByModel.set(normalized, Math.max(...context));
   }
   if (!modelIds.length) {
-    throw new YunwuError(
-      "YunWu paid fallback cannot be enabled before the Codex model catalog is initialized.",
-      "yunwu_pricing_invalid",
+    throw new MeteredError(
+      "Metered paid fallback cannot be enabled before the Codex model catalog is initialized.",
+      "metered_pricing_invalid",
       503,
     );
   }
 
-  const pricing = await initializeYunwuPricing({ codexModelIds: modelIds, signal });
+  const pricing = await initializeMeteredPricing({ codexModelIds: modelIds, signal });
   if (!pricing.eligible_model_ids.length) {
-    throw new YunwuError(
-      "YunWu paid fallback found no priced models in the current Codex catalog.",
-      "yunwu_pricing_invalid",
+    throw new MeteredError(
+      "Metered paid fallback found no priced models in the current Codex catalog.",
+      "metered_pricing_invalid",
       503,
     );
   }
@@ -204,9 +204,9 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
   }
   const missingExposure = pricing.eligible_model_ids.some((model) => !isPositiveSafeInteger(maximumExposure[model]));
   if (missingExposure) {
-    throw new YunwuError(
-      "YunWu paid fallback cannot be enabled because a priced Codex model has no finite context bound.",
-      "yunwu_pricing_invalid",
+    throw new MeteredError(
+      "Metered paid fallback cannot be enabled because a priced Codex model has no finite context bound.",
+      "metered_pricing_invalid",
       503,
     );
   }
@@ -266,7 +266,7 @@ export const reservePaidFallback = async (
     const record = policy.record;
     const eligibility = evaluatePaidFallbackEligibility(record, input.model);
     if (eligibility.kind !== "eligible") return eligibility;
-    if (!readYunwuApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
+    if (!readMeteredApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
     const windowResetAtMs = advanceUsageWindow(record.usage_reset_at_ms, record.window_ms, input.createdAtMs);
     const policyVersion = `${record.window_ms}:${record.paid_fallback_pricing_checked_at_ms ?? 0}`;
     const admitted = await admitPaidFallbackV3({
@@ -290,7 +290,7 @@ export const reservePaidFallback = async (
   return { kind: "blocked", reason: "concurrent_update", reset_at_ms: null };
 };
 
-export const recordYunwuUpstreamResponse = async (
+export const recordMeteredUpstreamResponse = async (
   reservation: PaidFallbackReservation,
   _response: Response,
   providerRequestId: string | null,
@@ -301,24 +301,24 @@ export const recordYunwuUpstreamResponse = async (
   });
 };
 
-export const recordYunwuAmbiguousFailure = async (reservation: PaidFallbackReservation): Promise<void> => {
+export const recordMeteredAmbiguousFailure = async (reservation: PaidFallbackReservation): Promise<void> => {
   await updatePaidFallbackRequestV3(reservation, { dispatch_state: "dispatched" });
   await markPaidFallbackTerminalV3(reservation, "ambiguous");
 };
 
-export const recordYunwuUndispatchedCancellation = async (
+export const recordMeteredUndispatchedCancellation = async (
   reservation: PaidFallbackReservation,
 ): Promise<void> => {
   await releasePaidFallbackBeforeProviderFetchV3(reservation);
 };
 
-export const recordYunwuPrefetchCancellation = async (
+export const recordMeteredPrefetchCancellation = async (
   reservation: PaidFallbackReservation,
 ): Promise<void> => {
   await releasePaidFallbackBeforeProviderFetchV3(reservation);
 };
 
-export const recordYunwuTerminal = async (
+export const recordMeteredTerminal = async (
   reservation: PaidFallbackReservation,
   terminalState: "completed" | "failed" | "incomplete" | "cancelled" | "ambiguous",
 ): Promise<void> => {

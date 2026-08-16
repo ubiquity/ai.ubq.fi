@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import {
-  fetchYunwuResponses,
-  fetchYunwuTokenLogs,
-  initializeYunwuPricing,
-  YUNWU_FETCH_TIMEOUT_MS,
-  YunwuError,
-  type YunwuFetch,
-} from "../src/yunwu.ts";
+  fetchMeteredResponses,
+  fetchMeteredTokenLogs,
+  initializeMeteredPricing,
+  METERED_FETCH_TIMEOUT_MS,
+  MeteredError,
+  type MeteredFetch,
+} from "../src/metered.ts";
 
 const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): Response =>
   new Response(JSON.stringify(body), {
@@ -17,12 +17,12 @@ const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): R
     },
   });
 
-Deno.test("initializeYunwuPricing intersects the current Codex catalog and returns a compact snapshot", async () => {
+Deno.test("initializeMeteredPricing intersects the current Codex catalog and returns a compact snapshot", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  const fetcher: YunwuFetch = (input, init) => {
+  const fetcher: MeteredFetch = (input, init) => {
     const url = input.toString();
     calls.push({ url, init });
-    if (url === "https://yunwu.ai/api/ratio_config") {
+    if (url === "https://api.openlux.ai/api/ratio_config") {
       return Promise.resolve(jsonResponse({
         success: true,
         message: "",
@@ -38,7 +38,7 @@ Deno.test("initializeYunwuPricing intersects the current Codex catalog and retur
         },
       }));
     }
-    if (url === "https://yunwu.ai/api/status") {
+    if (url === "https://api.openlux.ai/api/status") {
       return Promise.resolve(jsonResponse({
         success: true,
         message: "",
@@ -52,7 +52,7 @@ Deno.test("initializeYunwuPricing intersects the current Codex catalog and retur
     throw new Error(`Unexpected URL: ${url}`);
   };
 
-  const snapshot = await initializeYunwuPricing({
+  const snapshot = await initializeMeteredPricing({
     codexModelIds: ["gpt-fixed", "missing", "gpt-5.6-sol", "gpt-fixed"],
     fetcher,
     now: () => 1_234_567,
@@ -68,8 +68,8 @@ Deno.test("initializeYunwuPricing intersects the current Codex catalog and retur
     checked_at_ms: 1_234_567,
   });
   assert.deepEqual(calls.map((call) => call.url), [
-    "https://yunwu.ai/api/ratio_config",
-    "https://yunwu.ai/api/status",
+    "https://api.openlux.ai/api/ratio_config",
+    "https://api.openlux.ai/api/status",
   ]);
   for (const call of calls) {
     assert.equal(call.init?.method, "GET");
@@ -78,9 +78,9 @@ Deno.test("initializeYunwuPricing intersects the current Codex catalog and retur
   }
 });
 
-Deno.test("initializeYunwuPricing fails closed and never returns an earlier snapshot", async () => {
+Deno.test("initializeMeteredPricing fails closed and never returns an earlier snapshot", async () => {
   let statusIsValid = true;
-  const fetcher: YunwuFetch = (input) => {
+  const fetcher: MeteredFetch = (input) => {
     if (input.toString().endsWith("/api/ratio_config")) {
       return Promise.resolve(jsonResponse({
         success: true,
@@ -99,7 +99,7 @@ Deno.test("initializeYunwuPricing fails closed and never returns an earlier snap
     );
   };
 
-  const first = await initializeYunwuPricing({
+  const first = await initializeMeteredPricing({
     codexModelIds: ["gpt-5.6-sol"],
     fetcher,
   });
@@ -108,15 +108,15 @@ Deno.test("initializeYunwuPricing fails closed and never returns an earlier snap
   statusIsValid = false;
   await assert.rejects(
     () =>
-      initializeYunwuPricing({
+      initializeMeteredPricing({
         codexModelIds: ["gpt-5.6-sol"],
         fetcher,
       }),
-    (error: unknown) => error instanceof YunwuError && error.code === "yunwu_status_invalid",
+    (error: unknown) => error instanceof MeteredError && error.code === "metered_status_invalid",
   );
 });
 
-Deno.test("fetchYunwuResponses applies YunWu Sol reasoning suffixes and forwards cancellation", async () => {
+Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forwards cancellation", async () => {
   const controller = new AbortController();
   const canonicalBody = {
     model: "gpt-5.6-sol",
@@ -125,24 +125,24 @@ Deno.test("fetchYunwuResponses applies YunWu Sol reasoning suffixes and forwards
     stream: true,
   };
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  const fetcher: YunwuFetch = (input, init) => {
+  const fetcher: MeteredFetch = (input, init) => {
     calls.push({ url: input.toString(), init });
     return Promise.resolve(
       new Response("rate limited", {
         status: 429,
-        headers: { "X-Api-Request-Id": " yunwu-request-1 " },
+        headers: { "X-Api-Request-Id": " metered-request-1 " },
       }),
     );
   };
 
-  const result = await fetchYunwuResponses(canonicalBody, {
-    apiKey: "test-yunwu-key",
+  const result = await fetchMeteredResponses(canonicalBody, {
+    apiKey: "test-metered-key",
     fetcher,
     signal: controller.signal,
   });
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://yunwu.ai/v1/responses");
+  assert.equal(calls[0].url, "https://api.openlux.ai/v1/responses");
   assert.equal(calls[0].init?.method, "POST");
   // The request signal also carries the provider header deadline, so it is a
   // composed signal rather than the caller's signal by reference.
@@ -154,27 +154,27 @@ Deno.test("fetchYunwuResponses applies YunWu Sol reasoning suffixes and forwards
     stream: true,
   });
   const headers = new Headers(calls[0].init?.headers);
-  assert.equal(headers.get("Authorization"), "Bearer test-yunwu-key");
+  assert.equal(headers.get("Authorization"), "Bearer test-metered-key");
   assert.equal(headers.get("Accept"), "text/event-stream");
   assert.equal(headers.get("Content-Type"), "application/json");
   assert.equal(result.response.status, 429);
-  assert.equal(result.request_id, "yunwu-request-1");
+  assert.equal(result.request_id, "metered-request-1");
 });
 
-Deno.test("fetchYunwuResponses maps no-reasoning and ultra Sol presets to live aliases", async () => {
+Deno.test("fetchMeteredResponses maps no-reasoning and ultra Sol presets to live aliases", async () => {
   const bodies: Record<string, unknown>[] = [];
-  const fetcher: YunwuFetch = (_input, init) => {
+  const fetcher: MeteredFetch = (_input, init) => {
     bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
     return Promise.resolve(new Response("{}", { status: 200 }));
   };
 
-  await fetchYunwuResponses(
+  await fetchMeteredResponses(
     { model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "minimal" } },
-    { apiKey: "test-yunwu-key", fetcher },
+    { apiKey: "test-metered-key", fetcher },
   );
-  await fetchYunwuResponses(
+  await fetchMeteredResponses(
     { model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "ultra" } },
-    { apiKey: "test-yunwu-key", fetcher },
+    { apiKey: "test-metered-key", fetcher },
   );
 
   assert.deepEqual(bodies, [
@@ -183,10 +183,10 @@ Deno.test("fetchYunwuResponses maps no-reasoning and ultra Sol presets to live a
   ]);
 });
 
-Deno.test("fetchYunwuResponses propagates client cancellation through the header deadline signal", async () => {
+Deno.test("fetchMeteredResponses propagates client cancellation through the header deadline signal", async () => {
   const controller = new AbortController();
   const observed = { signal: null as AbortSignal | null };
-  const fetcher: YunwuFetch = (_input, init) => {
+  const fetcher: MeteredFetch = (_input, init) => {
     observed.signal = init?.signal ?? null;
     return new Promise<Response>((_resolve, reject) => {
       observed.signal?.addEventListener(
@@ -197,10 +197,10 @@ Deno.test("fetchYunwuResponses propagates client cancellation through the header
     });
   };
 
-  const pending = fetchYunwuResponses(
+  const pending = fetchMeteredResponses(
     { model: "gpt-5.6-sol", input: "hello", stream: true },
     {
-      apiKey: "test-yunwu-key",
+      apiKey: "test-metered-key",
       fetcher,
       signal: controller.signal,
     },
@@ -218,10 +218,10 @@ Deno.test("fetchYunwuResponses propagates client cancellation through the header
   assert.equal(observedSignal.reason, cancellation);
 });
 
-Deno.test("fetchYunwuTokenLogs returns only strict allowlisted billing fields", async () => {
+Deno.test("fetchMeteredTokenLogs returns only strict allowlisted billing fields", async () => {
   let capturedUrl = "";
   let capturedInit: RequestInit | undefined;
-  const fetcher: YunwuFetch = (input, init) => {
+  const fetcher: MeteredFetch = (input, init) => {
     capturedUrl = input.toString();
     capturedInit = init;
     return Promise.resolve(jsonResponse({
@@ -257,14 +257,14 @@ Deno.test("fetchYunwuTokenLogs returns only strict allowlisted billing fields", 
     }));
   };
 
-  const logs = await fetchYunwuTokenLogs({
-    apiKey: "test-yunwu-key",
+  const logs = await fetchMeteredTokenLogs({
+    apiKey: "test-metered-key",
     fetcher,
   });
 
   const captured = new URL(capturedUrl);
-  assert.equal(captured.origin + captured.pathname, "https://yunwu.ai/api/log/token");
-  assert.equal(captured.searchParams.get("key"), "test-yunwu-key");
+  assert.equal(captured.origin + captured.pathname, "https://api.openlux.ai/api/log/token");
+  assert.equal(captured.searchParams.get("key"), "test-metered-key");
   assert.equal(captured.searchParams.get("page"), "1");
   assert.equal(captured.searchParams.get("page_size"), "100");
   assert.equal(capturedInit?.method, "GET");
@@ -289,17 +289,17 @@ Deno.test("fetchYunwuTokenLogs returns only strict allowlisted billing fields", 
   ]);
 });
 
-Deno.test("fetchYunwuTokenLogs aborts a stalled provider fetch at the bounded timeout", async () => {
+Deno.test("fetchMeteredTokenLogs aborts a stalled provider fetch at the bounded timeout", async () => {
   const originalTimeout = AbortSignal.timeout;
   const timeoutController = new AbortController();
   let observedSignal: AbortSignal | null = null;
   (AbortSignal as typeof AbortSignal & {
     timeout: (milliseconds: number) => AbortSignal;
   }).timeout = (milliseconds: number) => {
-    assert.equal(milliseconds, YUNWU_FETCH_TIMEOUT_MS);
+    assert.equal(milliseconds, METERED_FETCH_TIMEOUT_MS);
     return timeoutController.signal;
   };
-  const fetcher: YunwuFetch = (_input, init) => {
+  const fetcher: MeteredFetch = (_input, init) => {
     observedSignal = init?.signal ?? null;
     return new Promise<Response>((_resolve, reject) => {
       observedSignal?.addEventListener(
@@ -310,7 +310,7 @@ Deno.test("fetchYunwuTokenLogs aborts a stalled provider fetch at the bounded ti
     });
   };
   try {
-    const pending = fetchYunwuTokenLogs({ apiKey: "test-yunwu-key", fetcher });
+    const pending = fetchMeteredTokenLogs({ apiKey: "test-metered-key", fetcher });
     assert.equal(observedSignal, timeoutController.signal);
     timeoutController.abort(new DOMException("Billing log timeout", "TimeoutError"));
     await assert.rejects(

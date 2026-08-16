@@ -36,23 +36,23 @@ const awaitWithin = async (promise: Promise<void>, milliseconds: number, message
 };
 
 Deno.test({
-  name: "100 concurrent real HTTP 429 failovers reach unlimited YunWu together and settle exactly once",
+  name: "100 concurrent real HTTP 429 failovers reach unlimited Metered together and settle exactly once",
   ignore: loopbackPermission.state !== "granted" || typeof Deno.openKv !== "function",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
     const kv = await Deno.openKv(":memory:");
     const originalFetch = globalThis.fetch;
-    const originalApiKey = Deno.env.get("YUNWU_API_KEY");
+    const originalApiKey = Deno.env.get("METERED_API_KEY");
     const originalInfo = console.info;
     const originalWarn = console.warn;
     const warnings: string[] = [];
     let providerServer: Deno.HttpServer | null = null;
     let gatewayServer: Deno.HttpServer | null = null;
-    let releaseYunwuResponses = (): void => {};
+    let releaseMeteredResponses = (): void => {};
 
     try {
-      Deno.env.set("YUNWU_API_KEY", "yunwu-real-http-stress-key");
+      Deno.env.set("METERED_API_KEY", "metered-real-http-stress-key");
       const { setKvForTest } = await import("../src/kv.ts");
       setKvForTest(kv);
       console.info = () => {};
@@ -142,17 +142,17 @@ Deno.test({
         created_at: number;
       }>();
       let codexCalls = 0;
-      let yunwuCalls = 0;
-      let yunwuInFlight = 0;
-      let maxYunwuInFlight = 0;
+      let meteredCalls = 0;
+      let meteredInFlight = 0;
+      let maxMeteredInFlight = 0;
       let billingLogCalls = 0;
-      let resolveAllYunwuDispatched = (): void => {};
-      const allYunwuDispatched = new Promise<void>((resolve) => {
-        resolveAllYunwuDispatched = resolve;
+      let resolveAllMeteredDispatched = (): void => {};
+      const allMeteredDispatched = new Promise<void>((resolve) => {
+        resolveAllMeteredDispatched = resolve;
       });
-      const yunwuResponseBarrier = new Promise<void>((resolve) => {
+      const meteredResponseBarrier = new Promise<void>((resolve) => {
         let released = false;
-        releaseYunwuResponses = () => {
+        releaseMeteredResponses = () => {
           if (released) return;
           released = true;
           resolve();
@@ -169,12 +169,12 @@ Deno.test({
               { status: 429 },
             );
           }
-          if (url.pathname === "/yunwu/responses") {
-            const callNumber = ++yunwuCalls;
-            if (callNumber > 100) throw new Error(`Unexpected YunWu dispatch ${callNumber}`);
-            yunwuInFlight += 1;
-            maxYunwuInFlight = Math.max(maxYunwuInFlight, yunwuInFlight);
-            if (callNumber === 100) resolveAllYunwuDispatched();
+          if (url.pathname === "/metered/responses") {
+            const callNumber = ++meteredCalls;
+            if (callNumber > 100) throw new Error(`Unexpected Metered dispatch ${callNumber}`);
+            meteredInFlight += 1;
+            maxMeteredInFlight = Math.max(maxMeteredInFlight, meteredInFlight);
+            if (callNumber === 100) resolveAllMeteredDispatched();
             try {
               const body = await request.json() as {
                 input?: string | Array<{ content?: Array<{ text?: unknown }> }>;
@@ -184,8 +184,8 @@ Deno.test({
                 : body.input?.flatMap((item) => item.content ?? [])
                   .map((content) => typeof content.text === "string" ? content.text : "")
                   .join("") ?? "";
-              await yunwuResponseBarrier;
-              const providerRequestId = `yunwu-real-http-${callNumber}`;
+              await meteredResponseBarrier;
+              const providerRequestId = `metered-real-http-${callNumber}`;
               providerLogs.set(providerRequestId, {
                 request_id: providerRequestId,
                 quota: 500,
@@ -222,10 +222,10 @@ Deno.test({
                 },
               });
             } finally {
-              yunwuInFlight -= 1;
+              meteredInFlight -= 1;
             }
           }
-          if (url.pathname === "/yunwu/log/token") {
+          if (url.pathname === "/metered/log/token") {
             billingLogCalls += 1;
             return Response.json({
               success: true,
@@ -245,11 +245,11 @@ Deno.test({
         if (sourceUrl === "https://chatgpt.com/backend-api/codex/responses") {
           return originalFetch(`${providerBaseUrl}/codex/responses`, init);
         }
-        if (sourceUrl === "https://yunwu.ai/v1/responses") {
-          return originalFetch(`${providerBaseUrl}/yunwu/responses`, init);
+        if (sourceUrl === "https://api.openlux.ai/v1/responses") {
+          return originalFetch(`${providerBaseUrl}/metered/responses`, init);
         }
-        if (sourceUrl.startsWith("https://yunwu.ai/api/log/token?")) {
-          return originalFetch(`${providerBaseUrl}/yunwu/log/token${new URL(sourceUrl).search}`, init);
+        if (sourceUrl.startsWith("https://api.openlux.ai/api/log/token?")) {
+          return originalFetch(`${providerBaseUrl}/metered/log/token${new URL(sourceUrl).search}`, init);
         }
         return originalFetch(input, init);
       };
@@ -298,30 +298,30 @@ Deno.test({
       let dispatchBarrierError: unknown = null;
       try {
         await awaitWithin(
-          allYunwuDispatched,
+          allMeteredDispatched,
           15_000,
-          () => `Only ${yunwuCalls}/100 YunWu requests dispatched before the concurrency deadline`,
+          () => `Only ${meteredCalls}/100 Metered requests dispatched before the concurrency deadline`,
         );
-        assert.equal(yunwuCalls, 100);
-        assert.equal(yunwuInFlight, 100);
-        assert.equal(maxYunwuInFlight, 100);
+        assert.equal(meteredCalls, 100);
+        assert.equal(meteredInFlight, 100);
+        assert.equal(maxMeteredInFlight, 100);
         assert.equal(codexCalls, 200);
       } catch (error) {
         dispatchBarrierError = error;
       } finally {
-        releaseYunwuResponses();
+        releaseMeteredResponses();
       }
       const results = await pendingResults;
       if (dispatchBarrierError) throw dispatchBarrierError;
 
       assert.deepEqual(results.map((result) => result.status), Array(100).fill(200));
-      assert.deepEqual(results.map((result) => result.provider), Array(100).fill("yunwu"));
+      assert.deepEqual(results.map((result) => result.provider), Array(100).fill("metered"));
       const invalidResults = results.filter((result) => !result.completed || !result.exact || result.error !== null);
       assert.deepEqual(invalidResults, []);
       assert.equal(codexCalls, 200);
-      assert.equal(yunwuCalls, 100);
-      assert.equal(yunwuInFlight, 0);
-      assert.equal(maxYunwuInFlight, 100);
+      assert.equal(meteredCalls, 100);
+      assert.equal(meteredInFlight, 0);
+      assert.equal(maxMeteredInFlight, 100);
       assert.equal(providerLogs.size, 100);
 
       let requests: Deno.KvEntry<PaidFallbackRequestV3>[] = [];
@@ -379,14 +379,14 @@ Deno.test({
         warnings.join("\n"),
       );
     } finally {
-      releaseYunwuResponses();
+      releaseMeteredResponses();
       globalThis.fetch = originalFetch;
       const { setKvForTest } = await import("../src/kv.ts");
       setKvForTest(null);
       console.info = originalInfo;
       console.warn = originalWarn;
-      if (originalApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-      else Deno.env.set("YUNWU_API_KEY", originalApiKey);
+      if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+      else Deno.env.set("METERED_API_KEY", originalApiKey);
       if (gatewayServer) await gatewayServer.shutdown();
       if (providerServer) await providerServer.shutdown();
       kv.close();

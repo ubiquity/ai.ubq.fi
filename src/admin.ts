@@ -125,8 +125,8 @@ import type {
   CodexAuthPoolState,
   CodexAuthState,
 } from "./types.ts";
-import { YunwuError } from "./yunwu.ts";
-import { getYunwuQuotaDiagnostics } from "./yunwu_quota.ts";
+import { MeteredError } from "./metered.ts";
+import { getMeteredQuotaDiagnostics } from "./metered_quota.ts";
 
 const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
 const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
@@ -560,7 +560,7 @@ export const handleAdminKvMigrationValidate = async (): Promise<Response> => {
 export const handleAdminDefaults = async (
   req: Request,
   dependencies: Readonly<{
-    getYunwuQuotaDiagnostics?: typeof getYunwuQuotaDiagnostics;
+    getMeteredQuotaDiagnostics?: typeof getMeteredQuotaDiagnostics;
   }> = {},
 ): Promise<Response> => {
   const kv = await getKv();
@@ -569,11 +569,11 @@ export const handleAdminDefaults = async (
   }
 
   if (req.method === "GET") {
-    const [runtime, kernelLimitEntry, kernelWindowEntry, yunwuQuota] = await Promise.all([
+    const [runtime, kernelLimitEntry, kernelWindowEntry, meteredQuota] = await Promise.all([
       loadRuntimeConfig(kv),
       kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY),
       kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY),
-      (dependencies.getYunwuQuotaDiagnostics ?? getYunwuQuotaDiagnostics)(),
+      (dependencies.getMeteredQuotaDiagnostics ?? getMeteredQuotaDiagnostics)(),
     ]);
     const model = runtime?.default_model ?? "";
     const reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
@@ -587,7 +587,7 @@ export const handleAdminDefaults = async (
         kernel_policy_limit_requests: kernelPolicyLimit,
         kernel_policy_window_ms: kernelPolicyWindow,
       },
-      yunwu_quota: yunwuQuota,
+      metered_quota: meteredQuota,
     });
   }
 
@@ -780,11 +780,11 @@ const normalizeApiKeyWindowMsInput = (value: unknown): number | null => {
 const paidFallbackInputError = (message: string): Response => openaiError(400, message, "invalid_request_error");
 
 const paidFallbackInitializationError = (error: unknown): Response => {
-  if (error instanceof YunwuError) {
+  if (error instanceof MeteredError) {
     return openaiError(error.status, error.message, error.code, { type: "server_error" });
   }
-  console.error("[ai.ubq.fi] Failed to initialize YunWu paid fallback:", error);
-  return openaiError(502, "Failed to initialize YunWu paid fallback", "yunwu_pricing_unavailable", {
+  console.error("[ai.ubq.fi] Failed to initialize Metered paid fallback:", error);
+  return openaiError(502, "Failed to initialize Metered paid fallback", "metered_pricing_unavailable", {
     type: "server_error",
   });
 };
@@ -819,7 +819,7 @@ const paidFallbackHistoryRecord = (request: Awaited<ReturnType<typeof listPaidFa
     id: request.request_id,
     method: "POST",
     status_code: request.terminal_state === "completed" ? 200 : null,
-    provider: "yunwu",
+    provider: "metered",
     fallback_reason: "codex_429",
     started_at_ms: startedAtMs,
     completed_at_ms: completedAtMs,
@@ -1684,7 +1684,7 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
     const outstandingPaidFallback = paidFallbackDeletion.outstanding;
     return openaiError(
       409,
-      `Cannot delete API key while Yunwu billing is pending or unresolved ` +
+      `Cannot delete API key while metered billing is pending or unresolved ` +
         `(pending=${outstandingPaidFallback.pending_requests}, ` +
         `unresolved=${outstandingPaidFallback.unresolved_requests}, ` +
         `markers=${outstandingPaidFallback.pending_markers})`,

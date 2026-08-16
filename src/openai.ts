@@ -54,14 +54,14 @@ import {
 } from "./responses_stream.ts";
 import {
   type PaidFallbackReservation,
-  recordYunwuAmbiguousFailure,
-  recordYunwuPrefetchCancellation,
-  recordYunwuTerminal,
-  recordYunwuUndispatchedCancellation,
-  recordYunwuUpstreamResponse,
+  recordMeteredAmbiguousFailure,
+  recordMeteredPrefetchCancellation,
+  recordMeteredTerminal,
+  recordMeteredUndispatchedCancellation,
+  recordMeteredUpstreamResponse,
   reservePaidFallback,
 } from "./paid_fallback.ts";
-import { recordCerebrasProviderHealth, recordYunwuProviderHealth } from "./provider_health.ts";
+import { recordCerebrasProviderHealth, recordMeteredProviderHealth } from "./provider_health.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type {
   ChatCompletionRequest,
@@ -71,7 +71,7 @@ import type {
   ResponseMessageItem,
   ResponsesRequest,
 } from "./types.ts";
-import { fetchYunwuResponses, YunwuError } from "./yunwu.ts";
+import { fetchMeteredResponses, MeteredError } from "./metered.ts";
 
 const getDefaultModel = async (): Promise<string | null> => {
   const runtime = await loadRuntimeConfig();
@@ -117,11 +117,11 @@ type UsageContext = Readonly<{
   responseTelemetry?: ResponseTelemetryState;
   /** Commits an admitted API-key reservation exactly once before transport. */
   beforeProviderDispatch?: (
-    provider: "cerebras" | "chatgpt_codex" | "yunwu" | "voyage",
+    provider: "cerebras" | "chatgpt_codex" | "metered" | "voyage",
   ) => Promise<ApiKeyProviderDispatch | void>;
 }>;
 
-type UpstreamProvider = "cerebras" | "chatgpt_codex" | "yunwu";
+type UpstreamProvider = "cerebras" | "chatgpt_codex" | "metered";
 export type InferenceFallbackReason = "primary_401" | "primary_403" | "primary_429";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
@@ -627,7 +627,7 @@ type RedactedUpstreamErrorDiagnostic = Readonly<{
   error_class:
     | "ApiKeyQuotaDispatchError"
     | "CodexError"
-    | "YunwuError"
+    | "MeteredError"
     | "DOMException"
     | "TypeError"
     | "Error"
@@ -651,15 +651,15 @@ const REDACTED_UPSTREAM_DIAGNOSTIC_CODES = new Set<string>([
   "invalid_api_key",
   "rate_limit_exceeded",
   "server_error",
-  "yunwu_api_key_missing",
-  "yunwu_pricing_unavailable",
-  "yunwu_pricing_invalid",
-  "yunwu_status_unavailable",
-  "yunwu_status_invalid",
-  "yunwu_request_invalid",
-  "yunwu_upstream_unreachable",
-  "yunwu_logs_unavailable",
-  "yunwu_logs_invalid",
+  "metered_api_key_missing",
+  "metered_pricing_unavailable",
+  "metered_pricing_invalid",
+  "metered_status_unavailable",
+  "metered_status_invalid",
+  "metered_request_invalid",
+  "metered_upstream_unreachable",
+  "metered_logs_unavailable",
+  "metered_logs_invalid",
 ]);
 
 const redactedDiagnosticStatus = (value: unknown): number | null =>
@@ -678,8 +678,8 @@ const redactedUpstreamErrorDiagnostic = (error: unknown): RedactedUpstreamErrorD
     errorClass = "CodexError";
     status = redactedDiagnosticStatus(error.status);
     code = REDACTED_UPSTREAM_DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
-  } else if (error instanceof YunwuError) {
-    errorClass = "YunwuError";
+  } else if (error instanceof MeteredError) {
+    errorClass = "MeteredError";
     status = redactedDiagnosticStatus(error.status);
     code = REDACTED_UPSTREAM_DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
   } else if (error instanceof DOMException) {
@@ -973,9 +973,9 @@ const warnPaidFallbackBookkeepingFailure = (operation: string, error: unknown): 
   );
 };
 
-const logYunwuSelected = (requestId: string, reason: InferenceFallbackReason): void => {
+const logMeteredSelected = (requestId: string, reason: InferenceFallbackReason): void => {
   try {
-    console.info("[ai.ubq.fi] yunwu_selected", JSON.stringify({ request_id: requestId, reason }));
+    console.info("[ai.ubq.fi] metered_selected", JSON.stringify({ request_id: requestId, reason }));
   } catch {
     // Routing telemetry must never alter provider selection.
   }
@@ -992,15 +992,15 @@ const bestEffortPaidFallbackBookkeeping = async (
   }
 };
 
-type YunwuTransportLifecycle = Readonly<{
+type MeteredTransportLifecycle = Readonly<{
   terminal: (eventType: string) => void;
   ambiguous: () => void;
   cancelled: () => void;
 }>;
 
-const createYunwuTransportLifecycle = (
+const createMeteredTransportLifecycle = (
   reservation: PaidFallbackReservation | null,
-): YunwuTransportLifecycle => {
+): MeteredTransportLifecycle => {
   let recorded = false;
   const schedule = (
     operation: string,
@@ -1024,8 +1024,8 @@ const createYunwuTransportLifecycle = (
         "terminal reconciliation",
         async (activeReservation) => {
           await Promise.all([
-            recordYunwuTerminal(activeReservation, terminalState),
-            recordYunwuProviderHealth(
+            recordMeteredTerminal(activeReservation, terminalState),
+            recordMeteredProviderHealth(
               terminalState === "completed" ? "success" : "upstream_error",
               terminalState === "completed" ? 200 : null,
             ),
@@ -1038,8 +1038,8 @@ const createYunwuTransportLifecycle = (
         "ambiguous failure recording",
         async (activeReservation) => {
           await Promise.all([
-            recordYunwuAmbiguousFailure(activeReservation),
-            recordYunwuProviderHealth("upstream_error", null),
+            recordMeteredAmbiguousFailure(activeReservation),
+            recordMeteredProviderHealth("upstream_error", null),
           ]);
         },
       );
@@ -1047,7 +1047,7 @@ const createYunwuTransportLifecycle = (
     cancelled: () =>
       schedule(
         "dispatched cancellation recording",
-        (activeReservation) => recordYunwuTerminal(activeReservation, "cancelled"),
+        (activeReservation) => recordMeteredTerminal(activeReservation, "cancelled"),
       ),
   };
 };
@@ -1184,7 +1184,7 @@ const fetchResponsesWithPaidFallback = async (
     cancelResponseBody(primary);
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
-      () => recordYunwuPrefetchCancellation(decision.reservation),
+      () => recordMeteredPrefetchCancellation(decision.reservation),
     );
     throw options.signal.reason instanceof Error
       ? options.signal.reason
@@ -1194,56 +1194,56 @@ const fetchResponsesWithPaidFallback = async (
   if (options.signal?.aborted) {
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
-      () => recordYunwuPrefetchCancellation(decision.reservation),
+      () => recordMeteredPrefetchCancellation(decision.reservation),
     );
     throw options.signal.reason instanceof Error
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
   if (telemetry) {
-    telemetry.provider = "yunwu";
+    telemetry.provider = "metered";
     telemetry.accountSlot = null;
     telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
   }
-  logYunwuSelected(requestId, fallbackReason);
-  let result: Awaited<ReturnType<typeof fetchYunwuResponses>>;
+  logMeteredSelected(requestId, fallbackReason);
+  let result: Awaited<ReturnType<typeof fetchMeteredResponses>>;
   try {
-    result = await fetchYunwuResponses(body, {
+    result = await fetchMeteredResponses(body, {
       signal: options.signal,
-      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("yunwu") ?? Promise.resolve(),
+      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
     });
     if (result.response.status === 401 || result.response.status === 403) {
-      await recordYunwuProviderHealth("auth_invalid", result.response.status);
+      await recordMeteredProviderHealth("auth_invalid", result.response.status);
     } else if (result.response.status === 429) {
-      await recordYunwuProviderHealth("quota_exhausted", result.response.status);
+      await recordMeteredProviderHealth("quota_exhausted", result.response.status);
     } else if (result.response.status >= 500) {
-      await recordYunwuProviderHealth("upstream_error", result.response.status);
+      await recordMeteredProviderHealth("upstream_error", result.response.status);
     } else if (!result.response.ok) {
-      await recordYunwuProviderHealth("reachable", result.response.status);
+      await recordMeteredProviderHealth("reachable", result.response.status);
     }
   } catch (error) {
     if (error instanceof ApiKeyQuotaDispatchError) {
-      // Paid fallback writes a durable dispatch intent before Yunwu transport.
+      // Paid fallback writes a durable dispatch intent before metered transport.
       // If the API-key quota CAS rejects that transport, it is still known not
       // to have started and must be released rather than reconciled as billed.
       await bestEffortPaidFallbackBookkeeping(
         "pre-dispatch quota cancellation recording",
-        () => recordYunwuUndispatchedCancellation(decision.reservation),
+        () => recordMeteredUndispatchedCancellation(decision.reservation),
       );
       throw error;
     }
-    const yunwuStatus = error instanceof YunwuError ? error.status : null;
-    await recordYunwuProviderHealth(
-      yunwuStatus === 401 || yunwuStatus === 403
+    const meteredStatus = error instanceof MeteredError ? error.status : null;
+    await recordMeteredProviderHealth(
+      meteredStatus === 401 || meteredStatus === 403
         ? "auth_invalid"
-        : yunwuStatus === 429
+        : meteredStatus === 429
         ? "quota_exhausted"
         : "upstream_error",
-      yunwuStatus,
+      meteredStatus,
     );
     await bestEffortPaidFallbackBookkeeping(
       "ambiguous failure recording",
-      () => recordYunwuAmbiguousFailure(decision.reservation),
+      () => recordMeteredAmbiguousFailure(decision.reservation),
     );
     const abortReason = options.signal?.reason;
     if (
@@ -1253,26 +1253,26 @@ const fetchResponsesWithPaidFallback = async (
       return {
         response: preservePrimaryWarnings(openaiError(
           504,
-          "YunWu upstream exceeded the gateway deadline before response headers were received.",
+          "Metered upstream exceeded the gateway deadline before response headers were received.",
           "gateway_timeout",
           {
             type: "server_error",
-            headers: { "x-uos-upstream": "yunwu" },
+            headers: { "x-uos-upstream": "metered" },
           },
         )),
-        provider: "yunwu",
+        provider: "metered",
         paidFallback: decision.reservation,
         gatewayResponse: true,
         fallbackReason: reservationInput.reason,
       };
     }
-    if (error instanceof YunwuError) {
+    if (error instanceof MeteredError) {
       return {
         response: preservePrimaryWarnings(openaiError(error.status, error.message, error.code, {
           type: "server_error",
-          headers: { "x-uos-upstream": "yunwu" },
+          headers: { "x-uos-upstream": "metered" },
         })),
-        provider: "yunwu",
+        provider: "metered",
         paidFallback: decision.reservation,
         gatewayResponse: true,
         fallbackReason: reservationInput.reason,
@@ -1281,14 +1281,14 @@ const fetchResponsesWithPaidFallback = async (
     return {
       response: preservePrimaryWarnings(openaiError(
         502,
-        "YunWu upstream request failed before response headers were received.",
+        "Metered upstream request failed before response headers were received.",
         "upstream_error",
         {
           type: "server_error",
-          headers: { "x-uos-upstream": "yunwu" },
+          headers: { "x-uos-upstream": "metered" },
         },
       )),
-      provider: "yunwu",
+      provider: "metered",
       paidFallback: decision.reservation,
       gatewayResponse: true,
       fallbackReason: reservationInput.reason,
@@ -1296,11 +1296,11 @@ const fetchResponsesWithPaidFallback = async (
   }
   await bestEffortPaidFallbackBookkeeping(
     "upstream response recording",
-    () => recordYunwuUpstreamResponse(decision.reservation, result.response, result.request_id),
+    () => recordMeteredUpstreamResponse(decision.reservation, result.response, result.request_id),
   );
   return {
     response: preservePrimaryWarnings(result.response),
-    provider: "yunwu",
+    provider: "metered",
     paidFallback: decision.reservation,
     gatewayResponse: false,
     fallbackReason: reservationInput.reason,
@@ -4323,7 +4323,7 @@ const streamChatCompletions = (
   includeUsage: boolean,
   usageContext: UsageContext | undefined,
   provider: UpstreamProvider,
-  lifecycle: YunwuTransportLifecycle,
+  lifecycle: MeteredTransportLifecycle,
   signal: AbortSignal,
   downstreamSignal: AbortSignal,
   onResponseTerminal?: (completed: boolean) => void,
@@ -4614,7 +4614,7 @@ const completeChatCompletions = async (
   model: string,
   usageContext: UsageContext | undefined,
   provider: UpstreamProvider,
-  lifecycle: YunwuTransportLifecycle,
+  lifecycle: MeteredTransportLifecycle,
   signal: AbortSignal,
   downstreamSignal: AbortSignal,
   warnings: readonly string[] = [],
@@ -6173,7 +6173,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   }
   const upstream = routed.response;
   const providerWarnings = responseWarnings(upstream);
-  const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
+  const lifecycle = createMeteredTransportLifecycle(routed.paidFallback);
   const resolveCodexProbe = (completed = false): void => {
     if (routed.provider !== "chatgpt_codex") return;
     const transition = completed ? markCodexResponseCompleted(upstream) : releaseCodexResponseProbe(upstream);
@@ -6531,7 +6531,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
   const upstream = routed.response;
   const providerWarnings = responseWarnings(upstream);
-  const lifecycle = createYunwuTransportLifecycle(routed.paidFallback);
+  const lifecycle = createMeteredTransportLifecycle(routed.paidFallback);
   const resolveCodexProbe = (completed = false): void => {
     if (routed.provider !== "chatgpt_codex") return;
     const transition = completed ? markCodexResponseCompleted(upstream) : releaseCodexResponseProbe(upstream);

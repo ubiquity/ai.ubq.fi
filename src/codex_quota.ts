@@ -1,4 +1,4 @@
-export const YUNWU_CODEX_LIMIT_NAME = "YunWu balance";
+export const METERED_CODEX_LIMIT_NAME = "Metered balance";
 
 type ClientQuotaSnapshot = Readonly<{ used_percent: number | null }>;
 
@@ -51,7 +51,7 @@ export const buildCodexQuotaHeaders = (
 
   if (snapshot?.used_percent !== null && snapshot?.used_percent !== undefined) {
     const usedPercent = formatPercent(snapshot.used_percent);
-    headers.set(`${DEFAULT_CODEX_PREFIX}-limit-name`, YUNWU_CODEX_LIMIT_NAME);
+    headers.set(`${DEFAULT_CODEX_PREFIX}-limit-name`, METERED_CODEX_LIMIT_NAME);
     headers.set(`${DEFAULT_CODEX_PREFIX}-primary-used-percent`, usedPercent);
   }
   return headers;

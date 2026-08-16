@@ -8,7 +8,7 @@ import {
 } from "./codex_account_routing.ts";
 import { listProviderCapacityResetEvents, type ProviderCapacityResetEvent } from "./provider_capacity_events.ts";
 import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
-import { getConfiguredYunwuQuotaSnapshot, YUNWU_QUOTA_FRESH_MS, type YunwuQuotaSnapshot } from "./yunwu_quota.ts";
+import { getConfiguredMeteredQuotaSnapshot, METERED_QUOTA_FRESH_MS, type MeteredQuotaSnapshot } from "./metered_quota.ts";
 import { isRecord } from "./utils.ts";
 
 export { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
@@ -59,8 +59,8 @@ export type ProviderCapacitySource =
     additional_rate_limits: readonly ProviderCapacityAdditionalRateLimit[];
   }>
   | Readonly<{
-    source: "yunwu";
-    label: "YunWu fallback";
+    source: "metered";
+    label: "Metered fallback";
     state: CapacityState;
     source_observed_at_ms: number | null;
     snapshot_at_ms: number;
@@ -71,14 +71,14 @@ export type ProviderCapacitySource =
       refill_cycle_used_percent: number | null;
       cycle_started_at_ms: number | null;
       last_credit_at_ms: number | null;
-      confidence: YunwuQuotaSnapshot["state"]["confidence"] | null;
-      cache_state: YunwuQuotaSnapshot["cache_state"] | null;
+      confidence: MeteredQuotaSnapshot["state"]["confidence"] | null;
+      cache_state: MeteredQuotaSnapshot["cache_state"] | null;
       reset_at_ms: null;
     }>;
   }>;
 
 export type ProviderCapacityCodexSource = Extract<ProviderCapacitySource, { source: "codex" }>;
-export type ProviderCapacityYunwuSource = Extract<ProviderCapacitySource, { source: "yunwu" }>;
+export type ProviderCapacityMeteredSource = Extract<ProviderCapacitySource, { source: "metered" }>;
 
 export type ProviderCapacitySnapshot = Readonly<{
   snapshot_at_ms: number;
@@ -89,7 +89,7 @@ export type ProviderCapacitySnapshot = Readonly<{
 export type ProviderCapacityHistoryPoint = Readonly<{
   bucket_start_at_ms: number;
   sampled_at_ms: number;
-  sources: readonly [ProviderCapacityCodexSource, ProviderCapacityCodexSource, ProviderCapacityYunwuSource];
+  sources: readonly [ProviderCapacityCodexSource, ProviderCapacityCodexSource, ProviderCapacityMeteredSource];
 }>;
 
 export type ProviderCapacityView = Readonly<
@@ -233,9 +233,9 @@ const unavailableCodexSource = (slot: 1 | 2, snapshotAtMs: number): ProviderCapa
   additional_rate_limits: [],
 });
 
-const unavailableYunwuSource = (snapshotAtMs: number): ProviderCapacityYunwuSource => ({
-  source: "yunwu",
-  label: "YunWu fallback",
+const unavailableMeteredSource = (snapshotAtMs: number): ProviderCapacityMeteredSource => ({
+  source: "metered",
+  label: "Metered fallback",
   state: "unavailable",
   source_observed_at_ms: null,
   snapshot_at_ms: snapshotAtMs,
@@ -310,16 +310,16 @@ const fetchCodexCapacitySource = async (
   }
 };
 
-const yunwuCapacitySource = (
-  snapshot: YunwuQuotaSnapshot | null,
+const meteredCapacitySource = (
+  snapshot: MeteredQuotaSnapshot | null,
   snapshotAtMs: number,
 ): ProviderCapacitySource => {
-  if (!snapshot) return unavailableYunwuSource(snapshotAtMs);
+  if (!snapshot) return unavailableMeteredSource(snapshotAtMs);
   const sourceObservedAtMs = snapshot.state.observed_at_ms;
-  const stale = snapshot.cache_state === "stale" || snapshotAtMs - sourceObservedAtMs >= YUNWU_QUOTA_FRESH_MS;
+  const stale = snapshot.cache_state === "stale" || snapshotAtMs - sourceObservedAtMs >= METERED_QUOTA_FRESH_MS;
   return {
-    source: "yunwu",
-    label: "YunWu fallback",
+    source: "metered",
+    label: "Metered fallback",
     state: stale ? "stale" : "available",
     source_observed_at_ms: sourceObservedAtMs,
     snapshot_at_ms: snapshotAtMs,
@@ -332,7 +332,7 @@ const yunwuCapacitySource = (
       last_credit_at_ms: snapshot.state.last_credit_at_ms,
       confidence: snapshot.state.confidence,
       cache_state: snapshot.cache_state,
-      // YunWu exposes a refill cycle, not a scheduled reset window.
+      // Metered exposes a refill cycle, not a scheduled reset window.
       reset_at_ms: null,
     },
   };
@@ -359,7 +359,7 @@ const captureProviderCapacitySnapshot = async (
       ? await fetchCodexCapacitySource(account, snapshotAtMs, fetcher, signal)
       : unavailableCodexSource(slot, snapshotAtMs);
   }));
-  const yunwuPromise = getConfiguredYunwuQuotaSnapshot({
+  const meteredPromise = getConfiguredMeteredQuotaSnapshot({
     kv,
     fetcher,
     now: () => snapshotAtMs,
@@ -367,7 +367,7 @@ const captureProviderCapacitySnapshot = async (
     forceRefresh: true,
     createLeaseOwner: options.createLeaseOwner,
   }).catch(() => null);
-  const [codexSources, yunwuSnapshot] = await Promise.all([codexPromise, yunwuPromise]);
+  const [codexSources, meteredSnapshot] = await Promise.all([codexPromise, meteredPromise]);
 
   const routingObservations: CodexCapacityRoutingObservationInput[] = [];
   for (const account of accounts) {
@@ -388,7 +388,7 @@ const captureProviderCapacitySnapshot = async (
   return {
     snapshot_at_ms: snapshotAtMs,
     stale_after_ms: PROVIDER_CAPACITY_SOURCE_STALE_MS,
-    sources: [codexSources[0], codexSources[1], yunwuCapacitySource(yunwuSnapshot, snapshotAtMs)],
+    sources: [codexSources[0], codexSources[1], meteredCapacitySource(meteredSnapshot, snapshotAtMs)],
   };
 };
 
@@ -458,11 +458,11 @@ const readStoredCodexSource = (
   };
 };
 
-const readStoredYunwuSource = (
+const readStoredMeteredSource = (
   value: unknown,
   snapshotAtMs: number,
-): ProviderCapacityYunwuSource | null => {
-  if (!isRecord(value) || value.source !== "yunwu") return null;
+): ProviderCapacityMeteredSource | null => {
+  if (!isRecord(value) || value.source !== "metered") return null;
   const state = capacityState(value.state);
   const observed = value.source_observed_at_ms;
   const wallet = isRecord(value.wallet) ? value.wallet : null;
@@ -481,8 +481,8 @@ const readStoredYunwuSource = (
       ? wallet.cache_state
       : null;
   return {
-    source: "yunwu",
-    label: "YunWu fallback",
+    source: "metered",
+    label: "Metered fallback",
     state,
     source_observed_at_ms: observed,
     snapshot_at_ms: snapshotAtMs,
@@ -505,11 +505,11 @@ const readStoredSnapshot = (value: unknown): ProviderCapacitySnapshot | null => 
   const snapshotAtMs = value.snapshot_at_ms;
   const codexOne = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 1);
   const codexTwo = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 2);
-  const yunwu = value.sources.find((source) => isRecord(source) && source.source === "yunwu");
+  const metered = value.sources.find((source) => isRecord(source) && source.source === "metered");
   const sources = [
     readStoredCodexSource(codexOne, snapshotAtMs),
     readStoredCodexSource(codexTwo, snapshotAtMs),
-    readStoredYunwuSource(yunwu, snapshotAtMs),
+    readStoredMeteredSource(metered, snapshotAtMs),
   ];
   if (!sources[0] || !sources[1] || !sources[2]) return null;
   return {
@@ -536,16 +536,16 @@ const readStoredHistoryPoint = (value: unknown): StoredHistoryPoint | null => {
   if (!Array.isArray(value.sources)) return null;
   const sourceOne = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 1);
   const sourceTwo = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 2);
-  const sourceYunwu = value.sources.find((source) => isRecord(source) && source.source === "yunwu");
+  const sourceMetered = value.sources.find((source) => isRecord(source) && source.source === "metered");
   const codexSourceOne = readStoredCodexSource(sourceOne, value.sampled_at_ms);
   const codexSourceTwo = readStoredCodexSource(sourceTwo, value.sampled_at_ms);
   if (!codexSourceOne || !codexSourceTwo) return null;
-  const yunwuSource = readStoredYunwuSource(sourceYunwu, value.sampled_at_ms) ??
-    unavailableYunwuSource(value.sampled_at_ms);
+  const meteredSource = readStoredMeteredSource(sourceMetered, value.sampled_at_ms) ??
+    unavailableMeteredSource(value.sampled_at_ms);
   return {
     bucket_start_at_ms: value.bucket_start_at_ms,
     sampled_at_ms: value.sampled_at_ms,
-    sources: [codexSourceOne, codexSourceTwo, yunwuSource],
+    sources: [codexSourceOne, codexSourceTwo, meteredSource],
   };
 };
 
@@ -596,14 +596,14 @@ const historyPointForSnapshot = (snapshot: ProviderCapacitySnapshot): ProviderCa
     const source = snapshot.sources.find((candidate) => candidate.source === "codex" && candidate.slot === slot);
     return source?.source === "codex" ? source : unavailableCodexSource(slot, snapshot.snapshot_at_ms);
   };
-  const sourceForYunwu = (): ProviderCapacityYunwuSource => {
-    const source = snapshot.sources.find((candidate) => candidate.source === "yunwu");
-    return source?.source === "yunwu" ? source : unavailableYunwuSource(snapshot.snapshot_at_ms);
+  const sourceForMetered = (): ProviderCapacityMeteredSource => {
+    const source = snapshot.sources.find((candidate) => candidate.source === "metered");
+    return source?.source === "metered" ? source : unavailableMeteredSource(snapshot.snapshot_at_ms);
   };
   return {
     bucket_start_at_ms: historyBucketStartAtMs(snapshot.snapshot_at_ms),
     sampled_at_ms: snapshot.snapshot_at_ms,
-    sources: [sourceForSlot(1), sourceForSlot(2), sourceForYunwu()],
+    sources: [sourceForSlot(1), sourceForSlot(2), sourceForMetered()],
   };
 };
 
@@ -627,9 +627,9 @@ const staleProviderSnapshot = (snapshot: ProviderCapacitySnapshot, nowMs: number
         ? source
         : source.source === "codex" && nowMs >= source.snapshot_at_ms + snapshot.stale_after_ms
         ? { ...source, state: "stale" as const }
-        : source.source === "yunwu" &&
+        : source.source === "metered" &&
             (source.wallet.cache_state === "stale" || source.source_observed_at_ms === null ||
-              nowMs - source.source_observed_at_ms >= YUNWU_QUOTA_FRESH_MS)
+              nowMs - source.source_observed_at_ms >= METERED_QUOTA_FRESH_MS)
         ? { ...source, state: "stale" as const }
         : source
     ) as [ProviderCapacitySource, ProviderCapacitySource, ProviderCapacitySource],
@@ -659,7 +659,7 @@ const unavailableSnapshot = (snapshotAtMs: number): ProviderCapacitySnapshot => 
   sources: [
     unavailableCodexSource(1, snapshotAtMs),
     unavailableCodexSource(2, snapshotAtMs),
-    unavailableYunwuSource(snapshotAtMs),
+    unavailableMeteredSource(snapshotAtMs),
   ],
 });
 

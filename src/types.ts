@@ -134,7 +134,7 @@ export type ApiKeyUsageRequestV3 = Readonly<{
   state: "reserved" | "dispatched" | "released";
   reserved_at_ms: number;
   lease_expires_at_ms: number;
-  provider: "cerebras" | "chatgpt_codex" | "yunwu" | "voyage" | null;
+  provider: "cerebras" | "chatgpt_codex" | "metered" | "voyage" | null;
   dispatched_at_ms: number | null;
   released_at_ms: number | null;
   release_reason: string | null;
@@ -155,18 +155,18 @@ export type ApiKeyUsageRecord = Readonly<{
   last_model: string | null;
   last_reasoning: string | null;
   last_route: string | null;
-  yunwu_fallback_requests: number;
-  yunwu_input_tokens: number;
-  yunwu_output_tokens: number;
-  yunwu_total_tokens: number;
-  yunwu_spend_microcredits: number;
+  metered_fallback_requests: number;
+  metered_input_tokens: number;
+  metered_output_tokens: number;
+  metered_total_tokens: number;
+  metered_spend_microcredits: number;
 }>;
 
 export type ApiKeyUsageDay = Readonly<{
   day: string;
   request_count: number;
-  yunwu_fallback_requests: number;
-  yunwu_spend_microcredits: number;
+  metered_fallback_requests: number;
+  metered_spend_microcredits: number;
 }>;
 
 export type ApiKeyUsageDailyRecord = Readonly<{
@@ -186,7 +186,7 @@ export type ApiKeyRequestLogRecord = Readonly<{
   model: string | null;
   reasoning: string | null;
   created_at_ms: number;
-  provider: "cerebras" | "chatgpt_codex" | "voyage" | "yunwu";
+  provider: "cerebras" | "chatgpt_codex" | "voyage" | "metered";
   fallback_reason: string | null;
   provider_request_id: string | null;
   completed_at_ms: number | null;

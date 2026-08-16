@@ -7,7 +7,7 @@ import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
 import { sampleProviderCapacityForCron } from "./src/provider_capacity.ts";
 
 if (config.isDeploy) {
-  Deno.cron("reconcile pending Yunwu billing", "* * * * *", async () => {
+  Deno.cron("reconcile pending metered billing", "* * * * *", async () => {
     try {
       // KV is optional at process boot. Resolve it only when the scheduled
       // reconciliation actually runs so a slow KV connection cannot prevent

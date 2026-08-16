@@ -6,7 +6,7 @@ import { setKvForTest } from "../src/kv.ts";
 import { handleResponses } from "../src/openai.ts";
 import { resetProviderHealthThrottleForTest } from "../src/provider_health.ts";
 import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime_config.ts";
-import { YUNWU_BASE_URL } from "../src/yunwu.ts";
+import { METERED_BASE_URL } from "../src/metered.ts";
 
 type StoredEntry = {
   key: Deno.KvKey;
@@ -167,7 +167,7 @@ const KEY_HASH = "routing-matrix-hash";
 const ACCOUNT_IDS = ["account-one", "account-two"] as const;
 const CODEX_RESPONSES_URL = `${config.codexBaseUrl}/responses`;
 const CODEX_REFRESH_URL = "https://auth.openai.com/oauth/token";
-const YUNWU_RESPONSES_URL = `${YUNWU_BASE_URL}/v1/responses`;
+const METERED_RESPONSES_URL = `${METERED_BASE_URL}/v1/responses`;
 const encoder = new TextEncoder();
 
 const isFallbackOutcome = (outcome: Outcome): boolean =>
@@ -198,7 +198,7 @@ const jsonErrorResponse = (status: number): Response =>
     },
   );
 
-const yunwuSuccessResponse = (): Response => {
+const meteredSuccessResponse = (): Response => {
   const chunks = [
     `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_matrix", created_at: 0 } })}\n\n`,
     `data: ${
@@ -224,7 +224,7 @@ const yunwuSuccessResponse = (): Response => {
       status: 200,
       headers: {
         "Content-Type": "text/event-stream",
-        "X-Oneapi-Request-Id": "yunwu-routing-matrix",
+        "X-Oneapi-Request-Id": "metered-routing-matrix",
       },
     },
   );
@@ -235,7 +235,7 @@ type ActiveRun = {
   controller: AbortController;
   codexCalls: Record<(typeof ACCOUNT_IDS)[number], number>;
   refreshCalls: Record<(typeof ACCOUNT_IDS)[number], number>;
-  yunwuCalls: number;
+  meteredCalls: number;
   infoLogs: unknown[][];
 };
 
@@ -344,9 +344,9 @@ const mockedFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     );
   }
 
-  if (url === YUNWU_RESPONSES_URL) {
-    run.yunwuCalls += 1;
-    return Promise.resolve(yunwuSuccessResponse());
+  if (url === METERED_RESPONSES_URL) {
+    run.meteredCalls += 1;
+    return Promise.resolve(meteredSuccessResponse());
   }
 
   if (url !== CODEX_RESPONSES_URL) throw new Error(`Unexpected routing matrix URL: ${url}`);
@@ -389,7 +389,7 @@ const runCase = async (
     controller,
     codexCalls: { "account-one": 0, "account-two": 0 },
     refreshCalls: { "account-one": 0, "account-two": 0 },
-    yunwuCalls: 0,
+    meteredCalls: 0,
     infoLogs: [],
   };
   const label = `${first.name} -> ${second.name}`;
@@ -412,15 +412,15 @@ const runCase = async (
     );
 
     const reachesSecond = isFallbackOutcome(first);
-    const selectsYunwu = reachesSecond && isFallbackOutcome(second);
-    const expectedStatus = selectsYunwu ? 200 : directStatus(reachesSecond ? second : first);
+    const selectsMetered = reachesSecond && isFallbackOutcome(second);
+    const expectedStatus = selectsMetered ? 200 : directStatus(reachesSecond ? second : first);
     assert.equal(response.status, expectedStatus, `${label}: final status`);
     assert.equal(
       response.headers.get("x-uos-upstream"),
-      selectsYunwu ? "yunwu" : "chatgpt_codex",
+      selectsMetered ? "metered" : "chatgpt_codex",
       `${label}: selected upstream`,
     );
-    assert.equal(run.yunwuCalls, selectsYunwu ? 1 : 0, `${label}: YunWu call count`);
+    assert.equal(run.meteredCalls, selectsMetered ? 1 : 0, `${label}: Metered call count`);
     assert.equal(
       run.codexCalls["account-two"] > 0,
       reachesSecond,
@@ -439,7 +439,7 @@ const runCase = async (
 
     const expectedBaseCalls = 1 + (is401(first) ? 1 : 0) +
       (reachesSecond ? 1 + (is401(second) ? 1 : 0) : 0);
-    const expectsGlobal429Retry = selectsYunwu && (is429(first) || is429(second));
+    const expectsGlobal429Retry = selectsMetered && (is429(first) || is429(second));
     assert.equal(
       run.codexCalls["account-one"] + run.codexCalls["account-two"],
       expectedBaseCalls + (expectsGlobal429Retry ? 1 : 0),
@@ -462,18 +462,18 @@ const restoreEnv = (name: string, value: string | undefined): void => {
   else Deno.env.set(name, value);
 };
 
-Deno.test("two-account Codex-to-YunWu /v1/responses routing matrix", async (t) => {
+Deno.test("two-account Codex-to-Metered /v1/responses routing matrix", async (t) => {
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const originalWarn = console.warn;
   const originalError = console.error;
-  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   setKvForTest(kv);
   globalThis.fetch = mockedFetch;
   console.info = (...args: unknown[]) => activeRun?.infoLogs.push(args);
   console.warn = () => {};
   console.error = () => {};
-  Deno.env.set("YUNWU_API_KEY", "yunwu-routing-matrix-key");
+  Deno.env.set("METERED_API_KEY", "metered-routing-matrix-key");
 
   try {
     await t.step("Cartesian outcome matrix", async () => {
@@ -508,7 +508,7 @@ Deno.test("two-account Codex-to-YunWu /v1/responses routing matrix", async (t) =
     console.info = originalInfo;
     console.warn = originalWarn;
     console.error = originalError;
-    restoreEnv("YUNWU_API_KEY", originalYunwuApiKey);
+    restoreEnv("METERED_API_KEY", originalMeteredApiKey);
     resetCodexAuthCacheForTest();
     resetRuntimeConfigCacheForTest();
     resetProviderHealthThrottleForTest();

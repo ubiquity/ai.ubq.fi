@@ -10,9 +10,9 @@ The benchmark compared:
 | ------------ | ------------------------------------------------------------ |
 | Direct Codex | Client → `chatgpt.com/backend-api/codex/responses`           |
 | `ai.ubq.fi`  | Client → Deno Deploy gateway → ChatGPT Codex                 |
-| Yunwu        | Client → Yunwu proxy/router → presumed pooled Codex upstream |
+| metered        | Client → metered proxy/router → presumed pooled Codex upstream |
 
-The last route's internal topology and physical region were not independently verified. Yunwu advertises service across
+The last route's internal topology and physical region were not independently verified. metered advertises service across
 several global regions, so it should not be assumed that the tested serving edge was in mainland China.
 
 ## Prompt
@@ -40,7 +40,7 @@ One early comparison happened to produce exactly 71 input and 231 output tokens 
 
 | Route       | Total latency | Input/output tokens |
 | ----------- | ------------: | ------------------: |
-| Yunwu       |       4.795 s |            71 / 231 |
+| metered       |       4.795 s |            71 / 231 |
 | `ai.ubq.fi` |       7.746 s |            71 / 231 |
 
 In that single matched-output sample, `ai.ubq.fi` took 2.951 seconds longer. One request is not a reliable latency
@@ -59,16 +59,16 @@ The complete per-round measurements are preserved in
 | ------------ | ----------: | ----------: | ------: | ------: | -------: | -------------------: |
 | Direct Codex | **5.750 s** | **7.454 s** | 6.161 s | 5.255 s | 11.486 s |                245.5 |
 | `ai.ubq.fi`  |     6.782 s |     9.147 s | 7.284 s | 6.042 s | 12.631 s |                  238 |
-| Yunwu        |     7.104 s |     9.380 s | 6.727 s | 4.310 s | 10.027 s |                304.5 |
+| metered        |     7.104 s |     9.380 s | 6.727 s | 4.310 s | 10.027 s |                304.5 |
 
 Direct Codex had the best raw median and p95. Relative to direct:
 
 - `ai.ubq.fi` added about 1.03 seconds at the median;
-- Yunwu added about 1.35 seconds at the median;
-- Yunwu produced roughly 25% more output tokens than the other routes at the median, so its raw total latency is not
+- metered added about 1.35 seconds at the median;
+- metered produced roughly 25% more output tokens than the other routes at the median, so its raw total latency is not
   generation-normalized.
 
-Yunwu responses around 235–250 output tokens generally completed in roughly 4.3–4.9 seconds. Its inference throughput
+Metered responses around 235–250 output tokens generally completed in roughly 4.3–4.9 seconds. Its inference throughput
 therefore appeared competitive even though its uncapped outputs were often longer.
 
 ## Expected `ai.ubq.fi` UX impact
@@ -109,8 +109,8 @@ The synchronized per-round Pearson latency correlations were:
 
 | Pair                       | Correlation |
 | -------------------------- | ----------: |
-| Yunwu ↔ `ai.ubq.fi`        |      -0.134 |
-| Yunwu ↔ direct Codex       |      +0.351 |
+| metered ↔ `ai.ubq.fi`        |      -0.134 |
+| metered ↔ direct Codex       |      +0.351 |
 | `ai.ubq.fi` ↔ direct Codex |      -0.201 |
 
 The weak or negative correlations show that multi-second latency spikes were generally not shared by all three
@@ -148,7 +148,7 @@ The measured ordering matches the expected forwarding architecture:
 ```text
 Direct:      client → OpenAI
 ai.ubq.fi:   client → Deno Deploy → OpenAI → Deno Deploy → client
-Yunwu:       client → proxy/router → OpenAI capacity → proxy/router → client
+Metered:       client → proxy/router → OpenAI capacity → proxy/router → client
 ```
 
 Extra network legs, TLS handling, buffering, authentication, and queueing can reasonably add latency. Physical distance
@@ -156,6 +156,6 @@ alone is unlikely to explain multi-second differences; model generation and upst
 
 ## Benchmark limitation and next test
 
-The output limit was not enforced, and Yunwu generated longer responses. The clean follow-up benchmark should require
+The output limit was not enforced, and metered generated longer responses. The clean follow-up benchmark should require
 every model to copy one fixed literal block and reject responses that differ. That would hold output length constant and
 produce a more defensible transport-plus-inference comparison.

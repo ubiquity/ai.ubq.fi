@@ -48,7 +48,7 @@ Deno.test("Stage 0 cache telemetry analyzer groups completed inference and prese
     terminalLine({
       route: "chat.completions",
       status: 201,
-      provider: "yunwu",
+      provider: "metered",
       model: "gpt-chat-fixture",
       cached_input_tokens: 7,
       cache_write_input_tokens: null,
@@ -192,7 +192,7 @@ Deno.test("Stage 0 cache telemetry analyzer reports bounded failed and incomplet
   const incompleteWithUsage = terminalLine({
     route: "chat.completions",
     status: 200,
-    provider: "yunwu",
+    provider: "metered",
     model: "gpt-incomplete-secret",
     input_tokens: 60,
     cached_input_tokens: 12,

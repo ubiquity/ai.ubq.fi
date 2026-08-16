@@ -303,10 +303,10 @@ const seedStrictKey = async (
   return record;
 };
 
-const withYunwuApiKey = async (fn: () => Promise<void>): Promise<void> => {
+const withMeteredApiKey = async (fn: () => Promise<void>): Promise<void> => {
   const originalGet = Deno.env.get;
   Deno.env.get = (key: string): string | undefined =>
-    key === "YUNWU_API_KEY" ? "yunwu-test-key" : originalGet.call(Deno.env, key);
+    key === "METERED_API_KEY" ? "metered-test-key" : originalGet.call(Deno.env, key);
   try {
     await fn();
   } finally {
@@ -467,7 +467,7 @@ Deno.test("concurrent paid fallback ledger patches retry without losing either u
     status_code: 0,
     stream: false,
     created_at_ms: createdAtMs,
-    provider: "yunwu",
+    provider: "metered",
     billing_status: "pending",
   }, kv);
 
@@ -554,7 +554,7 @@ Deno.test("paid fallback admission re-reads policy when a committed disable race
     });
   };
 
-  await withYunwuApiKey(async () => {
+  await withMeteredApiKey(async () => {
     const decision = await reservePaidFallback(reservationInput(keyId, requestId));
     assert.deepEqual(decision, { kind: "skip", reason: "disabled" });
   });
@@ -615,7 +615,7 @@ Deno.test("V3 terminal reconciliation settles a pending request exactly once wit
       }),
     );
   try {
-    await withYunwuApiKey(async () => {
+    await withMeteredApiKey(async () => {
       const decision = await admitPaidFallbackV3({
         keyId,
         requestId,
@@ -698,7 +698,7 @@ Deno.test("V3 reconciliation records billing facts without manufacturing a termi
     );
   };
   try {
-    await withYunwuApiKey(async () => {
+    await withMeteredApiKey(async () => {
       const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
       assert.equal(decision.kind, "reserved");
       if (decision.kind !== "reserved") throw new Error("expected reservation");
@@ -753,7 +753,7 @@ Deno.test("V3 terminal delivery expedites a request deferred before provider bil
       }),
     );
   try {
-    await withYunwuApiKey(async () => {
+    await withMeteredApiKey(async () => {
       const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
       assert.equal(decision.kind, "reserved");
       if (decision.kind !== "reserved") throw new Error("expected reservation");
@@ -866,7 +866,7 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
       }),
     );
   try {
-    await withYunwuApiKey(async () => {
+    await withMeteredApiKey(async () => {
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now() + 100, kv), 2);
     });
   } finally {
@@ -1029,7 +1029,7 @@ Deno.test("V3 unlimited projection and newest-first history support safe settled
       }),
     );
   try {
-    await withYunwuApiKey(async () => {
+    await withMeteredApiKey(async () => {
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now() + 100, kv), 2);
     });
   } finally {
@@ -1248,7 +1248,7 @@ Deno.test("V3 queue delivery coalesces due rows by key and duplicate delivery is
       }),
     );
   try {
-    await withYunwuApiKey(async () => {
+    await withMeteredApiKey(async () => {
       assert.equal(await handlePaidFallbackReconciliationJobV3({ key_id: keyId }, kv), 1);
       assert.equal(await handlePaidFallbackReconciliationJobV3({ key_id: keyId }, kv), 0);
     });
@@ -1281,7 +1281,7 @@ Deno.test("V3 queue enqueue failure does not roll back durable reconciliation ba
   globalThis.fetch = () => Promise.resolve(Response.json({ success: true, data: [] }));
   memoryKv.enqueueFailure = new Error("queue unavailable");
   try {
-    await withYunwuApiKey(async () => {
+    await withMeteredApiKey(async () => {
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now() + 100, kv), 0);
     });
   } finally {
@@ -1314,7 +1314,7 @@ Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billi
   });
   globalThis.fetch = () => Promise.resolve(Response.json({ success: true, data: [] }));
   try {
-    await withYunwuApiKey(async () => {
+    await withMeteredApiKey(async () => {
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now() + 100, kv), 0);
     });
   } finally {
@@ -1346,7 +1346,7 @@ Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billi
       }),
     );
   try {
-    await withYunwuApiKey(async () => {
+    await withMeteredApiKey(async () => {
       assert.equal(await handlePaidFallbackReconciliationJobV3({ key_id: keyId }, kv), 1);
     });
   } finally {

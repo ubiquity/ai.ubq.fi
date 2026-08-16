@@ -364,7 +364,7 @@ const hasPaidFallbackLedgerIdentity = (value: unknown): value is ApiKeyRequestLo
   isApiKeyId(value.key_id) &&
   isApiKeyId(value.id) &&
   isPositiveSafeInteger(value.created_at_ms) &&
-  value.provider === "yunwu";
+  value.provider === "metered";
 
 const isPendingPaidFallbackLedgerRecord = (value: unknown): value is ApiKeyRequestLogRecord =>
   hasPaidFallbackLedgerIdentity(value) &&
@@ -1192,7 +1192,7 @@ const legacyPaidFallbackReference = (keyId: string, requestId: string): string =
 const legacyPaidFallbackCandidate = (
   entry: Pick<Deno.KvEntry<unknown>, "key" | "value">,
 ): LegacyPaidFallbackProjectionCandidate | null => {
-  if (!isRecord(entry.value) || entry.value.provider !== "yunwu") return null;
+  if (!isRecord(entry.value) || entry.value.provider !== "metered") return null;
   const keyId = isApiKeyId(entry.value.key_id) ? entry.value.key_id : null;
   const keySuffix = entry.key.at(-2);
   const requestSuffix = entry.key.at(-1);
@@ -1222,7 +1222,7 @@ const legacyPaidFallbackCandidate = (
         ? entry.value.reasoning
         : null,
       created_at_ms: createdAtMs,
-      provider: "yunwu",
+      provider: "metered",
       fallback_reason: typeof entry.value.fallback_reason === "string" ? entry.value.fallback_reason : "primary_429",
       provider_request_id: typeof entry.value.provider_request_id === "string" &&
           entry.value.provider_request_id.trim()
@@ -1620,7 +1620,7 @@ const inspectPendingPaidFallbackLedgers = async (
   const availableReferences = new Set<string>();
   for await (const entry of kv.list<unknown>({ prefix: PAID_FALLBACK_LEDGER_PREFIX })) {
     const value = entry.value;
-    const pending = isRecord(value) && value.provider === "yunwu" &&
+    const pending = isRecord(value) && value.provider === "metered" &&
       (value.billing_status === "pending" || value.billing_status === "unresolved");
     if (!pending) continue;
     const reference = pendingPaidFallbackLedgerReferenceFromEntry(entry, PAID_FALLBACK_LEDGER_PREFIX);
@@ -1634,7 +1634,7 @@ const inspectPendingPaidFallbackLedgers = async (
   const candidates: LegacyPaidFallbackLedgerCandidate[] = [];
   for await (const entry of kv.list<unknown>({ prefix: LEGACY_REQUEST_LOG_PREFIX })) {
     const value = entry.value;
-    const pending = isRecord(value) && value.provider === "yunwu" &&
+    const pending = isRecord(value) && value.provider === "metered" &&
       (value.billing_status === "pending" || value.billing_status === "unresolved");
     if (!pending) continue;
     const reference = pendingPaidFallbackLedgerReferenceFromEntry(entry, LEGACY_REQUEST_LOG_PREFIX);

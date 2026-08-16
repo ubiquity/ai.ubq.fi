@@ -240,7 +240,7 @@ const {
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const {
   getCodexProviderHealth,
-  getYunwuProviderHealth,
+  getMeteredProviderHealth,
   resetProviderHealthThrottleForTest,
 } = await import("../src/provider_health.ts");
 
@@ -475,7 +475,7 @@ Deno.test("V3 unlimited concurrent reservations avoid local CAS exhaustion and l
   });
   assert.equal(reservations.length, concurrency);
 
-  await Promise.all(reservations.map((reservation) => reservation.beforeProviderDispatch("yunwu")));
+  await Promise.all(reservations.map((reservation) => reservation.beforeProviderDispatch("metered")));
 
   assert.deepEqual(usageWindow(policy), {
     committed_requests: concurrency,
@@ -530,7 +530,7 @@ Deno.test("V3 dispatch is idempotent across retries and remains consumed after p
   if (!admission.ok) return;
 
   await admission.reservation.beforeProviderDispatch("chatgpt_codex");
-  await admission.reservation.beforeProviderDispatch("yunwu");
+  await admission.reservation.beforeProviderDispatch("metered");
   await admission.reservation.release("provider_http_failure");
 
   assert.deepEqual(usageWindow(policy), {
@@ -1263,15 +1263,15 @@ Deno.test("first bounded paid fallback response exposes settled spend and consum
   assert.ok(policy);
 
   const originalFetch = globalThis.fetch;
-  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   let calls = 0;
   const primaryAccountIds: string[] = [];
-  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input, init) => {
     calls += 1;
     const request = new Request(input, init);
     const url = request.url;
-    if (url === "https://yunwu.ai/v1/responses") {
+    if (url === "https://api.openlux.ai/v1/responses") {
       const response = sse();
       const headers = new Headers(response.headers);
       headers.set("X-Oneapi-Request-Id", "first-fallback-provider-request");
@@ -1298,7 +1298,7 @@ Deno.test("first bounded paid fallback response exposes settled spend and consum
     assert.equal(response.headers.get("x-codex-primary-used-percent"), "0");
     assert.equal(calls, 4);
     assert.deepEqual(primaryAccountIds, ["acct-1", "acct-2", "acct-1"]);
-    // Three Codex 429s plus Yunwu still belong to one routed inference. The
+    // Three Codex 429s plus metered still belong to one routed inference. The
     // V3 request is committed before the first transport and not incremented
     // again by retries or fallback.
     assert.equal(usageWindow(policy).committed_requests, 1);
@@ -1306,12 +1306,12 @@ Deno.test("first bounded paid fallback response exposes settled spend and consum
     await response.body?.cancel();
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-    else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
   }
 });
 
-Deno.test("paid fallback releases its dispatch intent when Yunwu quota admission fails before fetch", async () => {
+Deno.test("paid fallback releases its dispatch intent when metered quota admission fails before fetch", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -1323,14 +1323,14 @@ Deno.test("paid fallback releases its dispatch intent when Yunwu quota admission
   await seedPaidFallbackKey(token, keyId);
 
   const originalFetch = globalThis.fetch;
-  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
-  let yunwuCalls = 0;
-  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  let meteredCalls = 0;
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url === "https://yunwu.ai/v1/responses") {
-      yunwuCalls += 1;
-      return Promise.reject(new Error("Yunwu transport must not start"));
+    if (url === "https://api.openlux.ai/v1/responses") {
+      meteredCalls += 1;
+      return Promise.reject(new Error("Metered transport must not start"));
     }
     return Promise.resolve(
       new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
@@ -1353,13 +1353,13 @@ Deno.test("paid fallback releases its dispatch intent when Yunwu quota admission
         requestId: "fallback-pre-dispatch-quota-failure-request",
         startedAtMs: Date.now(),
         beforeProviderDispatch: (provider) =>
-          provider === "yunwu"
+          provider === "metered"
             ? Promise.reject(new ApiKeyQuotaDispatchError("API key quota reservation is unavailable"))
             : Promise.resolve(),
       },
     );
     assert.equal(response.status, 503);
-    assert.equal(yunwuCalls, 0);
+    assert.equal(meteredCalls, 0);
     const stored = [...kv.values.entries()].find(([key]) => key.includes(`"paid_fallback","v3","request","${keyId}"`))
       ?.[1] as {
         dispatch_state?: string;
@@ -1375,12 +1375,12 @@ Deno.test("paid fallback releases its dispatch intent when Yunwu quota admission
     assert.equal(window?.pending_count, 0);
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-    else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
   }
 });
 
-Deno.test("expired Codex credentials exhaust both accounts before paid Yunwu fallback", async () => {
+Deno.test("expired Codex credentials exhaust both accounts before paid metered fallback", async () => {
   kv.values.clear();
   resetProviderHealthThrottleForTest();
   resetApiKeyPolicyCacheForTest();
@@ -1394,12 +1394,12 @@ Deno.test("expired Codex credentials exhaust both accounts before paid Yunwu fal
 
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
-  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const accountIds: string[] = [];
   const logs: unknown[][] = [];
   let refreshCalls = 0;
-  let yunwuCalls = 0;
-  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  let meteredCalls = 0;
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input, init) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
@@ -1411,8 +1411,8 @@ Deno.test("expired Codex credentials exhaust both accounts before paid Yunwu fal
         }),
       );
     }
-    if (request.url === "https://yunwu.ai/v1/responses") {
-      yunwuCalls += 1;
+    if (request.url === "https://api.openlux.ai/v1/responses") {
+      meteredCalls += 1;
       return Promise.resolve(sse());
     }
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
@@ -1434,34 +1434,34 @@ Deno.test("expired Codex credentials exhaust both accounts before paid Yunwu fal
       }),
     );
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-uos-upstream"), "yunwu");
+    assert.equal(response.headers.get("x-uos-upstream"), "metered");
     await response.text();
     assert.equal(accountIds.length, 2);
     assert.equal(new Set(accountIds).size, 2);
     assert.equal(refreshCalls, 2);
-    assert.equal(yunwuCalls, 1);
+    assert.equal(meteredCalls, 1);
     assert.deepEqual(
       await Promise.all(["acct-1", "acct-2"].map(async (accountId) => (await getCodexProviderHealth(accountId)).state)),
       ["invalid", "invalid"],
     );
-    assert.equal((await getYunwuProviderHealth()).state, "healthy");
+    assert.equal((await getMeteredProviderHealth()).state, "healthy");
 
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
-    assert.equal(terminal.provider, "yunwu");
+    assert.equal(terminal.provider, "metered");
     assert.equal(terminal.fallback_reason, "primary_401");
     assert.equal(terminal.stream_terminal_type, "response.completed");
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
     resetCodexAuthCacheForTest();
-    if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-    else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
   }
 });
 
-Deno.test("paid fallback terminal telemetry records YunWu lifecycle", async () => {
+Deno.test("paid fallback terminal telemetry records Metered lifecycle", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -1473,12 +1473,12 @@ Deno.test("paid fallback terminal telemetry records YunWu lifecycle", async () =
 
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
-  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const logs: unknown[][] = [];
-  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url === "https://yunwu.ai/v1/responses") {
+    if (url === "https://api.openlux.ai/v1/responses") {
       return new Promise<Response>((resolve) => setTimeout(() => resolve(sse()), 30));
     }
     return Promise.resolve(
@@ -1496,7 +1496,7 @@ Deno.test("paid fallback terminal telemetry records YunWu lifecycle", async () =
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
-    assert.equal(terminal.provider, "yunwu");
+    assert.equal(terminal.provider, "metered");
     assert.equal(terminal.fallback_reason, "primary_429");
     assert.equal(terminal.stream_terminal_type, "response.completed");
     assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
@@ -1504,18 +1504,18 @@ Deno.test("paid fallback terminal telemetry records YunWu lifecycle", async () =
     const firstSseEventMs = requiredTerminalTiming(terminal, "first_sse_event_ms");
     assert.ok(
       firstSseEventMs >= firstCodexHeadersMs + 10,
-      "YunWu response time must remain outside first Codex timing",
+      "Metered response time must remain outside first Codex timing",
     );
     assert.equal(Object.prototype.hasOwnProperty.call(terminal, "upstream_headers_ms"), false);
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
-    if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-    else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
   }
 });
 
-Deno.test("paid fallback cancellation telemetry records a cancelled YunWu lifecycle", async () => {
+Deno.test("paid fallback cancellation telemetry records a cancelled Metered lifecycle", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -1528,13 +1528,13 @@ Deno.test("paid fallback cancellation telemetry records a cancelled YunWu lifecy
 
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
-  const originalYunwuApiKey = Deno.env.get("YUNWU_API_KEY");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const logs: unknown[][] = [];
   const encoder = new TextEncoder();
-  Deno.env.set("YUNWU_API_KEY", "yunwu-test-key");
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url === "https://yunwu.ai/v1/responses") {
+    if (url === "https://api.openlux.ai/v1/responses") {
       return Promise.resolve(
         new Response(
           new ReadableStream<Uint8Array>({
@@ -1569,14 +1569,14 @@ Deno.test("paid fallback cancellation telemetry records a cancelled YunWu lifecy
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
-    assert.equal(terminal.provider, "yunwu");
+    assert.equal(terminal.provider, "metered");
     assert.equal(terminal.fallback_reason, "primary_429");
     assert.equal(terminal.stream_terminal_type, "cancelled");
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
-    if (originalYunwuApiKey === undefined) Deno.env.delete("YUNWU_API_KEY");
-    else Deno.env.set("YUNWU_API_KEY", originalYunwuApiKey);
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
   }
 });
 
