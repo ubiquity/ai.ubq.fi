@@ -27,11 +27,77 @@ const STORAGE_KEYS = {
   view: "uos_ai.admin.view",
   defaultsSnapshot: "uos_ai.admin.defaults_snapshot",
   defaultsModels: "uos_ai.admin.defaults_models",
+  providerCapacitySnapshot: "uos_ai.admin.provider_capacity_snapshot",
+  apiKeysSnapshot: "uos_ai.admin.api_keys_snapshot",
 };
 
 const AUTH_RELAY_TIMEOUT_MS = 120_000;
 const API_KEY_REQUEST_LOGS_LIMIT = 20;
 const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
+const ADMIN_RESPONSE_CACHE_TTL_MS = 5 * 60_000;
+
+const adminResponseCacheKey = (url) => {
+  try {
+    return `uos_ai.admin.response_cache.${btoa(url).replaceAll("=", "").replaceAll("+", "-").replaceAll("/", "_")}`;
+  } catch {
+    return "";
+  }
+};
+
+const nativeFetch = globalThis.fetch.bind(globalThis);
+const isCacheableAdminGet = (input, init) => {
+  if ((init?.method ?? "GET").toUpperCase() !== "GET") return false;
+  try {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    return url.pathname.startsWith("/admin/") || url.pathname === "/health/providers";
+  } catch {
+    return false;
+  }
+};
+
+const readAdminResponseCache = (url) => {
+  const key = adminResponseCacheKey(url);
+  if (!key) return null;
+  const value = readStorageJson(key);
+  if (!value || typeof value !== "object" || typeof value.cached_at_ms !== "number") return null;
+  if (Date.now() - value.cached_at_ms > ADMIN_RESPONSE_CACHE_TTL_MS) return null;
+  return value;
+};
+
+const refreshAdminResponseCache = async (input, init, url, key) => {
+  try {
+    const response = await nativeFetch(input, init);
+    if (!response.ok) return;
+    const payload = await response.clone().json();
+    writeStorageJson(key, { cached_at_ms: Date.now(), payload });
+  } catch {
+    // A stale cached admin view remains usable when background refresh fails.
+  }
+};
+
+globalThis.fetch = async (input, init) => {
+  if (!isCacheableAdminGet(input, init)) return nativeFetch(input, init);
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const key = adminResponseCacheKey(url);
+  const cached = readAdminResponseCache(url);
+  if (cached) {
+    void refreshAdminResponseCache(input, init, url, key);
+    return new Response(JSON.stringify(cached.payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "X-UOS-Browser-Cache": "hit" },
+    });
+  }
+  const response = await nativeFetch(input, init);
+  if (response.ok) {
+    try {
+      const payload = await response.clone().json();
+      writeStorageJson(key, { cached_at_ms: Date.now(), payload });
+    } catch {
+      // Non-JSON admin responses are not cached.
+    }
+  }
+  return response;
+};
 
 const readStorageJson = (key) => {
   const raw = storage.get(key);
@@ -140,6 +206,12 @@ const providerCapacityList = mustGet("provider-capacity-list");
 const openRouterFailoverBadge = mustGet("openrouter-failover-badge");
 const openRouterFailoverObserved = mustGet("openrouter-failover-observed");
 const openRouterFailoverFacts = mustGet("openrouter-failover-facts");
+const debugRoutingScenario = mustGet("debug-routing-scenario");
+const debugRoutingDuration = mustGet("debug-routing-duration");
+const debugRoutingApply = mustGet("debug-routing-apply");
+const debugRoutingReset = mustGet("debug-routing-reset");
+const debugRoutingBadge = mustGet("debug-routing-badge");
+const debugRoutingStatus = mustGet("debug-routing-status");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -156,6 +228,7 @@ let keysLoadedAt = 0;
 let providersLoading = false;
 let providersLoadId = 0;
 let providersLoadedAt = 0;
+let debugRoutingLoadedAt = 0;
 let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
 let latestProviderCapacityChartState = null;
@@ -1877,6 +1950,30 @@ const renderProviderCapacity = (snapshot) => {
   providerCapacityUpdated.textContent = `Snapshot ${formatCapacityTimestamp(snapshotAt)} · ${cacheState}`;
 };
 
+const mergeProviderCapacitySnapshots = (cached, latest) => {
+  if (!cached || typeof cached !== "object") return latest;
+  if (!latest || typeof latest !== "object") return cached;
+  const mergeTimedRows = (key) => {
+    const rows = [...(Array.isArray(cached[key]) ? cached[key] : []), ...(Array.isArray(latest[key]) ? latest[key] : [])];
+    const byTime = new Map();
+    rows.forEach((row) => {
+      const timestamp = [row?.sampled_at_ms, row?.reset_at_ms, row?.occurred_at_ms]
+        .find((value) => typeof value === "number" && Number.isFinite(value));
+      if (timestamp !== undefined) byTime.set(timestamp, row);
+    });
+    return [...byTime.entries()]
+      .sort(([left], [right]) => left - right)
+      .slice(-2_000)
+      .map(([, row]) => row);
+  };
+  return {
+    ...latest,
+    history: mergeTimedRows("history"),
+    reset_events: mergeTimedRows("reset_events"),
+    downtime_events: mergeTimedRows("downtime_events"),
+  };
+};
+
 const loadProviderCapacity = async ({ live = true } = {}) => {
   if (providerCapacityLoading) return false;
   const token = getAdminToken();
@@ -1884,8 +1981,14 @@ const loadProviderCapacity = async ({ live = true } = {}) => {
     setBadge(providerCapacityBadge, "bad", "Sign in required");
     return false;
   }
+  const cached = readStorageJson(STORAGE_KEYS.providerCapacitySnapshot);
+  if (cached?.payload && typeof cached.payload === "object") {
+    renderProviderCapacity(cached.payload);
+    setBadge(providerCapacityBadge, "unknown", "Cached · loading latest");
+    providerCapacityUpdated.textContent = "Showing locally cached history while loading the latest snapshot";
+  }
   providerCapacityLoading = true;
-  setBadge(providerCapacityBadge, "unknown", "Loading capacity");
+  if (!cached?.payload) setBadge(providerCapacityBadge, "unknown", "Loading capacity");
   try {
     const response = await fetch(apiUrl(`/admin/providers/capacity${live ? "?refresh=live" : ""}`), {
       cache: "no-store",
@@ -1897,7 +2000,10 @@ const loadProviderCapacity = async ({ live = true } = {}) => {
       providerCapacityUpdated.textContent = "Snapshot unavailable";
       return false;
     }
-    renderProviderCapacity(payload);
+    const previous = cached?.payload && typeof cached.payload === "object" ? cached.payload : null;
+    const merged = mergeProviderCapacitySnapshots(previous, payload);
+    writeStorageJson(STORAGE_KEYS.providerCapacitySnapshot, { payload: merged, cached_at_ms: Date.now() });
+    renderProviderCapacity(merged);
     return true;
   } catch {
     setBadge(providerCapacityBadge, "bad", "Offline");
@@ -1957,7 +2063,95 @@ const loadProviders = async () => {
   } finally {
     if (loadId === providersLoadId) providersLoading = false;
   }
+  void loadDebugRouting();
 };
+
+const formatDebugRoutingStatus = (routing) => {
+  const scenario = routing?.scenario ?? "normal";
+  const expires = typeof routing?.expires_at_ms === "number" ? new Date(routing.expires_at_ms).toLocaleString() : null;
+  return expires && scenario !== "normal" ? `${scenario.replaceAll("_", " ")} until ${expires}` : "Normal routing";
+};
+
+const loadDebugRouting = async () => {
+  if (!adminAccessState.isSuperAdmin) {
+    setBadge(debugRoutingBadge, "unknown", "Super admin required");
+    debugRoutingStatus.textContent = "Only a super admin can change routing scenarios.";
+    debugRoutingApply.disabled = true;
+    debugRoutingReset.disabled = true;
+    return;
+  }
+  const token = getAdminToken();
+  if (!token) return;
+  try {
+    const response = await fetch(apiUrl("/admin/debug/routing"), {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.routing) throw new Error(payload?.error?.message ?? "Debug routing unavailable");
+    debugRoutingScenario.value = payload.routing.scenario;
+    debugRoutingStatus.textContent = formatDebugRoutingStatus(payload.routing);
+    setBadge(debugRoutingBadge, payload.routing.scenario === "normal" ? "ok" : "unknown", payload.routing.scenario === "normal" ? "Normal" : "Active");
+    debugRoutingLoadedAt = Date.now();
+  } catch (error) {
+    setBadge(debugRoutingBadge, "bad", "Unavailable");
+    debugRoutingStatus.textContent = error instanceof Error ? error.message : "Debug routing unavailable";
+  }
+};
+
+const updateDebugRouting = async (scenario, durationMs) => {
+  const token = getAdminToken();
+  if (!token || !adminAccessState.isSuperAdmin) return;
+  debugRoutingApply.disabled = true;
+  debugRoutingReset.disabled = true;
+  setBadge(debugRoutingBadge, "unknown", "Saving");
+  try {
+    const response = await fetch(apiUrl("/admin/debug/routing"), {
+      method: "POST",
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ scenario, duration_ms: durationMs }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.routing) throw new Error(payload?.error?.message ?? "Could not update routing");
+    debugRoutingStatus.textContent = formatDebugRoutingStatus(payload.routing);
+    setBadge(debugRoutingBadge, scenario === "normal" ? "ok" : "unknown", scenario === "normal" ? "Normal" : "Active");
+  } catch (error) {
+    setBadge(debugRoutingBadge, "bad", "Error");
+    debugRoutingStatus.textContent = error instanceof Error ? error.message : "Could not update routing";
+  } finally {
+    debugRoutingApply.disabled = false;
+    debugRoutingReset.disabled = false;
+  }
+};
+
+debugRoutingApply.addEventListener("click", () => {
+  void updateDebugRouting(debugRoutingScenario.value, Number(debugRoutingDuration.value));
+});
+debugRoutingReset.addEventListener("click", () => {
+  const token = getAdminToken();
+  if (!token || !adminAccessState.isSuperAdmin) return;
+  debugRoutingApply.disabled = true;
+  debugRoutingReset.disabled = true;
+  setBadge(debugRoutingBadge, "unknown", "Resetting");
+  void fetch(apiUrl("/admin/debug/routing"), {
+    method: "DELETE",
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` },
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.routing) throw new Error(payload?.error?.message ?? "Could not reset routing");
+    debugRoutingScenario.value = "normal";
+    debugRoutingStatus.textContent = "Normal routing";
+    setBadge(debugRoutingBadge, "ok", "Normal");
+  }).catch((error) => {
+    setBadge(debugRoutingBadge, "bad", "Error");
+    debugRoutingStatus.textContent = error instanceof Error ? error.message : "Could not reset routing";
+  }).finally(() => {
+    debugRoutingApply.disabled = false;
+    debugRoutingReset.disabled = false;
+  });
+});
 
 const formatPemPreview = (value) => {
   if (typeof value !== "string") return "";
@@ -6094,9 +6288,19 @@ const refreshKeys = async () => {
   }
 
   if (keysLoading) return;
+  const cached = readStorageJson(STORAGE_KEYS.apiKeysSnapshot);
+  const cachedKeys = Array.isArray(cached?.data) ? cached.data : null;
+  if (cachedKeys) {
+    allKeys = cachedKeys;
+    keysLoadedAt = Date.now();
+    setKeysBadge("unknown", "Cached · loading latest");
+    renderKeys(allKeys, currentKeyView);
+  }
   keysLoading = true;
-  setKeysBadge("unknown", "Loading...");
-  setKeysListLoading();
+  if (!cachedKeys) {
+    setKeysBadge("unknown", "Loading...");
+    setKeysListLoading();
+  }
 
   try {
     const res = await fetch(apiUrl("/admin/api-keys?include_usage=1"), {
@@ -6111,6 +6315,7 @@ const refreshKeys = async () => {
     }
     const keys = Array.isArray(data?.data) ? data.data : [];
     allKeys = keys;
+    writeStorageJson(STORAGE_KEYS.apiKeysSnapshot, { data: keys, cached_at_ms: Date.now() });
     keysLoadedAt = Date.now();
     renderKeys(allKeys, currentKeyView);
   } catch {

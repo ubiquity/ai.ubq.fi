@@ -105,6 +105,7 @@ import type {
   ResponsesRequest,
 } from "./types.ts";
 import { fetchMeteredResponses, MeteredError } from "./metered.ts";
+import { loadDebugRoutingConfig } from "./debug_routing.ts";
 
 const getDefaultModel = async (): Promise<string | null> => {
   const runtime = await loadRuntimeConfig();
@@ -1791,23 +1792,40 @@ const fetchResponsesWithPaidFallback = async (
   if (telemetry) telemetry.provider = "chatgpt_codex";
   recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
-  try {
-    primary = await fetchCodexResponses(body, {
-      clientVersion: options.clientVersion,
-      signal: options.signal,
-      requestId: options.usageContext?.requestId,
-      // Keep terminal telemetry bounded: only the first real Codex transport
-      // attempt contributes dispatch/header timings, even when routing retries.
-      timing: {
-        onDispatch: () => recordFirstCodexDispatch(options.usageContext),
-        onHeaders: () => recordFirstCodexHeaders(options.usageContext),
-      },
-      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(),
-      bankedReset: codexBankedResetOptionsForTest ?? undefined,
-    });
-  } catch (error) {
-    if (!(error instanceof CodexError) || error.status !== 401) throw error;
-    primary = openaiError(error.status, error.message, error.code);
+  const debugScenario = (await loadDebugRoutingConfig()).scenario;
+  const forcedStatus = debugScenario === "metered_first" || debugScenario === "codex_429"
+    ? 429
+    : debugScenario === "codex_403"
+    ? 403
+    : debugScenario === "codex_401"
+    ? 401
+    : null;
+  if (forcedStatus !== null) {
+    primary = openaiError(
+      forcedStatus,
+      `Debug routing scenario forced Codex ${forcedStatus}.`,
+      forcedStatus === 429 ? "rate_limit_error" : "debug_forced_codex",
+      { headers: { "x-uos-upstream": "chatgpt_codex", "x-uos-debug-scenario": debugScenario } },
+    );
+  } else {
+    try {
+      primary = await fetchCodexResponses(body, {
+        clientVersion: options.clientVersion,
+        signal: options.signal,
+        requestId: options.usageContext?.requestId,
+        // Keep terminal telemetry bounded: only the first real Codex transport
+        // attempt contributes dispatch/header timings, even when routing retries.
+        timing: {
+          onDispatch: () => recordFirstCodexDispatch(options.usageContext),
+          onHeaders: () => recordFirstCodexHeaders(options.usageContext),
+        },
+        beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(),
+        bankedReset: codexBankedResetOptionsForTest ?? undefined,
+      });
+    } catch (error) {
+      if (!(error instanceof CodexError) || error.status !== 401) throw error;
+      primary = openaiError(error.status, error.message, error.code);
+    }
   }
   const primaryStatus = primary.status;
   const authReauthenticationPrimary = primaryStatus === 401 &&
@@ -7309,6 +7327,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const requestInferenceSignal = clientWantsStream ? req.signal : inferenceSignal(req);
   const preHeaderDeadline = createStreamFirstEventDeadline(requestInferenceSignal);
   const apiKey = readOpenRouterApiKey();
+  const debugRoutingScenario = (await loadDebugRoutingConfig()).scenario;
   const circuit = apiKey ? await selectOpenRouterCircuitRoute() : null;
   if (circuit && circuit.transition !== "none") {
     recordOpenRouterFields(usageContext, { circuitTransition: circuit.transition });
@@ -7316,7 +7335,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const sessionId = apiKey
     ? await deriveOpenRouterSessionId(usageContext?.idempotencyPrincipal, rawRecord.client_metadata)
     : null;
-  let route: "codex" | "openrouter" = circuit?.route ?? "codex";
+  let route: "codex" | "openrouter" = debugRoutingScenario === "openrouter_first" && apiKey
+    ? "openrouter"
+    : circuit?.route ?? "codex";
   let globalProbe: OpenRouterCircuitProbe | null = circuit?.probe ?? null;
   let primaryFailureResponse: Response | null = null;
   let primaryResult: ResponsesRouteAttempt | null = null;

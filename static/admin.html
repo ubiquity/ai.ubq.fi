@@ -592,6 +592,39 @@
               <dl id="openrouter-failover-facts" data-capacity-meta aria-live="polite"></dl>
             </div>
           </article>
+          <article data-card data-span="half" aria-labelledby="card-debug-routing">
+            <header>
+              <h2 id="card-debug-routing">Routing debug panel</h2>
+              <p>Super-admin only. Temporarily force provider scenarios for a bounded test window; normal traffic is unchanged when reset.</p>
+            </header>
+            <div data-card-body>
+              <label data-field>
+                <span data-label>Scenario</span>
+                <select id="debug-routing-scenario">
+                  <option value="normal">Normal routing</option>
+                  <option value="metered_first">Metered first</option>
+                  <option value="openrouter_first">OpenRouter first</option>
+                  <option value="codex_401">Simulate Codex 401</option>
+                  <option value="codex_403">Simulate Codex 403</option>
+                  <option value="codex_429">Simulate Codex 429</option>
+                </select>
+              </label>
+              <label data-field>
+                <span data-label>Duration</span>
+                <select id="debug-routing-duration">
+                  <option value="300000">5 minutes</option>
+                  <option value="900000" selected>15 minutes</option>
+                  <option value="3600000">1 hour</option>
+                </select>
+              </label>
+              <div data-layout="row">
+                <button id="debug-routing-apply" type="button" data-variant="primary">Apply scenario</button>
+                <button id="debug-routing-reset" type="button">Reset now</button>
+                <span id="debug-routing-badge" data-badge data-state="unknown">Not loaded</span>
+              </div>
+              <p id="debug-routing-status" data-muted aria-live="polite">Loading current routing mode.</p>
+            </div>
+          </article>
         </section>
       </main>
 
@@ -708,6 +741,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=openrouter-failover-20260813-v2"></script>
+    <script type="module" src="/admin.js?v=browser-cache-20260816-v1"></script>
   </body>
 </html>

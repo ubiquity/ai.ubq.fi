@@ -127,6 +127,12 @@ import type {
 } from "./types.ts";
 import { MeteredError } from "./metered.ts";
 import { getMeteredQuotaDiagnostics } from "./metered_quota.ts";
+import {
+  DEBUG_ROUTING_MAX_DURATION_MS,
+  type DebugRoutingScenario,
+  loadDebugRoutingConfig,
+  setDebugRoutingConfig,
+} from "./debug_routing.ts";
 
 const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
 const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
@@ -137,6 +143,34 @@ const runtimeConfigErrorResponse = (error: unknown): Response | null => {
   if (!(error instanceof RuntimeConfigError)) return null;
   const status = error.message.includes("too large") || error.message.includes("4 KiB") ? 413 : 409;
   return openaiError(status, error.message, "runtime_config_invalid", { type: "invalid_request_error" });
+};
+
+export const handleAdminDebugRouting = async (req: Request): Promise<Response> => {
+  if (req.method === "GET") {
+    return json(200, { routing: await loadDebugRoutingConfig() }, { "Cache-Control": "no-store" });
+  }
+  if (req.method === "DELETE") {
+    return json(200, { routing: await setDebugRoutingConfig("normal", 0) }, { "Cache-Control": "no-store" });
+  }
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const scenario = getString(raw.scenario)?.trim() as DebugRoutingScenario | undefined;
+  const durationMs = raw.duration_ms === undefined ? 15 * 60_000 : Number(raw.duration_ms);
+  if (!scenario) return openaiError(400, "scenario is required", "invalid_request_error", { param: "scenario" });
+  if (!Number.isSafeInteger(durationMs) || durationMs < 0 || durationMs > DEBUG_ROUTING_MAX_DURATION_MS) {
+    return openaiError(400, "duration_ms must be between 0 and 3600000", "invalid_request_error", {
+      param: "duration_ms",
+    });
+  }
+  try {
+    return json(200, { routing: await setDebugRoutingConfig(scenario, durationMs) }, { "Cache-Control": "no-store" });
+  } catch (error) {
+    return openaiError(
+      400,
+      error instanceof Error ? error.message : "Invalid debug routing scenario",
+      "invalid_request_error",
+    );
+  }
 };
 
 /**

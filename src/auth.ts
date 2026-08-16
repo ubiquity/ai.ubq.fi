@@ -628,6 +628,16 @@ const getRequestPath = (req: Request): string => {
   }
 };
 
+const isLocalDevelopmentRequest = (req: Request): boolean => {
+  if (config.isDeploy) return false;
+  try {
+    const hostname = new URL(req.url).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
+};
+
 type AuthLogEntry = Readonly<{
   scope: "client" | "admin";
   ok: boolean;
@@ -664,7 +674,7 @@ const logAuthDecision = (req: Request, entry: AuthLogEntry): void => {
 
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
   const kv = await getKv();
-  const localAuthDisabled = !config.isDeploy && config.authTokens.size === 0 && !kv;
+  const localAuthDisabled = isLocalDevelopmentRequest(req);
   const token = getBearerToken(req);
   const tokenPresent = Boolean(token);
   const tokenShape = token ? classifyToken(token) : null;
@@ -900,6 +910,14 @@ const checkAdminToken = async (token: string): Promise<CheckAdminTokenResult> =>
 };
 
 export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> => {
+  if (isLocalDevelopmentRequest(req)) {
+    return {
+      ok: true,
+      token: getBearerToken(req) ?? "local-dev-admin",
+      is_super_admin: true,
+      method: { kind: "admin_allowlist" },
+    };
+  }
   const token = getBearerToken(req);
   const tokenPresent = Boolean(token);
   const tokenShape = token ? classifyToken(token) : null;
@@ -976,7 +994,10 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   if (!authResult.ok) return authResult.response;
 
   const kv = await getKv();
-  const mode = config.isDeploy && config.authTokens.size === 0 && !kv
+  const localAuthDisabled = isLocalDevelopmentRequest(req);
+  const mode = localAuthDisabled
+    ? "disabled"
+    : config.isDeploy && config.authTokens.size === 0 && !kv
     ? "misconfigured"
     : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)
     ? "required"
@@ -998,9 +1019,10 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
     };
 
   const method: Record<string, unknown> = { kind: authResult.method.kind };
-  const isAdmin = authResult.method.kind === "admin_allowlist" || authResult.method.kind === "deno_deploy_token" ||
+  const isAdmin = localAuthDisabled || authResult.method.kind === "admin_allowlist" ||
+    authResult.method.kind === "deno_deploy_token" ||
     (authResult.method.kind === "passkey_session" && authResult.method.is_admin);
-  const isSuperAdmin = authResult.method.kind === "admin_allowlist" ||
+  const isSuperAdmin = localAuthDisabled || authResult.method.kind === "admin_allowlist" ||
     authResult.method.kind === "deno_deploy_token";
 
   if (authResult.method.kind === "github_token") {

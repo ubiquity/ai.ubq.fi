@@ -14,6 +14,7 @@ import {
   handleAdminCodexModelsSet,
   handleAdminCodexPromptsPurge,
   handleAdminCodexRecheck,
+  handleAdminDebugRouting,
   handleAdminDefaults,
   handleAdminKernelPolicyQueueList,
   handleAdminKernelPubKeysCreate,
@@ -474,6 +475,12 @@ export default async function handler(req: Request): Promise<Response> {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminDefaults(req));
+  }
+
+  if ((req.method === "GET" || req.method === "POST" || req.method === "DELETE") && path === "/admin/debug/routing") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminDebugRouting(req));
   }
 
   if (req.method === "GET" && path === "/admin/providers") {
