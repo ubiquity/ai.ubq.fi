@@ -27,10 +27,10 @@ On 2026-07-21, Metered's live model catalog displayed the following `gpt-5.6-ter
 multiplier:
 
 | Token type   | metered credits per million |
-| ------------ | ------------------------: |
-| Input        |                    0.5000 |
-| Cached input |                    0.0500 |
-| Completion   |                    3.0000 |
+| ------------ | --------------------------: |
+| Input        |                      0.5000 |
+| Cached input |                      0.0500 |
+| Completion   |                      3.0000 |
 
 The live catalog displayed the `Codex专属` group at `0.8x`. The measured recharge exchange rate was 100 metered credits
 for 49.5 CNY. Using 6.7767 CNY/USD gives approximately $0.07304 per metered credit and these effective rates:
@@ -81,11 +81,11 @@ The Responses result and billing console reported:
 | Output          | 65 tokens, including 26 reasoning tokens      |
 | End-to-end time | 326.2 seconds; console rounded to 324 seconds |
 | Retrieval       | All three markers recovered                   |
-| metered group     | `官转`, not the cheap `Codex专属` group       |
+| metered group   | `官转`, not the cheap `Codex专属` group       |
 | Model ratio     | 1.25                                          |
 | Group ratio     | 3                                             |
 | Tier multiplier | Input 2; output 1.5                           |
-| Deduction       | 9.005678 metered credits                        |
+| Deduction       | 9.005678 metered credits                      |
 
 The console displayed this exact billing formula:
 
@@ -101,9 +101,9 @@ retail is approximately $3.0019. Metered's measured long-context route therefore
 The measured effective long-context rates are:
 
 | Token type | OpenAI retail | metered `官转` | OpenAI/Metered |
-| ---------- | ------------: | -----------: | -----------: |
-| Input      |       $5.00/M |    $1.0964/M |        4.56x |
-| Output     |      $22.50/M |    $4.9338/M |        4.56x |
+| ---------- | ------------: | -------------: | -------------: |
+| Input      |       $5.00/M |      $1.0964/M |          4.56x |
+| Output     |      $22.50/M |      $4.9338/M |          4.56x |
 
 ### Flex-processing hypothesis
 
@@ -114,18 +114,18 @@ unavailability, and recommends allowing timeouts up to 15 minutes for lengthy pr
 
 For the measured request:
 
-| Route                 | Equivalent cost | Relative to metered |
-| --------------------- | --------------: | ----------------: |
-| OpenAI standard       |         $3.0019 |             4.56x |
-| OpenAI public Flex    |         $1.5009 |             2.28x |
-| metered measured `官转` |         $0.6583 |             1.00x |
+| Route                   | Equivalent cost | Relative to metered |
+| ----------------------- | --------------: | ------------------: |
+| OpenAI standard         |         $3.0019 |               4.56x |
+| OpenAI public Flex      |         $1.5009 |               2.28x |
+| metered measured `官转` |         $0.6583 |               1.00x |
 
-The 326-second response time is consistent with Flex-like processing. If metered injected `service_tier: "flex"` upstream,
-public Flex pricing explains the first 50% discount. metered would then still be charging only 43.86% of public Flex
-pricing, requiring another 56.14% reduction or subsidy.
+The 326-second response time is consistent with Flex-like processing. If metered injected `service_tier: "flex"`
+upstream, public Flex pricing explains the first 50% discount. metered would then still be charging only 43.86% of
+public Flex pricing, requiring another 56.14% reduction or subsidy.
 
-This remains an inference: the original metered result was not saved with its full `service_tier` field, metered does not
-support retrieving the completed response by ID, and the billing console does not display the upstream service tier.
+This remains an inference: the original metered result was not saved with its full `service_tier` field, metered does
+not support retrieving the completed response by ID, and the billing console does not display the upstream service tier.
 
 ### Grey-market profitability model
 
@@ -221,13 +221,13 @@ The following estimates conservatively treat all input as uncached. Completion c
 reasoning tokens included in Metered's billed completion usage.
 
 | Turn shape                   | Cumulative input | Cumulative completion | metered cost | Cost in cents |
-| ---------------------------- | ---------------: | --------------------: | ---------: | ------------: |
-| Brief, one call              |            5,000 |                   750 |  $0.000278 |        0.028c |
-| Ordinary, one call           |           27,000 |                 1,500 |  $0.001052 |        0.105c |
-| Ordinary Agent, three calls  |           81,000 |                 4,500 |  $0.003156 |        0.316c |
-| Heavy Agent, three calls     |          204,000 |                 6,000 |  $0.007012 |        0.701c |
-| Heavy Agent, eight calls     |          544,000 |                16,000 |  $0.018699 |        1.870c |
-| Bulk worst case, eight calls |        1,600,000 |                24,000 |  $0.050956 |        5.096c |
+| ---------------------------- | ---------------: | --------------------: | -----------: | ------------: |
+| Brief, one call              |            5,000 |                   750 |    $0.000278 |        0.028c |
+| Ordinary, one call           |           27,000 |                 1,500 |    $0.001052 |        0.105c |
+| Ordinary Agent, three calls  |           81,000 |                 4,500 |    $0.003156 |        0.316c |
+| Heavy Agent, three calls     |          204,000 |                 6,000 |    $0.007012 |        0.701c |
+| Heavy Agent, eight calls     |          544,000 |                16,000 |    $0.018699 |        1.870c |
+| Bulk worst case, eight calls |        1,600,000 |                24,000 |    $0.050956 |        5.096c |
 
 Repeated conversation prefixes may receive the cached-input rate, reducing real multi-call costs substantially. The
 table intentionally does not rely on cache hits when setting retail prices.

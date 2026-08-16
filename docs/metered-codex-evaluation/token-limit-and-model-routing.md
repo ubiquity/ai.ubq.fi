@@ -11,9 +11,9 @@ Metered frequently returned more output tokens than direct Codex and `ai.ubq.fi`
 
 ## Documentation findings
 
-The exported metered documentation states that `/v1/chat/completions` accepts `max_tokens` and describes it as the maximum
-generated token count. However, that section is written for Metered's GPTs-compatible route and does not document
-model-specific behavior for `gpt-5.6-sol`.
+The exported metered documentation states that `/v1/chat/completions` accepts `max_tokens` and describes it as the
+maximum generated token count. However, that section is written for Metered's GPTs-compatible route and does not
+document model-specific behavior for `gpt-5.6-sol`.
 
 The same export contains:
 
@@ -129,8 +129,8 @@ Three small, deterministic metered requests were used to test the wire-level tie
 | `priority`     |  200 | `default`     |    34 |     15 |         0 | 1.734 s |
 
 The omitted-tier and `fast` requests used exactly the same prompt and produced exactly the requested literal output. A
-single latency sample is not a speed benchmark, but the response metadata establishes that metered did not preserve either
-requested non-default tier.
+single latency sample is not a speed benchmark, but the response metadata establishes that metered did not preserve
+either requested non-default tier.
 
 Controls against the direct ChatGPT Codex backend showed:
 
@@ -144,5 +144,6 @@ Metered's live `gpt-5.6-sol` catalog advertised `-low`, `-medium`, `-high`, `-xh
 suffixes. It did not advertise a `-fast` suffix or a Fast-specific price. No Fast behavior is documented in the exported
 Metered documentation either.
 
-Conclusion: the tested metered route silently downgrades or strips Fast/Priority tier requests. There is no observed 2.5x
-Fast surcharge because there is no observed Fast service. “Price priority” should not be conflated with Codex `/fast`.
+Conclusion: the tested metered route silently downgrades or strips Fast/Priority tier requests. There is no observed
+2.5x Fast surcharge because there is no observed Fast service. “Price priority” should not be conflated with Codex
+`/fast`.

@@ -179,30 +179,30 @@ upstream accepts them.
 
 ## Codex quota reporting
 
-After an inference response, stock Codex terminal and GUI clients can show the Metered wallet in `/status` and emit their
-built-in 25%, 10%, and 5% remaining warnings. The gateway publishes only the canonical `x-codex-*` family, named
+After an inference response, stock Codex terminal and GUI clients can show the Metered wallet in `/status` and emit
+their built-in 25%, 10%, and 5% remaining warnings. The gateway publishes only the canonical `x-codex-*` family, named
 `Metered balance`.
 
 Codex 0.144.6 parses multiple response-header families but persists only one response-derived rate-limit snapshot. Named
 OpenAI and Metered families therefore overwrite one another instead of remaining independent. The gateway strips every
-parseable upstream quota family and prioritizes the client-relevant Metered balance. It does not combine Metered with the
-shared ChatGPT subscription percentage because OpenAI provides no absolute token denominator and the shared account is
-not an individual AI.UBQ client's truthful capacity.
+parseable upstream quota family and prioritizes the client-relevant Metered balance. It does not combine Metered with
+the shared ChatGPT subscription percentage because OpenAI provides no absolute token denominator and the shared account
+is not an individual AI.UBQ client's truthful capacity.
 
 The Metered wallet is not a weekly quota. The gateway does not emit a synthetic `primary-window-minutes` or
 `primary-reset-at` value for it. A client that opens `/status` before its first inference response may still say that
 limit data is unavailable because Codex learns these headers from inference responses. If no valid Metered snapshot is
 available, the gateway emits no quota percentage.
 
-The Metered percentage uses a Deno KV-backed refill cycle rather than adding all historical top-ups. Its first baseline is
-the larger of the observed wallet balance and latest successful top-up. Later credits are inferred from wallet movement
-and the account usage counter; a new top-up record always starts a new cycle. If the usage counter also advanced, known
-inter-observation debits are restored to the observed balance before choosing that cycle's capacity so post-refill spend
-does not shrink the denominator. Snapshots are fresh for five minutes, retained for 24 hours, protected by a durable
-refresh lease, and served stale during temporary account API failures. Inference never waits for a slow account refresh:
-it uses only a snapshot that is already available. Metered-routed responses invalidate their pre-debit observation so the
-next request refreshes it. `GET /admin/defaults` exposes non-secret diagnostics in `metered_quota`; credentials are never
-returned.
+The Metered percentage uses a Deno KV-backed refill cycle rather than adding all historical top-ups. Its first baseline
+is the larger of the observed wallet balance and latest successful top-up. Later credits are inferred from wallet
+movement and the account usage counter; a new top-up record always starts a new cycle. If the usage counter also
+advanced, known inter-observation debits are restored to the observed balance before choosing that cycle's capacity so
+post-refill spend does not shrink the denominator. Snapshots are fresh for five minutes, retained for 24 hours,
+protected by a durable refresh lease, and served stale during temporary account API failures. Inference never waits for
+a slow account refresh: it uses only a snapshot that is already available. Metered-routed responses invalidate their
+pre-debit observation so the next request refreshes it. `GET /admin/defaults` exposes non-secret diagnostics in
+`metered_quota`; credentials are never returned.
 
 Observed integration behavior:
 

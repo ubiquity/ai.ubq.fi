@@ -34,9 +34,9 @@ The recharge screen showed:
 Using the contemporaneous conversion rate of approximately 6.7767 CNY/USD:
 
 | Direction | metered effective price | Displayed official price | Metered/official |
-| --------- | --------------------: | -----------------------: | -------------: |
-| Input     |        about $0.292/M |                     $5/M |          5.84% |
-| Output    |        about $1.753/M |                    $30/M |          5.84% |
+| --------- | ----------------------: | -----------------------: | ---------------: |
+| Input     |          about $0.292/M |                     $5/M |            5.84% |
+| Output    |          about $1.753/M |                    $30/M |            5.84% |
 
 Therefore the measured route was:
 
@@ -80,20 +80,20 @@ OpenAI's current token-based Codex rate card charges GPT-5.6 Sol 125 credits per
 million cached-input tokens, and 750 credits per million output tokens. At $0.04 per credit, this converts to:
 
 | Token type   | OpenAI credits/M | OpenAI overage price | Measured metered price | OpenAI/Metered |
-| ------------ | ---------------: | -------------------: | -------------------: | -----------: |
-| Input        |              125 |              $5.00/M |             $0.292/M |        17.1x |
-| Cached input |             12.5 |              $0.50/M |         Not measured |            - |
-| Output       |              750 |             $30.00/M |             $1.753/M |        17.1x |
+| ------------ | ---------------: | -------------------: | ---------------------: | -------------: |
+| Input        |              125 |              $5.00/M |               $0.292/M |          17.1x |
+| Cached input |             12.5 |              $0.50/M |           Not measured |              - |
+| Output       |              750 |             $30.00/M |               $1.753/M |          17.1x |
 
 OpenAI states that Codex credit pricing was changed to align with API token usage. These credits are therefore
 convenient official overage, not subscription-subsidized compute. For the tested GPT-5.6 Sol route, metered costs about
 5.84% as much:
 
 | Official OpenAI overage spend | metered cost for approximately the same compute |
-| ----------------------------: | --------------------------------------------: |
-|                           $20 |                                         $1.17 |
-|                          $100 |                                         $5.84 |
-|                          $200 |                                        $11.68 |
+| ----------------------------: | ----------------------------------------------: |
+|                           $20 |                                           $1.17 |
+|                          $100 |                                           $5.84 |
+|                          $200 |                                          $11.68 |
 
 The analytics screen also showed 2,918.309 credits in one usage-history entry. If that amount were charged against a
 purchased balance, it would represent:
@@ -130,9 +130,9 @@ Metered did not expose an equivalent working speed tier in testing on 2026-07-21
 - `service_tier: "priority"` was accepted but also returned `service_tier: "default"`; and
 - Metered's model catalog advertised reasoning-effort suffixes, but no `-fast` model suffix or Fast surcharge.
 
-Consequently, Metered's tested standard route should not be described as a cheaper implementation of Codex `/fast`. It is
-a cheaper default-speed route. Comparing OpenAI Fast overage with metered default pricing produces a nominal 42.8x price
-difference (`17.1 x 2.5`), but that is not an apples-to-apples speed-tier comparison.
+Consequently, Metered's tested standard route should not be described as a cheaper implementation of Codex `/fast`. It
+is a cheaper default-speed route. Comparing OpenAI Fast overage with metered default pricing produces a nominal 42.8x
+price difference (`17.1 x 2.5`), but that is not an apples-to-apples speed-tier comparison.
 
 Metered's dashboard separately announced a new “special-price Codex group” with a 0.2 group multiplier on 2026-07-21,
 while the live `gpt-5.6-sol` catalog still displayed the tested `Codex专属` group at 0.8. This appears to be a
@@ -159,10 +159,10 @@ Metered cost for the same monthly work = $200 × S × 0.0584
 ```
 
 | Assumed Codex value | API-equivalent monthly use | metered cost for same compute | metered credits | Relative to $200 |
-| ------------------- | -------------------------: | --------------------------: | ------------: | ---------------: |
-| 16×                 |                     $3,200 |                  about $187 |   about 2,558 |            0.93× |
-| 27×                 |                     $5,400 |                  about $315 |   about 4,317 |            1.58× |
-| 47×                 |                     $9,400 |                  about $549 |   about 7,516 |            2.74× |
+| ------------------- | -------------------------: | ----------------------------: | --------------: | ---------------: |
+| 16×                 |                     $3,200 |                    about $187 |     about 2,558 |            0.93× |
+| 27×                 |                     $5,400 |                    about $315 |     about 4,317 |            1.58× |
+| 47×                 |                     $9,400 |                    about $549 |     about 7,516 |            2.74× |
 
 The 16×, 27×, and 47× values are scenarios derived from anecdotal estimates, not official OpenAI guarantees.
 
@@ -182,9 +182,9 @@ Consequently:
 
 ## Practical recommendation
 
-Use the subscription first and metered as overflow for non-sensitive workloads. Use official OpenAI overage when privacy,
-supportability, or direct-provider reliability is worth the approximately 17.1x price premium. Determine the correct
-Metered top-up from observed overflow:
+Use the subscription first and metered as overflow for non-sensitive workloads. Use official OpenAI overage when
+privacy, supportability, or direct-provider reliability is worth the approximately 17.1x price premium. Determine the
+correct Metered top-up from observed overflow:
 
 ```text
 required metered dollars = overflow API-equivalent dollars × 0.0584

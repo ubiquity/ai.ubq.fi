@@ -2,8 +2,8 @@
 
 Date of investigation: 2026-07-19
 
-This directory records the pricing, latency, protocol, routing, and security findings from testing Metered's `gpt-5.6-sol`
-route against:
+This directory records the pricing, latency, protocol, routing, and security findings from testing Metered's
+`gpt-5.6-sol` route against:
 
 1. the ChatGPT Codex subscription backend directly;
 2. `ai.ubq.fi`, a Deno Deploy gateway to that backend; and

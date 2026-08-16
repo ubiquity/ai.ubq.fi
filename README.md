@@ -151,8 +151,8 @@ curl -sS https://ai.ubq.fi/v1/responses \
 
 ## Codex quota reporting
 
-Successful inference responses let unmodified Codex terminal and GUI clients show the Metered wallet in `/status` and emit
-their built-in 25%, 10%, and 5% remaining warnings. The gateway publishes the wallet as the sole canonical family:
+Successful inference responses let unmodified Codex terminal and GUI clients show the Metered wallet in `/status` and
+emit their built-in 25%, 10%, and 5% remaining warnings. The gateway publishes the wallet as the sole canonical family:
 `x-codex-limit-name: Metered balance` and `x-codex-primary-used-percent`.
 
 Codex 0.144.6 parses multiple response-header families but persists only one response-derived rate-limit snapshot, so
@@ -375,10 +375,10 @@ ubq-ai admin keys list | jq
   `gpt-oss-120b`. It is never accepted from clients or exposed by health responses.
 - `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
   Deno KV at `["uos_ai","voyage_api_key"]`.
-- `METERED_SYSTEM_TOKEN` (required for Codex quota reporting): Metered System Access Token used only by the server to read
-  the account balance and top-up records. It is never sent to gateway clients or inference upstreams.
-- `METERED_USER_ID` (required for Codex quota reporting): Numeric Metered account ID sent as `New-API-User` with the system
-  token.
+- `METERED_SYSTEM_TOKEN` (required for Codex quota reporting): Metered System Access Token used only by the server to
+  read the account balance and top-up records. It is never sent to gateway clients or inference upstreams.
+- `METERED_USER_ID` (required for Codex quota reporting): Numeric Metered account ID sent as `New-API-User` with the
+  system token.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.

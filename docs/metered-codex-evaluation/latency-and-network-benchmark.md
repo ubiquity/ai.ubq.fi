@@ -6,14 +6,14 @@ Date measured: 2026-07-19
 
 The benchmark compared:
 
-| Name         | Request path                                                 |
-| ------------ | ------------------------------------------------------------ |
-| Direct Codex | Client → `chatgpt.com/backend-api/codex/responses`           |
-| `ai.ubq.fi`  | Client → Deno Deploy gateway → ChatGPT Codex                 |
-| metered        | Client → metered proxy/router → presumed pooled Codex upstream |
+| Name         | Request path                                                   |
+| ------------ | -------------------------------------------------------------- |
+| Direct Codex | Client → `chatgpt.com/backend-api/codex/responses`             |
+| `ai.ubq.fi`  | Client → Deno Deploy gateway → ChatGPT Codex                   |
+| metered      | Client → metered proxy/router → presumed pooled Codex upstream |
 
-The last route's internal topology and physical region were not independently verified. metered advertises service across
-several global regions, so it should not be assumed that the tested serving edge was in mainland China.
+The last route's internal topology and physical region were not independently verified. metered advertises service
+across several global regions, so it should not be assumed that the tested serving edge was in mainland China.
 
 ## Prompt
 
@@ -40,7 +40,7 @@ One early comparison happened to produce exactly 71 input and 231 output tokens 
 
 | Route       | Total latency | Input/output tokens |
 | ----------- | ------------: | ------------------: |
-| metered       |       4.795 s |            71 / 231 |
+| metered     |       4.795 s |            71 / 231 |
 | `ai.ubq.fi` |       7.746 s |            71 / 231 |
 
 In that single matched-output sample, `ai.ubq.fi` took 2.951 seconds longer. One request is not a reliable latency
@@ -59,7 +59,7 @@ The complete per-round measurements are preserved in
 | ------------ | ----------: | ----------: | ------: | ------: | -------: | -------------------: |
 | Direct Codex | **5.750 s** | **7.454 s** | 6.161 s | 5.255 s | 11.486 s |                245.5 |
 | `ai.ubq.fi`  |     6.782 s |     9.147 s | 7.284 s | 6.042 s | 12.631 s |                  238 |
-| metered        |     7.104 s |     9.380 s | 6.727 s | 4.310 s | 10.027 s |                304.5 |
+| metered      |     7.104 s |     9.380 s | 6.727 s | 4.310 s | 10.027 s |                304.5 |
 
 Direct Codex had the best raw median and p95. Relative to direct:
 
@@ -109,8 +109,8 @@ The synchronized per-round Pearson latency correlations were:
 
 | Pair                       | Correlation |
 | -------------------------- | ----------: |
-| metered ↔ `ai.ubq.fi`        |      -0.134 |
-| metered ↔ direct Codex       |      +0.351 |
+| metered ↔ `ai.ubq.fi`      |      -0.134 |
+| metered ↔ direct Codex     |      +0.351 |
 | `ai.ubq.fi` ↔ direct Codex |      -0.201 |
 
 The weak or negative correlations show that multi-second latency spikes were generally not shared by all three
