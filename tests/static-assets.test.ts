@@ -20,34 +20,20 @@ Deno.test("static assets register frontend module dependencies", () => {
   }
 });
 
-Deno.test("admin provider view declares and renders the RemovedProvider failover card", () => {
-  for (
-    const id of [
-      "card-removed_provider-failover",
-      "removed_provider-failover-badge",
-      "removed_provider-failover-observed",
-      "removed_provider-failover-facts",
-    ]
-  ) assert.match(adminHtml, new RegExp(`id=["']${id}["']`));
+Deno.test("admin provider view places capacity history before current providers", () => {
+  const listIndex = adminHtml.indexOf('id="provider-capacity-list"');
+  const chartIndex = adminHtml.indexOf('id="provider-capacity-chart"');
+  assert.ok(chartIndex >= 0);
+  assert.ok(listIndex > chartIndex);
 
-  assert.match(adminHtml, /admin\.js\?v=browser-cache-20260816-v1/);
-  assert.match(adminScript, /renderRemovedProviderFailover\(payload\.removed_provider\)/);
+  assert.match(adminHtml, /admin\.js\?v=browser-cache-20260816-v2/);
+  assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
+  assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
+  assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
   assert.match(adminScript, /const loadId = \+\+providersLoadId/);
   assert.match(adminScript, /if \(loadId !== providersLoadId\) return/);
   assert.match(adminScript, /cache: "no-store"/);
   assert.match(adminScript, /Authorization: `Bearer \$\{token\}`/);
-  for (
-    const field of [
-      "attempted_provider",
-      "trigger_class",
-      "circuit_transition",
-      "selected_model",
-      "task_type",
-      "latency_ms",
-      "terminal_status",
-      "semantic_commitment",
-    ]
-  ) assert.match(adminScript, new RegExp(`telemetry\\.${field}`));
 });
 
 Deno.test("static assets register autonomous agent discovery documents", () => {

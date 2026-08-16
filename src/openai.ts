@@ -4353,7 +4353,7 @@ const configuredCerebrasModelCapabilities = (): Record<string, unknown> | null =
       display_name: "GPT-OSS 120B",
       upstream_provider: "cerebras",
       supported_endpoints: ["/v1/chat/completions"],
-      supported_reasoning_levels: ["medium"],
+      supported_reasoning_levels: ["low", "medium", "high"],
       default_reasoning_effort: "medium",
       reasoning_effort_wire_map: {},
       context_window_tokens: null,
@@ -6796,7 +6796,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   if (!maxCompletionTokens.ok) {
     return openaiError(400, maxCompletionTokens.message, "invalid_request_error", { param: "max_completion_tokens" });
   }
-  if (model === CEREBRAS_GPT_OSS_120B_MODEL) {
+  if (model.toLowerCase() === CEREBRAS_GPT_OSS_120B_MODEL) {
     return await handleCerebrasChatCompletions(req, rawRecord, modelRaw, usageContext);
   }
   const modelMetadata = await getCodexModelMetadata(model);
@@ -7112,7 +7112,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
   const model = normalizeModelForCodex(modelRaw);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.model = modelRaw;
-  if (model === CEREBRAS_GPT_OSS_120B_MODEL) {
+  if (model.toLowerCase() === CEREBRAS_GPT_OSS_120B_MODEL) {
     return openaiError(
       400,
       "gpt-oss-120b is available only on /v1/chat/completions.",

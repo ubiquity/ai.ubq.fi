@@ -190,6 +190,7 @@ Deno.test("admin provider health includes cached quota fields without an active 
     assert.equal(response.status, 200);
     assert.equal(typeof payload.metered?.quota?.available, "boolean");
     assert.equal("balance_credits" in (payload.metered?.quota ?? {}), true);
+    assert.equal("removed_provider" in payload, false);
   } finally {
     globalThis.fetch = originalFetch;
   }

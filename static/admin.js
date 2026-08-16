@@ -142,9 +142,6 @@ const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
-const removedProviderFailoverBadge = mustGet("removed_provider-failover-badge");
-const removedProviderFailoverObserved = mustGet("removed_provider-failover-observed");
-const removedProviderFailoverFacts = mustGet("removed_provider-failover-facts");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -716,11 +713,6 @@ const formatMicrocreditsAsCredits = (value) => {
   if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
   return formatCredits(value / MICROCREDITS_PER_CREDIT);
 };
-const formatLatency = (value) => {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
-  return `${numberFormatter.format(Math.trunc(value))} ms`;
-};
-
 const formatOptionalText = (value) => {
   if (typeof value !== "string") return "unknown";
   const trimmed = value.trim();
@@ -742,55 +734,6 @@ const appendProviderFact = (list, label, value) => {
   description.textContent = value;
   item.append(term, description);
   list.appendChild(item);
-};
-
-const resetRemovedProviderFailover = (message = "Waiting for snapshot") => {
-  setBadge(removedProviderFailoverBadge, "unknown", "Not loaded");
-  removedProviderFailoverObserved.textContent = message;
-  removedProviderFailoverFacts.replaceChildren();
-};
-
-const renderRemovedProviderFailover = (removedProvider) => {
-  removedProviderFailoverFacts.replaceChildren();
-  if (!removedProvider || typeof removedProvider !== "object") {
-    setBadge(removedProviderFailoverBadge, "bad", "Unavailable");
-    removedProviderFailoverObserved.textContent = "Snapshot unavailable";
-    appendProviderFact(removedProviderFailoverFacts, "Configured", "Unknown");
-    appendProviderFact(removedProviderFailoverFacts, "Circuit", "Unknown");
-    return;
-  }
-  const circuit = removedProvider.circuit ?? {};
-  const telemetry = removedProvider.telemetry ?? {};
-  const configured = removedProvider.configured === true;
-  const circuitState = formatOptionalText(circuit.state);
-  const available = circuit.available !== false;
-  const state = !configured || !available ? "bad" : circuitState === "closed" ? "ok" : "unknown";
-  const label = !configured ? "Not configured" : !available ? "State unavailable" : `Circuit ${circuitState}`;
-  setBadge(removedProviderFailoverBadge, state, label);
-  removedProviderFailoverObserved.textContent = typeof telemetry.observed_at_ms === "number"
-    ? `Observed ${formatDate(telemetry.observed_at_ms)}`
-    : "No failover observed";
-  appendProviderFact(removedProviderFailoverFacts, "Configured", configured ? "Yes" : "No");
-  appendProviderFact(removedProviderFailoverFacts, "Circuit", circuitState);
-  appendProviderFact(
-    removedProviderFailoverFacts,
-    "Open until",
-    typeof circuit.open_until_ms === "number" ? formatDate(circuit.open_until_ms) : "Not open",
-  );
-  appendProviderFact(
-    removedProviderFailoverFacts,
-    "Recent failures",
-    typeof circuit.recent_failures === "number" ? formatNumber(circuit.recent_failures) : "Unknown",
-  );
-  appendProviderFact(removedProviderFailoverFacts, "Probe", circuit.probe_active === true ? "Active" : "Inactive");
-  appendProviderFact(removedProviderFailoverFacts, "Attempted", formatOptionalText(telemetry.attempted_provider));
-  appendProviderFact(removedProviderFailoverFacts, "Trigger", formatOptionalText(telemetry.trigger_class));
-  appendProviderFact(removedProviderFailoverFacts, "Transition", formatOptionalText(telemetry.circuit_transition));
-  appendProviderFact(removedProviderFailoverFacts, "Selected model", formatOptionalText(telemetry.selected_model));
-  appendProviderFact(removedProviderFailoverFacts, "Task", formatOptionalText(telemetry.task_type));
-  appendProviderFact(removedProviderFailoverFacts, "Latency", formatLatency(telemetry.latency_ms));
-  appendProviderFact(removedProviderFailoverFacts, "Terminal", formatOptionalText(telemetry.terminal_status));
-  appendProviderFact(removedProviderFailoverFacts, "Commitment", formatOptionalText(telemetry.semantic_commitment));
 };
 
 const capacityBadgeState = (state) => state === "available" ? "ok" : state === "stale" ? "unknown" : "bad";
@@ -2325,14 +2268,14 @@ const renderProviderCapacity = (snapshot) => {
   } else if (staleCount > 0) {
     setBadge(providerCapacityBadge, "unknown", `Quota stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
   } else {
-    setBadge(providerCapacityBadge, "ok", "Live");
+    setBadge(providerCapacityBadge, "ok", "Snapshot ready");
   }
   const snapshotAt = typeof snapshot?.snapshot_at_ms === "number" ? snapshot.snapshot_at_ms : null;
   const cacheState = typeof snapshot?.cache_state === "string" ? snapshot.cache_state : "unavailable";
   providerCapacityUpdated.textContent = `Snapshot ${formatCapacityTimestamp(snapshotAt)} · ${cacheState}`;
 };
 
-const loadProviderCapacity = async ({ live = true } = {}) => {
+const loadProviderCapacity = async () => {
   if (providerCapacityLoading) return false;
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !token) {
@@ -2342,7 +2285,7 @@ const loadProviderCapacity = async ({ live = true } = {}) => {
   providerCapacityLoading = true;
   setBadge(providerCapacityBadge, "unknown", "Loading capacity");
   try {
-    const response = await fetch(apiUrl(`/admin/providers/capacity${live ? "?refresh=live" : ""}`), {
+    const response = await fetch(apiUrl("/admin/providers/capacity"), {
       cache: "no-store",
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -2394,20 +2337,17 @@ const loadProviders = async () => {
     if (loadId !== providersLoadId) return;
     if (!response.ok || !payload) {
       latestProviderHealth = null;
-      renderRemovedProviderFailover(null);
       if (latestProviderCapacityChartState?.sources) {
         renderProviderCapacityList(latestProviderCapacityChartState.sources);
       }
       return;
     }
     latestProviderHealth = payload;
-    renderRemovedProviderFailover(payload.removed_provider);
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
     providersLoadedAt = Date.now();
   } catch {
     if (loadId !== providersLoadId) return;
     latestProviderHealth = null;
-    renderRemovedProviderFailover(null);
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
   } finally {
     if (loadId === providersLoadId) providersLoading = false;
@@ -6259,7 +6199,7 @@ const loadAdminView = (view) => {
     void loadProviders();
     if (!providerCapacityLoadedForOpen) {
       providerCapacityLoadedForOpen = true;
-      void loadProviderCapacity({ live: true }).then((loaded) => {
+      void loadProviderCapacity().then((loaded) => {
         if (!loaded) providerCapacityLoadedForOpen = false;
       });
     }
@@ -7094,7 +7034,6 @@ setKernelNewBadge("unknown", "Idle");
 setKernelQueueBadge("unknown", "Not loaded");
 setKernelPubKeysBadge("unknown", "Not loaded");
 setKernelPubKeyCreateBadge("unknown", "Idle");
-resetRemovedProviderFailover();
 setKeyListMessage("Paste an admin token to load API keys.");
 setPasskeyUsersMessage("Paste a fallback admin token to manage passkey users.");
 setKernelListMessage(getKernelListMissingTokenMessage());
@@ -7156,7 +7095,6 @@ tokenInput.addEventListener("input", () => {
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
-  resetRemovedProviderFailover();
   clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");
@@ -7345,7 +7283,6 @@ baseSelect.addEventListener("change", () => {
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
-  resetRemovedProviderFailover("Target changed. Waiting for snapshot");
   resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
@@ -7398,7 +7335,7 @@ viewTabProviders.addEventListener("click", () => setAdminView("providers", { has
 globalThis.setInterval(() => {
   if (currentAdminView !== "providers" || document.visibilityState !== "visible") return;
   void loadProviders();
-  void loadProviderCapacity({ live: false });
+  void loadProviderCapacity();
 }, 30_000);
 
 createKeyBtn.addEventListener("click", () => {

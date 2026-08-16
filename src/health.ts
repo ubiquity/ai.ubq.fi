@@ -19,9 +19,6 @@ import {
 import { decodeBase64ToString } from "./utils.ts";
 import type { CodexAuthPoolState } from "./types.ts";
 import { readMeteredApiKey } from "./metered.ts";
-import { readRemovedProviderApiKey } from "./removed_provider.ts";
-import { getRemovedProviderCircuitView } from "./removed_provider_circuit.ts";
-import { getRemovedProviderTelemetryView } from "./removed_provider_telemetry.ts";
 import {
   fetchMeteredQuotaObservation,
   getCachedConfiguredMeteredQuotaSnapshot,
@@ -233,16 +230,12 @@ export const getPassiveProviderHealthSnapshot = async (
 ): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
-  const [cerebrasHealth, codexHealth, meteredHealth, meteredQuota, removedProviderCircuit, removedProviderTelemetry] =
-    await Promise
-      .all([
-        getCerebrasProviderHealth(),
-        Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
-        getMeteredProviderHealth(),
-        getCachedConfiguredMeteredQuotaSnapshot(),
-        getRemovedProviderCircuitView(),
-        getRemovedProviderTelemetryView(),
-      ]);
+  const [cerebrasHealth, codexHealth, meteredHealth, meteredQuota] = await Promise.all([
+    getCerebrasProviderHealth(),
+    Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
+    getMeteredProviderHealth(),
+    getCachedConfiguredMeteredQuotaSnapshot(),
+  ]);
   const codexAccounts = auth.accounts.map((account, index) => ({
     ...account,
     health: codexHealth[index],
@@ -274,11 +267,6 @@ export const getPassiveProviderHealthSnapshot = async (
           observed_at_ms: meteredQuota?.state.observed_at_ms ?? null,
         },
       }),
-    },
-    removed_provider: {
-      configured: readRemovedProviderApiKey() !== null,
-      circuit: removedProviderCircuit,
-      telemetry: removedProviderTelemetry,
     },
   };
 };

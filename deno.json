@@ -18,6 +18,7 @@
     "keys:list": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys list",
     "keys:revoke": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin keys revoke",
     "health:check": "deno run --allow-net --allow-env scripts/health-check.ts",
+    "logs:pull": "sh -c 'token_var=; if [ -n \"${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-}\" ]; then token_var=\"$DENO_DEPLOY_TOKEN_UBIQUITY_DAO\"; elif [ -n \"${DENO_DEPLOY_TOKEN:-}\" ]; then token_var=\"$DENO_DEPLOY_TOKEN\"; else echo \"DENO_DEPLOY_TOKEN_UBIQUITY_DAO (or DENO_DEPLOY_TOKEN) is required to pull Deno Deploy logs.\" >&2; exit 1; fi; mkdir -p logs; log_file=\"logs/deno-deploy-$(date -u +%Y%m%dT%H%M%SZ).jsonl\"; echo \"Saving logs to $log_file\" >&2; DENO_DEPLOY_TOKEN=\"$token_var\" deno deploy logs --json --non-interactive --once --org ubiquity-dao --app ai-ubq-fi \"$@\" > \"$log_file\"' --",
     "kv:probe": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net scripts/kv-migrate.ts probe",
     "kv:export": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net --allow-write=.kv-migration scripts/kv-migrate.ts export",
     "kv:analyze": "deno run --unstable-kv --allow-read=.kv-migration scripts/kv-migrate.ts analyze",
@@ -40,6 +41,6 @@
   },
   "deploy": {
     "org": "ubiquity-dao",
-    "app": "p-ai-ubq-fi"
+    "app": "ai-ubq-fi"
   }
 }

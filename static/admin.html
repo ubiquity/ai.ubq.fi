@@ -569,63 +569,21 @@
         >
           <article data-card aria-labelledby="card-provider-capacity">
             <header>
-              <h2 id="card-provider-capacity">Available capacity</h2>
-              <p>Usage windows, provider health, and the sampled Metered refill cycle in one view. The chart keeps Codex capacity and Metered refill as separate series; cards preserve each provider's value.</p>
+              <h2 id="card-provider-capacity">Provider capacity</h2>
+              <p>Retained capacity history with current provider health below.</p>
             </header>
             <div data-card-body>
               <div data-provider-heading>
                 <span id="provider-capacity-badge" data-badge data-state="unknown">Not loaded</span>
                 <span id="provider-capacity-updated" data-muted>Waiting for snapshot</span>
               </div>
-              <div id="provider-capacity-chart" data-capacity-chart role="group"
-                aria-label="Provider capacity history"></div>
+              <div
+                id="provider-capacity-chart"
+                data-capacity-chart
+                role="group"
+                aria-label="Provider capacity history"
+              ></div>
               <div id="provider-capacity-list" data-capacity-list role="list"></div>
-            </div>
-          </article>
-          <article data-card aria-labelledby="card-removed_provider-failover">
-            <header>
-              <h2 id="card-removed_provider-failover">RemovedProvider failover</h2>
-              <p>Passive, aggregate state for the last-resort Responses route. No prompt, tool, credential, session, or probe identity is shown.</p>
-            </header>
-            <div data-card-body>
-              <div data-provider-heading>
-                <span id="removed_provider-failover-badge" data-badge data-state="unknown">Not loaded</span>
-                <span id="removed_provider-failover-observed" data-muted>Waiting for snapshot</span>
-              </div>
-              <dl id="removed_provider-failover-facts" data-capacity-meta aria-live="polite"></dl>
-            </div>
-          </article>
-          <article data-card data-span="half" aria-labelledby="card-debug-routing">
-            <header>
-              <h2 id="card-debug-routing">Routing debug panel</h2>
-              <p>Administrators can temporarily force provider scenarios for a bounded test window; normal traffic is unchanged when reset.</p>
-            </header>
-            <div data-card-body>
-              <label data-field>
-                <span data-label>Scenario</span>
-                <select id="debug-routing-scenario">
-                  <option value="normal">Normal routing</option>
-                  <option value="metered_first">Metered first</option>
-                  <option value="removed_provider_first">RemovedProvider first</option>
-                  <option value="codex_401">Simulate Codex 401</option>
-                  <option value="codex_403">Simulate Codex 403</option>
-                  <option value="codex_429">Simulate Codex 429</option>
-                </select>
-              </label>
-              <label data-field>
-                <span data-label>Duration</span>
-                <select id="debug-routing-duration">
-                  <option value="300000">5 minutes</option>
-                  <option value="900000" selected>15 minutes</option>
-                  <option value="3600000">1 hour</option>
-                </select>
-              </label>
-              <div data-layout="row">
-                <button id="debug-routing-apply" type="button" data-variant="primary">Apply scenario</button>
-                <button id="debug-routing-reset" type="button">Reset now</button>
-                <span id="debug-routing-badge" data-badge data-state="unknown">Not loaded</span>
-              </div>
-              <p id="debug-routing-status" data-muted aria-live="polite">Loading current routing mode.</p>
             </div>
           </article>
         </section>
@@ -744,6 +702,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=browser-cache-20260816-v1"></script>
+    <script type="module" src="/admin.js?v=browser-cache-20260816-v2"></script>
   </body>
 </html>
