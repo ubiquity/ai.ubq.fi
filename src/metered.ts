@@ -33,34 +33,54 @@ export type MeteredModelsSnapshot = Readonly<{
 }>;
 
 let meteredModelsCache: MeteredModelsSnapshot | null = null;
+const defaultMeteredFetch: MeteredFetch = globalThis.fetch;
 
-const readOpenLuxApiKey = (): string | null => {
+const readModelDiscoveryApiKey = (): string | null => {
+  let openLuxApiKey: string | null = null;
+  let meteredApiKey: string | null = null;
   try {
-    return nonEmptyString(Deno.env.get(OPENLUX_API_KEY_ENV));
+    openLuxApiKey = nonEmptyString(Deno.env.get(OPENLUX_API_KEY_ENV));
   } catch {
-    return null;
+    // The deployment may grant only the legacy Metered key permission.
   }
+  try {
+    meteredApiKey = nonEmptyString(Deno.env.get(METERED_API_KEY_ENV));
+  } catch {
+    // Keep discovery unavailable only when neither credential is readable.
+  }
+  return openLuxApiKey ?? meteredApiKey;
+};
+
+const boundedModelDiscoverySignal = (signal: AbortSignal | undefined): AbortSignal => {
+  const timeout = AbortSignal.timeout(METERED_FETCH_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 };
 
 export const fetchMeteredModels = async (
-  options: Readonly<{ fetcher?: MeteredFetch; signal?: AbortSignal; force?: boolean }> = {},
+  options: Readonly<{ fetcher?: MeteredFetch; signal?: AbortSignal; force?: boolean; cachedOnly?: boolean }> = {},
 ): Promise<MeteredModelsSnapshot | null> => {
   if (
     !options.force && meteredModelsCache && Date.now() - meteredModelsCache.updated_at_ms < METERED_MODELS_CACHE_TTL_MS
   ) {
     return meteredModelsCache;
   }
-  const apiKey = readOpenLuxApiKey();
+  const apiKey = readModelDiscoveryApiKey();
   if (!apiKey) return meteredModelsCache;
-  const fetcher = options.fetcher ?? fetch;
+  if (options.cachedOnly) return meteredModelsCache;
+  const fetcher = options.fetcher ?? (globalThis.fetch === defaultMeteredFetch ? defaultMeteredFetch : null);
+  if (!fetcher) return meteredModelsCache;
+  const signal = boundedModelDiscoverySignal(options.signal);
   try {
-    const response = await fetcher(METERED_MODELS_URL, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-      signal: options.signal,
-    });
+    const response = await awaitWithAbort(
+      fetcher(METERED_MODELS_URL, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+        signal,
+      }),
+      signal,
+    );
     if (!response.ok) return meteredModelsCache;
-    const payload = await response.json() as unknown;
+    const payload = await awaitWithAbort(response.json(), signal) as unknown;
     if (!isRecord(payload) || !Array.isArray(payload.data)) return meteredModelsCache;
     const models: MeteredModel[] = [];
     const seen = new Set<string>();
@@ -85,7 +105,10 @@ export const fetchMeteredModels = async (
       });
       seen.add(id);
     }
-    if (!models.length) return meteredModelsCache;
+    if (!models.length) {
+      meteredModelsCache = { models: [], updated_at_ms: Date.now() };
+      return meteredModelsCache;
+    }
     meteredModelsCache = { models, updated_at_ms: Date.now() };
     return meteredModelsCache;
   } catch {

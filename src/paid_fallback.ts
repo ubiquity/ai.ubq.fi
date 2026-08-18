@@ -53,12 +53,16 @@ type PaidFallbackEligibility =
 const evaluatePaidFallbackEligibility = (
   record: ApiKeyRecord,
   model: string,
+  allowUnrosteredModel = false,
 ): PaidFallbackEligibility => {
   if (!record.paid_fallback_enabled) return { kind: "skip", reason: "disabled" };
+  const unlimited = record.paid_fallback_limit_microcredits === PAID_FALLBACK_NO_LIMIT;
   if (!record.paid_fallback_model_ids.includes(model)) {
+    if (allowUnrosteredModel && unlimited && isPositiveSafeInteger(record.paid_fallback_quota_per_credit)) {
+      return { kind: "eligible", unlimited: true };
+    }
     return { kind: "skip", reason: "model_not_priced" };
   }
-  const unlimited = record.paid_fallback_limit_microcredits === PAID_FALLBACK_NO_LIMIT;
   const exposure = record.paid_fallback_max_exposure_microcredits?.[model] ?? null;
   if (
     (!unlimited && !isPositiveSafeInteger(record.paid_fallback_limit_microcredits)) ||
@@ -252,6 +256,7 @@ export const reservePaidFallback = async (
     path: string;
     stream: boolean;
     reasoning: string | null;
+    allowUnrosteredModel?: boolean;
     reason: "primary_401" | "primary_403" | "primary_429" | "primary_quota_blocked";
   }>,
 ): Promise<PaidFallbackReservationDecision> => {
@@ -264,7 +269,7 @@ export const reservePaidFallback = async (
     const policy = await loadStrictKeyRecord(kv, input.keyId);
     if (!policy) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
     const record = policy.record;
-    const eligibility = evaluatePaidFallbackEligibility(record, input.model);
+    const eligibility = evaluatePaidFallbackEligibility(record, input.model, input.allowUnrosteredModel);
     if (eligibility.kind !== "eligible") return eligibility;
     if (!readMeteredApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
     const windowResetAtMs = advanceUsageWindow(record.usage_reset_at_ms, record.window_ms, input.createdAtMs);

@@ -615,12 +615,15 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     "x-uos-upstream": "chatgpt_codex",
     "x-uos-cache": cacheState,
   });
-  if (catalog.metadata.etag) headers.set("ETag", catalog.metadata.etag);
-  if (etagMatches(req.headers.get("If-None-Match"), catalog.metadata.etag)) {
-    return new Response(null, { status: 304, headers });
+  const metered = await fetchMeteredModels({ cachedOnly: true });
+  if (!metered) void fetchMeteredModels().catch(() => {});
+  if (!metered?.models.length) {
+    if (catalog.metadata.etag) headers.set("ETag", catalog.metadata.etag);
+    if (etagMatches(req.headers.get("If-None-Match"), catalog.metadata.etag)) {
+      return new Response(null, { status: 304, headers });
+    }
+    return new Response(catalog.body, { status: 200, headers });
   }
-  const metered = await fetchMeteredModels();
-  if (!metered?.models.length) return new Response(catalog.body, { status: 200, headers });
   const parsed = {
     ...catalog.parsed,
     models: [...(Array.isArray(catalog.parsed.models) ? catalog.parsed.models : [])],
@@ -633,11 +636,18 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     }).filter((id): id is string => Boolean(id)),
   );
   for (const model of metered.models) {
+    if (!model.supported_endpoint_types.includes("openai-response")) continue;
     if (seen.has(model.id)) continue;
     parsed.models.push(meteredCodexModelRecord(model));
     seen.add(model.id);
   }
-  return new Response(JSON.stringify(parsed), { status: 200, headers });
+  const body = JSON.stringify(parsed);
+  const etag = body === catalog.body ? catalog.metadata.etag : `"uos-catalog-${(await sha256Hex(body)).slice(0, 32)}"`;
+  if (etag) headers.set("ETag", etag);
+  if (etagMatches(req.headers.get("If-None-Match"), etag)) {
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(body, { status: 200, headers });
 };
 
 const meteredCatalogResponse = async (): Promise<Response | null> => {
@@ -645,7 +655,8 @@ const meteredCatalogResponse = async (): Promise<Response | null> => {
   if (!metered?.models.length) return null;
   return new Response(
     JSON.stringify({
-      models: metered.models.map(meteredCodexModelRecord),
+      models: metered.models.filter((model) => model.supported_endpoint_types.includes("openai-response"))
+        .map(meteredCodexModelRecord),
     }),
     {
       status: 200,

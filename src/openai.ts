@@ -1773,46 +1773,31 @@ const fetchResponsesWithPaidFallback = async (
   }>,
 ): Promise<RoutedResponsesUpstream> => {
   const telemetry = options.usageContext?.responseTelemetry;
-  const meteredCatalog = await fetchMeteredModels();
   const codexCatalog = await loadCodexModelsSnapshot();
-  const meteredOnly = meteredCatalog?.models.some((model) => model.id === options.model) === true &&
-    codexCatalog?.models.some((model) => {
-        const record = model as Record<string, unknown>;
-        return (getString(record.slug) ?? getString(record.id) ?? getString(record.model) ?? getString(record.name)) ===
-          options.model;
-      }) !== true;
-  if (meteredOnly) {
-    if (telemetry) {
-      telemetry.provider = "metered";
-      telemetry.accountSlot = null;
-    }
-    recordAttemptedProvider(options.usageContext, "metered");
-    try {
-      const result = await fetchMeteredResponses(body, {
-        signal: options.signal,
-        beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
-      });
-      return {
-        response: result.response,
-        provider: "metered",
-        paidFallback: null,
-        gatewayResponse: false,
-        fallbackReason: null,
-      };
-    } catch (error) {
-      if (error instanceof ApiKeyQuotaDispatchError) throw error;
-      const response = error instanceof MeteredError
-        ? openaiError(error.status, error.message, error.code, {
-          type: "server_error",
-          headers: { "x-uos-upstream": "metered" },
-        })
-        : openaiError(502, "Metered upstream request failed before response headers were received.", "upstream_error", {
-          type: "server_error",
-          headers: { "x-uos-upstream": "metered" },
-        });
-      return { response, provider: "metered", paidFallback: null, gatewayResponse: true, fallbackReason: null };
-    }
-  }
+  const codexModelKnown = codexCatalog?.models.some((model) => {
+    const record = model as Record<string, unknown>;
+    return (getString(record.slug) ?? getString(record.id) ?? getString(record.model) ?? getString(record.name)) ===
+      options.model;
+  }) === true;
+  const meteredCatalog = codexModelKnown ? null : await fetchMeteredModels({ signal: options.signal });
+  const meteredModelSupportsRoute = options.route === "responses"
+    ? meteredCatalog?.models.some((model) =>
+      model.id === options.model &&
+      model.supported_endpoint_types.includes("openai-response")
+    ) === true
+    : meteredCatalog?.models.some((model) =>
+      model.id === options.model &&
+      model.supported_endpoint_types.includes("openai")
+    ) === true;
+  const meteredOnly = meteredModelSupportsRoute && !codexModelKnown;
+  const meteredOnlyPrimary = meteredOnly
+    ? openaiError(
+      429,
+      "This dynamic Metered model is not in the configured paid-fallback roster.",
+      CODEX_QUOTA_BLOCKED_ERROR_CODE,
+      { headers: { "x-uos-upstream": "chatgpt_codex" } },
+    )
+    : null;
   if (telemetry) telemetry.provider = "chatgpt_codex";
   recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
@@ -1824,7 +1809,9 @@ const fetchResponsesWithPaidFallback = async (
     : debugScenario === "codex_401"
     ? 401
     : null;
-  if (forcedStatus !== null) {
+  if (meteredOnlyPrimary) {
+    primary = meteredOnlyPrimary;
+  } else if (forcedStatus !== null) {
     primary = openaiError(
       forcedStatus,
       `Debug routing scenario forced Codex ${forcedStatus}.`,
@@ -1914,6 +1901,7 @@ const fetchResponsesWithPaidFallback = async (
     path: options.route === "responses" ? "/v1/responses" : "/v1/chat/completions",
     stream: options.stream,
     reasoning: options.reasoning,
+    allowUnrosteredModel: meteredOnly,
     reason: fallbackReason,
   } as const;
   let decision: Awaited<ReturnType<typeof reservePaidFallback>>;
@@ -2086,6 +2074,7 @@ type CodexModelMetadata = Readonly<{
   snapshot: CodexModelsSnapshot | null;
   record: Record<string, unknown> | null;
   reasoning: CodexModelReasoning;
+  supportedEndpoints: readonly string[] | null;
 }>;
 
 const modelIdFromSnapshotRecord = (model: Record<string, unknown>): string | null => {
@@ -2146,7 +2135,7 @@ const getCodexModelReasoning = (record: Record<string, unknown> | null): CodexMo
 const getCodexModelMetadata = async (model: string): Promise<CodexModelMetadata> => {
   const snapshot = await loadCodexModelsSnapshot();
   const record = findSnapshotModelRecord(snapshot, model);
-  if (record) return { snapshot, record, reasoning: getCodexModelReasoning(record) };
+  if (record) return { snapshot, record, reasoning: getCodexModelReasoning(record), supportedEndpoints: null };
   const metered = await fetchMeteredModels();
   const meteredRecord = metered?.models.find((candidate) => candidate.id === model);
   if (meteredRecord) {
@@ -2162,12 +2151,28 @@ const getCodexModelMetadata = async (model: string): Promise<CodexModelMetadata>
         default_reasoning_level: "none",
       },
       reasoning: getCodexModelReasoning({ supported_reasoning_levels: ["none"], default_reasoning_level: "none" }),
+      supportedEndpoints: meteredRecord.supported_endpoint_types,
     };
   }
-  return { snapshot, record: null, reasoning: getCodexModelReasoning(null) };
+  return { snapshot, record: null, reasoning: getCodexModelReasoning(null), supportedEndpoints: null };
 };
 
-const validateCodexModelAvailable = (model: string, metadata: CodexModelMetadata): Response | null => {
+const validateCodexModelAvailable = (
+  model: string,
+  route: "chat.completions" | "responses",
+  metadata: CodexModelMetadata,
+): Response | null => {
+  if (
+    metadata.supportedEndpoints &&
+    !metadata.supportedEndpoints.includes(route === "responses" ? "openai-response" : "openai")
+  ) {
+    return openaiError(
+      404,
+      `The model '${model}' does not support ${route}. Use /v1/models for supported models.`,
+      "model_not_found",
+      { param: "model" },
+    );
+  }
   if (!metadata.snapshot?.models?.length || metadata.record) return null;
   return openaiError(
     404,
@@ -5605,15 +5610,17 @@ export const handleModelCapabilities = async (): Promise<Response> => {
   const metered = await fetchMeteredModels();
   for (const model of metered?.models ?? []) {
     if (data.some((candidate) => candidate.id === model.id)) continue;
+    const supportedEndpoints = [
+      ...(model.supported_endpoint_types.includes("openai-response") ? ["/v1/responses"] : []),
+      ...(model.supported_endpoint_types.includes("openai") ? ["/v1/chat/completions"] : []),
+    ];
     data.push({
       id: model.id,
       object: "uos.model_capabilities",
       owned_by: model.owned_by,
       display_name: model.id,
       upstream_provider: "metered",
-      supported_endpoints: model.supported_endpoint_types.includes("openai-response")
-        ? ["/v1/responses", "/v1/chat/completions"]
-        : ["/v1/chat/completions"],
+      supported_endpoints: supportedEndpoints,
       supported_reasoning_levels: ["none"],
       default_reasoning_effort: "none",
       reasoning_effort_wire_map: {},
@@ -6889,7 +6896,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     return await handleCerebrasChatCompletions(req, rawRecord, modelRaw, usageContext);
   }
   const modelMetadata = await getCodexModelMetadata(model);
-  const modelAvailabilityError = validateCodexModelAvailable(modelRaw, modelMetadata);
+  const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "chat.completions", modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
@@ -7210,7 +7217,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     );
   }
   const modelMetadata = await getCodexModelMetadata(model);
-  const modelAvailabilityError = validateCodexModelAvailable(modelRaw, modelMetadata);
+  const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
 
   const inputRaw = rawBody.input;

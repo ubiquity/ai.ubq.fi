@@ -179,14 +179,15 @@ jobs:
           set -euo pipefail
           [ -n "$DENO_DEPLOY_TOKEN" ]
           [ -n "$UOS_AI_TOKEN" ]
-          [ -n "$METERED_API_KEY" ]
-          [ -n "$OPENLUX_API_KEY" ]
+          [ -n "$METERED_API_KEY" ] || [ -n "$OPENLUX_API_KEY" ]
           echo "::add-mask::$DENO_DEPLOY_TOKEN"
 
           deno eval \
             '
-              const required = ["UOS_AI_TOKEN", "METERED_API_KEY", "OPENLUX_API_KEY"];
+              const required = ["UOS_AI_TOKEN"];
               const optional = [
+                "METERED_API_KEY",
+                "OPENLUX_API_KEY",
                 "UOS_AI_KERNEL_PUBLIC_KEY",
                 "CEREBRAS_API_KEY",
                 "VOYAGEAI_API_KEY",
@@ -200,6 +201,9 @@ jobs:
                   continue;
                 }
                 lines.push(`${name}=${JSON.stringify(value)}`);
+              }
+              if (!Deno.env.get("METERED_API_KEY")?.trim() && !Deno.env.get("OPENLUX_API_KEY")?.trim()) {
+                throw new Error("METERED_API_KEY or OPENLUX_API_KEY is required");
               }
               Deno.writeTextFileSync(".uos-deploy-secrets.env", `${lines.join("\n")}\n`, {
                 mode: 0o600,
