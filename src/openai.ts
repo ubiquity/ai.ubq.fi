@@ -104,7 +104,7 @@ import type {
   ResponseMessageItem,
   ResponsesRequest,
 } from "./types.ts";
-import { fetchMeteredResponses, MeteredError } from "./metered.ts";
+import { fetchMeteredModels, fetchMeteredResponses, MeteredError } from "./metered.ts";
 import { loadDebugRoutingConfig } from "./debug_routing.ts";
 
 const getDefaultModel = async (): Promise<string | null> => {
@@ -1773,6 +1773,46 @@ const fetchResponsesWithPaidFallback = async (
   }>,
 ): Promise<RoutedResponsesUpstream> => {
   const telemetry = options.usageContext?.responseTelemetry;
+  const meteredCatalog = await fetchMeteredModels();
+  const codexCatalog = await loadCodexModelsSnapshot();
+  const meteredOnly = meteredCatalog?.models.some((model) => model.id === options.model) === true &&
+    codexCatalog?.models.some((model) => {
+        const record = model as Record<string, unknown>;
+        return (getString(record.slug) ?? getString(record.id) ?? getString(record.model) ?? getString(record.name)) ===
+          options.model;
+      }) !== true;
+  if (meteredOnly) {
+    if (telemetry) {
+      telemetry.provider = "metered";
+      telemetry.accountSlot = null;
+    }
+    recordAttemptedProvider(options.usageContext, "metered");
+    try {
+      const result = await fetchMeteredResponses(body, {
+        signal: options.signal,
+        beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
+      });
+      return {
+        response: result.response,
+        provider: "metered",
+        paidFallback: null,
+        gatewayResponse: false,
+        fallbackReason: null,
+      };
+    } catch (error) {
+      if (error instanceof ApiKeyQuotaDispatchError) throw error;
+      const response = error instanceof MeteredError
+        ? openaiError(error.status, error.message, error.code, {
+          type: "server_error",
+          headers: { "x-uos-upstream": "metered" },
+        })
+        : openaiError(502, "Metered upstream request failed before response headers were received.", "upstream_error", {
+          type: "server_error",
+          headers: { "x-uos-upstream": "metered" },
+        });
+      return { response, provider: "metered", paidFallback: null, gatewayResponse: true, fallbackReason: null };
+    }
+  }
   if (telemetry) telemetry.provider = "chatgpt_codex";
   recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
@@ -2106,7 +2146,25 @@ const getCodexModelReasoning = (record: Record<string, unknown> | null): CodexMo
 const getCodexModelMetadata = async (model: string): Promise<CodexModelMetadata> => {
   const snapshot = await loadCodexModelsSnapshot();
   const record = findSnapshotModelRecord(snapshot, model);
-  return { snapshot, record, reasoning: getCodexModelReasoning(record) };
+  if (record) return { snapshot, record, reasoning: getCodexModelReasoning(record) };
+  const metered = await fetchMeteredModels();
+  const meteredRecord = metered?.models.find((candidate) => candidate.id === model);
+  if (meteredRecord) {
+    return {
+      snapshot: snapshot ?? {
+        models: [],
+        source: "metered",
+        updated_at_ms: metered?.updated_at_ms ?? Date.now(),
+      },
+      record: {
+        slug: meteredRecord.id,
+        supported_reasoning_levels: ["none"],
+        default_reasoning_level: "none",
+      },
+      reasoning: getCodexModelReasoning({ supported_reasoning_levels: ["none"], default_reasoning_level: "none" }),
+    };
+  }
+  return { snapshot, record: null, reasoning: getCodexModelReasoning(null) };
 };
 
 const validateCodexModelAvailable = (model: string, metadata: CodexModelMetadata): Response | null => {
@@ -5516,10 +5574,21 @@ export const handleModels = async (req?: Request): Promise<Response> => {
     ? normalizeModelList(snapshot)
     : null;
   const data = withConfiguredCerebrasModel(normalized?.data ?? []);
+  const metered = await fetchMeteredModels();
+  const merged = [...data];
+  for (const model of metered?.models ?? []) {
+    if (merged.some((candidate) => candidate.id === model.id)) continue;
+    merged.push({
+      id: model.id,
+      object: "model",
+      created: model.created,
+      owned_by: model.owned_by,
+    });
+  }
 
   return json(
     200,
-    { object: "list", data },
+    { object: "list", data: merged },
     { "x-uos-upstream": snapshot?.source || "stored_codex_models" },
   );
 };
@@ -5532,6 +5601,26 @@ export const handleModelCapabilities = async (): Promise<Response> => {
   const cerebras = configuredCerebrasModelCapabilities();
   if (cerebras && !data.some((model) => model.id === CEREBRAS_GPT_OSS_120B_MODEL)) {
     data.push(cerebras);
+  }
+  const metered = await fetchMeteredModels();
+  for (const model of metered?.models ?? []) {
+    if (data.some((candidate) => candidate.id === model.id)) continue;
+    data.push({
+      id: model.id,
+      object: "uos.model_capabilities",
+      owned_by: model.owned_by,
+      display_name: model.id,
+      upstream_provider: "metered",
+      supported_endpoints: model.supported_endpoint_types.includes("openai-response")
+        ? ["/v1/responses", "/v1/chat/completions"]
+        : ["/v1/chat/completions"],
+      supported_reasoning_levels: ["none"],
+      default_reasoning_effort: "none",
+      reasoning_effort_wire_map: {},
+      context_window_tokens: null,
+      max_context_window_tokens: null,
+      auto_compact_token_limit_tokens: null,
+    });
   }
 
   return json(

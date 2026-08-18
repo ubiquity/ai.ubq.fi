@@ -27,6 +27,7 @@ import {
   type RuntimeConfigV2,
 } from "./runtime_config.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
+import { fetchMeteredModels } from "./metered.ts";
 
 export const CODEX_CATALOG_FRESH_MS = 5 * 60_000;
 export const CODEX_CATALOG_RETENTION_MS = 24 * 60 * 60_000;
@@ -581,7 +582,33 @@ const etagMatches = (requestValue: string | null, etag: string | null): boolean 
   return requestValue.split(",").some((candidate) => candidate.trim() === "*" || candidate.trim() === etag);
 };
 
-const catalogResponse = (catalog: LoadedCodexCatalog, req: Request, cacheState: string): Response => {
+const meteredCodexModelRecord = (
+  model: NonNullable<Awaited<ReturnType<typeof fetchMeteredModels>>>["models"][number],
+) => ({
+  slug: model.id,
+  display_name: model.id,
+  description: model.description,
+  owned_by: model.owned_by,
+  supported_endpoint_types: [...model.supported_endpoint_types],
+  supported_reasoning_levels: [{ effort: "none", description: "No reasoning" }],
+  default_reasoning_level: "none",
+  shell_type: "shell_command",
+  visibility: "list",
+  supported_in_api: true,
+  priority: 1000,
+  availability_nux: null,
+  upgrade: null,
+  base_instructions: "",
+  support_verbosity: false,
+  default_verbosity: null,
+  apply_patch_tool_type: null,
+  web_search_tool_type: "text",
+  truncation_policy: { mode: "tokens", limit: 10000 },
+  supports_parallel_tool_calls: false,
+  experimental_supported_tools: [],
+});
+
+const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheState: string): Promise<Response> => {
   const headers = new Headers({
     "Content-Type": catalog.metadata.content_type,
     "Cache-Control": "private, max-age=300",
@@ -592,7 +619,43 @@ const catalogResponse = (catalog: LoadedCodexCatalog, req: Request, cacheState: 
   if (etagMatches(req.headers.get("If-None-Match"), catalog.metadata.etag)) {
     return new Response(null, { status: 304, headers });
   }
-  return new Response(catalog.body, { status: 200, headers });
+  const metered = await fetchMeteredModels();
+  if (!metered?.models.length) return new Response(catalog.body, { status: 200, headers });
+  const parsed = {
+    ...catalog.parsed,
+    models: [...(Array.isArray(catalog.parsed.models) ? catalog.parsed.models : [])],
+  };
+  const seen = new Set(
+    parsed.models.map((model) => {
+      if (!isRecord(model)) return null;
+      return (getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name))
+        ?.trim() ?? null;
+    }).filter((id): id is string => Boolean(id)),
+  );
+  for (const model of metered.models) {
+    if (seen.has(model.id)) continue;
+    parsed.models.push(meteredCodexModelRecord(model));
+    seen.add(model.id);
+  }
+  return new Response(JSON.stringify(parsed), { status: 200, headers });
+};
+
+const meteredCatalogResponse = async (): Promise<Response | null> => {
+  const metered = await fetchMeteredModels({ force: true });
+  if (!metered?.models.length) return null;
+  return new Response(
+    JSON.stringify({
+      models: metered.models.map(meteredCodexModelRecord),
+    }),
+    {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "private, max-age=300",
+        "x-uos-upstream": "metered",
+      },
+    },
+  );
 };
 
 export const handleCodexCatalogModels = async (req: Request, rawVersion: string): Promise<Response> => {
@@ -603,14 +666,18 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
     });
   }
   const kv = await getKv();
-  if (!kv) return openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
+  if (!kv) {
+    return await meteredCatalogResponse() ??
+      openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
+  }
 
   let authGeneration: string;
   try {
     authGeneration = await getAuthGeneration(kv);
   } catch (error) {
     console.error("[ai.ubq.fi] Codex catalog generation initialization failed:", error);
-    return openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
+    return await meteredCatalogResponse() ??
+      openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
   }
   const nowMs = Date.now();
   const cached = await loadCatalog(kv, version, authGeneration, nowMs).catch((error) => {
@@ -633,7 +700,8 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
       return null;
     });
     if (waited) return catalogResponse(waited, req, "wait");
-    return openaiError(502, "Codex model catalog refresh is already in progress", "codex_catalog_unavailable");
+    return await meteredCatalogResponse() ??
+      openaiError(502, "Codex model catalog refresh is already in progress", "codex_catalog_unavailable");
   }
 
   const leaseHeartbeat = startRefreshLeaseHeartbeat(kv, version, leaseOwner);
@@ -678,9 +746,8 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
         return catalogResponse(cached, req, "stale");
       }
       const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-      return replacement
-        ? catalogResponse(replacement, req, "rotated")
-        : openaiError(502, "Codex upstream did not return a valid model catalog", "codex_catalog_unavailable");
+      return replacement ? catalogResponse(replacement, req, "rotated") : await meteredCatalogResponse() ??
+        openaiError(502, "Codex upstream did not return a valid model catalog", "codex_catalog_unavailable");
     }
 
     if (leaseHeartbeat.lost() || !await authGenerationIsCurrent(kv, authGeneration)) {
@@ -703,9 +770,8 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
         return catalogResponse(cached, req, "stale");
       }
       const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-      return replacement
-        ? catalogResponse(replacement, req, "rotated")
-        : openaiError(502, "Codex model catalog could not be cached", "codex_catalog_unavailable");
+      return replacement ? catalogResponse(replacement, req, "rotated") : await meteredCatalogResponse() ??
+        openaiError(502, "Codex model catalog could not be cached", "codex_catalog_unavailable");
     }
     await maybeUpdateNormalizedSnapshot(kv, version, authGeneration, parsed, nowMs).catch((error) => {
       console.error(`[ai.ubq.fi] Codex normalized snapshot update failed for ${version}:`, error);
@@ -717,9 +783,8 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
         : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
     }
     const storedCatalog = await loadCatalog(kv, version, authGeneration, nowMs);
-    return storedCatalog
-      ? catalogResponse(storedCatalog, req, "miss")
-      : openaiError(502, "Codex model catalog could not be read after caching", "codex_catalog_unavailable");
+    return storedCatalog ? catalogResponse(storedCatalog, req, "miss") : await meteredCatalogResponse() ??
+      openaiError(502, "Codex model catalog could not be read after caching", "codex_catalog_unavailable");
   } catch (error) {
     console.error(`[ai.ubq.fi] Codex catalog refresh failed for ${version}:`, error);
     const generationCurrent = await authGenerationIsCurrent(kv, authGeneration).catch(() => false);
@@ -728,7 +793,8 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
       : await loadCurrentGenerationCatalog(kv, version).catch(() => null);
     return recovered
       ? catalogResponse(recovered, req, generationCurrent ? (cached ? "stale" : "miss") : "rotated")
-      : openaiError(502, "Codex upstream model catalog is unavailable", "codex_catalog_unavailable");
+      : await meteredCatalogResponse() ??
+        openaiError(502, "Codex upstream model catalog is unavailable", "codex_catalog_unavailable");
   } finally {
     await leaseHeartbeat.stop();
     await releaseRefreshLease(kv, version, leaseOwner);

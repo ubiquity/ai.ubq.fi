@@ -4,6 +4,8 @@ import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key
 export const METERED_BASE_URL = "https://api.openlux.ai";
 
 const METERED_API_KEY_ENV = "METERED_API_KEY";
+const OPENLUX_API_KEY_ENV = "OPENLUX_API_KEY";
+const METERED_MODELS_URL = `${METERED_BASE_URL}/v1/models`;
 const METERED_RATIO_CONFIG_URL = `${METERED_BASE_URL}/api/ratio_config`;
 const METERED_STATUS_URL = `${METERED_BASE_URL}/api/status`;
 const METERED_RESPONSES_URL = `${METERED_BASE_URL}/v1/responses`;
@@ -12,6 +14,88 @@ const METERED_TOKEN_LOGS_URL = `${METERED_BASE_URL}/api/log/token`;
 // queue delivery indefinitely when the provider stalls.
 export const METERED_FETCH_TIMEOUT_MS = 10_000;
 export const METERED_TOKEN_LOG_FETCH_TIMEOUT_MS = METERED_FETCH_TIMEOUT_MS;
+export const METERED_MODELS_CACHE_TTL_MS = 5 * 60_000;
+
+export type MeteredModel = Readonly<{
+  id: string;
+  object: "model";
+  created: number;
+  owned_by: string;
+  supported_endpoint_types: readonly string[];
+  model_type?: string;
+  description?: string;
+  tags?: string;
+}>;
+
+export type MeteredModelsSnapshot = Readonly<{
+  models: readonly MeteredModel[];
+  updated_at_ms: number;
+}>;
+
+let meteredModelsCache: MeteredModelsSnapshot | null = null;
+
+const readOpenLuxApiKey = (): string | null => {
+  try {
+    return nonEmptyString(Deno.env.get(OPENLUX_API_KEY_ENV));
+  } catch {
+    return null;
+  }
+};
+
+export const fetchMeteredModels = async (
+  options: Readonly<{ fetcher?: MeteredFetch; signal?: AbortSignal; force?: boolean }> = {},
+): Promise<MeteredModelsSnapshot | null> => {
+  if (
+    !options.force && meteredModelsCache && Date.now() - meteredModelsCache.updated_at_ms < METERED_MODELS_CACHE_TTL_MS
+  ) {
+    return meteredModelsCache;
+  }
+  const apiKey = readOpenLuxApiKey();
+  if (!apiKey) return meteredModelsCache;
+  const fetcher = options.fetcher ?? fetch;
+  try {
+    const response = await fetcher(METERED_MODELS_URL, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      signal: options.signal,
+    });
+    if (!response.ok) return meteredModelsCache;
+    const payload = await response.json() as unknown;
+    if (!isRecord(payload) || !Array.isArray(payload.data)) return meteredModelsCache;
+    const models: MeteredModel[] = [];
+    const seen = new Set<string>();
+    for (const value of payload.data) {
+      if (!isRecord(value)) continue;
+      const id = nonEmptyString(value.id);
+      const endpoints = Array.isArray(value.supported_endpoint_types)
+        ? value.supported_endpoint_types.filter((entry): entry is string => typeof entry === "string")
+        : [];
+      if (!id || seen.has(id)) continue;
+      const created = isNonNegativeSafeInteger(value.created) ? value.created : 0;
+      const ownedBy = nonEmptyString(value.owned_by) ?? "openlux";
+      models.push({
+        id,
+        object: "model",
+        created,
+        owned_by: ownedBy,
+        supported_endpoint_types: endpoints,
+        ...(nonEmptyString(value.model_type) ? { model_type: nonEmptyString(value.model_type)! } : {}),
+        ...(nonEmptyString(value.description) ? { description: nonEmptyString(value.description)! } : {}),
+        ...(nonEmptyString(value.tags) ? { tags: nonEmptyString(value.tags)! } : {}),
+      });
+      seen.add(id);
+    }
+    if (!models.length) return meteredModelsCache;
+    meteredModelsCache = { models, updated_at_ms: Date.now() };
+    return meteredModelsCache;
+  } catch {
+    return meteredModelsCache;
+  }
+};
+
+export const resetMeteredModelsCacheForTest = (): void => {
+  meteredModelsCache = null;
+};
 
 export type MeteredFetch = (
   input: RequestInfo | URL,
@@ -157,7 +241,7 @@ const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Prom
 
 export const readMeteredApiKey = (): string | null => {
   try {
-    return nonEmptyString(Deno.env.get(METERED_API_KEY_ENV));
+    return nonEmptyString(Deno.env.get(METERED_API_KEY_ENV)) ?? nonEmptyString(Deno.env.get(OPENLUX_API_KEY_ENV));
   } catch {
     return null;
   }
@@ -167,7 +251,7 @@ const requireMeteredApiKey = (supplied: string | null | undefined): string => {
   const apiKey = supplied === undefined ? readMeteredApiKey() : nonEmptyString(supplied);
   if (apiKey) return apiKey;
   throw new MeteredError(
-    "Metered paid fallback is unavailable because METERED_API_KEY is not configured.",
+    "Metered paid fallback is unavailable because METERED_API_KEY or OPENLUX_API_KEY is not configured.",
     "metered_api_key_missing",
     503,
   );

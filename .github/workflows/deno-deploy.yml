@@ -166,6 +166,7 @@ jobs:
       CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
       VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY }}
       METERED_API_KEY: ${{ secrets.METERED_API_KEY }}
+      OPENLUX_API_KEY: ${{ secrets.OPENLUX_API_KEY }}
       METERED_SYSTEM_TOKEN: ${{ secrets.METERED_SYSTEM_TOKEN }}
     steps:
       - uses: denoland/setup-deno@v2
@@ -179,11 +180,12 @@ jobs:
           [ -n "$DENO_DEPLOY_TOKEN" ]
           [ -n "$UOS_AI_TOKEN" ]
           [ -n "$METERED_API_KEY" ]
+          [ -n "$OPENLUX_API_KEY" ]
           echo "::add-mask::$DENO_DEPLOY_TOKEN"
 
           deno eval \
             '
-              const required = ["UOS_AI_TOKEN", "METERED_API_KEY"];
+              const required = ["UOS_AI_TOKEN", "METERED_API_KEY", "OPENLUX_API_KEY"];
               const optional = [
                 "UOS_AI_KERNEL_PUBLIC_KEY",
                 "CEREBRAS_API_KEY",
