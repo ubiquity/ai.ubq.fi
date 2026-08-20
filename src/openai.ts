@@ -110,8 +110,20 @@ import type {
   ResponseMessageItem,
   ResponsesRequest,
 } from "./types.ts";
-import { fetchMeteredModels, fetchMeteredResponses, MeteredError, readMeteredApiKey } from "./metered.ts";
-import { fetchSurplusModels, fetchSurplusResponses, readSurplusApiKey, SurplusError } from "./surplus.ts";
+import {
+  fetchMeteredModels,
+  fetchMeteredResponses,
+  METERED_MODELS_CACHE_TTL_MS,
+  MeteredError,
+  readMeteredApiKey,
+} from "./metered.ts";
+import {
+  fetchSurplusModels,
+  fetchSurplusResponses,
+  readSurplusApiKey,
+  SURPLUS_MODELS_CACHE_TTL_MS,
+  SurplusError,
+} from "./surplus.ts";
 import { loadDebugRoutingConfig } from "./debug_routing.ts";
 
 const getDefaultModel = async (): Promise<string | null> => {
@@ -1864,6 +1876,10 @@ const fetchResponsesWithPaidFallback = async (
     fetchMeteredModels({ cachedOnly: true }),
     fetchSurplusModels({ cachedOnly: true }),
   ]);
+  const meteredCatalogNeedsRefresh = (): boolean =>
+    meteredCatalog === null || Date.now() - meteredCatalog.updated_at_ms >= METERED_MODELS_CACHE_TTL_MS;
+  const surplusCatalogNeedsRefresh = (): boolean =>
+    surplusCatalog === null || Date.now() - surplusCatalog.updated_at_ms >= SURPLUS_MODELS_CACHE_TTL_MS;
   const endpointType = options.route === "responses" ? "openai-response" : "openai";
   const surplusPrimaryModels = new Set([
     "gpt-5.6-sol",
@@ -1925,13 +1941,22 @@ const fetchResponsesWithPaidFallback = async (
     );
     return { surplusBilling, paidProviders, meteredOnly: paidProviders.length > 0 && !codexModelKnown };
   };
-  if (!codexModelKnown && (!meteredCatalog || !surplusCatalog)) {
+  const refreshStalePaidCatalogsInBackground = (): void => {
+    if (meteredCatalog !== null && meteredCatalogNeedsRefresh()) {
+      void fetchMeteredModels().catch(() => {});
+    }
+    if (surplusCatalog !== null && surplusCatalogNeedsRefresh()) {
+      void fetchSurplusModels().catch(() => {});
+    }
+  };
+  if (!codexModelKnown && (meteredCatalog === null || surplusCatalog === null)) {
     [meteredCatalog, surplusCatalog] = await Promise.all([
-      fetchMeteredModels({ signal: options.signal }),
-      fetchSurplusModels({ signal: options.signal }),
+      meteredCatalog === null ? fetchMeteredModels({ signal: options.signal }) : Promise.resolve(meteredCatalog),
+      surplusCatalog === null ? fetchSurplusModels({ signal: options.signal }) : Promise.resolve(surplusCatalog),
     ]);
   }
   let { surplusBilling, paidProviders, meteredOnly } = routingState();
+  if (paidProviders.length) refreshStalePaidCatalogsInBackground();
   const meteredOnlyPrimary = meteredOnly
     ? openaiError(
       429,
@@ -2033,13 +2058,22 @@ const fetchResponsesWithPaidFallback = async (
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
-  if (!paidProviders.length || !meteredCatalog || !surplusCatalog) {
+  // A stale snapshot remains usable when it already selects a paid provider.
+  // Missing catalogs must still be discovered before trusting that historical
+  // provider path; otherwise Surplus-preferred models can bypass discovery.
+  // When no provider is selectable, also re-discover expired catalogs so a
+  // newly published model can still recover this request.
+  if (
+    meteredCatalog === null || surplusCatalog === null ||
+    (!paidProviders.length && (meteredCatalogNeedsRefresh() || surplusCatalogNeedsRefresh()))
+  ) {
     [meteredCatalog, surplusCatalog] = await Promise.all([
-      fetchMeteredModels({ signal: options.signal }),
-      fetchSurplusModels({ signal: options.signal }),
+      meteredCatalogNeedsRefresh() ? fetchMeteredModels({ signal: options.signal }) : Promise.resolve(meteredCatalog),
+      surplusCatalogNeedsRefresh() ? fetchSurplusModels({ signal: options.signal }) : Promise.resolve(surplusCatalog),
     ]);
     ({ surplusBilling, paidProviders, meteredOnly } = routingState());
   }
+  if (paidProviders.length) refreshStalePaidCatalogsInBackground();
   if (!paidProviders.length) {
     return {
       response: primary,

@@ -15,6 +15,7 @@ const METERED_TOKEN_LOGS_URL = `${METERED_BASE_URL}/api/log/token`;
 export const METERED_FETCH_TIMEOUT_MS = 10_000;
 export const METERED_TOKEN_LOG_FETCH_TIMEOUT_MS = METERED_FETCH_TIMEOUT_MS;
 export const METERED_MODELS_CACHE_TTL_MS = 5 * 60_000;
+const METERED_MODELS_FAILURE_BACKOFF_MS = 30_000;
 
 export type MeteredModel = Readonly<{
   id: string;
@@ -33,6 +34,11 @@ export type MeteredModelsSnapshot = Readonly<{
 }>;
 
 let meteredModelsCache: MeteredModelsSnapshot | null = null;
+let meteredModelsFetchInFlight: Promise<MeteredModelsSnapshot | null> | null = null;
+let meteredModelsFetchGeneration = 0;
+let meteredModelsCacheGeneration = 0;
+let meteredModelsRetryAfterMs = 0;
+let meteredModelsFetchForTest: MeteredFetch | null = null;
 const defaultMeteredFetch: MeteredFetch = globalThis.fetch;
 
 const readModelDiscoveryApiKey = (): string | null => {
@@ -56,6 +62,11 @@ const boundedModelDiscoverySignal = (signal: AbortSignal | undefined): AbortSign
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 };
 
+const markMeteredModelsFetchFailure = (requestGeneration: number): void => {
+  if (requestGeneration < meteredModelsCacheGeneration) return;
+  meteredModelsRetryAfterMs = Date.now() + METERED_MODELS_FAILURE_BACKOFF_MS;
+};
+
 export const fetchMeteredModels = async (
   options: Readonly<{ fetcher?: MeteredFetch; signal?: AbortSignal; force?: boolean; cachedOnly?: boolean }> = {},
 ): Promise<MeteredModelsSnapshot | null> => {
@@ -64,60 +75,104 @@ export const fetchMeteredModels = async (
   ) {
     return meteredModelsCache;
   }
+  if (!options.force && Date.now() < meteredModelsRetryAfterMs) return meteredModelsCache;
   const apiKey = readModelDiscoveryApiKey();
   if (!apiKey) return meteredModelsCache;
   if (options.cachedOnly) return meteredModelsCache;
-  const fetcher = options.fetcher ?? (globalThis.fetch === defaultMeteredFetch ? defaultMeteredFetch : null);
+  const fetcher = options.fetcher ?? meteredModelsFetchForTest ??
+    (globalThis.fetch === defaultMeteredFetch ? defaultMeteredFetch : null);
   if (!fetcher) return meteredModelsCache;
-  const signal = boundedModelDiscoverySignal(options.signal);
-  try {
-    const response = await awaitWithAbort(
-      fetcher(METERED_MODELS_URL, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+  // Only the ordinary discovery path shares an upstream request. Callers that
+  // supply a signal, fetcher, or force a refresh retain their own request
+  // semantics and do not join a request owned by another caller.
+  const shouldCoalesce = !options.force && !options.cachedOnly && options.fetcher === undefined &&
+    options.signal === undefined;
+  if (shouldCoalesce && meteredModelsFetchInFlight) return await meteredModelsFetchInFlight;
+
+  const requestGeneration = ++meteredModelsFetchGeneration;
+  const request = (async (): Promise<MeteredModelsSnapshot | null> => {
+    const signal = boundedModelDiscoverySignal(options.signal);
+    try {
+      const response = await awaitWithAbort(
+        fetcher(METERED_MODELS_URL, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+          signal,
+        }),
         signal,
-      }),
-      signal,
-    );
-    if (!response.ok) return meteredModelsCache;
-    const payload = await awaitWithAbort(response.json(), signal) as unknown;
-    if (!isRecord(payload) || !Array.isArray(payload.data)) return meteredModelsCache;
-    const models: MeteredModel[] = [];
-    const seen = new Set<string>();
-    for (const value of payload.data) {
-      if (!isRecord(value)) continue;
-      const id = nonEmptyString(value.id);
-      const endpoints = Array.isArray(value.supported_endpoint_types)
-        ? value.supported_endpoint_types.filter((entry): entry is string => typeof entry === "string")
-        : [];
-      if (!id || seen.has(id)) continue;
-      const created = isNonNegativeSafeInteger(value.created) ? value.created : 0;
-      const ownedBy = nonEmptyString(value.owned_by) ?? "openlux";
-      models.push({
-        id,
-        object: "model",
-        created,
-        owned_by: ownedBy,
-        supported_endpoint_types: endpoints,
-        ...(nonEmptyString(value.model_type) ? { model_type: nonEmptyString(value.model_type)! } : {}),
-        ...(nonEmptyString(value.description) ? { description: nonEmptyString(value.description)! } : {}),
-        ...(nonEmptyString(value.tags) ? { tags: nonEmptyString(value.tags)! } : {}),
-      });
-      seen.add(id);
-    }
-    if (!models.length) {
-      meteredModelsCache = { models: [], updated_at_ms: Date.now() };
+      );
+      if (!response.ok) {
+        markMeteredModelsFetchFailure(requestGeneration);
+        return meteredModelsCache;
+      }
+      const payload = await awaitWithAbort(response.json(), signal) as unknown;
+      if (!isRecord(payload) || !Array.isArray(payload.data)) {
+        markMeteredModelsFetchFailure(requestGeneration);
+        return meteredModelsCache;
+      }
+      const models: MeteredModel[] = [];
+      const seen = new Set<string>();
+      for (const value of payload.data) {
+        if (!isRecord(value)) continue;
+        const id = nonEmptyString(value.id);
+        const endpoints = Array.isArray(value.supported_endpoint_types)
+          ? value.supported_endpoint_types.filter((entry): entry is string => typeof entry === "string")
+          : [];
+        if (!id || seen.has(id)) continue;
+        const created = isNonNegativeSafeInteger(value.created) ? value.created : 0;
+        const ownedBy = nonEmptyString(value.owned_by) ?? "openlux";
+        models.push({
+          id,
+          object: "model",
+          created,
+          owned_by: ownedBy,
+          supported_endpoint_types: endpoints,
+          ...(nonEmptyString(value.model_type) ? { model_type: nonEmptyString(value.model_type)! } : {}),
+          ...(nonEmptyString(value.description) ? { description: nonEmptyString(value.description)! } : {}),
+          ...(nonEmptyString(value.tags) ? { tags: nonEmptyString(value.tags)! } : {}),
+        });
+        seen.add(id);
+      }
+      if (!models.length) {
+        const snapshot = { models: [], updated_at_ms: Date.now() } satisfies MeteredModelsSnapshot;
+        if (requestGeneration > meteredModelsCacheGeneration) {
+          meteredModelsCacheGeneration = requestGeneration;
+          meteredModelsCache = snapshot;
+          meteredModelsRetryAfterMs = 0;
+        }
+        return meteredModelsCache;
+      }
+      const snapshot = { models, updated_at_ms: Date.now() } satisfies MeteredModelsSnapshot;
+      if (requestGeneration > meteredModelsCacheGeneration) {
+        meteredModelsCacheGeneration = requestGeneration;
+        meteredModelsCache = snapshot;
+        meteredModelsRetryAfterMs = 0;
+      }
+      return meteredModelsCache;
+    } catch {
+      if (!(signal.aborted && options.signal?.aborted)) markMeteredModelsFetchFailure(requestGeneration);
       return meteredModelsCache;
     }
-    meteredModelsCache = { models, updated_at_ms: Date.now() };
-    return meteredModelsCache;
-  } catch {
-    return meteredModelsCache;
+  })();
+  if (!shouldCoalesce) return await request;
+  meteredModelsFetchInFlight = request;
+  try {
+    return await request;
+  } finally {
+    if (meteredModelsFetchInFlight === request) meteredModelsFetchInFlight = null;
   }
 };
 
 export const resetMeteredModelsCacheForTest = (): void => {
+  meteredModelsFetchInFlight = null;
+  meteredModelsFetchGeneration += 1;
+  meteredModelsCacheGeneration = meteredModelsFetchGeneration;
+  meteredModelsRetryAfterMs = 0;
   meteredModelsCache = null;
+};
+
+export const setMeteredModelsFetchForTest = (fetcher: MeteredFetch | null): void => {
+  meteredModelsFetchForTest = fetcher;
 };
 
 export type MeteredFetch = (

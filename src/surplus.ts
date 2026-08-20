@@ -7,6 +7,7 @@ const SURPLUS_MODELS_URL = `${SURPLUS_BASE_URL}/v1/models`;
 const SURPLUS_RESPONSES_URL = `${SURPLUS_BASE_URL}/v1/responses`;
 export const SURPLUS_FETCH_TIMEOUT_MS = 10_000;
 export const SURPLUS_MODELS_CACHE_TTL_MS = 5 * 60_000;
+const SURPLUS_MODELS_FAILURE_BACKOFF_MS = 30_000;
 
 export type SurplusModel = Readonly<{
   id: string;
@@ -187,6 +188,10 @@ const readSurplusModel = (value: unknown): SurplusModel | null => {
 };
 
 let surplusModelsCache: SurplusModelsSnapshot | null = null;
+let surplusModelsFetchInFlight: Promise<SurplusModelsSnapshot | null> | null = null;
+let surplusModelsFetchGeneration = 0;
+let surplusModelsCacheGeneration = 0;
+let surplusModelsRetryAfterMs = 0;
 
 export const readSurplusApiKey = (): string | null => {
   try {
@@ -199,6 +204,11 @@ export const readSurplusApiKey = (): string | null => {
 const boundedModelsSignal = (signal: AbortSignal | undefined): AbortSignal => {
   const timeout = AbortSignal.timeout(SURPLUS_FETCH_TIMEOUT_MS);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
+};
+
+const markSurplusModelsFetchFailure = (requestGeneration: number): void => {
+  if (requestGeneration < surplusModelsCacheGeneration) return;
+  surplusModelsRetryAfterMs = Date.now() + SURPLUS_MODELS_FAILURE_BACKOFF_MS;
 };
 
 export const fetchSurplusModels = async (
@@ -217,35 +227,69 @@ export const fetchSurplusModels = async (
     !options.force && surplusModelsCache &&
     Date.now() - surplusModelsCache.updated_at_ms < SURPLUS_MODELS_CACHE_TTL_MS
   ) return surplusModelsCache;
+  if (!options.force && Date.now() < surplusModelsRetryAfterMs) return surplusModelsCache;
   if (options.cachedOnly) return surplusModelsCache;
-  const signal = boundedModelsSignal(options.signal);
-  try {
-    const response = await (options.fetcher ?? fetch)(SURPLUS_MODELS_URL, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      redirect: "manual",
-      signal,
-    });
-    if (!response.ok) return surplusModelsCache;
-    const payload = await response.json() as unknown;
-    if (!isRecord(payload) || !Array.isArray(payload.data)) return surplusModelsCache;
-    const models: SurplusModel[] = [];
-    const seen = new Set<string>();
-    for (const value of payload.data) {
-      const model = readSurplusModel(value);
-      if (!model || seen.has(model.id)) continue;
-      models.push(model);
-      seen.add(model.id);
+  // Only the ordinary discovery path shares an upstream request. Callers that
+  // supply a signal, fetcher, API key, or force a refresh retain their own
+  // request semantics and do not join another caller's request.
+  const shouldCoalesce = !options.force && !options.cachedOnly && options.apiKey === undefined &&
+    options.fetcher === undefined && options.signal === undefined && options.requireApiKey === undefined;
+  if (shouldCoalesce && surplusModelsFetchInFlight) return await surplusModelsFetchInFlight;
+
+  const requestGeneration = ++surplusModelsFetchGeneration;
+  const request = (async (): Promise<SurplusModelsSnapshot | null> => {
+    const signal = boundedModelsSignal(options.signal);
+    try {
+      const response = await (options.fetcher ?? fetch)(SURPLUS_MODELS_URL, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        redirect: "manual",
+        signal,
+      });
+      if (!response.ok) {
+        markSurplusModelsFetchFailure(requestGeneration);
+        return surplusModelsCache;
+      }
+      const payload = await response.json() as unknown;
+      if (!isRecord(payload) || !Array.isArray(payload.data)) {
+        markSurplusModelsFetchFailure(requestGeneration);
+        return surplusModelsCache;
+      }
+      const models: SurplusModel[] = [];
+      const seen = new Set<string>();
+      for (const value of payload.data) {
+        const model = readSurplusModel(value);
+        if (!model || seen.has(model.id)) continue;
+        models.push(model);
+        seen.add(model.id);
+      }
+      const snapshot = { models, updated_at_ms: Date.now() } satisfies SurplusModelsSnapshot;
+      if (requestGeneration > surplusModelsCacheGeneration) {
+        surplusModelsCacheGeneration = requestGeneration;
+        surplusModelsCache = snapshot;
+        surplusModelsRetryAfterMs = 0;
+      }
+      return surplusModelsCache;
+    } catch (error) {
+      if (signal.aborted && options.signal?.aborted) throw error;
+      markSurplusModelsFetchFailure(requestGeneration);
+      return surplusModelsCache;
     }
-    surplusModelsCache = { models, updated_at_ms: Date.now() };
-    return surplusModelsCache;
-  } catch (error) {
-    if (signal.aborted && options.signal?.aborted) throw error;
-    return surplusModelsCache;
+  })();
+  if (!shouldCoalesce) return await request;
+  surplusModelsFetchInFlight = request;
+  try {
+    return await request;
+  } finally {
+    if (surplusModelsFetchInFlight === request) surplusModelsFetchInFlight = null;
   }
 };
 
 export const resetSurplusModelsCacheForTest = (): void => {
+  surplusModelsFetchInFlight = null;
+  surplusModelsFetchGeneration += 1;
+  surplusModelsCacheGeneration = surplusModelsFetchGeneration;
+  surplusModelsRetryAfterMs = 0;
   surplusModelsCache = null;
 };
 
