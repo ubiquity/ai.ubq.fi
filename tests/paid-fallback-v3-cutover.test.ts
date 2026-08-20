@@ -112,12 +112,14 @@ const {
   recordMeteredTerminal,
   recordMeteredUndispatchedCancellation,
   recordMeteredUpstreamResponse,
+  recordSurplusUsage,
   reservePaidFallback,
 } = await import("../src/paid_fallback.ts");
 const {
   paidFallbackPendingV3Key,
   paidFallbackRequestV3Key,
   paidFallbackWindowV3Key,
+  reconcilePaidFallbackV3,
 } = await import("../src/paid_fallback_ledger.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
@@ -280,6 +282,120 @@ Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs 
     assert.equal(window.value?.reserved_microcredits, 750_000);
     assert.equal(window.value?.pending_count, 3);
     await assertLegacyStateUnchanged(record);
+  } finally {
+    Deno.env.get = originalEnvGet;
+  }
+});
+
+Deno.test("Surplus usage settles cache read and write pricing, while incomplete usage stays pending", async () => {
+  memoryKv.entries.clear();
+  const now = Date.now();
+  const record: ApiKeyRecord = {
+    id: keyId,
+    name: "Surplus billing",
+    prefix: "u_v3",
+    hash: keyHash,
+    created_at_ms: now - 60_000,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 100,
+    usage_requests: 0,
+    usage_reset_at_ms: now + 60_000,
+    window_ms: 60_000,
+    usage_quota_version: 3,
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: 5_000_000,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+    paid_fallback_model_ids: ["gpt-5-codex"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_max_exposure_microcredits: { "gpt-5-codex": 250_000 },
+    paid_fallback_pricing_checked_at_ms: now - 30_000,
+  };
+  await memoryKv.set(apiKeyIdKey(keyId), record);
+  await memoryKv.set(apiKeyHashKey(keyHash), {
+    id: record.id,
+    expires_at_ms: record.expires_at_ms,
+    revoked_at_ms: record.revoked_at_ms,
+    usage_limit_requests: record.usage_limit_requests,
+    usage_requests: record.usage_requests,
+    usage_reset_at_ms: record.usage_reset_at_ms,
+    window_ms: record.window_ms,
+    usage_quota_version: record.usage_quota_version,
+    paid_fallback_enabled: record.paid_fallback_enabled,
+    paid_fallback_limit_microcredits: record.paid_fallback_limit_microcredits,
+    paid_fallback_spent_microcredits: record.paid_fallback_spent_microcredits,
+    paid_fallback_reserved_microcredits: record.paid_fallback_reserved_microcredits,
+    paid_fallback_reservation_request_id: record.paid_fallback_reservation_request_id,
+  });
+
+  const originalEnvGet = Deno.env.get;
+  Deno.env.get = (name: string): string | undefined =>
+    name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name);
+  try {
+    const settledReservation = await reserve("surplus-settled", now);
+    await recordMeteredUpstreamResponse(
+      settledReservation,
+      new Response(null, { status: 200 }),
+      "surplus-provider-request",
+      "surplus",
+    );
+    await recordMeteredTerminal(settledReservation, "completed", "surplus");
+    await recordSurplusUsage(
+      settledReservation,
+      "surplus-provider-request",
+      "gpt-5-codex",
+      {
+        input_tokens: 100,
+        cached_input_tokens: 20,
+        cache_write_input_tokens: 30,
+        output_tokens: 10,
+      },
+      {
+        input_price_per_token: 0.000001,
+        cache_read_price_per_token: 0.0000001,
+        cache_write_price_per_token: 0.000002,
+        output_price_per_token: 0.000003,
+      },
+    );
+    const settled = await readRequest("surplus-settled");
+    assert.equal(settled.billing_state, "settled");
+    assert.equal(settled.provider_quota, 86);
+    assert.equal(settled.spend_microcredits, 172);
+
+    const incompleteReservation = await reserve("surplus-incomplete", now + 1);
+    await recordMeteredUpstreamResponse(
+      incompleteReservation,
+      new Response(null, { status: 200 }),
+      "surplus-incomplete-request",
+      "surplus",
+    );
+    await recordMeteredTerminal(incompleteReservation, "completed", "surplus");
+    await recordSurplusUsage(
+      incompleteReservation,
+      "surplus-incomplete-request",
+      "gpt-5-codex",
+      { input_tokens: null, cached_input_tokens: null, cache_write_input_tokens: null, output_tokens: 10 },
+      { input_price_per_token: 0.000001, output_price_per_token: 0.000003 },
+    );
+
+    let meteredLogCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => {
+      meteredLogCalls += 1;
+      return Promise.reject(new Error("Surplus reconciliation must not call Metered logs"));
+    };
+    try {
+      await reconcilePaidFallbackV3(keyId, Date.now(), kv);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const incomplete = await readRequest("surplus-incomplete");
+    assert.equal(meteredLogCalls, 0);
+    assert.equal(incomplete.billing_state, "pending");
+    assert.equal(incomplete.spend_microcredits, null);
+    assert.ok((await memoryKv.get(paidFallbackPendingV3Key(keyId, incomplete.request_id))).value);
   } finally {
     Deno.env.get = originalEnvGet;
   }

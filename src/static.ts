@@ -66,17 +66,20 @@ const indexHtmlAsset = textAsset(["/index.html"], "index.html", "text/html; char
 
 textAsset(["/docs", "/docs.html"], "docs.html", "text/html; charset=utf-8", "html");
 textAsset(["/chat", "/chat.html"], "chat.html", "text/html; charset=utf-8", "html");
+textAsset(["/models", "/models.html"], "models.html", "text/html; charset=utf-8", "html");
 textAsset(["/admin", "/admin.html"], "admin.html", "text/html; charset=utf-8", "html");
 
 textAsset(["/style.css"], "style.css", "text/css; charset=utf-8");
 textAsset(["/docs.css"], "docs.css", "text/css; charset=utf-8");
 textAsset(["/chat.css"], "chat.css", "text/css; charset=utf-8");
+textAsset(["/models.css"], "models.css", "text/css; charset=utf-8");
 textAsset(["/home.css"], "home.css", "text/css; charset=utf-8");
 textAsset(["/admin.css"], "admin.css", "text/css; charset=utf-8");
 
 textAsset(["/app.js"], "app.js", "text/javascript; charset=utf-8");
 textAsset(["/docs.js"], "docs.js", "text/javascript; charset=utf-8");
 textAsset(["/chat.js"], "chat.js", "text/javascript; charset=utf-8");
+textAsset(["/models.js"], "models.js", "text/javascript; charset=utf-8");
 textAsset(["/admin.js"], "admin.js", "text/javascript; charset=utf-8");
 textAsset(["/auth.js"], "auth.js", "text/javascript; charset=utf-8");
 textAsset(["/auth-relay.js"], "auth-relay.js", "text/javascript; charset=utf-8");

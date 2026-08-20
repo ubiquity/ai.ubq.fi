@@ -158,7 +158,7 @@ type UsageContext = Readonly<{
   responseTelemetry?: ResponseTelemetryState;
   /** Commits an admitted API-key reservation exactly once before transport. */
   beforeProviderDispatch?: (
-    provider: "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "voyage",
+    provider: "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus" | "voyage",
   ) => Promise<ApiKeyProviderDispatch | void>;
   /** Test seam for proving one terminal usage observation per response. */
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
@@ -1704,9 +1704,21 @@ const warnPaidFallbackBookkeepingFailure = (operation: string, error: unknown): 
   );
 };
 
-const logMeteredSelected = (requestId: string, reason: InferenceFallbackReason): void => {
+const logPaidProviderSelected = (
+  requestId: string,
+  reason: InferenceFallbackReason,
+  provider: "metered" | "surplus",
+): void => {
   try {
-    console.info("[ai.ubq.fi] metered_selected", JSON.stringify({ request_id: requestId, reason }));
+    if (provider === "metered") {
+      // Keep the established Metered event shape for existing log consumers.
+      console.info("[ai.ubq.fi] metered_selected", JSON.stringify({ request_id: requestId, reason }));
+    } else {
+      console.info(
+        "[ai.ubq.fi] paid_provider_selected",
+        JSON.stringify({ request_id: requestId, reason, provider }),
+      );
+    }
   } catch {
     // Routing telemetry must never alter provider selection.
   }
@@ -1774,6 +1786,7 @@ const createMeteredTransportLifecycle = (
                   {
                     input_tokens: usage.inputTokens,
                     cached_input_tokens: usage.cachedInputTokens,
+                    cache_write_input_tokens: usage.cacheWriteInputTokens,
                     output_tokens: usage.outputTokens,
                   },
                   surplusBilling,
@@ -1843,39 +1856,15 @@ const fetchResponsesWithPaidFallback = async (
     return (getString(record.slug) ?? getString(record.id) ?? getString(record.model) ?? getString(record.name)) ===
       options.model;
   }) === true;
-  const [meteredCatalog, surplusCatalog] = await Promise.all([
-    fetchMeteredModels({ signal: options.signal }),
-    fetchSurplusModels({ signal: options.signal }),
+  // Cached discovery must not delay the primary Codex transport. A cold
+  // discovery is only needed before dispatch when the model is not in the
+  // Codex roster; known Codex models can use the historical Metered path and
+  // refresh paid catalogs after a fallback-triggering primary response.
+  let [meteredCatalog, surplusCatalog] = await Promise.all([
+    fetchMeteredModels({ cachedOnly: true }),
+    fetchSurplusModels({ cachedOnly: true }),
   ]);
   const endpointType = options.route === "responses" ? "openai-response" : "openai";
-  const meteredModelSupportsRoute =
-    meteredCatalog?.models.some((model) =>
-      model.id === options.model && model.supported_endpoint_types.includes(endpointType)
-    ) === true;
-  const surplusModelSupportsRoute =
-    surplusCatalog?.models.some((model) =>
-      model.id === options.model && model.supported_endpoint_types.includes(endpointType)
-    ) === true;
-  const surplusModel = surplusCatalog?.models.find((model) => model.id === options.model) ?? null;
-  const surplusInputPrice = surplusModel?.input_price_per_token;
-  const surplusOutputPrice = surplusModel?.output_price_per_token;
-  const surplusBilling: SurplusBillingPricing | null =
-    surplusInputPrice !== undefined && Number.isFinite(surplusInputPrice) && surplusInputPrice >= 0 &&
-      surplusOutputPrice !== undefined && Number.isFinite(surplusOutputPrice) && surplusOutputPrice >= 0
-      ? {
-        input_price_per_token: surplusInputPrice,
-        output_price_per_token: surplusOutputPrice,
-        ...(surplusModel?.cache_read_price_per_token === undefined
-          ? {}
-          : { cache_read_price_per_token: surplusModel.cache_read_price_per_token }),
-      }
-      : null;
-  // A known Codex model retains the historical OpenLux roster path even when
-  // its discovery request is temporarily unavailable. Surplus is selected
-  // only when its own catalog proves that the exact model is routable.
-  const meteredCanServe = Boolean(readMeteredApiKey()) &&
-    (codexModelKnown ? meteredCatalog === null || meteredModelSupportsRoute : meteredModelSupportsRoute);
-  const surplusCanServe = Boolean(readSurplusApiKey()) && surplusModelSupportsRoute && surplusBilling !== null;
   const surplusPrimaryModels = new Set([
     "gpt-5.6-sol",
     "gpt-5.6-terra",
@@ -1892,13 +1881,57 @@ const fetchResponsesWithPaidFallback = async (
     "grok-4.6",
     "qwen3.8-2.4t-a95b",
   ]);
-  const preferredPaidProviders: readonly ("metered" | "surplus")[] = surplusPrimaryModels.has(options.model)
-    ? ["surplus", "metered"]
-    : ["metered", "surplus"];
-  const paidProviders = preferredPaidProviders.filter((provider) =>
-    provider === "surplus" ? surplusCanServe : meteredCanServe
-  );
-  const meteredOnly = paidProviders.length > 0 && !codexModelKnown;
+  const routingState = (): Readonly<{
+    surplusBilling: SurplusBillingPricing | null;
+    paidProviders: readonly ("metered" | "surplus")[];
+    meteredOnly: boolean;
+  }> => {
+    const meteredModelSupportsRoute =
+      meteredCatalog?.models.some((model) =>
+        model.id === options.model && model.supported_endpoint_types.includes(endpointType)
+      ) === true;
+    const surplusModelSupportsRoute =
+      surplusCatalog?.models.some((model) =>
+        model.id === options.model && model.supported_endpoint_types.includes(endpointType)
+      ) === true;
+    const surplusModel = surplusCatalog?.models.find((model) => model.id === options.model) ?? null;
+    const surplusInputPrice = surplusModel?.input_price_per_token;
+    const surplusOutputPrice = surplusModel?.output_price_per_token;
+    const surplusBilling: SurplusBillingPricing | null =
+      surplusInputPrice !== undefined && Number.isFinite(surplusInputPrice) && surplusInputPrice >= 0 &&
+        surplusOutputPrice !== undefined && Number.isFinite(surplusOutputPrice) && surplusOutputPrice >= 0
+        ? {
+          input_price_per_token: surplusInputPrice,
+          output_price_per_token: surplusOutputPrice,
+          ...(surplusModel?.cache_read_price_per_token === undefined
+            ? {}
+            : { cache_read_price_per_token: surplusModel.cache_read_price_per_token }),
+          ...(surplusModel?.cache_write_price_per_token === undefined
+            ? {}
+            : { cache_write_price_per_token: surplusModel.cache_write_price_per_token }),
+        }
+        : null;
+    // A known Codex model retains the historical OpenLux roster path even when
+    // its discovery request is temporarily unavailable. Surplus is selected
+    // only when its own catalog proves that the exact model is routable.
+    const meteredCanServe = Boolean(readMeteredApiKey()) &&
+      (meteredCatalog === null ? codexModelKnown : meteredModelSupportsRoute);
+    const surplusCanServe = Boolean(readSurplusApiKey()) && surplusModelSupportsRoute && surplusBilling !== null;
+    const preferredPaidProviders: readonly ("metered" | "surplus")[] = surplusPrimaryModels.has(options.model)
+      ? ["surplus", "metered"]
+      : ["metered", "surplus"];
+    const paidProviders = preferredPaidProviders.filter((provider) =>
+      provider === "surplus" ? surplusCanServe : meteredCanServe
+    );
+    return { surplusBilling, paidProviders, meteredOnly: paidProviders.length > 0 && !codexModelKnown };
+  };
+  if (!codexModelKnown && (!meteredCatalog || !surplusCatalog)) {
+    [meteredCatalog, surplusCatalog] = await Promise.all([
+      fetchMeteredModels({ signal: options.signal }),
+      fetchSurplusModels({ signal: options.signal }),
+    ]);
+  }
+  let { surplusBilling, paidProviders, meteredOnly } = routingState();
   const meteredOnlyPrimary = meteredOnly
     ? openaiError(
       429,
@@ -2000,6 +2033,13 @@ const fetchResponsesWithPaidFallback = async (
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
+  if (!paidProviders.length || !meteredCatalog || !surplusCatalog) {
+    [meteredCatalog, surplusCatalog] = await Promise.all([
+      fetchMeteredModels({ signal: options.signal }),
+      fetchSurplusModels({ signal: options.signal }),
+    ]);
+    ({ surplusBilling, paidProviders, meteredOnly } = routingState());
+  }
   if (!paidProviders.length) {
     return {
       response: primary,
@@ -2079,18 +2119,18 @@ const fetchResponsesWithPaidFallback = async (
     telemetry.accountSlot = null;
     telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
   }
-  logMeteredSelected(requestId, fallbackReason);
+  logPaidProviderSelected(requestId, fallbackReason, paidProviders[0]);
   const providerStatus = (error: unknown): number | null =>
     error instanceof MeteredError || error instanceof SurplusError ? error.status : null;
   const isRetryableProviderStatus = (status: number | null): boolean =>
     status === null || status === 401 || status === 402 || status === 403 || status === 429 ||
     (status !== null && status >= 500);
-  const recordProviderHealth = async (provider: "metered" | "surplus", status: number): Promise<void> => {
+  const recordProviderHealth = async (provider: "metered" | "surplus", status: number | null): Promise<void> => {
     try {
       const record = provider === "surplus" ? recordSurplusProviderHealth : recordMeteredProviderHealth;
       if (status === 401 || status === 403) await record("auth_invalid", status);
       else if (status === 402 || status === 429) await record("quota_exhausted", status);
-      else if (status >= 500) await record("upstream_error", status);
+      else if (status === null || status >= 500) await record("upstream_error", status);
       else if (status >= 100) await record("reachable", status);
     } catch {
       // Provider-health persistence must not change failover or response delivery.
@@ -2119,7 +2159,7 @@ const fetchResponsesWithPaidFallback = async (
       const candidate = provider === "surplus"
         ? await fetchSurplusResponses(body, {
           signal: options.signal,
-          beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
+          beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("surplus") ?? Promise.resolve(),
         })
         : await fetchMeteredResponses(body, {
           signal: options.signal,
@@ -2130,6 +2170,11 @@ const fetchResponsesWithPaidFallback = async (
         providerIndex < paidProviders.length - 1 &&
         isRetryableProviderStatus(candidate.response.status)
       ) {
+        // Keep the reservation uncommitted until the provider that will be
+        // delivered to the client is known. The paid-fallback ledger has one
+        // terminal provider/request-id pair; recording this intermediate
+        // attempt would pin reconciliation to the failed provider and leave a
+        // later successful provider unbillable.
         cancelResponseBody(candidate.response);
         continue;
       }
@@ -2147,12 +2192,11 @@ const fetchResponsesWithPaidFallback = async (
       }
       providerError = error;
       const status = providerStatus(error);
-      await recordProviderHealth(provider, status ?? 0);
+      await recordProviderHealth(provider, status);
       if (providerIndex < paidProviders.length - 1 && isRetryableProviderStatus(status)) continue;
       break;
     }
   }
-
   if (!result) {
     const error = providerError;
     const selectedProviderLabel = selectedProvider === "surplus" ? "Surplus" : "Metered";
@@ -5777,6 +5821,81 @@ export const handleModels = async (req?: Request): Promise<Response> => {
     { object: "list", data: merged },
     { "x-uos-upstream": snapshot?.source || "stored_codex_models" },
   );
+};
+
+type PublicModelProvider = Readonly<{
+  id: "codex" | "openlux" | "surplus";
+  owned_by: string;
+  supported_endpoints: readonly string[];
+}>;
+
+export const handlePublicModelCatalog = async (): Promise<Response> => {
+  const snapshot = await loadCodexModelsSnapshot();
+  const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
+    ? normalizeModelList(snapshot)
+    : null;
+  const [metered, surplus] = await Promise.all([
+    fetchMeteredModels(),
+    fetchSurplusModels({ requireApiKey: false }),
+  ]);
+  const models = new Map<string, { id: string; providers: PublicModelProvider[] }>();
+  const add = (id: string, provider: PublicModelProvider): void => {
+    const existing = models.get(id);
+    if (existing) existing.providers.push(provider);
+    else models.set(id, { id, providers: [provider] });
+  };
+
+  for (const model of normalized?.data ?? []) {
+    const id = getString(model.id);
+    if (!id) continue;
+    add(id, {
+      id: "codex",
+      owned_by: getString(model.owned_by) ?? "openai",
+      supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
+    });
+  }
+  for (const model of metered?.models ?? []) {
+    add(model.id, {
+      id: "openlux",
+      owned_by: model.owned_by,
+      supported_endpoints: [
+        ...(model.supported_endpoint_types.includes("openai-response") ? ["/v1/responses"] : []),
+        ...(model.supported_endpoint_types.includes("openai") ? ["/v1/chat/completions"] : []),
+      ],
+    });
+  }
+  for (const model of surplus?.models ?? []) {
+    add(model.id, {
+      id: "surplus",
+      owned_by: model.owned_by,
+      supported_endpoints: [
+        ...(model.supported_endpoint_types.includes("openai-response") ? ["/v1/responses"] : []),
+        ...(model.supported_endpoint_types.includes("openai") ? ["/v1/chat/completions"] : []),
+      ],
+    });
+  }
+
+  return json(200, {
+    object: "uos.model_catalog",
+    data: [...models.values()].sort((left, right) => left.id.localeCompare(right.id)),
+    sources: {
+      codex: {
+        status: normalized ? "available" : "unavailable",
+        count: normalized?.data.length ?? 0,
+        updated_at_ms: snapshot?.updated_at_ms ?? null,
+      },
+      openlux: {
+        status: metered ? "available" : "unavailable",
+        count: metered?.models.length ?? 0,
+        updated_at_ms: metered?.updated_at_ms ?? null,
+      },
+      surplus: {
+        status: surplus ? "available" : "unavailable",
+        count: surplus?.models.length ?? 0,
+        updated_at_ms: surplus?.updated_at_ms ?? null,
+      },
+    },
+  });
 };
 
 export const handleModelCapabilities = async (): Promise<Response> => {

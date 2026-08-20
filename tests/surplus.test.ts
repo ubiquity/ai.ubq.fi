@@ -25,11 +25,20 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
           created: 1_735_000_000,
           provider: "openai",
           architecture: { modality: "text->text" },
-          pricing: { prompt: "0.000001", completion: "0.000003", cache_read: "0.0000001" },
+          pricing: {
+            prompt: "0.000001",
+            completion: "0.000003",
+            input_cache_read: "0.0000001",
+            input_cache_write: "0.000002",
+          },
         },
         {
           id: "image-model-that-must-not-route",
           architecture: { output_modalities: ["image"] },
+        },
+        {
+          id: "audio-to-text-model-that-must-not-route",
+          architecture: { modality: "audio->text" },
         },
         {
           id: "claude-opus-5",
@@ -50,6 +59,8 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
   assert.deepEqual(snapshot?.models.map((model) => model.id), ["gpt-5.6-sol", "claude-opus-5"]);
   assert.equal(snapshot?.models[0].owned_by, "openai");
   assert.equal(snapshot?.models[0].input_price_per_token, 0.000001);
+  assert.equal(snapshot?.models[0].cache_read_price_per_token, 0.0000001);
+  assert.equal(snapshot?.models[0].cache_write_price_per_token, 0.000002);
   assert.deepEqual(snapshot?.models[0].supported_endpoint_types, ["openai", "openai-response"]);
   assert.equal(snapshot?.models[1].description, "test model");
   assert.equal(calls.length, 1);

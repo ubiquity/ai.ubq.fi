@@ -345,11 +345,13 @@ export type SurplusBillingPricing = Readonly<{
   input_price_per_token: number;
   output_price_per_token: number;
   cache_read_price_per_token?: number;
+  cache_write_price_per_token?: number;
 }>;
 
 export type SurplusUsage = Readonly<{
   input_tokens: number | null;
   cached_input_tokens: number | null;
+  cache_write_input_tokens: number | null;
   output_tokens: number | null;
 }>;
 
@@ -374,12 +376,18 @@ export const recordSurplusUsage = async (
     !isNonNegativeFiniteNumber(pricing.output_price_per_token)
   ) return;
   const cachedInputTokens = usage.cached_input_tokens === null ? 0 : usage.cached_input_tokens;
-  if (!isNonNegativeSafeInteger(cachedInputTokens) || cachedInputTokens > usage.input_tokens) return;
+  const cacheWriteInputTokens = usage.cache_write_input_tokens === null ? 0 : usage.cache_write_input_tokens;
+  if (
+    !isNonNegativeSafeInteger(cachedInputTokens) || cachedInputTokens > usage.input_tokens ||
+    !isNonNegativeSafeInteger(cacheWriteInputTokens) || cacheWriteInputTokens > usage.input_tokens
+  ) return;
   const uncachedInputTokens = usage.input_tokens - cachedInputTokens;
   const cacheReadPrice = pricing.cache_read_price_per_token ?? pricing.input_price_per_token;
-  if (!isNonNegativeFiniteNumber(cacheReadPrice)) return;
+  const cacheWritePrice = pricing.cache_write_price_per_token ?? pricing.input_price_per_token;
+  if (!isNonNegativeFiniteNumber(cacheReadPrice) || !isNonNegativeFiniteNumber(cacheWritePrice)) return;
   const chargedCredits = uncachedInputTokens * pricing.input_price_per_token +
-    cachedInputTokens * cacheReadPrice + usage.output_tokens * pricing.output_price_per_token;
+    cachedInputTokens * cacheReadPrice + cacheWriteInputTokens * cacheWritePrice +
+    usage.output_tokens * pricing.output_price_per_token;
   const providerQuota = Math.round(chargedCredits * reservation.quota_per_credit);
   if (!Number.isSafeInteger(providerQuota) || providerQuota < 0) return;
   await settlePaidFallbackUsageV3(reservation, {

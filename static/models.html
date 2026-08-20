@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Models — UbiquityOS AI Gateway</title>
+    <meta name="description" content="Models available through Codex, OpenLux, and Surplus Intelligence." />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/models.css" />
+  </head>
+  <body data-page="models" data-role="public">
+    <div data-shell>
+      <header data-shared-header>
+        <div data-brand>
+          <a data-brand-link href="/"><img data-models-logo src="/company-logo.svg" alt="" /><span>UbiquityOS</span></a>
+          <span data-muted>/ Models</span>
+        </div>
+        <nav data-actions aria-label="Primary">
+          <a data-button href="/docs">Docs</a>
+          <a data-button href="/chat">Chat</a>
+        </nav>
+      </header>
+      <main>
+        <section data-models-hero>
+          <p data-eyebrow>Live upstream catalog</p>
+          <h1>Models</h1>
+          <p data-lead>Every text model discovered from the Codex subscription, OpenLux, and Surplus Intelligence.</p>
+        </section>
+        <section data-source-summary aria-label="Catalog sources"></section>
+        <section data-catalog-controls>
+          <label>
+            <span>Search models</span>
+            <input data-model-search type="search" placeholder="Search by model or provider" autocomplete="off" />
+          </label>
+          <p data-model-count aria-live="polite">Loading catalog…</p>
+        </section>
+        <section data-model-list aria-live="polite"></section>
+      </main>
+    </div>
+    <script type="module" src="/models.js"></script>
+  </body>
+</html>

@@ -614,6 +614,20 @@ const meteredCodexModelRecord = (
   experimental_supported_tools: [],
 });
 
+const uniqueResponsesModels = <
+  T extends Readonly<{
+    id: string;
+    supported_endpoint_types: readonly string[];
+  }>,
+>(models: readonly T[]): T[] => {
+  const seen = new Set<string>();
+  return models.filter((model) => {
+    if (!model.supported_endpoint_types.includes("openai-response") || seen.has(model.id)) return false;
+    seen.add(model.id);
+    return true;
+  });
+};
+
 const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheState: string): Promise<Response> => {
   const headers = new Headers({
     "Content-Type": catalog.metadata.content_type,
@@ -627,7 +641,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   ]);
   if (!metered) void fetchMeteredModels().catch(() => {});
   if (!surplus) void fetchSurplusModels().catch(() => {});
-  const paidModels = [...(metered?.models ?? []), ...(surplus?.models ?? [])];
+  const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
   if (!paidModels.length) {
     if (catalog.metadata.etag) headers.set("ETag", catalog.metadata.etag);
     if (etagMatches(req.headers.get("If-None-Match"), catalog.metadata.etag)) {
@@ -647,7 +661,6 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     }).filter((id): id is string => Boolean(id)),
   );
   for (const model of paidModels) {
-    if (!model.supported_endpoint_types.includes("openai-response")) continue;
     if (seen.has(model.id)) continue;
     parsed.models.push(meteredCodexModelRecord(model));
     seen.add(model.id);
@@ -666,12 +679,11 @@ const meteredCatalogResponse = async (): Promise<Response | null> => {
     fetchMeteredModels({ force: true }),
     fetchSurplusModels({ force: true }),
   ]);
-  const paidModels = [...(metered?.models ?? []), ...(surplus?.models ?? [])];
+  const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
   if (!paidModels.length) return null;
   return new Response(
     JSON.stringify({
-      models: paidModels.filter((model) => model.supported_endpoint_types.includes("openai-response"))
-        .map(meteredCodexModelRecord),
+      models: paidModels.map(meteredCodexModelRecord),
     }),
     {
       status: 200,

@@ -18,6 +18,7 @@ export type SurplusModel = Readonly<{
   input_price_per_token?: number;
   output_price_per_token?: number;
   cache_read_price_per_token?: number;
+  cache_write_price_per_token?: number;
 }>;
 
 export type SurplusModelsSnapshot = Readonly<{
@@ -87,43 +88,88 @@ const nonNegativeNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
-const readTextModalities = (value: unknown): { known: boolean; outputText: boolean } => {
-  if (!isRecord(value)) return { known: false, outputText: false };
+const readTextModalities = (value: unknown): {
+  inputKnown: boolean;
+  outputKnown: boolean;
+  inputText: boolean;
+  outputText: boolean;
+} => {
+  if (!isRecord(value)) return { inputKnown: false, outputKnown: false, inputText: false, outputText: false };
+  let inputKnown = false;
+  let outputKnown = false;
+  let inputText = false;
+  let outputText = false;
+  const inputModalities = Array.isArray(value.input_modalities)
+    ? value.input_modalities.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  if (inputModalities.length) {
+    inputKnown = true;
+    inputText = inputModalities.includes("text");
+  }
   const outputModalities = Array.isArray(value.output_modalities)
     ? value.output_modalities.filter((entry): entry is string => typeof entry === "string")
     : [];
-  if (outputModalities.length) return { known: true, outputText: outputModalities.includes("text") };
+  if (outputModalities.length) {
+    outputKnown = true;
+    outputText = outputModalities.includes("text");
+  }
   const modality = nonEmptyString(value.modality);
-  if (!modality) return { known: false, outputText: false };
-  const output = modality.includes("->") ? modality.slice(modality.lastIndexOf("->") + 2) : modality;
-  return { known: true, outputText: output.split(",").map((part) => part.trim()).includes("text") };
+  if (modality) {
+    const hasTextModality = (part: string): boolean => part.split(/[+,]/).map((entry) => entry.trim()).includes("text");
+    const arrow = modality.lastIndexOf("->");
+    if (arrow >= 0) {
+      inputKnown = true;
+      outputKnown = true;
+      inputText = hasTextModality(modality.slice(0, arrow));
+      outputText = hasTextModality(modality.slice(arrow + 2));
+    } else {
+      inputKnown = true;
+      outputKnown = true;
+      inputText = outputText = hasTextModality(modality);
+    }
+  }
+  return { inputKnown, outputKnown, inputText, outputText };
 };
 
 const modelSupportsTextOutput = (value: JsonRecord): boolean => {
   const architecture = value.architecture;
   if (!isRecord(architecture)) return true;
   const modalities = readTextModalities(architecture);
-  return !modalities.known || modalities.outputText;
+  return !modalities.outputKnown || modalities.outputText;
+};
+
+const modelSupportsTextInput = (value: JsonRecord): boolean => {
+  const architecture = value.architecture;
+  if (!isRecord(architecture)) return true;
+  const modalities = readTextModalities(architecture);
+  return !modalities.inputKnown || modalities.inputText;
 };
 
 const readPricing = (value: JsonRecord): Readonly<{
   input_price_per_token?: number;
   output_price_per_token?: number;
   cache_read_price_per_token?: number;
+  cache_write_price_per_token?: number;
 }> => {
   if (!isRecord(value.pricing)) return {};
   const input = nonNegativeNumber(value.pricing.prompt ?? value.pricing.input);
   const output = nonNegativeNumber(value.pricing.completion ?? value.pricing.output);
-  const cacheRead = nonNegativeNumber(value.pricing.cache_read ?? value.pricing.cache_read_input);
+  const cacheRead = nonNegativeNumber(
+    value.pricing.input_cache_read ?? value.pricing.cache_read ?? value.pricing.cache_read_input,
+  );
+  const cacheWrite = nonNegativeNumber(
+    value.pricing.input_cache_write ?? value.pricing.cache_write ?? value.pricing.cache_write_input,
+  );
   return {
     ...(input === null ? {} : { input_price_per_token: input }),
     ...(output === null ? {} : { output_price_per_token: output }),
     ...(cacheRead === null ? {} : { cache_read_price_per_token: cacheRead }),
+    ...(cacheWrite === null ? {} : { cache_write_price_per_token: cacheWrite }),
   };
 };
 
 const readSurplusModel = (value: unknown): SurplusModel | null => {
-  if (!isRecord(value) || !modelSupportsTextOutput(value)) return null;
+  if (!isRecord(value) || !modelSupportsTextInput(value) || !modelSupportsTextOutput(value)) return null;
   const id = nonEmptyString(value.id);
   if (!id) return null;
   const created = isNonNegativeSafeInteger(value.created) ? value.created : 0;

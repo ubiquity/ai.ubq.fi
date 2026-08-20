@@ -251,14 +251,24 @@ export const getPaidFallbackProviderUsageV3 = async (
   windowResetAtMs: number,
   kvOverride?: Deno.Kv | null,
 ): Promise<Readonly<Record<PaidFallbackProvider, PaidFallbackProviderUsageV3>>> => {
+  const kv = await resolveKv(kvOverride);
   const usage: Record<PaidFallbackProvider, PaidFallbackProviderUsageV3> = {
     metered: emptyPaidFallbackProviderUsage(),
     surplus: emptyPaidFallbackProviderUsage(),
   };
-  const requests = await listPaidFallbackRequestsV3(keyId, 1_000, kvOverride);
-  for (const request of requests) {
+  if (!kv) return usage;
+  // Request keys do not include the window reset, so scan the complete key
+  // history and filter by the requested window instead of truncating at the
+  // newest 1,000 rows.
+  for await (
+    const entry of kv.list<PaidFallbackRequestV3>(
+      { prefix: paidFallbackRequestV3Prefix(keyId) },
+      { consistency: "strong" },
+    )
+  ) {
+    const request = entry.value;
     if (request.window_reset_at_ms !== windowResetAtMs) continue;
-    const provider = request.provider ?? "metered";
+    const provider: PaidFallbackProvider = request.provider === "surplus" ? "surplus" : "metered";
     const current = usage[provider];
     const inputTokens = request.input_tokens ?? 0;
     const outputTokens = request.output_tokens ?? 0;
@@ -904,13 +914,18 @@ const settlePaidFallbackRequestV3 = async (
     if (!pendingEntry.value || request.provider_request_id !== providerLog.request_id) {
       return { settled: false, retry_delay_ms: null };
     }
-    const spend = Math.round(providerLog.quota * MICROCREDITS_PER_CREDIT / request.quota_per_credit);
-    if (!Number.isSafeInteger(spend) || spend < 0) {
+    const calculatedSpend = Math.round(providerLog.quota * MICROCREDITS_PER_CREDIT / request.quota_per_credit);
+    if (!Number.isSafeInteger(calculatedSpend) || calculatedSpend < 0) {
       return {
         settled: false,
         retry_delay_ms: await deferPaidFallbackReconciliationV3(kv, keyId, requestId, now),
       };
     }
+    // A provider can report more usage than the exposure admitted for this
+    // request. Preserve the actual provider spend so the window cannot
+    // under-report billed usage; the admission exposure only bounds the
+    // amount we risk before the provider responds.
+    const spend = calculatedSpend;
     const windowKey = paidFallbackWindowV3Key(keyId, request.window_reset_at_ms);
     const windowEntry = await kv.get<PaidFallbackWindowV3>(windowKey, { consistency: "strong" });
     const dispatchedAtMs = request.dispatched_at_ms ??
@@ -1035,7 +1050,19 @@ export const reconcilePaidFallbackV3 = async (
       candidates.push(requestEntry as Deno.KvEntry<PaidFallbackRequestV3>);
     }
     if (!candidates.length) return 0;
-    const providerRequestIds = candidates
+    // Surplus has no Metered token-log endpoint. Its terminal usage is settled
+    // synchronously by recordSurplusUsage; a missing or partial observation
+    // must remain pending and fail closed rather than being looked up or
+    // falsely settled through Metered logs.
+    const surplusCandidates = candidates.filter((requestEntry) => requestEntry.value.provider === "surplus");
+    await Promise.all(
+      surplusCandidates.map((requestEntry) =>
+        deferPaidFallbackReconciliationV3(kv, keyId, requestEntry.value.request_id, now)
+      ),
+    );
+    const meteredCandidates = candidates.filter((requestEntry) => requestEntry.value.provider !== "surplus");
+    if (!meteredCandidates.length) return 0;
+    const providerRequestIds = meteredCandidates
       .map((requestEntry) => requestEntry.value.provider_request_id)
       .filter((requestId): requestId is string => requestId !== null);
     let logs: readonly MeteredTokenLogEntry[] = [];
@@ -1043,13 +1070,13 @@ export const reconcilePaidFallbackV3 = async (
       logs = providerRequestIds.length
         ? await fetchMeteredTokenLogs({
           requestIds: providerRequestIds,
-          startAtMs: Math.min(...candidates.map((requestEntry) => requestEntry.value.created_at_ms)) - 60_000,
+          startAtMs: Math.min(...meteredCandidates.map((requestEntry) => requestEntry.value.created_at_ms)) - 60_000,
           endAtMs: now + 60_000,
         })
         : [];
     } catch {
       await Promise.all(
-        candidates.map(async (requestEntry) => {
+        meteredCandidates.map(async (requestEntry) => {
           await deferPaidFallbackReconciliationV3(
             kv,
             keyId,
@@ -1064,7 +1091,7 @@ export const reconcilePaidFallbackV3 = async (
     }
     const byId = new Map(logs.map((log) => [log.request_id, log]));
     let settled = 0;
-    for (const requestEntry of candidates) {
+    for (const requestEntry of meteredCandidates) {
       const request = requestEntry.value;
       const providerLog = request.provider_request_id ? byId.get(request.provider_request_id) : null;
       if (!providerLog) {
