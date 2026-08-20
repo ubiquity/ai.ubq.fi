@@ -1,5 +1,5 @@
 import { getKv } from "./kv.ts";
-import type { ApiKeyRequestLogRecord } from "./types.ts";
+import type { ApiKeyRequestLogRecord, PaidFallbackProvider } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
 
 // v1 analytics keys remain named for deletion and migration only. The serving path never reads or writes them.
@@ -25,7 +25,7 @@ export type ApiKeyRequestLogInput = Readonly<{
   model?: string | null;
   reasoning?: string | null;
   created_at_ms: number;
-  provider?: "cerebras" | "chatgpt_codex" | "voyage" | "metered";
+  provider?: "cerebras" | "chatgpt_codex" | "voyage" | PaidFallbackProvider;
   fallback_reason?: string | null;
   provider_request_id?: string | null;
   completed_at_ms?: number | null;
@@ -80,6 +80,8 @@ const normalize = (
       ? "cerebras"
       : value.provider === "voyage"
       ? "voyage"
+      : value.provider === "surplus"
+      ? "surplus"
       : value.provider === "metered"
       ? "metered"
       : "chatgpt_codex",

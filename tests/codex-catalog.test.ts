@@ -82,6 +82,8 @@ const {
   storeCodexCatalog,
 } = await import("../src/codex_catalog.ts");
 const { handleModels } = await import("../src/openai.ts");
+const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../src/metered.ts");
+const { fetchSurplusModels, resetSurplusModelsCacheForTest } = await import("../src/surplus.ts");
 const {
   loadRuntimeConfig,
   resetRuntimeConfigCacheForTest,
@@ -785,5 +787,83 @@ Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-c
   } finally {
     beforeAtomicCommit = null;
     globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("codex catalog: model picker receives the complete unique union of paid provider models", async () => {
+  seedBaseState("0.200.0");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  const originalFetch = globalThis.fetch;
+  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
+  Deno.env.set("METERED_API_KEY", "metered-catalog-test-key");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-catalog-test-key");
+  await fetchMeteredModels({
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [
+          {
+            id: "shared-paid-model",
+            owned_by: "openlux",
+            supported_endpoint_types: ["openai-response"],
+            description: "OpenLux route",
+          },
+          {
+            id: "openlux-only-model",
+            owned_by: "openlux",
+            supported_endpoint_types: ["openai-response"],
+          },
+          {
+            id: "chat-only-model",
+            owned_by: "openlux",
+            supported_endpoint_types: ["openai"],
+          },
+        ],
+      })),
+  });
+  await fetchSurplusModels({
+    apiKey: "surplus-catalog-test-key",
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [
+          { id: "shared-paid-model", provider: "surplus" },
+          { id: "surplus-only-model", provider: "surplus" },
+        ],
+      })),
+  });
+  globalThis.fetch = (input) => {
+    const version = new URL(String(input)).searchParams.get("client_version") ?? "missing";
+    return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
+  };
+
+  try {
+    const response = await handleCodexCatalogModels(request("0.148.0"), "0.148.0");
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { models: Array<Record<string, unknown>> };
+    const slugs = payload.models.map((model) => model.slug);
+    assert.deepEqual(slugs, [
+      "gpt-0.148.0",
+      "shared-paid-model",
+      "openlux-only-model",
+      "surplus-only-model",
+    ]);
+    assert.equal(new Set(slugs).size, slugs.length);
+    assert.equal(payload.models.find((model) => model.slug === "shared-paid-model")?.visibility, "list");
+    assert.deepEqual(
+      payload.models.find((model) => model.slug === "surplus-only-model")?.supported_reasoning_levels,
+      [{ effort: "none", description: "No reasoning" }],
+    );
+    assert.equal(slugs.includes("chat-only-model"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+    if (originalSurplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusKey);
   }
 });

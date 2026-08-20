@@ -57,6 +57,7 @@ import {
   handleEmbeddingsJobGet,
   handleModelCapabilities,
   handleModels,
+  handlePublicModelCatalog,
   handleResponses,
   handleUosEmbeddings,
   type ResponseTelemetry,
@@ -594,6 +595,10 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/uos/auth") {
     return withCors(await handleV1Auth(req));
+  }
+
+  if (req.method === "GET" && path === "/uos/models/catalog") {
+    return withCors(await handlePublicModelCatalog());
   }
 
   if (req.method === "GET" && path === "/uos/models/capabilities") {

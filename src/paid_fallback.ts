@@ -3,13 +3,15 @@ import {
   admitPaidFallbackV3,
   markPaidFallbackTerminalV3,
   releasePaidFallbackBeforeProviderFetchV3,
+  settlePaidFallbackUsageV3,
   updatePaidFallbackRequestV3,
 } from "./paid_fallback_ledger.ts";
 import { loadFullCodexModelsSnapshot } from "./codex.ts";
 import { getKv } from "./kv.ts";
-import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord, PaidFallbackProvider } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
 import { initializeMeteredPricing, MeteredError, readMeteredApiKey } from "./metered.ts";
+import { readSurplusApiKey } from "./surplus.ts";
 
 export type PaidFallbackPolicyFields = Pick<
   ApiKeyRecord,
@@ -89,6 +91,9 @@ export const defaultPaidFallbackPolicy = (): PaidFallbackPolicyFields => ({
 const isNonNegativeSafeInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
+const isNonNegativeFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
+
 const isPositiveSafeInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
@@ -158,9 +163,9 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
     | "paid_fallback_max_exposure_microcredits"
   >
 > => {
-  if (!readMeteredApiKey()) {
+  if (!readMeteredApiKey() && !readSurplusApiKey()) {
     throw new MeteredError(
-      "Metered paid fallback cannot be enabled because METERED_API_KEY is not configured.",
+      "Metered paid fallback cannot be enabled because no paid provider API key is configured.",
       "metered_api_key_missing",
       503,
     );
@@ -271,7 +276,7 @@ export const reservePaidFallback = async (
     const record = policy.record;
     const eligibility = evaluatePaidFallbackEligibility(record, input.model, input.allowUnrosteredModel);
     if (eligibility.kind !== "eligible") return eligibility;
-    if (!readMeteredApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
+    if (!readMeteredApiKey() && !readSurplusApiKey()) return { kind: "skip", reason: "provider_unconfigured" };
     const windowResetAtMs = advanceUsageWindow(record.usage_reset_at_ms, record.window_ms, input.createdAtMs);
     const policyVersion = `${record.window_ms}:${record.paid_fallback_pricing_checked_at_ms ?? 0}`;
     const admitted = await admitPaidFallbackV3({
@@ -299,15 +304,20 @@ export const recordMeteredUpstreamResponse = async (
   reservation: PaidFallbackReservation,
   _response: Response,
   providerRequestId: string | null,
+  provider: PaidFallbackProvider = "metered",
 ): Promise<void> => {
   await updatePaidFallbackRequestV3(reservation, {
+    provider,
     provider_request_id: providerRequestId,
     dispatch_state: "dispatched",
   });
 };
 
-export const recordMeteredAmbiguousFailure = async (reservation: PaidFallbackReservation): Promise<void> => {
-  await updatePaidFallbackRequestV3(reservation, { dispatch_state: "dispatched" });
+export const recordMeteredAmbiguousFailure = async (
+  reservation: PaidFallbackReservation,
+  provider: PaidFallbackProvider = "metered",
+): Promise<void> => {
+  await updatePaidFallbackRequestV3(reservation, { provider, dispatch_state: "dispatched" });
   await markPaidFallbackTerminalV3(reservation, "ambiguous");
 };
 
@@ -326,6 +336,67 @@ export const recordMeteredPrefetchCancellation = async (
 export const recordMeteredTerminal = async (
   reservation: PaidFallbackReservation,
   terminalState: "completed" | "failed" | "incomplete" | "cancelled" | "ambiguous",
+  provider: PaidFallbackProvider = "metered",
 ): Promise<void> => {
-  await markPaidFallbackTerminalV3(reservation, terminalState);
+  await markPaidFallbackTerminalV3(reservation, terminalState, provider);
+};
+
+export type SurplusBillingPricing = Readonly<{
+  input_price_per_token: number;
+  output_price_per_token: number;
+  cache_read_price_per_token?: number;
+  cache_write_price_per_token?: number;
+}>;
+
+export type SurplusUsage = Readonly<{
+  input_tokens: number | null;
+  cached_input_tokens: number | null;
+  cache_write_input_tokens: number | null;
+  output_tokens: number | null;
+}>;
+
+/**
+ * Surplus returns usage in the terminal Responses event instead of exposing a
+ * provider token-log query. Its catalog prices are per token; convert that
+ * charge into the existing paid-fallback quota unit before the shared ledger
+ * settles the request.
+ */
+export const recordSurplusUsage = async (
+  reservation: PaidFallbackReservation,
+  providerRequestId: string,
+  model: string,
+  usage: SurplusUsage,
+  pricing: SurplusBillingPricing,
+): Promise<void> => {
+  if (
+    !providerRequestId.trim() || !model.trim() ||
+    !isNonNegativeSafeInteger(usage.input_tokens) ||
+    !isNonNegativeSafeInteger(usage.output_tokens) ||
+    !isNonNegativeFiniteNumber(pricing.input_price_per_token) ||
+    !isNonNegativeFiniteNumber(pricing.output_price_per_token)
+  ) return;
+  const cachedInputTokens = usage.cached_input_tokens === null ? 0 : usage.cached_input_tokens;
+  const cacheWriteInputTokens = usage.cache_write_input_tokens === null ? 0 : usage.cache_write_input_tokens;
+  if (
+    !isNonNegativeSafeInteger(cachedInputTokens) || cachedInputTokens > usage.input_tokens ||
+    !isNonNegativeSafeInteger(cacheWriteInputTokens) || cacheWriteInputTokens > usage.input_tokens
+  ) return;
+  const uncachedInputTokens = usage.input_tokens - cachedInputTokens;
+  const cacheReadPrice = pricing.cache_read_price_per_token ?? pricing.input_price_per_token;
+  const cacheWritePrice = pricing.cache_write_price_per_token ?? pricing.input_price_per_token;
+  if (!isNonNegativeFiniteNumber(cacheReadPrice) || !isNonNegativeFiniteNumber(cacheWritePrice)) return;
+  const chargedCredits = uncachedInputTokens * pricing.input_price_per_token +
+    cachedInputTokens * cacheReadPrice + cacheWriteInputTokens * cacheWritePrice +
+    usage.output_tokens * pricing.output_price_per_token;
+  const providerQuota = Math.round(chargedCredits * reservation.quota_per_credit);
+  if (!Number.isSafeInteger(providerQuota) || providerQuota < 0) return;
+  await settlePaidFallbackUsageV3(reservation, {
+    provider_request_id: providerRequestId,
+    provider_quota: providerQuota,
+    input_tokens: usage.input_tokens,
+    cached_input_tokens: cachedInputTokens,
+    output_tokens: usage.output_tokens,
+    model,
+    created_at_ms: Date.now(),
+  });
 };

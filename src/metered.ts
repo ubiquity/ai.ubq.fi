@@ -208,6 +208,7 @@ export type MeteredTokenLogEntry = Readonly<{
   request_id: string;
   quota: number;
   prompt_tokens: number;
+  cached_prompt_tokens?: number;
   completion_tokens: number;
   model: string;
   created_at: number;
@@ -595,6 +596,9 @@ const normalizeTokenLogEntry = (value: unknown): MeteredTokenLogEntry | null => 
     request_id: requestId,
     quota: value.quota,
     prompt_tokens: value.prompt_tokens,
+    ...(isNonNegativeSafeInteger(value.cached_prompt_tokens)
+      ? { cached_prompt_tokens: value.cached_prompt_tokens }
+      : {}),
     completion_tokens: value.completion_tokens,
     model,
     created_at: value.created_at,

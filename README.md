@@ -381,6 +381,9 @@ ubq-ai admin keys list | jq
   Deno KV at `["uos_ai","voyage_api_key"]`.
 - `METERED_API_KEY` (optional): OpenLux business API key used only by the server for paid fallback and the non-billable
   token-usage quota snapshot. It is never sent to gateway clients.
+- `SURPLUS_API_KEY` (optional): Surplus Intelligence API key used only by the server for paid fallback. It is never sent
+  to gateway clients. When both paid-provider keys are configured, the gateway selects the provider by model family and
+  fails over between them on provider authentication, quota, and upstream failures.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.

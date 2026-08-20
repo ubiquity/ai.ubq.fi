@@ -71,6 +71,7 @@ import {
 } from "./paid_fallback.ts";
 import {
   deletePaidFallbackStateV3,
+  getPaidFallbackProviderUsageV3,
   getPaidFallbackWindowProjectionV3,
   listPaidFallbackRequestsV3,
   paidFallbackDeletionGuardV3Key,
@@ -828,18 +829,22 @@ const paidFallbackPublicFields = async (
   kv: Deno.Kv,
   windowResetAtMs = record.usage_reset_at_ms,
 ) => {
-  const projection = await getPaidFallbackWindowProjectionV3(
-    record.id,
-    windowResetAtMs,
-    record.paid_fallback_limit_microcredits,
-    kv,
-  );
+  const [projection, providerUsage] = await Promise.all([
+    getPaidFallbackWindowProjectionV3(
+      record.id,
+      windowResetAtMs,
+      record.paid_fallback_limit_microcredits,
+      kv,
+    ),
+    getPaidFallbackProviderUsageV3(record.id, windowResetAtMs, kv),
+  ]);
   return {
     paid_fallback_enabled: record.paid_fallback_enabled,
     paid_fallback_limit_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_limit_microcredits),
     paid_fallback_spent_credits: paidFallbackMicrocreditsToCredits(projection?.settled_microcredits ?? 0),
     paid_fallback_reserved_credits: paidFallbackMicrocreditsToCredits(projection?.reserved_microcredits ?? 0),
     paid_fallback_pending_count: projection?.pending_count ?? 0,
+    paid_fallback_provider_usage: providerUsage,
     paid_fallback_model_ids: record.paid_fallback_model_ids,
     paid_fallback_pricing_checked_at_ms: record.paid_fallback_pricing_checked_at_ms,
   };
@@ -853,7 +858,7 @@ const paidFallbackHistoryRecord = (request: Awaited<ReturnType<typeof listPaidFa
     id: request.request_id,
     method: "POST",
     status_code: request.terminal_state === "completed" ? 200 : null,
-    provider: "metered",
+    provider: request.provider ?? "metered",
     fallback_reason: "codex_429",
     started_at_ms: startedAtMs,
     completed_at_ms: completedAtMs,

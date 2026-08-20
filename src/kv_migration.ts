@@ -473,6 +473,7 @@ const isPaidFallbackRequestV3 = (value: unknown): value is PaidFallbackRequestV3
     isPositiveSafeInteger(value.window_reset_at_ms) &&
     isSafeUsageCount(value.reserved_microcredits) &&
     isPositiveSafeInteger(value.quota_per_credit) &&
+    (value.provider === undefined || value.provider === "metered" || value.provider === "surplus") &&
     isNullableNonEmptyString(value.provider_request_id) &&
     (value.provider_quota === null || isFiniteNonNegativeNumber(value.provider_quota)) &&
     (value.input_tokens === null || isSafeUsageCount(value.input_tokens)) &&
@@ -1543,6 +1544,7 @@ const projectLegacyPaidFallbackV3 = async (
       model: legacy.model ?? "legacy-unknown",
       stream: legacy.stream,
       reasoning: legacy.reasoning,
+      ...(legacy.provider === "surplus" ? { provider: "surplus" as const } : {}),
       window_reset_at_ms: windowResetAtMs,
       reserved_microcredits: outstanding ? legacyMaximumExposure(record, legacy) : 0,
       quota_per_credit: quotaPerCredit,

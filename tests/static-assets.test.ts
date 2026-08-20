@@ -13,11 +13,18 @@ Deno.test("static assets register frontend module dependencies", () => {
       "/auth-relay.js",
       "/foreground-refresh.js",
       "/network.js",
+      "/models.js",
+      "/models.css",
       "/reasoning-select.js",
     ]
   ) {
     assert.equal(hasStaticAsset(path), true, `${path} should be registered`);
   }
+});
+
+Deno.test("public models page is registered", () => {
+  assert.equal(hasStaticAsset("/models"), true);
+  assert.equal(hasStaticAsset("/models.html"), true);
 });
 
 Deno.test("admin provider view places capacity history before current providers", () => {

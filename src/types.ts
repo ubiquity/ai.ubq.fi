@@ -134,10 +134,20 @@ export type ApiKeyUsageRequestV3 = Readonly<{
   state: "reserved" | "dispatched" | "released";
   reserved_at_ms: number;
   lease_expires_at_ms: number;
-  provider: "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "voyage" | null;
+  provider: "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus" | "voyage" | null;
   dispatched_at_ms: number | null;
   released_at_ms: number | null;
   release_reason: string | null;
+}>;
+
+export type PaidFallbackProvider = "metered" | "surplus";
+
+export type PaidFallbackProviderUsageV3 = Readonly<{
+  request_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  spend_microcredits: number;
 }>;
 
 export type ApiKeyUsageRecord = Readonly<{
@@ -186,7 +196,7 @@ export type ApiKeyRequestLogRecord = Readonly<{
   model: string | null;
   reasoning: string | null;
   created_at_ms: number;
-  provider: "cerebras" | "chatgpt_codex" | "voyage" | "metered";
+  provider: "cerebras" | "chatgpt_codex" | "voyage" | PaidFallbackProvider;
   fallback_reason: string | null;
   provider_request_id: string | null;
   completed_at_ms: number | null;
@@ -222,12 +232,15 @@ export type PaidFallbackRequestV3 = Readonly<{
   model: string;
   stream: boolean;
   reasoning: string | null;
+  // Added after the V3 ledger launch. Missing values are legacy Metered rows.
+  provider?: PaidFallbackProvider;
   window_reset_at_ms: number;
   reserved_microcredits: number;
   quota_per_credit: number;
   provider_request_id: string | null;
   provider_quota: number | null;
   input_tokens: number | null;
+  cached_input_tokens?: number | null;
   output_tokens: number | null;
   dispatch_state: "reserved" | "dispatched" | "not_dispatched";
   terminal_state: "pending" | "completed" | "failed" | "incomplete" | "cancelled" | "ambiguous";

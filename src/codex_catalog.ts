@@ -28,6 +28,7 @@ import {
 } from "./runtime_config.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import { fetchMeteredModels } from "./metered.ts";
+import { fetchSurplusModels } from "./surplus.ts";
 
 export const CODEX_CATALOG_FRESH_MS = 5 * 60_000;
 export const CODEX_CATALOG_RETENTION_MS = 24 * 60 * 60_000;
@@ -583,7 +584,12 @@ const etagMatches = (requestValue: string | null, etag: string | null): boolean 
 };
 
 const meteredCodexModelRecord = (
-  model: NonNullable<Awaited<ReturnType<typeof fetchMeteredModels>>>["models"][number],
+  model: Readonly<{
+    id: string;
+    description?: string;
+    owned_by: string;
+    supported_endpoint_types: readonly string[];
+  }>,
 ) => ({
   slug: model.id,
   display_name: model.id,
@@ -608,6 +614,20 @@ const meteredCodexModelRecord = (
   experimental_supported_tools: [],
 });
 
+const uniqueResponsesModels = <
+  T extends Readonly<{
+    id: string;
+    supported_endpoint_types: readonly string[];
+  }>,
+>(models: readonly T[]): T[] => {
+  const seen = new Set<string>();
+  return models.filter((model) => {
+    if (!model.supported_endpoint_types.includes("openai-response") || seen.has(model.id)) return false;
+    seen.add(model.id);
+    return true;
+  });
+};
+
 const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheState: string): Promise<Response> => {
   const headers = new Headers({
     "Content-Type": catalog.metadata.content_type,
@@ -615,9 +635,14 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     "x-uos-upstream": "chatgpt_codex",
     "x-uos-cache": cacheState,
   });
-  const metered = await fetchMeteredModels({ cachedOnly: true });
+  const [metered, surplus] = await Promise.all([
+    fetchMeteredModels({ cachedOnly: true }),
+    fetchSurplusModels({ cachedOnly: true }),
+  ]);
   if (!metered) void fetchMeteredModels().catch(() => {});
-  if (!metered?.models.length) {
+  if (!surplus) void fetchSurplusModels().catch(() => {});
+  const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
+  if (!paidModels.length) {
     if (catalog.metadata.etag) headers.set("ETag", catalog.metadata.etag);
     if (etagMatches(req.headers.get("If-None-Match"), catalog.metadata.etag)) {
       return new Response(null, { status: 304, headers });
@@ -635,8 +660,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
         ?.trim() ?? null;
     }).filter((id): id is string => Boolean(id)),
   );
-  for (const model of metered.models) {
-    if (!model.supported_endpoint_types.includes("openai-response")) continue;
+  for (const model of paidModels) {
     if (seen.has(model.id)) continue;
     parsed.models.push(meteredCodexModelRecord(model));
     seen.add(model.id);
@@ -651,12 +675,15 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
 };
 
 const meteredCatalogResponse = async (): Promise<Response | null> => {
-  const metered = await fetchMeteredModels({ force: true });
-  if (!metered?.models.length) return null;
+  const [metered, surplus] = await Promise.all([
+    fetchMeteredModels({ force: true }),
+    fetchSurplusModels({ force: true }),
+  ]);
+  const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
+  if (!paidModels.length) return null;
   return new Response(
     JSON.stringify({
-      models: metered.models.filter((model) => model.supported_endpoint_types.includes("openai-response"))
-        .map(meteredCodexModelRecord),
+      models: paidModels.map(meteredCodexModelRecord),
     }),
     {
       status: 200,

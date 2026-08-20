@@ -13,12 +13,14 @@ import {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
   getMeteredProviderHealth,
+  getSurplusProviderHealth,
   PROVIDER_HEALTH_STALE_AFTER_MS,
   type ProviderHealthState,
 } from "./provider_health.ts";
 import { decodeBase64ToString } from "./utils.ts";
 import type { CodexAuthPoolState } from "./types.ts";
 import { readMeteredApiKey } from "./metered.ts";
+import { readSurplusApiKey } from "./surplus.ts";
 import {
   fetchMeteredQuotaObservation,
   getCachedConfiguredMeteredQuotaSnapshot,
@@ -230,10 +232,11 @@ export const getPassiveProviderHealthSnapshot = async (
 ): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
-  const [cerebrasHealth, codexHealth, meteredHealth, meteredQuota] = await Promise.all([
+  const [cerebrasHealth, codexHealth, meteredHealth, surplusHealth, meteredQuota] = await Promise.all([
     getCerebrasProviderHealth(),
     Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
     getMeteredProviderHealth(),
+    getSurplusProviderHealth(),
     getCachedConfiguredMeteredQuotaSnapshot(),
   ]);
   const codexAccounts = auth.accounts.map((account, index) => ({
@@ -267,6 +270,24 @@ export const getPassiveProviderHealthSnapshot = async (
           observed_at_ms: meteredQuota?.state.observed_at_ms ?? null,
         },
       }),
+    },
+    surplus: {
+      configured: readSurplusApiKey() !== null,
+      quota_monitoring_configured: false,
+      health: surplusHealth,
+      ...(options.includeQuota
+        ? {
+          quota: {
+            ...quotaView(null),
+            source: "not_reported",
+          },
+        }
+        : {
+          quota: {
+            available: false,
+            observed_at_ms: null,
+          },
+        }),
     },
   };
 };
