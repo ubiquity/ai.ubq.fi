@@ -495,6 +495,7 @@ export const admitPaidFallbackV3 = async (
       provider_request_id: null,
       provider_quota: null,
       input_tokens: null,
+      cached_input_tokens: null,
       output_tokens: null,
       dispatch_state: input.dispatchIntent ? "dispatched" : "reserved",
       terminal_state: "pending",
@@ -869,6 +870,7 @@ const settlePaidFallbackRequestV3 = async (
       ...request,
       provider_quota: providerLog.quota,
       input_tokens: providerLog.prompt_tokens,
+      cached_input_tokens: providerLog.cached_prompt_tokens ?? null,
       output_tokens: providerLog.completion_tokens,
       dispatch_state: request.dispatch_state === "reserved" ? "dispatched" : request.dispatch_state,
       dispatched_at_ms: dispatchedAtMs,
@@ -901,6 +903,48 @@ const settlePaidFallbackRequestV3 = async (
     if ((await atomic.commit()).ok) return { settled: true, retry_delay_ms: null };
   }
   throw new Error("Paid fallback settlement changed concurrently.");
+};
+
+export type PaidFallbackUsageSettlementV3 = Readonly<{
+  provider_request_id: string;
+  provider_quota: number;
+  input_tokens: number;
+  cached_input_tokens?: number | null;
+  output_tokens: number;
+  model: string;
+  created_at_ms: number;
+}>;
+
+/**
+ * Settles a provider whose response contains authoritative usage instead of
+ * exposing the OpenLux token-log endpoint. The same CAS path is used as the
+ * asynchronous OpenLux reconciliation, so duplicate terminal observations
+ * remain idempotent.
+ */
+export const settlePaidFallbackUsageV3 = async (
+  reservation: PaidFallbackAdmissionV3,
+  usage: PaidFallbackUsageSettlementV3,
+): Promise<boolean> => {
+  const kv = await getKv();
+  if (!kv) return false;
+  const result = await settlePaidFallbackRequestV3(
+    kv,
+    reservation.key_id,
+    reservation.request_id,
+    {
+      request_id: usage.provider_request_id,
+      quota: usage.provider_quota,
+      prompt_tokens: usage.input_tokens,
+      ...(usage.cached_input_tokens === null || usage.cached_input_tokens === undefined
+        ? {}
+        : { cached_prompt_tokens: usage.cached_input_tokens }),
+      completion_tokens: usage.output_tokens,
+      model: usage.model,
+      created_at: Math.max(0, Math.trunc(usage.created_at_ms / 1_000)),
+    },
+    Date.now(),
+  );
+  return result.settled;
 };
 
 export const reconcilePaidFallbackV3 = async (

@@ -92,7 +92,9 @@ import {
   recordMeteredTerminal,
   recordMeteredUndispatchedCancellation,
   recordMeteredUpstreamResponse,
+  recordSurplusUsage,
   reservePaidFallback,
+  type SurplusBillingPricing,
 } from "./paid_fallback.ts";
 import { recordCerebrasProviderHealth, recordMeteredProviderHealth } from "./provider_health.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
@@ -104,7 +106,8 @@ import type {
   ResponseMessageItem,
   ResponsesRequest,
 } from "./types.ts";
-import { fetchMeteredModels, fetchMeteredResponses, MeteredError } from "./metered.ts";
+import { fetchMeteredModels, fetchMeteredResponses, MeteredError, readMeteredApiKey } from "./metered.ts";
+import { fetchSurplusModels, fetchSurplusResponses, readSurplusApiKey, SurplusError } from "./surplus.ts";
 import { loadDebugRoutingConfig } from "./debug_routing.ts";
 
 const getDefaultModel = async (): Promise<string | null> => {
@@ -157,7 +160,7 @@ type UsageContext = Readonly<{
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
 
-type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered";
+type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
 export type InferenceFallbackReason = "primary_401" | "primary_403" | "primary_429" | "primary_quota_blocked";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
@@ -452,6 +455,8 @@ type RoutedResponsesUpstream = Readonly<{
   response: Response;
   provider: UpstreamProvider;
   paidFallback: PaidFallbackReservation | null;
+  paidFallbackBilling?: SurplusBillingPricing | null;
+  paidFallbackProviderRequestId?: string | null;
   gatewayResponse: boolean;
   fallbackReason: InferenceFallbackReason | null;
 }>;
@@ -1061,7 +1066,13 @@ const fetchAndPreparePrimaryResponses = async (
     }
     throw error;
   }
-  const lifecycle = createMeteredTransportLifecycle(routed.paidFallback);
+  const lifecycle = createMeteredTransportLifecycle(
+    routed.paidFallback,
+    routed.provider,
+    routed.paidFallbackBilling ?? null,
+    routed.paidFallbackProviderRequestId ?? null,
+    options.model,
+  );
   if (routed.gatewayResponse) {
     deadline.clear();
     const trigger: ResponsesAttemptTrigger = routed.response.status === 504
@@ -1164,7 +1175,7 @@ const finalizeAbandonedPrimaryAttempt = (
 ): void => {
   if (routed.provider === "chatgpt_codex") {
     void releaseCodexResponseProbe(routed.response).catch(() => {});
-  } else if (routed.provider === "metered" && !routed.gatewayResponse) {
+  } else if ((routed.provider === "metered" || routed.provider === "surplus") && !routed.gatewayResponse) {
     if (options.cancelled) lifecycle.cancelled();
     else if (options.failureTrigger === "http_5xx" || options.failureTrigger === "terminal_failure") {
       lifecycle.terminal("response.failed");
@@ -1336,6 +1347,7 @@ type RedactedUpstreamErrorDiagnostic = Readonly<{
     | "ApiKeyQuotaDispatchError"
     | "CodexError"
     | "MeteredError"
+    | "SurplusError"
     | "DOMException"
     | "TypeError"
     | "Error"
@@ -1368,6 +1380,9 @@ const REDACTED_UPSTREAM_DIAGNOSTIC_CODES = new Set<string>([
   "metered_upstream_unreachable",
   "metered_logs_unavailable",
   "metered_logs_invalid",
+  "surplus_api_key_missing",
+  "surplus_request_invalid",
+  "surplus_upstream_unreachable",
 ]);
 
 const redactedDiagnosticStatus = (value: unknown): number | null =>
@@ -1388,6 +1403,10 @@ const redactedUpstreamErrorDiagnostic = (error: unknown): RedactedUpstreamErrorD
     code = REDACTED_UPSTREAM_DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
   } else if (error instanceof MeteredError) {
     errorClass = "MeteredError";
+    status = redactedDiagnosticStatus(error.status);
+    code = REDACTED_UPSTREAM_DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
+  } else if (error instanceof SurplusError) {
+    errorClass = "SurplusError";
     status = redactedDiagnosticStatus(error.status);
     code = REDACTED_UPSTREAM_DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
   } else if (error instanceof DOMException) {
@@ -1701,13 +1720,17 @@ const bestEffortPaidFallbackBookkeeping = async (
 };
 
 type MeteredTransportLifecycle = Readonly<{
-  terminal: (eventType: string) => void;
+  terminal: (eventType: string, usage?: UsageTokens | null) => void;
   ambiguous: () => void;
   cancelled: () => void;
 }>;
 
 const createMeteredTransportLifecycle = (
   reservation: PaidFallbackReservation | null,
+  provider: UpstreamProvider = "metered",
+  surplusBilling: SurplusBillingPricing | null = null,
+  surplusProviderRequestId: string | null = null,
+  model: string | null = null,
 ): MeteredTransportLifecycle => {
   let recorded = false;
   const schedule = (
@@ -1719,7 +1742,7 @@ const createMeteredTransportLifecycle = (
     void bestEffortPaidFallbackBookkeeping(operation, () => run(reservation));
   };
   return {
-    terminal: (eventType) => {
+    terminal: (eventType, usage = null) => {
       const terminalState = eventType === "response.completed"
         ? "completed"
         : eventType === "response.failed" || eventType === "error"
@@ -1731,8 +1754,26 @@ const createMeteredTransportLifecycle = (
       schedule(
         "terminal reconciliation",
         async (activeReservation) => {
+          const terminal = recordMeteredTerminal(activeReservation, terminalState);
+          const surplusSettlement =
+            provider === "surplus" && surplusBilling && surplusProviderRequestId && model && usage
+              ? async (): Promise<void> => {
+                await terminal;
+                await recordSurplusUsage(
+                  activeReservation,
+                  surplusProviderRequestId,
+                  model,
+                  {
+                    input_tokens: usage.inputTokens,
+                    cached_input_tokens: usage.cachedInputTokens,
+                    output_tokens: usage.outputTokens,
+                  },
+                  surplusBilling,
+                );
+              }
+              : () => terminal;
           await Promise.all([
-            recordMeteredTerminal(activeReservation, terminalState),
+            surplusSettlement(),
             recordMeteredProviderHealth(
               terminalState === "completed" ? "success" : "upstream_error",
               terminalState === "completed" ? 200 : null,
@@ -1779,21 +1820,66 @@ const fetchResponsesWithPaidFallback = async (
     return (getString(record.slug) ?? getString(record.id) ?? getString(record.model) ?? getString(record.name)) ===
       options.model;
   }) === true;
-  const meteredCatalog = codexModelKnown ? null : await fetchMeteredModels({ signal: options.signal });
-  const meteredModelSupportsRoute = options.route === "responses"
-    ? meteredCatalog?.models.some((model) =>
-      model.id === options.model &&
-      model.supported_endpoint_types.includes("openai-response")
-    ) === true
-    : meteredCatalog?.models.some((model) =>
-      model.id === options.model &&
-      model.supported_endpoint_types.includes("openai")
+  const [meteredCatalog, surplusCatalog] = await Promise.all([
+    fetchMeteredModels({ signal: options.signal }),
+    fetchSurplusModels({ signal: options.signal }),
+  ]);
+  const endpointType = options.route === "responses" ? "openai-response" : "openai";
+  const meteredModelSupportsRoute =
+    meteredCatalog?.models.some((model) =>
+      model.id === options.model && model.supported_endpoint_types.includes(endpointType)
     ) === true;
-  const meteredOnly = meteredModelSupportsRoute && !codexModelKnown;
+  const surplusModelSupportsRoute =
+    surplusCatalog?.models.some((model) =>
+      model.id === options.model && model.supported_endpoint_types.includes(endpointType)
+    ) === true;
+  const surplusModel = surplusCatalog?.models.find((model) => model.id === options.model) ?? null;
+  const surplusInputPrice = surplusModel?.input_price_per_token;
+  const surplusOutputPrice = surplusModel?.output_price_per_token;
+  const surplusBilling: SurplusBillingPricing | null =
+    surplusInputPrice !== undefined && Number.isFinite(surplusInputPrice) && surplusInputPrice >= 0 &&
+      surplusOutputPrice !== undefined && Number.isFinite(surplusOutputPrice) && surplusOutputPrice >= 0
+      ? {
+        input_price_per_token: surplusInputPrice,
+        output_price_per_token: surplusOutputPrice,
+        ...(surplusModel?.cache_read_price_per_token === undefined
+          ? {}
+          : { cache_read_price_per_token: surplusModel.cache_read_price_per_token }),
+      }
+      : null;
+  // A known Codex model retains the historical OpenLux roster path even when
+  // its discovery request is temporarily unavailable. Surplus is selected
+  // only when its own catalog proves that the exact model is routable.
+  const meteredCanServe = Boolean(readMeteredApiKey()) &&
+    (codexModelKnown ? meteredCatalog === null || meteredModelSupportsRoute : meteredModelSupportsRoute);
+  const surplusCanServe = Boolean(readSurplusApiKey()) && surplusModelSupportsRoute && surplusBilling !== null;
+  const surplusPrimaryModels = new Set([
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "claude-opus-5",
+    "claude-fable-5",
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "glm-5.3",
+    "kimi-k3",
+    "gemini-3.7-flash",
+    "minimax-m3",
+    "grok-4.5",
+    "grok-4.6",
+    "qwen3.8-2.4t-a95b",
+  ]);
+  const preferredPaidProviders: readonly ("metered" | "surplus")[] = surplusPrimaryModels.has(options.model)
+    ? ["surplus", "metered"]
+    : ["metered", "surplus"];
+  const paidProviders = preferredPaidProviders.filter((provider) =>
+    provider === "surplus" ? surplusCanServe : meteredCanServe
+  );
+  const meteredOnly = paidProviders.length > 0 && !codexModelKnown;
   const meteredOnlyPrimary = meteredOnly
     ? openaiError(
       429,
-      "This dynamic Metered model is not in the configured paid-fallback roster.",
+      "This dynamic paid model is not in the configured paid-fallback roster.",
       CODEX_QUOTA_BLOCKED_ERROR_CODE,
       { headers: { "x-uos-upstream": "chatgpt_codex" } },
     )
@@ -1891,6 +1977,15 @@ const fetchResponsesWithPaidFallback = async (
       ? options.signal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
+  if (!paidProviders.length) {
+    return {
+      response: primary,
+      provider: "chatgpt_codex",
+      paidFallback: null,
+      gatewayResponse,
+      fallbackReason,
+    };
+  }
 
   const reservationInput = {
     keyId,
@@ -1957,47 +2052,89 @@ const fetchResponsesWithPaidFallback = async (
       : new DOMException("The request was aborted.", "AbortError");
   }
   if (telemetry) {
-    telemetry.provider = "metered";
+    telemetry.provider = paidProviders[0];
     telemetry.accountSlot = null;
     telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
   }
-  recordAttemptedProvider(options.usageContext, "metered");
   logMeteredSelected(requestId, fallbackReason);
-  let result: Awaited<ReturnType<typeof fetchMeteredResponses>>;
-  try {
-    result = await fetchMeteredResponses(body, {
-      signal: options.signal,
-      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
-    });
-    if (result.response.status === 401 || result.response.status === 403) {
-      await recordMeteredProviderHealth("auth_invalid", result.response.status);
-    } else if (result.response.status === 429) {
-      await recordMeteredProviderHealth("quota_exhausted", result.response.status);
-    } else if (result.response.status >= 500) {
-      await recordMeteredProviderHealth("upstream_error", result.response.status);
-    } else if (!result.response.ok) {
-      await recordMeteredProviderHealth("reachable", result.response.status);
+  const providerStatus = (error: unknown): number | null =>
+    error instanceof MeteredError || error instanceof SurplusError ? error.status : null;
+  const isRetryableProviderStatus = (status: number | null): boolean =>
+    status === null || status === 401 || status === 402 || status === 403 || status === 429 ||
+    (status !== null && status >= 500);
+  const recordProviderHealth = async (status: number): Promise<void> => {
+    try {
+      if (status === 401 || status === 403) await recordMeteredProviderHealth("auth_invalid", status);
+      else if (status === 402 || status === 429) await recordMeteredProviderHealth("quota_exhausted", status);
+      else if (status >= 500) await recordMeteredProviderHealth("upstream_error", status);
+      else if (status >= 100) await recordMeteredProviderHealth("reachable", status);
+    } catch {
+      // Provider-health persistence must not change failover or response delivery.
     }
-  } catch (error) {
-    if (error instanceof ApiKeyQuotaDispatchError) {
-      // Paid fallback writes a durable dispatch intent before Metered transport.
-      // If the API-key quota CAS rejects that transport, it is still known not
-      // to have started and must be released rather than reconciled as billed.
+  };
+  let result:
+    | Awaited<ReturnType<typeof fetchMeteredResponses>>
+    | Awaited<ReturnType<typeof fetchSurplusResponses>>
+    | null = null;
+  let selectedProvider: "metered" | "surplus" = paidProviders[0];
+  let providerError: unknown = null;
+  for (const [providerIndex, provider] of paidProviders.entries()) {
+    if (options.signal?.aborted) {
       await bestEffortPaidFallbackBookkeeping(
-        "pre-dispatch quota cancellation recording",
-        () => recordMeteredUndispatchedCancellation(decision.reservation),
+        "prefetch cancellation recording",
+        () => recordMeteredPrefetchCancellation(decision.reservation),
       );
+      throw options.signal.reason instanceof Error
+        ? options.signal.reason
+        : new DOMException("The request was aborted.", "AbortError");
+    }
+    selectedProvider = provider;
+    if (telemetry) telemetry.provider = provider;
+    recordAttemptedProvider(options.usageContext, provider);
+    try {
+      const candidate = provider === "surplus"
+        ? await fetchSurplusResponses(body, {
+          signal: options.signal,
+          beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
+        })
+        : await fetchMeteredResponses(body, {
+          signal: options.signal,
+          beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
+        });
+      await recordProviderHealth(candidate.response.status);
+      if (
+        providerIndex < paidProviders.length - 1 &&
+        isRetryableProviderStatus(candidate.response.status)
+      ) {
+        cancelResponseBody(candidate.response);
+        continue;
+      }
+      result = candidate;
+      break;
+    } catch (error) {
+      if (error instanceof ApiKeyQuotaDispatchError) {
+        // Paid fallback writes a durable dispatch intent before provider
+        // transport. A quota CAS rejection proves no provider was started.
+        await bestEffortPaidFallbackBookkeeping(
+          "pre-dispatch quota cancellation recording",
+          () => recordMeteredUndispatchedCancellation(decision.reservation),
+        );
+        throw error;
+      }
+      providerError = error;
+      const status = providerStatus(error);
+      await recordProviderHealth(status ?? 0);
+      if (providerIndex < paidProviders.length - 1 && isRetryableProviderStatus(status)) continue;
+      break;
+    }
+  }
+
+  if (!result) {
+    const error = providerError;
+    const selectedProviderLabel = selectedProvider === "surplus" ? "Surplus" : "Metered";
+    if (error instanceof ApiKeyQuotaDispatchError) {
       throw error;
     }
-    const meteredStatus = error instanceof MeteredError ? error.status : null;
-    await recordMeteredProviderHealth(
-      meteredStatus === 401 || meteredStatus === 403
-        ? "auth_invalid"
-        : meteredStatus === 429
-        ? "quota_exhausted"
-        : "upstream_error",
-      meteredStatus,
-    );
     await bestEffortPaidFallbackBookkeeping(
       "ambiguous failure recording",
       () => recordMeteredAmbiguousFailure(decision.reservation),
@@ -2010,26 +2147,26 @@ const fetchResponsesWithPaidFallback = async (
       return {
         response: preservePrimaryWarnings(openaiError(
           504,
-          "Metered upstream exceeded the gateway deadline before response headers were received.",
+          `${selectedProviderLabel} upstream exceeded the gateway deadline before response headers were received.`,
           "gateway_timeout",
           {
             type: "server_error",
-            headers: { "x-uos-upstream": "metered" },
+            headers: { "x-uos-upstream": selectedProvider },
           },
         )),
-        provider: "metered",
+        provider: selectedProvider,
         paidFallback: decision.reservation,
         gatewayResponse: true,
         fallbackReason: reservationInput.reason,
       };
     }
-    if (error instanceof MeteredError) {
+    if (error instanceof MeteredError || error instanceof SurplusError) {
       return {
         response: preservePrimaryWarnings(openaiError(error.status, error.message, error.code, {
           type: "server_error",
-          headers: { "x-uos-upstream": "metered" },
+          headers: { "x-uos-upstream": selectedProvider },
         })),
-        provider: "metered",
+        provider: selectedProvider,
         paidFallback: decision.reservation,
         gatewayResponse: true,
         fallbackReason: reservationInput.reason,
@@ -2038,27 +2175,30 @@ const fetchResponsesWithPaidFallback = async (
     return {
       response: preservePrimaryWarnings(openaiError(
         502,
-        "Metered upstream request failed before response headers were received.",
+        `${selectedProviderLabel} upstream request failed before response headers were received.`,
         "upstream_error",
         {
           type: "server_error",
-          headers: { "x-uos-upstream": "metered" },
+          headers: { "x-uos-upstream": selectedProvider },
         },
       )),
-      provider: "metered",
+      provider: selectedProvider,
       paidFallback: decision.reservation,
       gatewayResponse: true,
       fallbackReason: reservationInput.reason,
     };
   }
+  const providerRequestId = result.request_id ?? (selectedProvider === "surplus" ? `surplus:${requestId}` : null);
   await bestEffortPaidFallbackBookkeeping(
     "upstream response recording",
-    () => recordMeteredUpstreamResponse(decision.reservation, result.response, result.request_id),
+    () => recordMeteredUpstreamResponse(decision.reservation, result.response, providerRequestId),
   );
   return {
     response: preservePrimaryWarnings(result.response),
-    provider: "metered",
+    provider: selectedProvider,
     paidFallback: decision.reservation,
+    paidFallbackBilling: selectedProvider === "surplus" ? surplusBilling : null,
+    paidFallbackProviderRequestId: providerRequestId,
     gatewayResponse: false,
     fallbackReason: reservationInput.reason,
   };
@@ -2136,22 +2276,27 @@ const getCodexModelMetadata = async (model: string): Promise<CodexModelMetadata>
   const snapshot = await loadCodexModelsSnapshot();
   const record = findSnapshotModelRecord(snapshot, model);
   if (record) return { snapshot, record, reasoning: getCodexModelReasoning(record), supportedEndpoints: null };
-  const metered = await fetchMeteredModels();
+  const [metered, surplus] = await Promise.all([
+    fetchMeteredModels(),
+    fetchSurplusModels(),
+  ]);
   const meteredRecord = metered?.models.find((candidate) => candidate.id === model);
-  if (meteredRecord) {
+  const surplusRecord = surplus?.models.find((candidate) => candidate.id === model);
+  const paidRecord = meteredRecord ?? surplusRecord;
+  if (paidRecord) {
     return {
       snapshot: snapshot ?? {
         models: [],
-        source: "metered",
-        updated_at_ms: metered?.updated_at_ms ?? Date.now(),
+        source: meteredRecord ? "metered" : "surplus",
+        updated_at_ms: (meteredRecord ? metered?.updated_at_ms : surplus?.updated_at_ms) ?? Date.now(),
       },
       record: {
-        slug: meteredRecord.id,
+        slug: paidRecord.id,
         supported_reasoning_levels: ["none"],
         default_reasoning_level: "none",
       },
       reasoning: getCodexModelReasoning({ supported_reasoning_levels: ["none"], default_reasoning_level: "none" }),
-      supportedEndpoints: meteredRecord.supported_endpoint_types,
+      supportedEndpoints: paidRecord.supported_endpoint_types,
     };
   }
   return { snapshot, record: null, reasoning: getCodexModelReasoning(null), supportedEndpoints: null };
@@ -5333,9 +5478,9 @@ const streamChatCompletions = (
               return;
             }
             onResponseTerminal?.(true);
-            lifecycle.terminal(type);
-            recordStreamTerminalType(usageContext, "response.completed");
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
+            lifecycle.terminal(type, usageTokens);
+            recordStreamTerminalType(usageContext, "response.completed");
             void recordCompletionUsage(usageContext, usageTokens);
             const chunk: Record<string, unknown> = {
               id,
@@ -5369,9 +5514,9 @@ const streamChatCompletions = (
           }
           if (event.terminal) {
             onResponseTerminal?.(false);
-            lifecycle.terminal(type);
-            recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
+            lifecycle.terminal(type, usageTokens);
+            recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
             recordTerminalUsage(usageContext, usageTokens, false);
             const errorValue = {
               error: {
@@ -5459,10 +5604,10 @@ const completeChatCompletions = async (
       const type = event.type;
       if (event.terminal) {
         if (type !== "response.completed") onResponseTerminal?.(false);
-        lifecycle.terminal(type);
+        const terminalUsage = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
+        lifecycle.terminal(type, terminalUsage);
         recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
         if (type !== "response.completed") {
-          const terminalUsage = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
           recordTerminalUsage(usageContext, terminalUsage, false);
         }
       }
@@ -5579,9 +5724,12 @@ export const handleModels = async (req?: Request): Promise<Response> => {
     ? normalizeModelList(snapshot)
     : null;
   const data = withConfiguredCerebrasModel(normalized?.data ?? []);
-  const metered = await fetchMeteredModels();
+  const [metered, surplus] = await Promise.all([
+    fetchMeteredModels(),
+    fetchSurplusModels(),
+  ]);
   const merged = [...data];
-  for (const model of metered?.models ?? []) {
+  for (const model of [...(metered?.models ?? []), ...(surplus?.models ?? [])]) {
     if (merged.some((candidate) => candidate.id === model.id)) continue;
     merged.push({
       id: model.id,
@@ -5607,8 +5755,11 @@ export const handleModelCapabilities = async (): Promise<Response> => {
   if (cerebras && !data.some((model) => model.id === CEREBRAS_GPT_OSS_120B_MODEL)) {
     data.push(cerebras);
   }
-  const metered = await fetchMeteredModels();
-  for (const model of metered?.models ?? []) {
+  const [metered, surplus] = await Promise.all([
+    fetchMeteredModels(),
+    fetchSurplusModels(),
+  ]);
+  for (const model of [...(metered?.models ?? []), ...(surplus?.models ?? [])]) {
     if (data.some((candidate) => candidate.id === model.id)) continue;
     const supportedEndpoints = [
       ...(model.supported_endpoint_types.includes("openai-response") ? ["/v1/responses"] : []),
@@ -7027,7 +7178,13 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   }
   const upstream = routed.response;
   const providerWarnings = responseWarnings(upstream);
-  const lifecycle = createMeteredTransportLifecycle(routed.paidFallback);
+  const lifecycle = createMeteredTransportLifecycle(
+    routed.paidFallback,
+    routed.provider,
+    routed.paidFallbackBilling ?? null,
+    routed.paidFallbackProviderRequestId ?? null,
+    model,
+  );
   const resolveCodexProbe = (completed = false): void => {
     if (routed.provider !== "chatgpt_codex") return;
     const transition = completed ? markCodexResponseCompleted(upstream) : releaseCodexResponseProbe(upstream);
@@ -7634,7 +7791,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       recordStreamTerminalType(usageContext, terminalType);
     }
     if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
-    if (globalProbe && routed?.provider === "metered") {
+    if (globalProbe && (routed?.provider === "metered" || routed?.provider === "surplus")) {
       void releaseGlobalRemovedProviderProbe(globalProbe).then((value) => {
         if (value !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: value });
       }).catch(() => {});
@@ -7672,7 +7829,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     clearProbeRenewal();
     const syntheticFailure = isSyntheticResponsesFailureEvent(event);
     if (routed && !syntheticFailure) {
-      lifecycle.terminal(event.type);
+      const terminalUsage = isRecord(event.value.response) ? extractUsageTokens(event.value.response.usage) : null;
+      lifecycle.terminal(event.type, terminalUsage);
       if (routed.provider === "chatgpt_codex") {
         const transition = event.type === "response.completed"
           ? markCodexResponseCompleted(routed.response)

@@ -228,6 +228,7 @@ export type PaidFallbackRequestV3 = Readonly<{
   provider_request_id: string | null;
   provider_quota: number | null;
   input_tokens: number | null;
+  cached_input_tokens?: number | null;
   output_tokens: number | null;
   dispatch_state: "reserved" | "dispatched" | "not_dispatched";
   terminal_state: "pending" | "completed" | "failed" | "incomplete" | "cancelled" | "ambiguous";

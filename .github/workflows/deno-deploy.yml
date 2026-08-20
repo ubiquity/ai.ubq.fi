@@ -167,6 +167,7 @@ jobs:
       VOYAGEAI_API_KEY: ${{ secrets.VOYAGEAI_API_KEY }}
       METERED_API_KEY: ${{ secrets.METERED_API_KEY }}
       OPENLUX_API_KEY: ${{ secrets.OPENLUX_API_KEY }}
+      SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
       METERED_SYSTEM_TOKEN: ${{ secrets.METERED_SYSTEM_TOKEN }}
     steps:
       - uses: denoland/setup-deno@v2
@@ -179,7 +180,7 @@ jobs:
           set -euo pipefail
           [ -n "$DENO_DEPLOY_TOKEN" ]
           [ -n "$UOS_AI_TOKEN" ]
-          [ -n "$METERED_API_KEY" ] || [ -n "$OPENLUX_API_KEY" ]
+          [ -n "$METERED_API_KEY" ] || [ -n "$OPENLUX_API_KEY" ] || [ -n "$SURPLUS_API_KEY" ]
           echo "::add-mask::$DENO_DEPLOY_TOKEN"
 
           deno eval \
@@ -188,6 +189,7 @@ jobs:
               const optional = [
                 "METERED_API_KEY",
                 "OPENLUX_API_KEY",
+                "SURPLUS_API_KEY",
                 "UOS_AI_KERNEL_PUBLIC_KEY",
                 "CEREBRAS_API_KEY",
                 "VOYAGEAI_API_KEY",
@@ -202,8 +204,12 @@ jobs:
                 }
                 lines.push(`${name}=${JSON.stringify(value)}`);
               }
-              if (!Deno.env.get("METERED_API_KEY")?.trim() && !Deno.env.get("OPENLUX_API_KEY")?.trim()) {
-                throw new Error("METERED_API_KEY or OPENLUX_API_KEY is required");
+              if (
+                !Deno.env.get("METERED_API_KEY")?.trim() &&
+                !Deno.env.get("OPENLUX_API_KEY")?.trim() &&
+                !Deno.env.get("SURPLUS_API_KEY")?.trim()
+              ) {
+                throw new Error("METERED_API_KEY, OPENLUX_API_KEY, or SURPLUS_API_KEY is required");
               }
               Deno.writeTextFileSync(".uos-deploy-secrets.env", `${lines.join("\n")}\n`, {
                 mode: 0o600,
