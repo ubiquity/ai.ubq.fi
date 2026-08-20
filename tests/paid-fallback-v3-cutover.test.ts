@@ -254,11 +254,13 @@ Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs 
       dispatchedReservation,
       new Response(null, { status: 503 }),
       "provider-request-id",
+      "surplus",
     );
     const dispatched = await readRequest("dispatched-http-error");
     assert.equal(dispatched.dispatch_state, "dispatched");
     assert.equal(dispatched.terminal_state, "pending");
     assert.equal(dispatched.provider_request_id, "provider-request-id");
+    assert.equal(dispatched.provider, "surplus");
     assert.equal(dispatched.billing_state, "pending");
     assert.equal(dispatched.reserved_microcredits, 250_000);
 

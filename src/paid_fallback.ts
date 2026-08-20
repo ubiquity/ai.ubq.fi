@@ -8,7 +8,7 @@ import {
 } from "./paid_fallback_ledger.ts";
 import { loadFullCodexModelsSnapshot } from "./codex.ts";
 import { getKv } from "./kv.ts";
-import type { ApiKeyHashRecord, ApiKeyRecord } from "./types.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord, PaidFallbackProvider } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
 import { initializeMeteredPricing, MeteredError, readMeteredApiKey } from "./metered.ts";
 import { readSurplusApiKey } from "./surplus.ts";
@@ -304,15 +304,20 @@ export const recordMeteredUpstreamResponse = async (
   reservation: PaidFallbackReservation,
   _response: Response,
   providerRequestId: string | null,
+  provider: PaidFallbackProvider = "metered",
 ): Promise<void> => {
   await updatePaidFallbackRequestV3(reservation, {
+    provider,
     provider_request_id: providerRequestId,
     dispatch_state: "dispatched",
   });
 };
 
-export const recordMeteredAmbiguousFailure = async (reservation: PaidFallbackReservation): Promise<void> => {
-  await updatePaidFallbackRequestV3(reservation, { dispatch_state: "dispatched" });
+export const recordMeteredAmbiguousFailure = async (
+  reservation: PaidFallbackReservation,
+  provider: PaidFallbackProvider = "metered",
+): Promise<void> => {
+  await updatePaidFallbackRequestV3(reservation, { provider, dispatch_state: "dispatched" });
   await markPaidFallbackTerminalV3(reservation, "ambiguous");
 };
 
@@ -331,8 +336,9 @@ export const recordMeteredPrefetchCancellation = async (
 export const recordMeteredTerminal = async (
   reservation: PaidFallbackReservation,
   terminalState: "completed" | "failed" | "incomplete" | "cancelled" | "ambiguous",
+  provider: PaidFallbackProvider = "metered",
 ): Promise<void> => {
-  await markPaidFallbackTerminalV3(reservation, terminalState);
+  await markPaidFallbackTerminalV3(reservation, terminalState, provider);
 };
 
 export type SurplusBillingPricing = Readonly<{

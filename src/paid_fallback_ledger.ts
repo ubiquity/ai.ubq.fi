@@ -1,6 +1,11 @@
 import { MICROCREDITS_PER_CREDIT, PAID_FALLBACK_NO_LIMIT } from "./api_keys.ts";
 import { getKv } from "./kv.ts";
-import type { PaidFallbackRequestV3, PaidFallbackWindowV3 } from "./types.ts";
+import type {
+  PaidFallbackProvider,
+  PaidFallbackProviderUsageV3,
+  PaidFallbackRequestV3,
+  PaidFallbackWindowV3,
+} from "./types.ts";
 import { fetchMeteredTokenLogs, type MeteredTokenLogEntry } from "./metered.ts";
 
 const PREFIX = ["uos_ai", "paid_fallback", "v3"] as const;
@@ -226,6 +231,47 @@ export const listPaidFallbackRequestsV3 = async (
     right.created_at_ms - left.created_at_ms || right.request_id.localeCompare(left.request_id)
   );
   return requests.slice(0, Math.min(1_000, Math.trunc(limit)));
+};
+
+const emptyPaidFallbackProviderUsage = (): PaidFallbackProviderUsageV3 => ({
+  request_count: 0,
+  input_tokens: 0,
+  output_tokens: 0,
+  total_tokens: 0,
+  spend_microcredits: 0,
+});
+
+/**
+ * Returns current-window usage split by the actual paid provider. The shared
+ * admission window remains provider-neutral; this projection is only an
+ * operator view and does not affect quota decisions.
+ */
+export const getPaidFallbackProviderUsageV3 = async (
+  keyId: string,
+  windowResetAtMs: number,
+  kvOverride?: Deno.Kv | null,
+): Promise<Readonly<Record<PaidFallbackProvider, PaidFallbackProviderUsageV3>>> => {
+  const usage: Record<PaidFallbackProvider, PaidFallbackProviderUsageV3> = {
+    metered: emptyPaidFallbackProviderUsage(),
+    surplus: emptyPaidFallbackProviderUsage(),
+  };
+  const requests = await listPaidFallbackRequestsV3(keyId, 1_000, kvOverride);
+  for (const request of requests) {
+    if (request.window_reset_at_ms !== windowResetAtMs) continue;
+    const provider = request.provider ?? "metered";
+    const current = usage[provider];
+    const inputTokens = request.input_tokens ?? 0;
+    const outputTokens = request.output_tokens ?? 0;
+    usage[provider] = {
+      request_count: current.request_count + 1,
+      input_tokens: current.input_tokens + inputTokens,
+      output_tokens: current.output_tokens + outputTokens,
+      total_tokens: current.total_tokens + inputTokens + outputTokens,
+      spend_microcredits: current.spend_microcredits +
+        (request.billing_state === "settled" ? request.spend_microcredits ?? 0 : 0),
+    };
+  }
+  return usage;
 };
 
 export const getPaidFallbackWindowProjectionV3 = async (
@@ -560,7 +606,7 @@ type PaidFallbackRequestLifecyclePatchV3 = Readonly<
   Partial<
     Pick<
       PaidFallbackRequestV3,
-      "provider_request_id" | "dispatch_state" | "terminal_state"
+      "provider" | "provider_request_id" | "dispatch_state" | "terminal_state"
     > & {
       reconciliation_attempts?: number;
       last_reconciliation_at_ms?: number | null;
@@ -581,6 +627,7 @@ export const updatePaidFallbackRequestV3 = async (
     if (!entry.value) return;
     const current = entry.value;
     const now = Date.now();
+    const provider = current.provider ?? patch.provider;
     const providerRequestId = current.provider_request_id ??
       (patch.provider_request_id === undefined ? null : patch.provider_request_id);
     const dispatchState = current.dispatch_state === "reserved" && patch.dispatch_state !== undefined
@@ -599,6 +646,7 @@ export const updatePaidFallbackRequestV3 = async (
       : patch.last_reconciliation_at_ms ?? current.last_reconciliation_at_ms;
     if (
       providerRequestId === current.provider_request_id &&
+      provider === current.provider &&
       dispatchState === current.dispatch_state &&
       terminalState === current.terminal_state &&
       reconciliationAttempts === current.reconciliation_attempts &&
@@ -614,6 +662,7 @@ export const updatePaidFallbackRequestV3 = async (
       : null;
     let atomic = kv.atomic().check(entry).set(key, {
       ...current,
+      ...(provider === undefined ? {} : { provider }),
       provider_request_id: providerRequestId,
       dispatch_state: dispatchState,
       terminal_state: terminalState,
@@ -1091,8 +1140,10 @@ export const reconcileDuePaidFallbacksV3 = async (
 export const markPaidFallbackTerminalV3 = async (
   reservation: PaidFallbackAdmissionV3,
   terminalState: PaidFallbackRequestV3["terminal_state"],
+  provider?: PaidFallbackProvider,
 ): Promise<number> => {
   await updatePaidFallbackRequestV3(reservation, {
+    ...(provider === undefined ? {} : { provider }),
     terminal_state: terminalState,
     increment_reconciliation_attempts: true,
   });
@@ -1108,8 +1159,9 @@ export const markPaidFallbackTerminalV3 = async (
 export const recordPaidFallbackTerminalV3 = async (
   reservation: PaidFallbackAdmissionV3,
   terminalState: PaidFallbackRequestV3["terminal_state"],
+  provider?: PaidFallbackProvider,
 ): Promise<number> => {
-  await markPaidFallbackTerminalV3(reservation, terminalState);
+  await markPaidFallbackTerminalV3(reservation, terminalState, provider);
   // Legacy direct callers are retained only for deterministic local migration
   // tests; production inference calls markPaidFallbackTerminalV3 instead.
   return await reconcilePaidFallbackV3(reservation.key_id, Date.now());

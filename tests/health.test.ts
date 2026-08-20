@@ -71,6 +71,7 @@ const {
   recordCerebrasProviderHealth,
   recordCodexProviderHealth,
   recordMeteredProviderHealth,
+  recordSurplusProviderHealth,
   resetProviderHealthThrottleForTest,
 } = await import("../src/provider_health.ts");
 resetAuthCache = resetCodexAuthCacheForTest;
@@ -193,6 +194,34 @@ Deno.test("admin provider health includes cached quota fields without an active 
     assert.equal("removed_provider" in payload, false);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("admin provider health exposes Surplus identity and honest quota availability", async () => {
+  kvStore.clear();
+  resetProviderHealthThrottleForTest();
+  const originalApiKey = Deno.env.get("SURPLUS_API_KEY");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+  await recordSurplusProviderHealth("success", 200, () => 4_000);
+  try {
+    const response = await handleHealthProviders({ includeQuota: true });
+    const payload = await response.json() as {
+      surplus?: {
+        configured?: boolean;
+        quota_monitoring_configured?: boolean;
+        health?: { state?: string };
+        quota?: { available?: boolean; source?: string };
+      };
+    };
+    assert.equal(response.status, 200);
+    assert.equal(payload.surplus?.configured, true);
+    assert.equal(payload.surplus?.quota_monitoring_configured, false);
+    assert.equal(payload.surplus?.health?.state, "healthy");
+    assert.equal(payload.surplus?.quota?.available, false);
+    assert.equal(payload.surplus?.quota?.source, "not_reported");
+  } finally {
+    if (originalApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalApiKey);
   }
 });
 

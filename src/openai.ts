@@ -96,7 +96,11 @@ import {
   reservePaidFallback,
   type SurplusBillingPricing,
 } from "./paid_fallback.ts";
-import { recordCerebrasProviderHealth, recordMeteredProviderHealth } from "./provider_health.ts";
+import {
+  recordCerebrasProviderHealth,
+  recordMeteredProviderHealth,
+  recordSurplusProviderHealth,
+} from "./provider_health.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type {
   ChatCompletionRequest,
@@ -1754,7 +1758,11 @@ const createMeteredTransportLifecycle = (
       schedule(
         "terminal reconciliation",
         async (activeReservation) => {
-          const terminal = recordMeteredTerminal(activeReservation, terminalState);
+          const terminal = recordMeteredTerminal(
+            activeReservation,
+            terminalState,
+            provider === "surplus" ? "surplus" : "metered",
+          );
           const surplusSettlement =
             provider === "surplus" && surplusBilling && surplusProviderRequestId && model && usage
               ? async (): Promise<void> => {
@@ -1774,10 +1782,15 @@ const createMeteredTransportLifecycle = (
               : () => terminal;
           await Promise.all([
             surplusSettlement(),
-            recordMeteredProviderHealth(
-              terminalState === "completed" ? "success" : "upstream_error",
-              terminalState === "completed" ? 200 : null,
-            ),
+            provider === "surplus"
+              ? recordSurplusProviderHealth(
+                terminalState === "completed" ? "success" : "upstream_error",
+                terminalState === "completed" ? 200 : null,
+              )
+              : recordMeteredProviderHealth(
+                terminalState === "completed" ? "success" : "upstream_error",
+                terminalState === "completed" ? 200 : null,
+              ),
           ]);
         },
       );
@@ -1787,8 +1800,13 @@ const createMeteredTransportLifecycle = (
         "ambiguous failure recording",
         async (activeReservation) => {
           await Promise.all([
-            recordMeteredAmbiguousFailure(activeReservation),
-            recordMeteredProviderHealth("upstream_error", null),
+            recordMeteredAmbiguousFailure(
+              activeReservation,
+              provider === "surplus" ? "surplus" : "metered",
+            ),
+            provider === "surplus"
+              ? recordSurplusProviderHealth("upstream_error", null)
+              : recordMeteredProviderHealth("upstream_error", null),
           ]);
         },
       );
@@ -1796,7 +1814,12 @@ const createMeteredTransportLifecycle = (
     cancelled: () =>
       schedule(
         "dispatched cancellation recording",
-        (activeReservation) => recordMeteredTerminal(activeReservation, "cancelled"),
+        (activeReservation) =>
+          recordMeteredTerminal(
+            activeReservation,
+            "cancelled",
+            provider === "surplus" ? "surplus" : "metered",
+          ),
       ),
   };
 };
@@ -2062,12 +2085,13 @@ const fetchResponsesWithPaidFallback = async (
   const isRetryableProviderStatus = (status: number | null): boolean =>
     status === null || status === 401 || status === 402 || status === 403 || status === 429 ||
     (status !== null && status >= 500);
-  const recordProviderHealth = async (status: number): Promise<void> => {
+  const recordProviderHealth = async (provider: "metered" | "surplus", status: number): Promise<void> => {
     try {
-      if (status === 401 || status === 403) await recordMeteredProviderHealth("auth_invalid", status);
-      else if (status === 402 || status === 429) await recordMeteredProviderHealth("quota_exhausted", status);
-      else if (status >= 500) await recordMeteredProviderHealth("upstream_error", status);
-      else if (status >= 100) await recordMeteredProviderHealth("reachable", status);
+      const record = provider === "surplus" ? recordSurplusProviderHealth : recordMeteredProviderHealth;
+      if (status === 401 || status === 403) await record("auth_invalid", status);
+      else if (status === 402 || status === 429) await record("quota_exhausted", status);
+      else if (status >= 500) await record("upstream_error", status);
+      else if (status >= 100) await record("reachable", status);
     } catch {
       // Provider-health persistence must not change failover or response delivery.
     }
@@ -2101,7 +2125,7 @@ const fetchResponsesWithPaidFallback = async (
           signal: options.signal,
           beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
         });
-      await recordProviderHealth(candidate.response.status);
+      await recordProviderHealth(provider, candidate.response.status);
       if (
         providerIndex < paidProviders.length - 1 &&
         isRetryableProviderStatus(candidate.response.status)
@@ -2123,7 +2147,7 @@ const fetchResponsesWithPaidFallback = async (
       }
       providerError = error;
       const status = providerStatus(error);
-      await recordProviderHealth(status ?? 0);
+      await recordProviderHealth(provider, status ?? 0);
       if (providerIndex < paidProviders.length - 1 && isRetryableProviderStatus(status)) continue;
       break;
     }
@@ -2137,7 +2161,7 @@ const fetchResponsesWithPaidFallback = async (
     }
     await bestEffortPaidFallbackBookkeeping(
       "ambiguous failure recording",
-      () => recordMeteredAmbiguousFailure(decision.reservation),
+      () => recordMeteredAmbiguousFailure(decision.reservation, selectedProvider),
     );
     const abortReason = options.signal?.reason;
     if (
@@ -2191,7 +2215,7 @@ const fetchResponsesWithPaidFallback = async (
   const providerRequestId = result.request_id ?? (selectedProvider === "surplus" ? `surplus:${requestId}` : null);
   await bestEffortPaidFallbackBookkeeping(
     "upstream response recording",
-    () => recordMeteredUpstreamResponse(decision.reservation, result.response, providerRequestId),
+    () => recordMeteredUpstreamResponse(decision.reservation, result.response, providerRequestId, selectedProvider),
   );
   return {
     response: preservePrimaryWarnings(result.response),
@@ -5759,26 +5783,33 @@ export const handleModelCapabilities = async (): Promise<Response> => {
     fetchMeteredModels(),
     fetchSurplusModels(),
   ]);
-  for (const model of [...(metered?.models ?? []), ...(surplus?.models ?? [])]) {
-    if (data.some((candidate) => candidate.id === model.id)) continue;
-    const supportedEndpoints = [
-      ...(model.supported_endpoint_types.includes("openai-response") ? ["/v1/responses"] : []),
-      ...(model.supported_endpoint_types.includes("openai") ? ["/v1/chat/completions"] : []),
-    ];
-    data.push({
-      id: model.id,
-      object: "uos.model_capabilities",
-      owned_by: model.owned_by,
-      display_name: model.id,
-      upstream_provider: "metered",
-      supported_endpoints: supportedEndpoints,
-      supported_reasoning_levels: ["none"],
-      default_reasoning_effort: "none",
-      reasoning_effort_wire_map: {},
-      context_window_tokens: null,
-      max_context_window_tokens: null,
-      auto_compact_token_limit_tokens: null,
-    });
+  for (
+    const [provider, models] of [
+      ["metered", metered?.models ?? []],
+      ["surplus", surplus?.models ?? []],
+    ] as const
+  ) {
+    for (const model of models) {
+      if (data.some((candidate) => candidate.id === model.id)) continue;
+      const supportedEndpoints = [
+        ...(model.supported_endpoint_types.includes("openai-response") ? ["/v1/responses"] : []),
+        ...(model.supported_endpoint_types.includes("openai") ? ["/v1/chat/completions"] : []),
+      ];
+      data.push({
+        id: model.id,
+        object: "uos.model_capabilities",
+        owned_by: model.owned_by,
+        display_name: model.id,
+        upstream_provider: provider,
+        supported_endpoints: supportedEndpoints,
+        supported_reasoning_levels: ["none"],
+        default_reasoning_effort: "none",
+        reasoning_effort_wire_map: {},
+        context_window_tokens: null,
+        max_context_window_tokens: null,
+        auto_compact_token_limit_tokens: null,
+      });
+    }
   }
 
   return json(

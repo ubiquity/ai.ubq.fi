@@ -969,6 +969,38 @@ const renderMeteredCapacitySource = (source, provider = null) => {
   return row;
 };
 
+const renderSurplusProviderHealthSource = (provider = null) => {
+  const row = document.createElement("article");
+  row.dataset.capacitySource = "surplus";
+  row.dataset.state = provider?.configured === false ? "unavailable" : provider?.health?.state ?? "unknown";
+  row.setAttribute("role", "listitem");
+
+  const header = document.createElement("header");
+  const title = document.createElement("h3");
+  title.textContent = "Surplus Intelligence";
+  const badge = document.createElement("span");
+  badge.dataset.badge = "";
+  const configured = provider?.configured === true;
+  const state = configured ? provider?.health?.state ?? "unknown" : "unconfigured";
+  setBadge(
+    badge,
+    configured ? providerBadgeState(state) : "bad",
+    configured ? providerStateLabel(provider?.health) : "Not configured",
+  );
+  header.append(title, badge);
+
+  const facts = document.createElement("dl");
+  facts.dataset.capacityFacts = "";
+  appendProviderFact(facts, "Configured", configured ? "Yes" : "No");
+  appendProviderFact(facts, "Inference", configured ? providerStateLabel(provider?.health) : "Unavailable");
+  appendProviderFact(facts, "Last response", formatDate(provider?.health?.last_observed_at_ms));
+  appendProviderFact(facts, "Quota", provider?.quota?.available === true ? "Reported" : "Not reported");
+  appendProviderFact(facts, "Usage", "Shown per API key");
+  appendProviderFact(facts, "Settlement", "Response usage");
+  row.append(header, facts);
+  return row;
+};
+
 const providerForCodexSlot = (slot) => {
   const accounts = Array.isArray(latestProviderHealth?.codex?.accounts) ? latestProviderHealth.codex.accounts : [];
   return accounts.find((account) => String(account?.slot) === String(slot)) ?? null;
@@ -982,6 +1014,9 @@ const renderProviderCapacityList = (sources) => {
         ? renderMeteredCapacitySource(source, latestProviderHealth?.metered)
         : renderCodexCapacitySource(source, providerForCodexSlot(source.slot)),
     );
+  }
+  if (latestProviderHealth?.surplus) {
+    providerCapacityList.appendChild(renderSurplusProviderHealthSource(latestProviderHealth.surplus));
   }
 };
 
@@ -5165,6 +5200,10 @@ const renderKeys = (keys, view = "all") => {
     const paidResetInfo = appendKeyInfo(paidFallbackInfo, "Window resets", "unknown");
     const lifetimeSpendInfo = appendKeyInfo(paidFallbackInfo, "Lifetime spend", "unknown");
     const fallbackCountInfo = appendKeyInfo(paidFallbackInfo, "Fallbacks", "unknown");
+    const meteredWindowCountInfo = appendKeyInfo(paidFallbackInfo, "Metered window requests", "unknown");
+    const surplusWindowCountInfo = appendKeyInfo(paidFallbackInfo, "Surplus window requests", "unknown");
+    const meteredWindowSpendInfo = appendKeyInfo(paidFallbackInfo, "Metered window spend", "unknown");
+    const surplusWindowSpendInfo = appendKeyInfo(paidFallbackInfo, "Surplus window spend", "unknown");
 
     paidFallbackSummary.appendChild(paidFallbackHeader);
     paidFallbackSummary.appendChild(paidFallbackInfo);
@@ -5175,6 +5214,15 @@ const renderKeys = (keys, view = "all") => {
       const spent = normalizeFiniteNumber(key.paid_fallback_spent_credits) ?? 0;
       const reserved = normalizeFiniteNumber(key.paid_fallback_reserved_credits) ?? 0;
       const usage = key.usage && typeof key.usage === "object" ? key.usage : null;
+      const providerUsage = key.paid_fallback_provider_usage && typeof key.paid_fallback_provider_usage === "object"
+        ? key.paid_fallback_provider_usage
+        : null;
+      const meteredUsage = providerUsage?.metered && typeof providerUsage.metered === "object"
+        ? providerUsage.metered
+        : null;
+      const surplusUsage = providerUsage?.surplus && typeof providerUsage.surplus === "object"
+        ? providerUsage.surplus
+        : null;
 
       paidFallbackSummary.hidden = !enabled;
       paidFallbackStatus.dataset.state = enabled ? "ok" : "unknown";
@@ -5191,6 +5239,14 @@ const renderKeys = (keys, view = "all") => {
       fallbackCountInfo.valueEl.textContent = usage &&
           Object.prototype.hasOwnProperty.call(usage, "metered_fallback_requests")
         ? formatNumber(usage.metered_fallback_requests)
+        : "unknown";
+      meteredWindowCountInfo.valueEl.textContent = meteredUsage ? formatNumber(meteredUsage.request_count) : "unknown";
+      surplusWindowCountInfo.valueEl.textContent = surplusUsage ? formatNumber(surplusUsage.request_count) : "unknown";
+      meteredWindowSpendInfo.valueEl.textContent = meteredUsage
+        ? formatMicrocreditsAsCredits(meteredUsage.spend_microcredits)
+        : "unknown";
+      surplusWindowSpendInfo.valueEl.textContent = surplusUsage
+        ? formatMicrocreditsAsCredits(surplusUsage.spend_microcredits)
         : "unknown";
 
       if (enabled && limit !== -1 && limit <= 0) {

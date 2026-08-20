@@ -266,6 +266,26 @@ Deno.test("API key list projects current paid fallback totals from V3 only", asy
     pending_count: 1,
     updated_at_ms: now,
   });
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "request", id, "metered-request"]), {
+    request_id: "metered-request",
+    provider: "metered",
+    window_reset_at_ms: resetAtMs,
+    input_tokens: 3,
+    output_tokens: 4,
+    billing_state: "settled",
+    spend_microcredits: 500,
+    created_at_ms: now - 2,
+  });
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "request", id, "surplus-request"]), {
+    request_id: "surplus-request",
+    provider: "surplus",
+    window_reset_at_ms: resetAtMs,
+    input_tokens: 11,
+    output_tokens: 7,
+    billing_state: "settled",
+    spend_microcredits: 700,
+    created_at_ms: now - 1,
+  });
 
   const response = await handleAdminApiKeysList(new Request("https://ai.ubq.fi/admin/api-keys"));
   assert.equal(response.status, 200);
@@ -275,12 +295,22 @@ Deno.test("API key list projects current paid fallback totals from V3 only", asy
       paid_fallback_spent_credits?: number;
       paid_fallback_reserved_credits?: number;
       paid_fallback_pending_count?: number;
+      paid_fallback_provider_usage?: {
+        metered?: { request_count?: number; total_tokens?: number; spend_microcredits?: number };
+        surplus?: { request_count?: number; total_tokens?: number; spend_microcredits?: number };
+      };
     }>;
   };
   assert.equal(payload.data?.[0]?.paid_fallback_limit_credits, 2);
   assert.equal(payload.data?.[0]?.paid_fallback_spent_credits, 0.028992);
   assert.equal(payload.data?.[0]?.paid_fallback_reserved_credits, 0.125);
   assert.equal(payload.data?.[0]?.paid_fallback_pending_count, 1);
+  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.metered?.request_count, 1);
+  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.metered?.total_tokens, 7);
+  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.metered?.spend_microcredits, 500);
+  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.surplus?.request_count, 1);
+  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.surplus?.total_tokens, 18);
+  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.surplus?.spend_microcredits, 700);
 });
 
 Deno.test("API key limit edits retain V3 usage while resets create a fresh aggregate and reject live leases", async () => {
@@ -1457,6 +1487,7 @@ Deno.test("admin paid fallback history exposes V3 request lifecycle and billing 
     model: "gpt-5.6-sol",
     stream: true,
     reasoning: "max",
+    provider: "surplus",
     window_reset_at_ms: 61_000,
     reserved_microcredits: 125_000,
     quota_per_credit: 500_000,
@@ -1518,7 +1549,7 @@ Deno.test("admin paid fallback history exposes V3 request lifecycle and billing 
   assert.equal(payload.data?.[0]?.request_id, settledRequest.request_id);
   assert.equal(payload.data?.[0]?.model, "gpt-5.6-sol");
   assert.equal(payload.data?.[0]?.reasoning, "max");
-  assert.equal(payload.data?.[0]?.provider, "metered");
+  assert.equal(payload.data?.[0]?.provider, "surplus");
   assert.equal(payload.data?.[0]?.reserved_microcredits, 125_000);
   assert.equal(payload.data?.[0]?.dispatch_state, "dispatched");
   assert.equal(payload.data?.[0]?.terminal_state, "completed");
