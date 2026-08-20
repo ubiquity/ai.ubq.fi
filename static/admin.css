@@ -377,6 +377,10 @@ body[data-page="admin"] [data-capacity-list] {
   gap: 8px;
 }
 
+body[data-page="admin"] [data-capacity-source="surplus"] {
+  grid-column: 3;
+}
+
 body[data-page="admin"] [data-capacity-chart] {
   display: grid;
   gap: 8px;
@@ -801,6 +805,10 @@ body[data-page="admin"] [data-capacity-meta] {
 
   body[data-page="admin"] [data-capacity-list] {
     grid-template-columns: 1fr;
+  }
+
+  body[data-page="admin"] [data-capacity-source="surplus"] {
+    grid-column: auto;
   }
 }
 

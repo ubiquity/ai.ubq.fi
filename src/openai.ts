@@ -2296,7 +2296,10 @@ const getCodexModelReasoning = (record: Record<string, unknown> | null): CodexMo
   };
 };
 
-const getCodexModelMetadata = async (model: string): Promise<CodexModelMetadata> => {
+const getCodexModelMetadata = async (
+  model: string,
+  route: "chat.completions" | "responses",
+): Promise<CodexModelMetadata> => {
   const snapshot = await loadCodexModelsSnapshot();
   const record = findSnapshotModelRecord(snapshot, model);
   if (record) return { snapshot, record, reasoning: getCodexModelReasoning(record), supportedEndpoints: null };
@@ -2306,13 +2309,19 @@ const getCodexModelMetadata = async (model: string): Promise<CodexModelMetadata>
   ]);
   const meteredRecord = metered?.models.find((candidate) => candidate.id === model);
   const surplusRecord = surplus?.models.find((candidate) => candidate.id === model);
-  const paidRecord = meteredRecord ?? surplusRecord;
+  const endpointType = route === "responses" ? "openai-response" : "openai";
+  const routeRecord = [meteredRecord, surplusRecord].find((candidate) =>
+    candidate?.supported_endpoint_types.includes(endpointType)
+  );
+  const paidRecord = routeRecord ?? meteredRecord ?? surplusRecord;
   if (paidRecord) {
+    const routeProvider = routeRecord === surplusRecord && surplusRecord ? "surplus" : "metered";
+    const routeSnapshot = routeProvider === "surplus" ? surplus : metered;
     return {
       snapshot: snapshot ?? {
         models: [],
-        source: meteredRecord ? "metered" : "surplus",
-        updated_at_ms: (meteredRecord ? metered?.updated_at_ms : surplus?.updated_at_ms) ?? Date.now(),
+        source: routeProvider,
+        updated_at_ms: routeSnapshot?.updated_at_ms ?? Date.now(),
       },
       record: {
         slug: paidRecord.id,
@@ -7077,7 +7086,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   if (model.toLowerCase() === CEREBRAS_GPT_OSS_120B_MODEL) {
     return await handleCerebrasChatCompletions(req, rawRecord, modelRaw, usageContext);
   }
-  const modelMetadata = await getCodexModelMetadata(model);
+  const modelMetadata = await getCodexModelMetadata(model, "chat.completions");
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "chat.completions", modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
   const messagesRaw = body.messages;
@@ -7404,7 +7413,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       { param: "model" },
     );
   }
-  const modelMetadata = await getCodexModelMetadata(model);
+  const modelMetadata = await getCodexModelMetadata(model, "responses");
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
 
