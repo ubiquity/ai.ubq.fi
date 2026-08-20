@@ -355,6 +355,46 @@ Deno.test("Owned stream synthetic failure preserves template, text, tools, and s
   assert.equal(output.find((item) => item.id === "ctc_broken")?.status, "completed");
 });
 
+Deno.test("Owned stream synthesizes a Codex failure after semantic output without response.created", async () => {
+  let observedFailure: {
+    failureKind: string;
+    responseCreatedObserved: boolean;
+    semanticCommitmentObserved: boolean;
+    syntheticTerminalType: string | null;
+  } | null = null;
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({
+        type: "response.output_text.delta",
+        response_id: "resp_without_created",
+        item_id: "msg_without_created",
+        output_index: 0,
+        delta: "partial",
+      }),
+    ],
+    iterator: (async function* (): ResponsesStreamIterator {
+      yield* [];
+      throw new Error("provider socket reset");
+    })(),
+    responseId: null,
+    onFailure: (_error, details) => {
+      observedFailure = details;
+    },
+  });
+  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  assert.deepEqual(values.map((value) => value.type), ["response.output_text.delta", "response.failed"]);
+  assert.equal(values.filter((value) => value.type === "error").length, 0);
+  const terminal = values.at(-1)!;
+  assert.equal((terminal.response as Record<string, unknown>).id, "resp_without_created");
+  assert.deepEqual(observedFailure, {
+    failureKind: "read_error",
+    responseCreatedObserved: false,
+    semanticCommitmentObserved: true,
+    syntheticTerminalType: "response.failed",
+  });
+});
+
 Deno.test("Owned stream closes its iterator after a post-commit validation failure", async () => {
   let returned = false;
   const rest = (async function* (): ResponsesStreamIterator {

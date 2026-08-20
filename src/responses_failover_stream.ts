@@ -2,6 +2,7 @@ import {
   RESPONSES_TERMINAL_EVENT_TYPES,
   ResponsesStreamError,
   type ResponsesStreamEvent,
+  type ResponsesStreamFailureKind,
   type ResponsesStreamIterator,
 } from "./responses_stream.ts";
 import { getString, isRecord } from "./utils.ts";
@@ -153,6 +154,7 @@ export const appendResponsesPrecommitEvent = (
 /** Holds all provider events until semantic output or a valid terminal owns the attempt. */
 export const prepareResponsesStreamForCommit = async (
   iterator: ResponsesStreamIterator,
+  options: Readonly<{ onEvent?: (event: ResponsesStreamEvent) => void }> = {},
 ): Promise<PreparedResponsesStream> => {
   const buffered: ResponsesStreamEvent[] = [];
   let bufferedChars = 0;
@@ -165,6 +167,7 @@ export const prepareResponsesStreamForCommit = async (
         });
       }
       bufferedChars = appendResponsesPrecommitEvent(buffered, next.value, bufferedChars);
+      options.onEvent?.(next.value);
       const semanticKind = responsesEventSemanticKind(next.value);
       if (semanticKind) {
         return {
@@ -328,6 +331,13 @@ export const responseIdFromEvents = (events: readonly ResponsesStreamEvent[]): s
 
 const syntheticFailureEvents = new WeakSet<ResponsesStreamEvent>();
 
+export type OwnedResponsesStreamFailureDetails = Readonly<{
+  failureKind: ResponsesStreamFailureKind;
+  responseCreatedObserved: boolean;
+  semanticCommitmentObserved: boolean;
+  syntheticTerminalType: "response.failed" | "error" | null;
+}>;
+
 export const failureEventAfterCommit = (
   responseId: string,
   sequenceNumber: number,
@@ -378,7 +388,7 @@ type OwnedResponsesStreamOptions = Readonly<{
   abortUpstream?: (reason?: unknown) => void;
   onEvent?: (event: ResponsesStreamEvent) => void | Promise<void>;
   validateEvent?: (event: ResponsesStreamEvent) => void;
-  onFailure?: (error: unknown) => void | Promise<void>;
+  onFailure?: (error: unknown, details: OwnedResponsesStreamFailureDetails) => void | Promise<void>;
   onCancel?: (reason: unknown) => void | Promise<void>;
 }>;
 
@@ -409,6 +419,7 @@ export const createOwnedResponsesStream = (
   let closed = false;
   let terminalEmitted = false;
   let responseCreatedObserved = false;
+  let semanticCommitmentObserved = false;
   const queue: ResponsesStreamEvent[] = [];
   let responseTemplate: Record<string, unknown> = {};
   const completedOutputItems: Record<string, unknown>[] = [];
@@ -491,6 +502,14 @@ export const createOwnedResponsesStream = (
   };
   const observeVisibleEvent = (event: ResponsesStreamEvent): void => {
     if (event.type === "response.created") responseCreatedObserved = true;
+    if (responsesEventSemanticKind(event)) semanticCommitmentObserved = true;
+    const candidateResponseId = responseIdFromEvents([event]);
+    if (candidateResponseId && responseId && candidateResponseId !== responseId) {
+      throw new ResponsesStreamError("Upstream Responses stream changed response identifiers.", {
+        kind: "malformed_event",
+      });
+    }
+    responseId ??= candidateResponseId;
     const valueResponse = event.value.response;
     if (isRecord(valueResponse) && !Array.isArray(valueResponse)) {
       responseTemplate = { ...responseTemplate, ...valueResponse };
@@ -573,7 +592,7 @@ export const createOwnedResponsesStream = (
     return output;
   };
   const syntheticFailure = (): ResponsesStreamEvent => {
-    return responseCreatedObserved
+    return semanticCommitmentObserved
       ? failureEventAfterCommit(
         responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
         sequenceNumber++,
@@ -582,6 +601,17 @@ export const createOwnedResponsesStream = (
       )
       : errorEventAfterCommit(sequenceNumber++);
   };
+  const failureKindFor = (error: unknown): ResponsesStreamFailureKind =>
+    error instanceof ResponsesStreamError ? error.kind : "read_error";
+  const failureDetails = (
+    error: unknown,
+    syntheticTerminalType: OwnedResponsesStreamFailureDetails["syntheticTerminalType"],
+  ): OwnedResponsesStreamFailureDetails => ({
+    failureKind: failureKindFor(error),
+    responseCreatedObserved,
+    semanticCommitmentObserved,
+    syntheticTerminalType,
+  });
   const advanceSequence = (event: ResponsesStreamEvent): void => {
     const value = event.value.sequence_number;
     if (typeof value === "number" && Number.isSafeInteger(value) && value >= sequenceNumber) {
@@ -613,6 +643,10 @@ export const createOwnedResponsesStream = (
         if (closed) return;
         if (!event) {
           const failure = syntheticFailure();
+          const details = failureDetails(
+            new ResponsesStreamError("Responses stream ended without a terminal.", { kind: "premature_eof" }),
+            failure.type === "response.failed" || failure.type === "error" ? failure.type : null,
+          );
           terminalEmitted = true;
           closed = true;
           controller.enqueue(encoder.encode(failure.raw));
@@ -620,9 +654,8 @@ export const createOwnedResponsesStream = (
           invoke(() => options.onEvent?.(failure));
           invoke(() =>
             options.onFailure?.(
-              new ResponsesStreamError("Responses stream ended without a terminal.", {
-                kind: "premature_eof",
-              }),
+              new ResponsesStreamError("Responses stream ended without a terminal.", { kind: "premature_eof" }),
+              details,
             )
           );
           return;
@@ -644,17 +677,21 @@ export const createOwnedResponsesStream = (
           closed = true;
           controller.close();
           await options.iterator.return(error).catch(() => {});
-          invoke(() => options.onFailure?.(error));
+          invoke(() => options.onFailure?.(error, failureDetails(error, null)));
           return;
         }
         const failure = syntheticFailure();
+        const details = failureDetails(
+          error,
+          failure.type === "response.failed" || failure.type === "error" ? failure.type : null,
+        );
         terminalEmitted = true;
         closed = true;
         controller.enqueue(encoder.encode(failure.raw));
         controller.close();
         await options.iterator.return(error).catch(() => {});
         invoke(() => options.onEvent?.(failure));
-        invoke(() => options.onFailure?.(error));
+        invoke(() => options.onFailure?.(error, details));
       }
     },
     cancel(reason) {

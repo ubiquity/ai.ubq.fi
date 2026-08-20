@@ -5,6 +5,7 @@ import type { CodexAuthPoolState } from "../src/types.ts";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
 import { setStreamFirstEventDeadlineMsForTest } from "../src/inference_deadline.ts";
 import { RELEASE_GIT_SHA } from "../src/release.ts";
+import { MAX_RESPONSES_SSE_EVENT_BYTES } from "../src/responses_stream.ts";
 import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
@@ -5530,6 +5531,9 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       quotaUsedPercent: undefined,
       completed: true,
       streamTerminalType: "response.completed",
+      failureKind: null,
+      responseCreatedObserved: false,
+      syntheticTerminalType: null,
       stream: false,
       providerRequestId: null,
       firstProviderDispatchMs: null,
@@ -7959,6 +7963,46 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
     restoreApiKey();
     setCerebrasFetchTimeoutMsForTest(null);
   }
+});
+
+Deno.test("openai: oversized Responses events retain their redacted failure classification", async () => {
+  const response = await withFetchMock(
+    () => sseResponse([`data: ${"x".repeat(MAX_RESPONSES_SSE_EVENT_BYTES + 1)}\n\n`]),
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+        }),
+      ),
+  );
+  assert.equal(response.status, 502);
+  assert.equal(getResponseTelemetry(response)?.failureKind, "event_too_large");
+  assert.equal(getResponseTelemetry(response)?.responseCreatedObserved, false);
+  assert.equal(getResponseTelemetry(response)?.syntheticTerminalType, null);
+});
+
+Deno.test("openai: precommit telemetry records response.created before a malformed event", async () => {
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_precommit_malformed" } })}\n\n`,
+        'data: {"type":\n\n',
+      ]),
+    () =>
+      handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+        }),
+      ),
+  );
+  assert.equal(response.status, 502);
+  assert.equal(getResponseTelemetry(response)?.failureKind, "malformed_event");
+  assert.equal(getResponseTelemetry(response)?.responseCreatedObserved, true);
+  assert.equal(getResponseTelemetry(response)?.syntheticTerminalType, null);
 });
 
 Deno.test("openai: streamed Responses force the SSE content type", async () => {

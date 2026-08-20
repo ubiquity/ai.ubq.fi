@@ -54,6 +54,7 @@ import {
   readResponsesStream,
   ResponsesStreamError,
   type ResponsesStreamEvent,
+  type ResponsesStreamFailureKind,
   type ResponsesStreamIterator,
   withSseKeepalive,
 } from "./responses_stream.ts";
@@ -80,6 +81,7 @@ import {
   appendResponsesPrecommitEvent,
   createOwnedResponsesStream,
   isSyntheticResponsesFailureEvent,
+  type OwnedResponsesStreamFailureDetails,
   type PreparedResponsesStream,
   prepareResponsesStreamForCommit,
   responseEventFromValue,
@@ -190,6 +192,9 @@ export type ResponseTelemetry = Readonly<{
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
+  failureKind: ResponsesStreamFailureKind | null;
+  responseCreatedObserved: boolean;
+  syntheticTerminalType: "response.failed" | "error" | null;
   stream: boolean | null;
   providerRequestId: string | null;
   firstProviderDispatchMs: number | null;
@@ -237,6 +242,9 @@ type ResponseTelemetryState = {
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
+  failureKind: ResponsesStreamFailureKind | null;
+  responseCreatedObserved: boolean;
+  syntheticTerminalType: "response.failed" | "error" | null;
   stream: boolean | null;
   providerRequestId: string | null;
   firstProviderDispatchMs: number | null;
@@ -277,6 +285,9 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   quotaUsedPercent: undefined,
   completed: false,
   streamTerminalType: null,
+  failureKind: null,
+  responseCreatedObserved: false,
+  syntheticTerminalType: null,
   stream: null,
   providerRequestId: null,
   firstProviderDispatchMs: null,
@@ -341,6 +352,9 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     quotaUsedPercent: state.quotaUsedPercent,
     completed: state.completed,
     streamTerminalType: state.streamTerminalType,
+    failureKind: state.failureKind,
+    responseCreatedObserved: state.responseCreatedObserved,
+    syntheticTerminalType: state.syntheticTerminalType,
     stream: state.stream,
     providerRequestId: state.providerRequestId,
     firstProviderDispatchMs: state.firstProviderDispatchMs,
@@ -444,6 +458,35 @@ const recordFirstSseEvent = (context: UsageContext | undefined): void => {
 
 const recordStreamTerminal = (context: UsageContext | undefined): void => {
   recordResponseTiming(context, "streamTerminalMs");
+};
+
+const recordResponsesEventTelemetry = (
+  context: UsageContext | undefined,
+  event: ResponsesStreamEvent,
+): void => {
+  const telemetry = context?.responseTelemetry;
+  if (!telemetry) return;
+  if (event.type === "response.created") telemetry.responseCreatedObserved = true;
+  if (isSyntheticResponsesFailureEvent(event)) {
+    telemetry.syntheticTerminalType = event.type === "response.failed" || event.type === "error" ? event.type : null;
+  }
+};
+
+const failureKindFromError = (error: unknown): ResponsesStreamFailureKind =>
+  error instanceof ResponsesStreamError ? error.kind : "read_error";
+
+const recordResponsesFailureTelemetry = (
+  context: UsageContext | undefined,
+  error: unknown,
+  details?: OwnedResponsesStreamFailureDetails,
+): void => {
+  const telemetry = context?.responseTelemetry;
+  if (!telemetry) return;
+  telemetry.failureKind = details?.failureKind ?? failureKindFromError(error);
+  if (details) {
+    telemetry.responseCreatedObserved = details.responseCreatedObserved;
+    telemetry.syntheticTerminalType = details.syntheticTerminalType;
+  }
 };
 
 const runWithResponseTelemetry = async (
@@ -742,6 +785,7 @@ type ResponsesAttemptTrigger =
   | "http_5xx"
   | "missing_body"
   | "malformed_event"
+  | "event_too_large"
   | "premature_eof"
   | "semantic_timeout"
   | "terminal_failure"
@@ -779,11 +823,32 @@ const triggerForResponsesError = (error: unknown, signal: AbortSignal): Response
     return "semantic_timeout";
   }
   if (error instanceof ResponsesStreamError) {
-    if (error.kind === "malformed_event" || error.kind === "event_too_large") return "malformed_event";
+    if (error.kind === "event_too_large") return "event_too_large";
+    if (error.kind === "malformed_event") return "malformed_event";
     if (error.kind === "premature_eof") return "premature_eof";
     if (error.kind === "inactivity_timeout") return "semantic_timeout";
   }
   return "read_error";
+};
+
+const failureKindForResponsesAttemptTrigger = (
+  trigger: ResponsesAttemptTrigger,
+): ResponsesStreamFailureKind | null => {
+  switch (trigger) {
+    case "premature_eof":
+      return "premature_eof";
+    case "malformed_event":
+      return "malformed_event";
+    case "event_too_large":
+      return "event_too_large";
+    case "semantic_timeout":
+      return "inactivity_timeout";
+    case "read_error":
+    case "missing_body":
+      return "read_error";
+    default:
+      return null;
+  }
 };
 
 const safeFailedAttemptResponse = (
@@ -828,6 +893,7 @@ const prepareResponsesAttempt = async (
   requestSignal: AbortSignal,
   warnings: readonly string[],
   options: Readonly<{
+    usageContext?: UsageContext;
     requireEligibleModel?: boolean;
     rejectFailedTerminal?: boolean;
     rejectPresemanticFailureTerminal?: boolean;
@@ -861,7 +927,9 @@ const prepareResponsesAttempt = async (
   });
   let preparedStream: PreparedResponsesStream | null = null;
   try {
-    const prepared = await prepareResponsesStreamForCommit(iterator);
+    const prepared = await prepareResponsesStreamForCommit(iterator, {
+      onEvent: (event) => recordResponsesEventTelemetry(options.usageContext, event),
+    });
     preparedStream = prepared;
     if (
       prepared.terminal &&
@@ -1105,7 +1173,10 @@ const fetchAndPreparePrimaryResponses = async (
     deadline,
     options.requestSignal,
     [...options.warnings, ...responseWarnings(routed.response)],
-    { rejectPresemanticFailureTerminal: options.rejectPresemanticFailureTerminal },
+    {
+      usageContext: options.usageContext,
+      rejectPresemanticFailureTerminal: options.rejectPresemanticFailureTerminal,
+    },
   );
   return prepared.kind === "ready"
     ? { kind: "ready", value: { routed, prepared: prepared.attempt, lifecycle } }
@@ -1165,7 +1236,7 @@ const fetchAndPrepareRemovedProviderResponses = async (
     deadline,
     options.requestSignal,
     [],
-    { requireEligibleModel: true, rejectFailedTerminal: true },
+    { usageContext: options.usageContext, requireEligibleModel: true, rejectFailedTerminal: true },
   );
 };
 
@@ -1211,7 +1282,7 @@ const collectBufferedResponses = async (
     usageContext?: UsageContext;
     onTerminal?: (event: ResponsesStreamEvent) => void;
     validateEvent?: (event: ResponsesStreamEvent) => void;
-    onFailure?: (error: unknown) => void;
+    onFailure?: (error: unknown, details?: OwnedResponsesStreamFailureDetails) => void;
   }> = {},
 ): Promise<Response> => {
   const initial = options.warningModel
@@ -1222,6 +1293,7 @@ const collectBufferedResponses = async (
         responseId: attempt.responseId,
         warning: { model: options.warningModel! },
         validateEvent: options.validateEvent,
+        onEvent: (event) => recordResponsesEventTelemetry(options.usageContext, event),
         onFailure: options.onFailure,
       });
       return readResponsesStream(stream);
@@ -1229,10 +1301,12 @@ const collectBufferedResponses = async (
     : (async function* (): AsyncGenerator<ResponsesStreamEvent> {
       for (const event of attempt.prepared.buffered) {
         options.validateEvent?.(event);
+        recordResponsesEventTelemetry(options.usageContext, event);
         yield event;
       }
       for await (const event of attempt.prepared.iterator) {
         options.validateEvent?.(event);
+        recordResponsesEventTelemetry(options.usageContext, event);
         yield event;
       }
     })();
@@ -5046,6 +5120,7 @@ const recordResponsesTerminal = (
   usageContext?: UsageContext,
 ): void => {
   if (!event.terminal) return;
+  recordResponsesEventTelemetry(usageContext, event);
   recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
   const usage = isRecord(event.value.response) ? extractUsageTokens(event.value.response.usage) : null;
   if (event.type === "response.completed") void recordCompletionUsage(usageContext, usage);
@@ -7392,6 +7467,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     resolveCodexProbe();
     const terminalType = classifyStreamFailure(error, requestInferenceSignal, req.signal);
     recordStreamTerminalType(usageContext, terminalType);
+    if (terminalType !== "cancelled") recordResponsesFailureTelemetry(usageContext, error);
     if (terminalType === "cancelled") lifecycle.cancelled();
     else lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
@@ -7776,6 +7852,10 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           primaryFailureResponse = failed.response;
           const terminalType = responseFailureTerminalType(failed.trigger, failed.signal, req.signal);
           recordStreamTerminalType(usageContext, terminalType);
+          const failureKind = failureKindForResponsesAttemptTrigger(failed.trigger);
+          if (failureKind && usageContext?.responseTelemetry) {
+            usageContext.responseTelemetry.failureKind = failureKind;
+          }
           if (routed.gatewayResponse && !isEligibleResponsesAttemptStatus(failed.response)) {
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
@@ -8039,8 +8119,14 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       usageContext,
       onTerminal,
       validateEvent: validateRemovedProviderEvent,
-      onFailure: (error) => {
-        reconcileCommittedFailure(classifyStreamFailure(error, ready.signal, req.signal));
+      onFailure: (error, details) => {
+        const terminalType = classifyStreamFailure(error, ready.signal, req.signal);
+        if (terminalType !== "cancelled") recordResponsesFailureTelemetry(usageContext, error, details);
+        else if (usageContext?.responseTelemetry) {
+          usageContext.responseTelemetry.responseCreatedObserved = details?.responseCreatedObserved ??
+            usageContext.responseTelemetry.responseCreatedObserved;
+        }
+        reconcileCommittedFailure(terminalType);
       },
     });
     return withUosWarning(response, clientWarnings);
@@ -8055,10 +8141,18 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     signal: ready.signal,
     downstreamSignal: req.signal,
     abortUpstream: ready.abort,
-    onEvent: onTerminal,
+    onEvent: (event) => {
+      recordResponsesEventTelemetry(usageContext, event);
+      onTerminal(event);
+    },
     validateEvent: validateRemovedProviderEvent,
-    onFailure: (error) => {
+    onFailure: (error, details) => {
       const terminalType = classifyStreamFailure(error, ready.signal, req.signal);
+      if (terminalType !== "cancelled") recordResponsesFailureTelemetry(usageContext, error, details);
+      else if (usageContext?.responseTelemetry) {
+        usageContext.responseTelemetry.responseCreatedObserved = details?.responseCreatedObserved ??
+          usageContext.responseTelemetry.responseCreatedObserved;
+      }
       reconcileCommittedFailure(terminalType);
     },
     onCancel: () => {

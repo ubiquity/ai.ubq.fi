@@ -1031,6 +1031,9 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       removed_provider_semantic_commitment: null,
       stream: false,
       stream_terminal_type: "response.completed",
+      failure_kind: null,
+      response_created_observed: false,
+      synthetic_terminal_type: null,
       git_sha: "unknown",
       deno_revision: "unknown",
       router_revision: null,
@@ -1245,6 +1248,60 @@ Deno.test("streaming drain timing remains separate from V3 dispatch accounting",
       requiredTerminalTiming(terminal, "stream_terminal_ms");
     const downstreamDrainMs = requiredTerminalTiming(terminal, "downstream_drain_ms");
     assert.ok(postTerminalMs >= downstreamDrainMs, "downstream drain must be part of terminal latency");
+  } finally {
+    console.info = originalInfo;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("semantic Responses stream drops without response.created emit one failed terminal and redacted diagnostics", async () => {
+  kv.values.clear();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
+  const token = `u_${"d".repeat(64)}`;
+  await seedKey(token, "responses-stream-drop-no-created", -1);
+
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const logs: unknown[][] = [];
+  const encoder = new TextEncoder();
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(semanticSseEvent("partial")));
+            setTimeout(() => controller.error(new Error("provider socket reset")), 5);
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+  console.info = (...args: unknown[]) => logs.push(args);
+  try {
+    const response = await handler(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ input: "ping", stream: true }),
+      }),
+    );
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    const values = [...text.matchAll(/^data: (.+)$/gm)]
+      .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+    assert.deepEqual(values.map((value) => value.type), ["response.output_text.delta", "response.failed"]);
+    const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(terminalLogs.length, 1);
+    const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
+    assert.equal(terminal.failure_kind, "read_error");
+    assert.equal(terminal.response_created_observed, false);
+    assert.equal(terminal.synthetic_terminal_type, "response.failed");
+    assert.equal(terminal.stream_terminal_type, "error");
+    assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
