@@ -82,8 +82,17 @@ const {
   storeCodexCatalog,
 } = await import("../src/codex_catalog.ts");
 const { handleModels } = await import("../src/openai.ts");
-const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../src/metered.ts");
-const { fetchSurplusModels, resetSurplusModelsCacheForTest } = await import("../src/surplus.ts");
+const {
+  fetchMeteredModels,
+  METERED_MODELS_CACHE_TTL_MS,
+  resetMeteredModelsCacheForTest,
+  setMeteredModelsFetchForTest,
+} = await import("../src/metered.ts");
+const {
+  fetchSurplusModels,
+  resetSurplusModelsCacheForTest,
+  SURPLUS_MODELS_CACHE_TTL_MS,
+} = await import("../src/surplus.ts");
 const {
   loadRuntimeConfig,
   resetRuntimeConfigCacheForTest,
@@ -859,6 +868,206 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
     assert.equal(slugs.includes("chat-only-model"), false);
   } finally {
     globalThis.fetch = originalFetch;
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+    if (originalSurplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusKey);
+  }
+});
+
+Deno.test("paid-provider model caches ignore out-of-order Metered refreshes", async () => {
+  resetMeteredModelsCacheForTest();
+  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+  Deno.env.set("METERED_API_KEY", "metered-cache-race-test-key");
+  let calls = 0;
+  let resolveOlder!: (response: Response) => void;
+  let resolveNewer!: (response: Response) => void;
+  const olderResponse = new Promise<Response>((resolve) => resolveOlder = resolve);
+  const newerResponse = new Promise<Response>((resolve) => resolveNewer = resolve);
+  const fetcher = () => {
+    calls += 1;
+    return calls === 1 ? olderResponse : newerResponse;
+  };
+
+  try {
+    const older = fetchMeteredModels({ force: true, fetcher });
+    const newer = fetchMeteredModels({ force: true, fetcher });
+    assert.equal(calls, 2);
+    resolveNewer(Response.json({
+      data: [{ id: "new-metered-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+    }));
+    assert.deepEqual((await newer)?.models.map((model) => model.id), ["new-metered-model"]);
+    resolveOlder(Response.json({
+      data: [{ id: "old-metered-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+    }));
+    await older;
+    const cached = await fetchMeteredModels({ fetcher });
+    assert.deepEqual(cached?.models.map((model) => model.id), ["new-metered-model"]);
+    assert.equal(calls, 2);
+  } finally {
+    resetMeteredModelsCacheForTest();
+    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+  }
+});
+
+Deno.test("paid-provider model caches ignore out-of-order Surplus refreshes", async () => {
+  resetSurplusModelsCacheForTest();
+  let calls = 0;
+  let resolveOlder!: (response: Response) => void;
+  let resolveNewer!: (response: Response) => void;
+  const olderResponse = new Promise<Response>((resolve) => resolveOlder = resolve);
+  const newerResponse = new Promise<Response>((resolve) => resolveNewer = resolve);
+  const fetcher = () => {
+    calls += 1;
+    return calls === 1 ? olderResponse : newerResponse;
+  };
+
+  try {
+    const older = fetchSurplusModels({ apiKey: "surplus-cache-race-test-key", force: true, fetcher });
+    const newer = fetchSurplusModels({ apiKey: "surplus-cache-race-test-key", force: true, fetcher });
+    assert.equal(calls, 2);
+    resolveNewer(Response.json({ data: [{ id: "new-surplus-model" }] }));
+    assert.deepEqual((await newer)?.models.map((model) => model.id), ["new-surplus-model"]);
+    resolveOlder(Response.json({ data: [{ id: "old-surplus-model" }] }));
+    await older;
+    const cached = await fetchSurplusModels({ apiKey: "surplus-cache-race-test-key", fetcher });
+    assert.deepEqual(cached?.models.map((model) => model.id), ["new-surplus-model"]);
+    assert.equal(calls, 2);
+  } finally {
+    resetSurplusModelsCacheForTest();
+  }
+});
+
+Deno.test("paid-provider model refresh failures use a cooldown", async () => {
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  const originalNow = Date.now;
+  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+  const baseNow = originalNow();
+  Deno.env.set("METERED_API_KEY", "metered-cache-backoff-test-key");
+  Date.now = () => baseNow;
+
+  try {
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: "stale-metered-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+        })),
+    });
+    await fetchSurplusModels({
+      apiKey: "surplus-cache-backoff-test-key",
+      force: true,
+      fetcher: () => Promise.resolve(Response.json({ data: [{ id: "stale-surplus-model" }] })),
+    });
+    Date.now = () => baseNow + Math.max(METERED_MODELS_CACHE_TTL_MS, SURPLUS_MODELS_CACHE_TTL_MS) + 1;
+    let meteredFailures = 0;
+    let surplusFailures = 0;
+    const failingMeteredFetcher = () => {
+      meteredFailures += 1;
+      return Promise.resolve(new Response("unavailable", { status: 503 }));
+    };
+    const failingSurplusFetcher = () => {
+      surplusFailures += 1;
+      return Promise.resolve(new Response("unavailable", { status: 503 }));
+    };
+
+    await fetchMeteredModels({ fetcher: failingMeteredFetcher });
+    await fetchMeteredModels({ fetcher: failingMeteredFetcher });
+    await fetchSurplusModels({ apiKey: "surplus-cache-backoff-test-key", fetcher: failingSurplusFetcher });
+    await fetchSurplusModels({ apiKey: "surplus-cache-backoff-test-key", fetcher: failingSurplusFetcher });
+    assert.equal(meteredFailures, 1);
+    assert.equal(surplusFailures, 1);
+  } finally {
+    Date.now = originalNow;
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+  }
+});
+
+Deno.test("codex catalog: expired paid-provider caches schedule background refreshes", async () => {
+  seedBaseState("0.200.0");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
+  const baseNow = originalNow();
+  const staleNow = baseNow + Math.max(METERED_MODELS_CACHE_TTL_MS, SURPLUS_MODELS_CACHE_TTL_MS) + 1;
+  let meteredRefreshes = 0;
+  let surplusRefreshes = 0;
+  let resolveMeteredRefresh!: (response: Response) => void;
+  let resolveSurplusRefresh!: (response: Response) => void;
+  const meteredRefreshResponse = new Promise<Response>((resolve) => resolveMeteredRefresh = resolve);
+  const surplusRefreshResponse = new Promise<Response>((resolve) => resolveSurplusRefresh = resolve);
+  Deno.env.set("METERED_API_KEY", "metered-catalog-stale-test-key");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-catalog-stale-test-key");
+  Date.now = () => baseNow;
+  await fetchMeteredModels({
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [{ id: "stale-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+      })),
+  });
+  await fetchSurplusModels({
+    apiKey: "surplus-catalog-stale-test-key",
+    force: true,
+    fetcher: () => Promise.resolve(Response.json({ data: [{ id: "stale-surplus-model" }] })),
+  });
+  Date.now = () => staleNow;
+  setMeteredModelsFetchForTest((input) => {
+    if (String(input) !== "https://api.openlux.ai/v1/models") {
+      return Promise.resolve(new Response("unexpected Metered URL", { status: 500 }));
+    }
+    meteredRefreshes += 1;
+    return meteredRefreshResponse;
+  });
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    if (url === "https://api.openlux.ai/v1/models") {
+      meteredRefreshes += 1;
+      return Promise.resolve(Response.json({
+        data: [{ id: "fresh-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+      }));
+    }
+    if (url === "https://api.surplusintelligence.ai/v1/models") {
+      surplusRefreshes += 1;
+      return surplusRefreshResponse;
+    }
+    const version = new URL(url).searchParams.get("client_version") ?? "missing";
+    return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
+  };
+
+  try {
+    const response = await handleCodexCatalogModels(request("0.202.0"), "0.202.0");
+    assert.equal(response.status, 200);
+    const concurrent = await handleCodexCatalogModels(request("0.202.0"), "0.202.0");
+    assert.equal(concurrent.status, 200);
+    assert.equal(meteredRefreshes, 1);
+    assert.equal(surplusRefreshes, 1);
+
+    resolveMeteredRefresh(Response.json({
+      data: [{ id: "fresh-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+    }));
+    resolveSurplusRefresh(Response.json({ data: [{ id: "fresh-surplus-model" }] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const refreshed = await handleCodexCatalogModels(request("0.202.0"), "0.202.0");
+    const payload = await refreshed.json() as { models: Array<{ slug?: string }> };
+    const slugs = payload.models.map((model) => model.slug);
+    assert.equal(slugs.includes("fresh-openlux-model"), true);
+    assert.equal(slugs.includes("fresh-surplus-model"), true);
+  } finally {
+    Date.now = originalNow;
+    globalThis.fetch = originalFetch;
+    setMeteredModelsFetchForTest(null);
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
     if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");

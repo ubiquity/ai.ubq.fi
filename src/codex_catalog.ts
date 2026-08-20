@@ -27,8 +27,8 @@ import {
   type RuntimeConfigV2,
 } from "./runtime_config.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
-import { fetchMeteredModels } from "./metered.ts";
-import { fetchSurplusModels } from "./surplus.ts";
+import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS } from "./metered.ts";
+import { fetchSurplusModels, SURPLUS_MODELS_CACHE_TTL_MS } from "./surplus.ts";
 
 export const CODEX_CATALOG_FRESH_MS = 5 * 60_000;
 export const CODEX_CATALOG_RETENTION_MS = 24 * 60 * 60_000;
@@ -639,8 +639,13 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     fetchMeteredModels({ cachedOnly: true }),
     fetchSurplusModels({ cachedOnly: true }),
   ]);
-  if (!metered) void fetchMeteredModels().catch(() => {});
-  if (!surplus) void fetchSurplusModels().catch(() => {});
+  const nowMs = Date.now();
+  if (!metered || nowMs - metered.updated_at_ms >= METERED_MODELS_CACHE_TTL_MS) {
+    void fetchMeteredModels().catch(() => {});
+  }
+  if (!surplus || nowMs - surplus.updated_at_ms >= SURPLUS_MODELS_CACHE_TTL_MS) {
+    void fetchSurplusModels().catch(() => {});
+  }
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
   if (!paidModels.length) {
     if (catalog.metadata.etag) headers.set("ETag", catalog.metadata.etag);
