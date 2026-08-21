@@ -5956,17 +5956,14 @@ const streamChatCompletions = (
         }
       } catch (error) {
         if (closed) return;
-        if (initialTerminalAlreadyValidated) {
-          closed = true;
-          controller.close();
-          return;
+        if (!initialTerminalAlreadyValidated) {
+          const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
+          onResponseTerminal?.(terminalType);
+          recordStreamTerminalType(usageContext, terminalType);
+          if (terminalType === "cancelled") lifecycle.cancelled();
+          else lifecycle.ambiguous();
+          void recordErrorUsage(usageContext);
         }
-        const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
-        onResponseTerminal?.(terminalType);
-        recordStreamTerminalType(usageContext, terminalType);
-        if (terminalType === "cancelled") lifecycle.cancelled();
-        else lifecycle.ambiguous();
-        void recordErrorUsage(usageContext);
         const errorValue = {
           error: {
             message: "The upstream stream ended unexpectedly.",
@@ -8169,6 +8166,14 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     : circuit?.route ?? "codex";
   let globalProbe: RemovedProviderCircuitProbe | null = circuit?.probe ?? null;
   let primaryFailureResponse: Response | null = null;
+  let primaryFailureCorrelation:
+    | Readonly<{
+      provider: string | null;
+      accountSlot: number | null;
+      accountCohortId: string | null;
+      providerRequestId: string | null;
+    }>
+    | null = null;
   let primaryResult: ResponsesRouteAttempt | null = null;
   let removedProviderAttempt: PreparedResponsesAttempt | null = null;
   let selectedModel: string | null = null;
@@ -8208,6 +8213,15 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         } else {
           const { routed, failed, lifecycle } = result.value;
           primaryFailureResponse = failed.response;
+          const telemetry = usageContext?.responseTelemetry;
+          if (telemetry) {
+            primaryFailureCorrelation = {
+              provider: telemetry.provider,
+              accountSlot: telemetry.accountSlot,
+              accountCohortId: telemetry.accountCohortId,
+              providerRequestId: telemetry.providerRequestId,
+            };
+          }
           const terminalType = responseFailureTerminalType(failed.trigger, failed.signal, downstreamSignal);
           recordStreamTerminalType(usageContext, terminalType);
           const failureKind = failureKindForResponsesAttemptTrigger(failed.trigger);
@@ -8281,8 +8295,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         void persistFailedRemovedProviderAttempt(usageContext, fallbackStartedAt, removedProvider.attempt.trigger);
         if (primaryFailureResponse || removedProvider.attempt.trigger === "terminal_failure") {
           if (primaryFailureResponse && usageContext?.responseTelemetry) {
-            usageContext.responseTelemetry.provider = primaryFailureResponse.headers.get("x-uos-upstream") ||
-              "chatgpt_codex";
+            const telemetry = usageContext.responseTelemetry;
+            telemetry.provider = primaryFailureCorrelation?.provider ??
+              primaryFailureResponse.headers.get("x-uos-upstream") ?? "chatgpt_codex";
+            telemetry.accountSlot = primaryFailureCorrelation?.accountSlot ?? null;
+            telemetry.accountCohortId = primaryFailureCorrelation?.accountCohortId ?? null;
+            telemetry.providerRequestId = primaryFailureCorrelation?.providerRequestId ?? null;
           } else {
             selectRemovedProviderTelemetry(usageContext);
           }
