@@ -238,6 +238,55 @@ Deno.test("provider health persists a recovery immediately while retaining the l
   assert.equal(health.last_success_at_ms, 3_000);
 });
 
+Deno.test("provider reachability and token refresh stay degraded until inference succeeds", async () => {
+  kvStore.clear();
+  resetProviderHealthThrottleForTest();
+  await recordCodexProviderHealth("reachable-only-account", "reachable", 200, () => 500);
+  const reachableOnly = await getCodexProviderHealth("reachable-only-account", () => 501);
+  assert.equal(reachableOnly.state, "degraded");
+  assert.equal(reachableOnly.last_event, "reachable");
+  assert.equal(reachableOnly.last_success_at_ms, null);
+
+  await recordCodexProviderHealth("evidence-account", "success", 200, () => 1_000);
+  await recordCodexProviderHealth("evidence-account", "reachable", 200, () => 2_000);
+  await recordCodexProviderHealth("evidence-account", "refresh_success", 200, () => 3_000);
+
+  const refreshed = await getCodexProviderHealth("evidence-account", () => 3_001);
+  assert.equal(refreshed.state, "degraded");
+  assert.equal(refreshed.last_event, "refresh_success");
+  assert.equal(refreshed.last_success_at_ms, 1_000);
+  assert.equal(refreshed.last_refresh_at_ms, 3_000);
+  assert.equal(refreshed.last_refresh_succeeded, true);
+
+  await recordCodexProviderHealth("evidence-account", "success", 200, () => 4_000);
+  const recovered = await getCodexProviderHealth("evidence-account", () => 4_001);
+  assert.equal(recovered.state, "healthy");
+  assert.equal(recovered.last_success_at_ms, 4_000);
+});
+
+Deno.test("provider request IDs are bounded, normalized, and sampled without per-request writes", async () => {
+  kvStore.clear();
+  resetProviderHealthThrottleForTest();
+  atomicCommitCount = 0;
+  await recordCodexProviderHealth("request-id-account", "reachable", 200, () => 1_000);
+  assert.equal(atomicCommitCount, 1);
+  await recordCodexProviderHealth("request-id-account", "reachable", 200, () => 2_000, "  first-id  ");
+  assert.equal(atomicCommitCount, 2);
+  await recordCodexProviderHealth("request-id-account", "reachable", 200, () => 3_000, "second-id");
+  assert.equal(atomicCommitCount, 2);
+  const sampled = await getCodexProviderHealth("request-id-account", () => 3_001);
+  assert.equal(sampled.last_provider_request_id, "first-id");
+  assert.equal(sampled.last_provider_request_id_at_ms, 2_000);
+
+  await recordCodexProviderHealth("control-id-account", "reachable", 200, () => 4_000, "bad\nrequest-id");
+  const control = await getCodexProviderHealth("control-id-account", () => 4_001);
+  assert.equal(control.last_provider_request_id, null);
+
+  await recordCodexProviderHealth("oversized-id-account", "reachable", 200, () => 5_000, "x".repeat(257));
+  const oversized = await getCodexProviderHealth("oversized-id-account", () => 5_001);
+  assert.equal(oversized.last_provider_request_id, null);
+});
+
 Deno.test("provider health coalesces identical quota observations without hiding a later transition", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();

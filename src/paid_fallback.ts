@@ -266,8 +266,7 @@ export const reservePaidFallback = async (
       | "primary_401"
       | "primary_403"
       | "primary_429"
-      | "primary_quota_blocked"
-      | "primary_upstream_degraded";
+      | "primary_quota_blocked";
   }>,
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await getKv();
@@ -321,8 +320,13 @@ export const recordMeteredUpstreamResponse = async (
 export const recordMeteredAmbiguousFailure = async (
   reservation: PaidFallbackReservation,
   provider: PaidFallbackProvider = "metered",
+  providerRequestId: string | null = null,
 ): Promise<void> => {
-  await updatePaidFallbackRequestV3(reservation, { provider, dispatch_state: "dispatched" });
+  await updatePaidFallbackRequestV3(reservation, {
+    provider,
+    provider_request_id: providerRequestId,
+    dispatch_state: "dispatched",
+  });
   await markPaidFallbackTerminalV3(reservation, "ambiguous");
 };
 
@@ -364,17 +368,18 @@ export type SurplusUsage = Readonly<{
  * Surplus returns usage in the terminal Responses event instead of exposing a
  * provider token-log query. Its catalog prices are per token; convert that
  * charge into the existing paid-fallback quota unit before the shared ledger
- * settles the request.
+ * settles the exact gateway reservation. The settlement key is internal and
+ * is not recorded as an upstream provider request ID.
  */
 export const recordSurplusUsage = async (
   reservation: PaidFallbackReservation,
-  providerRequestId: string,
+  settlementRequestId: string,
   model: string,
   usage: SurplusUsage,
   pricing: SurplusBillingPricing,
 ): Promise<void> => {
   if (
-    !providerRequestId.trim() || !model.trim() ||
+    !settlementRequestId.trim() || !model.trim() ||
     !isNonNegativeSafeInteger(usage.input_tokens) ||
     !isNonNegativeSafeInteger(usage.output_tokens) ||
     !isNonNegativeFiniteNumber(pricing.input_price_per_token) ||
@@ -396,7 +401,7 @@ export const recordSurplusUsage = async (
   const providerQuota = Math.round(chargedCredits * reservation.quota_per_credit);
   if (!Number.isSafeInteger(providerQuota) || providerQuota < 0) return;
   await settlePaidFallbackUsageV3(reservation, {
-    provider_request_id: providerRequestId,
+    settlement_request_id: settlementRequestId,
     provider_quota: providerQuota,
     input_tokens: usage.input_tokens,
     cached_input_tokens: cachedInputTokens,

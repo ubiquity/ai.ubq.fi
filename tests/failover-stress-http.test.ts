@@ -255,6 +255,7 @@ Deno.test({
       };
 
       const { default: handler } = await import("../src/handler.ts");
+      const { createServeHandler } = await import("../serve.ts");
       const {
         paidFallbackWindowV3Key,
         reconcileDuePaidFallbacksV3,
@@ -263,7 +264,7 @@ Deno.test({
       const pendingPrefix = ["uos_ai", "paid_fallback", "v3", "pending", keyId] as const;
       gatewayServer = Deno.serve(
         { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-        handler,
+        createServeHandler(handler),
       );
       const gatewayAddress = gatewayServer.addr as Deno.NetAddr;
       const gatewayUrl = `http://127.0.0.1:${gatewayAddress.port}/v1/responses`;

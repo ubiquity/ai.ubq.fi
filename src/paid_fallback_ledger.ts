@@ -890,6 +890,7 @@ const settlePaidFallbackRequestV3 = async (
   requestId: string,
   providerLog: MeteredTokenLogEntry,
   now: number,
+  correlation: "provider_request_id" | "surplus_reservation" = "provider_request_id",
 ): Promise<Readonly<{ settled: boolean; retry_delay_ms: number | null }>> => {
   const requestKey = paidFallbackRequestV3Key(keyId, requestId);
   const pendingKey = paidFallbackPendingV3Key(keyId, requestId);
@@ -911,7 +912,13 @@ const settlePaidFallbackRequestV3 = async (
       }
       return { settled: false, retry_delay_ms: null };
     }
-    if (!pendingEntry.value || request.provider_request_id !== providerLog.request_id) {
+    // Surplus usage is delivered synchronously for this exact gateway
+    // reservation. It does not need a fabricated upstream request ID; the
+    // provider field prevents this direct path from settling a Metered row.
+    const correlationMatches = correlation === "surplus_reservation"
+      ? request.provider === "surplus"
+      : request.provider_request_id === providerLog.request_id;
+    if (!pendingEntry.value || !correlationMatches) {
       return { settled: false, retry_delay_ms: null };
     }
     const calculatedSpend = Math.round(providerLog.quota * MICROCREDITS_PER_CREDIT / request.quota_per_credit);
@@ -970,7 +977,8 @@ const settlePaidFallbackRequestV3 = async (
 };
 
 export type PaidFallbackUsageSettlementV3 = Readonly<{
-  provider_request_id: string;
+  /** Internal direct-settlement key; never exposed as an upstream request ID. */
+  settlement_request_id: string;
   provider_quota: number;
   input_tokens: number;
   cached_input_tokens?: number | null;
@@ -996,7 +1004,7 @@ export const settlePaidFallbackUsageV3 = async (
     reservation.key_id,
     reservation.request_id,
     {
-      request_id: usage.provider_request_id,
+      request_id: usage.settlement_request_id,
       quota: usage.provider_quota,
       prompt_tokens: usage.input_tokens,
       ...(usage.cached_input_tokens === null || usage.cached_input_tokens === undefined
@@ -1007,6 +1015,7 @@ export const settlePaidFallbackUsageV3 = async (
       created_at: Math.max(0, Math.trunc(usage.created_at_ms / 1_000)),
     },
     Date.now(),
+    "surplus_reservation",
   );
   return result.settled;
 };

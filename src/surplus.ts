@@ -61,6 +61,7 @@ export type SurplusAuthenticatedFetchOptions = Readonly<{
   fetcher?: SurplusFetch;
   signal?: AbortSignal;
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
+  onDispatch?: () => void;
 }>;
 
 export type SurplusResponsesResult = Readonly<{
@@ -396,6 +397,7 @@ export const fetchSurplusResponses = async (
       throw signal.reason ?? new DOMException("The request was aborted.", "AbortError");
     }
     dispatch?.markTransportStarted();
+    options.onDispatch?.();
     response = await awaitWithAbort(
       (options.fetcher ?? fetch)(SURPLUS_RESPONSES_URL, {
         method: "POST",

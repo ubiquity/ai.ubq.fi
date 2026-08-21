@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { sha256Base64Url } from "../src/utils.ts";
+import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
@@ -217,6 +217,7 @@ const kv = new CountingKv();
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
 
 const { default: handler } = await import("../src/handler.ts");
+const { createRequestDeliveryLifecycle } = await import("../serve.ts");
 const { handleResponses } = await import("../src/openai.ts");
 const {
   API_KEY_USAGE_V3_REQUEST_PREFIX,
@@ -231,6 +232,8 @@ const {
   resetApiKeyPolicyCacheForTest,
 } = await import("../src/api_key_policy.ts");
 const { kernelOrgWindowKey } = await import("../src/kernel_quota_v2.ts");
+const { paidFallbackRequestV3Key } = await import("../src/paid_fallback_ledger.ts");
+const { setStreamFirstEventDeadlineMsForTest } = await import("../src/inference_deadline.ts");
 const {
   loadRuntimeConfig,
   RUNTIME_CONFIG_CACHE_TTL_MS,
@@ -383,6 +386,24 @@ const sse = (
     }\n\n`,
     { status: 200, headers: { "Content-Type": "text/event-stream" } },
   );
+
+const deferred = <T>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+};
+
+const waitFor = async (predicate: () => boolean, label: string, timeoutMs = 2_000): Promise<void> => {
+  const deadline = performance.now() + timeoutMs;
+  while (!predicate()) {
+    if (performance.now() >= deadline) throw new Error(`Timed out waiting for ${label}`);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+};
 
 const usageWindow = (
   policy: NonNullable<ReturnType<typeof apiKeyPolicyFromHashRecord>>,
@@ -557,6 +578,8 @@ Deno.test("V3 dispatch is idempotent across retries and remains consumed after p
 Deno.test("V3 cancellation during the Codex dispatch commit releases quota before fetch", async () => {
   const { token, policy } = await prepareApiKeyInference("e", "dispatch-cancelled", 1);
   const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const logs: unknown[][] = [];
   let fetchCalls = 0;
   let releaseDispatchCommit = () => {};
   const dispatchCommitGate = new Promise<void>((resolve) => {
@@ -573,6 +596,7 @@ Deno.test("V3 cancellation during the Codex dispatch commit releases quota befor
     fetchCalls += 1;
     return Promise.resolve(sse());
   };
+  console.info = (...args: unknown[]) => logs.push(args);
   try {
     const pending = handler(
       new Request("https://ai.ubq.fi/v1/responses", {
@@ -585,9 +609,16 @@ Deno.test("V3 cancellation during the Codex dispatch commit releases quota befor
     await dispatchCommitStartedPromise;
     controller.abort(new DOMException("cancelled", "AbortError"));
     releaseDispatchCommit();
-    await pending;
+    const response = await pending;
 
+    assert.equal(response.status, 499);
     assert.equal(fetchCalls, 0);
+    const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(terminalLogs.length, 1);
+    const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
+    assert.equal(terminal.status, 499);
+    assert.equal(terminal.stream_terminal_type, "cancelled");
+    assert.equal(terminal.delivery_outcome, "unobserved");
     assert.deepEqual(usageWindow(policy), {
       committed_requests: 0,
       reserved_requests: 0,
@@ -597,6 +628,7 @@ Deno.test("V3 cancellation during the Codex dispatch commit releases quota befor
     releaseDispatchCommit();
     kv.apiKeyV3DispatchCommitGate = null;
     kv.onApiKeyV3DispatchCommit = null;
+    console.info = originalInfo;
     globalThis.fetch = originalFetch;
   }
 });
@@ -828,6 +860,209 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
   }
 });
 
+Deno.test("Codex terminal health distinguishes completion, post-header failure, and cancellation", async () => {
+  const originalFetch = globalThis.fetch;
+  const currentHealthKey = encodeKey(["uos_ai", "provider_health", "v1", "codex", "acct-1", "current"]);
+  const currentHealth = () =>
+    kv.values.get(currentHealthKey) as
+      | { event?: string; status?: number | null; provider_request_id?: string | null }
+      | undefined;
+  const waitForHealth = async (event: string, providerRequestId: string) => {
+    await waitFor(
+      () => currentHealth()?.event === event && currentHealth()?.provider_request_id === providerRequestId,
+      `${event} health for ${providerRequestId}`,
+    );
+    return await getCodexProviderHealth("acct-1");
+  };
+
+  try {
+    for (const [route, tokenDigit] of [["responses", "2"], ["chat", "3"]] as const) {
+      const { token } = await prepareApiKeyInference(tokenDigit, `terminal-health-${route}`, 20);
+      resetProviderHealthThrottleForTest();
+
+      const firstSuccessId = `${route}-success-1`;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(completedSseEvent(), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "X-Request-Id": firstSuccessId },
+          }),
+        );
+      const firstSuccess = await handler(streamingRequest(token, route));
+      assert.equal(firstSuccess.status, 200);
+      await firstSuccess.text();
+      const healthy = await waitForHealth("success", firstSuccessId);
+      assert.equal(healthy.state, "healthy");
+      assert.equal(healthy.last_status, 200);
+
+      const failureId = `${route}-post-header-failure`;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            `data: ${
+              JSON.stringify({ type: "response.created", response: { id: failureId } })
+            }\n\n${semanticSseEvent()}`,
+            {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream", "X-Request-Id": failureId },
+            },
+          ),
+        );
+      const failed = await handler(streamingRequest(token, route));
+      assert.equal(failed.status, 200);
+      await failed.text();
+      const degraded = await waitForHealth("upstream_error", failureId);
+      assert.equal(degraded.state, "degraded");
+      assert.equal(degraded.last_status, 200);
+
+      const recoveredId = `${route}-success-2`;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(completedSseEvent(), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "X-Request-Id": recoveredId },
+          }),
+        );
+      const recoveredResponse = await handler(streamingRequest(token, route));
+      assert.equal(recoveredResponse.status, 200);
+      await recoveredResponse.text();
+      const recovered = await waitForHealth("success", recoveredId);
+      assert.equal(recovered.state, "healthy");
+
+      const terminalFailureId = `${route}-response-failed`;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            `data: ${
+              JSON.stringify({
+                type: "response.failed",
+                response: { id: terminalFailureId, error: { code: "fixture_failure" } },
+              })
+            }\n\n`,
+            {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream", "X-Request-Id": terminalFailureId },
+            },
+          ),
+        );
+      const terminalFailure = await handler(streamingRequest(token, route));
+      await terminalFailure.text();
+      const failedTerminalHealth = await waitForHealth("upstream_error", terminalFailureId);
+      assert.equal(failedTerminalHealth.state, "degraded");
+
+      const finalRecoveryId = `${route}-success-3`;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(completedSseEvent(), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "X-Request-Id": finalRecoveryId },
+          }),
+        );
+      const finalRecoveryResponse = await handler(streamingRequest(token, route));
+      assert.equal(finalRecoveryResponse.status, 200);
+      await finalRecoveryResponse.text();
+      const finalRecovery = await waitForHealth("success", finalRecoveryId);
+      assert.equal(finalRecovery.state, "healthy");
+
+      let lastHealthyId = finalRecoveryId;
+      for (const malformedTerminal of ["response.completed", "response.failed"] as const) {
+        const malformedId = `${route}-${malformedTerminal}-array`;
+        globalThis.fetch = () =>
+          Promise.resolve(
+            new Response(
+              `data: ${JSON.stringify({ type: malformedTerminal, response: [] })}\n\n`,
+              {
+                status: 200,
+                headers: { "Content-Type": "text/event-stream", "X-Request-Id": malformedId },
+              },
+            ),
+          );
+        const malformed = await handler(streamingRequest(token, route));
+        assert.equal(malformed.status, 502);
+        await malformed.text();
+        const malformedHealth = await waitForHealth("upstream_error", malformedId);
+        assert.equal(malformedHealth.state, "degraded");
+
+        lastHealthyId = `${malformedId}-recovered`;
+        globalThis.fetch = () =>
+          Promise.resolve(
+            new Response(completedSseEvent(), {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream", "X-Request-Id": lastHealthyId },
+            }),
+          );
+        const malformedRecovery = await handler(streamingRequest(token, route));
+        assert.equal(malformedRecovery.status, 200);
+        await malformedRecovery.text();
+        const malformedRecoveredHealth = await waitForHealth("success", lastHealthyId);
+        assert.equal(malformedRecoveredHealth.state, "healthy");
+      }
+
+      const incompleteId = `${route}-incomplete`;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            `data: ${JSON.stringify({ type: "response.incomplete", response: { id: incompleteId } })}\n\n`,
+            {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream", "X-Request-Id": incompleteId },
+            },
+          ),
+        );
+      const incomplete = await handler(streamingRequest(token, route));
+      await incomplete.text();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const afterIncomplete = await getCodexProviderHealth("acct-1");
+      assert.equal(afterIncomplete.state, "healthy");
+      assert.equal(afterIncomplete.last_event, "success");
+      assert.equal(afterIncomplete.last_provider_request_id, lastHealthyId);
+
+      let upstreamCancelled = 0;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  textEncoder.encode(
+                    `data: ${JSON.stringify({ type: "response.created", response: { id: `${route}-cancelled` } })}\n\n`,
+                  ),
+                );
+                controller.enqueue(textEncoder.encode(semanticSseEvent()));
+              },
+              cancel() {
+                upstreamCancelled += 1;
+              },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream", "X-Request-Id": `${route}-cancelled` },
+            },
+          ),
+        );
+      const cancelled = await handler(streamingRequest(token, route));
+      assert.equal(cancelled.status, 200);
+      if (route === "responses") {
+        const reader = cancelled.body!.getReader();
+        assert.equal((await reader.read()).done, false);
+        await reader.cancel("client cancelled");
+      } else {
+        await cancelled.body!.cancel("client cancelled");
+      }
+      await waitFor(() => upstreamCancelled === 1, `${route} upstream cancellation`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const afterCancellation = await getCodexProviderHealth("acct-1");
+      assert.equal(afterCancellation.state, "healthy");
+      assert.equal(afterCancellation.last_event, "success");
+      assert.equal(afterCancellation.last_provider_request_id, lastHealthyId);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetProviderHealthThrottleForTest();
+    resetCodexAuthCacheForTest();
+  }
+});
+
 Deno.test("provider dispatch commits API-key V3 while kernel completion writes only the split window", async () => {
   const { token, policy } = await prepareApiKeyInference("0", "stream-kernel-and-key", 100);
 
@@ -1005,6 +1240,7 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       first_sse_event_ms: terminalPayload.first_sse_event_ms,
       stream_terminal_ms: terminalPayload.stream_terminal_ms,
       downstream_drain_ms: null,
+      delivery_outcome: "unobserved",
       model: MODEL,
       reasoning: "medium",
       input_tokens: 1,
@@ -1018,6 +1254,7 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       prompt_cache_mode: "unspecified",
       explicit_breakpoint_count: 0,
       account_slot: 1,
+      account_cohort_id: await sha256Hex("uos-prompt-cache-account-cohort-v1\0acct-1"),
       affinity_outcome: "none",
       provider_request_id: null,
       fallback_reason: null,
@@ -1117,7 +1354,9 @@ Deno.test("streaming inference emits one terminal log only after the response bo
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"7".repeat(64)}`;
-  await seedKey(token, "stream-telemetry", -1);
+  const { hash, record } = await seedKey(token, "stream-telemetry", -1);
+  const policy = apiKeyPolicyFromHashRecord(hash, record, Date.now());
+  assert.ok(policy);
 
   const encoder = new TextEncoder();
   let resolveUpstreamController: (controller: ReadableStreamDefaultController<Uint8Array>) => void = () => {};
@@ -1144,13 +1383,21 @@ Deno.test("streaming inference emits one terminal log only after the response bo
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
+    const requestController = new AbortController();
+    const completed = deferred<void>();
+    const delivery = createRequestDeliveryLifecycle(requestController.signal, completed.promise);
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "ping", stream: true }),
+        signal: requestController.signal,
       }),
+      { completed: completed.promise, downstreamSignal: delivery.signal },
     );
+    delivery.handoff();
+    requestController.abort(new DOMException("legacy success abort", "AbortError"));
+    assert.equal(delivery.signal.aborted, false);
     assert.equal(response.status, 200);
     assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 0);
 
@@ -1168,6 +1415,12 @@ Deno.test("streaming inference emits one terminal log only after the response bo
     );
     upstreamController.close();
     await bodyPromise;
+    assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 0);
+    completed.resolve();
+    await waitFor(
+      () => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1,
+      "delivered terminal telemetry",
+    );
 
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
@@ -1177,13 +1430,68 @@ Deno.test("streaming inference emits one terminal log only after the response bo
     assert.equal(terminal.reasoning, "medium");
     assert.equal(terminal.provider_request_id, null);
     assert.equal(terminal.stream_terminal_type, "response.completed");
+    assert.equal(terminal.delivery_outcome, "delivered");
     assertOrderedTerminalTimings(terminal, true);
     assert.equal(terminal.input_tokens, 3);
     assert.equal(terminal.output_tokens, 4);
     assert.equal(terminal.total_tokens, 7);
     assert.equal(terminal.usage_telemetry_status, "partial");
     assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
+    assert.deepEqual(usageWindow(policy), {
+      committed_requests: 1,
+      reserved_requests: 0,
+      window_reset_at_ms: policy.usage_reset_at_ms,
+    });
   } finally {
+    console.info = originalInfo;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("streaming deadline emits one delivered terminal and keeps dispatched quota committed", async () => {
+  const { token, policy } = await prepareApiKeyInference("6", "stream-deadline-telemetry", 5);
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const logs: unknown[][] = [];
+  setStreamFirstEventDeadlineMsForTest(10);
+  globalThis.fetch = (_input, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      const rejectFromSignal = () => reject(signal?.reason ?? new DOMException("deadline exceeded", "TimeoutError"));
+      if (signal?.aborted) rejectFromSignal();
+      else signal?.addEventListener("abort", rejectFromSignal, { once: true });
+    });
+  console.info = (...args: unknown[]) => logs.push(args);
+  try {
+    const completed = deferred<void>();
+    const delivery = createRequestDeliveryLifecycle(new AbortController().signal, completed.promise);
+    const response = await handler(
+      streamingRequest(token, "responses"),
+      { completed: completed.promise, downstreamSignal: delivery.signal },
+    );
+    delivery.handoff();
+    assert.equal(response.status, 504);
+    await response.text();
+    assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 0);
+    completed.resolve();
+    await waitFor(
+      () => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1,
+      "deadline terminal telemetry",
+    );
+    const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
+    assert.equal(terminalLogs.length, 1);
+    const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
+    assert.equal(terminal.status, 504);
+    assert.equal(terminal.stream_terminal_type, "deadline");
+    assert.equal(terminal.delivery_outcome, "delivered");
+    assert.equal(delivery.signal.aborted, false);
+    assert.deepEqual(usageWindow(policy), {
+      committed_requests: 1,
+      reserved_requests: 0,
+      window_reset_at_ms: policy.usage_reset_at_ms,
+    });
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
   }
@@ -1262,7 +1570,9 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"d".repeat(64)}`;
-  await seedKey(token, "responses-stream-drop-no-created", -1);
+  const { hash, record } = await seedKey(token, "responses-stream-drop-no-created", -1);
+  const policy = apiKeyPolicyFromHashRecord(hash, record, Date.now());
+  assert.ok(policy);
 
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
@@ -1282,18 +1592,28 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
+    const completed = deferred<void>();
+    const delivery = createRequestDeliveryLifecycle(new AbortController().signal, completed.promise);
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "ping", stream: true }),
       }),
+      { completed: completed.promise, downstreamSignal: delivery.signal },
     );
+    delivery.handoff();
     assert.equal(response.status, 200);
     const text = await response.text();
     const values = [...text.matchAll(/^data: (.+)$/gm)]
       .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
     assert.deepEqual(values.map((value) => value.type), ["response.output_text.delta", "response.failed"]);
+    assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 0);
+    completed.resolve();
+    await waitFor(
+      () => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1,
+      "post-commit failure terminal telemetry",
+    );
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
@@ -1301,7 +1621,13 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
     assert.equal(terminal.response_created_observed, false);
     assert.equal(terminal.synthetic_terminal_type, "response.failed");
     assert.equal(terminal.stream_terminal_type, "error");
+    assert.equal(terminal.delivery_outcome, "delivered");
     assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
+    assert.deepEqual(usageWindow(policy), {
+      committed_requests: 1,
+      reserved_requests: 0,
+      window_reset_at_ms: policy.usage_reset_at_ms,
+    });
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
@@ -1614,13 +1940,16 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const token = `u_${"a".repeat(64)}`;
   const keyId = "fallback-cancel-telemetry";
-  await seedPaidFallbackKey(token, keyId);
+  const { hash, record } = await seedPaidFallbackKey(token, keyId);
+  const policy = apiKeyPolicyFromHashRecord(hash, record, Date.now());
+  assert.ok(policy);
 
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const logs: unknown[][] = [];
   const encoder = new TextEncoder();
+  let upstreamCancellations = 0;
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -1636,6 +1965,9 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
               );
               controller.enqueue(encoder.encode(semanticSseEvent()));
             },
+            cancel() {
+              upstreamCancellations += 1;
+            },
           }),
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
         ),
@@ -1650,12 +1982,26 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
   };
   console.info = (...args: unknown[]) => logs.push(args);
   try {
-    const response = await handler(streamingRequest(token, "responses"));
+    const requestController = new AbortController();
+    const completed = deferred<void>();
+    const delivery = createRequestDeliveryLifecycle(requestController.signal, completed.promise);
+    const response = await handler(
+      new Request(streamingRequest(token, "responses"), { signal: requestController.signal }),
+      { completed: completed.promise, downstreamSignal: delivery.signal },
+    );
+    delivery.handoff();
     assert.equal(response.status, 200);
     assert.ok(response.body);
     const reader = response.body.getReader();
     assert.equal((await reader.read()).done, false);
     await reader.cancel("client disconnected");
+    const deliveryFailure = new DOMException("client disconnected", "AbortError");
+    completed.reject(deliveryFailure);
+    await completed.promise.catch(() => {});
+    await waitFor(
+      () => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1,
+      "cancelled terminal telemetry",
+    );
 
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
@@ -1663,6 +2009,37 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
     assert.equal(terminal.provider, "metered");
     assert.equal(terminal.fallback_reason, "primary_429");
     assert.equal(terminal.stream_terminal_type, "cancelled");
+    assert.equal(terminal.delivery_outcome, "interrupted");
+    assert.equal(delivery.signal.aborted, true);
+    assert.equal(delivery.signal.reason, deliveryFailure);
+    assert.equal(upstreamCancellations, 1);
+    const requestId = response.headers.get("x-uos-request-id");
+    assert.ok(requestId);
+    const requestKey = paidFallbackRequestV3Key(keyId, requestId);
+    await waitFor(
+      () =>
+        (kv.values.get(encodeKey(requestKey)) as { terminal_state?: unknown } | undefined)?.terminal_state ===
+          "cancelled",
+      "cancelled paid-fallback ledger state",
+    );
+    const stored = kv.values.get(encodeKey(requestKey)) as {
+      dispatch_state?: unknown;
+      terminal_state?: unknown;
+      billing_state?: unknown;
+    };
+    assert.equal(stored.dispatch_state, "dispatched");
+    assert.equal(stored.terminal_state, "cancelled");
+    assert.equal(stored.billing_state, "pending");
+    assert.equal(
+      [...kv.values.keys()].filter((key) => key.includes('"paid_fallback","v3","request"') && key.includes(keyId))
+        .length,
+      1,
+    );
+    assert.deepEqual(usageWindow(policy), {
+      committed_requests: 1,
+      reserved_requests: 0,
+      window_reset_at_ms: policy.usage_reset_at_ms,
+    });
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;

@@ -13,6 +13,9 @@ class AuthKv {
   routingCommitFailures = 0;
   nextReadGate: Promise<void> | null = null;
   onRoutingRead: ((read: number) => void | Promise<void>) | null = null;
+  providerHealthSuccessCommitGate: Promise<void> | null = null;
+  onProviderHealthSuccessCommit: (() => void) | null = null;
+  onProviderHealthSuccessCommitted: (() => void) | null = null;
   authVersion = 1;
   readonly extra = new Map<string, { value: unknown; version: number }>();
 
@@ -69,7 +72,15 @@ class AuthKv {
         writes.push({ type: "delete", key });
         return chain;
       },
-      commit: () => {
+      commit: async () => {
+        const providerHealthSuccess = writes.some((write) =>
+          write.key[0] === "uos_ai" && write.key[1] === "provider_health" && write.key[2] === "v1" &&
+          (write.value as { event?: unknown } | undefined)?.event === "success"
+        );
+        if (providerHealthSuccess) {
+          this.onProviderHealthSuccessCommit?.();
+          await this.providerHealthSuccessCommitGate;
+        }
         if (
           this.routingCommitFailures > 0 &&
           writes.some((write) => JSON.stringify(write.key) !== JSON.stringify(AUTH_KEY))
@@ -97,6 +108,7 @@ class AuthKv {
           if (write.type === "delete") this.extra.delete(encoded);
           else this.extra.set(encoded, { value: write.value, version: (this.extra.get(encoded)?.version ?? 0) + 1 });
         }
+        if (providerHealthSuccess) this.onProviderHealthSuccessCommitted?.();
         return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as const);
       },
     };
@@ -158,6 +170,7 @@ const {
   resetCodexAccountRoutingForTest,
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
+const { resetProviderHealthThrottleForTest } = await import("../src/provider_health.ts");
 
 Deno.test("Codex auth account ordering rotates from the selected account", () => {
   const accounts = [auth("one"), auth("two")];
@@ -2018,6 +2031,9 @@ Deno.test("post-reset response probes retain their tombstone until an explicit c
   const originalDeployFlag = config.isDeploy;
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
+  resetProviderHealthThrottleForTest();
+  let releaseProviderHealthCommit = () => {};
+  let providerHealthCommitted: Promise<void> | null = null;
 
   const routingSlot = () => {
     const state = parseCodexAccountRoutingState(kv.extra.get(JSON.stringify(CODEX_ACCOUNT_ROUTING_KV_KEY))?.value);
@@ -2079,13 +2095,40 @@ Deno.test("post-reset response probes retain their tombstone until an explicit c
     }
 
     const completed = await fetchPostResetResponse("owner-post-reset-completed");
-    await markCodexResponseCompleted(completed);
+    const providerHealthCommitGate = new Promise<void>((resolve) => {
+      releaseProviderHealthCommit = resolve;
+    });
+    let signalProviderHealthCommit = () => {};
+    const providerHealthCommitEntered = new Promise<void>((resolve) => {
+      signalProviderHealthCommit = resolve;
+    });
+    let signalProviderHealthCommitted = () => {};
+    providerHealthCommitted = new Promise<void>((resolve) => {
+      signalProviderHealthCommitted = resolve;
+    });
+    kv.providerHealthSuccessCommitGate = providerHealthCommitGate;
+    kv.onProviderHealthSuccessCommit = signalProviderHealthCommit;
+    kv.onProviderHealthSuccessCommitted = signalProviderHealthCommitted;
+    let completionSettled = false;
+    const completion = markCodexResponseCompleted(completed).then(() => {
+      completionSettled = true;
+    });
     assert.equal(getCodexRoutingProbe(completed), null);
+    await providerHealthCommitEntered;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assert.equal(completionSettled, true);
+    await completion;
     const slot = routingSlot();
     assert.equal(slot?.banked_reset_generation_ambiguous, false);
     assert.equal(slot?.observed_reset_at_ms, null);
     assert.equal(slot?.probe_lease, null);
   } finally {
+    releaseProviderHealthCommit();
+    if (providerHealthCommitted) await providerHealthCommitted;
+    kv.providerHealthSuccessCommitGate = null;
+    kv.onProviderHealthSuccessCommit = null;
+    kv.onProviderHealthSuccessCommitted = null;
+    resetProviderHealthThrottleForTest();
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
     globalThis.fetch = originalFetch;
