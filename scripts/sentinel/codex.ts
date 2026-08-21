@@ -452,6 +452,27 @@ export const outputContainsCodexSecret = (auth: CodexAuthDocument, ...outputs: r
   return secretValues(auth).some((secret) => combined.includes(secret));
 };
 
+const sentinelRelayConfigArgs = (relayBaseUrl: string): readonly string[] => [
+  "-c",
+  'model_provider="sentinel_relay"',
+  "-c",
+  'model_providers.sentinel_relay.name="Sentinel relay"',
+  "-c",
+  `model_providers.sentinel_relay.base_url=${JSON.stringify(`${relayBaseUrl}/codex`)}`,
+  "-c",
+  'model_providers.sentinel_relay.wire_api="responses"',
+  "-c",
+  "model_providers.sentinel_relay.requires_openai_auth=true",
+  "-c",
+  "model_providers.sentinel_relay.supports_websockets=false",
+  "-c",
+  "model_providers.sentinel_relay.supports_standalone_web_search=false",
+  "-c",
+  `chatgpt_base_url=${JSON.stringify(relayBaseUrl)}`,
+  "-c",
+  "features.apps=false",
+];
+
 const execConfigArgs = (
   checkoutPath: string,
   policy: SentinelAgentPolicy,
@@ -485,8 +506,7 @@ const execConfigArgs = (
   'shell_environment_policy.inherit="none"',
   "-c",
   "agents.enabled=false",
-  "-c",
-  `chatgpt_base_url=${JSON.stringify(relayBaseUrl)}`,
+  ...sentinelRelayConfigArgs(relayBaseUrl),
   "--cd",
   checkoutPath,
   "-",
@@ -507,8 +527,7 @@ const nativeReviewArgs = (checkoutPath: string, relayBaseUrl: string): readonly 
   'shell_environment_policy.inherit="none"',
   "-c",
   "agents.enabled=false",
-  "-c",
-  `chatgpt_base_url=${JSON.stringify(relayBaseUrl)}`,
+  ...sentinelRelayConfigArgs(relayBaseUrl),
   "review",
   "--strict-config",
   "--base",

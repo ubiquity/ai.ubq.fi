@@ -225,7 +225,7 @@ export const TRIAGE_OUTPUT_SCHEMA = {
   additionalProperties: false,
   required: ["schema_version", "interval", "findings", "no_findings_reason"],
   properties: {
-    schema_version: { const: 1 },
+    schema_version: { type: "integer", const: 1 },
     interval: {
       type: "object",
       additionalProperties: false,
@@ -255,7 +255,7 @@ export const TRIAGE_OUTPUT_SCHEMA = {
         properties: {
           id: { type: "string", minLength: 1 },
           fingerprint: { type: "string", minLength: 16 },
-          severity: { enum: ["P0", "P1", "P2", "P3"] },
+          severity: { type: "string", enum: ["P0", "P1", "P2", "P3"] },
           title: { type: "string", minLength: 1 },
           affected_surface: { type: "string", minLength: 1 },
           evidence: {
@@ -266,7 +266,7 @@ export const TRIAGE_OUTPUT_SCHEMA = {
               additionalProperties: false,
               required: ["source", "reference", "detail"],
               properties: {
-                source: { enum: ["deno_log", "replay_manifest", "repository"] },
+                source: { type: "string", enum: ["deno_log", "replay_manifest", "repository"] },
                 reference: { type: "string" },
                 detail: { type: "string" },
               },
@@ -287,7 +287,7 @@ export const IMPLEMENTATION_OUTPUT_SCHEMA = {
   additionalProperties: false,
   required: ["schema_version", "candidate_sha", "dispositions", "replay_acceptances", "summary"],
   properties: {
-    schema_version: { const: 1 },
+    schema_version: { type: "integer", const: 1 },
     candidate_sha: { type: ["string", "null"] },
     dispositions: {
       type: "array",
@@ -297,7 +297,7 @@ export const IMPLEMENTATION_OUTPUT_SCHEMA = {
         required: ["finding_id", "status", "summary", "changed_files", "validation"],
         properties: {
           finding_id: { type: "string" },
-          status: { enum: ["implemented", "already_fixed", "not_actionable", "blocked"] },
+          status: { type: "string", enum: ["implemented", "already_fixed", "not_actionable", "blocked"] },
           summary: { type: "string" },
           changed_files: { type: "array", items: { type: "string" } },
           validation: { type: "array", items: { type: "string" } },
@@ -313,6 +313,7 @@ export const IMPLEMENTATION_OUTPUT_SCHEMA = {
         properties: {
           capture_fingerprint: { type: "string" },
           disposition: {
+            type: "string",
             enum: ["fixed", "accepted_unavailable", "accepted_still_failing", "not_applicable"],
           },
           reasoning: { type: "string" },
@@ -328,8 +329,8 @@ export const MONITOR_OUTPUT_SCHEMA = {
   additionalProperties: false,
   required: ["schema_version", "decision", "evidence", "traffic_sufficient", "observed_regression"],
   properties: {
-    schema_version: { const: 1 },
-    decision: { enum: ["keep", "rollback"] },
+    schema_version: { type: "integer", const: 1 },
+    decision: { type: "string", enum: ["keep", "rollback"] },
     evidence: { type: "array", minItems: 1, items: { type: "string" } },
     traffic_sufficient: { type: "boolean" },
     observed_regression: { type: "boolean" },

@@ -523,6 +523,16 @@ Deno.test("structured execution uses fixed policy, relay-only auth, a private ho
   assert.ok(captured.args.includes("read-only"));
   assert.ok(captured.args.includes("sandbox_workspace_write.network_access=false"));
   assert.ok(captured.args.includes('chatgpt_base_url="http://127.0.0.1:41771/backend-api"'));
+  assert.ok(captured.args.includes('model_provider="sentinel_relay"'));
+  assert.ok(
+    captured.args.includes(
+      'model_providers.sentinel_relay.base_url="http://127.0.0.1:41771/backend-api/codex"',
+    ),
+  );
+  assert.ok(captured.args.includes("model_providers.sentinel_relay.requires_openai_auth=true"));
+  assert.ok(captured.args.includes("model_providers.sentinel_relay.supports_websockets=false"));
+  assert.ok(captured.args.includes("model_providers.sentinel_relay.supports_standalone_web_search=false"));
+  assert.ok(captured.args.includes("features.apps=false"));
   assert.equal(
     runtimeAuth,
     syntheticCodexAuthJson(parseCodexAuthJsonB64(slot1.encoded, 1, {
@@ -682,4 +692,6 @@ Deno.test("native review delegates reviewer model selection to Codex", async () 
   assert.equal(args.includes("-m"), false);
   assert.equal(args.some((arg) => arg.startsWith("model_reasoning_effort=")), false);
   assert.equal(args.some((arg) => arg.includes("gpt-5.6-sol")), false);
+  assert.ok(args.includes('model_provider="sentinel_relay"'));
+  assert.ok(args.includes("model_providers.sentinel_relay.supports_websockets=false"));
 });

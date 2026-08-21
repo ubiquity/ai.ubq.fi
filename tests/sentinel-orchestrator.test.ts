@@ -41,9 +41,12 @@ import {
 import {
   assertActionableFindingsResolved,
   assertCompleteFindingDispositions,
+  IMPLEMENTATION_OUTPUT_SCHEMA,
   type ImplementationReport,
   isTriageReport,
+  MONITOR_OUTPUT_SCHEMA,
   type ReplayCase,
+  TRIAGE_OUTPUT_SCHEMA,
   type TriageReport,
 } from "../scripts/sentinel/types.ts";
 import {
@@ -116,6 +119,28 @@ Deno.test("observe mode is triage-only and never enables autonomous repair", () 
   assert.equal(isObserveOnlyMode("incident"), false);
   assert.equal(isAutonomousMode("observe"), false);
   assert.throws(() => parseMode(["--mode", "unknown"]), /daily\|incident\|observe\|preview/);
+});
+
+Deno.test("every structured-output property declares an explicit JSON Schema type", () => {
+  const visit = (value: unknown, path: string): void => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+    const schema = value as Record<string, unknown>;
+    if (typeof schema.properties === "object" && schema.properties !== null && !Array.isArray(schema.properties)) {
+      for (const [name, property] of Object.entries(schema.properties)) {
+        assert.equal(
+          typeof property === "object" && property !== null && !Array.isArray(property) && "type" in property,
+          true,
+          `${path}.properties.${name} must declare type`,
+        );
+        visit(property, `${path}.properties.${name}`);
+      }
+    }
+    if (schema.items !== undefined) visit(schema.items, `${path}.items`);
+  };
+
+  visit(TRIAGE_OUTPUT_SCHEMA, "triage");
+  visit(IMPLEMENTATION_OUTPUT_SCHEMA, "implementation");
+  visit(MONITOR_OUTPUT_SCHEMA, "monitor");
 });
 
 Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion, or rollback capabilities", async () => {
