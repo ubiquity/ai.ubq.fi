@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy information — AI.UBQ.FI</title>
+    <meta
+      name="description"
+      content="Operational privacy information for the authenticated UbiquityOS AI Gateway service."
+    />
+    <link rel="canonical" href="https://ai.ubq.fi/privacy" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Privacy information — AI.UBQ.FI" />
+    <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/docs.css" />
+  </head>
+  <body data-page="docs" data-role="public">
+    <div data-shell>
+      <header data-shared-header>
+        <div data-brand>
+          <a data-brand-link href="/"><img data-logo src="/company-logo.svg" alt="" /><span>UbiquityOS</span></a>
+          <span data-muted>/ AI Gateway</span>
+        </div>
+        <div data-pill><strong>Privacy</strong></div>
+        <nav data-actions aria-label="Primary">
+          <a data-button href="/">Home</a>
+          <a data-button href="/developers">Developers</a>
+          <a data-button href="/docs">Docs</a>
+          <a data-button href="/contact">Contact</a>
+        </nav>
+      </header>
+
+      <main>
+        <section data-hero data-docs-hero>
+          <div>
+            <h1>Operational privacy information</h1>
+            <p data-lead>How the UbiquityOS AI Gateway handles authenticated API traffic during service operation.</p>
+          </div>
+        </section>
+        <section data-docs-layout>
+          <article data-card data-docs-content>
+            <h2>Service data flow</h2>
+            <p>
+              The gateway processes an authenticated request so it can validate access, select a configured upstream
+              path, and return an API response. Request content is used to perform the requested inference operation.
+              Client bearer tokens are used for gateway authentication and are not forwarded upstream. The gateway uses
+              server-side upstream credentials for configured providers instead. Clients should treat prompts, model
+              inputs, and outputs as data that may be processed by the configured service path needed to complete the
+              request.
+            </p>
+            <p>
+              Do not submit passwords, raw bearer tokens, private keys, unredacted credentials, or other secrets in a
+              prompt. Do not put tokens in URLs, source control, screenshots, or agent transcripts. Use the
+              <a href="/developers">developer portal</a> to learn the required authentication header and use the
+              <a href="/contact">authorized operator channel</a> when you need a credential, revocation, or support.
+            </p>
+            <h2>Operational records</h2>
+            <p>
+              The service may return request identifiers, route warnings, and status information that help an authorized
+              operator diagnose an integration. Share only redacted diagnostic details. This page describes the current
+              technical service boundary and does not replace a legal agreement, a customer-specific data-processing
+              agreement, or a retention commitment. Product owners must provide those terms before relying on the
+              service for a use case that requires them.
+            </p>
+          </article>
+          <aside data-card data-docs-sidebar>
+            <h2>Related pages</h2>
+            <nav data-docs-toc aria-label="Related pages">
+              <a href="/developers">Developer portal</a>
+              <a href="/llms.txt">Agent instructions</a>
+              <a href="/contact">Contact routing</a>
+              <a href="/about">About</a>
+            </nav>
+          </aside>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

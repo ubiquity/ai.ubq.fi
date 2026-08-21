@@ -2685,6 +2685,10 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
         const blocked = await handler(embeddingsRequest(`exhausted-miss-${crypto.randomUUID()}`));
         assert.equal(blocked.status, 429);
         assert.ok(blocked.headers.get("Retry-After"));
+        assert.equal(blocked.headers.get("RateLimit-Limit"), "1");
+        assert.equal(blocked.headers.get("RateLimit-Remaining"), "0");
+        assert.match(blocked.headers.get("RateLimit-Policy") ?? "", /^1;w=\d+$/);
+        assert.match(blocked.headers.get("RateLimit") ?? "", /^limit=1, remaining=0, reset=\d+$/);
         assert.equal((await blocked.json() as { error?: { type?: unknown } }).error?.type, "rate_limit_error");
       },
     );

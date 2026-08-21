@@ -1629,7 +1629,7 @@ const toCodexErrorResponse = (error: unknown, provider?: string | null): Respons
   if (error instanceof ApiKeyQuotaDispatchError) {
     response = openaiError(error.status, error.message, error.code, {
       type: error.errorType,
-      ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {}),
+      headers: error.headers,
     });
   } else if (error instanceof CodexError) {
     const authReauthenticationFailure = error.code === "codex_auth_invalid" ||
@@ -1698,7 +1698,7 @@ const toCerebrasErrorResponse = (error: unknown): Response => {
   if (error instanceof ApiKeyQuotaDispatchError) {
     response = openaiError(error.status, error.message, error.code, {
       type: error.errorType,
-      ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {}),
+      headers: error.headers,
     });
   } else if (error instanceof CerebrasError) {
     response = openaiError(error.status, error.message, error.code, {
@@ -4637,7 +4637,7 @@ const apiKeyQuotaDispatchErrorResponse = (error: ApiKeyQuotaDispatchError): Resp
   openaiError(error.status, error.message, error.code, {
     type: error.errorType,
     param: null,
-    ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {}),
+    headers: error.headers,
   });
 
 type NormalizationResult<T> =

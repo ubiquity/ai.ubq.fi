@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Contact AI.UBQ.FI — UbiquityOS AI Gateway</title>
+    <meta
+      name="description"
+      content="Contact and support routing information for approved UbiquityOS AI Gateway integrations."
+    />
+    <link rel="canonical" href="https://ai.ubq.fi/contact" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Contact AI.UBQ.FI" />
+    <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/docs.css" />
+  </head>
+  <body data-page="docs" data-role="public">
+    <div data-shell>
+      <header data-shared-header>
+        <div data-brand>
+          <a data-brand-link href="/"><img data-logo src="/company-logo.svg" alt="" /><span>UbiquityOS</span></a>
+          <span data-muted>/ AI Gateway</span>
+        </div>
+        <div data-pill><strong>Contact</strong></div>
+        <nav data-actions aria-label="Primary">
+          <a data-button href="/">Home</a>
+          <a data-button href="/developers">Developers</a>
+          <a data-button href="/docs">Docs</a>
+          <a data-button href="/privacy">Privacy</a>
+        </nav>
+      </header>
+
+      <main>
+        <section data-hero data-docs-hero>
+          <div>
+            <h1>Contact and support routing</h1>
+            <p data-lead>Use the authorized operator channel associated with your UbiquityOS AI Gateway access.</p>
+          </div>
+        </section>
+        <section data-docs-layout>
+          <article data-card data-docs-content>
+            <h2>Integration support</h2>
+            <p>
+              The UbiquityOS AI Gateway is a credentialed service. The correct support contact is the UbiquityOS
+              administrator or application owner that issued the gateway token or authorized the integration. They can
+              confirm whether an application should have access, provision or revoke a token through the protected
+              administration workflow, and route an operational issue to the responsible team. This public page never
+              asks you to publish, paste, or send a bearer token.
+            </p>
+            <p>
+              For a technical question, first read the <a href="/developers">developer portal</a>,
+              <a href="/openapi.json">OpenAPI contract</a>, and <a href="/llms-full.txt">full agent guide</a>.
+              Include the public request ID from a response header, the endpoint, HTTP status, and a redacted error
+              envelope when asking an authorized operator for help. Do not include prompts that contain private data,
+              authentication headers, API keys, cookies, or upstream credentials.
+            </p>
+            <h2>Security and access concerns</h2>
+            <p>
+              If a token may have been exposed, stop using it and contact the operator who provisioned it immediately
+              so they can revoke and replace it. If an agent does not have a token or clear authority, it must not try
+              alternate credentials or private routes. The public <a href="/health">health endpoint</a> is available
+              for release liveness; provider and administration endpoints remain protected by design.
+            </p>
+          </article>
+          <aside data-card data-docs-sidebar>
+            <h2>Start here</h2>
+            <nav data-docs-toc aria-label="Support resources">
+              <a href="/developers">Integration guide</a>
+              <a href="/openapi.json">API contract</a>
+              <a href="/llms.txt">Agent instructions</a>
+              <a href="/privacy">Privacy information</a>
+            </nav>
+          </aside>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

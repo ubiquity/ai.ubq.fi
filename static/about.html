@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>About AI.UBQ.FI — UbiquityOS AI Gateway</title>
+    <meta
+      name="description"
+      content="About the UbiquityOS AI Gateway at AI.UBQ.FI and its OpenAI-compatible developer service."
+    />
+    <link rel="canonical" href="https://ai.ubq.fi/about" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="About AI.UBQ.FI" />
+    <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/docs.css" />
+  </head>
+  <body data-page="docs" data-role="public">
+    <div data-shell>
+      <header data-shared-header>
+        <div data-brand>
+          <a data-brand-link href="/"><img data-logo src="/company-logo.svg" alt="" /><span>UbiquityOS</span></a>
+          <span data-muted>/ AI Gateway</span>
+        </div>
+        <div data-pill><strong>About</strong></div>
+        <nav data-actions aria-label="Primary">
+          <a data-button href="/">Home</a>
+          <a data-button href="/developers">Developers</a>
+          <a data-button href="/docs">Docs</a>
+          <a data-button href="/contact">Contact</a>
+        </nav>
+      </header>
+
+      <main>
+        <section data-hero data-docs-hero>
+          <div>
+            <h1>About the UbiquityOS AI Gateway</h1>
+            <p data-lead>AI.UBQ.FI is the OpenAI-compatible inference service for approved UbiquityOS workloads.</p>
+          </div>
+        </section>
+        <section data-docs-layout>
+          <article data-card data-docs-content>
+            <h2>What this service is</h2>
+            <p>
+              The UbiquityOS AI Gateway provides one documented API base URL for approved applications and autonomous
+              agents that need model discovery, Chat Completions, or the Responses API. It is an integration service,
+              not a replacement for the public OpenAI API and not a promise that every public model alias is available.
+              Clients discover the current supported model catalog at runtime through <code>GET /v1/models</code>.
+            </p>
+            <p>
+              The public site is intentionally small and server-rendered so developers, search systems, and agents can
+              find the service contract without running client JavaScript. The authoritative entry points are the
+              <a href="/developers">developer portal</a>, the <a href="/openapi.json">OpenAPI 3.1 document</a>, and
+              <a href="/llms.txt">agent instructions</a>. They describe authentication, inference routes, streaming,
+              error handling, function tools, and safe integration boundaries.
+            </p>
+            <h2>How to use it responsibly</h2>
+            <p>
+              Access is authenticated. Integrators use an approved UbiquityOS gateway token and must protect it like a
+              password. The gateway does not forward a client bearer token upstream. Agents should use the published
+              contract, select models from the live catalog, respect rate-limit responses, and stop for operator help
+              when they do not have approved credentials or authority for an action.
+            </p>
+          </article>
+          <aside data-card data-docs-sidebar>
+            <h2>Public pages</h2>
+            <nav data-docs-toc aria-label="Public pages">
+              <a href="/developers">Developer portal</a>
+              <a href="/docs">Documentation</a>
+              <a href="/contact">Contact</a>
+              <a href="/privacy">Privacy information</a>
+            </nav>
+          </aside>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

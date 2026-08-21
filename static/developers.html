@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI.UBQ.FI Developer Portal — UbiquityOS AI Gateway</title>
+    <meta
+      name="description"
+      content="Developer portal for the UbiquityOS AI Gateway at AI.UBQ.FI: OpenAI-compatible API, OpenAPI contract, authentication, and agent guidance."
+    />
+    <link rel="canonical" href="https://ai.ubq.fi/developers" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="AI.UBQ.FI Developer Portal" />
+    <meta property="og:description" content="OpenAI-compatible API documentation and agent integration guidance." />
+    <meta property="og:url" content="https://ai.ubq.fi/developers" />
+    <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/docs.css" />
+  </head>
+  <body data-page="docs" data-role="public">
+    <div data-shell>
+      <header data-shared-header>
+        <div data-brand>
+          <a data-brand-link href="/">
+            <img data-logo src="/company-logo.svg" alt="" />
+            <span>UbiquityOS</span>
+          </a>
+          <span data-muted>/ AI Gateway</span>
+        </div>
+        <div data-pill><strong>Developer portal</strong></div>
+        <nav data-actions aria-label="Primary">
+          <a data-button href="/">Home</a>
+          <a data-button href="/models">Models</a>
+          <a data-button href="/docs">Docs</a>
+          <a data-button href="/chat">Chat playground</a>
+        </nav>
+      </header>
+
+      <main>
+        <section data-hero data-docs-hero>
+          <div>
+            <h1>AI.UBQ.FI Developer Portal</h1>
+            <p data-lead>
+              Integrate approved UbiquityOS applications and agents with the OpenAI-compatible UbiquityOS AI Gateway.
+            </p>
+          </div>
+          <div data-layout="row">
+            <a data-button data-variant="primary" href="/openapi.json">OpenAPI contract</a>
+            <a data-button href="/llms.txt">Agent instructions</a>
+          </div>
+        </section>
+
+        <section data-docs-layout>
+          <article data-card data-docs-content>
+            <h2>Quickstart</h2>
+            <p>
+              Set an approved UbiquityOS gateway token in <code>UOS_AI_TOKEN</code>. Configure an
+              OpenAI-compatible client with <code>https://ai.ubq.fi/v1</code> as its base URL. The gateway accepts
+              bearer authentication and does not forward a client bearer token upstream.
+            </p>
+            <pre data-code><code>export UOS_AI_TOKEN="..."
+
+curl -sS https://ai.ubq.fi/v1/models \
+  -H "Authorization: Bearer $UOS_AI_TOKEN"</code></pre>
+            <p>
+              Always query <code>GET /v1/models</code> before selecting a model. The returned catalog is the source of
+              truth for the account and runtime; do not assume that a public OpenAI model alias is available here.
+            </p>
+
+            <h2>API keys and authentication</h2>
+            <p>
+              This portal documents an authenticated service, not a self-service key issuer. API keys are provisioned
+              through the authorized UbiquityOS operator workflow. If an agent or application does not already have an
+              approved token, it must stop and ask its operator for access rather than requesting a secret in chat,
+              logging it, or adding it to source code. Administrators use the separate protected administration flow to
+              create and revoke keys.
+            </p>
+
+            <h2>Endpoints and function tools</h2>
+            <p>
+              Use <code>POST /v1/chat/completions</code> for the Chat Completions API or
+              <code>POST /v1/responses</code> for the Responses API. Both support streaming and documented function
+              tools. The <a href="/openapi.json">OpenAPI 3.1 contract</a> contains typed request fields, unique
+              operation identifiers, response envelopes, authentication, and rate-limit headers for tool-aware clients.
+            </p>
+            <p>
+              Parse every non-2xx response as JSON. OpenAI-compatible failures use an <code>error</code> object with a
+              message, type, and code. A <code>429</code> response includes <code>Retry-After</code>; when an enforced
+              gateway key window is authoritative, it also includes standard <code>RateLimit</code> fields for
+              self-throttling.
+            </p>
+
+            <h2>Interactive sandbox</h2>
+            <p>
+              The <a href="/chat">Chat playground</a> is an authenticated browser sandbox for testing a token that has
+              already been issued to you. It is useful for a small manual request before automating an integration. It
+              does not create credentials, expose server-side provider credentials, or replace the API contract.
+            </p>
+
+            <h2>Agent discovery</h2>
+            <p>
+              Autonomous agents should read <a href="/llms.txt">/llms.txt</a>, then the
+              <a href="/llms-full.txt">complete guide</a> and <a href="/openapi.json">OpenAPI document</a>. Use this
+              service for approved OpenAI-compatible inference, dynamic model discovery, and function calls. Do not use
+              it for key administration, private health probes, or unsupported product actions.
+            </p>
+          </article>
+
+          <aside data-card data-docs-sidebar>
+            <h2>Resources</h2>
+            <nav data-docs-toc aria-label="Developer resources">
+              <a href="/openapi.json">OpenAPI 3.1</a>
+              <a href="/docs">Integration guide</a>
+              <a href="/llms.txt">Agent instructions</a>
+              <a href="/llms-full.txt">Full agent guide</a>
+              <a href="/health">Public health</a>
+              <a href="/contact">Contact route</a>
+            </nav>
+          </aside>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
