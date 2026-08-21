@@ -475,8 +475,8 @@ const execConfigArgs = (
   `model_reasoning_effort=\"${policy.reasoningEffort}\"`,
   "-s",
   policy.sandbox,
-  "-a",
-  "never",
+  "-c",
+  'approval_policy="never"',
   "-c",
   'web_search="disabled"',
   "-c",
@@ -493,7 +493,6 @@ const execConfigArgs = (
 ];
 
 const nativeReviewArgs = (checkoutPath: string, relayBaseUrl: string): readonly string[] => [
-  "--ignore-user-config",
   "--cd",
   checkoutPath,
   "--sandbox",
@@ -514,6 +513,24 @@ const nativeReviewArgs = (checkoutPath: string, relayBaseUrl: string): readonly 
   "--strict-config",
   "--base",
   "origin/development",
+];
+
+const COMPATIBILITY_CHECK_RELAY = "http://127.0.0.1:9/sentinel-compatibility/backend-api";
+
+export const codexExecCliCompatibilityArgs = (checkoutPath: string): readonly string[] => {
+  const args = execConfigArgs(
+    checkoutPath,
+    SENTINEL_AGENT_POLICIES.triage,
+    "/tmp/sentinel-output-schema.json",
+    "/tmp/sentinel-last-message.json",
+    COMPATIBILITY_CHECK_RELAY,
+  );
+  return [...args.slice(0, -1), "--help"];
+};
+
+export const codexReviewCliCompatibilityArgs = (checkoutPath: string): readonly string[] => [
+  ...nativeReviewArgs(checkoutPath, COMPATIBILITY_CHECK_RELAY),
+  "--help",
 ];
 
 type PrivateInvocationOptions = Readonly<{

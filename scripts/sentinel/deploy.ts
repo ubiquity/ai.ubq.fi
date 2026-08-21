@@ -18,6 +18,15 @@ export interface HealthIdentity {
   readonly revisionId: string;
 }
 
+export type CustomHealthAttestation =
+  | Readonly<{ kind: "identity"; identity: HealthIdentity }>
+  | Readonly<{ kind: "cloudflare_challenge"; url: string; status: 403; ray: string }>;
+
+export type ProductionHealthAttestation = Readonly<{
+  managed: HealthIdentity;
+  custom: CustomHealthAttestation;
+}>;
+
 export interface RollbackTarget {
   readonly gitSha: string;
   readonly revisionId: string;
@@ -60,6 +69,13 @@ const DEFAULT_HEALTH_IDENTITY_POLL_INTERVAL_MS = 2_000;
 const REVISION_PAGE_LIMIT = 100;
 const MAX_REVISION_PAGES = 1_000;
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
+
+class HealthIdentityMismatchError extends Error {
+  constructor(url: string, expectedGitSha: string, expectedRevisionId: string) {
+    super(`Health identity mismatch at ${url}: expected ${expectedGitSha}/${expectedRevisionId}`);
+    this.name = "HealthIdentityMismatchError";
+  }
+}
 
 const defaultSleep = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -296,7 +312,10 @@ export class DenoDeployClient {
     return revision;
   }
 
-  async #readHealth(url: string, timeoutMs: number): Promise<HealthIdentity> {
+  async #requestHealth(
+    url: string,
+    timeoutMs: number,
+  ): Promise<Readonly<{ response: Response; signal: AbortSignal; operation: string }>> {
     const operation = `Read health at ${url}`;
     const { response, signal } = await this.#request(
       url,
@@ -309,6 +328,15 @@ export class DenoDeployClient {
       operation,
       timeoutMs,
     );
+    return { response, signal, operation };
+  }
+
+  async #parseHealthIdentity(
+    url: string,
+    response: Response,
+    signal: AbortSignal,
+    operation: string,
+  ): Promise<HealthIdentity> {
     if (response.status !== 200) {
       throw new Error(`${operation} failed with HTTP ${response.status}; expected 200`);
     }
@@ -319,16 +347,37 @@ export class DenoDeployClient {
 
     const headerGitSha = response.headers.get("x-uos-git-sha")?.trim();
     const headerRevisionId = response.headers.get("x-uos-deployment-id")?.trim();
-    if (bodyGitSha && headerGitSha && headerGitSha !== bodyGitSha) {
+    if (!bodyGitSha || !bodyRevisionId || !headerGitSha || !headerRevisionId) {
+      throw new Error(`Health at ${url} did not report release identity in both its body and headers`);
+    }
+    if (headerGitSha !== bodyGitSha) {
       throw new Error(`Health at ${url} reported inconsistent Git identities`);
     }
-    if (bodyRevisionId && headerRevisionId && headerRevisionId !== bodyRevisionId) {
+    if (headerRevisionId !== bodyRevisionId) {
       throw new Error(`Health at ${url} reported inconsistent revision identities`);
     }
-    const gitSha = bodyGitSha ?? headerGitSha ?? null;
-    const revisionId = bodyRevisionId ?? headerRevisionId ?? null;
-    if (!gitSha || !revisionId) throw new Error(`Health at ${url} did not report a complete release identity`);
-    return { url, gitSha, revisionId };
+    return { url, gitSha: bodyGitSha, revisionId: bodyRevisionId };
+  }
+
+  async #readHealth(url: string, timeoutMs: number): Promise<HealthIdentity> {
+    const { response, signal, operation } = await this.#requestHealth(url, timeoutMs);
+    return await this.#parseHealthIdentity(url, response, signal, operation);
+  }
+
+  async #readCustomHealth(url: string, timeoutMs: number): Promise<CustomHealthAttestation> {
+    const { response, signal, operation } = await this.#requestHealth(url, timeoutMs);
+    if (response.status === 200) {
+      return { kind: "identity", identity: await this.#parseHealthIdentity(url, response, signal, operation) };
+    }
+    const server = response.headers.get("server")?.trim().toLowerCase();
+    const mitigation = response.headers.get("cf-mitigated")?.trim().toLowerCase();
+    const ray = response.headers.get("cf-ray")?.trim() ?? "";
+    if (response.status === 403 && server === "cloudflare" && mitigation === "challenge" && ray !== "") {
+      await response.body?.cancel().catch(() => undefined);
+      return { kind: "cloudflare_challenge", url, status: 403, ray };
+    }
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`${operation} failed with HTTP ${response.status}; expected 200`);
   }
 
   async readHealth(url: string): Promise<HealthIdentity> {
@@ -385,12 +434,77 @@ export class DenoDeployClient {
     return await this.#pollHealthIdentities(urls, (identities) => {
       for (const identity of identities) {
         if (identity.gitSha !== expectedGitSha || identity.revisionId !== expectedRevisionId) {
-          throw new Error(
-            `Health identity mismatch at ${identity.url}: expected ${expectedGitSha}/${expectedRevisionId}`,
-          );
+          throw new HealthIdentityMismatchError(identity.url, expectedGitSha, expectedRevisionId);
         }
       }
     }, options);
+  }
+
+  async #pollCustomHealthIdentity(
+    url: string,
+    expectedGitSha: string,
+    expectedRevisionId: string,
+    options: HealthIdentityPollOptions,
+  ): Promise<CustomHealthAttestation> {
+    const timeoutMs = positiveMilliseconds(
+      options.timeoutMs ?? DEFAULT_HEALTH_IDENTITY_TIMEOUT_MS,
+      "Custom health identity timeout",
+    );
+    const pollIntervalMs = positiveMilliseconds(
+      options.pollIntervalMs ?? DEFAULT_HEALTH_IDENTITY_POLL_INTERVAL_MS,
+      "Custom health identity poll interval",
+    );
+    const deadline = this.#now() + timeoutMs;
+    const maximumAttempts = Math.ceil(timeoutMs / pollIntervalMs) + 1;
+    let lastError: unknown = new Error("Custom health identity did not converge");
+    for (let attempt = 0; attempt < maximumAttempts; attempt++) {
+      const remainingBeforeRequest = Math.max(1, deadline - this.#now());
+      try {
+        const attestation = await this.#readCustomHealth(
+          url,
+          Math.min(this.#requestTimeoutMs, remainingBeforeRequest),
+        );
+        if (attestation.kind === "cloudflare_challenge") return attestation;
+        if (
+          attestation.identity.gitSha !== expectedGitSha ||
+          attestation.identity.revisionId !== expectedRevisionId
+        ) {
+          throw new HealthIdentityMismatchError(url, expectedGitSha, expectedRevisionId);
+        }
+        return attestation;
+      } catch (error) {
+        if (error instanceof HealthIdentityMismatchError) throw error;
+        lastError = error;
+      }
+      const remaining = deadline - this.#now();
+      if (remaining <= 0 || attempt + 1 >= maximumAttempts) break;
+      await this.#sleep(Math.min(pollIntervalMs, remaining));
+      if (this.#now() >= deadline) break;
+    }
+    if (lastError instanceof Error) throw lastError;
+    throw new Error("Custom health identity did not converge");
+  }
+
+  async verifyProductionHealthIdentity(
+    managedUrl: string,
+    customUrl: string,
+    expectedGitSha: string,
+    expectedRevisionId: string,
+    options: HealthIdentityPollOptions = {},
+  ): Promise<ProductionHealthAttestation> {
+    const managed = (await this.verifyHealthIdentity(
+      [managedUrl],
+      expectedGitSha,
+      expectedRevisionId,
+      options,
+    ))[0]!;
+    const custom = await this.#pollCustomHealthIdentity(
+      customUrl,
+      expectedGitSha,
+      expectedRevisionId,
+      options,
+    );
+    return { managed, custom };
   }
 
   async snapshotHealthyProduction(
@@ -401,7 +515,8 @@ export class DenoDeployClient {
     if (healthUrls.length === 0 || healthUrls.length > 2) {
       throw new Error("A production snapshot requires one or two health URLs");
     }
-    const identities = await this.#pollHealthIdentities(healthUrls, (observed) => {
+    const managedUrls = healthUrls.length === 2 ? [healthUrls[0]!] : healthUrls;
+    const identities = await this.#pollHealthIdentities(managedUrls, (observed) => {
       const first = observed[0];
       requireGitSha(first.gitSha, "Production Git SHA");
       for (const identity of observed.slice(1)) {
@@ -411,6 +526,14 @@ export class DenoDeployClient {
       }
     }, healthOptions);
     const first = identities[0];
+    if (healthUrls.length === 2) {
+      await this.#pollCustomHealthIdentity(
+        healthUrls[1]!,
+        first.gitSha,
+        first.revisionId,
+        healthOptions,
+      );
+    }
     await this.assertRevisionBelongsToApp(app, first.revisionId);
     const revision = await this.getRevision(first.revisionId);
     if (revision.id !== first.revisionId) {
@@ -474,6 +597,13 @@ export class DenoDeployClient {
 
   async promoteRevision(app: string, revisionId: string): Promise<void> {
     await this.assertRevisionBelongsToApp(app, revisionId);
+    const revision = await this.getRevision(revisionId);
+    if (revision.id !== revisionId) {
+      throw new Error(`Deno returned the wrong revision for ${revisionId}`);
+    }
+    if (revision.status !== "routed") {
+      throw new Error(`Revision ${revisionId} is not routed immediately before promotion`);
+    }
     const operation = `Promote revision ${revisionId}`;
     const { response } = await this.#request(
       this.#apiUrl(`revisions/${encodeURIComponent(revisionId)}/promote`),

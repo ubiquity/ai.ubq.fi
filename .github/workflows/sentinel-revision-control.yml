@@ -1,0 +1,97 @@
+name: Sentinel Revision Control
+run-name: Sentinel revision ${{ inputs.correlation_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      correlation_id:
+        description: Opaque Sentinel promotion correlation ID
+        required: true
+        type: string
+      target_app:
+        description: Exact Deno application to promote
+        required: true
+        type: choice
+        options:
+          - ai-ubq-fi
+          - p-ai-ubq-fi
+      target_git_sha:
+        description: Full Git SHA attested by the target revision
+        required: true
+        type: string
+      target_revision:
+        description: Exact Deno revision ID to promote
+        required: true
+        type: string
+      expected_current_git_sha:
+        description: Full Git SHA currently served by the stable route
+        required: true
+        type: string
+      expected_current_revision:
+        description: Deno revision currently served by the stable route
+        required: true
+        type: string
+      expected_development_git_sha:
+        description: Full Git SHA that development must still resolve to
+        required: true
+        type: string
+
+concurrency:
+  group: ai-ubq-fi-deploy
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+
+jobs:
+  production-approval:
+    if: inputs.target_app == 'ai-ubq-fi'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "Production revision control approved."
+
+  promote:
+    needs: production-approval
+    if: >-
+      always() &&
+      (
+        (inputs.target_app == 'ai-ubq-fi' && needs.production-approval.result == 'success') ||
+        (inputs.target_app == 'p-ai-ubq-fi' && needs.production-approval.result == 'skipped')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Promote and verify exact revision
+        env:
+          SENTINEL_CORRELATION_ID: ${{ inputs.correlation_id }}
+          SENTINEL_TARGET_APP: ${{ inputs.target_app }}
+          SENTINEL_TARGET_GIT_SHA: ${{ inputs.target_git_sha }}
+          SENTINEL_TARGET_REVISION: ${{ inputs.target_revision }}
+          SENTINEL_EXPECTED_CURRENT_GIT_SHA: ${{ inputs.expected_current_git_sha }}
+          SENTINEL_EXPECTED_CURRENT_REVISION: ${{ inputs.expected_current_revision }}
+          SENTINEL_EXPECTED_DEVELOPMENT_GIT_SHA: ${{ inputs.expected_development_git_sha }}
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          deno run --frozen --no-remote
+          --allow-env=SENTINEL_CORRELATION_ID,SENTINEL_TARGET_APP,SENTINEL_TARGET_GIT_SHA,SENTINEL_TARGET_REVISION,SENTINEL_EXPECTED_CURRENT_GIT_SHA,SENTINEL_EXPECTED_CURRENT_REVISION,SENTINEL_EXPECTED_DEVELOPMENT_GIT_SHA,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_SHA,GITHUB_REF,DENO_DEPLOY_TOKEN,GITHUB_TOKEN
+          --allow-net
+          --allow-write=sentinel-revision-control-result.json
+          scripts/sentinel/revision-control.ts
+
+      - name: Upload promotion result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sentinel-revision-control-${{ github.run_id }}
+          path: sentinel-revision-control-result.json
+          if-no-files-found: error
+          retention-days: 7

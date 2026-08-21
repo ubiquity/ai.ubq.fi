@@ -1,4 +1,5 @@
 name: Deno Deploy
+run-name: Deno Deploy ${{ inputs.sentinel_correlation_id || github.sha }}
 
 on:
   push:
@@ -17,12 +18,18 @@ on:
         required: false
         type: boolean
         default: false
+      sentinel_correlation_id:
+        description: Opaque Provider Sentinel dispatch correlation ID
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   # Every deployment mutates either the production app or the shared preview
   # app. Queue all runs so a later preview cannot race an earlier one.
   group: ai-ubq-fi-deploy
   cancel-in-progress: false
+  queue: max
 
 jobs:
   validate:
@@ -349,14 +356,33 @@ jobs:
     uses: ubiquity/deno-deploy-workflow/.github/workflows/deno-deploy-reusable.yml@091927036712d54a020a3240b5b2fa492f78a94b
     with:
       project: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
-      preview_project: p-ai-ubq-fi
+      # Sentinel build-only dispatches deliberately select preview mode in the
+      # pinned reusable workflow while pointing that mode at the requested
+      # application. The pinned workflow adds --prod only in production mode.
+      # This creates an immutable revision without changing the stable route.
+      preview_project: >-
+        ${{
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.sentinel_build_only == 'true' &&
+          github.ref == 'refs/heads/development' &&
+          'ai-ubq-fi' ||
+          'p-ai-ubq-fi'
+        }}
       # p-ai-ubq-fi is a separate acceptance app. Manual preview dispatches
       # intentionally use its stable timeline so the stable hostname and
       # Deno.cron exercise the same isolated revision; PRs use unique preview
       # revision URLs and never target ai-ubq-fi.
       # A PR ref must never compare equal to the production branch. Manual
       # preview dispatches retain their existing stable-app acceptance mode.
-      prod_branch: ${{ github.event_name == 'pull_request' && '__preview__' || github.ref_name }}
+      prod_branch: >-
+        ${{
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.sentinel_build_only == 'true' &&
+          '__sentinel_non_promoting__' ||
+          github.event_name == 'pull_request' &&
+          '__preview__' ||
+          github.ref_name
+        }}
       deploy_platform: deno2
       entrypoint: serve.ts
       artifact_name: ai-ubq-fi-source-${{ github.sha }}
@@ -378,6 +404,139 @@ jobs:
         DENO_DEPLOY_TOKEN
     secrets:
       DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+
+  attest-sentinel-candidate:
+    needs:
+      - deploy
+      - capture-deployment-baseline
+    if: >-
+      always() &&
+      needs.deploy.result == 'success' &&
+      needs.capture-deployment-baseline.result == 'success' &&
+      (
+        github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.sentinel_build_only == 'true'
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Resolve one immutable Sentinel revision
+        shell: bash
+        env:
+          BASELINE_REVISION_IDS: ${{ needs.capture-deployment-baseline.outputs.revision_ids }}
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          TARGET_PROJECT: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$*"
+            exit 1
+          }
+
+          case "$TARGET_PROJECT" in
+            ai-ubq-fi|p-ai-ubq-fi) ;;
+            *) fail "Sentinel build-only deployment resolved an invalid target application." ;;
+          esac
+          [ -n "$DENO_DEPLOY_TOKEN" ] || fail "DENO_DEPLOY_TOKEN is required for candidate attestation."
+          echo "::add-mask::$DENO_DEPLOY_TOKEN"
+          printf '%s' "$BASELINE_REVISION_IDS" | jq -e \
+            'type == "array" and all(.[]; type == "string" and length > 0)' \
+            >/dev/null || fail "The pre-deploy revision baseline is missing or invalid."
+
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          trap 'rm -f "$headers" "$body"' EXIT
+
+          attest_candidate() {
+            local candidate_url="$1"
+            local candidate_id="$2"
+            local status
+            : > "$headers"
+            : > "$body"
+            status="$(curl -sS --max-time 20 -D "$headers" -o "$body" -w '%{http_code}' \
+              "${candidate_url}/health" || true)"
+            body_git_sha="$(jq -er '.release.git_sha' "$body" 2>/dev/null || true)"
+            body_revision="$(jq -er '.release.deployment_id' "$body" 2>/dev/null || true)"
+            header_git_sha="$(awk 'tolower($1) == "x-uos-git-sha:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
+            header_revision="$(awk 'tolower($1) == "x-uos-deployment-id:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
+            [ "$status" = "200" ] &&
+              [ "$body_git_sha" = "$GITHUB_SHA" ] &&
+              [ "$header_git_sha" = "$GITHUB_SHA" ] &&
+              [ "$body_revision" = "$candidate_id" ] &&
+              [ "$header_revision" = "$candidate_id" ]
+          }
+
+          revision_id=""
+          for attempt in $(seq 1 18); do
+            if revisions="$(curl --fail-with-body -sS --max-time 30 \
+              -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+              "https://api.deno.com/v2/apps/${TARGET_PROJECT}/revisions?limit=50")"; then
+              printf '%s' "$revisions" | jq -e \
+                'type == "array" and all(.[]; (.id | type == "string") and (.status | type == "string"))' \
+                >/dev/null || fail "Deno returned an invalid revision list for ${TARGET_PROJECT}."
+              mapfile -t candidate_ids < <(
+                printf '%s' "$revisions" | jq -r --argjson baseline "$BASELINE_REVISION_IDS" '
+                  .[] | .id as $id | select(($baseline | index($id)) == null) | $id
+                '
+              )
+              [ "${#candidate_ids[@]}" -le 1 ] || fail "More than one revision appeared after the Sentinel baseline."
+              if [ "${#candidate_ids[@]}" -eq 1 ]; then
+                candidate_id="${candidate_ids[0]}"
+                candidate_status="$(printf '%s' "$revisions" | jq -r --arg id "$candidate_id" \
+                  '.[] | select(.id == $id) | .status')"
+                candidate_url="https://${TARGET_PROJECT}-${candidate_id}.ubiquity-dao.deno.net"
+                if { [ "$candidate_status" = "succeeded" ] || [ "$candidate_status" = "routed" ]; } &&
+                  attest_candidate "$candidate_url" "$candidate_id"; then
+                  revision_id="$candidate_id"
+                  break
+                fi
+              fi
+            fi
+            echo "Waiting for one exact ${TARGET_PROJECT} candidate (${attempt}/18)."
+            sleep 10
+          done
+          [ -n "$revision_id" ] || fail "No unique new Sentinel revision attested ${GITHUB_SHA}."
+
+          revisions="$(curl --fail-with-body -sS --max-time 30 \
+            -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+            "https://api.deno.com/v2/apps/${TARGET_PROJECT}/revisions?limit=50")"
+          mapfile -t final_candidate_ids < <(
+            printf '%s' "$revisions" | jq -r --argjson baseline "$BASELINE_REVISION_IDS" '
+              .[] | .id as $id | select(($baseline | index($id)) == null) | $id
+            '
+          )
+          [ "${#final_candidate_ids[@]}" -eq 1 ] || fail "The post-baseline revision set changed before attestation."
+          [ "${final_candidate_ids[0]}" = "$revision_id" ] || fail "The candidate revision identity changed."
+
+          revision="$(curl --fail-with-body -sS --max-time 30 \
+            -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+            "https://api.deno.com/v2/revisions/${revision_id}")"
+          printf '%s' "$revision" | jq -e --arg id "$revision_id" '
+            (.revision // .data // .) |
+            .id == $id and (.status == "succeeded" or .status == "routed")
+          ' >/dev/null || fail "Revision ${revision_id} is not routed at final attestation."
+          attest_candidate "https://${TARGET_PROJECT}-${revision_id}.ubiquity-dao.deno.net" "$revision_id" ||
+            fail "Revision ${revision_id} lost its immutable health identity."
+
+          mkdir -p .sentinel-deployment
+          jq -n \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --arg app "$TARGET_PROJECT" \
+            --arg git_sha "$GITHUB_SHA" \
+            --arg revision "$revision_id" \
+            '{schema_version: 1, run_id: $run_id, app: $app, git_sha: $git_sha, revision: $revision}' \
+            > .sentinel-deployment/sentinel-deployment.json
+
+      - name: Upload exact Sentinel deployment identity
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sentinel-deployment-${{ github.run_id }}
+          path: .sentinel-deployment/sentinel-deployment.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
 
   verify-deployment:
     needs:
@@ -553,9 +712,20 @@ jobs:
 
           custom_health="not applicable"
           if [ -n "$custom_url" ]; then
-            attest_health "$custom_url" "$revision_id" ||
-              fail "Custom deployment identity check failed for ${custom_url}/health (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>})."
-            custom_health="exact release identity attested"
+            if attest_health "$custom_url" "$revision_id"; then
+              custom_health="exact release identity attested"
+            else
+              cloudflare_server="$(awk 'tolower($1) == "server:" { gsub("\r", "", $2); print tolower($2); exit }' "$headers")"
+              cloudflare_ray="$(awk 'tolower($1) == "cf-ray:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
+              cloudflare_mitigation="$(awk 'tolower($1) == "cf-mitigated:" { gsub("\r", "", $2); print tolower($2); exit }' "$headers")"
+              if [ "$last_status" = "403" ] && [ "$cloudflare_server" = "cloudflare" ] &&
+                [ "$cloudflare_mitigation" = "challenge" ] && [ -n "$cloudflare_ray" ]; then
+                custom_health="Cloudflare challenged the GitHub runner (HTTP 403, ray ${cloudflare_ray})"
+                echo "::warning::${custom_url}/health was challenged by Cloudflare Bot Fight Mode. The exact managed Deno route is attested; this is not a Deno revision mismatch."
+              else
+                fail "Custom deployment identity check failed for ${custom_url}/health (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>})."
+              fi
+            fi
           fi
 
           {

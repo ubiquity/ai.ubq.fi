@@ -10,6 +10,7 @@ export interface GitHubWorkflowRun {
   readonly conclusion: string | null;
   readonly htmlUrl: string | null;
   readonly createdAt: string;
+  readonly displayTitle: string;
 }
 
 export interface GitHubArtifact {
@@ -33,13 +34,17 @@ export interface GitHubClientOptions {
 }
 
 export interface WaitForWorkflowOptions {
-  readonly workflow: string;
+  readonly runId: number;
   readonly headSha: string;
-  readonly branch: string;
-  readonly createdAfterMs: number;
-  readonly event?: string;
+  readonly displayTitle?: string;
   readonly timeoutMs?: number;
   readonly pollIntervalMs?: number;
+}
+
+export interface GitHubWorkflowDispatch {
+  readonly runId: number;
+  readonly runUrl: string;
+  readonly htmlUrl: string;
 }
 
 export interface ListRepositoryArtifactsOptions {
@@ -76,7 +81,8 @@ const parseWorkflowRun = (value: unknown): GitHubWorkflowRun => {
   const headSha = nonEmptyString(record.head_sha);
   const status = nonEmptyString(record.status);
   const createdAt = nonEmptyString(record.created_at);
-  if (!id || !headSha || !status || !createdAt) {
+  const displayTitle = nonEmptyString(record.display_title);
+  if (!id || !headSha || !status || !createdAt || !displayTitle) {
     throw new Error("GitHub returned an incomplete workflow run");
   }
   return {
@@ -86,6 +92,7 @@ const parseWorkflowRun = (value: unknown): GitHubWorkflowRun => {
     conclusion: nonEmptyString(record.conclusion),
     htmlUrl: nonEmptyString(record.html_url),
     createdAt,
+    displayTitle,
   };
 };
 
@@ -148,7 +155,7 @@ export class GitHubActionsClient {
     const headers = new Headers({
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${this.#token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
+      "X-GitHub-Api-Version": "2026-03-10",
     });
     if (contentType) headers.set("Content-Type", "application/json");
     return headers;
@@ -181,11 +188,10 @@ export class GitHubActionsClient {
     workflow: string,
     ref: string,
     inputs: Readonly<Record<string, string | boolean>> = {},
-  ): Promise<number> {
+  ): Promise<GitHubWorkflowDispatch> {
     if (workflow.trim() === "" || ref.trim() === "") {
       throw new Error("Workflow and ref are required for dispatch");
     }
-    const dispatchedAt = this.#now();
     const response = await this.#request(
       this.#url(
         `repos/${this.#repository}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
@@ -193,38 +199,42 @@ export class GitHubActionsClient {
       {
         method: "POST",
         headers: this.#headers(true),
-        body: JSON.stringify({ ref, inputs }),
+        body: JSON.stringify({ ref, inputs, return_run_details: true }),
         redirect: "manual",
       },
       `Dispatch workflow ${workflow}`,
     );
-    if (response.status !== 204) {
-      throw new Error(`Dispatch workflow ${workflow} failed with HTTP ${response.status}; expected 204`);
+    if (response.status !== 200) {
+      throw new Error(`Dispatch workflow ${workflow} failed with HTTP ${response.status}; expected 200`);
     }
-    return dispatchedAt;
-  }
-
-  async #listWorkflowRuns(
-    workflow: string,
-    branch: string,
-    event: string,
-  ): Promise<readonly GitHubWorkflowRun[]> {
-    const url = this.#url(
-      `repos/${this.#repository}/actions/workflows/${encodeURIComponent(workflow)}/runs`,
-    );
-    url.searchParams.set("branch", branch);
-    url.searchParams.set("event", event);
-    url.searchParams.set("per_page", "100");
-    const response = await this.#request(url, {
-      method: "GET",
-      headers: this.#headers(),
-      redirect: "manual",
-    }, `List workflow runs for ${workflow}`);
-    const payload = asRecord(await this.#json(response, `List workflow runs for ${workflow}`));
-    if (!payload || !Array.isArray(payload.workflow_runs)) {
-      throw new Error(`List workflow runs for ${workflow} returned no workflow_runs array`);
+    const payload = asRecord(await this.#json(response, `Dispatch workflow ${workflow}`));
+    const runId = integer(payload?.workflow_run_id);
+    const runUrl = nonEmptyString(payload?.run_url);
+    const htmlUrl = nonEmptyString(payload?.html_url);
+    if (!runId || !runUrl || !htmlUrl) {
+      throw new Error(`Dispatch workflow ${workflow} returned incomplete run details`);
     }
-    return payload.workflow_runs.map(parseWorkflowRun);
+    const expectedRunUrl = this.#url(`repos/${this.#repository}/actions/runs/${runId}`);
+    if (runUrl !== expectedRunUrl.href) {
+      throw new Error(`Dispatch workflow ${workflow} returned a run URL outside the repository`);
+    }
+    let parsedHtmlUrl: URL;
+    try {
+      parsedHtmlUrl = new URL(htmlUrl);
+    } catch {
+      throw new Error(`Dispatch workflow ${workflow} returned an invalid HTML run URL`);
+    }
+    const expectedHtmlHost = this.#apiBaseUrl.hostname === "api.github.com"
+      ? "github.com"
+      : this.#apiBaseUrl.hostname.replace(/^api\./u, "");
+    if (
+      parsedHtmlUrl.protocol !== "https:" || parsedHtmlUrl.hostname !== expectedHtmlHost ||
+      parsedHtmlUrl.username !== "" || parsedHtmlUrl.password !== "" || parsedHtmlUrl.search !== "" ||
+      parsedHtmlUrl.hash !== "" || parsedHtmlUrl.pathname !== `/${this.#repository}/actions/runs/${runId}`
+    ) {
+      throw new Error(`Dispatch workflow ${workflow} returned an HTML run URL outside the repository`);
+    }
+    return { runId, runUrl, htmlUrl };
   }
 
   async getWorkflowRun(runId: number): Promise<GitHubWorkflowRun> {
@@ -242,53 +252,58 @@ export class GitHubActionsClient {
   }
 
   async waitForWorkflow(options: WaitForWorkflowOptions): Promise<GitHubWorkflowRun> {
+    if (!Number.isSafeInteger(options.runId) || options.runId <= 0) {
+      throw new Error("Workflow run ID must be positive");
+    }
     if (!FULL_GIT_SHA.test(options.headSha)) {
       throw new Error("Workflow head SHA must be a lowercase, full Git commit SHA");
     }
-    if (!Number.isFinite(options.createdAfterMs) || options.createdAfterMs < 0) {
-      throw new Error("Workflow creation fence is invalid");
-    }
-    const event = options.event ?? "workflow_dispatch";
     const timeoutMs = options.timeoutMs ?? DEFAULT_WORKFLOW_TIMEOUT_MS;
     const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("Workflow timeout must be positive");
     if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
       throw new Error("Workflow poll interval must be positive");
     }
+    if (options.displayTitle !== undefined && options.displayTitle.trim() === "") {
+      throw new Error("Workflow display-title correlation must not be empty");
+    }
 
     const deadline = this.#now() + timeoutMs;
-    // GitHub run timestamps have one-second precision. Keep that precision in
-    // the dispatch fence so the run created during the same second is eligible
-    // without admitting runs from earlier seconds.
-    const createdAfterSecond = Math.floor(options.createdAfterMs / 1_000) * 1_000;
-    let runId: number | null = null;
+    let lastPollingError: unknown = null;
     while (this.#now() <= deadline) {
-      if (runId === null) {
-        const runs = await this.#listWorkflowRuns(options.workflow, options.branch, event);
-        const candidate = runs
-          .filter((run) => run.headSha === options.headSha)
-          .filter((run) => Date.parse(run.createdAt) >= createdAfterSecond)
-          .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
-        if (candidate) runId = candidate.id;
+      let run: GitHubWorkflowRun;
+      try {
+        run = await this.getWorkflowRun(options.runId);
+        lastPollingError = null;
+      } catch (error) {
+        // A dispatch response gives Sentinel one exact run ID. A transient API,
+        // network, or eventual-consistency failure must not release the caller
+        // into rollback while that exact serialized run may still be active.
+        lastPollingError = error;
+        if (this.#now() >= deadline) break;
+        await this.#sleep(Math.min(pollIntervalMs, Math.max(0, deadline - this.#now())));
+        continue;
       }
-
-      if (runId !== null) {
-        const run = await this.getWorkflowRun(runId);
-        if (run.headSha !== options.headSha) {
-          throw new Error(`Workflow run ${run.id} changed head SHA`);
+      if (run.headSha !== options.headSha) {
+        throw new Error(`Workflow run ${run.id} has the wrong head SHA`);
+      }
+      if (options.displayTitle !== undefined && run.displayTitle !== options.displayTitle) {
+        throw new Error(`Workflow run ${run.id} has the wrong dispatch correlation`);
+      }
+      if (run.status === "completed") {
+        if (run.conclusion !== "success") {
+          throw new Error(`Workflow run ${run.id} completed with ${run.conclusion ?? "no conclusion"}`);
         }
-        if (run.status === "completed") {
-          if (run.conclusion !== "success") {
-            throw new Error(`Workflow run ${run.id} completed with ${run.conclusion ?? "no conclusion"}`);
-          }
-          return run;
-        }
+        return run;
       }
 
       if (this.#now() >= deadline) break;
       await this.#sleep(Math.min(pollIntervalMs, Math.max(0, deadline - this.#now())));
     }
-    throw new Error(`Timed out waiting for workflow ${options.workflow} at ${options.headSha}`);
+    throw new Error(
+      `Timed out reconciling workflow run ${options.runId} at ${options.headSha}`,
+      lastPollingError === null ? undefined : { cause: lastPollingError },
+    );
   }
 
   async listRunArtifacts(runId: number): Promise<readonly GitHubArtifact[]> {

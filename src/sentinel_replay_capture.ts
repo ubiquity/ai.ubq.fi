@@ -1007,10 +1007,16 @@ const manifestEntryMatchesKey = (entry: Deno.KvEntry<SentinelReplayManifest>): b
 
 export const listEncryptedSentinelReplays = async (
   kv: Deno.Kv,
-  options: Readonly<{ afterMs: number; cursor?: string; limit?: number }>,
+  options: Readonly<{ afterMs: number; beforeMs: number; cursor?: string; limit?: number }>,
 ): Promise<Readonly<{ captures: ExportedSentinelReplayCapture[]; cursor: string }>> => {
   if (!Number.isSafeInteger(options.afterMs) || options.afterMs < 0) {
     throw new Error("Sentinel replay export start is invalid");
+  }
+  if (
+    !Number.isSafeInteger(options.beforeMs) || options.beforeMs < options.afterMs ||
+    options.beforeMs >= Number.MAX_SAFE_INTEGER
+  ) {
+    throw new Error("Sentinel replay export end is invalid");
   }
   if (options.limit !== undefined && options.limit !== SENTINEL_REPLAY_EXPORT_PAGE_LIMIT) {
     throw new Error("Sentinel replay export limit must be one");
@@ -1025,6 +1031,7 @@ export const listEncryptedSentinelReplays = async (
     {
       prefix: SENTINEL_REPLAY_MANIFEST_PREFIX,
       start: [...SENTINEL_REPLAY_MANIFEST_PREFIX, options.afterMs],
+      end: [...SENTINEL_REPLAY_MANIFEST_PREFIX, options.beforeMs + 1],
     },
     { cursor: options.cursor, limit: SENTINEL_REPLAY_EXPORT_PAGE_LIMIT },
   );
@@ -1034,6 +1041,7 @@ export const listEncryptedSentinelReplays = async (
       throw new Error("Sentinel replay manifest is invalid");
     }
     if (entry.value.captured_at_ms < options.afterMs) throw new Error("Sentinel replay manifest order is invalid");
+    if (entry.value.captured_at_ms > options.beforeMs) throw new Error("Sentinel replay manifest range is invalid");
     const chunks = await getChunks(kv, entry.value);
     captures.push({ manifest: entry.value, chunks: chunks.map(base64UrlEncode) });
     break;

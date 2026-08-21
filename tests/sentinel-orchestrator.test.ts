@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY } from "../scripts/sentinel/policy.ts";
 import {
+  agentCheckoutPath,
   assertRetainedReplayArtifactBudget,
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
@@ -8,14 +9,22 @@ import {
   MAX_MATCHING_REPLAY_ARCHIVE_BYTES,
   MAX_MATCHING_REPLAY_ARTIFACTS,
   parseMonitorDecision,
+  parseSentinelDeploymentAttestation,
+  previewCompletionForDecision,
   replayIndexArtifactMayMatch,
   replayIndexArtifactName,
   resolveCycleAnchorMs,
   sentinelDeploymentInputs,
   sentinelEvidenceArtifactName,
+  sentinelRevisionControlInputs,
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
-import { inspectSse, replayOneCase, selectCurrentAndMatchingRegressionCases } from "../scripts/sentinel/replay.ts";
+import {
+  inspectSse,
+  isInferenceOnlyReplayEndpoint,
+  replayOneCase,
+  selectCurrentAndMatchingRegressionCases,
+} from "../scripts/sentinel/replay.ts";
 import {
   blockingReviewFindings,
   canStartReviewRound,
@@ -40,6 +49,27 @@ import {
 import type { ExportedSentinelReplayCapture } from "../src/sentinel_replay_capture.ts";
 
 const now = Date.parse("2026-08-21T06:00:00.000Z");
+
+Deno.test("triage reads the repository root while monitoring reads the accepted candidate checkout", () => {
+  const root = "/runner/work/repository";
+  const candidate = "/runner/work/repository/.sentinel/candidate-worktree";
+  assert.equal(agentCheckoutPath("triage", root, candidate), root);
+  assert.equal(agentCheckoutPath("implementation", root, candidate), candidate);
+  assert.equal(agentCheckoutPath("monitoring", root, candidate), candidate);
+});
+
+Deno.test("preview completion restores only a candidate accepted by monitoring", () => {
+  assert.deepEqual(previewCompletionForDecision("keep"), {
+    restoreCandidate: true,
+    status: "preview_complete",
+    branchDisposition: "retained_pending_supervised_acceptance",
+  });
+  assert.deepEqual(previewCompletionForDecision("rollback"), {
+    restoreCandidate: false,
+    status: "preview_rolled_back",
+    branchDisposition: "remote_retained_rejected_by_monitor",
+  });
+});
 
 Deno.test("implementation scope protects Sentinel and nested Codex instruction surfaces", () => {
   for (
@@ -82,8 +112,75 @@ Deno.test("sentinel schedule windows anchor to the immutable GitHub run creation
 });
 
 Deno.test("sentinel deployment dispatches are build-only for preview and production candidates", () => {
-  assert.deepEqual(sentinelDeploymentInputs(true), { deploy_preview: true, sentinel_build_only: true });
-  assert.deepEqual(sentinelDeploymentInputs(false), { deploy_preview: false, sentinel_build_only: true });
+  const correlationId = "sentinel-1234567890abcdef";
+  assert.deepEqual(sentinelDeploymentInputs(true, correlationId), {
+    deploy_preview: true,
+    sentinel_build_only: true,
+    sentinel_correlation_id: correlationId,
+  });
+  assert.deepEqual(sentinelDeploymentInputs(false, correlationId), {
+    deploy_preview: false,
+    sentinel_build_only: true,
+    sentinel_correlation_id: correlationId,
+  });
+  assert.throws(() => sentinelDeploymentInputs(true, "short"), /correlation ID is invalid/);
+});
+
+Deno.test("sentinel deployment attestation is bound to one run, app, SHA, and revision", () => {
+  const gitSha = "2".repeat(40);
+  const value = {
+    schema_version: 1,
+    run_id: 41,
+    app: "p-ai-ubq-fi",
+    git_sha: gitSha,
+    revision: "revision-41",
+  };
+  assert.deepEqual(
+    parseSentinelDeploymentAttestation(value, { runId: 41, app: "p-ai-ubq-fi", gitSha }),
+    value,
+  );
+  assert.throws(
+    () => parseSentinelDeploymentAttestation(value, { runId: 42, app: "p-ai-ubq-fi", gitSha }),
+    /does not match/,
+  );
+  assert.throws(
+    () =>
+      parseSentinelDeploymentAttestation({ ...value, extra: true }, {
+        runId: 41,
+        app: "p-ai-ubq-fi",
+        gitSha,
+      }),
+    /does not match/,
+  );
+});
+
+Deno.test("sentinel revision-control dispatch carries exact current, target, and development identities", () => {
+  const targetGitSha = "2".repeat(40);
+  const currentGitSha = "1".repeat(40);
+  assert.deepEqual(
+    sentinelRevisionControlInputs({
+      correlationId: "sentinel:12345678",
+      app: "ai-ubq-fi",
+      targetGitSha,
+      targetRevision: "target-revision",
+      expectedCurrent: {
+        gitSha: currentGitSha,
+        revisionId: "current-revision",
+        healthUrls: ["https://example.test/health"],
+        snapshottedAt: "2026-08-21T00:00:00.000Z",
+      },
+      expectedDevelopmentGitSha: targetGitSha,
+    }),
+    {
+      correlation_id: "sentinel:12345678",
+      target_app: "ai-ubq-fi",
+      target_git_sha: targetGitSha,
+      target_revision: "target-revision",
+      expected_current_git_sha: currentGitSha,
+      expected_current_revision: "current-revision",
+      expected_development_git_sha: targetGitSha,
+    },
+  );
 });
 
 Deno.test("rollback preflight requires known Git and production identities before promotion", () => {
@@ -332,6 +429,49 @@ Deno.test("replay preserves exact bytes and compatibility headers while replacin
   assert.equal(result.terminal_event, "response.completed");
   assert.equal(result.comparison.provider_matches_original, true);
   assert.equal(result.comparison.framing_matches_original, true);
+});
+
+Deno.test("replay permits inference-only endpoints and rejects stateful embedding jobs before transport", async () => {
+  assert.equal(isInferenceOnlyReplayEndpoint("/v1/responses"), true);
+  assert.equal(isInferenceOnlyReplayEndpoint("/v1/chat/completions?trace=1"), true);
+  assert.equal(isInferenceOnlyReplayEndpoint("/uos/embeddings"), true);
+  assert.equal(isInferenceOnlyReplayEndpoint("/uos/embedding-jobs"), false);
+  assert.equal(isInferenceOnlyReplayEndpoint("/admin/defaults"), false);
+
+  let transported = false;
+  const replayCase: ReplayCase = {
+    fingerprint: "stateful-job",
+    case_group_digest: "a".repeat(64),
+    captured_at_ms: now,
+    endpoint: "/uos/embedding-jobs",
+    method: "POST",
+    content_type: "application/json",
+    compatibility_headers: {},
+    body: new TextEncoder().encode('{"input":["sensitive"]}'),
+    original: {
+      status: 502,
+      stream: false,
+      framing_valid: true,
+      completed: false,
+      terminal_type: "http.error",
+      failure_kind: "server_error",
+      provider_route: "voyage",
+      failure_signature: "original",
+    },
+  };
+  const result = await replayOneCase({
+    replayCase,
+    previewBaseUrl: "https://preview.example",
+    previewCredential: "preview-token",
+    fetchImpl: () => {
+      transported = true;
+      return Promise.resolve(new Response(null, { status: 500 }));
+    },
+  });
+  assert.equal(transported, false);
+  assert.equal(result.attempted, false);
+  assert.equal(result.unavailable_reason, "case_target_not_inference_only");
+  replayCase.body.fill(0);
 });
 
 Deno.test("replay never executes returned tool calls and invalid SSE framing is not an improvement", async () => {

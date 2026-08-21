@@ -66,7 +66,10 @@ export const SENTINEL_POLICY = Object.freeze({
     ]),
     previewHealthUrl: "https://p-ai-ubq-fi.ubiquity-dao.deno.net/health",
   }),
-  github: Object.freeze({ deploymentWorkflow: "deno-deploy.yml" }),
+  github: Object.freeze({
+    deploymentWorkflow: "deno-deploy.yml",
+    revisionControlWorkflow: "sentinel-revision-control.yml",
+  }),
   paths: Object.freeze({
     root: ".sentinel",
     rawLogs: ".sentinel/raw-logs",

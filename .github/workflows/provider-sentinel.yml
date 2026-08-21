@@ -15,6 +15,7 @@ concurrency:
   # One repair cycle may operate on the repository or shared preview app at a time.
   group: provider-sentinel-${{ github.repository }}
   cancel-in-progress: false
+  queue: max
 
 permissions:
   actions: write
@@ -121,6 +122,16 @@ jobs:
             scripts/setup-instance.ts \
             scripts/sentinel/main.ts \
             tests/*.ts
+
+      - name: Validate pinned Codex CLI argument contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test \
+            --cached-only \
+            --allow-env=PATH \
+            --allow-run=codex \
+            tests/sentinel-codex-cli-integration.test.ts
 
       - name: Run Provider Sentinel
         shell: bash

@@ -22,12 +22,16 @@ export const handleAdminSentinelReplayCaptures = async (
 ): Promise<Response> => {
   const url = new URL(req.url);
   const afterMs = nonNegativeInteger(url.searchParams.get("after_ms"), 0);
+  const beforeMs = nonNegativeInteger(url.searchParams.get("before_ms"), -1);
   const limit = nonNegativeInteger(url.searchParams.get("limit"), SENTINEL_REPLAY_EXPORT_PAGE_LIMIT);
   const cursor = url.searchParams.get("cursor");
-  if (afterMs === null || limit !== SENTINEL_REPLAY_EXPORT_PAGE_LIMIT || !validCursor(cursor)) {
+  if (
+    afterMs === null || beforeMs === null || beforeMs < afterMs ||
+    limit !== SENTINEL_REPLAY_EXPORT_PAGE_LIMIT || !validCursor(cursor)
+  ) {
     return openaiError(
       400,
-      "after_ms must be a non-negative integer, limit must be one, and cursor must be valid",
+      "after_ms and before_ms must define a valid interval, limit must be one, and cursor must be valid",
       "invalid_request_error",
     );
   }
@@ -38,6 +42,7 @@ export const handleAdminSentinelReplayCaptures = async (
     }
     const page = await (dependencies.listEncryptedSentinelReplays ?? listEncryptedSentinelReplays)(kv, {
       afterMs,
+      beforeMs,
       limit,
       cursor: cursor || undefined,
     });

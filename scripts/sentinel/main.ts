@@ -57,7 +57,14 @@ type CycleState = {
   candidate_sha: string | null;
   temporary_branch: string | null;
   stage: string;
-  status: "running" | "no_change" | "preview_complete" | "kept" | "rolled_back" | "failed";
+  status:
+    | "running"
+    | "no_change"
+    | "preview_complete"
+    | "preview_rolled_back"
+    | "kept"
+    | "rolled_back"
+    | "failed";
   branch_disposition: string | null;
 };
 
@@ -66,6 +73,7 @@ const REPLAY_BUNDLE_ARTIFACT_PREFIX = "sentinel-replay-bundle-v1-";
 const EVIDENCE_ARTIFACT_PREFIX = "sentinel-evidence-v1-";
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 const MAX_REPLAY_BUNDLE_BYTES = 512 * 1024 * 1024;
+const MAX_DEPLOYMENT_ATTESTATION_BYTES = 1024 * 1024;
 export const MAX_MATCHING_REPLAY_ARTIFACTS = 256;
 export const MAX_MATCHING_REPLAY_ARCHIVE_BYTES = 512 * 1024 * 1024;
 export const MAX_MATCHING_REPLAY_EXTRACTED_BYTES = 512 * 1024 * 1024;
@@ -79,6 +87,31 @@ const requiredEnvironment = (name: string): string => {
 };
 
 const optionalEnvironment = (name: string): string | undefined => Deno.env.get(name)?.trim() || undefined;
+
+export const agentCheckoutPath = (
+  role: "triage" | "implementation" | "monitoring",
+  repositoryRoot: string,
+  candidateCheckout: string,
+): string => role === "triage" ? repositoryRoot : candidateCheckout;
+
+export const previewCompletionForDecision = (
+  decision: ProductionDecision["decision"],
+): Readonly<{
+  restoreCandidate: boolean;
+  status: "preview_complete" | "preview_rolled_back";
+  branchDisposition: string;
+}> =>
+  decision === "keep"
+    ? {
+      restoreCandidate: true,
+      status: "preview_complete",
+      branchDisposition: "retained_pending_supervised_acceptance",
+    }
+    : {
+      restoreCandidate: false,
+      status: "preview_rolled_back",
+      branchDisposition: "remote_retained_rejected_by_monitor",
+    };
 
 const parseMode = (args: readonly string[]): SentinelMode => {
   if (args.length !== 2 || args[0] !== "--mode" || !["daily", "incident", "preview"].includes(args[1])) {
@@ -477,8 +510,9 @@ const unzipJsonArtifact = async (
   bytes: Uint8Array,
   privateDir: string,
   entryPath: string,
+  maximumBytes = MAX_REPLAY_BUNDLE_BYTES,
 ): Promise<Readonly<{ value: unknown; extractedBytes: number }>> => {
-  if (artifact.sizeInBytes > MAX_REPLAY_BUNDLE_BYTES || bytes.byteLength > MAX_REPLAY_BUNDLE_BYTES) {
+  if (artifact.sizeInBytes > maximumBytes || bytes.byteLength > maximumBytes) {
     throw new Error(`Artifact ${artifact.id} exceeds the Sentinel limit`);
   }
   const path = await Deno.makeTempFile({ dir: privateDir, prefix: "artifact-", suffix: ".zip" });
@@ -488,7 +522,7 @@ const unzipJsonArtifact = async (
       command: "unzip",
       args: ["-p", path, entryPath],
       cwd: privateDir,
-      maximumOutputBytes: MAX_REPLAY_BUNDLE_BYTES,
+      maximumOutputBytes: maximumBytes,
     });
     return { value: JSON.parse(textDecoder.decode(result.stdout)), extractedBytes: result.stdout.byteLength };
   } finally {
@@ -707,10 +741,136 @@ const pushTemporaryCandidate = async (
 
 export const sentinelDeploymentInputs = (
   deployPreview: boolean,
+  correlationId: string,
 ): Readonly<Record<string, string | boolean>> => ({
+  ...(correlationId.length >= 16 && correlationId.length <= 80 && /^[A-Za-z0-9_-]+$/u.test(correlationId)
+    ? {}
+    : (() => {
+      throw new Error("Sentinel deployment correlation ID is invalid");
+    })()),
   deploy_preview: deployPreview,
   sentinel_build_only: true,
+  sentinel_correlation_id: correlationId,
 });
+
+export const sentinelRevisionControlInputs = (
+  input: Readonly<{
+    correlationId: string;
+    app: string;
+    targetGitSha: string;
+    targetRevision: string;
+    expectedCurrent: RollbackTarget;
+    expectedDevelopmentGitSha: string;
+  }>,
+): Readonly<Record<string, string>> => {
+  if (
+    input.correlationId.length < 8 || input.correlationId.length > 128 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]+$/u.test(input.correlationId)
+  ) {
+    throw new Error("Sentinel revision-control correlation ID is invalid");
+  }
+  if (input.app !== SENTINEL_POLICY.deno.productionApp && input.app !== SENTINEL_POLICY.deno.previewApp) {
+    throw new Error("Sentinel revision-control application is invalid");
+  }
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(input.targetRevision) ||
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(input.expectedCurrent.revisionId)
+  ) {
+    throw new Error("Sentinel revision-control revision ID is invalid");
+  }
+  return {
+    correlation_id: input.correlationId,
+    target_app: input.app,
+    target_git_sha: ensureFullSha(input.targetGitSha, "Revision-control target SHA"),
+    target_revision: input.targetRevision,
+    expected_current_git_sha: ensureFullSha(
+      input.expectedCurrent.gitSha,
+      "Revision-control current SHA",
+    ),
+    expected_current_revision: input.expectedCurrent.revisionId,
+    expected_development_git_sha: ensureFullSha(
+      input.expectedDevelopmentGitSha,
+      "Revision-control development SHA",
+    ),
+  };
+};
+
+export type SentinelDeploymentAttestation = Readonly<{
+  schema_version: 1;
+  run_id: number;
+  app: string;
+  git_sha: string;
+  revision: string;
+}>;
+
+export const parseSentinelDeploymentAttestation = (
+  value: unknown,
+  expected: Readonly<{ runId: number; app: string; gitSha: string }>,
+): SentinelDeploymentAttestation => {
+  const record = value !== null && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : null;
+  if (
+    !record || Object.keys(record).sort().join(",") !== "app,git_sha,revision,run_id,schema_version" ||
+    record.schema_version !== 1 || record.run_id !== expected.runId || record.app !== expected.app ||
+    record.git_sha !== expected.gitSha || typeof record.revision !== "string" ||
+    !/^[A-Za-z0-9_-]{1,200}$/u.test(record.revision)
+  ) {
+    throw new Error("Sentinel deployment attestation does not match the exact workflow run");
+  }
+  return {
+    schema_version: 1,
+    run_id: record.run_id,
+    app: record.app,
+    git_sha: record.git_sha,
+    revision: record.revision,
+  };
+};
+
+const resolveWorkflowDeploymentRevision = async (
+  input: Readonly<{
+    github: GitHubActionsClient;
+    deno: DenoDeployClient;
+    app: string;
+    sha: string;
+    privateDir: string;
+    run: Readonly<{ id: number }>;
+  }>,
+): Promise<{ revision: string; run_id: number }> => {
+  const artifactName = `sentinel-deployment-${input.run.id}`;
+  const artifacts = (await input.github.listRunArtifacts(input.run.id)).filter((artifact) =>
+    artifact.name === artifactName && !artifact.expired
+  );
+  if (artifacts.length !== 1) {
+    throw new Error(`Workflow run ${input.run.id} did not publish one exact deployment attestation`);
+  }
+  const artifact = artifacts[0]!;
+  const archive = await input.github.downloadArtifact(artifact.id, MAX_DEPLOYMENT_ATTESTATION_BYTES);
+  const extracted = await unzipJsonArtifact(
+    artifact,
+    archive,
+    input.privateDir,
+    "sentinel-deployment.json",
+    MAX_DEPLOYMENT_ATTESTATION_BYTES,
+  );
+  if (extracted.extractedBytes > MAX_DEPLOYMENT_ATTESTATION_BYTES) {
+    throw new Error(`Workflow run ${input.run.id} deployment attestation is too large`);
+  }
+  const attestation = parseSentinelDeploymentAttestation(extracted.value, {
+    runId: input.run.id,
+    app: input.app,
+    gitSha: input.sha,
+  });
+  await input.deno.assertRevisionBelongsToApp(input.app, attestation.revision);
+  const revision = await input.deno.getRevision(attestation.revision);
+  if (revision.id !== attestation.revision || revision.status !== "routed") {
+    throw new Error(`Attested revision ${attestation.revision} is not routed`);
+  }
+  await input.deno.verifyHealthIdentity(
+    [`${defaultRevisionBaseUrl(input.app, attestation.revision, SENTINEL_POLICY.deno.organization)}/health`],
+    input.sha,
+    attestation.revision,
+  );
+  return { revision: attestation.revision, run_id: input.run.id };
+};
 
 const dispatchAndResolveRevision = async (
   input: Readonly<{
@@ -721,26 +881,68 @@ const dispatchAndResolveRevision = async (
     branch: string;
     sha: string;
     deployPreview: boolean;
+    privateDir: string;
   }>,
 ): Promise<{ revision: string; run_id: number }> => {
-  const before = new Set((await input.deno.listRevisions(input.app)).map((revision) => revision.id));
-  const fence = await input.github.dispatchWorkflow(
+  const correlationId = `sentinel-${crypto.randomUUID()}`;
+  const displayTitle = `Deno Deploy ${correlationId}`;
+  const dispatch = await input.github.dispatchWorkflow(
     SENTINEL_POLICY.github.deploymentWorkflow,
     input.branch,
-    sentinelDeploymentInputs(input.deployPreview),
+    sentinelDeploymentInputs(input.deployPreview, correlationId),
   );
   const run = await input.github.waitForWorkflow({
-    workflow: SENTINEL_POLICY.github.deploymentWorkflow,
+    runId: dispatch.runId,
     headSha: input.sha,
-    branch: input.branch,
-    createdAfterMs: fence,
+    displayTitle,
   });
-  const revision = await input.deno.waitForNewCandidateRevision({
-    app: input.app,
-    previousRevisionIds: before,
-    candidateGitSha: input.sha,
+  return await resolveWorkflowDeploymentRevision({ ...input, run });
+};
+
+const dispatchSerializedPromotion = async (
+  input: Readonly<{
+    github: GitHubActionsClient;
+    app: string;
+    targetGitSha: string;
+    targetRevision: string;
+    expectedCurrent: RollbackTarget;
+    expectedDevelopmentGitSha: string;
+  }>,
+): Promise<number> => {
+  const correlationId = `sentinel:${crypto.randomUUID()}`;
+  const displayTitle = `Sentinel revision ${correlationId}`;
+  const dispatch = await input.github.dispatchWorkflow(
+    SENTINEL_POLICY.github.revisionControlWorkflow,
+    SENTINEL_POLICY.developmentBranch,
+    sentinelRevisionControlInputs({ ...input, correlationId }),
+  );
+  const run = await input.github.waitForWorkflow({
+    runId: dispatch.runId,
+    headSha: input.expectedDevelopmentGitSha,
+    displayTitle,
   });
-  return { revision: revision.id, run_id: run.id };
+  return run.id;
+};
+
+const verifyPolicyHealthIdentity = async (
+  deno: DenoDeployClient,
+  healthUrls: readonly string[],
+  sha: string,
+  revision: string,
+): Promise<Readonly<{ custom_route: "identity" | "cloudflare_challenge" | null; cloudflare_ray: string | null }>> => {
+  if (healthUrls.length === 2) {
+    const attestation = await deno.verifyProductionHealthIdentity(
+      healthUrls[0]!,
+      healthUrls[1]!,
+      sha,
+      revision,
+    );
+    return attestation.custom.kind === "identity"
+      ? { custom_route: "identity", cloudflare_ray: null }
+      : { custom_route: "cloudflare_challenge", cloudflare_ray: attestation.custom.ray };
+  }
+  await deno.verifyHealthIdentity(healthUrls, sha, revision);
+  return { custom_route: null, cloudflare_ray: null };
 };
 
 const monitorDeployment = async (
@@ -758,12 +960,13 @@ const monitorDeployment = async (
   while (Date.now() < endTarget) {
     const observedAt = new Date().toISOString();
     try {
-      await input.deno.verifyHealthIdentity(
+      const attestation = await verifyPolicyHealthIdentity(
+        input.deno,
         input.healthUrls,
         input.sha,
         input.revision,
       );
-      samples.push({ observed_at: observedAt, identity_matches: true });
+      samples.push({ observed_at: observedAt, identity_matches: true, ...attestation });
     } catch (error) {
       samples.push({
         observed_at: observedAt,
@@ -1019,6 +1222,7 @@ const run = async (): Promise<void> => {
       baseUrl: "https://ai-ubq-fi.ubiquity-dao.deno.net",
       adminToken: denoToken,
       afterMs: Date.parse(state.interval.start),
+      beforeMs: Date.parse(state.interval.end),
     });
   } catch (error) {
     if (mode !== "preview") throw error;
@@ -1057,7 +1261,7 @@ const run = async (): Promise<void> => {
   const rawLogs = await immutableFileEvidence(rawLogPath);
   const triageResult = await runStructuredCodexAgent({
     role: "triage",
-    checkoutPath: root,
+    checkoutPath: agentCheckoutPath("triage", root, root),
     prompt: triagePrompt(state.interval, rawLogs, currentEncrypted.map((capture) => capture.manifest)),
     outputSchemaPath: triageSchemaPath,
     authSlots,
@@ -1195,19 +1399,13 @@ const run = async (): Promise<void> => {
     await assertProtectedFilesUnchanged(checkout, protectedHashes);
     candidateSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Validated candidate SHA");
     await updateState(`preview_deploy_${reviewRound}`, { candidate_sha: candidateSha });
+    const previewBeforeDeployment = await deno.snapshotHealthyProduction(
+      SENTINEL_POLICY.deno.previewApp,
+      [SENTINEL_POLICY.deno.previewHealthUrl],
+    );
     if (mode === "preview" && previewRollbackTarget === undefined) {
-      try {
-        previewRollbackTarget = await deno.snapshotHealthyProduction(
-          SENTINEL_POLICY.deno.previewApp,
-          [SENTINEL_POLICY.deno.previewHealthUrl],
-        );
-      } catch {
-        previewRollbackTarget = null;
-        await writeJson(`${reportsDir}/preview-rollback-target.json`, {
-          available: false,
-          reason: "no_attestable_prior_preview_revision",
-        });
-      }
+      previewRollbackTarget = previewBeforeDeployment;
+      await writeJson(`${reportsDir}/preview-rollback-target.json`, previewRollbackTarget);
     }
     await pushTemporaryCandidate(checkout, branch, gitEnvironment);
     await updateState(`preview_deploy_${reviewRound}`, {
@@ -1222,6 +1420,7 @@ const run = async (): Promise<void> => {
       branch,
       sha: candidateSha,
       deployPreview: true,
+      privateDir,
     });
     previewRevision = preview.revision;
     const immutablePreviewBaseUrl = defaultRevisionBaseUrl(
@@ -1231,7 +1430,25 @@ const run = async (): Promise<void> => {
     );
     const immutablePreviewHealthUrl = `${immutablePreviewBaseUrl}/health`;
     await deno.verifyHealthIdentity([immutablePreviewHealthUrl], candidateSha, preview.revision);
-    await deno.promoteRevision(SENTINEL_POLICY.deno.previewApp, preview.revision);
+    const previewCurrent = await deno.snapshotHealthyProduction(
+      SENTINEL_POLICY.deno.previewApp,
+      [SENTINEL_POLICY.deno.previewHealthUrl],
+    );
+    const previewStayedPrevious = previewCurrent.gitSha === previewBeforeDeployment.gitSha &&
+      previewCurrent.revisionId === previewBeforeDeployment.revisionId;
+    const previewAlreadyCandidate = previewCurrent.gitSha === candidateSha &&
+      previewCurrent.revisionId === preview.revision;
+    if (!previewStayedPrevious && !previewAlreadyCandidate) {
+      throw new Error("Preview identity changed to an unrelated revision during candidate deployment");
+    }
+    await dispatchSerializedPromotion({
+      github,
+      app: SENTINEL_POLICY.deno.previewApp,
+      targetGitSha: candidateSha,
+      targetRevision: preview.revision,
+      expectedCurrent: previewCurrent,
+      expectedDevelopmentGitSha: baseSha,
+    });
     await deno.verifyHealthIdentity([SENTINEL_POLICY.deno.previewHealthUrl], candidateSha, preview.revision);
     await writeJson(`${reportsDir}/preview-deployment-round-${reviewRound}.json`, {
       git_sha: candidateSha,
@@ -1296,7 +1513,7 @@ const run = async (): Promise<void> => {
     const previewMonitorEvidence = await immutableFileEvidence(previewMonitorLogPath);
     const previewMonitorResult = await runStructuredCodexAgent({
       role: "monitoring",
-      checkoutPath: root,
+      checkoutPath: agentCheckoutPath("monitoring", root, checkout),
       prompt: monitorPrompt({
         candidate: { git_sha: candidateSha, revision: previewRevision },
         previous: previewRollbackTarget,
@@ -1320,24 +1537,62 @@ const run = async (): Promise<void> => {
       `${reportsDir}/preview-monitoring-decision.json`,
       durableProductionDecision(previewDecision, previewCandidateIdentity, previewPreviousIdentity),
     );
-    await deno.promoteRevision(SENTINEL_POLICY.deno.previewApp, previewRollbackTarget.revisionId);
+    const previewCandidateCurrent = await deno.snapshotHealthyProduction(
+      SENTINEL_POLICY.deno.previewApp,
+      [SENTINEL_POLICY.deno.previewHealthUrl],
+    );
+    if (previewCandidateCurrent.gitSha !== candidateSha || previewCandidateCurrent.revisionId !== previewRevision) {
+      throw new Error("Preview candidate identity changed before rollback proof");
+    }
+    const rollbackPromotionRunId = await dispatchSerializedPromotion({
+      github,
+      app: SENTINEL_POLICY.deno.previewApp,
+      targetGitSha: previewRollbackTarget.gitSha,
+      targetRevision: previewRollbackTarget.revisionId,
+      expectedCurrent: previewCandidateCurrent,
+      expectedDevelopmentGitSha: baseSha,
+    });
     await deno.verifyHealthIdentity(
       [SENTINEL_POLICY.deno.previewHealthUrl],
       previewRollbackTarget.gitSha,
       previewRollbackTarget.revisionId,
     );
-    await deno.promoteRevision(SENTINEL_POLICY.deno.previewApp, previewRevision);
-    await deno.verifyHealthIdentity([SENTINEL_POLICY.deno.previewHealthUrl], candidateSha, previewRevision);
+    const previewCompletion = previewCompletionForDecision(previewDecision.decision);
+    let restorePromotionRunId: number | null = null;
+    if (previewCompletion.restoreCandidate) {
+      const previewPreviousCurrent = await deno.snapshotHealthyProduction(
+        SENTINEL_POLICY.deno.previewApp,
+        [SENTINEL_POLICY.deno.previewHealthUrl],
+      );
+      if (
+        previewPreviousCurrent.gitSha !== previewRollbackTarget.gitSha ||
+        previewPreviousCurrent.revisionId !== previewRollbackTarget.revisionId
+      ) {
+        throw new Error("Preview rollback identity changed before candidate restoration");
+      }
+      restorePromotionRunId = await dispatchSerializedPromotion({
+        github,
+        app: SENTINEL_POLICY.deno.previewApp,
+        targetGitSha: candidateSha,
+        targetRevision: previewRevision,
+        expectedCurrent: previewPreviousCurrent,
+        expectedDevelopmentGitSha: baseSha,
+      });
+      await deno.verifyHealthIdentity([SENTINEL_POLICY.deno.previewHealthUrl], candidateSha, previewRevision);
+    }
     await writeJson(`${reportsDir}/preview-rollback-proof.json`, {
+      monitoring_decision: previewDecision.decision,
       rollback_revision: previewRollbackTarget.revisionId,
       rollback_git_sha: previewRollbackTarget.gitSha,
-      restored_candidate_revision: previewRevision,
-      restored_candidate_git_sha: candidateSha,
+      restored_candidate_revision: previewCompletion.restoreCandidate ? previewRevision : null,
+      restored_candidate_git_sha: previewCompletion.restoreCandidate ? candidateSha : null,
+      rollback_workflow_run_id: rollbackPromotionRunId,
+      restore_workflow_run_id: restorePromotionRunId,
     });
-    await updateState("preview_complete", {
+    await updateState(previewCompletion.status, {
       candidate_sha: candidateSha,
-      status: "preview_complete",
-      branch_disposition: "retained_pending_supervised_acceptance",
+      status: previewCompletion.status,
+      branch_disposition: previewCompletion.branchDisposition,
     });
     for (const replayCase of applicableCases) replayCase.body.fill(0);
     return;
@@ -1400,17 +1655,27 @@ const run = async (): Promise<void> => {
         throw new Error("origin/development changed during rollback preflight");
       }
 
+      let rollbackPromotionRunId: number | null = null;
       if (preflight.promotePrevious) {
         const rollbackCandidateRevision = productionRevision ?? observedProduction.revisionId;
-        await deno.verifyHealthIdentity(
+        await verifyPolicyHealthIdentity(
+          deno,
           SENTINEL_POLICY.deno.productionHealthUrls,
           candidateSha,
           rollbackCandidateRevision,
         );
         await updateState("rolling_back_revision");
-        await deno.promoteRevision(SENTINEL_POLICY.deno.productionApp, previous.revisionId);
+        rollbackPromotionRunId = await dispatchSerializedPromotion({
+          github,
+          app: SENTINEL_POLICY.deno.productionApp,
+          targetGitSha: previous.gitSha,
+          targetRevision: previous.revisionId,
+          expectedCurrent: observedProduction,
+          expectedDevelopmentGitSha: confirmedRemote,
+        });
       }
-      await deno.verifyHealthIdentity(
+      await verifyPolicyHealthIdentity(
+        deno,
         SENTINEL_POLICY.deno.productionHealthUrls,
         previous.gitSha,
         previous.revisionId,
@@ -1418,6 +1683,7 @@ const run = async (): Promise<void> => {
       let revertSha: string | null = null;
       let revertRevision: string | null = null;
       let workflowRunId: number | null = null;
+      let revertPromotionWorkflowRunId: number | null = null;
       if (preflight.revertDevelopment) {
         const remoteBeforeRevert = await fetchDevelopmentTip();
         if (remoteBeforeRevert !== candidateSha) {
@@ -1441,11 +1707,31 @@ const run = async (): Promise<void> => {
           branch: SENTINEL_POLICY.developmentBranch,
           sha: revertSha,
           deployPreview: false,
+          privateDir,
         });
         revertRevision = revertDeployment.revision;
         workflowRunId = revertDeployment.run_id;
-        await deno.promoteRevision(SENTINEL_POLICY.deno.productionApp, revertRevision);
-        await deno.verifyHealthIdentity(
+        const stableBeforeRevertPromotion = await deno.snapshotHealthyProduction(
+          SENTINEL_POLICY.deno.productionApp,
+          SENTINEL_POLICY.deno.productionHealthUrls,
+        );
+        const stableIsPrevious = stableBeforeRevertPromotion.gitSha === previous.gitSha &&
+          stableBeforeRevertPromotion.revisionId === previous.revisionId;
+        const stableIsRevert = stableBeforeRevertPromotion.gitSha === revertSha &&
+          stableBeforeRevertPromotion.revisionId === revertRevision;
+        if (!stableIsPrevious && !stableIsRevert) {
+          throw new Error("Production identity changed to an unrelated revision during revert deployment");
+        }
+        revertPromotionWorkflowRunId = await dispatchSerializedPromotion({
+          github,
+          app: SENTINEL_POLICY.deno.productionApp,
+          targetGitSha: revertSha,
+          targetRevision: revertRevision,
+          expectedCurrent: stableBeforeRevertPromotion,
+          expectedDevelopmentGitSha: revertSha,
+        });
+        await verifyPolicyHealthIdentity(
+          deno,
           SENTINEL_POLICY.deno.productionHealthUrls,
           revertSha,
           revertRevision,
@@ -1459,9 +1745,11 @@ const run = async (): Promise<void> => {
           git_sha: observedProduction.gitSha,
           revision: observedProduction.revisionId,
         },
+        rollback_promotion_workflow_run_id: rollbackPromotionRunId,
         revert_git_sha: revertSha,
         revert_revision: revertRevision,
         workflow_run_id: workflowRunId,
+        revert_promotion_workflow_run_id: revertPromotionWorkflowRunId,
       });
       productionSettled = true;
     })();
@@ -1484,11 +1772,31 @@ const run = async (): Promise<void> => {
       branch: SENTINEL_POLICY.developmentBranch,
       sha: candidateSha,
       deployPreview: false,
+      privateDir,
     });
     productionRevision = production.revision;
     await updateState("promoting_candidate");
-    await deno.promoteRevision(SENTINEL_POLICY.deno.productionApp, production.revision);
-    await deno.verifyHealthIdentity(
+    const productionCurrent = await deno.snapshotHealthyProduction(
+      SENTINEL_POLICY.deno.productionApp,
+      SENTINEL_POLICY.deno.productionHealthUrls,
+    );
+    const productionStayedPrevious = productionCurrent.gitSha === previous.gitSha &&
+      productionCurrent.revisionId === previous.revisionId;
+    const productionAlreadyCandidate = productionCurrent.gitSha === candidateSha &&
+      productionCurrent.revisionId === production.revision;
+    if (!productionStayedPrevious && !productionAlreadyCandidate) {
+      throw new Error("Production identity changed to an unrelated revision during candidate deployment");
+    }
+    const promotionWorkflowRunId = await dispatchSerializedPromotion({
+      github,
+      app: SENTINEL_POLICY.deno.productionApp,
+      targetGitSha: candidateSha,
+      targetRevision: production.revision,
+      expectedCurrent: productionCurrent,
+      expectedDevelopmentGitSha: candidateSha,
+    });
+    const productionHealthAttestation = await verifyPolicyHealthIdentity(
+      deno,
       SENTINEL_POLICY.deno.productionHealthUrls,
       candidateSha,
       production.revision,
@@ -1506,7 +1814,13 @@ const run = async (): Promise<void> => {
     await writeJson(`${reportsDir}/production-deployment.json`, candidateIdentity);
     await writeJson(`${reportsDir}/production-deployment-workflow.json`, {
       schema_version: 1,
-      workflow_run_id: production.run_id,
+      deployment_workflow_run_id: production.run_id,
+      promotion_workflow_run_id: promotionWorkflowRunId,
+    });
+    await writeJson(`${reportsDir}/production-custom-health.json`, {
+      schema_version: 1,
+      ...productionHealthAttestation,
+      observed_at: new Date().toISOString(),
     });
 
     await updateState("monitoring_production");
@@ -1530,7 +1844,7 @@ const run = async (): Promise<void> => {
     const monitorEvidence = await immutableFileEvidence(monitorLogPath);
     const monitorResult = await runStructuredCodexAgent({
       role: "monitoring",
-      checkoutPath: root,
+      checkoutPath: agentCheckoutPath("monitoring", root, checkout),
       prompt: monitorPrompt({
         candidate: { git_sha: candidateSha, revision: production.revision },
         previous,
@@ -1543,7 +1857,8 @@ const run = async (): Promise<void> => {
     await assertImmutableFileEvidence(monitorEvidence);
     const decision = parseMonitorDecision(monitorResult.lastMessage);
     if (decision.decision === "keep") {
-      await deno.verifyHealthIdentity(
+      await verifyPolicyHealthIdentity(
+        deno,
         SENTINEL_POLICY.deno.productionHealthUrls,
         candidateSha,
         production.revision,

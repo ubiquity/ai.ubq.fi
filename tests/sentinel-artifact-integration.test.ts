@@ -43,6 +43,26 @@ Deno.test({
   name: "raw log capture and encrypted replay artifact export-load path preserves its contracts",
   ignore: requiredPermissions.some((permission) => permission.state !== "granted"),
   async fn() {
+    const deploymentWorkflow = await Deno.readTextFile(".github/workflows/deno-deploy.yml");
+    assert.match(
+      deploymentWorkflow,
+      /deno-deploy-reusable\.yml@091927036712d54a020a3240b5b2fa492f78a94b/u,
+    );
+    assert.match(
+      deploymentWorkflow,
+      /sentinel_build_only == 'true'[\s\S]*'__sentinel_non_promoting__'/u,
+      "Sentinel candidates must force the pinned reusable workflow into its mode without --prod",
+    );
+    assert.match(
+      deploymentWorkflow,
+      /preview_project:[\s\S]*sentinel_build_only == 'true'[\s\S]*'ai-ubq-fi'[\s\S]*'p-ai-ubq-fi'/u,
+      "non-promoting mode must still target the exact requested Deno application",
+    );
+    assert.match(
+      deploymentWorkflow,
+      /name: sentinel-deployment-\$\{\{ github\.run_id \}\}[\s\S]*include-hidden-files: true/u,
+    );
+
     const privateDir = await Deno.makeTempDir({ prefix: "sentinel-artifact-integration-" });
     try {
       const fakeDeno = `${privateDir}/fake-deno`;

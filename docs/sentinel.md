@@ -25,9 +25,11 @@ provide `client_payload.signal_id`; repeated deliveries of that ID share one key
 anchored interval in the key. Before raw-log capture, the cycle looks for a 90-day evidence artifact named exactly for
 that key and exits as a duplicate when one exists. Evidence artifacts from separate runs may use the same name.
 
-The workflow uses one repository-wide concurrency group and does not cancel an active run. Scheduled and
-repository-dispatch runs are skipped unless the repository variable `SENTINEL_AUTONOMY_ENABLED` is exactly `true`.
-Manual preview runs remain eligible while that gate is disabled, subject to the repository-visibility gate below.
+The workflow uses one repository-wide concurrency group, does not cancel an active run, and sets `queue: max`. GitHub
+can therefore retain up to 100 waiting cycles instead of replacing the one pending cycle. This keeps the daily 06:00 run
+and the simultaneous incident run distinct. Scheduled and repository-dispatch runs are skipped unless the repository
+variable `SENTINEL_AUTONOMY_ENABLED` is exactly `true`. Manual preview runs remain eligible while that gate is disabled,
+subject to the repository-visibility gate below.
 
 The workflow fails before checkout, raw-log capture, or secret use unless repository visibility is `private` or
 `internal`. This repository is currently public, so the visibility gate presently blocks every Sentinel run. Keep the
@@ -67,7 +69,8 @@ index manifest. The keyed case-group Bloom filter in the artifact name lets futu
 that may match the current incident. The index contains no request bodies, decrypted capture fields, authorization
 values, cookies, or credentials. Matching retained bundles are subject to fail-closed aggregate artifact-count,
 compressed-byte, and extracted-byte limits. Duplicate retained captures are collapsed by capture fingerprint before
-decryption and replay.
+decryption and replay. The export request includes both interval boundaries. KV iteration and the orchestrator reject a
+capture before the interval start or after the interval end.
 
 Generate a replay key locally without writing the plaintext to shell history:
 
@@ -87,9 +90,11 @@ workflow run. Provider Sentinel therefore performs an explicit workaround: after
 not advanced and pushing the accepted SHA, it dispatches `.github/workflows/deno-deploy.yml` at the exact `development`
 ref. It accepts only the deployment run whose recorded head SHA equals the candidate SHA. Preview runs use the same
 explicit dispatch with `deploy_preview=true` at the temporary Sentinel ref. Every Sentinel dispatch also sets
-`sentinel_build_only=true`, which skips the deployment workflow's stable verification and promotion job. The Sentinel
-orchestrator alone resolves, replays, verifies, and promotes the exact revision. Normal push and manual deployment runs
-retain the workflow-owned verification and promotion behavior.
+`sentinel_build_only=true`. For that path, the pinned reusable workflow is forced into its mode without `--prod` while
+its preview target is set to the requested application. The run requires exactly one post-baseline revision, verifies
+its immutable body and header identity, and uploads `sentinel-deployment-<run-id>` with the exact app, SHA, and
+revision. The orchestrator follows the run ID returned by GitHub's dispatch API and accepts only that run-scoped
+artifact. Normal push and manual deployment runs retain the workflow-owned verification and promotion behavior.
 
 Deployment success alone is not production identity. The orchestrator resolves the new routed revision whose revision
 URL `/health` reports the exact candidate Git SHA, promotes that revision with Deno's revision API, requires HTTP 204,
@@ -97,11 +102,29 @@ and verifies the public Deno host and `ai.ubq.fi` report both the candidate SHA 
 previous healthy SHA and revision before deployment so rollback has an exact target. Health attestation requires HTTP
 200. An identity-bearing error response is not treated as healthy.
 
+Every preview, production, rollback, and revert promotion is dispatched to
+`.github/workflows/sentinel-revision-control.yml`. That short workflow shares the `ai-ubq-fi-deploy` concurrency queue
+with all deployment writers. It rechecks the live `development` SHA, the expected stable identity, application
+membership, routed status, and immutable health immediately before promotion. Production runs retain the existing
+`production` environment gate. If a promotion attempt has an ambiguous result or post-promotion verification fails, the
+workflow observes the managed route while it still holds the lock. It restores and verifies the saved revision when the
+target is live, records a verified no-change result when the previous revision remained live, and records an unknown
+outcome without overwriting an unrelated identity.
+
 Preview replay uses the resolved revision's immutable hostname, not the shared `p-ai-ubq-fi` stable hostname. Production
-`keep` is finalized only after one last dual-host identity check. Before rollback can promote the recorded old revision,
-the orchestrator re-fetches `origin/development`, checks both production hosts, and stops if either identity belongs to
+`keep` is finalized only after one last managed-host identity check and custom-host probe. An exact custom-host HTTP 200
+identity mismatch is fatal. An identified Cloudflare Bot Fight Mode challenge is recorded once as a warning after the
+managed route passes, without repeated identical probes. Before rollback can promote the recorded old revision, the
+orchestrator re-fetches `origin/development`, checks production identity, and stops if the managed identity belongs to
 an unknown deployment. Durable preview and production decision files use the declared deployment-identity shape with
 app, Git SHA, revision, health URL, and observation time for both candidate and previous revisions.
+
+The supervised preview always proves the rollback leg after monitoring. It restores the candidate only after a `keep`
+decision. A `rollback` decision leaves the prior preview revision live and records the candidate as rejected.
+
+Replay transport has a hard inference-only endpoint allowlist. Failed stateful embedding-job requests may remain in the
+encrypted incident evidence, but Sentinel never replays `/uos/embedding-jobs` or administrative endpoints and never
+executes tool calls returned by a model.
 
 The cycle will not start a production push after its first 90 minutes. This preserves a large part of the hosted
 runner's six-hour limit for the fixed 30-minute observation window, the separate monitoring agent, and a deployment plus

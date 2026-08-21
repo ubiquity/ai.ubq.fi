@@ -225,6 +225,10 @@ Deno.test("Deno promotion requires application membership, sends no body, and re
       return json({ data: [{ id: "candidate-revision", status: "succeeded" }] });
     },
     (request) => {
+      assertDenoApiRequest(request, "/v2/revisions/candidate-revision");
+      return json({ revision: { id: "candidate-revision", status: "routed" } });
+    },
+    (request) => {
       assertDenoApiRequest(request, "/v2/revisions/candidate-revision/promote", "POST");
       assert.equal(request.body, undefined, "promotion must be bodyless");
       assert.equal(request.headers.has("Content-Type"), false);
@@ -243,10 +247,21 @@ Deno.test("Deno promotion requires application membership, sends no body, and re
 
   const wrongStatus = queuedFetch([
     () => json({ revisions: [{ id: "candidate-revision" }] }),
-    () => json({ promoted: true }, 200),
+    () => json({ revision: { id: "candidate-revision", status: "building" } }),
   ]);
   await assert.rejects(
     () => denoClient(wrongStatus.fetcher).promoteRevision("ai-ubq-fi", "candidate-revision"),
+    /not routed immediately before promotion/,
+  );
+  assert.equal(wrongStatus.seen.length, 2, "status failure must stop before POST");
+
+  const wrongPromotionStatus = queuedFetch([
+    () => json({ revisions: [{ id: "candidate-revision", status: "routed" }] }),
+    () => json({ revision: { id: "candidate-revision", status: "routed" } }),
+    () => json({ promoted: true }, 200),
+  ]);
+  await assert.rejects(
+    () => denoClient(wrongPromotionStatus.fetcher).promoteRevision("ai-ubq-fi", "candidate-revision"),
     /expected 204/,
   );
 });
@@ -332,6 +347,89 @@ Deno.test("Deno health rejects an identity-bearing HTTP 503", async () => {
   fake.assertDrained();
 });
 
+Deno.test("Deno health requires release identity in both body and headers", async () => {
+  const missingHeaders = queuedFetch([
+    () => json({ release: { git_sha: NEW_SHA, deployment_id: "candidate-revision" } }),
+  ]);
+  await assert.rejects(
+    () => denoClient(missingHeaders.fetcher).readHealth("https://managed.test/health"),
+    /both its body and headers/,
+  );
+  missingHeaders.assertDrained();
+
+  const missingBody = queuedFetch([
+    () => json({}, 200, { "x-uos-git-sha": NEW_SHA, "x-uos-deployment-id": "candidate-revision" }),
+  ]);
+  await assert.rejects(
+    () => denoClient(missingBody.fetcher).readHealth("https://managed.test/health"),
+    /both its body and headers/,
+  );
+  missingBody.assertDrained();
+});
+
+Deno.test("production health accepts one identified Cloudflare challenge after exact managed identity", async () => {
+  const fake = queuedFetch([
+    () =>
+      json({ release: { git_sha: NEW_SHA, deployment_id: "candidate-revision" } }, 200, {
+        "x-uos-git-sha": NEW_SHA,
+        "x-uos-deployment-id": "candidate-revision",
+      }),
+    () =>
+      new Response("challenge", {
+        status: 403,
+        headers: { server: "cloudflare", "cf-mitigated": "challenge", "cf-ray": "test-ray" },
+      }),
+  ]);
+  const attestation = await denoClient(fake.fetcher).verifyProductionHealthIdentity(
+    "https://ai-ubq-fi.ubiquity-dao.deno.net/health",
+    "https://ai.ubq.fi/health",
+    NEW_SHA,
+    "candidate-revision",
+  );
+  assert.deepEqual(attestation, {
+    managed: {
+      url: "https://ai-ubq-fi.ubiquity-dao.deno.net/health",
+      gitSha: NEW_SHA,
+      revisionId: "candidate-revision",
+    },
+    custom: {
+      kind: "cloudflare_challenge",
+      url: "https://ai.ubq.fi/health",
+      status: 403,
+      ray: "test-ray",
+    },
+  });
+  assert.equal(fake.seen.length, 2, "an identified challenge must not be retried");
+  fake.assertDrained();
+});
+
+Deno.test("production health fails immediately on custom-route HTTP 200 identity mismatch", async () => {
+  const fake = queuedFetch([
+    () =>
+      json({ release: { git_sha: NEW_SHA, deployment_id: "candidate-revision" } }, 200, {
+        "x-uos-git-sha": NEW_SHA,
+        "x-uos-deployment-id": "candidate-revision",
+      }),
+    () =>
+      json({ release: { git_sha: WRONG_SHA, deployment_id: "wrong-revision" } }, 200, {
+        "x-uos-git-sha": WRONG_SHA,
+        "x-uos-deployment-id": "wrong-revision",
+      }),
+  ]);
+  await assert.rejects(
+    () =>
+      denoClient(fake.fetcher).verifyProductionHealthIdentity(
+        "https://ai-ubq-fi.ubiquity-dao.deno.net/health",
+        "https://ai.ubq.fi/health",
+        NEW_SHA,
+        "candidate-revision",
+      ),
+    /Health identity mismatch/,
+  );
+  assert.equal(fake.seen.length, 2, "an HTTP 200 identity mismatch must not be retried");
+  fake.assertDrained();
+});
+
 Deno.test("Deno production snapshot preserves the exact previous healthy revision", async () => {
   const fake = queuedFetch([
     () =>
@@ -368,19 +466,45 @@ Deno.test("Deno production snapshot preserves the exact previous healthy revisio
   fake.assertDrained();
 });
 
+Deno.test("Deno production snapshot preserves the managed identity through a Cloudflare challenge", async () => {
+  const fake = queuedFetch([
+    () =>
+      json({ release: { git_sha: OLD_SHA, deployment_id: "previous-revision" } }, 200, {
+        "x-uos-git-sha": OLD_SHA,
+        "x-uos-deployment-id": "previous-revision",
+      }),
+    () =>
+      new Response("challenge", {
+        status: 403,
+        headers: { server: "cloudflare", "cf-mitigated": "challenge", "cf-ray": "snapshot-ray" },
+      }),
+    () => json({ revisions: [{ id: "previous-revision", status: "succeeded" }] }),
+    () => json({ revision: { id: "previous-revision", status: "succeeded" } }),
+  ]);
+  const urls = ["https://ai-ubq-fi.ubiquity-dao.deno.net/health", "https://ai.ubq.fi/health"];
+  const snapshot = await denoClient(fake.fetcher, { now: () => Date.parse("2026-08-21T12:00:00Z") })
+    .snapshotHealthyProduction("ai-ubq-fi", urls);
+  assert.equal(snapshot.gitSha, OLD_SHA);
+  assert.equal(snapshot.revisionId, "previous-revision");
+  assert.equal(fake.seen.length, 4, "the custom challenge must be observed only once");
+  fake.assertDrained();
+});
+
 const workflowRun = (
   id: number,
   headSha: string,
   status: string,
   conclusion: string | null,
   createdAt = "2026-08-21T12:00:01Z",
+  displayTitle = "Deno Deploy sentinel-test-correlation",
 ) => ({
   id,
   head_sha: headSha,
   status,
   conclusion,
   created_at: createdAt,
-  html_url: `https://github.test/runs/${id}`,
+  display_title: displayTitle,
+  html_url: `https://github.test/ubiquity/ai.ubq.fi/actions/runs/${id}`,
 });
 
 const githubClient = (
@@ -405,7 +529,7 @@ const assertGitHubApiRequest = (request: SeenRequest, pathname: string, method =
   assert.equal(request.url.pathname, pathname);
   assert.equal(request.method, method);
   assert.equal(request.headers.get("Authorization"), `Bearer ${GITHUB_TOKEN}`);
-  assert.equal(request.headers.get("X-GitHub-Api-Version"), "2022-11-28");
+  assert.equal(request.headers.get("X-GitHub-Api-Version"), "2026-03-10");
 };
 
 Deno.test("GitHub current-run lookup exposes the stable workflow creation timestamp", async () => {
@@ -422,6 +546,7 @@ Deno.test("GitHub current-run lookup exposes the stable workflow creation timest
 
 Deno.test("GitHub dispatch and polling follow only the exact candidate head SHA to a successful conclusion", async () => {
   let now = Date.parse("2026-08-21T12:00:00Z");
+  const displayTitle = "Deno Deploy sentinel-test-correlation";
   const fake = queuedFetch([
     (request) => {
       assertGitHubApiRequest(
@@ -432,27 +557,21 @@ Deno.test("GitHub dispatch and polling follow only the exact candidate head SHA 
       assert.deepEqual(JSON.parse(String(request.body)), {
         ref: "feature/triage-sentinel",
         inputs: { deploy_preview: true, sentinel_build_only: true },
+        return_run_details: true,
       });
-      return new Response(null, { status: 204 });
-    },
-    (request) => {
-      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/actions/workflows/deno-deploy.yml/runs");
-      assert.equal(request.url.searchParams.get("branch"), "feature/triage-sentinel");
-      assert.equal(request.url.searchParams.get("event"), "workflow_dispatch");
       return json({
-        workflow_runs: [
-          workflowRun(40, WRONG_SHA, "completed", "success"),
-          workflowRun(41, NEW_SHA, "queued", null),
-        ],
+        workflow_run_id: 41,
+        run_url: "https://github.test/repos/ubiquity/ai.ubq.fi/actions/runs/41",
+        html_url: "https://github.test/ubiquity/ai.ubq.fi/actions/runs/41",
       });
     },
     (request) => {
       assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/actions/runs/41");
-      return json(workflowRun(41, NEW_SHA, "in_progress", null));
+      return json(workflowRun(41, NEW_SHA, "in_progress", null, undefined, displayTitle));
     },
     (request) => {
       assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/actions/runs/41");
-      return json(workflowRun(41, NEW_SHA, "completed", "success"));
+      return json(workflowRun(41, NEW_SHA, "completed", "success", undefined, displayTitle));
     },
   ]);
   const client = githubClient(fake.fetcher, {
@@ -462,16 +581,15 @@ Deno.test("GitHub dispatch and polling follow only the exact candidate head SHA 
       return Promise.resolve();
     },
   });
-  const dispatchFence = await client.dispatchWorkflow(
+  const dispatch = await client.dispatchWorkflow(
     "deno-deploy.yml",
     "feature/triage-sentinel",
     { deploy_preview: true, sentinel_build_only: true },
   );
   const run = await client.waitForWorkflow({
-    workflow: "deno-deploy.yml",
+    runId: dispatch.runId,
     headSha: NEW_SHA,
-    branch: "feature/triage-sentinel",
-    createdAfterMs: dispatchFence,
+    displayTitle,
     timeoutMs: 2_000,
     pollIntervalMs: 1_000,
   });
@@ -485,20 +603,56 @@ Deno.test("GitHub dispatch and polling follow only the exact candidate head SHA 
 Deno.test("GitHub workflow polling rejects a failed exact-SHA run", async () => {
   const now = Date.parse("2026-08-21T12:00:00Z");
   const fake = queuedFetch([
-    () => json({ workflow_runs: [workflowRun(51, NEW_SHA, "completed", "failure")] }),
     () => json(workflowRun(51, NEW_SHA, "completed", "failure")),
   ]);
   await assert.rejects(
     () =>
       githubClient(fake.fetcher, { now: () => now }).waitForWorkflow({
-        workflow: "deno-deploy.yml",
+        runId: 51,
         headSha: NEW_SHA,
-        branch: "development",
-        createdAfterMs: now,
         timeoutMs: 1_000,
       }),
     /completed with failure/,
   );
+});
+
+Deno.test("GitHub workflow polling reconciles transient API failures before returning", async () => {
+  let now = Date.parse("2026-08-21T12:00:00Z");
+  const fake = queuedFetch([
+    () => {
+      throw new TypeError("temporary GitHub network failure");
+    },
+    () => json(workflowRun(52, NEW_SHA, "in_progress", null)),
+    () => json(workflowRun(52, NEW_SHA, "completed", "success")),
+  ]);
+  const run = await githubClient(fake.fetcher, {
+    now: () => now,
+    sleep: (milliseconds) => {
+      now += milliseconds;
+      return Promise.resolve();
+    },
+  }).waitForWorkflow({
+    runId: 52,
+    headSha: NEW_SHA,
+    timeoutMs: 3_000,
+    pollIntervalMs: 1_000,
+  });
+
+  assert.equal(run.id, 52);
+  assert.equal(run.conclusion, "success");
+  assert.equal(now, Date.parse("2026-08-21T12:00:02Z"));
+  fake.assertDrained();
+});
+
+Deno.test("GitHub dispatch requires exact run details from the modern API", async () => {
+  const fake = queuedFetch([
+    () => new Response(null, { status: 204 }),
+  ]);
+  await assert.rejects(
+    () => githubClient(fake.fetcher).dispatchWorkflow("deno-deploy.yml", "development"),
+    /expected 200/,
+  );
+  fake.assertDrained();
 });
 
 Deno.test("GitHub API requests use a bounded timeout and fail closed", async () => {

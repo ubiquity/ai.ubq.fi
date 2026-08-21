@@ -278,7 +278,15 @@ export const runCandidateValidation = async (
     await runValidationCommand(
       input.cwd,
       "deno",
-      ["check", "--frozen", "--no-remote", "serve.ts", "scripts/setup-instance.ts", "scripts/sentinel/main.ts"],
+      [
+        "check",
+        "--frozen",
+        "--no-remote",
+        "serve.ts",
+        "scripts/setup-instance.ts",
+        "scripts/sentinel/main.ts",
+        "scripts/sentinel/revision-control.ts",
+      ],
       sandboxHome,
       input.denoDirectory,
       report,

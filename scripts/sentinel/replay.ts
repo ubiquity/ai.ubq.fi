@@ -86,16 +86,37 @@ const readBoundedResponse = async (
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
+const INFERENCE_ONLY_REPLAY_PATHS = new Set([
+  "/v1/chat/completions",
+  "/v1/responses",
+  "/uos/embeddings",
+]);
+
+export const isInferenceOnlyReplayEndpoint = (endpoint: string): boolean => {
+  if (!endpoint.startsWith("/")) return false;
+  try {
+    const base = new URL("https://sentinel-replay.invalid");
+    const target = new URL(endpoint, base);
+    return target.origin === base.origin && INFERENCE_ONLY_REPLAY_PATHS.has(target.pathname);
+  } catch {
+    return false;
+  }
+};
+
 export const fetchEncryptedReplayCaptures = async (
   input: Readonly<{
     baseUrl: string;
     adminToken: string;
     afterMs: number;
+    beforeMs: number;
     fetchImpl?: Fetch;
   }>,
 ): Promise<ExportedSentinelReplayCapture[]> => {
   if (!input.adminToken) throw new Error("Sentinel replay export credential is missing");
   if (!Number.isSafeInteger(input.afterMs) || input.afterMs < 0) throw new Error("Replay export start is invalid");
+  if (!Number.isSafeInteger(input.beforeMs) || input.beforeMs < input.afterMs) {
+    throw new Error("Replay export end is invalid");
+  }
   const fetchImpl = input.fetchImpl ?? fetch;
   const base = new URL(input.baseUrl);
   const captures: ExportedSentinelReplayCapture[] = [];
@@ -106,6 +127,7 @@ export const fetchEncryptedReplayCaptures = async (
   for (let pageNumber = 0; pageNumber < SENTINEL_MAX_REPLAY_EXPORT_PAGES; pageNumber++) {
     const url = new URL("/admin/sentinel/replay-captures", base);
     url.searchParams.set("after_ms", String(input.afterMs));
+    url.searchParams.set("before_ms", String(input.beforeMs));
     url.searchParams.set("limit", "1");
     if (cursor) url.searchParams.set("cursor", cursor);
     const response = await fetchImpl(url, {
@@ -143,7 +165,10 @@ export const fetchEncryptedReplayCaptures = async (
       throw new Error("Sentinel replay export returned an empty continuation page");
     }
     for (const capture of parsed.data) {
-      if (capture.manifest.captured_at_ms < input.afterMs) {
+      if (
+        capture.manifest.captured_at_ms < input.afterMs ||
+        capture.manifest.captured_at_ms > input.beforeMs
+      ) {
         throw new Error("Sentinel replay export returned an out-of-range manifest");
       }
       const currentKey = [
@@ -181,7 +206,7 @@ export const decryptReplayCaptures = async (
   try {
     for (const capture of captures) {
       const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
-      if (plaintext.method !== "POST" || !plaintext.endpoint.startsWith("/")) {
+      if (plaintext.method !== "POST" || !isInferenceOnlyReplayEndpoint(plaintext.endpoint)) {
         plaintext.body.fill(0);
         continue;
       }
@@ -313,7 +338,12 @@ export const replayOneCase = async (
   try {
     const base = new URL(input.previewBaseUrl);
     target = new URL(input.replayCase.endpoint, base);
-    if (target.origin !== base.origin || input.replayCase.method !== "POST") return unavailable("case_target_invalid");
+    if (
+      target.origin !== base.origin || input.replayCase.method !== "POST" ||
+      !isInferenceOnlyReplayEndpoint(input.replayCase.endpoint)
+    ) {
+      return unavailable("case_target_not_inference_only");
+    }
   } catch {
     return unavailable("case_target_invalid");
   }

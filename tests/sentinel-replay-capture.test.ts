@@ -408,7 +408,10 @@ Deno.test("sentinel concurrent capture publication deduplicates and rejects exce
     }),
   ]);
   assert.deepEqual(results.map((result) => result.status).sort(), ["duplicate", "stored"]);
-  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, { afterMs: 0 });
+  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs: 0,
+    beforeMs: Number.MAX_SAFE_INTEGER - 1,
+  });
   assert.equal(page.captures.length, 1);
   const retainedChunks = [...kv.entries.values()].filter((entry) =>
     SENTINEL_REPLAY_CHUNK_PREFIX.every((part, index) => Object.is(part, entry.key[index]))
@@ -456,7 +459,10 @@ Deno.test("sentinel replay encrypts, chunks, exports, decrypts, and deduplicates
   });
   assert.equal(duplicate.status, "duplicate");
 
-  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, { afterMs: now - 1 });
+  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs: now - 1,
+    beforeMs: now,
+  });
   assert.equal(page.captures.length, 1);
   const decrypted = await decryptExportedSentinelReplay(page.captures[0]!, keyBytes);
   assert.deepEqual(decrypted.body, body);
@@ -487,7 +493,10 @@ Deno.test("sentinel manifest export seeks to the requested timestamp and returns
     now: () => 1_777_000_000_000,
     randomUuid: () => "ordered-fixture",
   });
-  const [fixture] = (await listEncryptedSentinelReplays(backing as unknown as Deno.Kv, { afterMs: 0 })).captures;
+  const [fixture] = (await listEncryptedSentinelReplays(backing as unknown as Deno.Kv, {
+    afterMs: 0,
+    beforeMs: Number.MAX_SAFE_INTEGER - 1,
+  })).captures;
   assert.ok(fixture);
   let observedSelector: Deno.KvListSelector | null = null;
   let observedOptions: Deno.KvListOptions | undefined;
@@ -522,13 +531,17 @@ Deno.test("sentinel manifest export seeks to the requested timestamp and returns
     },
   };
   const afterMs = fixture.manifest.captured_at_ms;
-  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, { afterMs, limit: 1 });
+  const beforeMs = afterMs + 10;
+  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, { afterMs, beforeMs, limit: 1 });
   assert.equal(page.captures.length, 1);
   assert.equal(page.cursor, "next_cursor");
   const selector = observedSelector as unknown as Deno.KvListSelector;
   assert.ok("start" in selector);
   if (!("start" in selector)) throw new Error("fixture selector missing start");
   assert.deepEqual(selector.start, [...SENTINEL_REPLAY_MANIFEST_PREFIX, afterMs]);
+  assert.ok("end" in selector);
+  if (!("end" in selector)) throw new Error("fixture selector missing end");
+  assert.deepEqual(selector.end, [...SENTINEL_REPLAY_MANIFEST_PREFIX, beforeMs + 1]);
   assert.equal(observedOptions?.limit, 1);
 });
 
@@ -807,7 +820,10 @@ Deno.test("client-visible signatures survive encrypted capture round trips", asy
     client,
   );
   assert.equal(stored.status, "stored");
-  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, { afterMs: 0 });
+  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs: 0,
+    beforeMs: Number.MAX_SAFE_INTEGER - 1,
+  });
   const decrypted = await decryptExportedSentinelReplay(page.captures[0]!, keyBytes);
   assert.deepEqual(decrypted.observation, internal);
   assert.deepEqual(decrypted.client_observation, client);
@@ -821,7 +837,10 @@ Deno.test("encrypted replay rejects hostile manifest and chunk sizes before decr
     keyBytes,
     now: () => 1_777_000_000_000,
   });
-  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, { afterMs: 0 });
+  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs: 0,
+    beforeMs: Number.MAX_SAFE_INTEGER - 1,
+  });
   const capture = page.captures[0]!;
   assert.equal(
     isExportedSentinelReplayCapture({
@@ -996,7 +1015,7 @@ Deno.test("sentinel replay admin separates invalid input from storage failure", 
   assert.equal(SENTINEL_REPLAY_EXPORT_PAGE_LIMIT, 1);
 
   const unavailable = await handleAdminSentinelReplayCaptures(
-    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?cursor=valid_cursor"),
+    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?before_ms=2000000000000&cursor=valid_cursor"),
     {
       getKv: () => Promise.resolve({} as Deno.Kv),
       listEncryptedSentinelReplays: () => Promise.reject(new Error("KV unavailable")),
@@ -1005,10 +1024,26 @@ Deno.test("sentinel replay admin separates invalid input from storage failure", 
   assert.equal(unavailable.status, 503);
 
   const kvFailure = await handleAdminSentinelReplayCaptures(
-    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures"),
+    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?before_ms=2000000000000"),
     { getKv: () => Promise.reject(new Error("KV open failed")) },
   );
   assert.equal(kvFailure.status, 503);
+});
+
+Deno.test("sentinel replay admin forwards the closed capture interval", async () => {
+  let observed: { afterMs: number; beforeMs: number } | null = null;
+  const response = await handleAdminSentinelReplayCaptures(
+    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?after_ms=100&before_ms=200&limit=1"),
+    {
+      getKv: () => Promise.resolve({} as Deno.Kv),
+      listEncryptedSentinelReplays: (_kv, options) => {
+        observed = { afterMs: options.afterMs, beforeMs: options.beforeMs };
+        return Promise.resolve({ captures: [], cursor: "" });
+      },
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(observed, { afterMs: 100, beforeMs: 200 });
 });
 
 Deno.test("replay export and preview reads enforce declared and streamed byte limits", async () => {
@@ -1019,6 +1054,7 @@ Deno.test("replay export and preview reads enforce declared and streamed byte li
         baseUrl: "https://preview.example",
         adminToken: "admin-fixture",
         afterMs: 0,
+        beforeMs: 2_000_000_000_000,
         fetchImpl: ((input: URL | Request | string) => {
           const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
           requestedLimit = url.searchParams.get("limit");
@@ -1157,7 +1193,10 @@ Deno.test("replay export pagination rejects repeated cursors and stops at the fi
     now: () => 1_777_000_000_000,
     randomUuid: () => "pagination-fixture",
   });
-  const [fixture] = (await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, { afterMs: 0 })).captures;
+  const [fixture] = (await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs: 0,
+    beforeMs: Number.MAX_SAFE_INTEGER - 1,
+  })).captures;
   assert.ok(fixture);
   const pageCapture = (index: number) => ({
     ...fixture,
@@ -1177,6 +1216,7 @@ Deno.test("replay export pagination rejects repeated cursors and stops at the fi
         baseUrl: "https://preview.example",
         adminToken: "admin-fixture",
         afterMs: 0,
+        beforeMs: 2_000_000_000_000,
         fetchImpl: (() => {
           const index = repeatedCalls++;
           return Promise.resolve(
@@ -1195,6 +1235,7 @@ Deno.test("replay export pagination rejects repeated cursors and stops at the fi
         baseUrl: "https://preview.example",
         adminToken: "admin-fixture",
         afterMs: 0,
+        beforeMs: 2_000_000_000_000,
         fetchImpl: (() => {
           const index = boundedCalls++;
           return Promise.resolve(
@@ -1205,4 +1246,58 @@ Deno.test("replay export pagination rejects repeated cursors and stops at the fi
     /page limit/,
   );
   assert.equal(boundedCalls, SENTINEL_MAX_REPLAY_EXPORT_PAGES);
+});
+
+Deno.test("replay export accepts only manifests inside the fixed log interval", async () => {
+  const kv = new CountingKv();
+  await persistEncryptedSentinelReplay(acceptedInput(), failedObservation(), {
+    kv: kv as unknown as Deno.Kv,
+    keyBytes,
+    now: () => 1_777_000_000_000,
+    randomUuid: () => "range-fixture",
+  });
+  const [fixture] = (await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs: 0,
+    beforeMs: Number.MAX_SAFE_INTEGER - 1,
+  })).captures;
+  assert.ok(fixture);
+  const afterMs = fixture.manifest.captured_at_ms - 1;
+  const beforeMs = fixture.manifest.captured_at_ms + 1;
+  let observedBefore: string | null = null;
+  const inRange = await fetchEncryptedReplayCaptures({
+    baseUrl: "https://preview.example",
+    adminToken: "admin-fixture",
+    afterMs,
+    beforeMs,
+    fetchImpl: ((input: URL | Request | string) => {
+      const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
+      observedBefore = url.searchParams.get("before_ms");
+      return Promise.resolve(Response.json({ data: [fixture], cursor: null }));
+    }) as typeof fetch,
+  });
+  assert.equal(observedBefore, String(beforeMs));
+  assert.equal(inRange.length, 1);
+
+  for (const capturedAtMs of [afterMs - 1, beforeMs + 1]) {
+    const outside = {
+      ...fixture,
+      manifest: {
+        ...fixture.manifest,
+        capture_id: `outside-${capturedAtMs}`,
+        captured_at_ms: capturedAtMs,
+        expires_at_ms: capturedAtMs + SENTINEL_REPLAY_TTL_MS,
+      },
+    };
+    await assert.rejects(
+      () =>
+        fetchEncryptedReplayCaptures({
+          baseUrl: "https://preview.example",
+          adminToken: "admin-fixture",
+          afterMs,
+          beforeMs,
+          fetchImpl: (() => Promise.resolve(Response.json({ data: [outside], cursor: null }))) as typeof fetch,
+        }),
+      /out-of-range manifest/,
+    );
+  }
 });
