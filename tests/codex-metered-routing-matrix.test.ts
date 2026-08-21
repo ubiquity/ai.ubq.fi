@@ -160,7 +160,7 @@ const OUTCOMES: readonly Outcome[] = [
   { name: "network", kind: "network" },
 ];
 
-const FALLBACK_STATUSES = new Set([401, 403, 429]);
+const ACCOUNT_FALLBACK_STATUSES = new Set([401, 403, 429]);
 const MODEL = "gpt-5-routing-matrix";
 const KEY_ID = "routing-matrix-key";
 const KEY_HASH = "routing-matrix-hash";
@@ -171,7 +171,7 @@ const METERED_RESPONSES_URL = `${METERED_BASE_URL}/v1/responses`;
 const encoder = new TextEncoder();
 
 const isFallbackOutcome = (outcome: Outcome): boolean =>
-  outcome.kind === "http" && FALLBACK_STATUSES.has(outcome.status);
+  outcome.kind === "http" && ACCOUNT_FALLBACK_STATUSES.has(outcome.status);
 
 const is401 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 401;
 const is429 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 429;
@@ -412,8 +412,18 @@ const runCase = async (
     );
 
     const reachesSecond = isFallbackOutcome(first);
-    const selectsMetered = reachesSecond && isFallbackOutcome(second);
-    const expectedStatus = selectsMetered ? 200 : directStatus(reachesSecond ? second : first);
+    // Codex may try its sibling account after 401/403/429. Paid fallback still
+    // requires an authoritative 429 from at least one account; 401/403 alone
+    // may exhaust the sibling pool but must fail closed. Exhausted 401 refresh
+    // attempts are normalized to the reauthentication 503 contract.
+    const terminalCodexOutcome = reachesSecond ? second : first;
+    const selectsMetered = reachesSecond && isFallbackOutcome(second) &&
+      (is429(first) || is429(second));
+    const expectedStatus = selectsMetered
+      ? 200
+      : is401(terminalCodexOutcome)
+      ? 503
+      : directStatus(terminalCodexOutcome);
     assert.equal(response.status, expectedStatus, `${label}: final status`);
     assert.equal(
       response.headers.get("x-uos-upstream"),

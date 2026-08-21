@@ -294,7 +294,18 @@ let authPoolEntryInFlight: Promise<CodexAuthPoolEntry> | null = null;
 const refreshesInFlight = new Map<string, Promise<CodexAuthState>>();
 const codexProbeByResponse = new WeakMap<Response, RoutingAccount>();
 const codexSlotByResponse = new WeakMap<Response, number>();
+const codexAccountIdByResponse = new WeakMap<Response, string>();
+const codexTerminalOutcomeByResponse = new WeakSet<Response>();
 const codexProbeTransitionsInFlight = new Set<Promise<void>>();
+
+const setCodexResponseAccountTelemetry = (
+  response: Response,
+  slot: number,
+  accountId: string,
+): void => {
+  codexSlotByResponse.set(response, slot);
+  codexAccountIdByResponse.set(response, accountId);
+};
 
 const withCodexAuthWarning = (response: Response, warning: string): Response => {
   const headers = new Headers(response.headers);
@@ -312,6 +323,8 @@ const withCodexAuthWarning = (response: Response, warning: string): Response => 
   if (probe) codexProbeByResponse.set(decorated, probe);
   const slot = codexSlotByResponse.get(response);
   if (slot !== undefined) codexSlotByResponse.set(decorated, slot);
+  const accountId = codexAccountIdByResponse.get(response);
+  if (accountId !== undefined) codexAccountIdByResponse.set(decorated, accountId);
   codexAuthWarnings.set(decorated, warning);
   return decorated;
 };
@@ -323,11 +336,42 @@ export const getCodexRoutingProbe = (response: Response): RoutingAccount | null 
 /** The slot is isolate-local telemetry only; account IDs never leave the routing layer. */
 export const getCodexResponseSlot = (response: Response): number | null => codexSlotByResponse.get(response) ?? null;
 
+/** Returns a stable digest while keeping the raw account ID inside this module. */
+export const getCodexResponseAccountCohortId = async (response: Response): Promise<string | null> => {
+  const accountId = codexAccountIdByResponse.get(response);
+  return accountId === undefined ? null : await sha256Hex(`uos-prompt-cache-account-cohort-v1\u0000${accountId}`);
+};
+
 const takeCodexResponseProbe = (response: Response): RoutingAccount | null => {
   const probe = codexProbeByResponse.get(response);
   if (probe) codexProbeByResponse.delete(response);
   return probe ?? null;
 };
+
+const beginCodexResponseTerminalOutcome = (
+  response: Response,
+): Readonly<{ accountId: string | null; probe: RoutingAccount | null }> | null => {
+  if (codexTerminalOutcomeByResponse.has(response)) return null;
+  codexTerminalOutcomeByResponse.add(response);
+  return {
+    accountId: codexAccountIdByResponse.get(response) ?? null,
+    probe: takeCodexResponseProbe(response),
+  };
+};
+
+const completeCodexProbeTransition = async (transition: Promise<void>): Promise<void> => {
+  codexProbeTransitionsInFlight.add(transition);
+  try {
+    await transition;
+  } finally {
+    codexProbeTransitionsInFlight.delete(transition);
+  }
+};
+
+const codexProviderRequestId = (response: Response): string | null =>
+  response.headers.get("X-Request-Id") ??
+    response.headers.get("X-Api-Request-Id") ??
+    response.headers.get("X-Oneapi-Request-Id");
 
 /**
  * Detach a response from its recovery probe without claiming success. Failed,
@@ -336,28 +380,43 @@ const takeCodexResponseProbe = (response: Response): RoutingAccount | null => {
  * healthy.
  */
 export const releaseCodexResponseProbe = async (response: Response): Promise<void> => {
-  const probe = takeCodexResponseProbe(response);
-  if (!probe) return;
-  const transition = releaseCodexRoutingProbe(probe);
-  codexProbeTransitionsInFlight.add(transition);
-  try {
-    await transition;
-  } finally {
-    codexProbeTransitionsInFlight.delete(transition);
-  }
+  const terminal = beginCodexResponseTerminalOutcome(response);
+  if (!terminal?.probe) return;
+  await completeCodexProbeTransition(releaseCodexRoutingProbe(terminal.probe));
 };
 
 /** Only a validated upstream `response.completed` event may clear the recovery probe. */
 export const markCodexResponseCompleted = async (response: Response): Promise<void> => {
-  const probe = takeCodexResponseProbe(response);
-  if (!probe) return;
-  const transition = markCodexSuccess(probe);
-  codexProbeTransitionsInFlight.add(transition);
-  try {
-    await transition;
-  } finally {
-    codexProbeTransitionsInFlight.delete(transition);
+  const terminal = beginCodexResponseTerminalOutcome(response);
+  if (!terminal) return;
+  if (terminal.accountId !== null) {
+    void recordCodexProviderHealth(
+      terminal.accountId,
+      "success",
+      response.status,
+      Date.now,
+      codexProviderRequestId(response),
+    ).catch(() => {});
   }
+  if (!terminal.probe) return;
+  await completeCodexProbeTransition(markCodexSuccess(terminal.probe));
+};
+
+/** A trustworthy failure after 2xx headers degrades health without treating cancellation or incompletion as failure. */
+export const markCodexResponseUpstreamError = async (response: Response): Promise<void> => {
+  const terminal = beginCodexResponseTerminalOutcome(response);
+  if (!terminal) return;
+  if (response.ok && terminal.accountId !== null) {
+    void recordCodexProviderHealth(
+      terminal.accountId,
+      "upstream_error",
+      response.status,
+      Date.now,
+      codexProviderRequestId(response),
+    ).catch(() => {});
+  }
+  if (!terminal.probe) return;
+  await completeCodexProbeTransition(releaseCodexRoutingProbe(terminal.probe));
 };
 
 export const cacheCodexAuthPool = (pool: CodexAuthPoolState): void => {
@@ -811,7 +870,7 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
       });
       throw error;
     }
-    codexSlotByResponse.set(response, options.slot);
+    setCodexResponseAccountTelemetry(response, options.slot, routing.auth.account_id);
     void recordCodexResponseHealth(routing.auth.account_id, response, routing.auth);
     logCodexRouting("codex_attempt", {
       request_id: null,
@@ -824,7 +883,7 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
 
     if (response.status === 429) {
       response = (await markCodexQuotaBlocked(routing, response)).response;
-      codexSlotByResponse.set(response, options.slot);
+      setCodexResponseAccountTelemetry(response, options.slot, routing.auth.account_id);
     }
     if (!response.ok) {
       await releaseCodexRoutingProbe(routing);
@@ -1354,20 +1413,32 @@ const recordCodexResponseHealth = async (
   accountId: string,
   response: Response,
   auth?: CodexAuthState,
+  successfulResponseEvent: "success" | "reachable" | null = null,
 ): Promise<void> => {
+  const providerRequestId = response.headers.get("X-Request-Id") ??
+    response.headers.get("X-Api-Request-Id") ??
+    response.headers.get("X-Oneapi-Request-Id");
   if (response.status === 401 || (response.status === 403 && auth !== undefined && accessTokenExpired(auth))) {
-    await recordCodexProviderHealth(accountId, "auth_invalid", response.status);
+    await recordCodexProviderHealth(accountId, "auth_invalid", response.status, Date.now, providerRequestId);
   } else if (response.status === 429) {
-    await recordCodexProviderHealth(accountId, "quota_exhausted", response.status);
+    await recordCodexProviderHealth(accountId, "quota_exhausted", response.status, Date.now, providerRequestId);
   } else if (response.status >= 500) {
     void recordProviderCapacityDowntimeEvent({
       failure_kind: "upstream_error",
       status: response.status,
       observed_at_ms: Date.now(),
     });
-    await recordCodexProviderHealth(accountId, "upstream_error", response.status);
-  } else {
-    await recordCodexProviderHealth(accountId, response.ok ? "success" : "reachable", response.status);
+    await recordCodexProviderHealth(accountId, "upstream_error", response.status, Date.now, providerRequestId);
+  } else if (response.ok && successfulResponseEvent !== null) {
+    await recordCodexProviderHealth(
+      accountId,
+      successfulResponseEvent,
+      response.status,
+      Date.now,
+      providerRequestId,
+    );
+  } else if (!response.ok) {
+    await recordCodexProviderHealth(accountId, "reachable", response.status, Date.now, providerRequestId);
   }
 };
 
@@ -2094,7 +2165,7 @@ export const fetchCodexResponses = async (
           reportCodexResponseTiming(options.timing?.onDispatch);
         },
       );
-      codexSlotByResponse.set(response, routing.slot + 1);
+      setCodexResponseAccountTelemetry(response, routing.slot + 1, auth.account_id);
       reportCodexResponseTiming(options.timing?.onHeaders);
       void recordCodexResponseHealth(auth.account_id, response, auth);
       logCodexRouting("codex_attempt", {
@@ -2107,7 +2178,14 @@ export const fetchCodexResponses = async (
       });
       return response;
     } catch (error) {
-      if (!(error instanceof CodexBankedResetRetryFenceError)) {
+      const signalReason = options.signal?.reason;
+      const clientCancelled = options.signal?.aborted === true &&
+        !(signalReason instanceof Error && signalReason.name === "TimeoutError");
+      if (
+        !(error instanceof CodexBankedResetRetryFenceError) &&
+        !(error instanceof ApiKeyQuotaDispatchError) &&
+        !clientCancelled
+      ) {
         void recordCodexThrownHealth(accountEntry.auth.account_id, error);
       }
       if (transportStarted && error instanceof CodexError && error.code === "gateway_timeout") {
@@ -2492,7 +2570,7 @@ export const fetchCodexResponses = async (
       }
       if (response.status === 429) {
         response = await classify429(accountEntry, routing, auth, response);
-        codexSlotByResponse.set(response, routing.slot + 1);
+        setCodexResponseAccountTelemetry(response, routing.slot + 1, auth.account_id);
       } else if (!response.ok) {
         await releaseCodexRoutingProbe(routing);
       }
@@ -2661,7 +2739,7 @@ export const fetchCodexResponses = async (
         // evidence that a banked reset is safe to spend.
         bankedResetCandidates.clear();
       }
-      codexSlotByResponse.set(response, retryRouting.slot + 1);
+      setCodexResponseAccountTelemetry(response, retryRouting.slot + 1, retryAuth.account_id);
     } else if (!response.ok) {
       // A 401/403 says this retrying account cannot serve, but does not erase
       // a separately verified quota-exhaustion candidate from another slot.
@@ -2712,7 +2790,7 @@ export const fetchCodexModels = async (
       try {
         auth = await awaitWithoutCancellingSharedWork(getValidAuth(accountEntry), options.signal);
         res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch, options.signal);
-        await recordCodexResponseHealth(auth.account_id, res, auth);
+        await recordCodexResponseHealth(auth.account_id, res, auth, "reachable");
         if (res.status === 401) {
           cancelResponseBody(res);
           auth = await awaitWithoutCancellingSharedWork(
@@ -2720,7 +2798,7 @@ export const fetchCodexModels = async (
             options.signal,
           );
           res = await fetchCodexModelsWithAuth(auth, url, clientVersion, options.ifNoneMatch, options.signal);
-          await recordCodexResponseHealth(auth.account_id, res, auth);
+          await recordCodexResponseHealth(auth.account_id, res, auth, "reachable");
         }
       } catch (error) {
         await recordCodexThrownHealth(accountEntry.auth.account_id, error);

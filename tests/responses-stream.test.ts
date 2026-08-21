@@ -96,6 +96,49 @@ Deno.test("Responses parser rejects terminal events without their protocol paylo
   assert.equal(error.kind, "malformed_event");
 });
 
+Deno.test("Responses parser rejects array-valued terminal response payloads", async () => {
+  for (const type of ["response.completed", "response.failed", "response.incomplete"]) {
+    const error = await captureError(async () => {
+      for await (
+        const _ of readResponsesStream(
+          chunked(`data: ${JSON.stringify({ type, response: [] })}\n\n`, []),
+        )
+      ) {
+        // consume
+      }
+    });
+    assert.ok(error instanceof ResponsesStreamError, type);
+    assert.equal(error.kind, "malformed_event", type);
+  }
+});
+
+Deno.test("Responses parser rejects an array-valued nested error payload", async () => {
+  const error = await captureError(async () => {
+    for await (const _ of readResponsesStream(chunked('data: {"type":"error","error":[]}\n\n', []))) {
+      // consume
+    }
+  });
+  assert.ok(error instanceof ResponsesStreamError);
+  assert.equal(error.kind, "malformed_event");
+});
+
+Deno.test("Responses parser rejects an array-valued nested error despite valid flat fields", async () => {
+  const error = await captureError(async () => {
+    for await (
+      const _ of readResponsesStream(
+        chunked(
+          'data: {"type":"error","error":[],"code":"provider_error","message":"Provider stopped.","param":null}\n\n',
+          [],
+        ),
+      )
+    ) {
+      // consume
+    }
+  });
+  assert.ok(error instanceof ResponsesStreamError);
+  assert.equal(error.kind, "malformed_event");
+});
+
 Deno.test("Responses parser accepts an official flat error terminal", async () => {
   const events = [];
   for await (

@@ -112,6 +112,103 @@ Deno.test("Stage 0 cache telemetry analyzer groups completed inference and prese
   assert.equal(report.gates.reported_coverage_99_5.all_observed_cohorts_passed, false);
 });
 
+Deno.test("Stage 0 cache telemetry analyzer emits stable privacy-safe model and account cohorts", () => {
+  const rawModel = "gpt-private-model-must-not-appear";
+  const otherRawModel = "zzzz-other-private-model-must-not-appear";
+  const accountA = "a".repeat(64);
+  const accountB = "b".repeat(64);
+  const report = analyzeStage0CacheTelemetryLines([
+    terminalLine({ model: rawModel, account_slot: 17, account_cohort_id: accountA }),
+    terminalLine({ model: rawModel, account_slot: 17, account_cohort_id: accountA }),
+    terminalLine({ model: rawModel, account_slot: 17, account_cohort_id: accountB }),
+    terminalLine({ provider: "surplus", model: "gpt-paid-model", account_slot: null, account_cohort_id: null }),
+  ]);
+
+  const codexCohorts = report.cache_dimension_cohorts.filter((cohort) => cohort.provider === "chatgpt_codex");
+  assert.equal(codexCohorts.length, 2);
+  assert.deepEqual(codexCohorts.map((cohort) => cohort.completed_inference).sort(), [1, 2]);
+  assert.deepEqual(codexCohorts.map((cohort) => cohort.account_cohort_id).sort(), [accountA, accountB]);
+  assert.deepEqual([...new Set(codexCohorts.map((cohort) => cohort.model_cohort_id))].length, 1);
+  assert.deepEqual([...new Set(codexCohorts.map((cohort) => cohort.account_slot_cohort))], ["slot_1"]);
+
+  const reordered = analyzeStage0CacheTelemetryLines([
+    terminalLine({ model: otherRawModel, account_slot: 17, account_cohort_id: accountB }),
+    terminalLine({ model: rawModel, account_slot: 17, account_cohort_id: accountA }),
+  ]);
+  const reorderedRawModel = reordered.cache_dimension_cohorts.find((cohort) => cohort.account_cohort_id === accountA);
+  assert.ok(reorderedRawModel);
+  assert.equal(
+    reorderedRawModel.model_cohort_id,
+    codexCohorts[0]?.model_cohort_id,
+  );
+  assert.notEqual(reorderedRawModel.model, codexCohorts[0]?.model);
+  const movedAccount = analyzeStage0CacheTelemetryLines([
+    terminalLine({ model: rawModel, account_slot: 93, account_cohort_id: accountA }),
+  ]).cache_dimension_cohorts[0];
+  assert.equal(movedAccount?.account_cohort_id, accountA);
+  assert.equal(movedAccount?.model_cohort_id, codexCohorts[0]?.model_cohort_id);
+  assert.doesNotMatch(JSON.stringify(movedAccount), /"account_slot":93/);
+  const differentModel = analyzeStage0CacheTelemetryLines([
+    terminalLine({ model: `${rawModel}-different`, account_slot: 17, account_cohort_id: accountA }),
+  ]);
+  assert.notEqual(
+    differentModel.cache_dimension_cohorts[0]?.model_cohort_id,
+    codexCohorts[0]?.model_cohort_id,
+  );
+
+  const paidCohort = report.cache_dimension_cohorts.find((cohort) => cohort.provider === "surplus");
+  assert.ok(paidCohort);
+  assert.equal(paidCohort.account_slot_cohort, "unassigned");
+  assert.equal(paidCohort.account_cohort_id, null);
+  const serialized = JSON.stringify(report);
+  assert.doesNotMatch(serialized, new RegExp(rawModel));
+  assert.doesNotMatch(serialized, /"account_slot":17/);
+  const reorderedSerialized = JSON.stringify(reordered);
+  assert.doesNotMatch(reorderedSerialized, new RegExp(rawModel));
+  assert.doesNotMatch(reorderedSerialized, new RegExp(otherRawModel));
+
+  const slotAndAccountRows = [
+    terminalLine({ model: rawModel, account_slot: 93, account_cohort_id: accountA }),
+    terminalLine({ model: rawModel, account_slot: 17, account_cohort_id: accountB }),
+    terminalLine({ model: rawModel, account_slot: 17, account_cohort_id: accountA }),
+  ];
+  const forwardDimensions = analyzeStage0CacheTelemetryLines(slotAndAccountRows).cache_dimension_cohorts;
+  const reverseDimensions = analyzeStage0CacheTelemetryLines([...slotAndAccountRows].reverse()).cache_dimension_cohorts;
+  assert.deepEqual(reverseDimensions, forwardDimensions);
+  assert.doesNotMatch(JSON.stringify(forwardDimensions), /"account_slot":(?:17|93)/);
+});
+
+Deno.test("Stage 0 cache telemetry analyzer reports completed latency by cache dimension", () => {
+  const report = analyzeStage0CacheTelemetryLines([
+    terminalLine({ latency_ms: 10 }),
+    terminalLine({ latency_ms: 20 }),
+    terminalLine({ latency_ms: 100 }),
+    terminalLine({ prompt_cache_mode: "explicit", prompt_cache_key_present: true }),
+  ]);
+
+  const latency = { observed_events: 3, min_ms: 10, p50_ms: 20, p95_ms: 100, max_ms: 100 };
+  assert.deepEqual(report.completed_latency_ms, latency);
+  assert.equal(report.cache_dimension_cohorts.length, 2);
+  const implicit = report.cache_dimension_cohorts.find((cohort) =>
+    cohort.prompt_cache_mode === "unspecified" && !cohort.prompt_cache_key_present
+  );
+  assert.ok(implicit);
+  assert.equal(implicit.completed_inference, 3);
+  assert.deepEqual(implicit.completed_latency_ms, latency);
+  const explicit = report.cache_dimension_cohorts.find((cohort) =>
+    cohort.prompt_cache_mode === "explicit" && cohort.prompt_cache_key_present
+  );
+  assert.ok(explicit);
+  assert.equal(explicit.completed_inference, 1);
+  assert.deepEqual(explicit.completed_latency_ms, {
+    observed_events: 0,
+    min_ms: null,
+    p50_ms: null,
+    p95_ms: null,
+    max_ms: null,
+  });
+});
+
 Deno.test("Stage 0 cache telemetry analyzer keeps invalid completed usage out of reported coverage", () => {
   const report = analyzeStage0CacheTelemetryLines([
     terminalLine({
@@ -474,6 +571,10 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
   assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ account_slot: -1 })]),
     /invalid account_slot field/,
+  );
+  assert.throws(
+    () => analyzeStage0CacheTelemetryLines([terminalLine({ account_cohort_id: "not-a-sha256-digest" })]),
+    /invalid account_cohort_id field/,
   );
   assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ affinity_outcome: "sticky" })]),

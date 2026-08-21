@@ -161,6 +161,52 @@ Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forw
   assert.equal(result.request_id, "metered-request-1");
 });
 
+Deno.test("Metered billing correlation prefers provider IDs over generic trace IDs", async () => {
+  const billingRequestId = "openlux-billing-request";
+  const fetcher: MeteredFetch = (input) => {
+    const url = input.toString();
+    if (url === "https://api.openlux.ai/v1/responses") {
+      return Promise.resolve(
+        new Response("{}", {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-Id": "proxy-trace-request",
+            "X-Api-Request-Id": billingRequestId,
+            "X-Oneapi-Request-Id": "openlux-legacy-request",
+          },
+        }),
+      );
+    }
+    if (url.startsWith("https://api.openlux.ai/api/log/token?")) {
+      return Promise.resolve(jsonResponse({
+        success: true,
+        data: {
+          items: [{
+            quota: 100,
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            model_name: "gpt-5.6-sol",
+            created_at: 1_752_960_000,
+            other: JSON.stringify({ request_id: billingRequestId }),
+          }],
+        },
+      }));
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const result = await fetchMeteredResponses(
+    { model: "gpt-5.6-sol", input: "hello" },
+    { apiKey: "test-metered-key", fetcher },
+  );
+  const logs = await fetchMeteredTokenLogs({ apiKey: "test-metered-key", fetcher });
+
+  assert.equal(result.request_id, billingRequestId);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0]?.request_id, result.request_id);
+});
+
 Deno.test("fetchMeteredResponses maps no-reasoning and ultra Sol presets to live aliases", async () => {
   const bodies: Record<string, unknown>[] = [];
   const fetcher: MeteredFetch = (_input, init) => {

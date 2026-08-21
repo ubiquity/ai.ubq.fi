@@ -44,17 +44,40 @@ Deno.test({
     const kv = await Deno.openKv(":memory:");
     const originalFetch = globalThis.fetch;
     const originalApiKey = Deno.env.get("METERED_API_KEY");
+    const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
     const originalInfo = console.info;
     const originalWarn = console.warn;
     const warnings: string[] = [];
+    let originalDeployFlag: boolean | null = null;
     let providerServer: Deno.HttpServer | null = null;
     let gatewayServer: Deno.HttpServer | null = null;
     let releaseMeteredResponses = (): void => {};
 
     try {
       Deno.env.set("METERED_API_KEY", "metered-real-http-stress-key");
+      Deno.env.delete("SURPLUS_API_KEY");
       const { setKvForTest } = await import("../src/kv.ts");
+      const {
+        fetchMeteredModels,
+        resetMeteredModelsCacheForTest,
+        setMeteredModelsFetchForTest,
+      } = await import("../src/metered.ts");
+      const { config } = await import("../src/config.ts");
       setKvForTest(kv);
+      originalDeployFlag = config.isDeploy;
+      resetMeteredModelsCacheForTest();
+      setMeteredModelsFetchForTest(() =>
+        Promise.resolve(Response.json({
+          data: [{
+            id: "gpt-5.6-sol",
+            owned_by: "openlux",
+            supported_endpoint_types: ["openai-response"],
+          }],
+        }))
+      );
+      assert.deepEqual((await fetchMeteredModels({ force: true }))?.models.map((entry) => entry.id), [
+        "gpt-5.6-sol",
+      ]);
       console.info = () => {};
       console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
 
@@ -255,6 +278,8 @@ Deno.test({
       };
 
       const { default: handler } = await import("../src/handler.ts");
+      const { createServeHandler } = await import("../serve.ts");
+      (config as { isDeploy: boolean }).isDeploy = true;
       const {
         paidFallbackWindowV3Key,
         reconcileDuePaidFallbacksV3,
@@ -263,7 +288,7 @@ Deno.test({
       const pendingPrefix = ["uos_ai", "paid_fallback", "v3", "pending", keyId] as const;
       gatewayServer = Deno.serve(
         { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-        handler,
+        createServeHandler(handler),
       );
       const gatewayAddress = gatewayServer.addr as Deno.NetAddr;
       const gatewayUrl = `http://127.0.0.1:${gatewayAddress.port}/v1/responses`;
@@ -312,7 +337,14 @@ Deno.test({
         releaseMeteredResponses();
       }
       const results = await pendingResults;
-      if (dispatchBarrierError) throw dispatchBarrierError;
+      if (dispatchBarrierError) {
+        throw new Error(
+          `${dispatchBarrierError instanceof Error ? dispatchBarrierError.message : String(dispatchBarrierError)}; ` +
+            `Codex calls: ${codexCalls}; first results: ${JSON.stringify(results.slice(0, 3))}; ` +
+            `warnings: ${JSON.stringify(warnings.slice(0, 5))}`,
+          { cause: dispatchBarrierError },
+        );
+      }
 
       assert.deepEqual(results.map((result) => result.status), Array(100).fill(200));
       assert.deepEqual(results.map((result) => result.provider), Array(100).fill("metered"));
@@ -382,11 +414,21 @@ Deno.test({
       releaseMeteredResponses();
       globalThis.fetch = originalFetch;
       const { setKvForTest } = await import("../src/kv.ts");
+      const {
+        resetMeteredModelsCacheForTest,
+        setMeteredModelsFetchForTest,
+      } = await import("../src/metered.ts");
+      const { config } = await import("../src/config.ts");
       setKvForTest(null);
+      setMeteredModelsFetchForTest(null);
+      resetMeteredModelsCacheForTest();
+      if (originalDeployFlag !== null) (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
       console.info = originalInfo;
       console.warn = originalWarn;
       if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
       else Deno.env.set("METERED_API_KEY", originalApiKey);
+      if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+      else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
       if (gatewayServer) await gatewayServer.shutdown();
       if (providerServer) await providerServer.shutdown();
       kv.close();

@@ -16,6 +16,9 @@ const TEST_CODEX_MODELS_KEY = ["ubq_ai", "codex_models"] as const;
 const kvStore = new Map<string, unknown>();
 type OpenAiAtomicOp = { type: "set" | "delete"; key: Deno.KvKey; value?: unknown };
 let atomicCommitFailure: ((ops: readonly OpenAiAtomicOp[]) => Error | null) | null = null;
+const atomicCommitObservation: {
+  observer: ((ops: readonly OpenAiAtomicOp[]) => void) | null;
+} = { observer: null };
 let exposePaidFallbackLedgerEntries = false;
 kvStore.set(keyToString(DEFAULT_REASONING_EFFORT_KEY), "low");
 kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
@@ -89,6 +92,7 @@ const kvStub = {
       commit: () => {
         const failure = atomicCommitFailure?.(ops) ?? null;
         if (failure) return Promise.reject(failure);
+        atomicCommitObservation.observer?.(ops.slice());
         for (const op of ops) {
           if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
           else kvStore.delete(keyToString(op.key));
@@ -121,8 +125,15 @@ const {
   fetchSurplusModels,
   resetSurplusModelsCacheForTest,
 } = await import("../src/surplus.ts");
+const { ApiKeyQuotaDispatchError } = await import("../src/api_key_policy.ts");
 const { withCors } = await import("../src/http.ts");
+const { default: gatewayHandler } = await import("../src/handler.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
+const { DEBUG_ROUTING_KEY, resetDebugRoutingCacheForTest } = await import("../src/debug_routing.ts");
+const {
+  setRemovedProviderApiKeyForTest,
+  setRemovedProviderTestAdapterForTest,
+} = await import("../src/removed_provider.ts");
 const {
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
@@ -135,9 +146,13 @@ const {
   isCodexQuotaBlockFenceCurrent,
   markCodexQuotaBlocked,
   markCodexUpstreamTimeout,
+  resetCodexAccountRoutingForTest,
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
 const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
+const { recordCodexProviderHealth, resetProviderHealthThrottleForTest } = await import(
+  "../src/provider_health.ts"
+);
 
 const TEXT_ENCODER = new TextEncoder();
 const utf8ByteLength = (value: string): number => TEXT_ENCODER.encode(value).byteLength;
@@ -285,7 +300,9 @@ type StoredPaidFallbackRequest = {
   dispatch_state?: string;
   terminal_state?: string;
   billing_state?: string;
+  provider?: string;
   provider_request_id?: string | null;
+  reconciliation_attempts?: number;
 };
 
 const getStoredPaidFallbackRequest = (keyId: string, requestId: string): StoredPaidFallbackRequest | null =>
@@ -2667,6 +2684,310 @@ Deno.test("openai: a failed half-open 2xx stream releases its routing lease", as
   );
 });
 
+Deno.test("openai: request abort after Codex headers releases its half-open probe neutrally", async () => {
+  const accountId = "acct-cancelled-probe-fixture";
+  const authPoolKey = keyToString(["ubq_ai", "codex_auth"]);
+  const routingKey = keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY);
+  const healthKey = keyToString(["uos_ai", "provider_health", "v1", "codex", accountId, "current"]);
+  const upstreamErrorHealthKey = keyToString([
+    "uos_ai",
+    "provider_health",
+    "v1",
+    "codex",
+    accountId,
+    "upstream_error",
+  ]);
+  const isFixtureHealthKey = (encoded: string): boolean => {
+    const key = JSON.parse(encoded) as unknown[];
+    return key[0] === "uos_ai" && key[1] === "provider_health" && key[2] === "v1" && key[3] === "codex" &&
+      key[4] === accountId;
+  };
+  const clearFixtureHealth = (): void => {
+    for (const encoded of [...kvStore.keys()]) {
+      if (isFixtureHealthKey(encoded)) kvStore.delete(encoded);
+    }
+  };
+  const previousAuthPool = kvStore.get(authPoolKey);
+  const previousRouting = kvStore.get(routingKey);
+  const awaitingSemantic = new Deferred<void>();
+  let releaseBlockedPull = (): void => {};
+  let upstreamCancellations = 0;
+  let codexCalls = 0;
+  const waitForLeaseRelease = async (label: string): Promise<void> => {
+    const deadline = performance.now() + 1_000;
+    while (true) {
+      const routing = kvStore.get(routingKey) as { slots?: Array<{ probe_lease?: unknown }> } | undefined;
+      if (routing?.slots?.[0]?.probe_lease === null) return;
+      if (performance.now() >= deadline) assert.fail(`${label} did not release its half-open lease`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  };
+
+  try {
+    await withFetchMock(
+      () => {
+        codexCalls += 1;
+        if (codexCalls !== 1) {
+          return sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.incomplete",
+                response: { id: "resp_cancelled_probe_retry", status: "incomplete", output: [] },
+              })
+            }\n\n`,
+          ]);
+        }
+        let emittedCreated = false;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (!emittedCreated) {
+                emittedCreated = true;
+                controller.enqueue(
+                  TEXT_ENCODER.encode(
+                    `data: ${
+                      JSON.stringify({ type: "response.created", response: { id: "resp_cancelled_probe" } })
+                    }\n\n`,
+                  ),
+                );
+                return;
+              }
+              awaitingSemantic.resolve();
+              return new Promise<void>((resolve) => {
+                releaseBlockedPull = resolve;
+              });
+            },
+            cancel() {
+              upstreamCancellations += 1;
+              releaseBlockedPull();
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "X-Request-Id": "cancelled-probe-request" },
+          },
+        );
+      },
+      async () => {
+        const existingPool = kvStore.get(authPoolKey) as {
+          accounts: Array<{
+            access_token: string;
+            refresh_token: string;
+            account_id: string;
+          }>;
+          updated_at_ms: number;
+        };
+        const pool = {
+          ...existingPool,
+          accounts: existingPool.accounts.map((account, index) =>
+            index === 0 ? { ...account, account_id: accountId } : account
+          ),
+          updated_at_ms: Date.now(),
+        };
+        kvStore.set(authPoolKey, pool);
+        resetCodexAuthCacheForTest();
+        resetProviderHealthThrottleForTest();
+        clearFixtureHealth();
+        const account = pool.accounts[0]!;
+        const credentialVersion = await sha256Hex(
+          `${account.account_id}\u0000${account.access_token}\u0000${account.refresh_token}`,
+        );
+        kvStore.set(routingKey, {
+          v: 2,
+          updated_at_ms: Date.now(),
+          slots: [{
+            credential_version: credentialVersion,
+            quota_blocked_until_ms: Date.now() - 1,
+            quota_block_source: "header_retry_after",
+            invalid_credential_version: null,
+            primary_used_percent: null,
+            secondary_used_percent: null,
+            observed_reset_at_ms: Date.now() - 1,
+            generation: 1,
+            probe_lease: null,
+          }],
+        });
+        resetCodexAccountRoutingForTest();
+
+        const abortController = new AbortController();
+        const cancelledResponse = handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "cancel half-open probe", stream: true }),
+            signal: abortController.signal,
+          }),
+        );
+        await awaitingSemantic.promise;
+        const claimed = kvStore.get(routingKey) as { slots?: Array<{ probe_lease?: unknown }> } | undefined;
+        assert.ok(claimed?.slots?.[0]?.probe_lease, "the in-flight 2xx response must own the half-open lease");
+
+        abortController.abort(new DOMException("client cancelled", "AbortError"));
+        const cancelled = await cancelledResponse;
+        assert.equal(cancelled.status, 499);
+        await cancelled.text();
+        assert.equal(upstreamCancellations, 1);
+
+        await recordCodexProviderHealth(accountId, "reachable", 299, Date.now, "cancel-barrier");
+        await waitForLeaseRelease("the cancelled response");
+        assert.equal(kvStore.get(upstreamErrorHealthKey), undefined);
+        const cancellationHealth = kvStore.get(healthKey) as
+          | { event?: unknown; provider_request_id?: unknown }
+          | undefined;
+        assert.equal(cancellationHealth?.event, "reachable");
+        assert.equal(cancellationHealth?.provider_request_id, "cancel-barrier");
+
+        const retry = await handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "retry after cancellation" }),
+          }),
+        );
+        assert.equal(retry.status, 200);
+        await retry.text();
+        assert.equal(codexCalls, 2);
+        await waitForLeaseRelease("the neutral retry");
+        await recordCodexProviderHealth(accountId, "reachable", 299, Date.now, "retry-barrier");
+        assert.equal(
+          kvStore.get(upstreamErrorHealthKey),
+          undefined,
+          "neutral cancellation and incompletion must not write upstream-error health",
+        );
+      },
+    );
+  } finally {
+    if (previousAuthPool === undefined) kvStore.delete(authPoolKey);
+    else kvStore.set(authPoolKey, previousAuthPool);
+    if (previousRouting === undefined) kvStore.delete(routingKey);
+    else kvStore.set(routingKey, previousRouting);
+    clearFixtureHealth();
+    resetProviderHealthThrottleForTest();
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("openai: buffered inference deadline after Codex headers records an upstream failure", async () => {
+  const accountId = "acct-buffered-deadline-fixture";
+  const authPoolKey = keyToString(["ubq_ai", "codex_auth"]);
+  const routingKey = keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY);
+  const healthKey = keyToString(["uos_ai", "provider_health", "v1", "codex", accountId, "current"]);
+  const previousAuthPool = kvStore.get(authPoolKey);
+  const previousRouting = kvStore.get(routingKey);
+  const originalTimeout = AbortSignal.timeout;
+  const inferenceDeadline = new AbortController();
+  const awaitingSemantic = new Deferred<void>();
+  let releaseBlockedPull = (): void => {};
+  let upstreamCancellations = 0;
+  const isFixtureHealthKey = (encoded: string): boolean => {
+    const key = JSON.parse(encoded) as unknown[];
+    return key[0] === "uos_ai" && key[1] === "provider_health" && key[2] === "v1" && key[3] === "codex" &&
+      key[4] === accountId;
+  };
+  const clearFixtureHealth = (): void => {
+    for (const encoded of [...kvStore.keys()]) {
+      if (isFixtureHealthKey(encoded)) kvStore.delete(encoded);
+    }
+  };
+
+  try {
+    (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = () =>
+      inferenceDeadline.signal;
+    await withFetchMock(
+      () => {
+        let emittedCreated = false;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (!emittedCreated) {
+                emittedCreated = true;
+                controller.enqueue(
+                  TEXT_ENCODER.encode(
+                    `data: ${
+                      JSON.stringify({ type: "response.created", response: { id: "resp_buffered_deadline" } })
+                    }\n\n`,
+                  ),
+                );
+                return;
+              }
+              awaitingSemantic.resolve();
+              return new Promise<void>((resolve) => {
+                releaseBlockedPull = resolve;
+              });
+            },
+            cancel() {
+              upstreamCancellations += 1;
+              releaseBlockedPull();
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "X-Request-Id": "buffered-deadline-request" },
+          },
+        );
+      },
+      async () => {
+        const existingPool = kvStore.get(authPoolKey) as CodexAuthPoolState;
+        kvStore.set(authPoolKey, {
+          ...existingPool,
+          accounts: existingPool.accounts.map((account, index) =>
+            index === 0 ? { ...account, account_id: accountId } : account
+          ),
+          updated_at_ms: Date.now(),
+        });
+        kvStore.delete(routingKey);
+        clearFixtureHealth();
+        resetCodexAuthCacheForTest();
+        resetCodexAccountRoutingForTest();
+        resetProviderHealthThrottleForTest();
+
+        const downstreamRequest = new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "buffered deadline" }),
+        });
+        const pending = handleResponses(downstreamRequest);
+        await awaitingSemantic.promise;
+        assert.equal(downstreamRequest.signal.aborted, false);
+
+        inferenceDeadline.abort(new DOMException("buffered inference timed out", "TimeoutError"));
+        const response = await pending;
+        assert.equal(response.status, 504);
+        assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+        await response.text();
+        assert.equal(upstreamCancellations, 1);
+
+        const healthDeadline = performance.now() + 1_000;
+        while (true) {
+          const health = kvStore.get(healthKey) as
+            | { event?: unknown; status?: unknown; provider_request_id?: unknown }
+            | undefined;
+          if (health?.event === "upstream_error") {
+            assert.equal(health.status, 200);
+            assert.equal(health.provider_request_id, "buffered-deadline-request");
+            break;
+          }
+          if (performance.now() >= healthDeadline) {
+            assert.fail("the buffered deadline was not recorded as an upstream failure");
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      },
+    );
+  } finally {
+    (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = originalTimeout;
+    if (previousAuthPool === undefined) kvStore.delete(authPoolKey);
+    else kvStore.set(authPoolKey, previousAuthPool);
+    if (previousRouting === undefined) kvStore.delete(routingKey);
+    else kvStore.set(routingKey, previousRouting);
+    clearFixtureHealth();
+    resetProviderHealthThrottleForTest();
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("openai: gateway first-event deadlines return 504 on both streaming routes", async () => {
   setStreamFirstEventDeadlineMsForTest(10);
   try {
@@ -2970,6 +3291,241 @@ Deno.test("openai: an all-blocked Codex response continues through paid Metered 
   }
 });
 
+Deno.test("openai: tool-bearing paid fallback skips Surplus without capability evidence", async () => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const keyId = "fallback-tools-skip-unverified-surplus";
+  const requestId = `request-${keyId}`;
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-test-key");
+    Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response"] }],
+        })),
+    });
+    await fetchSurplusModels({
+      apiKey: "surplus-test-key",
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{
+            id: DEFAULT_TEST_MODEL,
+            pricing: { prompt: 0.000001, completion: 0.000003 },
+          }],
+        })),
+    });
+    seedPaidFallbackKey(keyId);
+    let surplusCalls = 0;
+    let meteredCalls = 0;
+
+    const response = await withFetchMock(
+      (url) => {
+        if (url === "https://api.surplusintelligence.ai/v1/responses") {
+          surplusCalls += 1;
+          throw new Error("unverified Surplus tool transport must not start");
+        }
+        if (url === "https://api.openlux.ai/v1/responses") {
+          meteredCalls += 1;
+          return sseResponse(baseSseChunks());
+        }
+        return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              input: "inspect the workspace",
+              tools: [{
+                type: "function",
+                name: "inspect_workspace",
+                description: "Inspect the workspace before continuing.",
+                parameters: { type: "object", properties: {}, additionalProperties: false },
+              }],
+            }),
+          }),
+          { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "metered");
+    assert.equal(surplusCalls, 0);
+    assert.equal(meteredCalls, 1);
+    const stored = await waitForPaidFallbackTerminal(keyId, requestId, "completed");
+    assert.equal(stored.provider, "metered");
+  } finally {
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
+Deno.test("openai: inter-provider abort and quota rejection retain the responding provider request ID", async () => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-test-key");
+    Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response"] }],
+        })),
+    });
+    await fetchSurplusModels({
+      apiKey: "surplus-test-key",
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{
+            id: DEFAULT_TEST_MODEL,
+            pricing: { prompt: 0.000001, completion: 0.000003 },
+          }],
+        })),
+    });
+
+    const abortKeyId = "fallback-inter-provider-abort";
+    const abortRequestId = `request-${abortKeyId}`;
+    seedPaidFallbackKey(abortKeyId);
+    const controller = new AbortController();
+    let abortMeteredCalls = 0;
+    const abortedResponse = await withFetchMock(
+      (url) => {
+        if (url === "https://api.surplusintelligence.ai/v1/responses") {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(streamController) {
+                streamController.enqueue(TEXT_ENCODER.encode("provider one limited"));
+              },
+              cancel() {
+                controller.abort(new DOMException("client disconnected", "AbortError"));
+              },
+            }),
+            {
+              status: 429,
+              headers: { "X-Oneapi-Request-Id": "provider-1-abort-id" },
+            },
+          );
+        }
+        if (url === "https://api.openlux.ai/v1/responses") {
+          abortMeteredCalls += 1;
+          return sseResponse(baseSseChunks());
+        }
+        return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+            signal: controller.signal,
+          }),
+          {
+            keyId: abortKeyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            requestId: abortRequestId,
+            startedAtMs: Date.now(),
+          },
+        ),
+    );
+    assert.equal(abortedResponse.status, 499);
+    assert.equal(abortMeteredCalls, 0);
+    const abortedTelemetry = getResponseTelemetry(abortedResponse);
+    assert.equal(abortedTelemetry?.provider, "surplus");
+    assert.equal(abortedTelemetry?.providerRequestId, "provider-1-abort-id");
+    assert.equal(abortedResponse.headers.get("x-uos-upstream"), "surplus");
+    const aborted = await waitForPaidFallbackTerminal(abortKeyId, abortRequestId, "ambiguous");
+    assert.equal(aborted.dispatch_state, "dispatched");
+    assert.equal(aborted.provider, "surplus");
+    assert.equal(aborted.provider_request_id, "provider-1-abort-id");
+    assert.equal(aborted.billing_state, "pending");
+
+    const quotaKeyId = "fallback-provider-two-quota";
+    const quotaRequestId = `request-${quotaKeyId}`;
+    seedPaidFallbackKey(quotaKeyId);
+    let quotaMeteredCalls = 0;
+    const quotaResponse = await withFetchMock(
+      (url) => {
+        if (url === "https://api.surplusintelligence.ai/v1/responses") {
+          return new Response("provider one limited", {
+            status: 429,
+            headers: { "X-Oneapi-Request-Id": "provider-1-quota-id" },
+          });
+        }
+        if (url === "https://api.openlux.ai/v1/responses") {
+          quotaMeteredCalls += 1;
+          return sseResponse(baseSseChunks());
+        }
+        return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+          }),
+          {
+            keyId: quotaKeyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            requestId: quotaRequestId,
+            startedAtMs: Date.now(),
+            beforeProviderDispatch: (provider) =>
+              provider === "metered"
+                ? Promise.reject(new ApiKeyQuotaDispatchError("API key quota reservation is unavailable"))
+                : Promise.resolve(),
+          },
+        ),
+    );
+    assert.equal(quotaResponse.status, 503);
+    assert.equal(quotaMeteredCalls, 0);
+    const quotaTelemetry = getResponseTelemetry(quotaResponse);
+    assert.equal(quotaTelemetry?.provider, "surplus");
+    assert.equal(quotaTelemetry?.providerRequestId, "provider-1-quota-id");
+    assert.equal(quotaResponse.headers.get("x-uos-upstream"), "surplus");
+    const quotaRejected = await waitForPaidFallbackTerminal(quotaKeyId, quotaRequestId, "ambiguous");
+    assert.equal(quotaRejected.dispatch_state, "dispatched");
+    assert.equal(quotaRejected.provider, "surplus");
+    assert.equal(quotaRejected.provider_request_id, "provider-1-quota-id");
+    assert.equal(quotaRejected.billing_state, "pending");
+  } finally {
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
 Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
   const originalApiKey = Deno.env.get("METERED_API_KEY");
   Deno.env.set("METERED_API_KEY", "metered-test-key");
@@ -3116,8 +3672,8 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("primary errors and network failures other than 429 never dispatch Metered", async () => {
-      for (const scenario of ["http_500", "network"] as const) {
+    await t.step("primary 402, errors, and network failures other than 429 never dispatch Metered", async () => {
+      for (const scenario of ["http_402", "http_500", "network"] as const) {
         const keyId = `fallback-${scenario}`;
         seedPaidFallbackKey(keyId);
         let calls = 0;
@@ -3126,7 +3682,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
             calls += 1;
             if (scenario === "network") throw new TypeError("primary network unavailable");
             return new Response(JSON.stringify({ error: { message: "Primary failed" } }), {
-              status: 500,
+              status: scenario === "http_402" ? 402 : 500,
               headers: { "Content-Type": "application/json" },
             });
           },
@@ -3146,82 +3702,59 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               },
             ),
         );
-        assert.equal(response.status, scenario === "http_500" ? 500 : 502);
+        assert.equal(response.status, scenario === "http_402" ? 402 : scenario === "http_500" ? 500 : 502);
         assert.equal(calls, 1);
       }
     });
 
-    await t.step("primary 403 selects Metered once and emits only safe selection fields", async () => {
-      const keyId = "fallback-primary-403";
-      const requestId = "request-fallback-primary-403";
-      seedPaidFallbackKey(keyId);
-      const infoLogs: unknown[][] = [];
-      const originalInfo = console.info;
-      let codexCalls = 0;
-      let meteredCalls = 0;
-      let selectionObservedBeforeMetered = false;
-      let primaryCancellationStarted = false;
-      console.info = (...args: unknown[]) => infoLogs.push(args);
-      const response = await (async () => {
-        try {
-          return await withFetchMock(
-            (url) => {
-              if (url === "https://api.openlux.ai/v1/responses") {
-                meteredCalls += 1;
-                selectionObservedBeforeMetered = infoLogs.some((entry) => entry[0] === "[ai.ubq.fi] metered_selected");
-                return sseResponse(baseSseChunks());
-              }
-              codexCalls += 1;
-              return new Response(
-                new ReadableStream<Uint8Array>({
-                  start(controller) {
-                    controller.enqueue(TEXT_ENCODER.encode('{"error":{"message":"do-not-log-primary-body"}}'));
-                  },
-                  cancel() {
-                    primaryCancellationStarted = true;
-                    return new Promise<void>(() => {});
-                  },
-                }),
-                {
-                  status: 403,
-                  headers: { "Content-Type": "application/json" },
-                },
-              );
+    await t.step("primary 401 and 403 fail closed without paid dispatch", async () => {
+      const debugKey = keyToString(DEBUG_ROUTING_KEY);
+      const previousDebugRouting = kvStore.get(debugKey);
+      try {
+        for (const status of [401, 403] as const) {
+          const keyId = `fallback-primary-${status}`;
+          const requestId = `request-${keyId}`;
+          seedPaidFallbackKey(keyId);
+          kvStore.set(debugKey, {
+            scenario: `codex_${status}`,
+            expires_at_ms: Date.now() + 60_000,
+            updated_at_ms: Date.now(),
+          });
+          resetDebugRoutingCacheForTest();
+          let paidCalls = 0;
+          const response = await withFetchMock(
+            () => {
+              paidCalls += 1;
+              throw new Error(`primary ${status} must not dispatch paid inference`);
             },
             () =>
               handleResponses(
                 new Request("https://ai.ubq.fi/v1/responses", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "do-not-log-request-body" }),
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "fail closed" }),
                 }),
-                {
-                  keyId,
-                  kernelRepo: null,
-                  kernelOrg: null,
-                  requestId,
-                  startedAtMs: Date.now(),
-                },
+                { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
               ),
           );
-        } finally {
-          console.info = originalInfo;
-        }
-      })();
 
-      assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-uos-upstream"), "metered");
-      assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_403");
-      assert.equal(codexCalls, 1);
-      assert.equal(meteredCalls, 1);
-      assert.equal(primaryCancellationStarted, true);
-      assert.equal(selectionObservedBeforeMetered, true);
-      const selectionLogs = infoLogs.filter((entry) => entry[0] === "[ai.ubq.fi] metered_selected");
-      assert.equal(selectionLogs.length, 1);
-      assert.equal(typeof selectionLogs[0]?.[1], "string");
-      const selectionPayload = JSON.parse(selectionLogs[0]?.[1] as string) as Record<string, unknown>;
-      assert.deepEqual(selectionPayload, { request_id: requestId, reason: "primary_403" });
-      assert.deepEqual(Object.keys(selectionPayload).sort(), ["reason", "request_id"]);
+          assert.equal(response.status, status);
+          assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+          assert.equal(getResponseTelemetry(response)?.fallbackReason, null);
+          assert.equal(paidCalls, 0);
+          assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+        }
+        kvStore.set(debugKey, {
+          scenario: "normal",
+          expires_at_ms: null,
+          updated_at_ms: Date.now(),
+        });
+        resetDebugRoutingCacheForTest();
+      } finally {
+        if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+        else kvStore.set(debugKey, previousDebugRouting);
+        resetDebugRoutingCacheForTest();
+      }
     });
 
     await t.step("Codex timeout circuit returns 503 without spending paid quota", async () => {
@@ -3309,10 +3842,15 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
             },
           ),
       );
-      assert.equal(response.status, 502);
+      assert.equal(response.status, 499);
+      const cancellation = await response.json() as { error?: { type?: unknown; code?: unknown; param?: unknown } };
+      assert.equal(cancellation.error?.type, "server_error");
+      assert.equal(cancellation.error?.code, "request_cancelled");
+      assert.equal(cancellation.error?.param, null);
       assert.equal(codexCalls, 1);
       assert.equal(meteredCalls, 0);
       assert.equal(getResponseTelemetry(response)?.provider, "chatgpt_codex");
+      assert.equal(getResponseTelemetry(response)?.streamTerminalType, "cancelled");
       const stored = getStoredPaidFallbackRequest(keyId, requestId);
       assert.equal(stored, null);
       const keyRecord = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
@@ -3350,7 +3888,10 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
           }
           return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
             status: 429,
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "x-uos-warning": "codex_quota_temporarily_exceeded",
+            },
           });
         },
         () =>
@@ -3375,6 +3916,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       );
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("x-uos-upstream"), "metered");
+      assert.equal(response.headers.get("x-uos-warning"), null);
       assert.equal(getResponseTelemetry(response)?.quotaUsedPercent, 0);
       assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_429");
       assert.deepEqual(urls, [
@@ -3692,6 +4234,263 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
             assert.equal(stored.billing_state, "pending", suffix);
           },
         );
+      }
+    });
+
+    await t.step("Surplus network ambiguity retains its provider-specific 502 contract", async () => {
+      const previousMeteredApiKey = Deno.env.get("METERED_API_KEY");
+      const previousSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+      try {
+        Deno.env.set("METERED_API_KEY", "metered-test-key");
+        Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+        resetMeteredModelsCacheForTest();
+        resetSurplusModelsCacheForTest();
+        await fetchMeteredModels({
+          force: true,
+          fetcher: () =>
+            Promise.resolve(Response.json({
+              data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response", "openai"] }],
+            })),
+        });
+        await fetchSurplusModels({
+          apiKey: "surplus-test-key",
+          force: true,
+          fetcher: () =>
+            Promise.resolve(Response.json({
+              data: [{
+                id: DEFAULT_TEST_MODEL,
+                pricing: { prompt: 0.000001, completion: 0.000003 },
+              }],
+            })),
+        });
+        for (
+          const routeCase of [
+            { route: "responses", stream: false },
+            { route: "responses", stream: true },
+            { route: "chat", stream: false },
+            { route: "chat", stream: true },
+          ] as const
+        ) {
+          const suffix = `${routeCase.route}-${routeCase.stream ? "stream" : "buffered"}`;
+          const keyId = `fallback-surplus-network-${suffix}`;
+          const requestId = `request-${keyId}`;
+          seedPaidFallbackKey(keyId);
+          let surplusAttempts = 0;
+          let meteredAttempts = 0;
+          await withFetchMock(
+            (url) => {
+              if (url === "https://api.surplusintelligence.ai/v1/responses") {
+                surplusAttempts += 1;
+                throw new TypeError("network connection reset before response headers");
+              }
+              if (url === "https://api.openlux.ai/v1/responses") {
+                meteredAttempts += 1;
+                return sseResponse(baseSseChunks());
+              }
+              return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+                status: 429,
+                headers: { "Content-Type": "application/json" },
+              });
+            },
+            async () => {
+              const response = routeCase.route === "responses"
+                ? await handleResponses(
+                  new Request("https://ai.ubq.fi/v1/responses", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: DEFAULT_TEST_MODEL,
+                      input: "ping",
+                      stream: routeCase.stream,
+                    }),
+                  }),
+                  { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
+                )
+                : await handleChatCompletions(
+                  new Request("https://ai.ubq.fi/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: DEFAULT_TEST_MODEL,
+                      messages: [{ role: "user", content: "ping" }],
+                      stream: routeCase.stream,
+                    }),
+                  }),
+                  { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
+                );
+              assert.equal(response.status, 502, suffix);
+              assert.equal(response.headers.get("x-uos-upstream"), "surplus", suffix);
+              assert.equal(surplusAttempts, 1, suffix);
+              assert.equal(meteredAttempts, 0, suffix);
+              assert.deepEqual(await response.json(), {
+                error: {
+                  message:
+                    "Surplus upstream request failed: Surplus Responses request could not reach the upstream service.",
+                  type: "server_error",
+                  code: "surplus_upstream_unreachable",
+                  param: null,
+                },
+              }, suffix);
+              const stored = await waitForPaidFallbackTerminal(keyId, requestId, "ambiguous");
+              assert.equal(stored.provider, "surplus", suffix);
+              assert.equal(stored.billing_state, "pending", suffix);
+            },
+          );
+        }
+      } finally {
+        resetMeteredModelsCacheForTest();
+        resetSurplusModelsCacheForTest();
+        if (previousMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+        else Deno.env.set("METERED_API_KEY", previousMeteredApiKey);
+        if (previousSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+        else Deno.env.set("SURPLUS_API_KEY", previousSurplusApiKey);
+      }
+    });
+
+    await t.step("RemovedProvider recovery clears failed Codex request metadata", async () => {
+      const debugKey = keyToString(DEBUG_ROUTING_KEY);
+      const previousDebugRouting = kvStore.get(debugKey);
+      const originalInfo = console.info;
+      const logs: unknown[][] = [];
+      setRemovedProviderApiKeyForTest("removed-provider-test-key");
+      kvStore.set(debugKey, {
+        scenario: "removed_provider_first",
+        expires_at_ms: Date.now() + 60_000,
+        updated_at_ms: Date.now(),
+      });
+      resetDebugRoutingCacheForTest();
+      console.info = (...args: unknown[]) => logs.push(args);
+      try {
+        const response = await withFetchMock(
+          () =>
+            new Response(JSON.stringify({ error: { message: "Codex recovery failed" } }), {
+              status: 500,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Request-Id": "failed-codex-request-id",
+              },
+            }),
+          () =>
+            gatewayHandler(
+              new Request("http://localhost/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "recover through RemovedProvider" }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 502);
+        assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
+        assert.equal(response.headers.get("x-uos-provider-request-id"), null);
+        const terminal = logs
+          .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+          .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>)[0];
+        assert.ok(terminal);
+        assert.equal(terminal.provider, "removed_provider");
+        assert.equal(terminal.provider_request_id, null);
+        assert.equal(terminal.account_slot, null);
+        assert.equal(terminal.account_cohort_id, null);
+      } finally {
+        console.info = originalInfo;
+        setRemovedProviderApiKeyForTest(undefined);
+        if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+        else kvStore.set(debugKey, previousDebugRouting);
+        resetDebugRoutingCacheForTest();
+      }
+    });
+
+    await t.step("direct Codex failure selects RemovedProvider without failed metadata", async () => {
+      const debugKey = keyToString(DEBUG_ROUTING_KEY);
+      const previousDebugRouting = kvStore.get(debugKey);
+      const originalInfo = console.info;
+      const logs: unknown[][] = [];
+      setRemovedProviderApiKeyForTest("removed-provider-test-key");
+      setRemovedProviderTestAdapterForTest({
+        fetchResponses: async (_body, options) => {
+          await options.beforeDispatch?.();
+          options.timing?.onDispatch?.();
+          options.timing?.onHeaders?.();
+          return {
+            response: sseResponse([
+              `data: ${
+                JSON.stringify({
+                  type: "response.created",
+                  response: { id: "resp_removed_provider_direct", model: DEFAULT_TEST_MODEL },
+                })
+              }\n\n`,
+              `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Recovered" })}\n\n`,
+              `data: ${
+                JSON.stringify({
+                  type: "response.completed",
+                  response: {
+                    id: "resp_removed_provider_direct",
+                    model: DEFAULT_TEST_MODEL,
+                    status: "completed",
+                    output: [],
+                    usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                  },
+                })
+              }\n\n`,
+            ]),
+          };
+        },
+        modelFromEvent: (value) => {
+          const response = value.response;
+          if (!response || typeof response !== "object" || Array.isArray(response)) return null;
+          const model = (response as Record<string, unknown>).model;
+          return typeof model === "string" ? model : null;
+        },
+        isEligibleModel: (model) => model === DEFAULT_TEST_MODEL,
+      });
+      kvStore.set(debugKey, {
+        scenario: "normal",
+        expires_at_ms: Date.now() + 60_000,
+        updated_at_ms: Date.now(),
+      });
+      resetDebugRoutingCacheForTest();
+      console.info = (...args: unknown[]) => logs.push(args);
+      try {
+        const response = await withFetchMock(
+          () =>
+            new Response(JSON.stringify({ error: { message: "Codex direct failure" } }), {
+              status: 500,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Request-Id": "failed-codex-request-id",
+              },
+            }),
+          () =>
+            gatewayHandler(
+              new Request("http://localhost/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "recover through RemovedProvider" }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
+        assert.equal(response.headers.get("x-uos-provider-request-id"), null);
+        await response.text();
+        for (let attempt = 0; attempt < 100 && logs.length === 0; attempt += 1) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 1));
+        }
+        const terminals = logs
+          .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+          .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>);
+        assert.equal(terminals.length, 1);
+        const terminal = terminals[0]!;
+        assert.equal(terminal.provider, "removed_provider");
+        assert.equal(terminal.provider_request_id, null);
+        assert.equal(terminal.account_slot, null);
+        assert.equal(terminal.account_cohort_id, null);
+      } finally {
+        console.info = originalInfo;
+        setRemovedProviderTestAdapterForTest(null);
+        setRemovedProviderApiKeyForTest(undefined);
+        if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+        else kvStore.set(debugKey, previousDebugRouting);
+        resetDebugRoutingCacheForTest();
       }
     });
 
@@ -4036,6 +4835,558 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       }
     });
 
+    await t.step("buffered post-header cancellation returns the OpenAI-shaped 499 contract", async () => {
+      for (const route of ["responses", "chat"] as const) {
+        const keyId = `fallback-buffered-cancel-${route}`;
+        const requestId = `request-${keyId}`;
+        seedPaidFallbackKey(keyId);
+        const controller = new AbortController();
+        const secondPull = new Deferred<void>();
+        let emittedSemantic = false;
+        let releaseBlockedPull = (): void => {};
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://api.openlux.ai/v1/responses") {
+              return new Response(
+                new ReadableStream<Uint8Array>({
+                  pull(streamController) {
+                    if (!emittedSemantic) {
+                      emittedSemantic = true;
+                      streamController.enqueue(
+                        TEXT_ENCODER.encode(
+                          'data: {"type":"response.output_text.delta","delta":"partial"}\n\n',
+                        ),
+                      );
+                      return;
+                    }
+                    secondPull.resolve();
+                    return new Promise<void>((resolve) => {
+                      releaseBlockedPull = resolve;
+                    });
+                  },
+                  cancel() {
+                    releaseBlockedPull();
+                  },
+                }),
+                {
+                  status: 200,
+                  headers: {
+                    "Content-Type": "text/event-stream",
+                    "X-Request-Id": `provider-buffered-cancel-${route}`,
+                  },
+                },
+              );
+            }
+            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+              status: 429,
+              headers: { "Content-Type": "application/json" },
+            });
+          },
+          async () => {
+            const pending = route === "responses"
+              ? handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+                  signal: controller.signal,
+                }),
+                { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
+              )
+              : handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    messages: [{ role: "user", content: "ping" }],
+                  }),
+                  signal: controller.signal,
+                }),
+                { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
+              );
+            await secondPull.promise;
+            controller.abort(new DOMException("client disconnected", "AbortError"));
+            return await pending;
+          },
+        );
+        assert.equal(response.status, 499, route);
+        assert.deepEqual(await response.json(), {
+          error: {
+            message: "Request was cancelled.",
+            type: "server_error",
+            code: "request_cancelled",
+            param: null,
+          },
+        }, route);
+        assert.equal(getResponseTelemetry(response)?.streamTerminalType, "cancelled", route);
+        const stored = await waitForPaidFallbackTerminal(keyId, requestId, "cancelled");
+        assert.equal(stored.dispatch_state, "dispatched", route);
+      }
+    });
+
+    await t.step("validated terminals survive later client-body cancellation", async () => {
+      for (const provider of ["chatgpt_codex", "metered"] as const) {
+        for (const route of ["responses", "chat"] as const) {
+          for (const terminalType of ["response.completed", "response.incomplete"] as const) {
+            const suffix = `${provider}-${route}-${terminalType.replace(".", "-")}`;
+            const keyId = `fallback-terminal-cancel-${suffix}`;
+            const requestId = `request-${keyId}`;
+            if (provider === "metered") seedPaidFallbackKey(keyId);
+            const terminalState = terminalType === "response.completed" ? "completed" : "incomplete";
+            const observedTerminalUsages: Array<{ completed: boolean; inputTokens: number | null }> = [];
+            const context = {
+              keyId: provider === "metered" ? keyId : null,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId,
+              startedAtMs: Date.now(),
+              onTerminalUsage: (usage: { inputTokens: number | null } | null, completed: boolean) => {
+                observedTerminalUsages.push({ completed, inputTokens: usage?.inputTokens ?? null });
+              },
+            };
+            const atomicCommits: OpenAiAtomicOp[][] = [];
+            const previousAtomicObserver = atomicCommitObservation.observer;
+            if (provider === "metered") {
+              resetProviderHealthThrottleForTest();
+              atomicCommitObservation.observer = (operations) => atomicCommits.push([...operations]);
+            }
+            try {
+              const response = await withFetchMock(
+                (url) => {
+                  if (provider === "metered" && url !== "https://api.openlux.ai/v1/responses") {
+                    return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+                      status: 429,
+                      headers: { "Content-Type": "application/json" },
+                    });
+                  }
+                  return new Response(
+                    sseResponse([
+                      `data: ${
+                        JSON.stringify({
+                          type: terminalType,
+                          response: {
+                            id: `resp_${suffix}`,
+                            status: terminalState,
+                            model: DEFAULT_TEST_MODEL,
+                            output: [],
+                            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                          },
+                        })
+                      }\n\n`,
+                    ]).body,
+                    {
+                      status: 200,
+                      headers: {
+                        "Content-Type": "text/event-stream",
+                        "X-Request-Id": `provider-${suffix}`,
+                      },
+                    },
+                  );
+                },
+                async () => {
+                  const response = route === "responses"
+                    ? await handleResponses(
+                      new Request("https://ai.ubq.fi/v1/responses", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+                      }),
+                      context,
+                    )
+                    : await handleChatCompletions(
+                      new Request("https://ai.ubq.fi/v1/chat/completions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          model: DEFAULT_TEST_MODEL,
+                          messages: [{ role: "user", content: "ping" }],
+                          stream: true,
+                        }),
+                      }),
+                      context,
+                    );
+                  assert.equal(response.status, 200, suffix);
+                  assert.ok(response.body, suffix);
+                  await response.body.cancel("client cancelled after upstream terminal");
+                  return response;
+                },
+              );
+              const telemetry = getResponseTelemetry(response);
+              assert.equal(telemetry?.streamTerminalType, terminalType, suffix);
+              assert.equal(telemetry?.completed, terminalType === "response.completed", suffix);
+              assert.deepEqual(observedTerminalUsages, [{
+                completed: terminalType === "response.completed",
+                inputTokens: 1,
+              }], suffix);
+              if (provider === "metered") {
+                const stored = await waitForPaidFallbackTerminal(keyId, requestId, terminalState);
+                assert.equal(stored.dispatch_state, "dispatched", suffix);
+                assert.notEqual(stored.terminal_state, "cancelled", suffix);
+                assert.equal(stored.reconciliation_attempts, 1, suffix);
+
+                const writesForKey = (key: Deno.KvKey): OpenAiAtomicOp[] =>
+                  atomicCommits.flatMap((operations) =>
+                    operations.filter((operation) =>
+                      operation.type === "set" && keyToString(operation.key) === keyToString(key)
+                    )
+                  );
+                const paidRequestKey = ["uos_ai", "paid_fallback", "v3", "request", keyId, requestId] as const;
+                const terminalWrites = writesForKey(paidRequestKey).filter((operation) =>
+                  typeof operation.value === "object" && operation.value !== null &&
+                  (operation.value as { terminal_state?: unknown }).terminal_state === terminalState
+                );
+                assert.equal(terminalWrites.length, 1, `${suffix} terminal ledger transition`);
+                assert.equal(
+                  writesForKey(paidRequestKey).filter((operation) =>
+                    typeof operation.value === "object" && operation.value !== null &&
+                    (operation.value as { billing_state?: unknown }).billing_state === "settled"
+                  ).length,
+                  0,
+                  `${suffix} has no unexpected settlement`,
+                );
+
+                const expectedHealthEvent = terminalType === "response.completed" ? "success" : "upstream_error";
+                const expectedHealthStatus = terminalType === "response.completed" ? 200 : null;
+                const healthKey = ["uos_ai", "provider_health", "v1", "metered", "default", "current"] as const;
+                for (let attempt = 0; attempt < 100; attempt += 1) {
+                  const healthWrites = writesForKey(healthKey).filter((operation) =>
+                    typeof operation.value === "object" && operation.value !== null &&
+                    (operation.value as { event?: unknown }).event === expectedHealthEvent
+                  );
+                  if (healthWrites.length === 1) break;
+                  await new Promise<void>((resolve) => setTimeout(resolve, 1));
+                }
+                const terminalHealthWrites = writesForKey(healthKey).filter((operation) =>
+                  typeof operation.value === "object" && operation.value !== null &&
+                  (operation.value as { event?: unknown }).event === expectedHealthEvent
+                );
+                assert.equal(terminalHealthWrites.length, 1, `${suffix} terminal health transition`);
+                const health = terminalHealthWrites[0]?.value as
+                  | { status?: unknown; provider_request_id?: unknown }
+                  | undefined;
+                assert.equal(health?.status, expectedHealthStatus, suffix);
+                assert.equal(health?.provider_request_id, `provider-${suffix}`, suffix);
+              }
+            } finally {
+              atomicCommitObservation.observer = previousAtomicObserver;
+              if (provider === "metered") resetProviderHealthThrottleForTest();
+            }
+          }
+        }
+      }
+    });
+
+    await t.step("validated Codex terminals resolve each half-open probe once", async () => {
+      const authPoolKey = keyToString(["ubq_ai", "codex_auth"]);
+      const routingKey = keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY);
+      const previousAuthPool = kvStore.get(authPoolKey);
+      const previousRouting = kvStore.get(routingKey);
+      try {
+        for (const route of ["responses", "chat"] as const) {
+          for (const terminalType of ["response.completed", "response.incomplete"] as const) {
+            const suffix = `${route}-${terminalType.replace(".", "-")}`;
+            const accountId = `acct-terminal-probe-${suffix}`;
+            const providerRequestId = `provider-terminal-probe-${suffix}`;
+            const healthKey = ["uos_ai", "provider_health", "v1", "codex", accountId, "current"] as const;
+            const terminalState = terminalType === "response.completed" ? "completed" : "incomplete";
+            const observedTerminalUsages: Array<{ completed: boolean; inputTokens: number | null }> = [];
+            const atomicCommits: OpenAiAtomicOp[][] = [];
+            await withFetchMock(
+              () =>
+                new Response(
+                  sseResponse([
+                    `data: ${
+                      JSON.stringify({
+                        type: terminalType,
+                        response: {
+                          id: `resp_terminal_probe_${suffix}`,
+                          status: terminalState,
+                          model: DEFAULT_TEST_MODEL,
+                          output: [],
+                          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                        },
+                      })
+                    }\n\n`,
+                  ]).body,
+                  {
+                    status: 200,
+                    headers: {
+                      "Content-Type": "text/event-stream",
+                      "X-Request-Id": providerRequestId,
+                    },
+                  },
+                ),
+              async () => {
+                const existingPool = kvStore.get(authPoolKey) as CodexAuthPoolState;
+                const account = existingPool.accounts[0]!;
+                const pool = {
+                  ...existingPool,
+                  accounts: existingPool.accounts.map((entry, index) =>
+                    index === 0 ? { ...entry, account_id: accountId } : entry
+                  ),
+                  updated_at_ms: Date.now(),
+                };
+                kvStore.set(authPoolKey, pool);
+                resetCodexAuthCacheForTest();
+                const credentialVersion = await sha256Hex(
+                  `${accountId}\u0000${account.access_token}\u0000${account.refresh_token}`,
+                );
+                kvStore.set(routingKey, {
+                  v: 2,
+                  updated_at_ms: Date.now(),
+                  slots: [{
+                    credential_version: credentialVersion,
+                    quota_blocked_until_ms: Date.now() - 1,
+                    quota_block_source: "header_retry_after",
+                    invalid_credential_version: null,
+                    primary_used_percent: null,
+                    secondary_used_percent: null,
+                    observed_reset_at_ms: Date.now() - 1,
+                    generation: 1,
+                    probe_lease: null,
+                  }],
+                });
+                resetCodexAccountRoutingForTest();
+                resetProviderHealthThrottleForTest();
+                const previousAtomicObserver = atomicCommitObservation.observer;
+                atomicCommitObservation.observer = (operations) => atomicCommits.push([...operations]);
+                try {
+                  const context = {
+                    keyId: null,
+                    kernelRepo: null,
+                    kernelOrg: null,
+                    requestId: `request-terminal-probe-${suffix}`,
+                    startedAtMs: Date.now(),
+                    onTerminalUsage: (usage: { inputTokens: number | null } | null, completed: boolean) => {
+                      observedTerminalUsages.push({ completed, inputTokens: usage?.inputTokens ?? null });
+                    },
+                  };
+                  const response = route === "responses"
+                    ? await handleResponses(
+                      new Request("https://ai.ubq.fi/v1/responses", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+                      }),
+                      context,
+                    )
+                    : await handleChatCompletions(
+                      new Request("https://ai.ubq.fi/v1/chat/completions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          model: DEFAULT_TEST_MODEL,
+                          messages: [{ role: "user", content: "ping" }],
+                          stream: true,
+                        }),
+                      }),
+                      context,
+                    );
+                  assert.equal(response.status, 200, suffix);
+                  assert.ok(response.body, suffix);
+                  await response.body.cancel("client cancelled after upstream terminal");
+
+                  const writesForKey = (key: Deno.KvKey): OpenAiAtomicOp[] =>
+                    atomicCommits.flatMap((operations) =>
+                      operations.filter((operation) =>
+                        operation.type === "set" && keyToString(operation.key) === keyToString(key)
+                      )
+                    );
+                  const routingWrites = (): OpenAiAtomicOp[] => writesForKey(CODEX_ACCOUNT_ROUTING_KV_KEY);
+                  const isProbeClaim = (operation: OpenAiAtomicOp): boolean => {
+                    const slot = (operation.value as { slots?: Array<{ probe_lease?: unknown }> } | undefined)
+                      ?.slots?.[0];
+                    return slot?.probe_lease !== null && slot?.probe_lease !== undefined;
+                  };
+                  const isProbeClear = (operation: OpenAiAtomicOp): boolean => {
+                    const slot = (operation.value as { slots?: Array<{ probe_lease?: unknown }> } | undefined)
+                      ?.slots?.[0];
+                    return slot?.probe_lease === null;
+                  };
+                  const expectedHealthEvent = terminalType === "response.completed" ? "success" : null;
+                  for (let attempt = 0; attempt < 100; attempt += 1) {
+                    const claims = routingWrites().filter(isProbeClaim);
+                    const clears = routingWrites().filter(isProbeClear);
+                    const healthWrites = writesForKey(healthKey).filter((operation) =>
+                      typeof operation.value === "object" && operation.value !== null &&
+                      (operation.value as { event?: unknown }).event === expectedHealthEvent
+                    );
+                    if (
+                      claims.length === 1 && clears.length === 1 &&
+                      (expectedHealthEvent === null || healthWrites.length === 1)
+                    ) break;
+                    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+                  }
+
+                  const telemetry = getResponseTelemetry(response);
+                  assert.equal(telemetry?.streamTerminalType, terminalType, suffix);
+                  assert.equal(telemetry?.completed, terminalType === "response.completed", suffix);
+                  assert.deepEqual(observedTerminalUsages, [{
+                    completed: terminalType === "response.completed",
+                    inputTokens: 1,
+                  }], suffix);
+                  assert.equal(routingWrites().filter(isProbeClaim).length, 1, `${suffix} probe claim`);
+                  assert.equal(routingWrites().filter(isProbeClear).length, 1, `${suffix} probe clear`);
+
+                  const terminalHealthWrites = writesForKey(healthKey).filter((operation) =>
+                    typeof operation.value === "object" && operation.value !== null &&
+                    ((operation.value as { event?: unknown }).event === "success" ||
+                      (operation.value as { event?: unknown }).event === "upstream_error")
+                  );
+                  if (terminalType === "response.completed") {
+                    assert.equal(terminalHealthWrites.length, 1, `${suffix} health transition`);
+                    const health = terminalHealthWrites[0]?.value as
+                      | { event?: unknown; status?: unknown; provider_request_id?: unknown }
+                      | undefined;
+                    assert.equal(health?.event, "success", suffix);
+                    assert.equal(health?.status, 200, suffix);
+                    assert.equal(health?.provider_request_id, providerRequestId, suffix);
+                  } else {
+                    assert.equal(terminalHealthWrites.length, 0, `${suffix} has no false health failure`);
+                  }
+                } finally {
+                  atomicCommitObservation.observer = previousAtomicObserver;
+                  resetProviderHealthThrottleForTest();
+                }
+              },
+            );
+          }
+        }
+      } finally {
+        if (previousAuthPool === undefined) kvStore.delete(authPoolKey);
+        else kvStore.set(authPoolKey, previousAuthPool);
+        if (previousRouting === undefined) kvStore.delete(routingKey);
+        else kvStore.set(routingKey, previousRouting);
+        resetCodexAuthCacheForTest();
+        resetCodexAccountRoutingForTest();
+        resetProviderHealthThrottleForTest();
+      }
+    });
+
+    await t.step("gateway logs a preflight terminal once after body cancellation", async () => {
+      const originalInfo = console.info;
+      const logs: unknown[][] = [];
+      const providerRequestId = "provider-terminal-log-once";
+      console.info = (...args: unknown[]) => logs.push(args);
+      try {
+        const response = await withFetchMock(
+          () =>
+            new Response(
+              sseResponse([
+                `data: ${
+                  JSON.stringify({
+                    type: "response.completed",
+                    response: {
+                      id: "resp_terminal_log_once",
+                      status: "completed",
+                      model: DEFAULT_TEST_MODEL,
+                      output: [],
+                      usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+                    },
+                  })
+                }\n\n`,
+              ]).body,
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/event-stream",
+                  "X-Request-Id": providerRequestId,
+                },
+              },
+            ),
+          () =>
+            gatewayHandler(
+              new Request("http://localhost/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 200);
+        assert.ok(response.body);
+        await response.body.cancel("client cancelled after upstream terminal");
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          const terminals = logs
+            .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+            .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>)
+            .filter((terminal) => terminal.provider_request_id === providerRequestId);
+          if (terminals.length === 1) break;
+          await new Promise<void>((resolve) => setTimeout(resolve, 1));
+        }
+        const terminals = logs
+          .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+          .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>)
+          .filter((terminal) => terminal.provider_request_id === providerRequestId);
+        const cancelledTerminals = terminals.filter((terminal) => terminal.stream_terminal_type === "cancelled");
+        assert.equal(terminals.length, 1);
+        assert.equal(cancelledTerminals.length, 0);
+        const terminal = terminals[0]!;
+        assert.equal(terminal.status, 200);
+        assert.equal(terminal.stream_terminal_type, "response.completed");
+        assert.equal(terminal.input_tokens, 3);
+        assert.equal(terminal.output_tokens, 2);
+        assert.equal(terminal.total_tokens, 5);
+      } finally {
+        console.info = originalInfo;
+      }
+    });
+
+    await t.step("buffered Chat preflight terminals record usage exactly once", async () => {
+      for (const terminalType of ["response.completed", "response.incomplete"] as const) {
+        const observedTerminalUsages: Array<{ completed: boolean; inputTokens: number | null }> = [];
+        const response = await withFetchMock(
+          () =>
+            new Response(
+              sseResponse([
+                `data: ${
+                  JSON.stringify({
+                    type: terminalType,
+                    response: {
+                      id: `resp-buffered-chat-${terminalType}`,
+                      status: terminalType === "response.completed" ? "completed" : "incomplete",
+                      model: DEFAULT_TEST_MODEL,
+                      output: [],
+                      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                    },
+                  })
+                }\n\n`,
+              ]).body,
+              {
+                status: 200,
+                headers: { "Content-Type": "text/event-stream" },
+              },
+            ),
+          () =>
+            handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  messages: [{ role: "user", content: "ping" }],
+                }),
+              }),
+              {
+                keyId: null,
+                kernelRepo: null,
+                kernelOrg: null,
+                onTerminalUsage: (usage, completed) => {
+                  observedTerminalUsages.push({ completed, inputTokens: usage?.inputTokens ?? null });
+                },
+              },
+            ),
+        );
+        assert.equal(response.status, terminalType === "response.completed" ? 200 : 502, terminalType);
+        if (response.body) await response.body.cancel("client cancelled after buffered upstream terminal");
+        assert.deepEqual(observedTerminalUsages, [{
+          completed: terminalType === "response.completed",
+          inputTokens: 1,
+        }], terminalType);
+      }
+    });
+
     await t.step("Chat streaming remains bounded until the downstream client pulls", async () => {
       const keyId = "fallback-chat-backpressure";
       const requestId = `request-${keyId}`;
@@ -4221,8 +5572,8 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 });
               }
               codexCalls += 1;
-              return new Response(JSON.stringify({ error: { message: "Primary forbidden" } }), {
-                status: 403,
+              return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+                status: 429,
                 headers: { "Content-Type": "application/json" },
               });
             },
@@ -4268,7 +5619,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
           assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
           assert.equal(response.headers.get("X-Metered-Diagnostic"), null);
           assert.deepEqual(await response.json(), { error: testCase.expectedError });
-          assert.equal(codexCalls, 1);
+          assert.equal(codexCalls, 2);
           assert.equal(meteredCalls, 1);
           const failed = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
           assert.equal(failed.terminal_state, "failed");

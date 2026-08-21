@@ -7,6 +7,8 @@
  * it never echoes an input line or request-level identifiers.
  */
 
+import { createHash } from "node:crypto";
+
 const TERMINAL_MARKER = "[ai.ubq.fi] request_terminal";
 const TERMINAL_LINE_PREFIX = `${TERMINAL_MARKER} `;
 const INFO_TERMINAL_LINE_PREFIX = `INFO ${TERMINAL_LINE_PREFIX}`;
@@ -22,11 +24,13 @@ const MAX_RELEASE_IDENTIFIER_CHARS = 128;
 const MAX_RETAINED_REQUEST_IDS = 100_000;
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const GIT_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const USAGE_TELEMETRY_STATUSES = new Set(["missing", "partial", "reported", "invalid"] as const);
 // A Responses or Chat inference terminal is emitted only by these in-process
 // transports. Keeping this vocabulary closed means a forged or newly added
 // provider cannot silently become a Stage 0 or outcome cohort.
-const INFERENCE_PROVIDERS = new Set(["chatgpt_codex", "metered"] as const);
+const INFERENCE_PROVIDER_VALUES = ["chatgpt_codex", "metered", "surplus"] as const;
+const INFERENCE_PROVIDERS = new Set(INFERENCE_PROVIDER_VALUES);
 const PROMPT_CACHE_MODE_VALUES = ["implicit", "explicit", "legacy_retention", "unspecified"] as const;
 const PROMPT_CACHE_MODES = new Set(PROMPT_CACHE_MODE_VALUES);
 const AFFINITY_OUTCOME_VALUES = ["none", "preferred", "failover", "shadow_only"] as const;
@@ -55,6 +59,7 @@ const STREAM_TERMINAL_TYPES = new Set(
 );
 
 type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
+type InferenceProvider = typeof INFERENCE_PROVIDER_VALUES[number];
 type TerminalRoute = "responses" | "chat.completions" | "embeddings" | "embeddings.jobs.create" | "embeddings.jobs.get";
 type InferenceRoute = "responses" | "chat.completions";
 type InferenceTerminalOutcome = typeof INFERENCE_TERMINAL_OUTCOMES[number];
@@ -89,6 +94,7 @@ type TerminalEvent = Readonly<{
   request_id: string;
   route: TerminalRoute;
   status: number;
+  latency_ms: number | null;
   stream_terminal_type: StreamTerminalType | null;
   input_tokens: number | null;
   cached_input_tokens: number | null;
@@ -98,6 +104,7 @@ type TerminalEvent = Readonly<{
   prompt_cache_key_present: boolean;
   prompt_cache_mode: PromptCacheMode;
   account_slot: number | null;
+  account_cohort_id: string | null;
   affinity_outcome: AffinityOutcome;
   stream: boolean | null;
   release: ReleaseIdentity;
@@ -112,6 +119,14 @@ export type CacheTokenSummary = Readonly<{
   null_events: number;
   zero_events: number;
   positive_events: number;
+}>;
+
+export type LatencySummary = Readonly<{
+  observed_events: number;
+  min_ms: number | null;
+  p50_ms: number | null;
+  p95_ms: number | null;
+  max_ms: number | null;
 }>;
 
 /**
@@ -166,6 +181,33 @@ export type Stage0CohortReport = Readonly<{
 }>;
 
 /**
+ * Content-free cache evidence across every routing dimension that can change
+ * prefix reuse. Model values remain opaque and cache-key values never enter
+ * the analyzer.
+ */
+export type CacheDimensionCohortReport = Readonly<{
+  provider: string;
+  /** Opaque, per-report cohort label; never the logged model value. */
+  model: string;
+  /** Stable pseudonymous join key; it is not secrecy for guessable model IDs. */
+  model_cohort_id: string;
+  route: InferenceRoute;
+  /** Opaque, per-report label; never the isolate-local account-slot value. */
+  account_slot_cohort: string;
+  /** Stable high-entropy account join key; null on older or paid-provider logs. */
+  account_cohort_id: string | null;
+  prompt_cache_mode: PromptCacheMode;
+  prompt_cache_key_present: boolean;
+  completed_inference: number;
+  status_totals: Readonly<Record<string, number>>;
+  usage_telemetry_status_totals: Readonly<Record<UsageTelemetryStatus, number>>;
+  valid_reported_cache_metrics: ValidReportedCacheMetrics;
+  observed_completed_cache_read_input_tokens: CacheTokenSummary;
+  observed_completed_cache_write_input_tokens: CacheTokenSummary;
+  completed_latency_ms: LatencySummary;
+}>;
+
+/**
  * Aggregate-only observation for all terminal Responses and Chat outcomes.
  * It deliberately has no eligibility gate: Stage 0 remains completed-only.
  */
@@ -216,6 +258,7 @@ export type Stage0CacheTelemetryReport = Readonly<{
   valid_reported_cache_metrics: ValidReportedCacheMetrics;
   observed_completed_cache_read_input_tokens: CacheTokenSummary;
   observed_completed_cache_write_input_tokens: CacheTokenSummary;
+  completed_latency_ms: LatencySummary;
   reported_over_completed: Readonly<{
     reported: number;
     completed: number;
@@ -251,6 +294,7 @@ export type Stage0CacheTelemetryReport = Readonly<{
     }>;
   }>;
   cohorts: readonly Stage0CohortReport[];
+  cache_dimension_cohorts: readonly CacheDimensionCohortReport[];
   inference_terminal_outcomes: InferenceTerminalOutcomesReport;
 }>;
 
@@ -268,6 +312,8 @@ type MutableCacheTokenSummary = {
   zero_events: number;
   positive_events: number;
 };
+
+type MutableLatencySummary = number[];
 
 type MutableValidReportedCacheMetrics = {
   reported_events: number;
@@ -289,6 +335,23 @@ type MutableCohort = {
   cache_read_input_tokens: MutableCacheTokenSummary;
   cache_write_input_tokens: MutableCacheTokenSummary;
   reported: number;
+};
+
+type MutableCacheDimensionCohort = {
+  provider: InferenceProvider;
+  model: string;
+  route: InferenceRoute;
+  account_slot: number | null;
+  account_cohort_id: string | null;
+  prompt_cache_mode: PromptCacheMode;
+  prompt_cache_key_present: boolean;
+  completed_inference: number;
+  status_totals: Map<string, number>;
+  usage_telemetry_status_totals: Map<UsageTelemetryStatus, number>;
+  valid_reported_cache_metrics: MutableValidReportedCacheMetrics;
+  cache_read_input_tokens: MutableCacheTokenSummary;
+  cache_write_input_tokens: MutableCacheTokenSummary;
+  latency_ms: MutableLatencySummary;
 };
 
 type MutableInferenceOutcomeCohort = {
@@ -391,18 +454,18 @@ const requireNullableReleaseString = (
   return bounded;
 };
 
-const requireInferenceProvider = (record: Record<string, unknown>, lineNumber: number): string => {
+const requireInferenceProvider = (record: Record<string, unknown>, lineNumber: number): InferenceProvider => {
   const provider = requireNonEmptyString(record, "provider", lineNumber);
-  if (!INFERENCE_PROVIDERS.has(provider as "chatgpt_codex" | "metered")) {
+  if (!INFERENCE_PROVIDERS.has(provider as InferenceProvider)) {
     return fail(lineNumber, "inference terminal event has an unsupported provider field");
   }
-  return provider;
+  return provider as InferenceProvider;
 };
 
 const optionalInferenceProvider = (record: Record<string, unknown>): string | null => {
   const provider = record.provider;
   if (typeof provider !== "string" || provider.trim().length === 0) return null;
-  return INFERENCE_PROVIDERS.has(provider as "chatgpt_codex" | "metered") ? provider : null;
+  return INFERENCE_PROVIDERS.has(provider as InferenceProvider) ? provider : null;
 };
 
 const requireBoundedModelLabel = (record: Record<string, unknown>, lineNumber: number): string => {
@@ -442,6 +505,19 @@ const requireStatus = (record: Record<string, unknown>, lineNumber: number): num
     !hasOwn(record, "status") || typeof value !== "number" || !Number.isSafeInteger(value) || value < 100 || value > 599
   ) {
     return fail(lineNumber, "terminal event has an invalid status field");
+  }
+  return value;
+};
+
+const optionalNonNegativeSafeInteger = (
+  record: Record<string, unknown>,
+  key: string,
+  lineNumber: number,
+): number | null => {
+  if (!hasOwn(record, key) || record[key] === null) return null;
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    return fail(lineNumber, `terminal event has an invalid ${key} field`);
   }
   return value;
 };
@@ -499,6 +575,14 @@ const requireAccountSlot = (record: Record<string, unknown>, lineNumber: number)
     return fail(lineNumber, "terminal event has an invalid account_slot field");
   }
   return slot;
+};
+
+const optionalAccountCohortId = (record: Record<string, unknown>, lineNumber: number): string | null => {
+  if (!hasOwn(record, "account_cohort_id") || record.account_cohort_id === null) return null;
+  if (typeof record.account_cohort_id !== "string" || !SHA256_HEX_PATTERN.test(record.account_cohort_id)) {
+    return fail(lineNumber, "terminal event has an invalid account_cohort_id field");
+  }
+  return record.account_cohort_id;
 };
 
 const requireAffinityOutcome = (record: Record<string, unknown>, lineNumber: number): AffinityOutcome => {
@@ -596,6 +680,7 @@ const parseTerminalEvent = (line: string, lineNumber: number): TerminalEvent | n
   const route = requireTerminalRoute(parsed, lineNumber);
   const streamTerminalType = requireStreamTerminalType(parsed, lineNumber);
   const status = requireStatus(parsed, lineNumber);
+  const latencyMs = optionalNonNegativeSafeInteger(parsed, "latency_ms", lineNumber);
   const usageTelemetryStatus = requireUsageTelemetryStatus(parsed, lineNumber);
   const usageObserved = requireUsageObserved(parsed, lineNumber);
   const inputTokens = requireCacheToken(parsed, "input_tokens", lineNumber);
@@ -604,6 +689,7 @@ const parseTerminalEvent = (line: string, lineNumber: number): TerminalEvent | n
   const promptCacheKeyPresent = requireBoolean(parsed, "prompt_cache_key_present", lineNumber);
   const promptCacheMode = requirePromptCacheMode(parsed, lineNumber);
   const accountSlot = requireAccountSlot(parsed, lineNumber);
+  const accountCohortId = optionalAccountCohortId(parsed, lineNumber);
   const affinityOutcome = requireAffinityOutcome(parsed, lineNumber);
   const stream = requireNullableBoolean(parsed, "stream", lineNumber);
   const release: ReleaseIdentity = {
@@ -640,6 +726,7 @@ const parseTerminalEvent = (line: string, lineNumber: number): TerminalEvent | n
     request_id: requestId,
     route,
     status,
+    latency_ms: latencyMs,
     stream_terminal_type: streamTerminalType,
     input_tokens: inputTokens,
     cached_input_tokens: cachedInputTokens,
@@ -649,6 +736,7 @@ const parseTerminalEvent = (line: string, lineNumber: number): TerminalEvent | n
     prompt_cache_key_present: promptCacheKeyPresent,
     prompt_cache_mode: promptCacheMode,
     account_slot: accountSlot,
+    account_cohort_id: accountCohortId,
     affinity_outcome: affinityOutcome,
     stream,
     release,
@@ -698,6 +786,25 @@ const addCacheToken = (summary: MutableCacheTokenSummary, value: number | null, 
 };
 
 const toCacheTokenSummary = (summary: MutableCacheTokenSummary): CacheTokenSummary => ({ ...summary });
+
+const addLatency = (summary: MutableLatencySummary, value: number | null): void => {
+  if (value !== null) summary.push(value);
+};
+
+const toLatencySummary = (summary: MutableLatencySummary): LatencySummary => {
+  if (summary.length === 0) {
+    return { observed_events: 0, min_ms: null, p50_ms: null, p95_ms: null, max_ms: null };
+  }
+  const sorted = [...summary].sort((left, right) => left - right);
+  const percentile = (ratio: number): number => sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)]!;
+  return {
+    observed_events: sorted.length,
+    min_ms: sorted[0]!,
+    p50_ms: percentile(0.5),
+    p95_ms: percentile(0.95),
+    max_ms: sorted[sorted.length - 1]!,
+  };
+};
 
 const addValidReportedCacheMetrics = (
   metrics: MutableValidReportedCacheMetrics,
@@ -761,6 +868,9 @@ const toOpaqueModelLabels = (models: Iterable<string>): Map<string, string> =>
       .map((model, index) => [model, `model_${index + 1}`] as const),
   );
 
+const stableOpaqueLabel = (domain: string, value: string): string =>
+  createHash("sha256").update(`${domain}\u0000${value}`).digest("hex");
+
 const extendOpaqueModelLabels = (
   labels: ReadonlyMap<string, string>,
   models: Iterable<string>,
@@ -811,7 +921,9 @@ class Stage0CacheTelemetryAccumulator {
   #validReportedCacheMetrics = createValidReportedCacheMetrics();
   #cacheReadInputTokens = createCacheTokenSummary();
   #cacheWriteInputTokens = createCacheTokenSummary();
+  #completedLatencyMs: MutableLatencySummary = [];
   #cohorts = new Map<string, MutableCohort>();
+  #cacheDimensionCohorts = new Map<string, MutableCacheDimensionCohort>();
   #inferenceTerminalEvents = 0;
   #inferenceTerminalWithoutUsage = 0;
   #inferenceOutcomeTotals = new Map<InferenceTerminalOutcome, number>();
@@ -846,8 +958,10 @@ class Stage0CacheTelemetryAccumulator {
 
     if (event.inference_outcome !== null) this.#addInferenceOutcome(event, lineNumber);
     if (event.inference_outcome !== "completed") return;
-    const provider = event.provider ?? fail(lineNumber, "completed inference event is missing a provider or model");
+    const provider = (event.provider ??
+      fail(lineNumber, "completed inference event is missing a provider or model")) as InferenceProvider;
     const model = event.model ?? fail(lineNumber, "completed inference event is missing a provider or model");
+    const route = event.route as InferenceRoute;
 
     this.#completedInference = addSafely(this.#completedInference, 1, lineNumber);
     increment(this.#completedStatusTotals, String(event.status), lineNumber);
@@ -858,6 +972,7 @@ class Stage0CacheTelemetryAccumulator {
     addValidReportedCacheMetrics(this.#validReportedCacheMetrics, event, lineNumber);
     addCacheToken(this.#cacheReadInputTokens, event.cached_input_tokens, lineNumber);
     addCacheToken(this.#cacheWriteInputTokens, event.cache_write_input_tokens, lineNumber);
+    addLatency(this.#completedLatencyMs, event.latency_ms);
 
     const key = JSON.stringify([provider, model, event.route]);
     const existingCohort = this.#cohorts.get(key);
@@ -886,6 +1001,48 @@ class Stage0CacheTelemetryAccumulator {
     addValidReportedCacheMetrics(cohort.valid_reported_cache_metrics, event, lineNumber);
     addCacheToken(cohort.cache_read_input_tokens, event.cached_input_tokens, lineNumber);
     addCacheToken(cohort.cache_write_input_tokens, event.cache_write_input_tokens, lineNumber);
+
+    const cacheDimensionKey = JSON.stringify([
+      provider,
+      model,
+      route,
+      event.account_slot,
+      event.account_cohort_id,
+      event.prompt_cache_mode,
+      event.prompt_cache_key_present,
+    ]);
+    const existingCacheDimensionCohort = this.#cacheDimensionCohorts.get(cacheDimensionKey);
+    let cacheDimensionCohort: MutableCacheDimensionCohort;
+    if (existingCacheDimensionCohort === undefined) {
+      cacheDimensionCohort = {
+        provider,
+        model,
+        route,
+        account_slot: event.account_slot,
+        account_cohort_id: event.account_cohort_id,
+        prompt_cache_mode: event.prompt_cache_mode,
+        prompt_cache_key_present: event.prompt_cache_key_present,
+        completed_inference: 0,
+        status_totals: new Map(),
+        usage_telemetry_status_totals: new Map(),
+        valid_reported_cache_metrics: createValidReportedCacheMetrics(),
+        cache_read_input_tokens: createCacheTokenSummary(),
+        cache_write_input_tokens: createCacheTokenSummary(),
+        latency_ms: [],
+      };
+      this.#cacheDimensionCohorts.set(cacheDimensionKey, cacheDimensionCohort);
+    } else cacheDimensionCohort = existingCacheDimensionCohort;
+    cacheDimensionCohort.completed_inference = addSafely(
+      cacheDimensionCohort.completed_inference,
+      1,
+      lineNumber,
+    );
+    increment(cacheDimensionCohort.status_totals, String(event.status), lineNumber);
+    increment(cacheDimensionCohort.usage_telemetry_status_totals, event.usage_telemetry_status, lineNumber);
+    addValidReportedCacheMetrics(cacheDimensionCohort.valid_reported_cache_metrics, event, lineNumber);
+    addCacheToken(cacheDimensionCohort.cache_read_input_tokens, event.cached_input_tokens, lineNumber);
+    addCacheToken(cacheDimensionCohort.cache_write_input_tokens, event.cache_write_input_tokens, lineNumber);
+    addLatency(cacheDimensionCohort.latency_ms, event.latency_ms);
   }
 
   #addInferenceOutcome(event: TerminalEvent, lineNumber: number): void {
@@ -963,6 +1120,17 @@ class Stage0CacheTelemetryAccumulator {
 
     const coverage = reportedOverCompleted(this.#reportedCompleted, this.#completedInference);
     const modelCohortLabels = toOpaqueModelLabels([...this.#cohorts.values()].map((cohort) => cohort.model));
+    const accountSlotCohortLabels = new Map(
+      [
+        ...new Set(
+          [...this.#cacheDimensionCohorts.values()]
+            .map((cohort) => cohort.account_slot)
+            .filter((slot): slot is number => slot !== null),
+        ),
+      ]
+        .sort((left, right) => left - right)
+        .map((slot, index) => [slot, `slot_${index + 1}`] as const),
+    );
     const outcomeModelCohortLabels = extendOpaqueModelLabels(
       modelCohortLabels,
       [...this.#inferenceOutcomeCohorts.values()]
@@ -1002,6 +1170,37 @@ class Stage0CacheTelemetryAccumulator {
           },
         };
       });
+    const cacheDimensionCohorts = [...this.#cacheDimensionCohorts.values()]
+      .sort((left, right) =>
+        left.provider.localeCompare(right.provider) ||
+        left.model.localeCompare(right.model) ||
+        left.route.localeCompare(right.route) ||
+        (left.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(left.account_slot)!).localeCompare(
+          right.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(right.account_slot)!,
+        ) ||
+        (left.account_cohort_id ?? "").localeCompare(right.account_cohort_id ?? "") ||
+        left.prompt_cache_mode.localeCompare(right.prompt_cache_mode) ||
+        Number(left.prompt_cache_key_present) - Number(right.prompt_cache_key_present)
+      )
+      .map((cohort): CacheDimensionCohortReport => ({
+        provider: cohort.provider,
+        model: modelCohortLabels.get(cohort.model)!,
+        model_cohort_id: stableOpaqueLabel("uos-prompt-cache-telemetry-model-v1", cohort.model),
+        route: cohort.route,
+        account_slot_cohort: cohort.account_slot === null
+          ? "unassigned"
+          : accountSlotCohortLabels.get(cohort.account_slot)!,
+        account_cohort_id: cohort.account_cohort_id,
+        prompt_cache_mode: cohort.prompt_cache_mode,
+        prompt_cache_key_present: cohort.prompt_cache_key_present,
+        completed_inference: cohort.completed_inference,
+        status_totals: toSortedCounts(cohort.status_totals),
+        usage_telemetry_status_totals: toSortedCounts(cohort.usage_telemetry_status_totals),
+        valid_reported_cache_metrics: toValidReportedCacheMetrics(cohort.valid_reported_cache_metrics),
+        observed_completed_cache_read_input_tokens: toCacheTokenSummary(cohort.cache_read_input_tokens),
+        observed_completed_cache_write_input_tokens: toCacheTokenSummary(cohort.cache_write_input_tokens),
+        completed_latency_ms: toLatencySummary(cohort.latency_ms),
+      }));
     const inferenceOutcomeCohorts = [...this.#inferenceOutcomeCohorts.values()]
       .sort((left, right) =>
         (left.provider ?? "unknown").localeCompare(right.provider ?? "unknown") ||
@@ -1040,6 +1239,7 @@ class Stage0CacheTelemetryAccumulator {
       valid_reported_cache_metrics: toValidReportedCacheMetrics(this.#validReportedCacheMetrics),
       observed_completed_cache_read_input_tokens: toCacheTokenSummary(this.#cacheReadInputTokens),
       observed_completed_cache_write_input_tokens: toCacheTokenSummary(this.#cacheWriteInputTokens),
+      completed_latency_ms: toLatencySummary(this.#completedLatencyMs),
       reported_over_completed: coverage,
       gates: {
         aggregate_completed_10k: {
@@ -1072,6 +1272,7 @@ class Stage0CacheTelemetryAccumulator {
         },
       },
       cohorts,
+      cache_dimension_cohorts: cacheDimensionCohorts,
       inference_terminal_outcomes: {
         terminal_events: this.#inferenceTerminalEvents,
         terminal_without_usage: this.#inferenceTerminalWithoutUsage,

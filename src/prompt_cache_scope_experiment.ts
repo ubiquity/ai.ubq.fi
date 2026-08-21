@@ -3,6 +3,7 @@ import {
   CodexCacheScopeExperimentError,
   fetchCodexResponsesForCacheScopeExperiment,
   getCodexResponseSlot,
+  markCodexResponseCompleted,
   refreshCodexCacheScopeExperimentSlot,
   releaseCodexResponseProbe,
 } from "./codex.ts";
@@ -554,6 +555,7 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
   startedAtMs: number,
   signal: AbortSignal,
 ): Promise<ReadSampleResult> => {
+  let responseCompleted = false;
   try {
     if (!response.ok || !response.body) {
       cancelResponse(response);
@@ -571,6 +573,7 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
         event.type === "response.completed" && isRecord(event.value.response) && !Array.isArray(event.value.response)
       ) {
         terminalResponse = event.value.response;
+        responseCompleted = true;
         break;
       }
       if (event.terminal) break;
@@ -622,9 +625,10 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
     );
   } finally {
     try {
-      await releaseCodexResponseProbe(response);
+      if (responseCompleted) await markCodexResponseCompleted(response);
+      else await releaseCodexResponseProbe(response);
     } catch {
-      // Probe release is best effort after terminal handling.
+      // Provider-health and probe transitions are best effort after terminal handling.
     }
   }
 };

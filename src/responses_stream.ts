@@ -76,13 +76,14 @@ const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
       kind: "malformed_event",
     });
   }
+  const hasNestedError = Object.prototype.hasOwnProperty.call(value, "error");
+  const isFlatError = (value.code === null || (typeof value.code === "string" && value.code.trim())) &&
+    typeof value.message === "string" && value.message.trim() &&
+    (value.param === null || typeof value.param === "string");
   if (
-    (type === "error" && !isRecord(value.error) && !(
-      (value.code === null || (typeof value.code === "string" && value.code.trim())) &&
-      typeof value.message === "string" && value.message.trim() &&
-      (value.param === null || typeof value.param === "string")
-    )) ||
-    (type !== "error" && RESPONSES_TERMINAL_EVENT_TYPES.has(type) && !isRecord(value.response))
+    (type === "error" && (hasNestedError ? !isRecord(value.error) || Array.isArray(value.error) : !isFlatError)) ||
+    (type !== "error" && RESPONSES_TERMINAL_EVENT_TYPES.has(type) &&
+      (!isRecord(value.response) || Array.isArray(value.response)))
   ) {
     throw new ResponsesStreamError("Upstream emitted a Responses terminal event with an invalid payload.", {
       kind: "malformed_event",

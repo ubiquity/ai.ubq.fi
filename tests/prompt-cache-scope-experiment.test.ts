@@ -123,6 +123,7 @@ const {
 } = await import("../src/prompt_cache_scope_experiment.ts");
 const { promoteCodexPromptCacheScope } = await import("../src/codex_catalog.ts");
 const { resolvePromptCacheTelemetryCounterKeys } = await import("../src/prompt_cache_telemetry_gate.ts");
+const { getCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../src/provider_health.ts");
 const { loadPromptCacheScopeTargetInventory } = await import("../src/prompt_cache_scope_targets.ts");
 const {
   handleAdminCodexCacheScopeExperiment,
@@ -310,6 +311,16 @@ const sseCompleted = (cachedTokens: number, cacheWriteTokens: number, model = MO
   return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
 };
 
+const waitForCodexHealth = async (accountId: string) => {
+  const deadline = performance.now() + 2_000;
+  for (;;) {
+    const health = await getCodexProviderHealth(accountId);
+    if (health.state === "healthy") return health;
+    if (performance.now() >= deadline) throw new Error(`Timed out waiting for ${accountId} provider health`);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+};
+
 Deno.test("prompt-cache Stage 0 diagnostic is read-only and redacts the server-selected target", async () => {
   seed();
   await seedStage0Baseline(MODEL);
@@ -387,6 +398,7 @@ Deno.test("a missing or mismatched pinned slot is an inconclusive scope result",
 
 Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope, and stores only redacted evidence", async () => {
   seed();
+  resetProviderHealthThrottleForTest();
   const originalFetch = globalThis.fetch;
   const requests: Array<{ account: string | null; conversation: string | null; body: string }> = [];
   let responseIndex = 0;
@@ -420,6 +432,12 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
 
   try {
     const first = await runExperiment();
+    for (const accountId of ["account-one", "account-two"]) {
+      const health = await waitForCodexHealth(accountId);
+      assert.equal(health.state, "healthy", accountId);
+      assert.equal(health.last_event, "success", accountId);
+      assert.equal(typeof health.last_success_at_ms, "number", accountId);
+    }
     const second = await runExperiment();
     const third = await runExperiment();
     assert.equal(first.status, "in_progress");
@@ -571,6 +589,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     assert.equal(serializedEvidence.includes(requests[0]?.conversation ?? "missing-conversation"), false);
   } finally {
     globalThis.fetch = originalFetch;
+    resetProviderHealthThrottleForTest();
     resetCodexAuthCacheForTest();
     resetRuntimeConfigCacheForTest();
   }

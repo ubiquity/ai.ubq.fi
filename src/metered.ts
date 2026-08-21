@@ -229,6 +229,7 @@ export type MeteredAuthenticatedFetchOptions = Readonly<{
   fetcher?: MeteredFetch;
   signal?: AbortSignal;
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
+  onDispatch?: () => void;
 }>;
 
 export type MeteredTokenLogFetchOptions =
@@ -592,6 +593,7 @@ export const fetchMeteredResponses = async (
       throw signal.reason ?? new DOMException("The request was aborted.", "AbortError");
     }
     dispatch?.markTransportStarted();
+    options.onDispatch?.();
     response = await (options.fetcher ?? fetch)(METERED_RESPONSES_URL, {
       method: "POST",
       headers,
@@ -619,7 +621,8 @@ export const fetchMeteredResponses = async (
     response,
     request_id: nonEmptyString(
       response.headers.get("X-Api-Request-Id") ??
-        response.headers.get("X-Oneapi-Request-Id"),
+        response.headers.get("X-Oneapi-Request-Id") ??
+        response.headers.get("X-Request-Id"),
     ),
   };
 };

@@ -51,6 +51,7 @@ import {
   incrementKernelUsageLimit,
 } from "./kernel_usage.ts";
 import {
+  getResponseAccountCohortId,
   getResponseTelemetry,
   handleChatCompletions,
   handleEmbeddingsJobCreate,
@@ -82,6 +83,14 @@ type AuthenticatedClientResult = Extract<
   Awaited<ReturnType<typeof authenticateClient>>,
   { ok: true }
 >;
+
+type RequestDeliveryInfo = Readonly<{
+  completed: Promise<void>;
+  downstreamSignal: AbortSignal;
+}>;
+
+type DeliveryOutcome = "delivered" | "interrupted" | "unobserved";
+type BodyOutcome = "drained" | "interrupted";
 
 export const resolveIdempotencyPrincipal = async (
   authResult: Readonly<{
@@ -133,6 +142,34 @@ const decorateInferenceQuota = (
   return withCodexQuotaHeaders(response, usedPercent === null ? null : { used_percent: usedPercent });
 };
 
+const providerRequestIdHeaderValue = (value: string | null): string | null => {
+  const requestId = value?.trim();
+  if (!requestId || requestId.length > 256) return null;
+  for (const character of requestId) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return null;
+  }
+  return requestId;
+};
+
+const withProviderRequestId = (response: Response, providerRequestId: string | null): Response => {
+  const requestId = providerRequestIdHeaderValue(providerRequestId);
+  const headers = new Headers(response.headers);
+  // Never reflect provider-native correlation headers. Expose one bounded UOS
+  // header whose value has already passed the gateway sanitizer.
+  headers.delete("x-request-id");
+  headers.delete("x-api-request-id");
+  headers.delete("x-oneapi-request-id");
+  headers.delete("x-cerebras-request-id");
+  headers.delete("x-uos-provider-request-id");
+  if (requestId) headers.set("x-uos-provider-request-id", requestId);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
+
 const logTerminalRequest = async (
   input: Readonly<{
     route: string;
@@ -140,11 +177,13 @@ const logTerminalRequest = async (
     telemetryResponse?: Response;
     startedAtMonotonicMs: number;
     downstreamDrainedAtMonotonicMs?: number;
+    deliveryOutcome: DeliveryOutcome;
     requestId: string;
     recordTelemetry?: typeof recordPromptCacheTelemetry;
   }>,
 ): Promise<void> => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
+  const accountCohortId = getResponseAccountCohortId(input.telemetryResponse ?? input.response);
   const latencyMs = Math.max(0, Math.round(performance.now() - input.startedAtMonotonicMs));
   const downstreamDrainMs = telemetry?.stream === true && telemetry.firstSseEventMs !== null &&
       telemetry.streamTerminalMs !== null && input.downstreamDrainedAtMonotonicMs !== undefined
@@ -166,6 +205,7 @@ const logTerminalRequest = async (
     first_sse_event_ms: telemetry?.firstSseEventMs ?? null,
     stream_terminal_ms: telemetry?.streamTerminalMs ?? null,
     downstream_drain_ms: downstreamDrainMs,
+    delivery_outcome: input.deliveryOutcome,
     model: telemetry?.model ?? null,
     reasoning: telemetry?.reasoning ?? null,
     provider_request_id: telemetry?.providerRequestId ?? null,
@@ -180,6 +220,7 @@ const logTerminalRequest = async (
     prompt_cache_mode: telemetry?.promptCacheMode ?? "unspecified",
     explicit_breakpoint_count: telemetry?.explicitBreakpointCount ?? 0,
     account_slot: telemetry?.accountSlot ?? null,
+    account_cohort_id: accountCohortId,
     affinity_outcome: telemetry?.affinityOutcome ?? "none",
     fallback_reason: telemetry?.fallbackReason ?? null,
     stream: telemetry?.stream ?? null,
@@ -241,20 +282,36 @@ export const withTerminalRequestLog = (
     startedAtMonotonicMs: number;
     requestId: string;
     onCompleted?: () => Promise<void>;
+    deliveryCompleted?: Promise<void>;
+    deliverySignal?: AbortSignal;
     /** Test seam for proving terminal telemetry remains best effort. */
     recordTelemetry?: typeof recordPromptCacheTelemetry;
   }>,
 ): Promise<Response> => {
   let terminalLog: Promise<void> | null = null;
   let completionFinalization: Promise<void> | null = null;
-  const log = (downstreamDrainedAtMonotonicMs?: number): Promise<void> => {
+  const log = (
+    downstreamDrainedAtMonotonicMs?: number,
+    deliveryOutcome: DeliveryOutcome = "unobserved",
+  ): Promise<void> => {
     if (terminalLog) return terminalLog;
-    terminalLog = logTerminalRequest({ ...input, response, downstreamDrainedAtMonotonicMs }).catch(() => {
+    terminalLog = logTerminalRequest({
+      ...input,
+      response,
+      downstreamDrainedAtMonotonicMs,
+      deliveryOutcome,
+    }).catch(() => {
       // Terminal logging and its durable baseline counters are best effort;
       // neither may replace a response that is already ready for the client.
     });
     return terminalLog;
   };
+  const deliveryOutcome = input.deliveryCompleted
+    ? input.deliveryCompleted.then(
+      () => input.deliverySignal?.aborted ? "interrupted" as const : "delivered" as const,
+      () => "interrupted" as const,
+    )
+    : null;
   const finalizeCompletion = (): Promise<void> => {
     const onCompleted = input.onCompleted;
     if (!onCompleted || !response.ok) return Promise.resolve();
@@ -275,12 +332,36 @@ export const withTerminalRequestLog = (
         await finalizeCompletion();
         return response;
       } finally {
-        await log();
+        if (deliveryOutcome) {
+          void deliveryOutcome.then((outcome) => log(undefined, outcome));
+        } else {
+          await log();
+        }
       }
     })();
   }
 
   const reader = response.body.getReader();
+  let downstreamDrainedAtMonotonicMs: number | undefined;
+  let settleBody: ((outcome: BodyOutcome) => void) | null = null;
+  let bodyDidSettle = false;
+  const bodyOutcome = deliveryOutcome
+    ? new Promise<BodyOutcome>((resolve) => {
+      settleBody = (outcome) => {
+        if (bodyDidSettle) return;
+        bodyDidSettle = true;
+        resolve(outcome);
+      };
+    })
+    : null;
+  if (bodyOutcome && deliveryOutcome) {
+    void Promise.all([bodyOutcome, deliveryOutcome]).then(([bodyResult, deliveryResult]) =>
+      log(
+        downstreamDrainedAtMonotonicMs,
+        bodyResult === "interrupted" ? "interrupted" : deliveryResult,
+      )
+    );
+  }
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -288,13 +369,14 @@ export const withTerminalRequestLog = (
         if (done) {
           // Snapshot the downstream drain before finalization. Accounting can
           // wait on KV and belongs in total latency, not drain telemetry.
-          const downstreamDrainedAtMonotonicMs = performance.now();
-          // The terminal bytes have already been delivered. Finish accounting
-          // before closing the downstream body so callers observe durable
-          // counters without holding back the terminal frame itself.
+          downstreamDrainedAtMonotonicMs = performance.now();
+          // The application stream has drained, but Deno still owns delivery.
+          // Finish one-shot usage accounting before closing this wrapper, then
+          // let `completed` classify the separate delivery outcome.
           await finalizeCompletion();
-          await log(downstreamDrainedAtMonotonicMs);
+          if (!deliveryOutcome) await log(downstreamDrainedAtMonotonicMs);
           controller.close();
+          settleBody?.("drained");
           return;
         }
         // The OpenAI stream observer marks response.completed before yielding
@@ -303,8 +385,9 @@ export const withTerminalRequestLog = (
         void finalizeCompletion();
         controller.enqueue(value);
       } catch (error) {
-        await log();
+        if (!deliveryOutcome) await log();
         controller.error(error);
+        settleBody?.("interrupted");
       }
     },
     cancel(reason) {
@@ -312,7 +395,8 @@ export const withTerminalRequestLog = (
       // that pull observes the cancellation and performs layered cleanup.
       void reader.cancel(reason).catch(() => {});
       void finalizeCompletion();
-      void log();
+      if (!deliveryOutcome) void log();
+      settleBody?.("interrupted");
     },
   });
   return Promise.resolve(
@@ -333,7 +417,7 @@ const terminalRouteForRequest = (method: string, path: string): string | null =>
   return null;
 };
 
-export default async function handler(req: Request): Promise<Response> {
+export default async function handler(req: Request, delivery?: RequestDeliveryInfo): Promise<Response> {
   const requestStartedAtMs = Date.now();
   const requestStartedAtMonotonicMs = performance.now();
   const requestId = crypto.randomUUID();
@@ -631,6 +715,8 @@ export default async function handler(req: Request): Promise<Response> {
         route: terminalRoute,
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
         requestId,
+        deliveryCompleted: delivery?.completed,
+        deliverySignal: delivery?.downstreamSignal,
       })
       : response;
   }
@@ -646,6 +732,8 @@ export default async function handler(req: Request): Promise<Response> {
         route: terminalRoute,
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
         requestId,
+        deliveryCompleted: delivery?.completed,
+        deliverySignal: delivery?.downstreamSignal,
       });
     }
     usageReservation = admission.reservation;
@@ -673,6 +761,7 @@ export default async function handler(req: Request): Promise<Response> {
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,
+    downstreamSignal: delivery?.downstreamSignal,
     beforeProviderDispatch: usageReservation?.beforeProviderDispatch,
   };
   if (terminalRoute) {
@@ -709,13 +798,16 @@ export default async function handler(req: Request): Promise<Response> {
     onCompleted?: () => Promise<void>,
   ): Promise<Response> => {
     const telemetry = getResponseTelemetry(response);
-    const decorated = includeQuota ? decorateInferenceQuota(response, usagePolicy, telemetry) : response;
+    const correlated = withProviderRequestId(response, telemetry?.providerRequestId ?? null);
+    const decorated = includeQuota ? decorateInferenceQuota(correlated, usagePolicy, telemetry) : correlated;
     return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
       route,
       telemetryResponse: response,
       startedAtMonotonicMs: requestStartedAtMonotonicMs,
       requestId,
       onCompleted,
+      deliveryCompleted: delivery?.completed,
+      deliverySignal: delivery?.downstreamSignal,
     });
   };
   const bestEffortKernelInferenceUsage = async (): Promise<void> => {

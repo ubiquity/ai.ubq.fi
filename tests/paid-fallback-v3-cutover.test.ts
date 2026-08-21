@@ -338,13 +338,14 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
     await recordMeteredUpstreamResponse(
       settledReservation,
       new Response(null, { status: 200 }),
-      "surplus-provider-request",
+      null,
       "surplus",
     );
     await recordMeteredTerminal(settledReservation, "completed", "surplus");
+    const surplusSettlementId = `surplus:${settledReservation.request_id}`;
     await recordSurplusUsage(
       settledReservation,
-      "surplus-provider-request",
+      surplusSettlementId,
       "gpt-5-codex",
       {
         input_tokens: 100,
@@ -360,9 +361,43 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
       },
     );
     const settled = await readRequest("surplus-settled");
+    assert.equal(settled.provider_request_id, null);
     assert.equal(settled.billing_state, "settled");
     assert.equal(settled.provider_quota, 86);
     assert.equal(settled.spend_microcredits, 172);
+    const settledWindowBeforeReplay = await memoryKv.get<PaidFallbackWindowV3>(
+      paidFallbackWindowV3Key(keyId, settledReservation.window_reset_at_ms),
+    );
+    await recordSurplusUsage(
+      settledReservation,
+      surplusSettlementId,
+      "gpt-5-codex",
+      {
+        input_tokens: 100,
+        cached_input_tokens: 20,
+        cache_write_input_tokens: 30,
+        output_tokens: 10,
+      },
+      {
+        input_price_per_token: 0.000001,
+        cache_read_price_per_token: 0.0000001,
+        cache_write_price_per_token: 0.000002,
+        output_price_per_token: 0.000003,
+      },
+    );
+    const settledAfterReplay = await readRequest("surplus-settled");
+    const settledWindowAfterReplay = await memoryKv.get<PaidFallbackWindowV3>(
+      paidFallbackWindowV3Key(keyId, settledReservation.window_reset_at_ms),
+    );
+    assert.equal(settledAfterReplay.spend_microcredits, settled.spend_microcredits);
+    assert.equal(
+      settledWindowAfterReplay.value?.settled_microcredits,
+      settledWindowBeforeReplay.value?.settled_microcredits,
+    );
+    assert.equal(
+      settledWindowAfterReplay.value?.reserved_microcredits,
+      settledWindowBeforeReplay.value?.reserved_microcredits,
+    );
 
     const incompleteReservation = await reserve("surplus-incomplete", now + 1);
     await recordMeteredUpstreamResponse(
