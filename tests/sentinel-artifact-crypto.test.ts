@@ -192,3 +192,23 @@ Deno.test({
     );
   },
 });
+
+Deno.test({
+  name: "Sentinel workflows use only supported concurrency keys",
+  ignore: fileSystemTestsUnavailable,
+  async fn() {
+    for (
+      const path of [
+        ".github/workflows/deno-deploy.yml",
+        ".github/workflows/provider-sentinel.yml",
+        ".github/workflows/sentinel-revision-control.yml",
+      ]
+    ) {
+      const workflow = await Deno.readTextFile(path);
+      assert(
+        !/^\s+queue:/mu.test(workflow),
+        `${path} contains the unsupported concurrency queue key`,
+      );
+    }
+  },
+});

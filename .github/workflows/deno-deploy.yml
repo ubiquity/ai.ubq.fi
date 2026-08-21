@@ -29,7 +29,6 @@ concurrency:
   # app. Queue all runs so a later preview cannot race an earlier one.
   group: ai-ubq-fi-deploy
   cancel-in-progress: false
-  queue: max
 
 jobs:
   validate:
