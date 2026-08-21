@@ -498,23 +498,34 @@ jobs:
             fail "Deno promotion failed for ${revision_id} (HTTP ${promote_status}: ${promote_error:-empty response})."
           }
 
-          stable_targets=("$stable_url")
-          if [ -n "$custom_url" ]; then
-            stable_targets+=("$custom_url")
-          fi
-          all_attested=false
+          stable_attested=false
           for attempt in $(seq 1 18); do
-            all_attested=true
-            for target_url in "${stable_targets[@]}"; do
-              if ! attest_health "$target_url" "$revision_id"; then
-                all_attested=false
-                echo "Waiting for ${target_url}/health to serve ${GITHUB_SHA}/${revision_id} (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}; ${attempt}/18)."
-              fi
-            done
-            [ "$all_attested" = "true" ] && break
+            if attest_health "$stable_url" "$revision_id"; then
+              stable_attested=true
+              break
+            fi
+            echo "Waiting for ${stable_url}/health to serve ${GITHUB_SHA}/${revision_id} (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}; ${attempt}/18)."
             sleep 10
           done
-          [ "$all_attested" = "true" ] || fail "Promoted revision ${revision_id}, but stable deployment identity did not converge."
+          [ "$stable_attested" = "true" ] || fail "Promoted revision ${revision_id}, but the managed stable route did not converge."
+
+          custom_health="not applicable"
+          if [ -n "$custom_url" ]; then
+            if attest_health "$custom_url" "$revision_id"; then
+              custom_health="exact release identity attested"
+            else
+              cloudflare_server="$(awk 'tolower($1) == "server:" { gsub("\r", "", $2); print tolower($2); exit }' "$headers")"
+              cloudflare_ray="$(awk 'tolower($1) == "cf-ray:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
+              cloudflare_mitigation="$(awk 'tolower($1) == "cf-mitigated:" { gsub("\r", "", $2); print tolower($2); exit }' "$headers")"
+              if [ "$last_status" = "403" ] && [ "$cloudflare_server" = "cloudflare" ] &&
+                [ "$cloudflare_mitigation" = "challenge" ] && [ -n "$cloudflare_ray" ]; then
+                custom_health="Cloudflare challenged the GitHub runner (HTTP 403, ray ${cloudflare_ray})"
+                echo "::warning::${custom_url}/health was challenged by Cloudflare Bot Fight Mode. The exact managed Deno route is attested; this is not a Deno revision mismatch."
+              else
+                fail "Custom deployment identity check failed for ${custom_url}/health (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>})."
+              fi
+            fi
+          fi
 
           {
             echo "### Deployment attestation"
@@ -528,5 +539,6 @@ jobs:
             echo "- Revision ID: \`${revision_id}\`"
             echo "- Git SHA: \`${GITHUB_SHA}\`"
             echo "- Promotion: HTTP ${promote_status}; exact revision pinned"
-            echo "- Health: all stable routes attest the exact release identity"
+            echo "- Managed health: exact release identity attested"
+            echo "- Custom health: ${custom_health}"
           } >> "$GITHUB_STEP_SUMMARY"

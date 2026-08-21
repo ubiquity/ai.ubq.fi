@@ -24,7 +24,10 @@
   and verify that revision's immutable `/health` response against both the full Git SHA and revision ID. Then call
   `POST https://api.deno.com/v2/revisions/<revision-id>/promote` with the existing Deno organization token and require
   HTTP 204. Never select or promote a revision from list order, creation time, or a dashboard "latest" label.
-- Serialize deployment writers. Do not use dashboard promotion during a CI release. Production deployment is complete
-  only after both `https://ai-ubq-fi.ubiquity-dao.deno.net/health` and `https://ai.ubq.fi/health` report the promoted
-  full Git SHA and the same revision ID in their bodies and response headers. If either identity stays old, fail the
-  workflow and do not report success or ask someone to repair it in the dashboard.
+- Serialize deployment writers. Do not use dashboard promotion during a CI release. Production promotion is complete
+  only after `https://ai-ubq-fi.ubiquity-dao.deno.net/health` reports the promoted full Git SHA and revision ID in its
+  body and response headers. Probe `https://ai.ubq.fi/health` too, and fail on any HTTP 200 identity mismatch.
+- Cloudflare Free Bot Fight Mode can challenge GitHub-hosted `curl` requests to the public custom-domain health route
+  with HTTP 403 and cannot be bypassed by a path-specific WAF skip rule. Record an identified Cloudflare 403 as a CI
+  warning after the exact managed Deno route passes; do not misclassify it as an old Deno revision, weaken bot
+  protection globally, report dashboard work as necessary, or wait through repeated identical probes.
