@@ -27,6 +27,14 @@ immediately after 07:15 EDT.
 Affected requests included `gpt-5.6-luna` and `gpt-5.6-terra` at multiple reasoning levels. Every failed terminal record
 listed only `chatgpt_codex` in `attempted_providers`; `fallback_reason` was `null`, and no paid provider was attempted.
 
+The Terra traffic was traced to four Codex subagents created from an active local Codex thread in this repository. The
+parent thread used `gpt-5.6-sol` with `ultra` effort and created the `lifecycle_trace`, `evidence_tooling`,
+`health_cache_probe`, and `deno_completion_research` subagents between 07:08:34 and 07:08:57 EDT. Their Terra requests
+began at 07:09:54 EDT and match the streaming, high-effort, large cached-context request shape in the production logs.
+This is evidence of expected Codex agent activity, not an unknown service or credential compromise. An installed
+Prospector Brave extension also contains a Terra model reference, but its non-streaming request shape does not match
+this incident.
+
 ## Timeline
 
 - 07:10:01–07:10:06 EDT: Five requests completed successfully.
@@ -78,6 +86,12 @@ A focused regression recreates the production condition by opening the Codex ups
 The focused Metered paid-fallback matrix passed all 25 steps. Formatting, lint, type checking, and Git diff checks also
 passed.
 
+Commit `7ac2c7478591b96b615d7e599009e46fab250785` passed the full GitHub validation workflow and was deployed as Deno
+revision `3hk9v2dx2g41`. The initial deployment verifier correctly failed because `deno deploy --prod` built a healthy
+revision but did not move the stable application alias from the prior revision. The already-built revision was then
+promoted through Deno's revision promotion API. Both the stable Deno application URL and `https://ai.ubq.fi/health`
+subsequently returned HTTP 200 and attested the repair SHA and revision. No paid live inference canary was used.
+
 ## Remaining risk
 
 This repair prevents the repeated immediate-503 failure storm after the timeout circuit opens. It cannot guarantee that
@@ -92,7 +106,10 @@ No evidence supports describing this incident as a global OpenAI outage.
 
 - Production Git SHA during the incident: `88ed1b854fd8f1571dd39b197f77bf6436d7d851`
 - Production Deno revision: `bpw68mckq1r9`
+- Repair production Git SHA: `7ac2c7478591b96b615d7e599009e46fab250785`
+- Repair production Deno revision: `3hk9v2dx2g41`
 - Live Deno Deploy log pull time: 2026-08-21 11:15:37 UTC
 - Preserved log capture: `logs/deno-deploy-20260821T111537Z.jsonl`
+- Terra parent Codex thread: `01a02400-9efa-7fa2-969d-1c048dca05d1`
 - Repair branch: `development`
 - Repository: `ubiquity/ai.ubq.fi`
