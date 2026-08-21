@@ -1,0 +1,234 @@
+name: Provider Sentinel
+
+on:
+  schedule:
+    # Daily repair cycle for the preceding 24 hours.
+    - cron: "0 6 * * *"
+    # Overlapping incident scan for the preceding 20 minutes.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types:
+      - provider_incident
+
+concurrency:
+  # One repair cycle may operate on the repository or shared preview app at a time.
+  group: provider-sentinel-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  sentinel:
+    if: >-
+      (
+        github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/development'
+      ) ||
+      (
+        (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') &&
+        vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Require a restricted artifact repository
+        shell: bash
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          set -euo pipefail
+          case "$REPOSITORY_VISIBILITY" in
+            private|internal)
+              echo "SENTINEL_REPOSITORY_RESTRICTED=true" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "::error::Provider Sentinel requires private or internal repository visibility before it captures or uploads raw logs."
+              exit 1
+              ;;
+          esac
+
+      - name: Select immutable run mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              mode=preview
+              ;;
+            schedule)
+              if [ "${{ github.event.schedule }}" = "0 6 * * *" ]; then
+                mode=daily
+              else
+                mode=incident
+              fi
+              ;;
+            repository_dispatch)
+              mode=incident
+              ;;
+            *)
+              echo "::error::Unsupported Provider Sentinel event."
+              exit 1
+              ;;
+          esac
+          echo "SENTINEL_MODE=$mode" >> "$GITHUB_ENV"
+          echo "Sentinel mode: $mode" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Configure private Deno cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno_dir="$RUNNER_TEMP/sentinel-deno-cache"
+          mkdir -p "$deno_dir"
+          chmod 700 "$deno_dir"
+          echo "DENO_DIR=$deno_dir" >> "$GITHUB_ENV"
+
+      - name: Check out full repository history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Install isolated-agent prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          npm install --global --ignore-scripts --no-audit --no-fund @openai/codex@0.149.0
+          mkdir -p "$RUNNER_TEMP/sentinel-bin"
+          GOBIN="$RUNNER_TEMP/sentinel-bin" go install github.com/gitleaks/gitleaks/v8@v8.28.0
+          echo "$RUNNER_TEMP/sentinel-bin" >> "$GITHUB_PATH"
+          bwrap --version
+          codex --version
+          "$RUNNER_TEMP/sentinel-bin/gitleaks" version
+
+      - name: Prime locked Deno dependency cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno cache \
+            --frozen \
+            --lock=deno.lock \
+            serve.ts \
+            scripts/setup-instance.ts \
+            scripts/sentinel/main.ts \
+            tests/*.ts
+
+      - name: Run Provider Sentinel
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
+          SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
+          SENTINEL_SIGNAL_ID: ${{ github.event.client_payload.signal_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env \
+            --allow-net \
+            --allow-read \
+            --allow-write \
+            --allow-run \
+            scripts/sentinel/main.ts \
+            --mode "$SENTINEL_MODE"
+
+      - name: Reject credential files from artifact paths
+        if: always() && env.SENTINEL_REPOSITORY_RESTRICTED == 'true'
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
+          SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if find \
+            .sentinel/raw-logs \
+            .sentinel/replay-cases \
+            .sentinel/replay-index \
+            .sentinel/reports \
+            -type f \( -name auth.json -o -name '*codex-auth*' -o -name '*auth-slot*' \) \
+            -print -quit 2>/dev/null | grep -q .; then
+            echo "::error::A forbidden credential-like file exists in a Sentinel artifact path."
+            echo "SENTINEL_ARTIFACTS_SAFE=false" >> "$GITHUB_ENV"
+            exit 1
+          fi
+          for secret_name in \
+            DENO_DEPLOY_TOKEN \
+            PREVIEW_UOS_AI_USER_TOKEN \
+            SENTINEL_CODEX_AUTH_SLOT_1_B64 \
+            SENTINEL_CODEX_AUTH_SLOT_2_B64 \
+            SENTINEL_REPLAY_KEY \
+            GITHUB_TOKEN; do
+            secret_value="${!secret_name:-}"
+            if [ -n "$secret_value" ]; then
+              pattern_file="$(mktemp "$RUNNER_TEMP/sentinel-artifact-pattern.XXXXXX")"
+              chmod 600 "$pattern_file"
+              printf '%s' "$secret_value" > "$pattern_file"
+              if grep \
+                --recursive \
+                --fixed-strings \
+                --quiet \
+                --file "$pattern_file" \
+                .sentinel/raw-logs \
+                .sentinel/replay-cases \
+                .sentinel/replay-index \
+                .sentinel/reports 2>/dev/null; then
+                : > "$pattern_file"
+                rm -f "$pattern_file"
+                echo "::error::Credential material exists in a Sentinel artifact path."
+                echo "SENTINEL_ARTIFACTS_SAFE=false" >> "$GITHUB_ENV"
+                exit 1
+              fi
+              : > "$pattern_file"
+              rm -f "$pattern_file"
+            fi
+          done
+          echo "SENTINEL_ARTIFACTS_SAFE=true" >> "$GITHUB_ENV"
+
+      - name: Upload restricted Sentinel evidence
+        if: >-
+          always() &&
+          env.SENTINEL_REPOSITORY_RESTRICTED == 'true' &&
+          env.SENTINEL_ARTIFACTS_SAFE == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.SENTINEL_EVIDENCE_ARTIFACT_NAME || format('sentinel-evidence-failed-before-dedupe-{0}', github.run_id) }}
+          path: |
+            .sentinel/raw-logs
+            .sentinel/reports
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Upload encrypted replay bundle
+        if: >-
+          always() &&
+          env.SENTINEL_REPOSITORY_RESTRICTED == 'true' &&
+          env.SENTINEL_ARTIFACTS_SAFE == 'true' &&
+          env.SENTINEL_HAS_REPLAY_CASES == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.SENTINEL_REPLAY_BUNDLE_ARTIFACT_NAME }}
+          path: |
+            .sentinel/replay-cases
+            .sentinel/replay-index
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90

@@ -212,7 +212,7 @@ export type ResponseTelemetry = Readonly<{
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
-  failureKind: ResponsesStreamFailureKind | null;
+  failureKind: string | null;
   responseCreatedObserved: boolean;
   syntheticTerminalType: "response.failed" | "error" | null;
   stream: boolean | null;
@@ -263,7 +263,7 @@ type ResponseTelemetryState = {
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
   streamTerminalType: ResponseStreamTerminalType | null;
-  failureKind: ResponsesStreamFailureKind | null;
+  failureKind: string | null;
   responseCreatedObserved: boolean;
   syntheticTerminalType: "response.failed" | "error" | null;
   stream: boolean | null;
@@ -503,6 +503,14 @@ const recordResponsesEventTelemetry = (
   const telemetry = context?.responseTelemetry;
   if (!telemetry) return;
   if (event.type === "response.created") telemetry.responseCreatedObserved = true;
+  if (event.type === "response.incomplete") {
+    const response = isRecord(event.value.response) ? event.value.response : null;
+    const details = response && isRecord(response.incomplete_details) ? response.incomplete_details : null;
+    const reason = details && typeof details.reason === "string" ? details.reason : null;
+    if (reason && /^(?:gateway|provider|upstream|server|network|timeout|deadline)[A-Za-z0-9_.:-]*$/i.test(reason)) {
+      telemetry.failureKind = `response_incomplete:${reason}`;
+    }
+  }
   if (isSyntheticResponsesFailureEvent(event)) {
     telemetry.syntheticTerminalType = event.type === "response.failed" || event.type === "error" ? event.type : null;
   }
@@ -6901,6 +6909,7 @@ const runEmbeddingsJobAttempt = async (params: {
 
   let currentJob: EmbeddingsJobRecord = locked;
   let queueRetryAfterMs: number | null = null;
+  let queueFailureKind: string | null = null;
 
   const computeMissing = async (): Promise<string[]> => {
     const entries = await Promise.all(
@@ -6935,10 +6944,16 @@ const runEmbeddingsJobAttempt = async (params: {
       uniqueHashes,
     );
     await recordErrorUsage(params.usageContext);
+    if (params.usageContext?.responseTelemetry) {
+      params.usageContext.responseTelemetry.stream = false;
+      params.usageContext.responseTelemetry.completed = false;
+      params.usageContext.responseTelemetry.streamTerminalType = "error";
+      params.usageContext.responseTelemetry.failureKind = code;
+    }
     return json(200, buildEmbeddingsJobBody(failed, null), { "x-uos-upstream": failed.upstream });
   };
 
-  const queueJob = async (waitMs: number): Promise<Response> => {
+  const queueJob = async (waitMs: number, failureKind: string | null = null): Promise<Response> => {
     const retryAfterSeconds = Math.max(1, Math.ceil(waitMs / 1000));
     const queued: EmbeddingsJobRecord = {
       ...currentJob,
@@ -6950,6 +6965,12 @@ const runEmbeddingsJobAttempt = async (params: {
     };
     currentJob = queued;
     await updateEmbeddingsJobRecord(params.kv, params.jobKey, params.jobLookupKey, queued);
+    if (failureKind && params.usageContext?.responseTelemetry) {
+      params.usageContext.responseTelemetry.stream = false;
+      params.usageContext.responseTelemetry.completed = false;
+      params.usageContext.responseTelemetry.streamTerminalType = "deadline";
+      params.usageContext.responseTelemetry.failureKind = failureKind;
+    }
     const body = buildEmbeddingsJobBody(queued, null);
     return json(202, body, { "Retry-After": String(retryAfterSeconds), "x-uos-upstream": queued.upstream });
   };
@@ -7030,6 +7051,7 @@ const runEmbeddingsJobAttempt = async (params: {
   for (const chunk of chunks) {
     if (Date.now() >= params.deadlineMs) {
       queueRetryAfterMs = 1000;
+      queueFailureKind = "embeddings_job_deadline";
       break;
     }
 
@@ -7066,6 +7088,7 @@ const runEmbeddingsJobAttempt = async (params: {
       const retryAfterMs = (error as { retry_after_ms?: number | null }).retry_after_ms ?? null;
       if (status && EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(status)) {
         queueRetryAfterMs = retryAfterMs ?? (status === 429 ? 60_000 : 1_000);
+        queueFailureKind = `embeddings_job_upstream_http_${status}`;
         break;
       }
       const snippet = formatErrorSnippet(error);
@@ -7110,7 +7133,7 @@ const runEmbeddingsJobAttempt = async (params: {
   if (missingAfter.length === 0) return await succeedJob();
 
   const waitMs = queueRetryAfterMs ?? 60_000;
-  return await queueJob(waitMs);
+  return await queueJob(waitMs, queueFailureKind);
 };
 
 const handleEmbeddingsJobCreateInternal = async (
@@ -8381,6 +8404,15 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       "chatgpt_codex",
       warnings,
     );
+  }
+  // A failed pre-commit attempt is diagnostic evidence for routing, not the
+  // terminal result of a later provider. Reset only final-failure telemetry
+  // when failover produced a ready response; the selected attempt will record
+  // its own terminal or stream failure below.
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.failureKind = null;
+    usageContext.responseTelemetry.syntheticTerminalType = null;
+    usageContext.responseTelemetry.streamTerminalType = null;
   }
   const lifecycle = primaryResult?.lifecycle ?? createMeteredTransportLifecycle(null);
   const routed = primaryResult?.routed ?? null;

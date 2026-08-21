@@ -78,6 +78,21 @@ import { withCodexQuotaHeaders } from "./codex_quota.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
 import { sha256Hex } from "./utils.ts";
 import { handleProviderCapacity } from "./provider_capacity.ts";
+import {
+  type AcceptedSentinelReplayInput,
+  captureAcceptedSentinelReplayInput,
+  createSentinelSseInspector,
+  discardSentinelReplayCaptureCandidate,
+  inspectSentinelBufferedResponseBody,
+  materializeSentinelReplayInput,
+  persistSentinelReplayFromEnvironment,
+  resolveSentinelClientFailureObservation,
+  type SentinelClientBodyObservation,
+  type SentinelFailureObservation,
+  shouldPersistSentinelReplay,
+  zeroSentinelReplayInput,
+} from "./sentinel_replay_capture.ts";
+import { handleAdminSentinelReplayCaptures } from "./sentinel_replay_admin.ts";
 
 type AuthenticatedClientResult = Extract<
   Awaited<ReturnType<typeof authenticateClient>>,
@@ -90,7 +105,7 @@ type RequestDeliveryInfo = Readonly<{
 }>;
 
 type DeliveryOutcome = "delivered" | "interrupted" | "unobserved";
-type BodyOutcome = "drained" | "interrupted";
+type BodyOutcome = "drained" | "interrupted" | "failed";
 
 export const resolveIdempotencyPrincipal = async (
   authResult: Readonly<{
@@ -180,6 +195,14 @@ const logTerminalRequest = async (
     deliveryOutcome: DeliveryOutcome;
     requestId: string;
     recordTelemetry?: typeof recordPromptCacheTelemetry;
+    sentinelReplayInput?: AcceptedSentinelReplayInput | null;
+    persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
+    streamReadFailure?: boolean;
+    suppressSentinelReplay?: boolean;
+    resolveClientBodyObservation?: () =>
+      | SentinelClientBodyObservation
+      | null
+      | Promise<SentinelClientBodyObservation | null>;
   }>,
 ): Promise<void> => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
@@ -223,9 +246,13 @@ const logTerminalRequest = async (
     account_cohort_id: accountCohortId,
     affinity_outcome: telemetry?.affinityOutcome ?? "none",
     fallback_reason: telemetry?.fallbackReason ?? null,
-    stream: telemetry?.stream ?? null,
-    stream_terminal_type: telemetry?.streamTerminalType ?? null,
-    failure_kind: telemetry?.failureKind ?? null,
+    stream: input.streamReadFailure ? telemetry?.stream ?? true : telemetry?.stream ?? null,
+    stream_terminal_type: input.streamReadFailure
+      ? telemetry?.streamTerminalType ?? "error"
+      : telemetry?.streamTerminalType ?? null,
+    failure_kind: input.streamReadFailure
+      ? telemetry?.failureKind ?? "gateway_stream_read_error"
+      : telemetry?.failureKind ?? null,
     response_created_observed: telemetry?.responseCreatedObserved ?? false,
     synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
     attempted_providers: telemetry?.attemptedProviders ?? [],
@@ -241,15 +268,39 @@ const logTerminalRequest = async (
     router_revision: input.response.headers.get("x-uos-router-revision"),
   };
   console.info("[ai.ubq.fi] request_terminal", JSON.stringify(terminal));
-  await (input.recordTelemetry ?? recordPromptCacheTelemetry)({
+  const telemetryWrite = (input.recordTelemetry ?? recordPromptCacheTelemetry)({
     provider: terminal.provider,
     model: terminal.model,
     route: terminal.route,
     status: terminal.status,
-    completed: telemetry?.completed ?? false,
+    completed: input.streamReadFailure ? false : telemetry?.completed ?? false,
     usageTelemetryStatus: terminal.usage_telemetry_status,
     cacheWriteTokensPresent: terminal.cache_write_input_tokens !== null,
   });
+  const replayObservation: SentinelFailureObservation = {
+    status: terminal.status,
+    stream: terminal.stream,
+    completed: input.streamReadFailure ? false : telemetry?.completed ?? false,
+    terminal_type: terminal.stream_terminal_type,
+    failure_kind: terminal.failure_kind,
+    synthetic_terminal_type: terminal.synthetic_terminal_type,
+    provider_route: terminal.provider,
+  };
+  try {
+    const clientBodyObservation = await input.resolveClientBodyObservation?.() ?? null;
+    const clientObservation = resolveSentinelClientFailureObservation(replayObservation, clientBodyObservation);
+    const replayWrite = input.sentinelReplayInput && !input.suppressSentinelReplay &&
+        shouldPersistSentinelReplay(replayObservation, clientObservation)
+      ? (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
+        input.sentinelReplayInput,
+        replayObservation,
+        clientObservation,
+      )
+      : Promise.resolve();
+    await Promise.all([telemetryWrite, replayWrite]);
+  } finally {
+    zeroSentinelReplayInput(input.sentinelReplayInput);
+  }
 };
 
 export const warnQuotaAccountingFailure = (
@@ -286,13 +337,66 @@ export const withTerminalRequestLog = (
     deliverySignal?: AbortSignal;
     /** Test seam for proving terminal telemetry remains best effort. */
     recordTelemetry?: typeof recordPromptCacheTelemetry;
+    /** Test seam for proving failed replay persistence and successful-request exclusion. */
+    sentinelReplayInput?: AcceptedSentinelReplayInput | null;
+    persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
   }>,
 ): Promise<Response> => {
+  const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
+  const isSse = contentType.includes("text/event-stream");
+  const initialTelemetry = getResponseTelemetry(input.telemetryResponse ?? response);
+  let clientBodyObservation: SentinelClientBodyObservation | null = null;
+  let bufferedObservation: Promise<SentinelClientBodyObservation | null> | null = null;
+  if (
+    !isSse && response.body &&
+    (response.status >= 400 || response.status === 202 || input.route.startsWith("embeddings.jobs.") ||
+      (initialTelemetry?.completed === false &&
+        (initialTelemetry.streamTerminalType !== null || initialTelemetry.failureKind !== null ||
+          initialTelemetry.syntheticTerminalType !== null)))
+  ) {
+    bufferedObservation = inspectSentinelBufferedResponseBody(response);
+  }
+  let replayFinalization: Promise<void> | null = null;
+  const persistReplayAtApplicationTerminal = (streamReadFailure = false): Promise<void> => {
+    if (replayFinalization) return replayFinalization;
+    const sentinelReplayInput = input.sentinelReplayInput;
+    replayFinalization = (async () => {
+      if (!sentinelReplayInput) return;
+      const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
+      const observation: SentinelFailureObservation = {
+        status: response.status,
+        stream: streamReadFailure ? telemetry?.stream ?? true : telemetry?.stream ?? null,
+        completed: streamReadFailure ? false : telemetry?.completed ?? false,
+        terminal_type: streamReadFailure
+          ? telemetry?.streamTerminalType ?? "error"
+          : telemetry?.streamTerminalType ?? null,
+        failure_kind: streamReadFailure
+          ? telemetry?.failureKind ?? "gateway_stream_read_error"
+          : telemetry?.failureKind ?? null,
+        synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
+        provider_route: telemetry?.provider ?? response.headers.get("x-uos-upstream") ?? "gateway",
+      };
+      const bodyObservation = clientBodyObservation ?? await bufferedObservation;
+      const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
+      if (shouldPersistSentinelReplay(observation, clientObservation)) {
+        await (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
+          sentinelReplayInput,
+          observation,
+          clientObservation,
+        );
+      }
+    })().catch(() => {
+      // Capture persistence is best effort and must not replace the response.
+    }).finally(() => zeroSentinelReplayInput(sentinelReplayInput));
+    return replayFinalization;
+  };
   let terminalLog: Promise<void> | null = null;
   let completionFinalization: Promise<void> | null = null;
   const log = (
     downstreamDrainedAtMonotonicMs?: number,
     deliveryOutcome: DeliveryOutcome = "unobserved",
+    streamReadFailure = false,
+    suppressSentinelReplay = false,
   ): Promise<void> => {
     if (terminalLog) return terminalLog;
     terminalLog = logTerminalRequest({
@@ -300,6 +404,9 @@ export const withTerminalRequestLog = (
       response,
       downstreamDrainedAtMonotonicMs,
       deliveryOutcome,
+      streamReadFailure,
+      suppressSentinelReplay: suppressSentinelReplay || replayFinalization !== null,
+      resolveClientBodyObservation: async () => clientBodyObservation ?? await bufferedObservation,
     }).catch(() => {
       // Terminal logging and its durable baseline counters are best effort;
       // neither may replace a response that is already ready for the client.
@@ -326,25 +433,45 @@ export const withTerminalRequestLog = (
     })();
     return completionFinalization;
   };
-  if (!response.body || !response.headers.get("Content-Type")?.toLowerCase().includes("text/event-stream")) {
+  if (!response.body || !isSse) {
     return (async () => {
       try {
         await finalizeCompletion();
+        await persistReplayAtApplicationTerminal();
         return response;
       } finally {
         if (deliveryOutcome) {
-          void deliveryOutcome.then((outcome) => log(undefined, outcome));
+          void deliveryOutcome.then((outcome) => log(undefined, outcome, false, true));
         } else {
-          await log();
+          await log(undefined, "unobserved", false, true);
         }
       }
     })();
   }
 
   const reader = response.body.getReader();
+  const sseInspector = createSentinelSseInspector();
+  let sseInspectionFailed = false;
+  const inspectSseChunk = (value: Uint8Array): void => {
+    if (sseInspectionFailed) return;
+    try {
+      sseInspector.push(value);
+    } catch {
+      sseInspectionFailed = true;
+    }
+  };
+  const finishSseInspection = (termination: "eof" | "read_error" = "eof"): SentinelClientBodyObservation | null => {
+    if (sseInspectionFailed) return null;
+    try {
+      return sseInspector.finish(termination);
+    } catch {
+      return null;
+    }
+  };
   let downstreamDrainedAtMonotonicMs: number | undefined;
   let settleBody: ((outcome: BodyOutcome) => void) | null = null;
   let bodyDidSettle = false;
+  let downstreamCancelled = false;
   const bodyOutcome = deliveryOutcome
     ? new Promise<BodyOutcome>((resolve) => {
       settleBody = (outcome) => {
@@ -358,44 +485,75 @@ export const withTerminalRequestLog = (
     void Promise.all([bodyOutcome, deliveryOutcome]).then(([bodyResult, deliveryResult]) =>
       log(
         downstreamDrainedAtMonotonicMs,
-        bodyResult === "interrupted" ? "interrupted" : deliveryResult,
+        bodyResult === "drained" ? deliveryResult : "interrupted",
+        bodyResult === "failed",
+        bodyResult === "interrupted",
       )
     );
   }
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
+      let result: ReadableStreamReadResult<Uint8Array>;
       try {
-        const { done, value } = await reader.read();
-        if (done) {
-          // Snapshot the downstream drain before finalization. Accounting can
-          // wait on KV and belongs in total latency, not drain telemetry.
-          downstreamDrainedAtMonotonicMs = performance.now();
-          // The application stream has drained, but Deno still owns delivery.
-          // Finish one-shot usage accounting before closing this wrapper, then
-          // let `completed` classify the separate delivery outcome.
-          await finalizeCompletion();
-          if (!deliveryOutcome) await log(downstreamDrainedAtMonotonicMs);
+        result = await reader.read();
+      } catch (error) {
+        clientBodyObservation = finishSseInspection("read_error");
+        const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
+        if (downstreamAborted) zeroSentinelReplayInput(input.sentinelReplayInput);
+        else await persistReplayAtApplicationTerminal(true);
+        if (!deliveryOutcome) await log(undefined, "interrupted", !downstreamAborted, true);
+        try {
+          controller.error(error);
+        } catch {
+          // The downstream may have cancelled while the provider read failed.
+        }
+        settleBody?.(downstreamAborted ? "interrupted" : "failed");
+        return;
+      }
+      if (result.done) {
+        clientBodyObservation = finishSseInspection();
+        // Snapshot the downstream drain before finalization. Accounting can
+        // wait on KV and belongs in total latency, not drain telemetry.
+        downstreamDrainedAtMonotonicMs = performance.now();
+        // The application stream has drained, but Deno still owns delivery.
+        // Finish one-shot usage accounting before closing this wrapper, then
+        // let `completed` classify the separate delivery outcome.
+        await finalizeCompletion();
+        await persistReplayAtApplicationTerminal();
+        try {
           controller.close();
-          settleBody?.("drained");
+        } catch {
+          if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
+          settleBody?.("interrupted");
           return;
         }
-        // The OpenAI stream observer marks response.completed before yielding
-        // the chunk that contains it. Schedule accounting, but never hold back
-        // the provider bytes that are already ready for the client.
-        void finalizeCompletion();
-        controller.enqueue(value);
-      } catch (error) {
-        if (!deliveryOutcome) await log();
-        controller.error(error);
+        if (!deliveryOutcome) await log(downstreamDrainedAtMonotonicMs, "unobserved", false, true);
+        settleBody?.("drained");
+        return;
+      }
+      // The OpenAI stream observer marks response.completed before yielding
+      // the chunk that contains it. Schedule accounting, but never hold back
+      // the provider bytes that are already ready for the client.
+      void finalizeCompletion();
+      inspectSseChunk(result.value);
+      try {
+        controller.enqueue(result.value);
+      } catch {
+        downstreamCancelled = true;
+        void reader.cancel().catch(() => {});
+        zeroSentinelReplayInput(input.sentinelReplayInput);
+        if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
         settleBody?.("interrupted");
       }
     },
     cancel(reason) {
       // Cancellation must not await a concurrently pending provider pull;
       // that pull observes the cancellation and performs layered cleanup.
+      downstreamCancelled = true;
       void reader.cancel(reason).catch(() => {});
       void finalizeCompletion();
-      if (!deliveryOutcome) void log();
+      zeroSentinelReplayInput(input.sentinelReplayInput);
+      if (!deliveryOutcome) void log(undefined, "interrupted", false, true);
       settleBody?.("interrupted");
     },
   });
@@ -557,6 +715,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const authError = await requireSuperAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminKvMigrationValidate());
+  }
+
+  if (req.method === "GET" && path === "/admin/sentinel/replay-captures") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminSentinelReplayCaptures(req));
   }
 
   if ((req.method === "GET" || req.method === "POST") && path === "/admin/defaults") {
@@ -775,6 +939,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       }),
     );
   }
+  const sentinelReplayCandidate = terminalRoute ? captureAcceptedSentinelReplayInput(req, requestId) : null;
+  const takeSentinelReplayInput = (): AcceptedSentinelReplayInput | null => {
+    const materialized = materializeSentinelReplayInput(sentinelReplayCandidate);
+    discardSentinelReplayCaptureCandidate(sentinelReplayCandidate);
+    return materialized;
+  };
   const resolveKernelLimitScope = async (): Promise<"org" | "repo" | null> => {
     if (!kernelRepo) return null;
     if (kernelLimitScope) return kernelLimitScope;
@@ -800,15 +970,22 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const telemetry = getResponseTelemetry(response);
     const correlated = withProviderRequestId(response, telemetry?.providerRequestId ?? null);
     const decorated = includeQuota ? decorateInferenceQuota(correlated, usagePolicy, telemetry) : correlated;
-    return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
-      route,
-      telemetryResponse: response,
-      startedAtMonotonicMs: requestStartedAtMonotonicMs,
-      requestId,
-      onCompleted,
-      deliveryCompleted: delivery?.completed,
-      deliverySignal: delivery?.downstreamSignal,
-    });
+    const sentinelReplayInput = takeSentinelReplayInput();
+    try {
+      return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
+        route,
+        telemetryResponse: response,
+        startedAtMonotonicMs: requestStartedAtMonotonicMs,
+        requestId,
+        onCompleted,
+        deliveryCompleted: delivery?.completed,
+        deliverySignal: delivery?.downstreamSignal,
+        sentinelReplayInput,
+      });
+    } catch (error) {
+      zeroSentinelReplayInput(sentinelReplayInput);
+      throw error;
+    }
   };
   const bestEffortKernelInferenceUsage = async (): Promise<void> => {
     try {
@@ -853,7 +1030,29 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
         ...(runError.retryAfter ? { headers: { "Retry-After": runError.retryAfter } } : {}),
       });
     }
-    if (runError) throw runError;
+    if (runError) {
+      const sentinelReplayInput = takeSentinelReplayInput();
+      if (sentinelReplayInput) {
+        const observation: SentinelFailureObservation = {
+          status: 500,
+          stream: null,
+          completed: false,
+          terminal_type: "error",
+          failure_kind: runError instanceof Error ? runError.name : "unknown_exception",
+          synthetic_terminal_type: null,
+          provider_route: "gateway",
+        };
+        try {
+          await persistSentinelReplayFromEnvironment(sentinelReplayInput, observation);
+        } catch {
+          // Replay persistence is best effort and cannot replace the original
+          // gateway exception or expose its request body in logs.
+        } finally {
+          zeroSentinelReplayInput(sentinelReplayInput);
+        }
+      }
+      throw runError;
+    }
     if (!response) throw new Error("Inference handler completed without a response");
     return response;
   };

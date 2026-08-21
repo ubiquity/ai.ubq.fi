@@ -1,0 +1,126 @@
+# Provider Sentinel
+
+Provider Sentinel is a single-runner Deno orchestration workflow for provider incident triage, repair, native review,
+preview replay, explicit Deno revision promotion, and post-promotion monitoring. Repository content, Deno logs, and
+captured request bodies are untrusted inputs. Agent prompts cannot change the fixed model, review, credential,
+deployment, or promotion policy in `scripts/sentinel/`.
+
+## Modes and schedule
+
+The `Provider Sentinel` Actions workflow has three modes:
+
+- `preview`: a manual `workflow_dispatch` run on the trusted `development` ref. It is supervised and may deploy only the
+  exact candidate SHA to `p-ai-ubq-fi`. It does not push `development` or promote production. A manual run selected on
+  any other ref is skipped.
+- `daily`: the 06:00 UTC schedule inspects the previous 24 hours.
+- `incident`: the 15-minute schedule and `provider_incident` repository-dispatch event inspect the previous 20 minutes,
+  so adjacent scans overlap by five minutes.
+
+On GitHub Actions, each interval is anchored to the current workflow run's immutable `created_at` value from the GitHub
+API. A cycle that waited for the repository concurrency lock therefore inspects the window associated with its trigger,
+not a later window calculated when the runner finally starts.
+
+After anchoring the interval, the orchestrator computes one event deduplication key. A `provider_incident` payload may
+provide `client_payload.signal_id`; repeated deliveries of that ID share one key, while events without an ID include the
+anchored interval in the key. Before raw-log capture, the cycle looks for a 90-day evidence artifact named exactly for
+that key and exits as a duplicate when one exists. Evidence artifacts from separate runs may use the same name.
+
+The workflow uses one repository-wide concurrency group and does not cancel an active run. Scheduled and
+repository-dispatch runs are skipped unless the repository variable `SENTINEL_AUTONOMY_ENABLED` is exactly `true`.
+Manual preview runs remain eligible while that gate is disabled, subject to the repository-visibility gate below.
+
+The workflow fails before checkout, raw-log capture, or secret use unless repository visibility is `private` or
+`internal`. This repository is currently public, so the visibility gate presently blocks every Sentinel run. Keep the
+gate in place until the repository becomes restricted or raw logs and reports move to a separate restricted artifact
+destination.
+
+## Required repository configuration
+
+Add these Actions secrets:
+
+- `SENTINEL_CODEX_AUTH_SLOT_1_B64`: base64 encoding of one complete Codex CLI `auth.json` document.
+- `SENTINEL_CODEX_AUTH_SLOT_2_B64`: base64 encoding of a second complete Codex CLI `auth.json` document.
+- `SENTINEL_REPLAY_KEY`: one cryptographically random 32-byte value encoded as base64url. The deployment workflow
+  validates its decoded size without printing it, then synchronizes it to preview and production with
+  `deno deploy env load --replace`.
+
+The workflow also requires existing secrets `DENO_DEPLOY_TOKEN` and `PREVIEW_UOS_AI_USER_TOKEN`. The deployment workflow
+installs the preview credential only on `p-ai-ubq-fi`, and replay uses that same credential to replace authorization.
+Production secret synchronization selects only `UBIQUITY_AI_USER_TOKEN`; an absent production token fails the deployment
+instead of falling through to the preview token. `GITHUB_TOKEN` comes from the workflow and has `actions: write` and
+`contents: write` permissions. Checkout does not persist it in Git configuration; the trusted orchestrator passes a
+process-local Git HTTP authorization header only to explicit fetch and push commands without writing the token into the
+checkout. The selected real Codex auth remains only in the parent orchestrator and its loopback relay. Agent
+`CODEX_HOME` directories contain a synthetic non-secret auth document. The outer Bubblewrap sandbox hides host runner
+files and PIDs and mounts only system files, the repository, the selected checkout, and the synthetic home. Neither real
+nor synthetic auth is placed under `.sentinel/`, logged, prompted, or uploaded. Workflow secrets are scoped to the
+orchestration and final artifact-scan steps, not dependency installation or artifact upload actions.
+
+Actions artifacts inherit the repository's access controls. Complete raw Deno log captures are given to triage and
+uploaded without field sanitization, filtering, or summarization only after the private/internal visibility gate passes.
+The repository or organization must also permit 90-day artifact retention. Each run uploads raw logs and durable reports
+in one restricted evidence artifact. Runs with new captures upload a separate encrypted replay bundle. Both artifacts
+use 90-day retention. Codex auth documents and deployment credentials are not artifacts.
+
+Each encrypted replay bundle uses a non-sensitive, digest-addressed `sentinel-replay-bundle-v1-*` name and includes its
+index manifest. The keyed case-group Bloom filter in the artifact name lets future runs locate and download only bundles
+that may match the current incident. The index contains no request bodies, decrypted capture fields, authorization
+values, cookies, or credentials. Matching retained bundles are subject to fail-closed aggregate artifact-count,
+compressed-byte, and extracted-byte limits. Duplicate retained captures are collapsed by capture fingerprint before
+decryption and replay.
+
+Generate a replay key locally without writing the plaintext to shell history:
+
+```sh
+openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '='
+```
+
+The Sentinel and deployment workflows pin third-party actions to full commit SHAs and pin Deno to `2.9.5`. Review and
+update these pins deliberately; do not replace them with moving major-version tags before autonomous operation. The
+Sentinel primes one run-scoped `DENO_DIR`, then starts the orchestrator with locked, frozen, cached-only dependency
+resolution.
+
+## Deployment identity and workflow dispatch
+
+The default workflow token can push a candidate to `development`, but that token's push does not create another push
+workflow run. Provider Sentinel therefore performs an explicit workaround: after proving that `origin/development` has
+not advanced and pushing the accepted SHA, it dispatches `.github/workflows/deno-deploy.yml` at the exact `development`
+ref. It accepts only the deployment run whose recorded head SHA equals the candidate SHA. Preview runs use the same
+explicit dispatch with `deploy_preview=true` at the temporary Sentinel ref. Every Sentinel dispatch also sets
+`sentinel_build_only=true`, which skips the deployment workflow's stable verification and promotion job. The Sentinel
+orchestrator alone resolves, replays, verifies, and promotes the exact revision. Normal push and manual deployment runs
+retain the workflow-owned verification and promotion behavior.
+
+Deployment success alone is not production identity. The orchestrator resolves the new routed revision whose revision
+URL `/health` reports the exact candidate Git SHA, promotes that revision with Deno's revision API, requires HTTP 204,
+and verifies the public Deno host and `ai.ubq.fi` report both the candidate SHA and promoted revision. It records the
+previous healthy SHA and revision before deployment so rollback has an exact target. Health attestation requires HTTP
+200. An identity-bearing error response is not treated as healthy.
+
+Preview replay uses the resolved revision's immutable hostname, not the shared `p-ai-ubq-fi` stable hostname. Production
+`keep` is finalized only after one last dual-host identity check. Before rollback can promote the recorded old revision,
+the orchestrator re-fetches `origin/development`, checks both production hosts, and stops if either identity belongs to
+an unknown deployment. Durable preview and production decision files use the declared deployment-identity shape with
+app, Git SHA, revision, health URL, and observation time for both candidate and previous revisions.
+
+The cycle will not start a production push after its first 90 minutes. This preserves a large part of the hosted
+runner's six-hour limit for the fixed 30-minute observation window, the separate monitoring agent, and a deployment plus
+Git revert if any production-stage operation fails.
+
+## Supervised preview acceptance
+
+Keep `SENTINEL_AUTONOMY_ENABLED` unset or `false` until repository visibility and immutable dependency pins satisfy the
+gates above and one manual preview cycle on `development` demonstrates all of these results:
+
+1. Both auth slots are validated without disclosure, quota selection is correct, and account changes between stages are
+   handled.
+2. Complete raw logs and new encrypted KV captures are exported to restricted artifacts, while exact request bytes and
+   allowed compatibility headers survive decryption and authorization is replaced.
+3. Triage reports every evidence-backed finding, implementation records every disposition, and native `codex review`
+   blocks P0/P1 while deduplicating P2/P3 into `docs/sentinel-review-backlog.md`.
+4. Formatting, lint, build, affected tests, served HTTP/SSE checks, secret scanning, and replay validation pass for the
+   exact candidate SHA.
+5. The exact SHA reaches `p-ai-ubq-fi`; a simulated keep and rollback both restore the expected revision identity.
+
+After the supervised run has a complete durable report, set the repository variable `SENTINEL_AUTONOMY_ENABLED=true`.
+Remove or change that variable to stop new autonomous daily and incident cycles.

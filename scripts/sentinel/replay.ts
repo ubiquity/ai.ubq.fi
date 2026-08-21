@@ -1,0 +1,400 @@
+import {
+  createSentinelSseInspector,
+  decodeSentinelReplayKey,
+  decryptExportedSentinelReplay,
+  type ExportedSentinelReplayCapture,
+  inspectSentinelBufferedResponse,
+  isExportedSentinelReplayCapture,
+  sentinelFailureSignature,
+} from "../../src/sentinel_replay_capture.ts";
+import type { ReplayCase, ReplayResult } from "./types.ts";
+
+type Fetch = typeof fetch;
+
+export const SENTINEL_MAX_ENCRYPTED_REPLAY_PAGE_BYTES = 48 * 1_024 * 1_024;
+export const SENTINEL_MAX_ENCRYPTED_REPLAY_TOTAL_BYTES = 128 * 1_024 * 1_024;
+export const SENTINEL_MAX_REPLAY_EXPORT_PAGES = 256;
+export const SENTINEL_MAX_REPLAY_RESPONSE_BYTES = 16 * 1_024 * 1_024;
+
+class BoundedResponseError extends Error {
+  constructor(readonly reason: "invalid_content_length" | "response_too_large") {
+    super(reason === "response_too_large" ? "Response exceeds its size limit" : "Response Content-Length is invalid");
+    this.name = "BoundedResponseError";
+  }
+}
+
+const declaredContentLength = (response: Response): number | null => {
+  const raw = response.headers.get("content-length");
+  if (raw === null) return null;
+  if (!/^(?:0|[1-9][0-9]*)$/.test(raw)) throw new BoundedResponseError("invalid_content_length");
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed)) throw new BoundedResponseError("invalid_content_length");
+  return parsed;
+};
+
+const concatBytes = (parts: readonly Uint8Array[], total: number): Uint8Array<ArrayBuffer> => {
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.byteLength;
+  }
+  return output;
+};
+
+const readBoundedResponse = async (
+  response: Response,
+  maxBytes: number,
+  onChunk?: (chunk: Uint8Array) => void,
+): Promise<Uint8Array<ArrayBuffer>> => {
+  let declared: number | null;
+  try {
+    declared = declaredContentLength(response);
+  } catch (error) {
+    await response.body?.cancel().catch(() => {});
+    throw error;
+  }
+  if (declared !== null && declared > maxBytes) {
+    await response.body?.cancel().catch(() => {});
+    throw new BoundedResponseError("response_too_large");
+  }
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const parts: Uint8Array<ArrayBuffer>[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.byteLength > maxBytes - total) {
+        await reader.cancel().catch(() => {});
+        throw new BoundedResponseError("response_too_large");
+      }
+      total += value.byteLength;
+      onChunk?.(value);
+      if (!onChunk) parts.push(new Uint8Array(value));
+    }
+  } catch (error) {
+    await reader.cancel(error).catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  return onChunk ? new Uint8Array() : concatBytes(parts, total);
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+export const fetchEncryptedReplayCaptures = async (
+  input: Readonly<{
+    baseUrl: string;
+    adminToken: string;
+    afterMs: number;
+    fetchImpl?: Fetch;
+  }>,
+): Promise<ExportedSentinelReplayCapture[]> => {
+  if (!input.adminToken) throw new Error("Sentinel replay export credential is missing");
+  if (!Number.isSafeInteger(input.afterMs) || input.afterMs < 0) throw new Error("Replay export start is invalid");
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const base = new URL(input.baseUrl);
+  const captures: ExportedSentinelReplayCapture[] = [];
+  let cursor: string | null = null;
+  let totalBytes = 0;
+  let previousManifestKey: readonly [number, string, string] | null = null;
+  const observedCursors = new Set<string>();
+  for (let pageNumber = 0; pageNumber < SENTINEL_MAX_REPLAY_EXPORT_PAGES; pageNumber++) {
+    const url = new URL("/admin/sentinel/replay-captures", base);
+    url.searchParams.set("after_ms", String(input.afterMs));
+    url.searchParams.set("limit", "1");
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const response = await fetchImpl(url, {
+      method: "GET",
+      redirect: "error",
+      headers: { Authorization: `Bearer ${input.adminToken}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(`Sentinel replay export failed with HTTP ${response.status}`);
+    }
+    const pageBytes = await readBoundedResponse(response, SENTINEL_MAX_ENCRYPTED_REPLAY_PAGE_BYTES);
+    totalBytes += pageBytes.byteLength;
+    if (totalBytes > SENTINEL_MAX_ENCRYPTED_REPLAY_TOTAL_BYTES) {
+      throw new Error("Sentinel replay export exceeded the aggregate byte limit");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(pageBytes));
+    } catch {
+      throw new Error("Sentinel replay export returned invalid JSON");
+    }
+    if (
+      !isRecord(parsed) || !Array.isArray(parsed.data) ||
+      parsed.data.length > 1 ||
+      !(parsed.cursor === null ||
+        (typeof parsed.cursor === "string" && parsed.cursor.length <= 2_048 &&
+          /^[A-Za-z0-9_-]+$/.test(parsed.cursor))) ||
+      !parsed.data.every(isExportedSentinelReplayCapture)
+    ) {
+      throw new Error("Sentinel replay export returned an invalid encrypted page");
+    }
+    if (parsed.cursor !== null && parsed.data.length !== 1) {
+      throw new Error("Sentinel replay export returned an empty continuation page");
+    }
+    for (const capture of parsed.data) {
+      if (capture.manifest.captured_at_ms < input.afterMs) {
+        throw new Error("Sentinel replay export returned an out-of-range manifest");
+      }
+      const currentKey = [
+        capture.manifest.captured_at_ms,
+        capture.manifest.fingerprint,
+        capture.manifest.capture_id,
+      ] as const;
+      if (
+        previousManifestKey &&
+        (currentKey[0] < previousManifestKey[0] ||
+          (currentKey[0] === previousManifestKey[0] && currentKey[1] < previousManifestKey[1]) ||
+          (currentKey[0] === previousManifestKey[0] && currentKey[1] === previousManifestKey[1] &&
+            currentKey[2] <= previousManifestKey[2]))
+      ) {
+        throw new Error("Sentinel replay export manifests are not strictly ordered");
+      }
+      previousManifestKey = currentKey;
+    }
+    captures.push(...parsed.data);
+    cursor = parsed.cursor;
+    if (!cursor) return captures;
+    if (observedCursors.has(cursor)) throw new Error("Sentinel replay export cursor repeated");
+    observedCursors.add(cursor);
+  }
+  throw new Error("Sentinel replay export exceeded the page limit");
+};
+
+export const decryptReplayCaptures = async (
+  captures: readonly ExportedSentinelReplayCapture[],
+  encodedKey: string,
+): Promise<ReplayCase[]> => {
+  const keyBytes = decodeSentinelReplayKey(encodedKey.trim());
+  if (!keyBytes) throw new Error("SENTINEL_REPLAY_KEY must encode exactly 32 bytes");
+  const deduplicated = new Map<string, ReplayCase>();
+  try {
+    for (const capture of captures) {
+      const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
+      if (plaintext.method !== "POST" || !plaintext.endpoint.startsWith("/")) {
+        plaintext.body.fill(0);
+        continue;
+      }
+      const prior = deduplicated.get(capture.manifest.fingerprint);
+      prior?.body.fill(0);
+      deduplicated.set(capture.manifest.fingerprint, {
+        fingerprint: capture.manifest.fingerprint,
+        case_group_digest: capture.manifest.case_group_digest,
+        captured_at_ms: capture.manifest.captured_at_ms,
+        endpoint: plaintext.endpoint,
+        method: plaintext.method,
+        content_type: plaintext.content_type,
+        compatibility_headers: plaintext.compatibility_headers,
+        body: plaintext.body,
+        original: {
+          status: plaintext.client_observation.status,
+          stream: plaintext.client_observation.stream,
+          framing_valid: plaintext.client_observation.framing_valid,
+          completed: plaintext.client_observation.completed,
+          terminal_type: plaintext.client_observation.terminal_type,
+          failure_kind: plaintext.client_observation.failure_kind,
+          provider_route: plaintext.client_observation.provider_route,
+          failure_signature: plaintext.failure_signature,
+          internal_terminal_type: plaintext.observation.terminal_type,
+          internal_failure_kind: plaintext.observation.failure_kind,
+          synthetic_terminal_type: plaintext.observation.synthetic_terminal_type,
+        },
+      });
+    }
+    return [...deduplicated.values()].sort((left, right) => left.captured_at_ms - right.captured_at_ms);
+  } catch (error) {
+    for (const replayCase of deduplicated.values()) replayCase.body.fill(0);
+    throw error;
+  } finally {
+    keyBytes.fill(0);
+  }
+};
+
+export const selectCurrentAndMatchingRegressionCases = (
+  current: readonly ReplayCase[],
+  retained: readonly ReplayCase[],
+): ReplayCase[] => {
+  const groups = new Set(current.map((item) => item.case_group_digest));
+  const selected = new Map(current.map((item) => [item.fingerprint, item]));
+  for (const item of retained) {
+    if (groups.has(item.case_group_digest) && !selected.has(item.fingerprint)) selected.set(item.fingerprint, item);
+  }
+  return [...selected.values()].sort((left, right) => left.captured_at_ms - right.captured_at_ms);
+};
+
+type SseObservation = Readonly<{
+  framingValid: boolean;
+  terminalEvent: string | null;
+  failureKind: string | null;
+  completed: boolean;
+}>;
+
+export const inspectSse = (text: string): SseObservation => {
+  const inspector = createSentinelSseInspector();
+  inspector.push(new TextEncoder().encode(text));
+  const inspected = inspector.finish();
+  return {
+    framingValid: inspected.framing_valid,
+    terminalEvent: inspected.terminal_type,
+    failureKind: inspected.failure_kind,
+    completed: inspected.completed,
+  };
+};
+
+const inspectSseResponse = async (response: Response): Promise<SseObservation> => {
+  const inspector = createSentinelSseInspector();
+  let readFailed = false;
+  try {
+    await readBoundedResponse(response, SENTINEL_MAX_REPLAY_RESPONSE_BYTES, (chunk) => inspector.push(chunk));
+  } catch (error) {
+    if (error instanceof BoundedResponseError || (error instanceof DOMException && error.name === "TimeoutError")) {
+      throw error;
+    }
+    readFailed = true;
+  }
+  const inspected = inspector.finish(readFailed ? "read_error" : "eof");
+  return {
+    framingValid: inspected.framing_valid,
+    terminalEvent: inspected.terminal_type,
+    failureKind: inspected.failure_kind,
+    completed: inspected.completed,
+  };
+};
+
+const inspectBuffered = (status: number, contentType: string, bytes: Uint8Array): SseObservation => {
+  const inspected = inspectSentinelBufferedResponse(status, contentType, bytes);
+  return {
+    framingValid: inspected.framing_valid,
+    terminalEvent: inspected.terminal_type,
+    failureKind: inspected.failure_kind,
+    completed: inspected.completed,
+  };
+};
+
+export const replayOneCase = async (
+  input: Readonly<{
+    replayCase: ReplayCase;
+    previewBaseUrl: string;
+    previewCredential: string;
+    fetchImpl?: Fetch;
+    timeoutMs?: number;
+  }>,
+): Promise<ReplayResult> => {
+  const unavailable = (reason: string): ReplayResult => ({
+    capture_fingerprint: input.replayCase.fingerprint,
+    attempted: false,
+    unavailable_reason: reason,
+    http_status: null,
+    sse_framing_valid: null,
+    terminal_event: null,
+    provider_route: null,
+    observed_failure_signature: null,
+    outcome: "unavailable",
+    comparison: {
+      status_matches_original: null,
+      terminal_matches_original: null,
+      provider_matches_original: null,
+      failure_signature_matches_original: null,
+      framing_matches_original: null,
+    },
+  });
+  if (!input.previewCredential) return unavailable("preview_credential_missing");
+  let target: URL;
+  try {
+    const base = new URL(input.previewBaseUrl);
+    target = new URL(input.replayCase.endpoint, base);
+    if (target.origin !== base.origin || input.replayCase.method !== "POST") return unavailable("case_target_invalid");
+  } catch {
+    return unavailable("case_target_invalid");
+  }
+  const headers = new Headers(input.replayCase.compatibility_headers);
+  if (input.replayCase.content_type) headers.set("content-type", input.replayCase.content_type);
+  headers.set("authorization", `Bearer ${input.previewCredential}`);
+  try {
+    const response = await (input.fetchImpl ?? fetch)(target, {
+      method: "POST",
+      headers,
+      body: input.replayCase.body,
+      redirect: "error",
+      signal: AbortSignal.timeout(input.timeoutMs ?? 120_000),
+    });
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    const stream = contentType.includes("text/event-stream");
+    const observation = stream ? await inspectSseResponse(response) : inspectBuffered(
+      response.status,
+      contentType,
+      await readBoundedResponse(response, SENTINEL_MAX_REPLAY_RESPONSE_BYTES),
+    );
+    const provider = response.headers.get("x-uos-upstream")?.trim() || "gateway";
+    const signature = sentinelFailureSignature({
+      status: response.status,
+      stream,
+      completed: observation.completed,
+      terminal_type: observation.terminalEvent,
+      failure_kind: observation.failureKind,
+      framing_valid: observation.framingValid,
+      provider_route: provider,
+    });
+    const statusMatches = response.status === input.replayCase.original.status;
+    const terminalMatches = observation.terminalEvent === input.replayCase.original.terminal_type;
+    const providerMatches = provider === input.replayCase.original.provider_route;
+    const signatureMatches = signature === input.replayCase.original.failure_signature;
+    const framingMatches = observation.framingValid === input.replayCase.original.framing_valid;
+    const improved = response.status < 400 && observation.completed && observation.framingValid;
+    return {
+      capture_fingerprint: input.replayCase.fingerprint,
+      attempted: true,
+      unavailable_reason: null,
+      http_status: response.status,
+      sse_framing_valid: stream ? observation.framingValid : null,
+      terminal_event: observation.terminalEvent,
+      provider_route: provider,
+      observed_failure_signature: signature,
+      outcome: improved
+        ? "improved"
+        : signatureMatches || (statusMatches && terminalMatches && framingMatches)
+        ? "same_failure"
+        : "regressed",
+      comparison: {
+        status_matches_original: statusMatches,
+        terminal_matches_original: terminalMatches,
+        provider_matches_original: providerMatches,
+        failure_signature_matches_original: signatureMatches,
+        framing_matches_original: framingMatches,
+      },
+    };
+  } catch (error) {
+    return unavailable(
+      error instanceof BoundedResponseError
+        ? error.reason
+        : error instanceof DOMException && error.name === "TimeoutError"
+        ? "deadline"
+        : "transport_unavailable",
+    );
+  }
+};
+
+export const replayCases = async (
+  input: Readonly<{
+    cases: readonly ReplayCase[];
+    previewBaseUrl: string;
+    previewCredential: string;
+    fetchImpl?: Fetch;
+  }>,
+): Promise<ReplayResult[]> => {
+  const results: ReplayResult[] = [];
+  for (const replayCase of input.cases) {
+    results.push(await replayOneCase({ ...input, replayCase }));
+  }
+  return results;
+};
