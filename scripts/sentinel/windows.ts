@@ -3,10 +3,13 @@ import type { SentinelInterval } from "./types.ts";
 
 export const DAILY_WINDOW_MS = 24 * 60 * 60 * 1_000;
 export const INCIDENT_WINDOW_MS = 20 * 60 * 1_000;
+// The private observation workflow runs every two hours. Five minutes of
+// overlap avoids gaps when GitHub starts a scheduled job late.
+export const OBSERVE_WINDOW_MS = 125 * 60 * 1_000;
 
 export const computeSentinelInterval = (mode: SentinelMode, nowMs: number): SentinelInterval => {
   if (!Number.isSafeInteger(nowMs) || nowMs <= 0) throw new Error("Sentinel clock must be a positive integer");
-  const durationMs = mode === "daily" ? DAILY_WINDOW_MS : INCIDENT_WINDOW_MS;
+  const durationMs = mode === "daily" ? DAILY_WINDOW_MS : mode === "observe" ? OBSERVE_WINDOW_MS : INCIDENT_WINDOW_MS;
   return {
     start: new Date(nowMs - durationMs).toISOString(),
     end: new Date(nowMs).toISOString(),

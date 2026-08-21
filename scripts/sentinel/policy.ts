@@ -81,6 +81,6 @@ export const SENTINEL_POLICY = Object.freeze({
   protectedImplementationPaths: PROTECTED_IMPLEMENTATION_PATHS,
 });
 
-export type SentinelMode = "daily" | "incident" | "preview";
+export type SentinelMode = "daily" | "incident" | "observe" | "preview";
 
-export const isAutonomousMode = (mode: SentinelMode): boolean => mode !== "preview";
+export const isAutonomousMode = (mode: SentinelMode): boolean => mode === "daily" || mode === "incident";

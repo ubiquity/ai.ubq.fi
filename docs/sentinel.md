@@ -16,6 +16,14 @@ The `Provider Sentinel` Actions workflow has three modes:
 - `incident`: the 15-minute schedule and `provider_incident` repository-dispatch event inspect the previous 20 minutes,
   so adjacent scans overlap by five minutes.
 
+The orchestrator also has a restricted observation mode for the supervised soak period. `--mode observe` inspects the
+previous 125 minutes, which supports a two-hour schedule with five minutes of overlap. It captures complete production
+logs, runs only the read-only triage agent, writes `triage.json`, `observation.json`, and `cycle.json`, and then returns
+unconditionally. It never exports or decrypts replay captures, creates a candidate worktree, edits code, runs replay
+inference, pushes Git, dispatches a deployment, promotes a revision, or rolls back production. Observation mode needs
+only the Deno log token, the two Codex auth slots, and read access to its private Actions repository; it does not
+receive preview credentials or the replay key.
+
 On GitHub Actions, each interval is anchored to the current workflow run's immutable `created_at` value from the GitHub
 API. A cycle that waited for the repository concurrency lock therefore inspects the window associated with its trigger,
 not a later window calculated when the runner finally starts.
@@ -35,6 +43,11 @@ The workflow fails before checkout, raw-log capture, or secret use unless reposi
 `internal`. This repository is currently public, so the visibility gate presently blocks every Sentinel run. Keep the
 gate in place until the repository becomes restricted or raw logs and reports move to a separate restricted artifact
 destination.
+
+For a public source repository, run observation mode from a private companion Actions repository that checks out an
+exact source SHA. Keep its token read-only, retain raw logs and reports only in that private repository, and keep
+`SENTINEL_AUTONOMY_ENABLED` absent. The initial soak should use one manual run followed by a bounded two-hour schedule;
+review quota consumption and reports before enabling the final 15-minute repair cadence.
 
 ## Required repository configuration
 

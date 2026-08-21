@@ -1,19 +1,26 @@
 import assert from "node:assert/strict";
-import { isSentinelProtectedImplementationPath, SENTINEL_POLICY } from "../scripts/sentinel/policy.ts";
+import {
+  isAutonomousMode,
+  isSentinelProtectedImplementationPath,
+  SENTINEL_POLICY,
+} from "../scripts/sentinel/policy.ts";
 import {
   agentCheckoutPath,
   assertRetainedReplayArtifactBudget,
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
   evaluateRollbackPreflight,
+  isObserveOnlyMode,
   MAX_MATCHING_REPLAY_ARCHIVE_BYTES,
   MAX_MATCHING_REPLAY_ARTIFACTS,
+  parseMode,
   parseMonitorDecision,
   parseSentinelDeploymentAttestation,
   previewCompletionForDecision,
   replayIndexArtifactMayMatch,
   replayIndexArtifactName,
   resolveCycleAnchorMs,
+  runObserveCycle,
   sentinelDeploymentInputs,
   sentinelEvidenceArtifactName,
   sentinelRevisionControlInputs,
@@ -45,6 +52,7 @@ import {
   deduplicateEvents,
   eventDedupeKey,
   INCIDENT_WINDOW_MS,
+  OBSERVE_WINDOW_MS,
 } from "../scripts/sentinel/windows.ts";
 import type { ExportedSentinelReplayCapture } from "../src/sentinel_replay_capture.ts";
 
@@ -91,12 +99,138 @@ Deno.test("implementation scope protects Sentinel and nested Codex instruction s
 Deno.test("sentinel schedule windows cover 24 hours daily and an overlapping 20 minutes for incidents", () => {
   const daily = computeSentinelInterval("daily", now);
   const incident = computeSentinelInterval("incident", now);
+  const observe = computeSentinelInterval("observe", now);
   const preview = computeSentinelInterval("preview", now);
   assert.equal(daily.duration_ms, DAILY_WINDOW_MS);
   assert.equal(daily.start, "2026-08-20T06:00:00.000Z");
   assert.equal(incident.duration_ms, INCIDENT_WINDOW_MS);
   assert.equal(incident.start, "2026-08-21T05:40:00.000Z");
+  assert.equal(observe.duration_ms, OBSERVE_WINDOW_MS);
+  assert.equal(observe.start, "2026-08-21T03:55:00.000Z");
   assert.deepEqual(preview, incident);
+});
+
+Deno.test("observe mode is triage-only and never enables autonomous repair", () => {
+  assert.equal(parseMode(["--mode", "observe"]), "observe");
+  assert.equal(isObserveOnlyMode("observe"), true);
+  assert.equal(isObserveOnlyMode("incident"), false);
+  assert.equal(isAutonomousMode("observe"), false);
+  assert.throws(() => parseMode(["--mode", "unknown"]), /daily\|incident\|observe\|preview/);
+});
+
+Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion, or rollback capabilities", async () => {
+  const interval = computeSentinelInterval("observe", now);
+  const triage: TriageReport = {
+    schema_version: 1,
+    interval,
+    findings: [
+      {
+        id: "finding-1",
+        fingerprint: "0123456789abcdef",
+        severity: "P1",
+        title: "Actionable provider failure",
+        affected_surface: "/v1/responses",
+        evidence: [{ source: "deno_log", reference: "line:1", detail: "provider transport failed" }],
+        proposed_correction: "Repair the provider transport path.",
+        validation_requirements: ["Replay the failed request."],
+        actionable: true,
+      },
+      {
+        id: "finding-2",
+        fingerprint: "fedcba9876543210",
+        severity: "P3",
+        title: "Efficiency opportunity",
+        affected_surface: "provider catalog",
+        evidence: [{ source: "repository", reference: "src/provider.ts", detail: "duplicate lookup" }],
+        proposed_correction: "Reuse the existing lookup.",
+        validation_requirements: ["Measure lookup count."],
+        actionable: false,
+      },
+    ],
+    no_findings_reason: null,
+  };
+  const callOrder: string[] = [];
+  const forbiddenAccesses: string[] = [];
+  const forbiddenCapabilities = new Set([
+    "exportReplay",
+    "runReplay",
+    "implement",
+    "review",
+    "writeGit",
+    "deploy",
+    "promote",
+    "rollback",
+  ]);
+  const dependencies = new Proxy({
+    capture: () => {
+      callOrder.push("capture");
+      return Promise.resolve({ path: "/private/raw.jsonl", byte_count: 41, sha256: "a".repeat(64) });
+    },
+    analyze: () => {
+      callOrder.push("analyze");
+      return Promise.resolve({
+        triage,
+        invocation: {
+          slot: 1 as const,
+          headroomPercent: 73,
+          probes: [
+            { kind: "available" as const, slot: 1 as const, headroomPercent: 73, observedAtMs: now },
+            { kind: "available" as const, slot: 2 as const, headroomPercent: 62, observedAtMs: now },
+          ] as const,
+          stdout: "",
+          stderr: "",
+          lastMessage: null,
+        },
+      });
+    },
+    verifyEvidence: () => {
+      callOrder.push("verifyEvidence");
+      return Promise.resolve();
+    },
+    writeTriage: () => {
+      callOrder.push("writeTriage");
+      return Promise.resolve();
+    },
+    writeObservation: () => {
+      callOrder.push("writeObservation");
+      return Promise.resolve();
+    },
+    complete: () => {
+      callOrder.push("complete");
+      return Promise.resolve();
+    },
+    exportReplay: () => Promise.resolve(),
+    runReplay: () => Promise.resolve(),
+    implement: () => Promise.resolve(),
+    review: () => Promise.resolve(),
+    writeGit: () => Promise.resolve(),
+    deploy: () => Promise.resolve(),
+    promote: () => Promise.resolve(),
+    rollback: () => Promise.resolve(),
+  }, {
+    get(target, property, receiver) {
+      if (typeof property === "string" && forbiddenCapabilities.has(property)) forbiddenAccesses.push(property);
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  const observation = await runObserveCycle(interval, dependencies);
+
+  assert.deepEqual(callOrder, [
+    "capture",
+    "analyze",
+    "verifyEvidence",
+    "writeTriage",
+    "writeObservation",
+    "complete",
+  ]);
+  assert.deepEqual(forbiddenAccesses, []);
+  assert.deepEqual(observation.findings, {
+    total: 2,
+    actionable: 1,
+    by_severity: { P0: 0, P1: 1, P2: 0, P3: 1 },
+  });
+  assert.deepEqual(observation.raw_log, { byte_count: 41, sha256: "a".repeat(64) });
 });
 
 Deno.test("sentinel schedule windows anchor to the immutable GitHub run creation time", () => {

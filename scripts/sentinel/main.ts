@@ -60,6 +60,7 @@ type CycleState = {
   status:
     | "running"
     | "no_change"
+    | "observed"
     | "preview_complete"
     | "preview_rolled_back"
     | "kept"
@@ -113,12 +114,14 @@ export const previewCompletionForDecision = (
       branchDisposition: "remote_retained_rejected_by_monitor",
     };
 
-const parseMode = (args: readonly string[]): SentinelMode => {
-  if (args.length !== 2 || args[0] !== "--mode" || !["daily", "incident", "preview"].includes(args[1])) {
-    throw new Error("Usage: main.ts --mode daily|incident|preview");
+export const parseMode = (args: readonly string[]): SentinelMode => {
+  if (args.length !== 2 || args[0] !== "--mode" || !["daily", "incident", "observe", "preview"].includes(args[1])) {
+    throw new Error("Usage: main.ts --mode daily|incident|observe|preview");
   }
   return args[1] as SentinelMode;
 };
+
+export const isObserveOnlyMode = (mode: SentinelMode): boolean => mode === "observe";
 
 export const resolveCycleAnchorMs = (
   workflowRunCreatedAt: string | null,
@@ -216,7 +219,68 @@ const sha256Hex = async (bytes: Uint8Array<ArrayBuffer>): Promise<string> =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 
-type ImmutableFileEvidence = Readonly<{ path: string; byte_count: number; sha256: string }>;
+export type ImmutableFileEvidence = Readonly<{ path: string; byte_count: number; sha256: string }>;
+
+export type ObservationReport = Readonly<{
+  schema_version: 1;
+  interval: CycleState["interval"];
+  raw_log: Readonly<{ byte_count: number; sha256: string }>;
+  codex: Readonly<{
+    selected_slot: CodexInvocationResult["slot"];
+    headroom_percent: number;
+    probes: CodexInvocationResult["probes"];
+  }>;
+  findings: Readonly<{
+    total: number;
+    actionable: number;
+    by_severity: Readonly<Record<"P0" | "P1" | "P2" | "P3", number>>;
+  }>;
+}>;
+
+export interface ObserveCycleDependencies {
+  capture(): Promise<ImmutableFileEvidence>;
+  analyze(
+    evidence: ImmutableFileEvidence,
+  ): Promise<Readonly<{ triage: TriageReport; invocation: CodexInvocationResult }>>;
+  verifyEvidence(evidence: ImmutableFileEvidence): Promise<void>;
+  writeTriage(triage: TriageReport): Promise<void>;
+  writeObservation(observation: ObservationReport): Promise<void>;
+  complete(): Promise<void>;
+}
+
+export const runObserveCycle = async (
+  interval: CycleState["interval"],
+  dependencies: ObserveCycleDependencies,
+): Promise<ObservationReport> => {
+  const rawLogs = await dependencies.capture();
+  const analysis = await dependencies.analyze(rawLogs);
+  await dependencies.verifyEvidence(rawLogs);
+  await dependencies.writeTriage(analysis.triage);
+  const counts = Object.fromEntries(
+    (["P0", "P1", "P2", "P3"] as const).map((severity) => [
+      severity,
+      analysis.triage.findings.filter((finding) => finding.severity === severity).length,
+    ]),
+  ) as Record<"P0" | "P1" | "P2" | "P3", number>;
+  const observation: ObservationReport = {
+    schema_version: 1,
+    interval,
+    raw_log: { byte_count: rawLogs.byte_count, sha256: rawLogs.sha256 },
+    codex: {
+      selected_slot: analysis.invocation.slot,
+      headroom_percent: analysis.invocation.headroomPercent,
+      probes: analysis.invocation.probes,
+    },
+    findings: {
+      total: analysis.triage.findings.length,
+      actionable: analysis.triage.findings.filter((finding) => finding.actionable).length,
+      by_severity: counts,
+    },
+  };
+  await dependencies.writeObservation(observation);
+  await dependencies.complete();
+  return observation;
+};
 
 const immutableFileEvidence = async (path: string): Promise<ImmutableFileEvidence> => {
   const bytes = await Deno.readFile(path);
@@ -1099,6 +1163,7 @@ const createRevertCommit = async (checkout: string, baseSha: string, candidateSh
 
 const run = async (): Promise<void> => {
   const mode = parseMode(Deno.args);
+  const observeOnly = isObserveOnlyMode(mode);
   const root = await Deno.realPath(Deno.cwd());
   const invocationStartedAtMs = Date.now();
   const githubRunIdValue = optionalEnvironment("GITHUB_RUN_ID");
@@ -1112,10 +1177,11 @@ const run = async (): Promise<void> => {
   const replayIndexDir = `${root}/.sentinel/replay-index`;
   const privateDir = `${root}/.sentinel/private`;
   const checkout = `${root}/${SENTINEL_POLICY.paths.checkout}`;
+  const runtimeDirectories = observeOnly
+    ? [rawLogsDir, reportsDir]
+    : [rawLogsDir, replayCasesDir, reportsDir, replayIndexDir, privateDir];
   await Promise.all(
-    [rawLogsDir, replayCasesDir, reportsDir, replayIndexDir, privateDir].map((path) =>
-      Deno.mkdir(path, { recursive: true, mode: 0o700 })
-    ),
+    runtimeDirectories.map((path) => Deno.mkdir(path, { recursive: true, mode: 0o700 })),
   );
   const statePath = `${reportsDir}/cycle.json`;
   const state: CycleState = {
@@ -1141,26 +1207,11 @@ const run = async (): Promise<void> => {
   await updateState("validating_credentials");
 
   const denoToken = requiredEnvironment("DENO_DEPLOY_TOKEN");
-  const previewCredential = requiredEnvironment("PREVIEW_UOS_AI_USER_TOKEN");
-  const replayKey = requiredEnvironment("SENTINEL_REPLAY_KEY");
   const githubToken = requiredEnvironment("GITHUB_TOKEN");
   const repository = requiredEnvironment("GITHUB_REPOSITORY");
-  const runnerTemp = requiredEnvironment("RUNNER_TEMP");
-  if (!runnerTemp.startsWith("/")) throw new Error("RUNNER_TEMP must be absolute");
-  const denoDirectory = `${runnerTemp}/sentinel-deno-cache`;
   const authSlots = authSlotsFromEnvironment();
   if (!authSlots.slot1B64 && !authSlots.slot2B64) throw new Error("At least one Sentinel Codex auth slot is required");
-  const sensitiveValues = [
-    denoToken,
-    previewCredential,
-    replayKey,
-    githubToken,
-    ...sensitiveAuthValues(authSlots.slot1B64),
-    ...sensitiveAuthValues(authSlots.slot2B64),
-  ];
   const github = new GitHubActionsClient({ repository, token: githubToken });
-  const deno = new DenoDeployClient({ token: denoToken });
-  const gitEnvironment = gitNetworkEnvironment(githubToken);
 
   let workflowRunCreatedAt: string | null = null;
   if (githubRunIdValue !== undefined) {
@@ -1204,6 +1255,66 @@ const run = async (): Promise<void> => {
   }
 
   const rawLogPath = `${rawLogsDir}/triage-${runId}.jsonl`;
+  if (observeOnly) {
+    const triageSchemaPath = `${reportsDir}/triage.schema.json`;
+    await writeJson(triageSchemaPath, TRIAGE_OUTPUT_SCHEMA);
+    await runObserveCycle(state.interval, {
+      capture: async () => {
+        await updateState("capturing_raw_logs");
+        await captureRawDenoLogs({
+          cwd: root,
+          token: denoToken,
+          organization: SENTINEL_POLICY.deno.organization,
+          app: SENTINEL_POLICY.deno.productionApp,
+          start: state.interval.start,
+          end: state.interval.end,
+          destination: rawLogPath,
+        });
+        return await immutableFileEvidence(rawLogPath);
+      },
+      analyze: async (rawLogs) => {
+        await updateState("triage");
+        const invocation = await runStructuredCodexAgent({
+          role: "triage",
+          checkoutPath: agentCheckoutPath("triage", root, root),
+          prompt: triagePrompt(state.interval, rawLogs, []),
+          outputSchemaPath: triageSchemaPath,
+          authSlots,
+        });
+        const triage = parseStructuredResult(invocation, isTriageReport, "Triage agent");
+        if (JSON.stringify(triage.interval) !== JSON.stringify(state.interval)) {
+          throw new Error("Triage agent changed the requested interval");
+        }
+        return { triage, invocation };
+      },
+      verifyEvidence: assertImmutableFileEvidence,
+      writeTriage: (triage) => writeJson(`${reportsDir}/triage.json`, triage),
+      writeObservation: (observation) => writeJson(`${reportsDir}/observation.json`, observation),
+      complete: () =>
+        updateState("observe_complete", {
+          status: "observed",
+          branch_disposition: "not_created_observe_only",
+        }),
+    });
+    return;
+  }
+
+  const previewCredential = requiredEnvironment("PREVIEW_UOS_AI_USER_TOKEN");
+  const replayKey = requiredEnvironment("SENTINEL_REPLAY_KEY");
+  const runnerTemp = requiredEnvironment("RUNNER_TEMP");
+  if (!runnerTemp.startsWith("/")) throw new Error("RUNNER_TEMP must be absolute");
+  const denoDirectory = `${runnerTemp}/sentinel-deno-cache`;
+  const sensitiveValues = [
+    denoToken,
+    previewCredential,
+    replayKey,
+    githubToken,
+    ...sensitiveAuthValues(authSlots.slot1B64),
+    ...sensitiveAuthValues(authSlots.slot2B64),
+  ];
+  const deno = new DenoDeployClient({ token: denoToken });
+  const gitEnvironment = gitNetworkEnvironment(githubToken);
+
   await updateState("capturing_raw_logs");
   await captureRawDenoLogs({
     cwd: root,
@@ -1215,8 +1326,8 @@ const run = async (): Promise<void> => {
     destination: rawLogPath,
   });
 
-  await updateState("exporting_replay_cases");
   let currentEncrypted: ExportedSentinelReplayCapture[] = [];
+  await updateState("exporting_replay_cases");
   try {
     currentEncrypted = await fetchEncryptedReplayCaptures({
       baseUrl: "https://ai-ubq-fi.ubiquity-dao.deno.net",
