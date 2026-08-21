@@ -183,8 +183,7 @@ export type InferenceFallbackReason =
   | "primary_401"
   | "primary_403"
   | "primary_429"
-  | "primary_quota_blocked"
-  | "primary_upstream_degraded";
+  | "primary_quota_blocked";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 export type AffinityOutcome = "none" | "preferred" | "failover" | "shadow_only";
@@ -1960,22 +1959,6 @@ const fetchResponsesWithPaidFallback = async (
   const surplusCatalogNeedsRefresh = (): boolean =>
     surplusCatalog === null || Date.now() - surplusCatalog.updated_at_ms >= SURPLUS_MODELS_CACHE_TTL_MS;
   const endpointType = options.route === "responses" ? "openai-response" : "openai";
-  const surplusPrimaryModels = new Set([
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "claude-opus-5",
-    "claude-fable-5",
-    "deepseek-v4-pro",
-    "deepseek-v4-flash",
-    "glm-5.3",
-    "kimi-k3",
-    "gemini-3.7-flash",
-    "minimax-m3",
-    "grok-4.5",
-    "grok-4.6",
-    "qwen3.8-2.4t-a95b",
-  ]);
   const routingState = (): Readonly<{
     surplusBilling: SurplusBillingPricing | null;
     paidProviders: readonly ("metered" | "surplus")[];
@@ -2012,9 +1995,9 @@ const fetchResponsesWithPaidFallback = async (
     const meteredCanServe = Boolean(readMeteredApiKey()) &&
       (meteredCatalog === null ? codexModelKnown : meteredModelSupportsRoute);
     const surplusCanServe = Boolean(readSurplusApiKey()) && surplusModelSupportsRoute && surplusBilling !== null;
-    const preferredPaidProviders: readonly ("metered" | "surplus")[] = surplusPrimaryModels.has(options.model)
-      ? ["surplus", "metered"]
-      : ["metered", "surplus"];
+    // The paid tiers have a fixed cost order for every model. Provider
+    // availability may remove a tier, but it must never reverse the order.
+    const preferredPaidProviders: readonly ("metered" | "surplus")[] = ["surplus", "metered"];
     const paidProviders = preferredPaidProviders.filter((provider) =>
       provider === "surplus" ? surplusCanServe : meteredCanServe
     );
@@ -2114,8 +2097,6 @@ const fetchResponsesWithPaidFallback = async (
     ? "primary_403"
     : primaryStatus === 429
     ? routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ? "primary_quota_blocked" : "primary_429"
-    : primaryStatus === 503 && routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE
-    ? "primary_upstream_degraded"
     : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
   if (
@@ -2237,9 +2218,7 @@ const fetchResponsesWithPaidFallback = async (
   logPaidProviderSelected(requestId, fallbackReason, paidProviders[0]);
   const providerStatus = (error: unknown): number | null =>
     error instanceof MeteredError || error instanceof SurplusError ? error.status : null;
-  const isRetryableProviderStatus = (status: number | null): boolean =>
-    status === null || status === 401 || status === 402 || status === 403 || status === 429 ||
-    (status !== null && status >= 500);
+  const isAuthoritativeCapacityStatus = (status: number | null): boolean => status === 402 || status === 429;
   const recordProviderHealth = async (provider: "metered" | "surplus", status: number | null): Promise<void> => {
     try {
       const record = provider === "surplus" ? recordSurplusProviderHealth : recordMeteredProviderHealth;
@@ -2283,7 +2262,7 @@ const fetchResponsesWithPaidFallback = async (
       await recordProviderHealth(provider, candidate.response.status);
       if (
         providerIndex < paidProviders.length - 1 &&
-        isRetryableProviderStatus(candidate.response.status)
+        isAuthoritativeCapacityStatus(candidate.response.status)
       ) {
         // Keep the reservation uncommitted until the provider that will be
         // delivered to the client is known. The paid-fallback ledger has one
@@ -2308,7 +2287,7 @@ const fetchResponsesWithPaidFallback = async (
       providerError = error;
       const status = providerStatus(error);
       await recordProviderHealth(provider, status);
-      if (providerIndex < paidProviders.length - 1 && isRetryableProviderStatus(status)) continue;
+      if (providerIndex < paidProviders.length - 1 && isAuthoritativeCapacityStatus(status)) continue;
       break;
     }
   }

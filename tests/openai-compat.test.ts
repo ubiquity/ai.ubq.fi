@@ -3224,16 +3224,15 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       assert.deepEqual(Object.keys(selectionPayload).sort(), ["reason", "request_id"]);
     });
 
-    await t.step("Codex timeout circuit selects Metered instead of returning 503", async () => {
+    await t.step("Codex timeout circuit returns 503 without spending paid quota", async () => {
       const keyId = "fallback-upstream-degraded";
       const requestId = "request-fallback-upstream-degraded";
       seedPaidFallbackKey(keyId);
       let meteredCalls = 0;
       const response = await withFetchMock(
-        (url) => {
-          assert.equal(url, "https://api.openlux.ai/v1/responses");
+        () => {
           meteredCalls += 1;
-          return sseResponse(baseSseChunks());
+          throw new Error("a timeout circuit must not dispatch to a paid provider");
         },
         async () => {
           const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
@@ -3258,10 +3257,10 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
         },
       );
 
-      assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-uos-upstream"), "metered");
-      assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_upstream_degraded");
-      assert.equal(meteredCalls, 1);
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("x-uos-upstream"), null);
+      assert.equal(getResponseTelemetry(response)?.fallbackReason, null);
+      assert.equal(meteredCalls, 0);
     });
 
     await t.step("cancellation before fallback admission creates no paid exposure", async () => {

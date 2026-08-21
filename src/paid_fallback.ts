@@ -266,8 +266,7 @@ export const reservePaidFallback = async (
       | "primary_401"
       | "primary_403"
       | "primary_429"
-      | "primary_quota_blocked"
-      | "primary_upstream_degraded";
+      | "primary_quota_blocked";
   }>,
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await getKv();

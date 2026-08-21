@@ -15,3 +15,6 @@
   boundary, and never translate an explicit no-reasoning request to an omitted field or `null`.
 - Mirror Codex CLI wire translation for advanced presets: send `ultra` upstream as `max`. Treat Codex's automatic
   multi-agent delegation for `ultra` as client-side orchestration, not as a distinct upstream reasoning effort.
+- Use this fixed inference waterfall, in cost order: eligible Codex subscription capacity first, Surplus Intelligence
+  second, and OpenLux last. Advance to the next paid tier only after an authoritative quota or capacity signal; do not
+  treat a transient timeout, stalled stream, network or read error, or upstream 5xx as quota exhaustion.
