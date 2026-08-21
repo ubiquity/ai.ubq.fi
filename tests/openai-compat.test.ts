@@ -3224,6 +3224,46 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       assert.deepEqual(Object.keys(selectionPayload).sort(), ["reason", "request_id"]);
     });
 
+    await t.step("Codex timeout circuit selects Metered instead of returning 503", async () => {
+      const keyId = "fallback-upstream-degraded";
+      const requestId = "request-fallback-upstream-degraded";
+      seedPaidFallbackKey(keyId);
+      let meteredCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          assert.equal(url, "https://api.openlux.ai/v1/responses");
+          meteredCalls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        async () => {
+          const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+          const selected = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+          assert.equal(selected.kind, "eligible");
+          if (selected.kind !== "eligible") throw new Error("expected an eligible timeout fixture account");
+          await markCodexUpstreamTimeout(selected.accounts[0]!);
+          return await handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "timeout circuit" }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          );
+        },
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
+      assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_upstream_degraded");
+      assert.equal(meteredCalls, 1);
+    });
+
     await t.step("cancellation before fallback admission creates no paid exposure", async () => {
       const keyId = "fallback-cancel-before-dispatch";
       const requestId = "request-fallback-cancel-before-dispatch";
