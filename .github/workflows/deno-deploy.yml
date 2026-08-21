@@ -503,12 +503,16 @@ jobs:
             stable_targets+=("$custom_url")
           fi
           all_attested=false
-          for attempt in $(seq 1 18); do
+          # Deno's custom-domain edge route can lag an exact revision promotion
+          # by several minutes. Keep the identity check strict, but allow the
+          # route enough time to converge before failing the deployment gate.
+          stable_attestation_attempts=48
+          for attempt in $(seq 1 "$stable_attestation_attempts"); do
             all_attested=true
             for target_url in "${stable_targets[@]}"; do
               if ! attest_health "$target_url" "$revision_id"; then
                 all_attested=false
-                echo "Waiting for ${target_url}/health to serve ${GITHUB_SHA}/${revision_id} (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}; ${attempt}/18)."
+                echo "Waiting for ${target_url}/health to serve ${GITHUB_SHA}/${revision_id} (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}; ${attempt}/${stable_attestation_attempts})."
               fi
             done
             [ "$all_attested" = "true" ] && break
