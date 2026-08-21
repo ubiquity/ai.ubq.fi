@@ -619,11 +619,9 @@ export const fetchMeteredResponses = async (
 
   return {
     response,
-    request_id: nonEmptyString(
-      response.headers.get("X-Request-Id") ??
-        response.headers.get("X-Api-Request-Id") ??
-        response.headers.get("X-Oneapi-Request-Id"),
-    ),
+    request_id: nonEmptyString(response.headers.get("X-Api-Request-Id")) ??
+      nonEmptyString(response.headers.get("X-Oneapi-Request-Id")) ??
+      nonEmptyString(response.headers.get("X-Request-Id")),
   };
 };
 

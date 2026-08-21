@@ -130,7 +130,11 @@ Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forw
     return Promise.resolve(
       new Response("rate limited", {
         status: 429,
-        headers: { "X-Api-Request-Id": " metered-request-1 " },
+        headers: {
+          "X-Request-Id": " intermediary-request-1 ",
+          "X-Oneapi-Request-Id": " metered-fallback-request-1 ",
+          "X-Api-Request-Id": " metered-request-1 ",
+        },
       }),
     );
   };
