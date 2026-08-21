@@ -108,10 +108,19 @@ const {
   getResponseTelemetry,
   handleChatCompletions,
   handleModelCapabilities,
+  handlePublicModelCatalog,
   handleModels,
   handleResponses,
   setCodexBankedResetOptionsForTest,
 } = await import("../src/openai.ts");
+const {
+  fetchMeteredModels,
+  resetMeteredModelsCacheForTest,
+} = await import("../src/metered.ts");
+const {
+  fetchSurplusModels,
+  resetSurplusModelsCacheForTest,
+} = await import("../src/surplus.ts");
 const { withCors } = await import("../src/http.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 const {
@@ -1906,6 +1915,84 @@ Deno.test("openai: models returns stored Codex snapshot without upstream fetch",
   assert.equal(typeof model.created, "number");
   assert.equal(Object.prototype.hasOwnProperty.call(model, "supported_reasoning_levels"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(model, "display_name"), false);
+});
+
+Deno.test("openai: public catalog hides OpenLux-only models", async () => {
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+  const runtimeConfigKey = keyToString(["uos_ai", "runtime_config", "v2"]);
+  const previousRuntimeConfig = kvStore.get(runtimeConfigKey);
+  const snapshot = kvStore.get(keyToString(TEST_CODEX_MODELS_KEY));
+  kvStore.set(runtimeConfigKey, {
+    version: 2,
+    default_model: DEFAULT_TEST_MODEL,
+    default_reasoning_effort: "low",
+    codex_models: snapshot,
+    updated_at_ms: Date.now(),
+  });
+  resetRuntimeConfigCacheForTest();
+  Deno.env.set("METERED_API_KEY", "metered-public-catalog-test-key");
+  await fetchMeteredModels({
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [
+          {
+            id: TERRA_TEST_MODEL,
+            owned_by: "openlux",
+            supported_endpoint_types: ["openai-response"],
+          },
+          {
+            id: "openlux-surplus-shared-model",
+            owned_by: "openlux",
+            supported_endpoint_types: ["openai-response"],
+          },
+          {
+            id: "openlux-only-model",
+            owned_by: "openlux",
+            supported_endpoint_types: ["openai-response"],
+          },
+        ],
+      })),
+  });
+  await fetchSurplusModels({
+    apiKey: "surplus-public-catalog-test-key",
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [
+          { id: "openlux-surplus-shared-model", provider: "surplus" },
+          { id: "surplus-only-model", provider: "surplus" },
+        ],
+      })),
+  });
+
+  try {
+    const response = await handlePublicModelCatalog();
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      data?: Array<{ id?: string; providers?: Array<{ id?: string }> }>;
+      sources?: { openlux?: { count?: number } };
+    };
+    const byId = new Map((payload.data ?? []).map((model) => [model.id, model]));
+    assert.deepEqual(byId.get(TERRA_TEST_MODEL)?.providers?.map((provider) => provider.id), ["codex", "openlux"]);
+    assert.deepEqual(
+      byId.get("openlux-surplus-shared-model")?.providers?.map((provider) => provider.id),
+      ["openlux", "surplus"],
+    );
+    assert.equal(byId.has("openlux-only-model"), false);
+    assert.deepEqual(byId.get("surplus-only-model")?.providers?.map((provider) => provider.id), ["surplus"]);
+    assert.equal(payload.sources?.openlux?.count, 2);
+  } finally {
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (previousRuntimeConfig === undefined) kvStore.delete(runtimeConfigKey);
+    else kvStore.set(runtimeConfigKey, previousRuntimeConfig);
+    resetRuntimeConfigCacheForTest();
+    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+  }
 });
 
 Deno.test("openai: models exposes API-supported hidden review models from the snapshot", async () => {

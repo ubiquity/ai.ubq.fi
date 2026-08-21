@@ -26,7 +26,10 @@ if [ -n "$lint_files" ]; then
   git add -- $lint_files
   deno lint $lint_files
 fi
-deno fmt --check
+# Check only the gateway-owned source tree. lib/codex is a pinned upstream
+# checkout and may contain formatting differences that this repository does
+# not own or need to rewrite.
+deno fmt --check serve.ts src tests scripts docs
 deno task build
 # Keep commits fast while checking the same test TypeScript program that CI
 # compiles before running. The full runtime suite remains a CI responsibility.

@@ -14,8 +14,9 @@ Enable the repository pre-commit hook once per checkout:
 git config core.hooksPath .githooks
 ```
 
-The hook runs formatting, lint, build, and the deterministic repository test suites. It does not run the external
-Metered stress test; run `deno task test:stress` only when an explicitly approved local load test is required.
+The hook automatically formats and applies safe lint fixes to staged files, then checks the gateway-owned source tree,
+lint, build, and deterministic repository test program. It does not rewrite the pinned `lib/codex` checkout or run the
+external Metered stress test; run `deno task test:stress` only when an explicitly approved local load test is required.
 
 ## How auth works
 

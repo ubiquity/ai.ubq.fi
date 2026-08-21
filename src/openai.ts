@@ -5947,14 +5947,23 @@ export const handlePublicModelCatalog = async (): Promise<Response> => {
     fetchMeteredModels(),
     fetchSurplusModels({ requireApiKey: false }),
   ]);
+  const codexModels = normalized?.data ?? [];
+  const surplusModels = surplus?.models ?? [];
+  const otherProviderModelIds = new Set<string>();
+  for (const model of codexModels) {
+    const id = getString(model.id);
+    if (id) otherProviderModelIds.add(id);
+  }
+  for (const model of surplusModels) otherProviderModelIds.add(model.id);
   const models = new Map<string, { id: string; providers: PublicModelProvider[] }>();
+  const includedOpenLuxModelIds = new Set<string>();
   const add = (id: string, provider: PublicModelProvider): void => {
     const existing = models.get(id);
     if (existing) existing.providers.push(provider);
     else models.set(id, { id, providers: [provider] });
   };
 
-  for (const model of normalized?.data ?? []) {
+  for (const model of codexModels) {
     const id = getString(model.id);
     if (!id) continue;
     add(id, {
@@ -5964,6 +5973,10 @@ export const handlePublicModelCatalog = async (): Promise<Response> => {
     });
   }
   for (const model of metered?.models ?? []) {
+    // OpenLux is a broad discovery source; only advertise it when another
+    // configured provider confirms the same model ID.
+    if (!otherProviderModelIds.has(model.id)) continue;
+    includedOpenLuxModelIds.add(model.id);
     add(model.id, {
       id: "openlux",
       owned_by: model.owned_by,
@@ -5973,7 +5986,7 @@ export const handlePublicModelCatalog = async (): Promise<Response> => {
       ],
     });
   }
-  for (const model of surplus?.models ?? []) {
+  for (const model of surplusModels) {
     add(model.id, {
       id: "surplus",
       owned_by: model.owned_by,
@@ -5995,7 +6008,7 @@ export const handlePublicModelCatalog = async (): Promise<Response> => {
       },
       openlux: {
         status: metered ? "available" : "unavailable",
-        count: metered?.models.length ?? 0,
+        count: includedOpenLuxModelIds.size,
         updated_at_ms: metered?.updated_at_ms ?? null,
       },
       surplus: {
