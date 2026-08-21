@@ -226,7 +226,7 @@ jobs:
             .uos-deploy-secrets.env |
             jq '{added, updated, skipped}'
 
-  deploy:
+  capture-deployment-baseline:
     needs:
       - validate
       - verify-artifact
@@ -236,9 +236,65 @@ jobs:
       always() &&
       needs.validate.result == 'success' &&
       needs.verify-artifact.result == 'success' &&
+      needs.configure-secrets.result == 'success' &&
+      (
+        (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
+        (
+          github.ref != 'refs/heads/development' &&
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.deploy_preview == 'true'
+        )
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      revision_ids: ${{ steps.capture.outputs.revision_ids }}
+    env:
+      DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+      TARGET_PROJECT: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
+    steps:
+      - name: Capture existing Deno revision IDs
+        id: capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "$DENO_DEPLOY_TOKEN" ] || {
+            echo "::error::DENO_DEPLOY_TOKEN is required to capture the deployment baseline."
+            exit 1
+          }
+          echo "::add-mask::$DENO_DEPLOY_TOKEN"
+
+          revisions="$(curl --fail-with-body -sS --max-time 30 \
+            -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+            "https://api.deno.com/v2/apps/${TARGET_PROJECT}/revisions?limit=50")"
+          printf '%s' "$revisions" | jq -e \
+            'type == "array" and all(.[]; .id | type == "string" and length > 0)' \
+            >/dev/null || {
+              echo "::error::Deno returned an invalid revision baseline for ${TARGET_PROJECT}."
+              exit 1
+            }
+          revision_ids="$(printf '%s' "$revisions" | jq -cer 'map(.id)')"
+          echo "revision_ids=$revision_ids" >> "$GITHUB_OUTPUT"
+          revision_count="$(printf '%s' "$revision_ids" | jq 'length')"
+          echo "Captured ${revision_count} pre-deploy revision IDs for ${TARGET_PROJECT}." >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs:
+      - validate
+      - verify-artifact
+      - production-approval
+      - configure-secrets
+      - capture-deployment-baseline
+    if: >-
+      always() &&
+      needs.validate.result == 'success' &&
+      needs.verify-artifact.result == 'success' &&
       (
         needs.configure-secrets.result == 'success' ||
         (github.event_name == 'pull_request' && needs.configure-secrets.result == 'skipped')
+      ) &&
+      (
+        needs.capture-deployment-baseline.result == 'success' ||
+        (github.event_name == 'pull_request' && needs.capture-deployment-baseline.result == 'skipped')
       ) &&
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
@@ -290,7 +346,9 @@ jobs:
     secrets: inherit
 
   verify-deployment:
-    needs: deploy
+    needs:
+      - deploy
+      - capture-deployment-baseline
     if: >-
       always() &&
       needs.deploy.result == 'success' &&
@@ -306,109 +364,169 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
-      - name: Verify stable deployment identity and health
+      - name: Promote and verify exact deployment revision
         shell: bash
         env:
+          BASELINE_REVISION_IDS: ${{ needs.capture-deployment-baseline.outputs.revision_ids }}
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           TARGET_PROJECT: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
         run: |
           set -euo pipefail
 
-          if [ "$GITHUB_REF" = "refs/heads/development" ]; then
-            [ "$TARGET_PROJECT" = "ai-ubq-fi" ] || {
-              echo "::error::Development verification must target ai-ubq-fi."
-              exit 1
-            }
-          else
-            [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || {
-              echo "::error::Preview verification requires workflow_dispatch."
-              exit 1
-            }
-            [ "$TARGET_PROJECT" = "p-ai-ubq-fi" ] || {
-              echo "::error::Preview verification must target p-ai-ubq-fi."
-              exit 1
-            }
-          fi
-          [ -n "$DENO_DEPLOY_TOKEN" ] || {
-            echo "::error::DENO_DEPLOY_TOKEN is required for deployment verification."
+          fail() {
+            echo "::error::$*"
             exit 1
           }
+
+          if [ "$GITHUB_REF" = "refs/heads/development" ]; then
+            [ "$TARGET_PROJECT" = "ai-ubq-fi" ] || fail "Development verification must target ai-ubq-fi."
+          else
+            [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || fail "Preview verification requires workflow_dispatch."
+            [ "$TARGET_PROJECT" = "p-ai-ubq-fi" ] || fail "Preview verification must target p-ai-ubq-fi."
+          fi
+          [ -n "$DENO_DEPLOY_TOKEN" ] || fail "DENO_DEPLOY_TOKEN is required for deployment verification."
           echo "::add-mask::$DENO_DEPLOY_TOKEN"
+          printf '%s' "$BASELINE_REVISION_IDS" | jq -e \
+            'type == "array" and all(.[]; type == "string" and length > 0)' \
+            >/dev/null || fail "The pre-deploy revision baseline is missing or invalid."
 
           stable_url="https://${TARGET_PROJECT}.ubiquity-dao.deno.net"
-          revision_id=""
-          revision_url=""
-          deployment_id=""
+          custom_url=""
+          if [ "$TARGET_PROJECT" = "ai-ubq-fi" ]; then
+            custom_url="https://ai.ubq.fi"
+          fi
+
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          promote_body="$(mktemp)"
+          trap 'rm -f "$headers" "$body" "$promote_body"' EXIT
+
           last_status="000"
           last_git_sha=""
           last_deployment_id=""
-          for _attempt in $(seq 1 18); do
-            headers="$(mktemp)"
-            body="$(mktemp)"
-            trap 'rm -f "$headers" "$body"' EXIT
-            http_code="$(curl -sS --max-time 20 -D "$headers" -o "$body" -w '%{http_code}' "${stable_url}/health" || true)"
-            git_sha="$(awk 'tolower($1) == "x-uos-git-sha:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
-            reported_deployment_id="$(awk 'tolower($1) == "x-uos-deployment-id:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
-            last_status="$http_code"
-            last_git_sha="$git_sha"
-            last_deployment_id="$reported_deployment_id"
 
-            attestable_health=false
-            if [ "$http_code" = "200" ] && jq -e \
-              --arg git_sha "$git_sha" \
-              --arg deployment_id "$reported_deployment_id" '
-              .status == "available" and
-              .release.git_sha == $git_sha and
-              .release.deployment_id == $deployment_id
-            ' "$body" >/dev/null 2>&1; then
-              attestable_health=true
-            elif [ "$http_code" = "503" ] && jq -e '
-              .ok == false and
-              .status == 503 and
-              .upstream == "chatgpt_codex" and
-              .details == "Codex upstream models endpoint returned 429."
-            ' "$body" >/dev/null 2>&1; then
-              # An exhausted Codex account is an accepted preview/production
-              # state: the request path must observe this authoritative 429
-              # before it can exercise Metered fallback. Keep every deployment
-              # identity check below mandatory.
-              attestable_health=true
-            fi
-            if [ "$attestable_health" = "true" ] && [ "$git_sha" = "$GITHUB_SHA" ] && [ -n "$reported_deployment_id" ] && [ "$reported_deployment_id" != "unknown" ]; then
-              # DENO_DEPLOY_BUILD_ID is emitted by stable health as the
-              # serving build ID. Health proves stable routing; this confirms
-              # that build has a valid Deno Deploy terminal state.
-              deployments_json="$(deno deploy deployments list --json --non-interactive --org ubiquity-dao --app "$TARGET_PROJECT" --limit 50 --token "$DENO_DEPLOY_TOKEN" 2>/dev/null || true)"
-              if printf '%s' "$deployments_json" | jq -e --arg id "$reported_deployment_id" \
-                '.items[] | select(.id == $id and (.status == "routed" or .status == "succeeded"))' \
-                >/dev/null 2>&1; then
-                revision_id="$reported_deployment_id"
-                deployment_id="$reported_deployment_id"
-                revision_url="https://console.deno.com/ubiquity-dao/${TARGET_PROJECT}/builds/${revision_id}"
-                rm -f "$headers" "$body"
-                break
+          attest_health() {
+            local base_url="$1"
+            local expected_deployment_id="$2"
+            : > "$headers"
+            : > "$body"
+            last_status="$(curl -sS --max-time 20 -D "$headers" -o "$body" -w '%{http_code}' \
+              "${base_url}/health" || true)"
+            last_git_sha="$(awk 'tolower($1) == "x-uos-git-sha:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
+            last_deployment_id="$(awk 'tolower($1) == "x-uos-deployment-id:" { gsub("\r", "", $2); print $2; exit }' "$headers")"
+
+            [ "$last_status" = "200" ] &&
+              [ "$last_git_sha" = "$GITHUB_SHA" ] &&
+              [ "$last_deployment_id" = "$expected_deployment_id" ] &&
+              jq -e \
+                --arg git_sha "$GITHUB_SHA" \
+                --arg deployment_id "$expected_deployment_id" '
+                  .status == "available" and
+                  .release.git_sha == $git_sha and
+                  .release.deployment_id == $deployment_id
+                ' "$body" >/dev/null 2>&1
+          }
+
+          revision_id=""
+          revision_url=""
+          for attempt in $(seq 1 18); do
+            if revisions="$(curl --fail-with-body -sS --max-time 30 \
+              -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+              "https://api.deno.com/v2/apps/${TARGET_PROJECT}/revisions?limit=50")"; then
+              printf '%s' "$revisions" | jq -e \
+                'type == "array" and all(.[]; (.id | type == "string") and (.status | type == "string"))' \
+                >/dev/null || fail "Deno returned an invalid revision list for ${TARGET_PROJECT}."
+
+              mapfile -t candidate_ids < <(
+                printf '%s' "$revisions" | jq -r --argjson baseline "$BASELINE_REVISION_IDS" '
+                  .[] |
+                  .id as $id |
+                  select(($baseline | index($id)) == null) |
+                  $id
+                '
+              )
+              if [ "${#candidate_ids[@]}" -gt 1 ]; then
+                fail "More than one revision appeared after the baseline; refusing an ambiguous promotion."
+              fi
+              if [ "${#candidate_ids[@]}" -eq 1 ]; then
+                candidate_id="${candidate_ids[0]}"
+                candidate_url="https://${TARGET_PROJECT}-${candidate_id}.ubiquity-dao.deno.net"
+                candidate_status="$(printf '%s' "$revisions" | jq -r --arg id "$candidate_id" \
+                  '.[] | select(.id == $id) | .status')"
+                if [ "$candidate_status" = "succeeded" ] && attest_health "$candidate_url" "$candidate_id"; then
+                  revision_id="$candidate_id"
+                  revision_url="https://console.deno.com/ubiquity-dao/${TARGET_PROJECT}/builds/${revision_id}"
+                  break
+                fi
               fi
             fi
-            rm -f "$headers" "$body"
+
+            echo "Waiting for the new ${TARGET_PROJECT} revision to attest ${GITHUB_SHA} (${attempt}/18)."
             sleep 10
           done
 
           if [ -z "$revision_id" ]; then
-            echo "::error::Stable deployment identity/health check failed for ${stable_url}/health (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}, expected ${GITHUB_SHA})."
-            exit 1
+            fail "No unique new succeeded ${TARGET_PROJECT} revision attested ${GITHUB_SHA}."
           fi
+
+          revisions="$(curl --fail-with-body -sS --max-time 30 \
+            -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+            "https://api.deno.com/v2/apps/${TARGET_PROJECT}/revisions?limit=50")"
+          mapfile -t final_candidate_ids < <(
+            printf '%s' "$revisions" | jq -r --argjson baseline "$BASELINE_REVISION_IDS" '
+              .[] |
+              .id as $id |
+              select(($baseline | index($id)) == null) |
+              $id
+            '
+          )
+          if [ "${#final_candidate_ids[@]}" -ne 1 ]; then
+            fail "The post-baseline revision set changed before promotion; refusing to overwrite another deployment."
+          fi
+          [ "${final_candidate_ids[0]}" = "$revision_id" ] ||
+            fail "The post-baseline revision identity changed before promotion."
+          printf '%s' "$revisions" | jq -e --arg id "$revision_id" \
+            '.[] | select(.id == $id and .status == "succeeded")' \
+            >/dev/null || fail "Revision ${revision_id} is no longer in a succeeded state."
+
+          promote_status="$(curl -sS --max-time 30 -o "$promote_body" -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+            "https://api.deno.com/v2/revisions/${revision_id}/promote" || true)"
+          [ "$promote_status" = "204" ] || {
+            promote_error="$(tr '\n' ' ' < "$promote_body" | cut -c1-500)"
+            fail "Deno promotion failed for ${revision_id} (HTTP ${promote_status}: ${promote_error:-empty response})."
+          }
+
+          stable_targets=("$stable_url")
+          if [ -n "$custom_url" ]; then
+            stable_targets+=("$custom_url")
+          fi
+          all_attested=false
+          for attempt in $(seq 1 18); do
+            all_attested=true
+            for target_url in "${stable_targets[@]}"; do
+              if ! attest_health "$target_url" "$revision_id"; then
+                all_attested=false
+                echo "Waiting for ${target_url}/health to serve ${GITHUB_SHA}/${revision_id} (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}; ${attempt}/18)."
+              fi
+            done
+            [ "$all_attested" = "true" ] && break
+            sleep 10
+          done
+          [ "$all_attested" = "true" ] || fail "Promoted revision ${revision_id}, but stable deployment identity did not converge."
+
           {
             echo "### Deployment attestation"
             echo ""
             echo "- Target: \`${TARGET_PROJECT}\`"
             echo "- Stable URL: ${stable_url}"
+            if [ -n "$custom_url" ]; then
+              echo "- Custom URL: ${custom_url}"
+            fi
             echo "- Revision URL: ${revision_url}"
             echo "- Revision ID: \`${revision_id}\`"
-            echo "- Deployment ID: \`${deployment_id}\`"
             echo "- Git SHA: \`${GITHUB_SHA}\`"
-            echo "- Health: HTTP ${last_status}; release identity attested"
+            echo "- Promotion: HTTP ${promote_status}; exact revision pinned"
+            echo "- Health: all stable routes attest the exact release identity"
           } >> "$GITHUB_STEP_SUMMARY"
