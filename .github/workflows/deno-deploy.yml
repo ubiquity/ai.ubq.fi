@@ -498,13 +498,17 @@ jobs:
             fail "Deno promotion failed for ${revision_id} (HTTP ${promote_status}: ${promote_error:-empty response})."
           }
 
+          # Deno's managed stable route can lag an exact revision promotion by
+          # several minutes. Keep its identity check strict while giving that
+          # authoritative route enough time to converge.
+          stable_attestation_attempts=48
           stable_attested=false
-          for attempt in $(seq 1 18); do
+          for attempt in $(seq 1 "$stable_attestation_attempts"); do
             if attest_health "$stable_url" "$revision_id"; then
               stable_attested=true
               break
             fi
-            echo "Waiting for ${stable_url}/health to serve ${GITHUB_SHA}/${revision_id} (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}; ${attempt}/18)."
+            echo "Waiting for ${stable_url}/health to serve ${GITHUB_SHA}/${revision_id} (HTTP ${last_status}, git ${last_git_sha:-<missing>}, deployment ${last_deployment_id:-<missing>}; ${attempt}/${stable_attestation_attempts})."
             sleep 10
           done
           [ "$stable_attested" = "true" ] || fail "Promoted revision ${revision_id}, but the managed stable route did not converge."
