@@ -263,8 +263,6 @@ export const reservePaidFallback = async (
     reasoning: string | null;
     allowUnrosteredModel?: boolean;
     reason:
-      | "primary_401"
-      | "primary_403"
       | "primary_429"
       | "primary_quota_blocked";
   }>,

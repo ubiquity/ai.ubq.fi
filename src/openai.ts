@@ -7,7 +7,6 @@ import {
   CodexError,
   type CodexModelsSnapshot,
   fetchCodexResponses,
-  getCodexAuthWarning,
   getCodexModelsSnapshotDefaultModel,
   getCodexResponseAccountCohortId,
   getCodexResponseSlot,
@@ -187,8 +186,6 @@ type UsageContext = Readonly<{
 
 type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
 export type InferenceFallbackReason =
-  | "primary_401"
-  | "primary_403"
   | "primary_429"
   | "primary_quota_blocked";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
@@ -2097,6 +2094,7 @@ const fetchResponsesWithPaidFallback = async (
   const surplusCatalogNeedsRefresh = (): boolean =>
     surplusCatalog === null || Date.now() - surplusCatalog.updated_at_ms >= SURPLUS_MODELS_CACHE_TTL_MS;
   const endpointType = options.route === "responses" ? "openai-response" : "openai";
+  const requestUsesTools = Array.isArray(body.tools) && body.tools.length > 0;
   const routingState = (): Readonly<{
     surplusBilling: SurplusBillingPricing | null;
     paidProviders: readonly ("metered" | "surplus")[];
@@ -2132,7 +2130,11 @@ const fetchResponsesWithPaidFallback = async (
     // only when its own catalog proves that the exact model is routable.
     const meteredCanServe = Boolean(readMeteredApiKey()) &&
       (meteredCatalog === null ? codexModelKnown : meteredModelSupportsRoute);
-    const surplusCanServe = Boolean(readSurplusApiKey()) && surplusModelSupportsRoute && surplusBilling !== null;
+    // Surplus catalog entries currently prove only text endpoint support. Do
+    // not send tool-bearing Codex work there until the catalog carries an
+    // explicit tool/function-call capability that this router can verify.
+    const surplusCanServe = !requestUsesTools && Boolean(readSurplusApiKey()) && surplusModelSupportsRoute &&
+      surplusBilling !== null;
     // The paid tiers have a fixed cost order for every model. Provider
     // availability may remove a tier, but it must never reverse the order.
     const preferredPaidProviders: readonly ("metered" | "surplus")[] = ["surplus", "metered"];
@@ -2208,13 +2210,6 @@ const fetchResponsesWithPaidFallback = async (
   const primaryStatus = primary.status;
   const authReauthenticationPrimary = primaryStatus === 401 &&
     responseWarnings(primary).includes(CODEX_AUTH_REAUTH_WARNING);
-  const primaryWarnings = Array.from(
-    new Set([
-      ...responseWarnings(primary),
-      ...(getCodexAuthWarning(primary) ? [getCodexAuthWarning(primary)!] : []),
-    ]),
-  );
-  const preservePrimaryWarnings = (response: Response): Response => withUosWarning(response, primaryWarnings);
   if (telemetry) {
     telemetry.accountSlot = getCodexResponseSlot(primary);
     telemetry.accountCohortId = await getCodexResponseAccountCohortId(primary);
@@ -2233,11 +2228,9 @@ const fetchResponsesWithPaidFallback = async (
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 401
-    ? "primary_401"
-    : primaryStatus === 403
-    ? "primary_403"
-    : primaryStatus === 429
+  // Authentication and authorization failures are not capacity evidence.
+  // Fail closed instead of converting bad Codex credentials into paid spend.
+  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 429
     ? routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ? "primary_quota_blocked" : "primary_429"
     : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
@@ -2537,7 +2530,7 @@ const fetchResponsesWithPaidFallback = async (
       (error instanceof Error && error.name === "TimeoutError")
     ) {
       return {
-        response: preservePrimaryWarnings(openaiError(
+        response: openaiError(
           504,
           `${selectedProviderLabel} upstream exceeded the gateway deadline before response headers were received.`,
           "gateway_timeout",
@@ -2545,7 +2538,7 @@ const fetchResponsesWithPaidFallback = async (
             type: "server_error",
             headers: { "x-uos-upstream": selectedProvider },
           },
-        )),
+        ),
         provider: selectedProvider,
         paidFallback: decision.reservation,
         gatewayResponse: true,
@@ -2554,10 +2547,10 @@ const fetchResponsesWithPaidFallback = async (
     }
     if (error instanceof MeteredError || error instanceof SurplusError) {
       return {
-        response: preservePrimaryWarnings(openaiError(error.status, error.message, error.code, {
+        response: openaiError(error.status, error.message, error.code, {
           type: "server_error",
           headers: { "x-uos-upstream": selectedProvider },
-        })),
+        }),
         provider: selectedProvider,
         paidFallback: decision.reservation,
         gatewayResponse: true,
@@ -2565,7 +2558,7 @@ const fetchResponsesWithPaidFallback = async (
       };
     }
     return {
-      response: preservePrimaryWarnings(openaiError(
+      response: openaiError(
         502,
         `${selectedProviderLabel} upstream request failed before response headers were received.`,
         "upstream_error",
@@ -2573,7 +2566,7 @@ const fetchResponsesWithPaidFallback = async (
           type: "server_error",
           headers: { "x-uos-upstream": selectedProvider },
         },
-      )),
+      ),
       provider: selectedProvider,
       paidFallback: decision.reservation,
       gatewayResponse: true,
@@ -2587,7 +2580,7 @@ const fetchResponsesWithPaidFallback = async (
     () => recordMeteredUpstreamResponse(decision.reservation, result.response, providerRequestId, selectedProvider),
   );
   return {
-    response: preservePrimaryWarnings(result.response),
+    response: result.response,
     provider: selectedProvider,
     paidFallback: decision.reservation,
     paidFallbackBilling: selectedProvider === "surplus" ? surplusBilling : null,

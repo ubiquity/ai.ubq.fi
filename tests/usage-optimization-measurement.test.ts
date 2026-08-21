@@ -364,9 +364,10 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     assert.ok(uosSuccess.commands > 0, "UOS allowlist activity must remain measurable");
     assert.ok(adminSuccess.commands > 0, "admin allowlist activity must remain measurable");
     assert.equal(retry.serialized_request_bytes, bytes(JSON.stringify(retryBody)) * 2);
-    assert.ok(
-      disconnect.atomic_commits >= 2,
-      "disconnect after transport must retain durable V3 reservation and dispatch",
+    assert.equal(
+      disconnect.atomic_commits,
+      2,
+      "a post-dispatch disconnect must retain the reservation and dispatch without false pre-transport compensation",
     );
     assert.ok(concurrent.atomic_commits >= 2, "concurrent admission must retain the winning reservation and dispatch");
     assert.equal(

@@ -3291,6 +3291,91 @@ Deno.test("openai: an all-blocked Codex response continues through paid Metered 
   }
 });
 
+Deno.test("openai: tool-bearing paid fallback skips Surplus without capability evidence", async () => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const keyId = "fallback-tools-skip-unverified-surplus";
+  const requestId = `request-${keyId}`;
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-test-key");
+    Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response"] }],
+        })),
+    });
+    await fetchSurplusModels({
+      apiKey: "surplus-test-key",
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{
+            id: DEFAULT_TEST_MODEL,
+            pricing: { prompt: 0.000001, completion: 0.000003 },
+          }],
+        })),
+    });
+    seedPaidFallbackKey(keyId);
+    let surplusCalls = 0;
+    let meteredCalls = 0;
+
+    const response = await withFetchMock(
+      (url) => {
+        if (url === "https://api.surplusintelligence.ai/v1/responses") {
+          surplusCalls += 1;
+          throw new Error("unverified Surplus tool transport must not start");
+        }
+        if (url === "https://api.openlux.ai/v1/responses") {
+          meteredCalls += 1;
+          return sseResponse(baseSseChunks());
+        }
+        return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              input: "inspect the workspace",
+              tools: [{
+                type: "function",
+                name: "inspect_workspace",
+                description: "Inspect the workspace before continuing.",
+                parameters: { type: "object", properties: {}, additionalProperties: false },
+              }],
+            }),
+          }),
+          { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "metered");
+    assert.equal(surplusCalls, 0);
+    assert.equal(meteredCalls, 1);
+    const stored = await waitForPaidFallbackTerminal(keyId, requestId, "completed");
+    assert.equal(stored.provider, "metered");
+  } finally {
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
 Deno.test("openai: inter-provider abort and quota rejection retain the responding provider request ID", async () => {
   const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
@@ -3622,77 +3707,54 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("primary 403 selects Metered once and emits only safe selection fields", async () => {
-      const keyId = "fallback-primary-403";
-      const requestId = "request-fallback-primary-403";
-      seedPaidFallbackKey(keyId);
-      const infoLogs: unknown[][] = [];
-      const originalInfo = console.info;
-      let codexCalls = 0;
-      let meteredCalls = 0;
-      let selectionObservedBeforeMetered = false;
-      let primaryCancellationStarted = false;
-      console.info = (...args: unknown[]) => infoLogs.push(args);
-      const response = await (async () => {
-        try {
-          return await withFetchMock(
-            (url) => {
-              if (url === "https://api.openlux.ai/v1/responses") {
-                meteredCalls += 1;
-                selectionObservedBeforeMetered = infoLogs.some((entry) => entry[0] === "[ai.ubq.fi] metered_selected");
-                return sseResponse(baseSseChunks());
-              }
-              codexCalls += 1;
-              return new Response(
-                new ReadableStream<Uint8Array>({
-                  start(controller) {
-                    controller.enqueue(TEXT_ENCODER.encode('{"error":{"message":"do-not-log-primary-body"}}'));
-                  },
-                  cancel() {
-                    primaryCancellationStarted = true;
-                    return new Promise<void>(() => {});
-                  },
-                }),
-                {
-                  status: 403,
-                  headers: { "Content-Type": "application/json" },
-                },
-              );
+    await t.step("primary 401 and 403 fail closed without paid dispatch", async () => {
+      const debugKey = keyToString(DEBUG_ROUTING_KEY);
+      const previousDebugRouting = kvStore.get(debugKey);
+      try {
+        for (const status of [401, 403] as const) {
+          const keyId = `fallback-primary-${status}`;
+          const requestId = `request-${keyId}`;
+          seedPaidFallbackKey(keyId);
+          kvStore.set(debugKey, {
+            scenario: `codex_${status}`,
+            expires_at_ms: Date.now() + 60_000,
+            updated_at_ms: Date.now(),
+          });
+          resetDebugRoutingCacheForTest();
+          let paidCalls = 0;
+          const response = await withFetchMock(
+            () => {
+              paidCalls += 1;
+              throw new Error(`primary ${status} must not dispatch paid inference`);
             },
             () =>
               handleResponses(
                 new Request("https://ai.ubq.fi/v1/responses", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "do-not-log-request-body" }),
+                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "fail closed" }),
                 }),
-                {
-                  keyId,
-                  kernelRepo: null,
-                  kernelOrg: null,
-                  requestId,
-                  startedAtMs: Date.now(),
-                },
+                { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
               ),
           );
-        } finally {
-          console.info = originalInfo;
-        }
-      })();
 
-      assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-uos-upstream"), "metered");
-      assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_403");
-      assert.equal(codexCalls, 1);
-      assert.equal(meteredCalls, 1);
-      assert.equal(primaryCancellationStarted, true);
-      assert.equal(selectionObservedBeforeMetered, true);
-      const selectionLogs = infoLogs.filter((entry) => entry[0] === "[ai.ubq.fi] metered_selected");
-      assert.equal(selectionLogs.length, 1);
-      assert.equal(typeof selectionLogs[0]?.[1], "string");
-      const selectionPayload = JSON.parse(selectionLogs[0]?.[1] as string) as Record<string, unknown>;
-      assert.deepEqual(selectionPayload, { request_id: requestId, reason: "primary_403" });
-      assert.deepEqual(Object.keys(selectionPayload).sort(), ["reason", "request_id"]);
+          assert.equal(response.status, status);
+          assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+          assert.equal(getResponseTelemetry(response)?.fallbackReason, null);
+          assert.equal(paidCalls, 0);
+          assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+        }
+        kvStore.set(debugKey, {
+          scenario: "normal",
+          expires_at_ms: null,
+          updated_at_ms: Date.now(),
+        });
+        resetDebugRoutingCacheForTest();
+      } finally {
+        if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+        else kvStore.set(debugKey, previousDebugRouting);
+        resetDebugRoutingCacheForTest();
+      }
     });
 
     await t.step("Codex timeout circuit returns 503 without spending paid quota", async () => {
@@ -3826,7 +3888,10 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
           }
           return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
             status: 429,
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "x-uos-warning": "codex_quota_temporarily_exceeded",
+            },
           });
         },
         () =>
@@ -3851,6 +3916,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       );
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("x-uos-upstream"), "metered");
+      assert.equal(response.headers.get("x-uos-warning"), null);
       assert.equal(getResponseTelemetry(response)?.quotaUsedPercent, 0);
       assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_429");
       assert.deepEqual(urls, [
@@ -5571,8 +5637,8 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 });
               }
               codexCalls += 1;
-              return new Response(JSON.stringify({ error: { message: "Primary forbidden" } }), {
-                status: 403,
+              return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
+                status: 429,
                 headers: { "Content-Type": "application/json" },
               });
             },
@@ -5618,7 +5684,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
           assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
           assert.equal(response.headers.get("X-Metered-Diagnostic"), null);
           assert.deepEqual(await response.json(), { error: testCase.expectedError });
-          assert.equal(codexCalls, 1);
+          assert.equal(codexCalls, 2);
           assert.equal(meteredCalls, 1);
           const failed = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
           assert.equal(failed.terminal_state, "failed");

@@ -243,7 +243,6 @@ const {
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const {
   getCodexProviderHealth,
-  getMeteredProviderHealth,
   resetProviderHealthThrottleForTest,
 } = await import("../src/provider_health.ts");
 
@@ -1448,19 +1447,19 @@ Deno.test("streaming inference emits one terminal log only after the response bo
   }
 });
 
-Deno.test("streaming deadline emits one delivered terminal and keeps dispatched quota committed", async () => {
+Deno.test("streaming timeout after dispatch emits one delivered terminal and keeps quota committed", async () => {
   const { token, policy } = await prepareApiKeyInference("6", "stream-deadline-telemetry", 5);
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const logs: unknown[][] = [];
-  setStreamFirstEventDeadlineMsForTest(10);
-  globalThis.fetch = (_input, init) =>
-    new Promise<Response>((_resolve, reject) => {
-      const signal = init?.signal;
-      const rejectFromSignal = () => reject(signal?.reason ?? new DOMException("deadline exceeded", "TimeoutError"));
-      if (signal?.aborted) rejectFromSignal();
-      else signal?.addEventListener("abort", rejectFromSignal, { once: true });
-    });
+  setStreamFirstEventDeadlineMsForTest(250);
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(new ReadableStream<Uint8Array>(), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const completed = deferred<void>();
@@ -1796,7 +1795,7 @@ Deno.test("paid fallback releases its dispatch intent when metered quota admissi
   }
 });
 
-Deno.test("expired Codex credentials exhaust both accounts before paid metered fallback", async () => {
+Deno.test("expired Codex credentials exhaust both accounts and fail closed without paid fallback", async () => {
   kv.values.clear();
   resetProviderHealthThrottleForTest();
   resetApiKeyPolicyCacheForTest();
@@ -1849,25 +1848,23 @@ Deno.test("expired Codex credentials exhaust both accounts before paid metered f
         body: JSON.stringify({ input: "ping", stream: true }),
       }),
     );
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("x-uos-upstream"), "metered");
+    assert.equal(response.status, 503);
     await response.text();
     assert.equal(accountIds.length, 2);
     assert.equal(new Set(accountIds).size, 2);
     assert.equal(refreshCalls, 2);
-    assert.equal(meteredCalls, 1);
+    assert.equal(meteredCalls, 0);
     assert.deepEqual(
       await Promise.all(["acct-1", "acct-2"].map(async (accountId) => (await getCodexProviderHealth(accountId)).state)),
       ["invalid", "invalid"],
     );
-    assert.equal((await getMeteredProviderHealth()).state, "healthy");
 
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
-    assert.equal(terminal.provider, "metered");
-    assert.equal(terminal.fallback_reason, "primary_401");
-    assert.equal(terminal.stream_terminal_type, "response.completed");
+    assert.equal(terminal.provider, "chatgpt_codex");
+    assert.equal(terminal.fallback_reason, null);
+    assert.equal(terminal.stream_terminal_type, "error");
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
