@@ -4281,6 +4281,71 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       }
     });
 
+    await t.step("failed RemovedProvider fallback restores primary Codex correlation", async () => {
+      const debugKey = keyToString(DEBUG_ROUTING_KEY);
+      const previousDebugRouting = kvStore.get(debugKey);
+      const originalInfo = console.info;
+      const logs: unknown[][] = [];
+      setRemovedProviderApiKeyForTest("removed-provider-test-key");
+      setRemovedProviderTestAdapterForTest({
+        fetchResponses: () => {
+          throw new Error("RemovedProvider fallback failed");
+        },
+        modelFromEvent: () => null,
+        isEligibleModel: (model) => model === DEFAULT_TEST_MODEL,
+      });
+      kvStore.set(debugKey, {
+        scenario: "normal",
+        expires_at_ms: Date.now() + 60_000,
+        updated_at_ms: Date.now(),
+      });
+      resetDebugRoutingCacheForTest();
+      console.info = (...args: unknown[]) => logs.push(args);
+      try {
+        const response = await withFetchMock(
+          () =>
+            new Response(JSON.stringify({ error: { message: "Codex primary failed" } }), {
+              status: 500,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Request-Id": "failed-codex-primary-id",
+              },
+            }),
+          () =>
+            gatewayHandler(
+              new Request("http://localhost/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "preserve primary correlation" }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 500);
+        assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+        assert.equal(response.headers.get("x-uos-provider-request-id"), "failed-codex-primary-id");
+        await response.json();
+        for (let attempt = 0; attempt < 100 && logs.length === 0; attempt += 1) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 1));
+        }
+        const terminals = logs
+          .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+          .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>);
+        assert.equal(terminals.length, 1);
+        const terminal = terminals[0]!;
+        assert.equal(terminal.provider, "chatgpt_codex");
+        assert.equal(terminal.provider_request_id, "failed-codex-primary-id");
+        assert.equal(terminal.account_slot, 1);
+        assert.equal(typeof terminal.account_cohort_id, "string");
+      } finally {
+        console.info = originalInfo;
+        setRemovedProviderTestAdapterForTest(null);
+        setRemovedProviderApiKeyForTest(undefined);
+        if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+        else kvStore.set(debugKey, previousDebugRouting);
+        resetDebugRoutingCacheForTest();
+      }
+    });
+
     await t.step("RemovedProvider recovery clears failed Codex request metadata", async () => {
       const debugKey = keyToString(DEBUG_ROUTING_KEY);
       const previousDebugRouting = kvStore.get(debugKey);
@@ -6421,6 +6486,49 @@ Deno.test("openai: inconsistent function-call stream arguments never emit Chat [
   const text = await response.text();
   assert.match(text, /upstream_stream_error/);
   assert.doesNotMatch(text, /data: \[DONE\]/);
+});
+
+Deno.test("openai: malformed preflight terminal emits a Chat stream error", async () => {
+  const observedTerminalUsages: Array<{ completed: boolean; inputTokens: number | null }> = [];
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${
+          JSON.stringify({
+            type: "response.completed",
+            response: {
+              output: [{ id: "fc_preflight_bad", type: "function_call", call_id: "call_bad", name: "bad" }],
+              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+            },
+          })
+        }\n\n`,
+      ]),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            stream: true,
+            messages: [{ role: "user", content: "tools" }],
+          }),
+        }),
+        {
+          keyId: null,
+          kernelRepo: null,
+          kernelOrg: null,
+          onTerminalUsage: (usage, completed) => {
+            observedTerminalUsages.push({ completed, inputTokens: usage?.inputTokens ?? null });
+          },
+        },
+      ),
+  );
+
+  const text = await response.text();
+  assert.match(text, /upstream_stream_error/);
+  assert.doesNotMatch(text, /data: \[DONE\]/);
+  assert.deepEqual(observedTerminalUsages, [{ completed: true, inputTokens: 1 }]);
 });
 
 Deno.test("openai: terminal function calls without arguments fail for buffered and streamed Chat", async (t) => {
