@@ -1203,6 +1203,7 @@ const run = async (): Promise<void> => {
   const updateState = async (stage: string, patch: Partial<CycleState> = {}): Promise<void> => {
     Object.assign(state, patch, { stage });
     await writeJson(statePath, state);
+    console.log(`[sentinel] stage=${stage} status=${state.status}`);
   };
   await updateState("validating_credentials");
 

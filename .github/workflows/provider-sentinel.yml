@@ -1,4 +1,5 @@
 name: Provider Sentinel
+run-name: Provider Sentinel ${{ github.event_name }} ${{ github.run_id }}
 
 on:
   schedule:
@@ -32,24 +33,35 @@ jobs:
         (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') &&
         vars.SENTINEL_AUTONOMY_ENABLED == 'true'
       )
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 360
     steps:
-      - name: Require a restricted artifact repository
+      - name: Require ciphertext-only artifact policy
         shell: bash
         env:
           REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
         run: |
           set -euo pipefail
+          echo "SENTINEL_ARTIFACT_POLICY_ACTIVE=false" >> "$GITHUB_ENV"
           case "$REPOSITORY_VISIBILITY" in
-            private|internal)
-              echo "SENTINEL_REPOSITORY_RESTRICTED=true" >> "$GITHUB_ENV"
-              ;;
+            public|private|internal) ;;
             *)
-              echo "::error::Provider Sentinel requires private or internal repository visibility before it captures or uploads raw logs."
+              echo "::error::Provider Sentinel received an unsupported repository visibility."
               exit 1
               ;;
           esac
+          if [ -z "$SENTINEL_ARTIFACT_KEY" ]; then
+            echo "::error::SENTINEL_ARTIFACT_KEY is required before log capture."
+            exit 1
+          fi
+          decoded_bytes="$(printf '%s' "$SENTINEL_ARTIFACT_KEY" | base64 --decode | wc -c | tr -d ' ')"
+          if [ "$decoded_bytes" != "32" ]; then
+            echo "::error::SENTINEL_ARTIFACT_KEY must encode exactly 32 bytes."
+            exit 1
+          fi
+          echo "SENTINEL_ARTIFACT_POLICY_ACTIVE=true" >> "$GITHUB_ENV"
+          echo "Ciphertext-only evidence policy active for $REPOSITORY_VISIBILITY visibility." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Select immutable run mode
         shell: bash
@@ -138,7 +150,7 @@ jobs:
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
-          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 || secrets.CODEX_AUTH_JSON_B64 }}
           SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
           SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
           SENTINEL_SIGNAL_ID: ${{ github.event.client_payload.signal_id }}
@@ -158,17 +170,19 @@ jobs:
             --mode "$SENTINEL_MODE"
 
       - name: Reject credential files from artifact paths
-        if: always() && env.SENTINEL_REPOSITORY_RESTRICTED == 'true'
+        if: always() && env.SENTINEL_ARTIFACT_POLICY_ACTIVE == 'true'
         shell: bash
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
-          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 || secrets.CODEX_AUTH_JSON_B64 }}
           SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
           SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          echo "SENTINEL_PLAINTEXT_SAFE=false" >> "$GITHUB_ENV"
           if find \
             .sentinel/raw-logs \
             .sentinel/replay-cases \
@@ -177,7 +191,6 @@ jobs:
             -type f \( -name auth.json -o -name '*codex-auth*' -o -name '*auth-slot*' \) \
             -print -quit 2>/dev/null | grep -q .; then
             echo "::error::A forbidden credential-like file exists in a Sentinel artifact path."
-            echo "SENTINEL_ARTIFACTS_SAFE=false" >> "$GITHUB_ENV"
             exit 1
           fi
           for secret_name in \
@@ -185,6 +198,7 @@ jobs:
             PREVIEW_UOS_AI_USER_TOKEN \
             SENTINEL_CODEX_AUTH_SLOT_1_B64 \
             SENTINEL_CODEX_AUTH_SLOT_2_B64 \
+            SENTINEL_ARTIFACT_KEY \
             SENTINEL_REPLAY_KEY \
             GITHUB_TOKEN; do
             secret_value="${!secret_name:-}"
@@ -204,34 +218,79 @@ jobs:
                 : > "$pattern_file"
                 rm -f "$pattern_file"
                 echo "::error::Credential material exists in a Sentinel artifact path."
-                echo "SENTINEL_ARTIFACTS_SAFE=false" >> "$GITHUB_ENV"
                 exit 1
               fi
               : > "$pattern_file"
               rm -f "$pattern_file"
             fi
           done
+          echo "SENTINEL_PLAINTEXT_SAFE=true" >> "$GITHUB_ENV"
+
+      - name: Publish supervised cycle summary
+        if: always() && env.SENTINEL_PLAINTEXT_SAFE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Provider Sentinel supervised cycle"
+            echo
+            echo "- Mode: ${SENTINEL_MODE:-unavailable}"
+            if [ -f .sentinel/reports/cycle.json ]; then
+              jq -r '
+                "- Status: " + .status,
+                "- Stage: " + .stage,
+                "- Candidate SHA: " + (.candidate_sha // "not created"),
+                "- Temporary branch: " + (.temporary_branch // "not created"),
+                "- Branch disposition: " + (.branch_disposition // "unavailable")
+              ' .sentinel/reports/cycle.json
+            else
+              echo "- Status: unavailable before initialization"
+            fi
+            if [ -f .sentinel/reports/triage.json ]; then
+              jq -r '
+                "- Findings: " + (.findings | length | tostring),
+                "- Severity counts: P0=" + ([.findings[] | select(.severity == "P0")] | length | tostring) +
+                  ", P1=" + ([.findings[] | select(.severity == "P1")] | length | tostring) +
+                  ", P2=" + ([.findings[] | select(.severity == "P2")] | length | tostring) +
+                  ", P3=" + ([.findings[] | select(.severity == "P3")] | length | tostring)
+              ' .sentinel/reports/triage.json
+            fi
+            echo "- Evidence artifact: encrypted AES-256-GCM ciphertext only"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Encrypt and scrub Sentinel evidence
+        if: always() && env.SENTINEL_PLAINTEXT_SAFE == 'true'
+        shell: bash
+        env:
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          echo "SENTINEL_ARTIFACTS_SAFE=false" >> "$GITHUB_ENV"
+          deno run \
+            --allow-env=GITHUB_ACTIONS,SENTINEL_ARTIFACT_KEY \
+            --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/encrypted \
+            --allow-write=.sentinel \
+            scripts/sentinel/encrypt-artifacts.ts
+          test ! -e .sentinel/raw-logs
+          test ! -e .sentinel/reports
+          test -f .sentinel/encrypted/sentinel-evidence-v1.json
           echo "SENTINEL_ARTIFACTS_SAFE=true" >> "$GITHUB_ENV"
 
-      - name: Upload restricted Sentinel evidence
+      - name: Upload encrypted Sentinel evidence
         if: >-
           always() &&
-          env.SENTINEL_REPOSITORY_RESTRICTED == 'true' &&
           env.SENTINEL_ARTIFACTS_SAFE == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ env.SENTINEL_EVIDENCE_ARTIFACT_NAME || format('sentinel-evidence-failed-before-dedupe-{0}', github.run_id) }}
-          path: |
-            .sentinel/raw-logs
-            .sentinel/reports
-          if-no-files-found: warn
+          path: .sentinel/encrypted/sentinel-evidence-v1.json
+          if-no-files-found: error
           include-hidden-files: true
           retention-days: 90
 
       - name: Upload encrypted replay bundle
         if: >-
           always() &&
-          env.SENTINEL_REPOSITORY_RESTRICTED == 'true' &&
           env.SENTINEL_ARTIFACTS_SAFE == 'true' &&
           env.SENTINEL_HAS_REPLAY_CASES == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

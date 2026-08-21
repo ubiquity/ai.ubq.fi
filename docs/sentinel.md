@@ -16,13 +16,12 @@ The `Provider Sentinel` Actions workflow has three modes:
 - `incident`: the 15-minute schedule and `provider_incident` repository-dispatch event inspect the previous 20 minutes,
   so adjacent scans overlap by five minutes.
 
-The orchestrator also has a restricted observation mode for the supervised soak period. `--mode observe` inspects the
-previous 125 minutes, which supports a two-hour schedule with five minutes of overlap. It captures complete production
-logs, runs only the read-only triage agent, writes `triage.json`, `observation.json`, and `cycle.json`, and then returns
+The orchestrator also has an observation mode for a supervised soak period. `--mode observe` inspects the previous 125
+minutes, which supports a two-hour schedule with five minutes of overlap. It captures complete production logs, runs
+only the read-only triage agent, writes `triage.json`, `observation.json`, and `cycle.json`, and then returns
 unconditionally. It never exports or decrypts replay captures, creates a candidate worktree, edits code, runs replay
 inference, pushes Git, dispatches a deployment, promotes a revision, or rolls back production. Observation mode needs
-only the Deno log token, the two Codex auth slots, and read access to its private Actions repository; it does not
-receive preview credentials or the replay key.
+only the Deno log token and the two Codex auth slots; it does not receive preview credentials or the replay key.
 
 On GitHub Actions, each interval is anchored to the current workflow run's immutable `created_at` value from the GitHub
 API. A cycle that waited for the repository concurrency lock therefore inspects the window associated with its trigger,
@@ -37,17 +36,13 @@ The workflow uses one repository-wide concurrency group, does not cancel an acti
 can therefore retain up to 100 waiting cycles instead of replacing the one pending cycle. This keeps the daily 06:00 run
 and the simultaneous incident run distinct. Scheduled and repository-dispatch runs are skipped unless the repository
 variable `SENTINEL_AUTONOMY_ENABLED` is exactly `true`. Manual preview runs remain eligible while that gate is disabled,
-subject to the repository-visibility gate below.
+so the first real repair cycle can be supervised before autonomous production operation begins.
 
-The workflow fails before checkout, raw-log capture, or secret use unless repository visibility is `private` or
-`internal`. This repository is currently public, so the visibility gate presently blocks every Sentinel run. Keep the
-gate in place until the repository becomes restricted or raw logs and reports move to a separate restricted artifact
-destination.
-
-For a public source repository, run observation mode from a private companion Actions repository that checks out an
-exact source SHA. Keep its token read-only, retain raw logs and reports only in that private repository, and keep
-`SENTINEL_AUTONOMY_ENABLED` absent. The initial soak should use one manual run followed by a bounded two-hour schedule;
-review quota consumption and reports before enabling the final 15-minute repair cadence.
+The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
+unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective
+artifact path for credentials, encrypts raw logs and durable reports with AES-256-GCM, reads the persisted ciphertext
+back, decrypts it, verifies every original byte, and only then removes the plaintext directories. The upload step
+accepts only the single verified ciphertext envelope. A scan or encryption failure uploads no raw logs or reports.
 
 ## Required repository configuration
 
@@ -55,6 +50,8 @@ Add these Actions secrets:
 
 - `SENTINEL_CODEX_AUTH_SLOT_1_B64`: base64 encoding of one complete Codex CLI `auth.json` document.
 - `SENTINEL_CODEX_AUTH_SLOT_2_B64`: base64 encoding of a second complete Codex CLI `auth.json` document.
+- `SENTINEL_ARTIFACT_KEY`: one cryptographically random 32-byte value encoded as standard base64. It encrypts the full
+  raw-log and report artifact before upload and remains separate from the replay key.
 - `SENTINEL_REPLAY_KEY`: one cryptographically random 32-byte value encoded as base64url. The deployment workflow
   validates its decoded size without printing it, then synchronizes it to preview and production with
   `deno deploy env load --replace`.
@@ -71,11 +68,11 @@ files and PIDs and mounts only system files, the repository, the selected checko
 nor synthetic auth is placed under `.sentinel/`, logged, prompted, or uploaded. Workflow secrets are scoped to the
 orchestration and final artifact-scan steps, not dependency installation or artifact upload actions.
 
-Actions artifacts inherit the repository's access controls. Complete raw Deno log captures are given to triage and
-uploaded without field sanitization, filtering, or summarization only after the private/internal visibility gate passes.
-The repository or organization must also permit 90-day artifact retention. Each run uploads raw logs and durable reports
-in one restricted evidence artifact. Runs with new captures upload a separate encrypted replay bundle. Both artifacts
-use 90-day retention. Codex auth documents and deployment credentials are not artifacts.
+Complete raw Deno log captures are given to triage without field sanitization, filtering, or summarization. Raw logs and
+durable reports are then compressed and encrypted into one authenticated ciphertext envelope before Actions receives
+them. The repository or organization must permit 90-day artifact retention. Runs with new captures upload a separate
+encrypted replay bundle. Both artifacts use 90-day retention. Codex auth documents and deployment credentials are not
+artifacts.
 
 Each encrypted replay bundle uses a non-sensitive, digest-addressed `sentinel-replay-bundle-v1-*` name and includes its
 index manifest. The keyed case-group Bloom filter in the artifact name lets future runs locate and download only bundles
@@ -145,13 +142,13 @@ Git revert if any production-stage operation fails.
 
 ## Supervised preview acceptance
 
-Keep `SENTINEL_AUTONOMY_ENABLED` unset or `false` until repository visibility and immutable dependency pins satisfy the
-gates above and one manual preview cycle on `development` demonstrates all of these results:
+Keep `SENTINEL_AUTONOMY_ENABLED` unset or `false` until the ciphertext artifact policy and immutable dependency pins
+satisfy the gates above and one manual preview cycle on `development` demonstrates all of these results:
 
 1. Both auth slots are validated without disclosure, quota selection is correct, and account changes between stages are
    handled.
-2. Complete raw logs and new encrypted KV captures are exported to restricted artifacts, while exact request bytes and
-   allowed compatibility headers survive decryption and authorization is replaced.
+2. Complete raw logs and durable reports are exported only as authenticated ciphertext, and new encrypted KV captures
+   preserve exact request bytes and allowed compatibility headers while replay replaces authorization.
 3. Triage reports every evidence-backed finding, implementation records every disposition, and native `codex review`
    blocks P0/P1 while deduplicating P2/P3 into `docs/sentinel-review-backlog.md`.
 4. Formatting, lint, build, affected tests, served HTTP/SSE checks, secret scanning, and replay validation pass for the
