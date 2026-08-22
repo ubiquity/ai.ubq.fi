@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import {
   PROMPT_CACHE_ANALYTICS_BUCKET_MS,
+  PROMPT_CACHE_ANALYTICS_DIMENSIONS,
   PROMPT_CACHE_ANALYTICS_KV_PREFIX,
   PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET,
   PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS,
@@ -107,6 +108,7 @@ Deno.test("prompt-cache analytics v2 aggregates safe cohorts and keeps model and
 
   const byProvider = await readPromptCacheAnalytics({ ...options(kv), groupBy: ["provider"] });
   assert.equal(byProvider.status, "ready");
+  assert.equal(byProvider.cardinality_limited, false);
   assert.deepEqual(
     byProvider.buckets.map((bucket) => ({
       provider: bucket.group?.provider,
@@ -355,17 +357,73 @@ Deno.test("prompt-cache analytics caps cohort cardinality while retaining aggreg
     const result = await recordPromptCacheAnalytics(event({ model: `gpt-cardinality-${index}` }), options(kv));
     assert.equal(result.reason, "recorded");
   }
-  const capped = await recordPromptCacheAnalytics(event({ model: "gpt-cardinality-overflow" }), options(kv));
-  assert.deepEqual(capped, {
-    status: "recorded",
-    reason: "recorded_cardinality_capped",
-    bucket_start_at_ms: NOW_MS,
-  });
+  for (
+    const input of [
+      event({ model: "gpt-cardinality-overflow" }),
+      event({
+        model: "gpt-cardinality-overflow-second",
+        inputTokens: 200,
+        cachedInputTokens: 50,
+        cacheWriteInputTokens: 20,
+      }),
+    ]
+  ) {
+    assert.deepEqual(await recordPromptCacheAnalytics(input, options(kv)), {
+      status: "recorded",
+      reason: "recorded_cardinality_capped",
+      bucket_start_at_ms: NOW_MS,
+    });
+  }
 
   const aggregate = await readPromptCacheAnalytics(options(kv));
-  assert.equal(aggregate.buckets[0]?.sample_count, PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET + 1);
+  assert.deepEqual(
+    aggregate.buckets[0] && {
+      input: aggregate.buckets[0].input_tokens,
+      cached: aggregate.buckets[0].cached_input_tokens,
+      write: aggregate.buckets[0].cache_write_input_tokens,
+      writeSamples: aggregate.buckets[0].cache_write_reported_sample_count,
+      samples: aggregate.buckets[0].sample_count,
+    },
+    { input: 3_500, cached: 875, write: 350, writeSamples: 34, samples: 34 },
+  );
   const byModel = await readPromptCacheAnalytics({ ...options(kv), groupBy: ["model"] });
-  assert.equal(byModel.buckets.length, PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET);
+  assert.equal(byModel.buckets.length, PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET + 1);
+  assert.equal(byModel.cardinality_limited, true);
+  assert.equal(byModel.truncated, true);
+  assert.equal(byModel.buckets.filter((bucket) => bucket.group?.cardinality_limited !== true).length, 32);
+  assert.doesNotMatch(JSON.stringify(byModel), /gpt-cardinality-overflow/);
+
+  for (const groupBy of PROMPT_CACHE_ANALYTICS_DIMENSIONS) {
+    const grouped = await readPromptCacheAnalytics({ ...options(kv), groupBy: [groupBy] });
+    assert.equal(grouped.cardinality_limited, true, groupBy);
+    assert.equal(grouped.truncated, true, groupBy);
+    const overflow = grouped.buckets.find((bucket) => bucket.group?.cardinality_limited === true);
+    assert.deepEqual(
+      overflow && {
+        group: overflow.group,
+        input: overflow.input_tokens,
+        cached: overflow.cached_input_tokens,
+        write: overflow.cache_write_input_tokens,
+        writeSamples: overflow.cache_write_reported_sample_count,
+        samples: overflow.sample_count,
+        hits: overflow.request_cache_hit_sample_count,
+        reported: overflow.usage_reported_sample_count,
+        limited: overflow.dimension_cardinality_limited_sample_count,
+      },
+      {
+        group: { cardinality_limited: true },
+        input: 300,
+        cached: 75,
+        write: 30,
+        writeSamples: 2,
+        samples: 2,
+        hits: 2,
+        reported: 2,
+        limited: 2,
+      },
+      groupBy,
+    );
+  }
 });
 
 Deno.test("prompt-cache analytics caps grouped response cardinality and marks the result", async () => {
@@ -399,6 +457,10 @@ Deno.test("prompt-cache analytics isolates v1 reads and prunes stale v1 and v2 e
   assert.deepEqual((await readPromptCacheAnalytics(options(kv))).buckets, []);
 
   await recordPromptCacheAnalytics(event({ model: "gpt-expired" }), options(kv, expiredBucket));
+  kv.seed(
+    [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "overflow", expiredBucket, "sample_count"],
+    new Deno.KvU64(1n),
+  );
   kv.seed([...LEGACY_V1_PREFIX, expiredBucket, "input_tokens"], new Deno.KvU64(1n));
   const pruned = await prunePromptCacheAnalytics({ kv: kv as unknown as Deno.Kv, now: () => NOW_MS });
   assert.equal(pruned.status, "pruned");

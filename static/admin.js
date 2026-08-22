@@ -181,7 +181,7 @@ promptCacheAnalyticsList.setAttribute("role", "list");
 const promptCacheAnalyticsRetention = document.createElement("p");
 promptCacheAnalyticsRetention.dataset.muted = "";
 promptCacheAnalyticsRetention.textContent =
-  "Fifteen-minute buckets are retained for seven days. Raw cache keys and request identifiers are not shown.";
+  "This view shows the trailing seven days. Storage retains fifteen-minute buckets for eight days to keep the window complete. Raw cache keys and request identifiers are not shown.";
 promptCacheAnalyticsPanel.append(
   promptCacheAnalyticsHeader,
   promptCacheAnalyticsState,
@@ -2516,6 +2516,7 @@ const promptCacheAnalyticsRatio = (value) =>
 
 const promptCacheAnalyticsGroupLabel = (group) => {
   if (!group || typeof group !== "object") return "All cache-eligible traffic";
+  if (group.cardinality_limited === true) return "Cohort detail capped";
   const labels = [];
   if (typeof group.provider === "string") labels.push(group.provider);
   if (typeof group.model_hash === "string") {
@@ -2567,8 +2568,14 @@ const renderPromptCacheAnalytics = (snapshot) => {
     return;
   }
 
+  const cappedCohortVisible = rows.some((bucket) => bucket?.group?.cardinality_limited === true);
+  const cardinalityLimited = snapshot.cardinality_limited === true || cappedCohortVisible;
   const truncated = snapshot.truncated === true;
-  promptCacheAnalyticsState.textContent = truncated
+  promptCacheAnalyticsState.textContent = cardinalityLimited
+    ? cappedCohortVisible
+      ? "Cohort detail reached the per-bucket cap. Cardinality-limited samples are included in the capped cohort row."
+      : "Cohort detail reached the per-bucket cap. The current response does not include the capped cohort row."
+    : truncated
     ? `Showing the newest ${rows.length} grouped buckets within the response limit.`
     : `Latest bucket for ${rows.length} cache cohort${rows.length === 1 ? "" : "s"}.`;
   for (const bucket of rows) {
@@ -2594,6 +2601,16 @@ const renderPromptCacheAnalytics = (snapshot) => {
     appendProviderFact(facts, "Samples", promptCacheAnalyticsNumber(bucket.sample_count));
     appendProviderFact(facts, "Cached input", promptCacheAnalyticsNumber(bucket.cached_input_tokens));
     appendProviderFact(facts, "Cache reads per write", promptCacheAnalyticsRatio(bucket.cache_reads_per_write));
+    if (
+      typeof bucket.dimension_cardinality_limited_sample_count === "number" &&
+      bucket.dimension_cardinality_limited_sample_count > 0
+    ) {
+      appendProviderFact(
+        facts,
+        "Cardinality-limited samples",
+        promptCacheAnalyticsNumber(bucket.dimension_cardinality_limited_sample_count),
+      );
+    }
     if (typeof bucket.group?.prompt_cache_key_present === "boolean") {
       appendProviderFact(facts, "Cache key", bucket.group.prompt_cache_key_present ? "Keyed" : "Unkeyed");
     }

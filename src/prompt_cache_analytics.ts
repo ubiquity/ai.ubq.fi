@@ -112,6 +112,8 @@ export type PromptCacheAnalyticsGroup = Readonly<{
   prompt_cache_key_present?: boolean;
   mode?: PromptCacheAnalyticsMode;
   fallback?: PromptCacheAnalyticsFallback;
+  /** Fixed synthetic group for events beyond the per-bucket cohort cap. */
+  cardinality_limited?: true;
 }>;
 
 export type PromptCacheAnalyticsBucket = Readonly<{
@@ -144,6 +146,9 @@ export type PromptCacheAnalyticsView = Readonly<{
   window_end_at_ms: number;
   group_by: readonly PromptCacheAnalyticsDimension[];
   max_buckets: number;
+  /** At least one group is a fixed synthetic cohort after the detail cap. */
+  cardinality_limited: boolean;
+  /** Response or cohort-detail truncation means the grouped view is incomplete. */
   truncated: boolean;
   buckets: readonly PromptCacheAnalyticsBucket[];
 }>;
@@ -249,6 +254,7 @@ const resolveKv = async (options: PromptCacheAnalyticsOptions): Promise<Deno.Kv 
 
 const aggregatePrefix = [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "all"] as const;
 const dimensionPrefix = [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "dimension"] as const;
+const overflowPrefix = [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "overflow"] as const;
 const metaPrefix = [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "meta"] as const;
 
 export const promptCacheAnalyticsBucketKey = (
@@ -290,6 +296,12 @@ const dimensionMarkerKey = (
   bucketStartAtMs: number,
   cohort: PromptCacheAnalyticsCohort,
 ): Deno.KvKey => [...dimensionPrefix, bucketStartAtMs, ...dimensionValues(cohort), "marker"];
+
+const overflowCounterKey = (bucketStartAtMs: number, counter: Counter): Deno.KvKey => [
+  ...overflowPrefix,
+  bucketStartAtMs,
+  counter,
+];
 
 const cardinalityKey = (bucketStartAtMs: number): Deno.KvKey => [...metaPrefix, bucketStartAtMs, "cardinality"];
 
@@ -364,14 +376,19 @@ const resolveCohort = async (
   };
 };
 
-const commitAggregateOnly = async (
+const commitAggregateAndOverflow = async (
   kv: Deno.Kv,
   bucketStartAtMs: number,
   deltas: CounterDeltas,
 ): Promise<boolean> => {
   try {
-    const operation = incrementCounters(
+    let operation = incrementCounters(
       kv.atomic(),
+      (counter) => overflowCounterKey(bucketStartAtMs, counter),
+      deltas,
+    );
+    operation = incrementCounters(
+      operation,
       (counter) => promptCacheAnalyticsCounterKey(bucketStartAtMs, counter),
       deltas,
     );
@@ -453,7 +470,7 @@ export const recordPromptCacheAnalytics = async (
           ...usage.deltas,
           dimension_cardinality_limited_sample_count: 1n,
         };
-        if (!await commitAggregateOnly(kv, bucketStartAtMs, cappedDeltas)) {
+        if (!await commitAggregateAndOverflow(kv, bucketStartAtMs, cappedDeltas)) {
           return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
         }
         return recordResult("recorded", "recorded_cardinality_capped", bucketStartAtMs);
@@ -497,7 +514,10 @@ export const recordPromptCacheAnalytics = async (
 const storageBucketStart = (key: Deno.KvKey): number | null => {
   const namespace = key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length];
   const bucketStartAtMs = key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length + 1];
-  if ((namespace !== "all" && namespace !== "dimension" && namespace !== "meta") || !safeCounter(bucketStartAtMs)) {
+  if (
+    (namespace !== "all" && namespace !== "dimension" && namespace !== "overflow" && namespace !== "meta") ||
+    !safeCounter(bucketStartAtMs)
+  ) {
     return null;
   }
   return bucketStartAtMs;
@@ -624,12 +644,21 @@ const groupIdentity = (bucketStartAtMs: number, group: PromptCacheAnalyticsGroup
     group.prompt_cache_key_present,
     group.mode,
     group.fallback,
+    group.cardinality_limited,
   ]);
 
 const parsedAggregateCounter = (key: Deno.KvKey): Readonly<{ bucketStartAtMs: number; counter: Counter }> | null => {
   if (key.length !== aggregatePrefix.length + 2) return null;
   const bucketStartAtMs = key[aggregatePrefix.length];
   const counter = key[aggregatePrefix.length + 1];
+  if (!safeCounter(bucketStartAtMs) || !isKnownCounter(counter)) return null;
+  return { bucketStartAtMs, counter };
+};
+
+const parsedOverflowCounter = (key: Deno.KvKey): Readonly<{ bucketStartAtMs: number; counter: Counter }> | null => {
+  if (key.length !== overflowPrefix.length + 2) return null;
+  const bucketStartAtMs = key[overflowPrefix.length];
+  const counter = key[overflowPrefix.length + 1];
   if (!safeCounter(bucketStartAtMs) || !isKnownCounter(counter)) return null;
   return { bucketStartAtMs, counter };
 };
@@ -769,6 +798,7 @@ export const readPromptCacheAnalytics = async (
     window_end_at_ms: window.windowEndAtMs,
     group_by: groupBy,
     max_buckets: PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS,
+    cardinality_limited: false,
     truncated: false,
     buckets: [],
   });
@@ -784,6 +814,7 @@ export const readPromptCacheAnalytics = async (
         counters: StoredCounters;
       }>
     >();
+    let cardinalityLimited = false;
     if (groupBy.length === 0) {
       for await (const entry of kv.list<Deno.KvU64>({ prefix: aggregatePrefix })) {
         const parsed = parsedAggregateCounter(entry.key);
@@ -817,6 +848,21 @@ export const readPromptCacheAnalytics = async (
         existing.counters[counter] = previous + value;
         storedBuckets.set(identity, existing);
       }
+      for await (const entry of kv.list<Deno.KvU64>({ prefix: overflowPrefix })) {
+        const parsed = parsedOverflowCounter(entry.key);
+        if (!parsed || !inWindow(parsed.bucketStartAtMs, window)) continue;
+        const value = storedCounter(entry.value);
+        if (value === null) continue;
+        cardinalityLimited = true;
+        const group: PromptCacheAnalyticsGroup = { cardinality_limited: true };
+        const identity = groupIdentity(parsed.bucketStartAtMs, group);
+        const existing = storedBuckets.get(identity) ??
+          { bucketStartAtMs: parsed.bucketStartAtMs, group, counters: {} };
+        const previous = existing.counters[parsed.counter] ?? 0;
+        if (previous > Number.MAX_SAFE_INTEGER - value) continue;
+        existing.counters[parsed.counter] = previous + value;
+        storedBuckets.set(identity, existing);
+      }
     }
 
     const projected = [...storedBuckets.values()]
@@ -826,8 +872,9 @@ export const readPromptCacheAnalytics = async (
         left.bucket_start_at_ms - right.bucket_start_at_ms ||
         JSON.stringify(left.group ?? {}).localeCompare(JSON.stringify(right.group ?? {}))
       );
-    const truncated = projected.length > PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS;
-    const buckets = truncated ? projected.slice(-PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS) : projected;
+    const responseTruncated = projected.length > PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS;
+    const truncated = responseTruncated || cardinalityLimited;
+    const buckets = responseTruncated ? projected.slice(-PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS) : projected;
     return {
       status: "ready",
       bucket_ms: PROMPT_CACHE_ANALYTICS_BUCKET_MS,
@@ -835,6 +882,7 @@ export const readPromptCacheAnalytics = async (
       window_end_at_ms: window.windowEndAtMs,
       group_by: groupBy,
       max_buckets: PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS,
+      cardinality_limited: cardinalityLimited,
       truncated,
       buckets,
     };

@@ -11,6 +11,7 @@ const readyView = (groupBy: readonly string[]): PromptCacheAnalyticsView => ({
   window_end_at_ms: 1_800_000_900_000,
   group_by: groupBy as PromptCacheAnalyticsView["group_by"],
   max_buckets: 512,
+  cardinality_limited: false,
   truncated: false,
   buckets: [{
     bucket_start_at_ms: 1_800_000_000_000,
@@ -90,7 +91,7 @@ Deno.test("prompt-cache analytics admin API preserves an explicit unavailable st
   assert.doesNotMatch(await failed.text(), new RegExp(secret));
 });
 
-Deno.test("admin cache analytics UI has bounded grouping controls and separate token and request hit rendering", () => {
+Deno.test("admin cache analytics UI exposes bounded grouping, capped cohorts, and distinct retention", () => {
   assert.match(adminScript, /\/admin\/prompt-cache-analytics/);
   assert.match(adminScript, /Token hit rate/);
   assert.match(adminScript, /Request hit rate/);
@@ -98,6 +99,14 @@ Deno.test("admin cache analytics UI has bounded grouping controls and separate t
   assert.match(adminScript, /Keyed/);
   assert.match(adminScript, /Unkeyed/);
   assert.match(adminScript, /prompt-cache-analytics-unavailable/);
+  assert.match(adminScript, /Cohort detail capped/);
+  assert.match(adminScript, /Cardinality-limited samples/);
+  assert.match(adminScript, /snapshot\.cardinality_limited === true/);
+  assert.match(
+    adminScript,
+    /This view shows the trailing seven days\. Storage retains fifteen-minute buckets for eight days/,
+  );
+  assert.doesNotMatch(adminScript, /Fifteen-minute buckets are retained for seven days\./);
   assert.match(adminScript, /cache: "no-store"/);
   assert.match(adminScript, /Authorization: `Bearer \$\{token\}`/);
 });
