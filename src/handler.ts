@@ -111,6 +111,21 @@ type RequestDeliveryInfo = Readonly<{
 type DeliveryOutcome = "delivered" | "interrupted" | "unobserved";
 type BodyOutcome = "drained" | "interrupted" | "failed";
 
+type SentinelBackgroundRuntime = Readonly<{
+  waitUntil: (task: Promise<unknown>) => void;
+}>;
+
+const scheduleSentinelBackgroundTask = (task: Promise<void>): boolean => {
+  const runtime = (globalThis as typeof globalThis & { EdgeRuntime?: SentinelBackgroundRuntime }).EdgeRuntime;
+  if (!runtime || typeof runtime.waitUntil !== "function") return false;
+  try {
+    runtime.waitUntil(task);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const shouldSignalSentinelProviderDegradation = (
   input: Readonly<{ status: number; completed: boolean; removedProviderTriggerClass: string | null }>,
 ): boolean =>
@@ -217,6 +232,7 @@ const logTerminalRequest = async (
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
     streamReadFailure?: boolean;
     suppressSentinelReplay?: boolean;
+    deferSentinelReplayCleanup?: boolean;
     resolveClientBodyObservation?: () =>
       | SentinelClientBodyObservation
       | null
@@ -334,7 +350,7 @@ const logTerminalRequest = async (
       : Promise.resolve();
     await Promise.all([telemetryWrite, cacheAnalyticsWrite, replayWrite, degradationWrite]);
   } finally {
-    zeroSentinelReplayInput(input.sentinelReplayInput);
+    if (!input.deferSentinelReplayCleanup) zeroSentinelReplayInput(input.sentinelReplayInput);
   }
 };
 
@@ -444,9 +460,7 @@ export const withTerminalRequestLog = (
       deliveryOutcome,
       streamReadFailure,
       suppressSentinelReplay: suppressSentinelReplay || replayFinalization !== null,
-      // A replay finalization owns the capture until its background cleanup
-      // finishes. Do not let terminal logging zero the request bytes first.
-      sentinelReplayInput: replayFinalization === null ? input.sentinelReplayInput : null,
+      deferSentinelReplayCleanup: replayFinalization !== null,
       resolveClientBodyObservation: async () => clientBodyObservation ?? await bufferedObservation,
     }).catch(() => {
       // Terminal logging and its durable baseline counters are best effort;
@@ -478,11 +492,14 @@ export const withTerminalRequestLog = (
     return (async () => {
       try {
         await finalizeCompletion();
-        // Replay capture is best effort. It may perform compression,
-        // encryption, and several remote KV operations, none of which may
-        // delay a response that is already computed. The finalization promise
-        // retains ownership of the capture bytes until its cleanup finishes.
-        void persistReplayAtApplicationTerminal();
+        // Replay persistence is best effort; schedule it after the response is
+        // ready so compression, encryption, and remote KV cannot delay
+        // non-SSE delivery.
+        const replayTask = persistReplayAtApplicationTerminal();
+        // Deno Deploy keeps registered tasks alive after the response is
+        // returned. Local runtimes do not expose that hook, so await the task
+        // there to retain deterministic cleanup without delaying delivery.
+        if (!scheduleSentinelBackgroundTask(replayTask)) await replayTask;
         return response;
       } finally {
         if (deliveryOutcome) {
