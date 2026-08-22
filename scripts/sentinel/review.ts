@@ -2,11 +2,11 @@ import { SENTINEL_POLICY } from "./policy.ts";
 import type { NativeReviewFinding, NativeReviewReport, TriageSeverity } from "./types.ts";
 
 const PRIORITY_PATTERN = /(?:^|\s)\[(P[0-3])\]\s+(.+)$/;
-const LOCATION_PATTERN = /(?:`)?([A-Za-z0-9_.@/+\-]+:\d+(?::\d+)?)(?:`)?/;
+const LOCATION_PATTERN = /(?:`)?([A-Za-z0-9_.@/+\-]+:\d+(?:-\d+)?(?::\d+)?)(?:`)?/;
 const NO_FINDINGS_PATTERNS = [
   /\bno findings\b/i,
-  /\bdid not find any (?:actionable )?(?:issues|findings)\b/i,
-  /\bno (?:actionable )?issues (?:found|identified)\b/i,
+  /\bdid not find any (?:actionable )?(?:issues|findings|defects?)\b/i,
+  /\bno (?:actionable )?(?:issues|findings|defects?)(?: (?:was|were))? (?:found|identified|detected)\b/i,
 ];
 const CHECKOUT_PATH_MARKERS = ["/candidate-worktree/", "/checkout/"];
 
@@ -19,7 +19,7 @@ const normalizeLocation = (value: string): string => {
 };
 
 const normalizeReviewLocations = (value: string): string =>
-  value.replace(/\/[A-Za-z0-9_.@/+\-]+:\d+(?::\d+)?/gu, (location) => normalizeLocation(location));
+  value.replace(/\/[A-Za-z0-9_.@/+\-]+:\d+(?:-\d+)?(?::\d+)?/gu, (location) => normalizeLocation(location));
 
 /** Codex writes the final native review to stdout; stderr is only a fallback for older clients. */
 export const nativeReviewParseInput = (stdout: string, stderr: string): string =>

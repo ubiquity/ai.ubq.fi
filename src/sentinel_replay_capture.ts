@@ -794,105 +794,115 @@ export const persistEncryptedSentinelReplay = async (
     throw new Error("Sentinel replay compatibility headers contain a disallowed value");
   }
 
-  const now = dependencies.now?.() ?? Date.now();
-  const failureSignature = sentinelFailureSignature(clientObservation);
-  const fingerprint = await hmacHex(
-    dependencies.keyBytes,
-    "fingerprint",
-    fingerprintParts(input, failureSignature, "fingerprint"),
-  );
-  const caseGroupDigest = await hmacHex(
-    dependencies.keyBytes,
-    "case-group",
-    fingerprintParts(input, failureSignature, "case-group"),
-  );
-  const dedupeKey = [...SENTINEL_REPLAY_DEDUPE_PREFIX, fingerprint] as const;
-  if ((await dependencies.kv.get(dedupeKey)).value !== null) return { status: "duplicate", fingerprint };
+  // Cancellation cleanup can zero the request-owned buffer while KV and
+  // cryptographic operations are pending. One synchronous snapshot must feed
+  // the digests and encrypted envelope so a capture cannot disagree with its
+  // own manifest.
+  const bodySnapshot = cloneBytes(input.body);
+  const snapshotInput: AcceptedSentinelReplayInput = { ...input, body: bodySnapshot };
+  try {
+    const now = dependencies.now?.() ?? Date.now();
+    const failureSignature = sentinelFailureSignature(clientObservation);
+    const fingerprint = await hmacHex(
+      dependencies.keyBytes,
+      "fingerprint",
+      fingerprintParts(snapshotInput, failureSignature, "fingerprint"),
+    );
+    const caseGroupDigest = await hmacHex(
+      dependencies.keyBytes,
+      "case-group",
+      fingerprintParts(snapshotInput, failureSignature, "case-group"),
+    );
+    const dedupeKey = [...SENTINEL_REPLAY_DEDUPE_PREFIX, fingerprint] as const;
+    if ((await dependencies.kv.get(dedupeKey)).value !== null) return { status: "duplicate", fingerprint };
 
-  const captureId = dependencies.randomUuid?.() ?? crypto.randomUUID();
-  const iv = dependencies.randomBytes?.(AES_GCM_IV_BYTES) ?? randomBytes(AES_GCM_IV_BYTES);
-  if (iv.byteLength !== AES_GCM_IV_BYTES) throw new Error("Sentinel replay IV must be 12 bytes");
-  const metadata: ReplayMetadata = {
-    version: ENVELOPE_VERSION,
-    captured_at_ms: now,
-    endpoint: input.endpoint,
-    method: input.method,
-    content_type: input.content_type,
-    compatibility_headers: input.compatibility_headers,
-    failure_signature: failureSignature,
-    observation,
-    client_observation: clientObservation,
-    request_id: input.request_id,
-    git_sha: input.git_sha,
-    deno_revision: input.deno_revision,
-  };
-  const encodedPlaintext = encodePlaintext(metadata, input.body);
-  let compressed: Uint8Array<ArrayBuffer>;
-  try {
-    compressed = await gzip(encodedPlaintext);
-  } finally {
-    encodedPlaintext.fill(0);
-  }
-  if (compressed.byteLength + 16 > MAX_REPLAY_CIPHERTEXT_BYTES) {
-    compressed.fill(0);
-    throw new Error("Sentinel replay compressed payload is too large");
-  }
-  let encrypted: Uint8Array<ArrayBuffer>;
-  try {
-    encrypted = new Uint8Array(
-      await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv, additionalData: encryptionAdditionalData(fingerprint) },
-        await importAesKey(dependencies.keyBytes),
-        compressed,
-      ),
-    );
-  } finally {
-    compressed.fill(0);
-  }
-  const chunks = splitChunks(encrypted);
-  const expiresAtMs = now + SENTINEL_REPLAY_TTL_MS;
-  const manifest: SentinelReplayManifest = {
-    version: ENVELOPE_VERSION,
-    capture_id: captureId,
-    fingerprint,
-    case_group_digest: caseGroupDigest,
-    captured_at_ms: now,
-    expires_at_ms: expiresAtMs,
-    algorithm: "AES-256-GCM",
-    compression: "gzip",
-    iv: base64UrlEncode(iv),
-    chunk_count: chunks.length,
-    ciphertext_bytes: encrypted.byteLength,
-  };
+    const captureId = dependencies.randomUuid?.() ?? crypto.randomUUID();
+    const iv = dependencies.randomBytes?.(AES_GCM_IV_BYTES) ?? randomBytes(AES_GCM_IV_BYTES);
+    if (iv.byteLength !== AES_GCM_IV_BYTES) throw new Error("Sentinel replay IV must be 12 bytes");
+    const metadata: ReplayMetadata = {
+      version: ENVELOPE_VERSION,
+      captured_at_ms: now,
+      endpoint: input.endpoint,
+      method: input.method,
+      content_type: input.content_type,
+      compatibility_headers: input.compatibility_headers,
+      failure_signature: failureSignature,
+      observation,
+      client_observation: clientObservation,
+      request_id: input.request_id,
+      git_sha: input.git_sha,
+      deno_revision: input.deno_revision,
+    };
+    const encodedPlaintext = encodePlaintext(metadata, bodySnapshot);
+    let compressed: Uint8Array<ArrayBuffer>;
+    try {
+      compressed = await gzip(encodedPlaintext);
+    } finally {
+      encodedPlaintext.fill(0);
+    }
+    if (compressed.byteLength + 16 > MAX_REPLAY_CIPHERTEXT_BYTES) {
+      compressed.fill(0);
+      throw new Error("Sentinel replay compressed payload is too large");
+    }
+    let encrypted: Uint8Array<ArrayBuffer>;
+    try {
+      encrypted = new Uint8Array(
+        await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv, additionalData: encryptionAdditionalData(fingerprint) },
+          await importAesKey(dependencies.keyBytes),
+          compressed,
+        ),
+      );
+    } finally {
+      compressed.fill(0);
+    }
+    const chunks = splitChunks(encrypted);
+    const expiresAtMs = now + SENTINEL_REPLAY_TTL_MS;
+    const manifest: SentinelReplayManifest = {
+      version: ENVELOPE_VERSION,
+      capture_id: captureId,
+      fingerprint,
+      case_group_digest: caseGroupDigest,
+      captured_at_ms: now,
+      expires_at_ms: expiresAtMs,
+      algorithm: "AES-256-GCM",
+      compression: "gzip",
+      iv: base64UrlEncode(iv),
+      chunk_count: chunks.length,
+      ciphertext_bytes: encrypted.byteLength,
+    };
 
-  const manifestKey = [...SENTINEL_REPLAY_MANIFEST_PREFIX, now, fingerprint, captureId] as const;
-  const cleanupChunks = async (): Promise<void> => {
-    await Promise.all(
-      chunks.map((_chunk, index) => dependencies.kv.delete([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index])),
-    );
-  };
-  try {
-    await Promise.all(
-      chunks.map((chunk, index) =>
-        dependencies.kv.set([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index], chunk, {
-          expireIn: SENTINEL_REPLAY_TTL_MS,
-        })
-      ),
-    );
-    const committed = await dependencies.kv.atomic()
-      .check({ key: dedupeKey, versionstamp: null })
-      .set(dedupeKey, { manifest_key: manifestKey }, { expireIn: SENTINEL_REPLAY_TTL_MS })
-      .set(manifestKey, manifest, { expireIn: SENTINEL_REPLAY_TTL_MS })
-      .commit();
-    if (committed.ok) return { status: "stored", manifest };
-    await cleanupChunks().catch(() => {});
-    return { status: "duplicate", fingerprint };
-  } catch (error) {
-    await cleanupChunks().catch(() => {});
-    throw error;
+    const manifestKey = [...SENTINEL_REPLAY_MANIFEST_PREFIX, now, fingerprint, captureId] as const;
+    const cleanupChunks = async (): Promise<void> => {
+      await Promise.all(
+        chunks.map((_chunk, index) => dependencies.kv.delete([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index])),
+      );
+    };
+    try {
+      await Promise.all(
+        chunks.map((chunk, index) =>
+          dependencies.kv.set([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index], chunk, {
+            expireIn: SENTINEL_REPLAY_TTL_MS,
+          })
+        ),
+      );
+      const committed = await dependencies.kv.atomic()
+        .check({ key: dedupeKey, versionstamp: null })
+        .set(dedupeKey, { manifest_key: manifestKey }, { expireIn: SENTINEL_REPLAY_TTL_MS })
+        .set(manifestKey, manifest, { expireIn: SENTINEL_REPLAY_TTL_MS })
+        .commit();
+      if (committed.ok) return { status: "stored", manifest };
+      await cleanupChunks().catch(() => {});
+      return { status: "duplicate", fingerprint };
+    } catch (error) {
+      await cleanupChunks().catch(() => {});
+      throw error;
+    } finally {
+      encrypted.fill(0);
+      for (const chunk of chunks) chunk.fill(0);
+    }
   } finally {
-    encrypted.fill(0);
-    for (const chunk of chunks) chunk.fill(0);
+    bodySnapshot.fill(0);
   }
 };
 

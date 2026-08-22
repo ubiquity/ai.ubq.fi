@@ -516,6 +516,39 @@ Deno.test("sentinel replay encrypts, chunks, exports, decrypts, and deduplicates
   );
 });
 
+Deno.test("sentinel replay snapshots exact bytes before concurrent request cleanup", async () => {
+  const input = acceptedInput(new TextEncoder().encode('{"prompt":"retain exact bytes"}'));
+  const expectedBody = new Uint8Array(input.body);
+  class CleanupRaceKv extends CountingKv {
+    override get<T = unknown>(
+      key: Deno.KvKey,
+      options?: Readonly<{ consistency?: "strong" | "eventual" }>,
+    ): Promise<Deno.KvEntryMaybe<T>> {
+      input.body.fill(0);
+      return super.get<T>(key, options);
+    }
+  }
+  const kv = new CleanupRaceKv();
+  const persisted = await persistEncryptedSentinelReplay(input, failedObservation(), {
+    kv: kv as unknown as Deno.Kv,
+    keyBytes,
+    now: () => 1_777_000_000_000,
+    randomUuid: () => "capture-cleanup-race",
+    randomBytes: () => new Uint8Array(12).fill(8),
+  });
+  assert.equal(persisted.status, "stored");
+  assert.deepEqual(new Set(input.body), new Set([0]));
+  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs: 0,
+    beforeMs: Number.MAX_SAFE_INTEGER - 1,
+  });
+  assert.equal(page.captures.length, 1);
+  const decrypted = await decryptExportedSentinelReplay(page.captures[0]!, keyBytes);
+  assert.deepEqual(decrypted.body, expectedBody);
+  decrypted.body.fill(0);
+  expectedBody.fill(0);
+});
+
 Deno.test("sentinel manifest export seeks to the requested timestamp and returns one ordered item", async () => {
   const backing = new CountingKv();
   await persistEncryptedSentinelReplay(acceptedInput(), failedObservation(), {

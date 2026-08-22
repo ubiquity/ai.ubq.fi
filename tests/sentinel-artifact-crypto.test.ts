@@ -207,21 +207,45 @@ Deno.test({
 });
 
 Deno.test({
-  name: "Sentinel workflows use only supported concurrency keys",
+  name: "Sentinel repair and watchdog workflows retain queued incident signals",
   ignore: fileSystemTestsUnavailable,
   async fn() {
     for (
       const path of [
-        ".github/workflows/deno-deploy.yml",
         ".github/workflows/provider-sentinel.yml",
-        ".github/workflows/sentinel-revision-control.yml",
+        ".github/workflows/provider-sentinel-watchdog.yml",
       ]
     ) {
       const workflow = await Deno.readTextFile(path);
       assert(
-        !/^\s+queue:/mu.test(workflow),
-        `${path} contains the unsupported concurrency queue key`,
+        /^\s+queue: max$/mu.test(workflow),
+        `${path} must retain concurrent incident signals in the maximum queue`,
       );
     }
+    for (
+      const path of [
+        ".github/workflows/deno-deploy.yml",
+        ".github/workflows/sentinel-revision-control.yml",
+      ]
+    ) {
+      const workflow = await Deno.readTextFile(path);
+      assert(!/^\s+queue:/mu.test(workflow), `${path} must keep its existing deployment concurrency policy`);
+    }
+  },
+});
+
+Deno.test({
+  name: "Sentinel watchdog dispatches incident signals on a resident five-minute ticker",
+  ignore: fileSystemTestsUnavailable,
+  async fn() {
+    const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel-watchdog.yml");
+    assert(workflow.includes("for iteration in $(seq 1 68)"), "Watchdog must stay below the six-hour runner limit");
+    assert(workflow.includes("next_tick_epoch=$(( $(date +%s) + 300 ))"), "Watchdog must use fixed five-minute ticks");
+    assert(workflow.includes("event_type=provider_incident"), "Watchdog must dispatch the incident event");
+    assert(!workflow.includes('cron: "*/5 * * * *"'), "Watchdog must not duplicate the incident schedule");
+    assert(
+      workflow.includes('"repos/${GITHUB_REPOSITORY}/actions/workflows/provider-sentinel-watchdog.yml/dispatches"'),
+      "Watchdog must rearm its successor",
+    );
   },
 });

@@ -664,6 +664,32 @@ Deno.test("native review parsing uses the final stdout and normalizes ephemeral 
   assert.equal(absolute.findings[0]?.fingerprint, relative.findings[0]?.fingerprint);
 });
 
+Deno.test("native review parser accepts explicit Codex clean verdicts and official location ranges", async () => {
+  assert.equal(
+    (await parseNativeReview(
+      "No actionable defects were found in the changes. Focused Sentinel tests pass.",
+      1,
+    )).parse_status,
+    "no_findings",
+  );
+  assert.equal(
+    (await parseNativeReview("I did not find any actionable defects.", 1)).parse_status,
+    "no_findings",
+  );
+  assert.equal((await parseNativeReview("The patch looks correct.", 1)).parse_status, "unparseable");
+  assert.equal(
+    (await parseNativeReview("Reviewer failed to output a response.", 1)).parse_status,
+    "unparseable",
+  );
+  const rendered = await parseNativeReview(
+    "Review comment:\n\n- [P2] Preserve the capture snapshot — /tmp/uos/candidate-worktree/src/handler.ts:439-444\n  Concurrent cleanup can zero the body.",
+    1,
+  );
+  assert.equal(rendered.parse_status, "findings");
+  assert.equal(rendered.findings[0]?.location, "src/handler.ts:439-444");
+  assert.match(rendered.findings[0]?.title ?? "", /src\/handler\.ts:439-444/u);
+});
+
 Deno.test("review backlog deduplicates fingerprints while retaining first observation and disposition", async () => {
   const report = await parseNativeReview("- [P2] Bound retries — src/retry.ts:9\n  Add a fixed maximum.", 1);
   const finding = report.findings[0]!;

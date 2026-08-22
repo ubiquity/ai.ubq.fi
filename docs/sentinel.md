@@ -13,8 +13,9 @@ The `Provider Sentinel` Actions workflow has three modes:
   exact candidate SHA to `p-ai-ubq-fi`. It does not push `development` or promote production. A manual run selected on
   any other ref is skipped.
 - `daily`: the 06:00 UTC schedule inspects the previous 24 hours.
-- `incident`: the five-minute schedule and `provider_incident` repository-dispatch event inspect the previous 20
-  minutes, so adjacent scans overlap by 15 minutes.
+- `incident`: the resident `Provider Sentinel Watchdog` sends a `provider_incident` repository-dispatch event every five
+  minutes. Each event inspects the previous 20 minutes, so adjacent scans overlap by 15 minutes. The watchdog rearms
+  itself before the six-hour hosted-runner limit; its six-hour cron is a recovery trigger, not the cadence.
 
 The orchestrator also has an observation mode for a supervised soak period. `--mode observe` inspects the previous 125
 minutes, which supports a two-hour schedule with five minutes of overlap. It captures complete production logs, runs
@@ -32,11 +33,11 @@ provide `client_payload.signal_id`; repeated deliveries of that ID share one key
 anchored interval in the key. Before raw-log capture, the cycle looks for a 90-day evidence artifact named exactly for
 that key and exits as a duplicate when one exists. Evidence artifacts from separate runs may use the same name.
 
-The workflow uses one repository-wide concurrency group and does not cancel an active run. GitHub retains at most one
-running and one pending cycle for that group; a newer queued event may replace the existing pending event. Scheduled and
-repository-dispatch runs are skipped unless the repository variable `SENTINEL_AUTONOMY_ENABLED` is exactly `true`.
-Manual preview runs remain eligible while that gate is disabled, so the first real repair cycle can be supervised before
-autonomous production operation begins.
+The workflow uses one repository-wide concurrency group and does not cancel an active run. Its `queue: max` policy
+retains up to 100 pending incident cycles instead of replacing the pending signal while a repair or deployment is
+active. Scheduled and repository-dispatch runs are skipped unless the repository variable `SENTINEL_AUTONOMY_ENABLED` is
+exactly `true`. Manual preview runs remain eligible while that gate is disabled, so the first real repair cycle can be
+supervised before autonomous production operation begins.
 
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective

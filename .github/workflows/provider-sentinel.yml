@@ -5,8 +5,6 @@ on:
   schedule:
     # Daily repair cycle for the preceding 24 hours.
     - cron: "0 6 * * *"
-    # Overlapping incident scan for the preceding 20 minutes.
-    - cron: "*/5 * * * *"
   workflow_dispatch:
   repository_dispatch:
     types:
@@ -16,6 +14,8 @@ concurrency:
   # One repair cycle may operate on the repository or shared preview app at a time.
   group: provider-sentinel-${{ github.repository }}
   cancel-in-progress: false
+  # Retain incident signals that arrive while a repair or deployment is active.
+  queue: max
 
 permissions:
   actions: write
