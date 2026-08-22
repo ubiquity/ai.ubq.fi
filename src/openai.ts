@@ -187,8 +187,7 @@ type UsageContext = Readonly<{
 type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
 export type InferenceFallbackReason =
   | "primary_429"
-  | "primary_quota_blocked"
-  | "dynamic_paid_model";
+  | "primary_quota_blocked";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 export type AffinityOutcome = "none" | "preferred" | "failover" | "shadow_only";
@@ -1954,72 +1953,6 @@ const logPaidProviderSelected = (
   }
 };
 
-const logPaidProviderAdmissionRejected = (
-  requestId: string,
-  model: string,
-  reason: string,
-): void => {
-  try {
-    console.warn(
-      "[ai.ubq.fi] paid_provider_admission_rejected",
-      JSON.stringify({ request_id: requestId, model, reason }),
-    );
-  } catch {
-    // Routing telemetry must never alter provider selection.
-  }
-};
-
-const paidProviderAdmissionError = (reason: string): Response => {
-  switch (reason) {
-    case "disabled":
-      return openaiError(
-        403,
-        "Paid-provider routing is disabled for this API key.",
-        "paid_fallback_disabled",
-      );
-    case "limit_exceeded":
-      return openaiError(
-        429,
-        "The API key's paid-provider limit is exhausted.",
-        "paid_fallback_limit_exceeded",
-      );
-    case "provider_unconfigured":
-      return openaiError(
-        503,
-        "No paid provider is configured for this model.",
-        "paid_provider_unconfigured",
-        { type: "server_error" },
-      );
-    case "model_not_priced":
-      return openaiError(
-        403,
-        "This model is not admitted by the API key's paid-provider policy.",
-        "paid_model_not_admitted",
-      );
-    case "reconciliation_pending":
-      return openaiError(
-        503,
-        "Paid-provider billing reconciliation is pending.",
-        "paid_fallback_reconciliation_pending",
-        { type: "server_error" },
-      );
-    case "concurrent_update":
-      return openaiError(
-        503,
-        "Paid-provider admission changed concurrently; retry the request.",
-        "paid_fallback_concurrent_update",
-        { type: "server_error" },
-      );
-    default:
-      return openaiError(
-        503,
-        "Paid-provider admission is unavailable.",
-        "paid_fallback_invalid_policy",
-        { type: "server_error" },
-      );
-  }
-};
-
 const bestEffortPaidFallbackBookkeeping = async (
   operation: string,
   run: () => Promise<unknown>,
@@ -2228,49 +2161,22 @@ const fetchResponsesWithPaidFallback = async (
   };
   if (!codexModelKnown && (meteredCatalog === null || surplusCatalog === null)) {
     [meteredCatalog, surplusCatalog] = await Promise.all([
-      // A request for a non-Codex model is authoritative demand. Bypass the
-      // catalog failure backoff so application retries can recover as soon as
-      // the provider catalog does instead of replaying a cached miss.
-      meteredCatalog === null
-        ? fetchMeteredModels({ force: true, signal: options.signal })
-        : Promise.resolve(meteredCatalog),
-      surplusCatalog === null
-        ? fetchSurplusModels({ force: true, signal: options.signal })
-        : Promise.resolve(surplusCatalog),
+      meteredCatalog === null ? fetchMeteredModels({ signal: options.signal }) : Promise.resolve(meteredCatalog),
+      surplusCatalog === null ? fetchSurplusModels({ signal: options.signal }) : Promise.resolve(surplusCatalog),
     ]);
   }
   let { surplusBilling, paidProviders, meteredOnly } = routingState();
   if (paidProviders.length) refreshStalePaidCatalogsInBackground();
-  const directPaidProvider = meteredOnly ? paidProviders[0] : null;
-  const rejectDirectPaidAdmission = (
-    provider: "metered" | "surplus",
-    errorReason: string,
-    logReason = errorReason,
-  ): RoutedResponsesUpstream => {
-    if (telemetry) telemetry.provider = "gateway";
-    logPaidProviderAdmissionRejected(
-      options.usageContext?.requestId ?? "unknown",
-      options.model,
-      logReason,
-    );
-    return {
-      response: paidProviderAdmissionError(errorReason),
-      provider,
-      paidFallback: null,
-      gatewayResponse: true,
-      fallbackReason: "dynamic_paid_model",
-    };
-  };
-  const directPaidPrimary = directPaidProvider
+  const meteredOnlyPrimary = meteredOnly
     ? openaiError(
-      503,
-      "Paid-provider routing did not reach the selected upstream.",
-      "paid_provider_not_dispatched",
-      { type: "server_error" },
+      429,
+      "This dynamic paid model is not in the configured paid-fallback roster.",
+      CODEX_QUOTA_BLOCKED_ERROR_CODE,
+      { headers: { "x-uos-upstream": "chatgpt_codex" } },
     )
     : null;
-  if (telemetry) telemetry.provider = directPaidProvider ?? "chatgpt_codex";
-  if (!directPaidProvider) recordAttemptedProvider(options.usageContext, "chatgpt_codex");
+  if (telemetry) telemetry.provider = "chatgpt_codex";
+  recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
   const debugScenario = (await loadDebugRoutingConfig()).scenario;
   const forcedStatus = debugScenario === "metered_first" || debugScenario === "codex_429"
@@ -2280,8 +2186,8 @@ const fetchResponsesWithPaidFallback = async (
     : debugScenario === "codex_401"
     ? 401
     : null;
-  if (directPaidPrimary) {
-    primary = directPaidPrimary;
+  if (meteredOnlyPrimary) {
+    primary = meteredOnlyPrimary;
   } else if (forcedStatus !== null) {
     primary = openaiError(
       forcedStatus,
@@ -2319,7 +2225,7 @@ const fetchResponsesWithPaidFallback = async (
     telemetry.providerRequestId = providerRequestIdFromResponse(primary);
   }
   const routingError = getCodexRoutingError(primary);
-  const gatewayResponse = directPaidProvider !== null || routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
+  const gatewayResponse = routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
     routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {
@@ -2333,15 +2239,10 @@ const fetchResponsesWithPaidFallback = async (
   const createdAtMs = options.usageContext?.startedAtMs;
   // Authentication and authorization failures are not capacity evidence.
   // Fail closed instead of converting bad Codex credentials into paid spend.
-  const fallbackReason: InferenceFallbackReason | null = directPaidProvider
-    ? "dynamic_paid_model"
-    : primaryStatus === 429
+  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 429
     ? routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ? "primary_quota_blocked" : "primary_429"
     : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
-  if (directPaidProvider && options.usageContext?.paidFallbackEnabled === false) {
-    return rejectDirectPaidAdmission(directPaidProvider, "disabled");
-  }
   if (
     !fallbackReason ||
     options.usageContext?.paidFallbackEnabled === false ||
@@ -2349,9 +2250,6 @@ const fetchResponsesWithPaidFallback = async (
     !requestId ||
     createdAtMs === undefined
   ) {
-    if (directPaidProvider) {
-      return rejectDirectPaidAdmission(directPaidProvider, "invalid_policy", "invalid_context");
-    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2409,9 +2307,6 @@ const fetchResponsesWithPaidFallback = async (
     decision = await reservePaidFallback(reservationInput);
   } catch (error) {
     warnPaidFallbackBookkeepingFailure("admission", error);
-    if (directPaidProvider) {
-      return rejectDirectPaidAdmission(directPaidProvider, "invalid_policy", "admission_error");
-    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2421,9 +2316,6 @@ const fetchResponsesWithPaidFallback = async (
     };
   }
   if (decision.kind === "skip") {
-    if (directPaidProvider) {
-      return rejectDirectPaidAdmission(directPaidProvider, decision.reason);
-    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2433,9 +2325,6 @@ const fetchResponsesWithPaidFallback = async (
     };
   }
   if (decision.kind === "blocked") {
-    if (directPaidProvider) {
-      return rejectDirectPaidAdmission(directPaidProvider, decision.reason);
-    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2785,21 +2674,10 @@ const getCodexModelMetadata = async (
   const snapshot = await loadCodexModelsSnapshot();
   const record = findSnapshotModelRecord(snapshot, model);
   if (record) return { snapshot, record, reasoning: getCodexModelReasoning(record), supportedEndpoints: null };
-  let [metered, surplus] = await Promise.all([
+  const [metered, surplus] = await Promise.all([
     fetchMeteredModels(),
     fetchSurplusModels(),
   ]);
-  const paidCatalogHasModel = (): boolean =>
-    metered?.models.some((candidate) => candidate.id === model) === true ||
-    surplus?.models.some((candidate) => candidate.id === model) === true;
-  if (!paidCatalogHasModel() && (metered === null || surplus === null)) {
-    [metered, surplus] = await Promise.all([
-      // An explicit request for an unknown model may bypass only a failed
-      // catalog's backoff. Healthy cached catalogs stay on their normal TTL.
-      metered === null ? fetchMeteredModels({ force: true }) : Promise.resolve(metered),
-      surplus === null ? fetchSurplusModels({ force: true }) : Promise.resolve(surplus),
-    ]);
-  }
   const meteredRecord = metered?.models.find((candidate) => candidate.id === model);
   const surplusRecord = surplus?.models.find((candidate) => candidate.id === model);
   const endpointType = route === "responses" ? "openai-response" : "openai";

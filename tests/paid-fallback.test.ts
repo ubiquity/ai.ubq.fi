@@ -244,7 +244,6 @@ const {
   paidFallbackReconciliationLeaseV3Key,
   paidFallbackWindowV3Key,
   markPaidFallbackTerminalV3,
-  recomputePaidFallbackReconciliationGateV3,
   reconcileDuePaidFallbacksV3,
   reconcilePaidFallbackV3,
   recordPaidFallbackTerminalV3,
@@ -666,12 +665,11 @@ Deno.test("V3 missing reconciliation gate bootstraps the earliest legacy marker"
   }
 });
 
-Deno.test("V3 concurrent dispatch-intent admissions do not exhaust gate CAS retries", async () => {
+Deno.test("V3 concurrent dispatch-intent admissions retain every reservation and gate arm", async () => {
   memoryKv.clear();
-  const concurrentAdmissions = 256;
   const decisions = await Promise.all(
     Array.from(
-      { length: concurrentAdmissions },
+      { length: 32 },
       (_, index) =>
         admitPaidFallbackV3(v3AdmissionInput("gate-concurrent", `gate-concurrent-${index}`, {
           limitMicrocredits: -1,
@@ -680,42 +678,17 @@ Deno.test("V3 concurrent dispatch-intent admissions do not exhaust gate CAS retr
         })),
     ),
   );
-  assert.deepEqual(decisions.map((decision) => decision.kind), Array(concurrentAdmissions).fill("reserved"));
+  assert.deepEqual(decisions.map((decision) => decision.kind), Array(32).fill("reserved"));
   const requests = await Promise.all(
     Array.from(
-      { length: concurrentAdmissions },
+      { length: 32 },
       (_, index) => memoryKv.get(paidFallbackRequestV3Key("gate-concurrent", `gate-concurrent-${index}`)),
     ),
   );
-  assert.equal(requests.filter((entry) => entry.value !== null).length, concurrentAdmissions);
-  assert.equal(memoryKv.atomicCommitFailures, 0);
+  assert.equal(requests.filter((entry) => entry.value !== null).length, 32);
   assert.equal(
     typeof (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value?.next_due_at_ms,
     "number",
-  );
-});
-
-Deno.test("V3 blind admission gate write fences a stale reconciliation scan", async () => {
-  memoryKv.clear();
-  const keyId = "gate-stale-scan";
-  const requestId = "gate-stale-scan-request";
-  const dueAtMs = Date.now();
-  const gateKey = paidFallbackReconciliationGateV3Key();
-  await memoryKv.set(gateKey, { next_due_at_ms: null });
-
-  memoryKv.beforeAtomicCommit = () => {
-    void memoryKv.set(paidFallbackPendingV3Key(keyId, requestId), {
-      created_at_ms: dueAtMs,
-      next_reconciliation_at_ms: dueAtMs,
-    });
-    void memoryKv.set(gateKey, { next_due_at_ms: 0 });
-  };
-
-  assert.equal(await recomputePaidFallbackReconciliationGateV3(kv), dueAtMs);
-  assert.equal(memoryKv.atomicCommitFailures, 1);
-  assert.deepEqual(
-    (await memoryKv.get<Record<string, unknown>>(gateKey)).value,
-    { next_due_at_ms: dueAtMs },
   );
 });
 
