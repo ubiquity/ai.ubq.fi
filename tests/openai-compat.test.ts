@@ -1102,6 +1102,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(warnings.includes("moderation_ignored"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
@@ -1109,7 +1110,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
     assert.equal("moderation" in recorded, false);
-    assert.deepEqual(recorded["prompt_cache_options"], { mode: "implicit", ttl: "30m" });
+    assert.equal("prompt_cache_options" in recorded, false);
   });
 
   await t.step("chat preserves none reasoning effort upstream", async () => {
@@ -1198,6 +1199,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(warnings.includes("moderation_ignored"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
@@ -1205,7 +1207,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
     assert.equal("moderation" in recorded, false);
-    assert.deepEqual(recorded["prompt_cache_options"], { mode: "implicit", ttl: "30m" });
+    assert.equal("prompt_cache_options" in recorded, false);
   });
 
   await t.step("responses accepts and strips Codex CLI client metadata", async () => {
@@ -1609,7 +1611,7 @@ Deno.test("openai: an expired access token makes a quota-shaped 403 actionable",
   }
 });
 
-Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly ignores temperature", async () => {
+Deno.test("openai: Terra Chat Completions accepts but omits the unsupported Codex completion cap", async () => {
   let recordedBody: Record<string, unknown> | null = null;
 
   const response = await withFetchMock(
@@ -1635,13 +1637,63 @@ Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly
   assert.equal(response.status, 200);
   const warnings = parseWarnings(response.headers.get("x-uos-warning"));
   assert.ok(warnings.includes("temperature_ignored"));
-  assert.equal(warnings.includes("max_output_tokens_ignored"), false);
+  assert.ok(warnings.includes("max_output_tokens_ignored"));
   assert.ok(recordedBody);
   const recorded = recordedBody as Record<string, unknown>;
   assert.equal(recorded.model, TERRA_TEST_MODEL);
-  assert.equal(recorded.max_output_tokens, 2048);
+  assert.equal("max_output_tokens" in recorded, false);
   assert.equal("max_completion_tokens" in recorded, false);
   assert.equal("temperature" in recorded, false);
+});
+
+Deno.test("openai: prompt-cache sessions are stable within and isolated across authenticated principals", async () => {
+  const identities: Array<Record<string, string | null>> = [];
+  const responseStatuses = await withFetchMock(
+    (_url, _bodyText, init) => {
+      const headers = new Headers(init?.headers);
+      identities.push({
+        conversation: headers.get("conversation_id"),
+        session: headers.get("session-id"),
+        thread: headers.get("thread-id"),
+        clientRequest: headers.get("x-client-request-id"),
+      });
+      return sseResponse(baseSseChunks());
+    },
+    async () => {
+      const invoke = async (principal: string): Promise<number> => {
+        const response = await handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              input: "stable prefix",
+              prompt_cache_key: "shared-client-key",
+            }),
+          }),
+          {
+            keyId: null,
+            kernelRepo: null,
+            kernelOrg: null,
+            idempotencyPrincipal: principal,
+          },
+        );
+        return response.status;
+      };
+      return [await invoke("api-key:one"), await invoke("api-key:one"), await invoke("api-key:two")];
+    },
+  );
+
+  assert.deepEqual(responseStatuses, [200, 200, 200]);
+  assert.equal(identities.length, 3);
+  assert.deepEqual(identities[1], identities[0]);
+  assert.notEqual(identities[2]?.conversation, identities[0]?.conversation);
+  for (const identity of identities) {
+    assert.match(identity.conversation ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.equal(identity.session, identity.conversation);
+    assert.equal(identity.thread, identity.conversation);
+    assert.equal(identity.clientRequest, identity.conversation);
+  }
 });
 
 Deno.test("openai: default model requires configured model or stored snapshot", async () => {
@@ -3862,7 +3914,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       assert.equal(window, undefined);
     });
 
-    await t.step("Responses sends the same canonical payload to Metered exactly once", async () => {
+    await t.step("Responses strips only Codex-incompatible controls before Metered fallback", async () => {
       const keyId = "fallback-responses-success";
       seedPaidFallbackKey(keyId);
       const bodies: Record<string, unknown>[] = [];
@@ -3901,7 +3953,19 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 model: DEFAULT_TEST_MODEL,
-                input: "ping",
+                input: [{
+                  type: "message",
+                  role: "user",
+                  content: [{
+                    type: "input_text",
+                    text: "stable fallback prefix",
+                    prompt_cache_breakpoint: { mode: "explicit" },
+                  }],
+                }],
+                max_output_tokens: 64,
+                prompt_cache_key: "fallback-cache-key",
+                prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                prompt_cache_retention: "24h",
                 reasoning: { effort: "ultra" },
               }),
             }),
@@ -3926,7 +3990,19 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       ]);
       assert.equal(bodies.length, 3);
       assert.deepEqual(bodies[1], bodies[0]);
-      assert.deepEqual(bodies[2], bodies[0]);
+      assert.equal(bodies[0].prompt_cache_key, "fallback-cache-key");
+      assert.equal("max_output_tokens" in bodies[0], false);
+      assert.equal("prompt_cache_options" in bodies[0], false);
+      assert.equal("prompt_cache_retention" in bodies[0], false);
+      const codexInput = bodies[0].input as Array<Record<string, unknown>>;
+      const codexContent = codexInput[0]?.content as Array<Record<string, unknown>>;
+      assert.equal("prompt_cache_breakpoint" in codexContent[0]!, false);
+      assert.equal(bodies[2].max_output_tokens, 64);
+      assert.deepEqual(bodies[2].prompt_cache_options, { mode: "explicit", ttl: "30m" });
+      assert.equal(bodies[2].prompt_cache_retention, "24h");
+      const meteredInput = bodies[2].input as Array<Record<string, unknown>>;
+      const meteredContent = meteredInput[0]?.content as Array<Record<string, unknown>>;
+      assert.deepEqual(meteredContent[0]?.prompt_cache_breakpoint, { mode: "explicit" });
       assert.deepEqual(bodies[2].reasoning, { effort: "max" });
     });
 
@@ -4469,9 +4545,11 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       const previousDebugRouting = kvStore.get(debugKey);
       const originalInfo = console.info;
       const logs: unknown[][] = [];
+      let removedProviderBody: Record<string, unknown> | null = null;
       setRemovedProviderApiKeyForTest("removed-provider-test-key");
       setRemovedProviderTestAdapterForTest({
-        fetchResponses: async (_body, options) => {
+        fetchResponses: async (body, options) => {
+          removedProviderBody = structuredClone(body);
           await options.beforeDispatch?.();
           options.timing?.onDispatch?.();
           options.timing?.onHeaders?.();
@@ -4529,13 +4607,32 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               new Request("http://localhost/v1/responses", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "recover through RemovedProvider" }),
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  prompt_cache_key: "removed-provider-cache-key",
+                  prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                  prompt_cache_retention: "24h",
+                  input: [{
+                    type: "input_text",
+                    text: "recover through RemovedProvider",
+                    prompt_cache_breakpoint: { mode: "explicit" },
+                  }],
+                }),
               }),
             ),
         );
         assert.equal(response.status, 200);
         assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
         assert.equal(response.headers.get("x-uos-provider-request-id"), null);
+        assert.equal(response.headers.get("x-uos-warning"), null);
+        assert.ok(removedProviderBody);
+        const forwardedBody = removedProviderBody as Record<string, unknown>;
+        assert.equal(forwardedBody.prompt_cache_key, "removed-provider-cache-key");
+        assert.deepEqual(forwardedBody.prompt_cache_options, { mode: "explicit", ttl: "30m" });
+        assert.equal(forwardedBody.prompt_cache_retention, "24h");
+        const forwardedInput = forwardedBody.input as Array<Record<string, unknown>>;
+        const forwardedContent = forwardedInput[0]?.content as Array<Record<string, unknown>>;
+        assert.deepEqual(forwardedContent[0]?.prompt_cache_breakpoint, { mode: "explicit" });
         await response.text();
         for (let attempt = 0; attempt < 100 && logs.length === 0; attempt += 1) {
           await new Promise<void>((resolve) => setTimeout(resolve, 1));
@@ -6968,7 +7065,7 @@ Deno.test("openai: streamed Chat preserves final-only text alongside function ca
   assert.match(text, /data: \[DONE\]/);
 });
 
-Deno.test("openai: native Responses preserve files, explicit nulls, and prompt-cache fields", async () => {
+Deno.test("openai: native Responses preserve files and key while omitting unsupported cache controls", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -7005,11 +7102,15 @@ Deno.test("openai: native Responses preserve files, explicit nulls, and prompt-c
       ),
   );
   assert.equal(response.status, 200);
+  const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+  assert.ok(warnings.includes("prompt_cache_options_ignored"));
+  assert.ok(warnings.includes("prompt_cache_retention_ignored"));
   assert.ok(recordedBody);
   const recorded = recordedBody as Record<string, unknown>;
   assert.equal("instructions" in recorded, false);
-  assert.deepEqual(recorded.prompt_cache_options, { mode: "implicit" });
-  assert.equal(recorded.prompt_cache_retention, "24h");
+  assert.equal(recorded.prompt_cache_key, "cache-key");
+  assert.equal("prompt_cache_options" in recorded, false);
+  assert.equal("prompt_cache_retention" in recorded, false);
   const content = ((recorded.input as Array<Record<string, unknown>>)[0]?.content ?? []) as Array<
     Record<string, unknown>
   >;
@@ -7540,8 +7641,8 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
   );
 });
 
-Deno.test("openai: preserves standard explicit cache breakpoints without aliases", async (t) => {
-  await t.step("Responses preserves each supported input content block", async () => {
+Deno.test("openai: accepts standard cache breakpoints but omits them from the Codex wire", async (t) => {
+  await t.step("Responses preserves content while omitting breakpoints", async () => {
     let recordedBody: Record<string, unknown> | null = null;
     const response = await withFetchMock(
       (_url, bodyText) => {
@@ -7579,6 +7680,9 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
         ),
     );
     assert.equal(response.status, 200);
+    const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
+    assert.ok(warnings.includes("prompt_cache_breakpoint_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as unknown as Record<string, unknown>;
     const content = ((recorded.input as Array<Record<string, unknown>>)[0]?.content ?? []) as Array<
@@ -7586,17 +7690,16 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
     >;
     assert.deepEqual(
       content.map((item) => item.prompt_cache_breakpoint),
-      [{ mode: "explicit" }, { mode: "explicit" }, { mode: "explicit" }],
+      [undefined, undefined, undefined],
     );
     assert.deepEqual(content[2], {
       type: "input_file",
       file_id: "file_stable",
       detail: "high",
-      prompt_cache_breakpoint: { mode: "explicit" },
     });
   });
 
-  await t.step("Responses preserves function-call output content breakpoints and file detail", async () => {
+  await t.step("Responses preserves function-call output content and file detail", async () => {
     let recordedBody: Record<string, unknown> | null = null;
     const response = await withFetchMock(
       (_url, bodyText) => {
@@ -7634,27 +7737,28 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
         ),
     );
     assert.equal(response.status, 200);
+    const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
+    assert.ok(warnings.includes("prompt_cache_breakpoint_ignored"));
     assert.ok(recordedBody);
     const input = (recordedBody as unknown as Record<string, unknown>).input as Array<Record<string, unknown>>;
     assert.deepEqual(input[0]?.output, [
-      { type: "input_text", text: "stable tool result", prompt_cache_breakpoint: { mode: "explicit" } },
+      { type: "input_text", text: "stable tool result" },
       {
         type: "input_image",
         image_url: "https://example.test/tool-result.png",
-        prompt_cache_breakpoint: { mode: "explicit" },
       },
       {
         type: "input_file",
         file_id: "file_tool_result",
         detail: "low",
-        prompt_cache_breakpoint: { mode: "explicit" },
       },
     ]);
     assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 3);
   });
 
   await t.step(
-    "Chat preserves text/image and moves breakpoint-bearing instructions into ordered developer input",
+    "Chat preserves text/image and ordered developer input while omitting breakpoints",
     async () => {
       let recordedBody: Record<string, unknown> | null = null;
       const response = await withFetchMock(
@@ -7694,6 +7798,9 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
           ),
       );
       assert.equal(response.status, 200);
+      const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+      assert.ok(warnings.includes("prompt_cache_options_ignored"));
+      assert.ok(warnings.includes("prompt_cache_breakpoint_ignored"));
       assert.ok(recordedBody);
       const recorded = recordedBody as unknown as Record<string, unknown>;
       assert.equal("instructions" in recorded, false);
@@ -7701,8 +7808,8 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
       assert.deepEqual(input.map((item) => item.role), ["developer", "developer", "user"]);
       const first = input[0]?.content as Array<Record<string, unknown>>;
       const last = input[2]?.content as Array<Record<string, unknown>>;
-      assert.deepEqual(first[0]?.prompt_cache_breakpoint, { mode: "explicit" });
-      assert.deepEqual(last.map((item) => item.prompt_cache_breakpoint), [{ mode: "explicit" }, { mode: "explicit" }]);
+      assert.equal(first[0]?.prompt_cache_breakpoint, undefined);
+      assert.deepEqual(last.map((item) => item.prompt_cache_breakpoint), [undefined, undefined]);
       assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 3);
       assert.equal(getResponseTelemetry(response)?.promptCacheKeyPresent, true);
       assert.equal(getResponseTelemetry(response)?.promptCacheMode, "explicit");
@@ -7731,7 +7838,7 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
     assert.equal(body.error?.param, "messages[0].content[0].prompt_cache_breakpoint");
   });
 
-  await t.step("Chat preserves a tool-output breakpoint through function_call_output", async () => {
+  await t.step("Chat preserves tool output while omitting its breakpoint", async () => {
     let dispatches = 0;
     let recordedBody: Record<string, unknown> | null = null;
     const response = await withFetchMock(
@@ -7761,11 +7868,12 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
         ),
     );
     assert.equal(response.status, 200);
+    assert.ok(parseWarnings(response.headers.get("x-uos-warning")).includes("prompt_cache_breakpoint_ignored"));
     assert.equal(dispatches, 1);
     assert.ok(recordedBody);
     const input = (recordedBody as unknown as Record<string, unknown>).input as Array<Record<string, unknown>>;
     assert.deepEqual(input[0]?.output, [
-      { type: "input_text", text: "stable tool result", prompt_cache_breakpoint: { mode: "explicit" } },
+      { type: "input_text", text: "stable tool result" },
     ]);
     assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 1);
   });
@@ -7814,28 +7922,29 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
         ),
     );
     assert.equal(response.status, 200);
+    const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
+    assert.ok(warnings.includes("prompt_cache_breakpoint_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal("instructions" in recorded, false);
     const input = recorded.input as Array<Record<string, unknown>>;
     assert.deepEqual(input.map((item) => item.role), ["developer", "user", "developer", "user"]);
     assert.deepEqual(input[0]?.content, [
-      { type: "input_text", text: "stable system", prompt_cache_breakpoint: { mode: "explicit" } },
+      { type: "input_text", text: "stable system" },
     ]);
     assert.deepEqual(input[2]?.content, [{ type: "input_text", text: "stable developer" }]);
     assert.deepEqual(input[3]?.content, [
-      { type: "input_text", text: "Read these files", prompt_cache_breakpoint: { mode: "explicit" } },
+      { type: "input_text", text: "Read these files" },
       {
         type: "input_file",
         file_id: "file_stable",
         filename: "stable.txt",
-        prompt_cache_breakpoint: { mode: "explicit" },
       },
       {
         type: "input_file",
         file_data: "data:text/plain;base64,c3RhYmxl",
         filename: "inline.txt",
-        prompt_cache_breakpoint: { mode: "explicit" },
       },
     ]);
     assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 4);
