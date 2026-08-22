@@ -147,6 +147,18 @@ Deno.test("prompt-cache analytics v2 aggregates safe cohorts and keeps model and
     { prompt_cache_key_present: true, route: "responses" },
   ]);
 
+  const byKeyPresence = await readPromptCacheAnalytics({ ...options(kv), groupBy: ["key_presence"] });
+  assert.deepEqual(
+    byKeyPresence.buckets.map((bucket) => ({
+      keyed: bucket.group?.prompt_cache_key_present,
+      ...groupedCounters(bucket),
+    })),
+    [
+      { keyed: false, input: 300, cached: 0, write: null, writeSamples: 0, samples: 1, hits: 0, reported: 1 },
+      { keyed: true, input: 300, cached: 125, write: 60, writeSamples: 2, samples: 2, hits: 2, reported: 2 },
+    ],
+  );
+
   const persisted = [...kv.entries.values()].map((entry) => JSON.stringify(entry.key)).join("\n");
   assert.doesNotMatch(persisted, new RegExp(rawModel));
   assert.doesNotMatch(persisted, new RegExp(rawKey));
