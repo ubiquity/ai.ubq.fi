@@ -4,10 +4,17 @@ import handler from "../src/handler.ts";
 import { corsHeaders } from "../src/http.ts";
 import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts";
 import adminHtml from "../static/admin.html" with { type: "text" };
+import aboutHtml from "../static/about.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
+import companyLogoSvg from "../static/company-logo.svg" with { type: "text" };
+import contactHtml from "../static/contact.html" with { type: "text" };
+import developersHtml from "../static/developers.html" with { type: "text" };
 import indexHtml from "../static/index.html" with { type: "text" };
 import llmsText from "../static/llms.txt" with { type: "text" };
+import modelsHtml from "../static/models.html" with { type: "text" };
 import openApiText from "../static/openapi.json" with { type: "text" };
+import privacyHtml from "../static/privacy.html" with { type: "text" };
+import styleCss from "../static/style.css" with { type: "text" };
 
 Deno.test("static assets register frontend module dependencies", () => {
   for (
@@ -29,6 +36,35 @@ Deno.test("static assets register frontend module dependencies", () => {
 Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
+});
+
+Deno.test("public brand logos are inline and inherit the page foreground", async () => {
+  assert.match(styleCss, /\[data-logo\]\s*\{[^}]*color: inherit;/);
+  const sourcePath = companyLogoSvg.match(/<path\b[\s\S]*?\bd="([^"]+)"/)?.[1];
+  assert.ok(sourcePath, "the source logo must define a path");
+
+  for (
+    const [path, sourceHtml] of [
+      ["/about", aboutHtml],
+      ["/contact", contactHtml],
+      ["/developers", developersHtml],
+      ["/models", modelsHtml],
+      ["/privacy", privacyHtml],
+    ]
+  ) {
+    const response = await handleStaticAsset(path);
+    assert.equal(response?.status, 200, `${path} must be publicly served`);
+    const html = await response!.text();
+    assert.equal(html, sourceHtml, `${path} must serve the inline brand markup`);
+    assert.doesNotMatch(html, /<img\b[^>]*(?:data-logo|data-models-logo)[^>]*>/, `${path} must not embed its logo`);
+    assert.match(
+      html,
+      /<svg\b(?=[^>]*\bdata-logo\b)[^>]*>[\s\S]*?<path\b[\s\S]*?fill="currentColor"/,
+      `${path} must use an inline currentColor logo`,
+    );
+    const inlinePath = html.match(/<svg\b(?=[^>]*\bdata-logo\b)[^>]*>[\s\S]*?<path\b[\s\S]*?\bd="([^"]+)"/)?.[1];
+    assert.equal(inlinePath, sourcePath, `${path} must preserve the company logo path`);
+  }
 });
 
 Deno.test("public agent-readiness pages and crawl artifacts are registered", () => {
@@ -96,10 +132,28 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
     "#/components/schemas/FunctionTool",
   );
   assert.equal(
+    document.components.schemas.ChatCompletionRequest.properties.tool_choice.$ref,
+    "#/components/schemas/ToolChoice",
+  );
+  assert.equal(
     document.components.schemas.ResponseRequest.properties.tools.items.$ref,
-    "#/components/schemas/FunctionTool",
+    "#/components/schemas/ResponseFunctionTool",
+  );
+  assert.equal(
+    document.components.schemas.ResponseRequest.properties.tool_choice.$ref,
+    "#/components/schemas/ResponseToolChoice",
   );
   assert.equal(document.components.schemas.ResponseRequest.required, undefined);
+  const responseFunctionTool = document.components.schemas.ResponseFunctionTool;
+  assert.deepEqual(responseFunctionTool.required, ["type", "name"]);
+  assert.ok(responseFunctionTool.properties.name);
+  assert.ok(responseFunctionTool.properties.description);
+  assert.ok(responseFunctionTool.properties.parameters);
+  assert.equal(responseFunctionTool.properties.function, undefined);
+  const responseForcedToolChoice = document.components.schemas.ResponseToolChoice.oneOf[1];
+  assert.deepEqual(responseForcedToolChoice.required, ["type", "name"]);
+  assert.ok(responseForcedToolChoice.properties.name);
+  assert.equal(responseForcedToolChoice.properties.function, undefined);
   assert.ok(document.components.headers.RateLimit);
   assert.ok(document.components.headers.RateLimitPolicy);
   assert.ok(document.components.responses.RateLimited.headers["Retry-After"]);

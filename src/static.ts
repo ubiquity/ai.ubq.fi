@@ -8,6 +8,7 @@ import homeMarkdownText from "../static/home.md" with { type: "text" };
 import indexHtmlText from "../static/index.html" with { type: "text" };
 import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
 import llmsText from "../static/llms.txt" with { type: "text" };
+import modelsHtmlText from "../static/models.html" with { type: "text" };
 import openApiText from "../static/openapi.json" with { type: "text" };
 import privacyHtmlText from "../static/privacy.html" with { type: "text" };
 import robotsText from "../static/robots.txt" with { type: "text" };
@@ -92,7 +93,7 @@ textAsset(["/about", "/about.html"], "about.html", "text/html; charset=utf-8", "
 textAsset(["/contact", "/contact.html"], "contact.html", "text/html; charset=utf-8", "html", contactHtmlText);
 textAsset(["/privacy", "/privacy.html"], "privacy.html", "text/html; charset=utf-8", "html", privacyHtmlText);
 textAsset(["/chat", "/chat.html"], "chat.html", "text/html; charset=utf-8", "html");
-textAsset(["/models", "/models.html"], "models.html", "text/html; charset=utf-8", "html");
+textAsset(["/models", "/models.html"], "models.html", "text/html; charset=utf-8", "html", modelsHtmlText);
 textAsset(["/admin", "/admin.html"], "admin.html", "text/html; charset=utf-8", "html");
 
 textAsset(["/style.css"], "style.css", "text/css; charset=utf-8");

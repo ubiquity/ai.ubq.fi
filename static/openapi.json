@@ -128,7 +128,7 @@
         "tags": ["OpenAI compatibility"],
         "operationId": "createResponse",
         "summary": "Create a model response",
-        "description": "Creates an OpenAI-compatible Responses API result. The input field is optional when the caller supplies instructions or a supported continuation context. Set stream to true for OpenAI Responses server-sent events.",
+        "description": "Creates an OpenAI-compatible Responses API result. The request body is required, but input is optional when the caller supplies instructions or a supported continuation context. Responses function tools use direct name, description, and parameters fields; the nested Chat Completions form is accepted only as a gateway compatibility extension. Set stream to true for OpenAI Responses server-sent events.",
         "requestBody": {
           "required": true,
           "content": {
@@ -333,6 +333,40 @@
           }
         ]
       },
+      "ResponseFunctionTool": {
+        "type": "object",
+        "description": "An OpenAI Responses function tool. Name, description, and parameters are direct properties. The gateway also accepts the nested Chat Completions function object as a compatibility extension, but clients should use this portable Responses shape.",
+        "required": ["type", "name"],
+        "properties": {
+          "type": { "const": "function" },
+          "name": { "type": "string", "minLength": 1, "description": "Stable function name." },
+          "description": {
+            "type": "string",
+            "description": "Clear instruction for when the model should call the function."
+          },
+          "parameters": { "$ref": "#/components/schemas/JsonSchema" },
+          "strict": {
+            "type": "boolean",
+            "description": "Request strict argument generation when supported by the selected model."
+          }
+        },
+        "additionalProperties": true
+      },
+      "ResponseToolChoice": {
+        "description": "Controls whether and how the Responses API may select a function tool. A forced function choice uses a direct name property.",
+        "oneOf": [
+          { "type": "string", "enum": ["none", "auto", "required"] },
+          {
+            "type": "object",
+            "required": ["type", "name"],
+            "properties": {
+              "type": { "const": "function" },
+              "name": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
       "ChatCompletionRequest": {
         "type": "object",
         "description": "An OpenAI-compatible Chat Completions request. Additional documented OpenAI fields may be accepted by the gateway, but clients should start with this portable shape.",
@@ -378,8 +412,8 @@
             "properties": { "effort": { "type": "string" } },
             "additionalProperties": true
           },
-          "tools": { "type": "array", "items": { "$ref": "#/components/schemas/FunctionTool" } },
-          "tool_choice": { "$ref": "#/components/schemas/ToolChoice" },
+          "tools": { "type": "array", "items": { "$ref": "#/components/schemas/ResponseFunctionTool" } },
+          "tool_choice": { "$ref": "#/components/schemas/ResponseToolChoice" },
           "parallel_tool_calls": { "type": "boolean" }
         },
         "additionalProperties": true
