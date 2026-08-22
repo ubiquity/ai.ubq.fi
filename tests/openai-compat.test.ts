@@ -19,6 +19,7 @@ if (typeof Deno.KvU64 !== "function") {
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 const DEFAULT_TEST_MODEL = "gpt-5-fixture-default";
 const TERRA_TEST_MODEL = "gpt-5.6-terra";
+const TEMPORARY_FREE_SURPLUS_TEST_MODEL = "glm-5.2";
 const TEST_CODEX_MODELS_KEY = ["ubq_ai", "codex_models"] as const;
 
 const kvStore = new Map<string, unknown>();
@@ -3348,6 +3349,452 @@ Deno.test("openai: an all-blocked Codex response continues through paid Metered 
     resetCodexAuthCacheForTest();
     if (previousMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
     else Deno.env.set("METERED_API_KEY", previousMeteredKey);
+  }
+});
+
+Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallback", async (t) => {
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const debugKey = keyToString(DEBUG_ROUTING_KEY);
+  const previousDebugRouting = kvStore.get(debugKey);
+  const healthPrefix = ["uos_ai", "provider_health", "v1", "surplus", "default"] as const;
+  const healthKey = keyToString([...healthPrefix, "current"]);
+  let removedProviderCalls = 0;
+
+  const clearSurplusHealth = (): void => {
+    for (const encodedKey of [...kvStore.keys()]) {
+      const key = JSON.parse(encodedKey) as unknown[];
+      if (healthPrefix.every((part, index) => key[index] === part)) kvStore.delete(encodedKey);
+    }
+    resetProviderHealthThrottleForTest();
+  };
+  const waitForSurplusHealth = async (event: string): Promise<Record<string, unknown>> => {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const current = kvStore.get(healthKey) as Record<string, unknown> | undefined;
+      if (current?.event === event) return current;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    const current = kvStore.get(healthKey) as Record<string, unknown> | undefined;
+    assert.fail(`Expected Surplus health event ${event}, received ${String(current?.event ?? "missing")}`);
+  };
+
+  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+  Deno.env.set("METERED_API_KEY", "metered-must-not-run");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  setRemovedProviderApiKeyForTest("removed-provider-must-not-run");
+  setRemovedProviderTestAdapterForTest({
+    fetchResponses: () => {
+      removedProviderCalls += 1;
+      throw new Error("RemovedProvider must not run for the temporary GLM cut");
+    },
+    modelFromEvent: () => null,
+    isEligibleModel: () => true,
+  });
+  kvStore.set(debugKey, {
+    scenario: "removed_provider_first",
+    expires_at_ms: Date.now() + 60_000,
+    updated_at_ms: Date.now(),
+  });
+  resetDebugRoutingCacheForTest();
+
+  try {
+    for (
+      const routeCase of [
+        { route: "responses", requestId: "free-glm-responses", reasoningEffort: "low" },
+        { route: "chat", requestId: "free-glm-chat", reasoningEffort: "medium" },
+      ] as const
+    ) {
+      await t.step(
+        `${routeCase.route} bypasses catalogs, Codex, RemovedProvider, Metered, and the ledger`,
+        async () => {
+          clearSurplusHealth();
+          const upstreamUrls: string[] = [];
+          const dispatchedProviders: string[] = [];
+          let upstreamModel: unknown = null;
+          let upstreamReasoningEffort: unknown = null;
+          const response = await withFetchMock(
+            (url, bodyText, init) => {
+              upstreamUrls.push(url);
+              assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
+              assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer surplus-test-key");
+              const upstreamRequest = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+              upstreamModel = upstreamRequest?.model ?? null;
+              upstreamReasoningEffort = (upstreamRequest?.reasoning as Record<string, unknown> | undefined)?.effort ??
+                null;
+              return new Response(sseResponse(baseSseChunks()).body, {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/event-stream",
+                  "X-Oneapi-Request-Id": routeCase.requestId + "-provider",
+                },
+              });
+            },
+            () => {
+              const context = {
+                keyId: "key-" + routeCase.requestId,
+                kernelRepo: null,
+                kernelOrg: null,
+                paidFallbackEnabled: false,
+                requestId: routeCase.requestId,
+                startedAtMs: Date.now(),
+                startedAtMonotonicMs: performance.now(),
+                beforeProviderDispatch: (provider: string) => {
+                  dispatchedProviders.push(provider);
+                  return Promise.resolve();
+                },
+              };
+              return routeCase.route === "responses"
+                ? handleResponses(
+                  new Request("https://ai.ubq.fi/v1/responses", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                      input: "ping",
+                      reasoning: { effort: routeCase.reasoningEffort },
+                    }),
+                  }),
+                  context,
+                )
+                : handleChatCompletions(
+                  new Request("https://ai.ubq.fi/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                      messages: [{ role: "user", content: "ping" }],
+                      reasoning_effort: routeCase.reasoningEffort,
+                      response_format: { type: "json_object" },
+                    }),
+                  }),
+                  context,
+                );
+            },
+          );
+
+          assert.equal(response.status, 200);
+          assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+          await response.text();
+          assert.deepEqual(upstreamUrls, ["https://api.surplusintelligence.ai/v1/responses"]);
+          assert.deepEqual(dispatchedProviders, ["surplus"]);
+          assert.equal(upstreamModel, TEMPORARY_FREE_SURPLUS_TEST_MODEL);
+          assert.equal(upstreamReasoningEffort, routeCase.reasoningEffort);
+          const telemetry = getResponseTelemetry(response);
+          assert.equal(telemetry?.provider, "surplus");
+          assert.equal(telemetry?.fallbackReason, null);
+          assert.equal(telemetry?.reasoning, routeCase.reasoningEffort);
+          assert.equal(telemetry?.providerRequestId, routeCase.requestId + "-provider");
+          assert.deepEqual(telemetry?.attemptedProviders, ["surplus"]);
+          assert.equal(telemetry?.firstCodexDispatchMs, null);
+          assert.equal(telemetry?.firstCodexHeadersMs, null);
+          assert.equal(typeof telemetry?.firstProviderDispatchMs, "number");
+          assert.equal(typeof telemetry?.firstProviderHeadersMs, "number");
+          assert.equal(
+            getStoredPaidFallbackRequest("key-" + routeCase.requestId, routeCase.requestId),
+            null,
+          );
+          const health = await waitForSurplusHealth("success");
+          assert.equal(health.status, 200);
+          assert.equal(health.provider_request_id, routeCase.requestId + "-provider");
+        },
+      );
+    }
+
+    await t.step("ordinary API-key quota rejection happens before Surplus transport", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-quota-key";
+      const requestId = "free-glm-quota-request";
+      let fetchCalls = 0;
+      const response = await withFetchMock(
+        () => {
+          fetchCalls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                messages: [{ role: "user", content: "ping" }],
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+              beforeProviderDispatch: () =>
+                Promise.reject(new ApiKeyQuotaDispatchError("API key quota reservation is unavailable")),
+            },
+          ),
+      );
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      assert.equal(fetchCalls, 0);
+      assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["surplus"]);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      assert.equal(kvStore.has(healthKey), false);
+    });
+
+    await t.step("tool-bearing requests fail before every provider and paid ledger", async () => {
+      clearSurplusHealth();
+      for (const route of ["responses", "chat"] as const) {
+        const keyId = `free-glm-tools-${route}-key`;
+        const requestId = `free-glm-tools-${route}-request`;
+        const dispatchedProviders: string[] = [];
+        let fetchCalls = 0;
+        const response = await withFetchMock(
+          () => {
+            fetchCalls += 1;
+            throw new Error("tool-bearing GLM requests must not reach a provider");
+          },
+          () => {
+            const context = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+              beforeProviderDispatch: (provider: string) => {
+                dispatchedProviders.push(provider);
+                return Promise.resolve();
+              },
+            };
+            const tool = {
+              type: "function",
+              name: "inspect_workspace",
+              description: "Inspect the workspace.",
+              parameters: { type: "object", properties: {}, additionalProperties: false },
+            };
+            return route === "responses"
+              ? handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                    input: "inspect the workspace",
+                    tools: [tool],
+                  }),
+                }),
+                context,
+              )
+              : handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                    messages: [{ role: "user", content: "inspect the workspace" }],
+                    tools: [{ type: "function", function: tool }],
+                  }),
+                }),
+                context,
+              );
+          },
+        );
+
+        assert.equal(response.status, 400, route);
+        const payload = await response.json() as {
+          error?: { code?: string; param?: string };
+        };
+        assert.equal(payload.error?.code, "unsupported_model_capability", route);
+        assert.equal(payload.error?.param, "tools", route);
+        assert.equal(fetchCalls, 0, route);
+        assert.deepEqual(dispatchedProviders, [], route);
+        assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, [], route);
+        assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null, route);
+        assert.equal(kvStore.has(healthKey), false, route);
+      }
+    });
+
+    await t.step("Surplus 429 remains quota health and never falls through", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-provider-quota-key";
+      const requestId = "free-glm-provider-quota-request";
+      const upstreamUrls: string[] = [];
+      const response = await withFetchMock(
+        (url) => {
+          upstreamUrls.push(url);
+          return new Response(
+            JSON.stringify({
+              error: { message: "temporary provider quota", type: "rate_limit_error", code: "provider_quota" },
+            }),
+            {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Oneapi-Request-Id": "free-glm-provider-429",
+              },
+            },
+          );
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: TEMPORARY_FREE_SURPLUS_TEST_MODEL, input: "ping" }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 429);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      await response.text();
+      assert.deepEqual(upstreamUrls, ["https://api.surplusintelligence.ai/v1/responses"]);
+      assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["surplus"]);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("quota_exhausted");
+      assert.equal(health.status, 429);
+      assert.equal(health.provider_request_id, "free-glm-provider-429");
+    });
+
+    await t.step("failed Surplus terminal marks provider health without a paid ledger row", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-terminal-key";
+      const requestId = "free-glm-terminal-request";
+      const response = await withFetchMock(
+        (url) => {
+          assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
+          return new Response(
+            sseResponse([
+              "data: " + JSON.stringify({
+                type: "response.failed",
+                response: {
+                  id: "free-glm-failed-response",
+                  status: "failed",
+                  model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                  output: [],
+                  error: { type: "server_error", code: "provider_error", message: "provider failed" },
+                },
+              }) + "\n\n",
+            ]).body,
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/event-stream",
+                "X-Oneapi-Request-Id": "free-glm-failed-provider",
+              },
+            },
+          );
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: TEMPORARY_FREE_SURPLUS_TEST_MODEL, input: "ping" }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      await response.text();
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("upstream_error");
+      assert.equal(health.status, null);
+      assert.equal(health.provider_request_id, "free-glm-failed-provider");
+    });
+
+    await t.step("client cancellation after headers does not mark Surplus degraded", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-cancel-key";
+      const requestId = "free-glm-cancel-request";
+      let upstreamCancelled = 0;
+      const response = await withFetchMock(
+        (url) => {
+          assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(TEXT_ENCODER.encode(
+                "data: " + JSON.stringify({
+                  type: "response.created",
+                  response: { id: "free-glm-cancel-response", model: TEMPORARY_FREE_SURPLUS_TEST_MODEL },
+                }) + "\n\n",
+              ));
+              controller.enqueue(TEXT_ENCODER.encode(
+                "data: " + JSON.stringify({ type: "response.output_text.delta", delta: "started" }) + "\n\n",
+              ));
+            },
+            cancel() {
+              upstreamCancelled += 1;
+            },
+          });
+          return new Response(body, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/event-stream",
+              "X-Oneapi-Request-Id": "free-glm-cancel-provider",
+            },
+          });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                input: "ping",
+                stream: true,
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      await response.body?.cancel("client stopped");
+      assert.equal(upstreamCancelled, 1);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("reachable");
+      assert.equal(health.status, 200);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal((kvStore.get(healthKey) as Record<string, unknown>).event, "reachable");
+    });
+
+    assert.equal(removedProviderCalls, 0);
+  } finally {
+    clearSurplusHealth();
+    setRemovedProviderTestAdapterForTest(null);
+    setRemovedProviderApiKeyForTest(undefined);
+    if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+    else kvStore.set(debugKey, previousDebugRouting);
+    resetDebugRoutingCacheForTest();
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
   }
 });
 
