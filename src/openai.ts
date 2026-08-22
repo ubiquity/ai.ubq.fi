@@ -2785,11 +2785,10 @@ const getCodexModelMetadata = async (
   route: "chat.completions" | "responses",
 ): Promise<CodexModelMetadata> => {
   if (isTemporaryFreeSurplusModel(model)) {
-    const record = {
-      slug: TEMPORARY_FREE_SURPLUS_MODEL,
-      supported_reasoning_levels: ["none"],
-      default_reasoning_level: "none",
-    };
+    // This non-Codex routing record deliberately omits reasoning capability
+    // claims. GLM preserves each caller-selected effort; no Surplus catalog
+    // metadata currently authorizes the gateway to advertise a fixed list.
+    const record = { slug: TEMPORARY_FREE_SURPLUS_MODEL };
     return {
       snapshot: null,
       record,

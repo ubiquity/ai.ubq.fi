@@ -3401,8 +3401,8 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
   try {
     for (
       const routeCase of [
-        { route: "responses", requestId: "free-glm-responses" },
-        { route: "chat", requestId: "free-glm-chat" },
+        { route: "responses", requestId: "free-glm-responses", reasoningEffort: "low" },
+        { route: "chat", requestId: "free-glm-chat", reasoningEffort: "medium" },
       ] as const
     ) {
       await t.step(
@@ -3412,12 +3412,16 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
           const upstreamUrls: string[] = [];
           const dispatchedProviders: string[] = [];
           let upstreamModel: unknown = null;
+          let upstreamReasoningEffort: unknown = null;
           const response = await withFetchMock(
             (url, bodyText, init) => {
               upstreamUrls.push(url);
               assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
               assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer surplus-test-key");
-              upstreamModel = bodyText ? (JSON.parse(bodyText) as Record<string, unknown>).model : null;
+              const upstreamRequest = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+              upstreamModel = upstreamRequest?.model ?? null;
+              upstreamReasoningEffort = (upstreamRequest?.reasoning as Record<string, unknown> | undefined)?.effort ??
+                null;
               return new Response(sseResponse(baseSseChunks()).body, {
                 status: 200,
                 headers: {
@@ -3448,6 +3452,7 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
                     body: JSON.stringify({
                       model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
                       input: "ping",
+                      reasoning: { effort: routeCase.reasoningEffort },
                     }),
                   }),
                   context,
@@ -3459,6 +3464,7 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
                     body: JSON.stringify({
                       model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
                       messages: [{ role: "user", content: "ping" }],
+                      reasoning_effort: routeCase.reasoningEffort,
                       response_format: { type: "json_object" },
                     }),
                   }),
@@ -3473,9 +3479,11 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
           assert.deepEqual(upstreamUrls, ["https://api.surplusintelligence.ai/v1/responses"]);
           assert.deepEqual(dispatchedProviders, ["surplus"]);
           assert.equal(upstreamModel, TEMPORARY_FREE_SURPLUS_TEST_MODEL);
+          assert.equal(upstreamReasoningEffort, routeCase.reasoningEffort);
           const telemetry = getResponseTelemetry(response);
           assert.equal(telemetry?.provider, "surplus");
           assert.equal(telemetry?.fallbackReason, null);
+          assert.equal(telemetry?.reasoning, routeCase.reasoningEffort);
           assert.equal(telemetry?.providerRequestId, routeCase.requestId + "-provider");
           assert.deepEqual(telemetry?.attemptedProviders, ["surplus"]);
           assert.equal(telemetry?.firstCodexDispatchMs, null);
