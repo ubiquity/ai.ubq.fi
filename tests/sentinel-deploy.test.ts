@@ -708,6 +708,51 @@ Deno.test("GitHub workflow polling rejects a failed exact-SHA run", async () => 
   );
 });
 
+Deno.test("GitHub workflow polling tolerates a transient dispatch-title delay", async () => {
+  let now = Date.parse("2026-08-21T12:00:00Z");
+  const displayTitle = "Deno Deploy sentinel-test-correlation";
+  const fake = queuedFetch([
+    () => json(workflowRun(53, NEW_SHA, "in_progress", null, undefined, "Deno Deploy")),
+    () => json(workflowRun(53, NEW_SHA, "completed", "success", undefined, displayTitle)),
+  ]);
+  const run = await githubClient(fake.fetcher, {
+    now: () => now,
+    sleep: (milliseconds) => {
+      now += milliseconds;
+      return Promise.resolve();
+    },
+  }).waitForWorkflow({
+    runId: 53,
+    headSha: NEW_SHA,
+    displayTitle,
+    timeoutMs: 2_000,
+    pollIntervalMs: 1_000,
+  });
+
+  assert.equal(run.id, 53);
+  assert.equal(run.displayTitle, displayTitle);
+  assert.equal(now, Date.parse("2026-08-21T12:00:01Z"));
+  fake.assertDrained();
+});
+
+Deno.test("GitHub workflow polling rejects a completed run with the wrong dispatch title", async () => {
+  const now = Date.parse("2026-08-21T12:00:00Z");
+  const fake = queuedFetch([
+    () => json(workflowRun(54, NEW_SHA, "completed", "success", undefined, "Deno Deploy other-dispatch")),
+  ]);
+  await assert.rejects(
+    () =>
+      githubClient(fake.fetcher, { now: () => now }).waitForWorkflow({
+        runId: 54,
+        headSha: NEW_SHA,
+        displayTitle: "Deno Deploy sentinel-test-correlation",
+        timeoutMs: 1_000,
+      }),
+    /wrong dispatch correlation/,
+  );
+  fake.assertDrained();
+});
+
 Deno.test("GitHub workflow polling reconciles transient API failures before returning", async () => {
   let now = Date.parse("2026-08-21T12:00:00Z");
   const fake = queuedFetch([
