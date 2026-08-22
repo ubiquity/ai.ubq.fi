@@ -13,8 +13,8 @@ The `Provider Sentinel` Actions workflow has three modes:
   exact candidate SHA to `p-ai-ubq-fi`. It does not push `development` or promote production. A manual run selected on
   any other ref is skipped.
 - `daily`: the 06:00 UTC schedule inspects the previous 24 hours.
-- `incident`: the 15-minute schedule and `provider_incident` repository-dispatch event inspect the previous 20 minutes,
-  so adjacent scans overlap by five minutes.
+- `incident`: the five-minute schedule and `provider_incident` repository-dispatch event inspect the previous 20
+  minutes, so adjacent scans overlap by 15 minutes.
 
 The orchestrator also has an observation mode for a supervised soak period. `--mode observe` inspects the previous 125
 minutes, which supports a two-hour schedule with five minutes of overlap. It captures complete production logs, runs

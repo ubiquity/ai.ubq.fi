@@ -57,8 +57,8 @@ const DEFAULT_WORKFLOW_TIMEOUT_MS = 45 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 // Ninety days of one evidence artifact and one optional replay bundle at the
-// 15-minute schedule needs up to 175 pages before deployment artifacts.
-const MAX_ARTIFACT_METADATA_PAGES = 300;
+// five-minute schedule needs up to 521 pages before deployment artifacts.
+const MAX_ARTIFACT_METADATA_PAGES = 900;
 const DEFAULT_ARTIFACT_DOWNLOAD_LIMIT_BYTES = 256 * 1024 * 1024;
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
 
