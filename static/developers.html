@@ -91,10 +91,11 @@ curl -sS https://ai.ubq.fi/v1/models \
               operation identifiers, response envelopes, authentication, and rate-limit headers for tool-aware clients.
             </p>
             <p>
-              Parse every non-2xx response as JSON. OpenAI-compatible failures use an <code>error</code> object with a
-              message, type, and code. A <code>429</code> response includes <code>Retry-After</code>; when an enforced
-              gateway key window is authoritative, it also includes standard <code>RateLimit</code> fields for
-              self-throttling.
+              Parse JSON error responses as an <code>error</code> object with a message, type, and code. A matching
+              <code>If-None-Match</code> request to <code>GET /v1/models?client_version=X.Y.Z</code> can return
+              <code>304 Not Modified</code> with no body; reuse the cached catalog instead of parsing a response body.
+              For a <code>429</code> error, honor <code>Retry-After</code> when present. When an enforced gateway key
+              window is authoritative, the response also includes <code>RateLimit</code> fields for self-throttling.
             </p>
 
             <h2>Interactive sandbox</h2>

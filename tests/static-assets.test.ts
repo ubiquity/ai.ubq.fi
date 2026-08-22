@@ -11,6 +11,7 @@ import contactHtml from "../static/contact.html" with { type: "text" };
 import developersHtml from "../static/developers.html" with { type: "text" };
 import indexHtml from "../static/index.html" with { type: "text" };
 import llmsText from "../static/llms.txt" with { type: "text" };
+import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
 import modelsHtml from "../static/models.html" with { type: "text" };
 import openApiText from "../static/openapi.json" with { type: "text" };
 import privacyHtml from "../static/privacy.html" with { type: "text" };
@@ -158,6 +159,29 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.ok(document.components.headers.RateLimitPolicy);
   assert.ok(document.components.responses.RateLimited.headers["Retry-After"]);
   assert.ok(document.components.responses.RateLimited.headers.RateLimit);
+});
+
+Deno.test("published agent contracts distinguish bodyless catalog revalidation and conditional rate limits", () => {
+  const document = JSON.parse(openApiText);
+  const developerText = developersHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const notModified = document.paths["/v1/models"].get.responses["304"];
+
+  assert.equal(notModified.content, undefined);
+  assert.match(notModified.description, /no response body; reuse the cached catalog/i);
+  assert.match(
+    developerText,
+    /matching If-None-Match request to GET \/v1\/models\?client_version=X\.Y\.Z can return 304 Not Modified with no body/i,
+  );
+  assert.match(llmsFullText, /matching `If-None-Match` requests receive `304 Not Modified`\s+with no body/i);
+
+  for (const publishedText of [openApiText, llmsFullText]) {
+    assert.doesNotMatch(publishedText, /RFC 9449/);
+    assert.match(publishedText, /draft-ietf-httpapi-ratelimit-headers-11/);
+  }
+  assert.match(document.components.headers.RetryAfter.description, /when present/i);
+  assert.match(document.components.responses.RateLimited.description, /Retry-After when present/i);
+  assert.match(developerText, /For a 429 error, honor Retry-After when present/i);
+  assert.match(llmsText, /honor `Retry-After` when present/);
 });
 
 Deno.test("agent discovery documents are served with useful media types", async () => {

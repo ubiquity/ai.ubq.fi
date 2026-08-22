@@ -287,6 +287,7 @@ Deno.test("codex catalog: stale ETags revalidate upstream and matching clients r
     assert.equal(response.status, 304);
     assert.equal(response.headers.get("x-uos-cache"), "revalidated");
     assert.equal(upstreamIfNoneMatch, '"catalog-etag"');
+    assert.equal(await response.text(), "");
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -140,8 +140,9 @@ version. It is intentionally not part of the official OpenAI model-list schema. 
 two-account Codex authentication pool upstream, caches validated gzip-compressed JSON by version in Deno KV for five
 minutes, retains a last valid copy for 24 hours, and uses a durable refresh lease to collapse concurrent upstream
 refreshes. Inference distributes requests across the two accounts and retries the other account after an account-level
-`401` or `429`. Upstream `ETag` values are returned and matching `If-None-Match` requests receive `304`. A temporary
-refresh failure serves the last valid version-specific copy; the route returns `502` when no valid copy exists.
+`401` or `429`. Upstream `ETag` values are returned, and matching `If-None-Match` requests receive `304 Not Modified`
+with no body; clients must reuse their cached catalog instead of parsing a response body. A temporary refresh failure
+serves the last valid version-specific copy; the route returns `502` when no valid copy exists.
 
 Use `/v1/models` as the source of truth instead of assuming OpenAI public API aliases are supported. The gateway is
 backed by Codex with a ChatGPT account, so some OpenAI API model aliases may not be available through this gateway.
@@ -595,9 +596,11 @@ Common status codes:
 ### Rate-limit headers
 
 Every `429` uses the JSON error envelope and includes `Retry-After` when the gateway has a retry delay. For an enforced
-KV API-key request window, the gateway also returns the RFC 9449 structured `RateLimit` field and `RateLimit-Policy`,
-plus `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` compatibility fields. The structured field has the
-form `limit=100, remaining=0, reset=60`; `reset` and `Retry-After` are seconds from the response time.
+KV API-key request window, the gateway also returns the structured `RateLimit` field and `RateLimit-Policy` defined by
+the active IETF HTTPAPI RateLimit Headers Internet-Draft (`draft-ietf-httpapi-ratelimit-headers-11`), plus
+`RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` compatibility fields. The structured fields use
+`RateLimit: "api-key";r=0;t=60` and `RateLimit-Policy: "api-key";q=100;w=3600`; `t` and `Retry-After` are seconds from
+the response time.
 
 Only fields backed by the gateway's own authoritative API-key window are emitted. An absent `RateLimit` field does not
 mean unlimited upstream capacity, and clients must not invent a quota from provider-specific or Metered balance headers.

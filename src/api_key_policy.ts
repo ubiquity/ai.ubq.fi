@@ -238,7 +238,9 @@ const expiredPolicyResponse = (): ApiKeyUsageReservationDecision => ({
 export const apiKeyRateLimitPolicyHeaders = (policy: ApiKeyPolicy | null): Record<string, string> => {
   if (!policy || policy.usage_limit_requests === API_KEY_NO_USAGE_LIMIT) return {};
   return {
-    "RateLimit-Policy": `${policy.usage_limit_requests};w=${Math.max(1, Math.ceil(policy.window_ms / 1000))}`,
+    "RateLimit-Policy": `"api-key";q=${policy.usage_limit_requests};w=${
+      Math.max(1, Math.ceil(policy.window_ms / 1000))
+    }`,
   };
 };
 
@@ -248,10 +250,10 @@ const rateLimitExceededHeaders = (window: ApiKeyUsageWindowV3, policy: ApiKeyPol
   const windowSeconds = Math.max(1, Math.ceil((window.window_reset_at_ms - window.window_start_ms) / 1000));
   return {
     "Retry-After": String(retryAfterSeconds),
-    "RateLimit": `limit=${policy.usage_limit_requests}, remaining=${remaining}, reset=${retryAfterSeconds}`,
-    "RateLimit-Policy": `${policy.usage_limit_requests};w=${windowSeconds}`,
+    "RateLimit": `"api-key";r=${remaining};t=${retryAfterSeconds}`,
+    "RateLimit-Policy": `"api-key";q=${policy.usage_limit_requests};w=${windowSeconds}`,
     // Older API clients still look for this de facto field family. Keep it in
-    // addition to RFC 9449's structured RateLimit fields.
+    // addition to the active HTTPAPI RateLimit Internet-Draft fields.
     "RateLimit-Limit": String(policy.usage_limit_requests),
     "RateLimit-Remaining": String(remaining),
     "RateLimit-Reset": String(retryAfterSeconds),
