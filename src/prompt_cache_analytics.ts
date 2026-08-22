@@ -58,6 +58,11 @@ export type PromptCacheAnalyticsView = Readonly<{
   buckets: readonly PromptCacheAnalyticsBucket[];
 }>;
 
+export type PromptCacheAnalyticsPruneResult = Readonly<{
+  status: "pruned" | "unavailable";
+  deleted: number;
+}>;
+
 const safeNow = (now: () => number): number => {
   const value = Math.trunc(now());
   return Number.isSafeInteger(value) && value >= 0 ? value : Date.now();
@@ -140,19 +145,57 @@ export const recordPromptCacheAnalytics = async (
   if (!kv) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
 
   try {
-    const expiredBucketStartAtMs = bucketStartAtMs - PROMPT_CACHE_ANALYTICS_RETENTION_MS;
-    const operation = kv.atomic()
+    const committed = await kv.atomic()
       .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "input_tokens"), BigInt(event.inputTokens))
       .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "cached_input_tokens"), BigInt(event.cachedInputTokens))
-      .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "sample_count"), 1n);
-    for (const counter of COUNTERS) operation.delete(promptCacheAnalyticsCounterKey(expiredBucketStartAtMs, counter));
-    const committed = await operation.commit();
+      .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "sample_count"), 1n)
+      .commit();
     if (!committed.ok) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
   } catch {
     return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
   }
 
   return recordResult("recorded", "recorded", bucketStartAtMs);
+};
+
+const isAnalyticsStorageKey = (key: Deno.KvKey, cutoffBucketStartAtMs: number): boolean => {
+  const bucketStartAtMs = key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length];
+  if (!safeCounter(bucketStartAtMs) || bucketStartAtMs > cutoffBucketStartAtMs) return false;
+  if (key.length === PROMPT_CACHE_ANALYTICS_KV_PREFIX.length + 1) return true;
+  const counter = key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length + 1];
+  return key.length === PROMPT_CACHE_ANALYTICS_KV_PREFIX.length + 2 &&
+    typeof counter === "string" &&
+    (COUNTERS as readonly string[]).includes(counter);
+};
+
+/** Removes every analytics bucket at or beyond the eight-day retention boundary. */
+export const prunePromptCacheAnalytics = async (
+  options: Pick<PromptCacheAnalyticsOptions, "kv" | "now"> = {},
+): Promise<PromptCacheAnalyticsPruneResult> => {
+  const nowMs = safeNow(options.now ?? Date.now);
+  const cutoffBucketStartAtMs = alignedBucketStart(Math.max(0, nowMs - PROMPT_CACHE_ANALYTICS_RETENTION_MS));
+  const kv = await resolveKv(options);
+  if (!kv) return { status: "unavailable", deleted: 0 };
+
+  let deleted = 0;
+  let batch: Deno.KvKey[] = [];
+  const deleteBatch = async (): Promise<void> => {
+    const current = batch;
+    batch = [];
+    await Promise.all(current.map((key) => kv.delete(key)));
+    deleted += current.length;
+  };
+  try {
+    for await (const entry of kv.list({ prefix: PROMPT_CACHE_ANALYTICS_KV_PREFIX })) {
+      if (!isAnalyticsStorageKey(entry.key, cutoffBucketStartAtMs)) continue;
+      batch.push(entry.key);
+      if (batch.length === 64) await deleteBatch();
+    }
+    if (batch.length) await deleteBatch();
+    return { status: "pruned", deleted };
+  } catch {
+    return { status: "unavailable", deleted };
+  }
 };
 
 const projectedBucket = (

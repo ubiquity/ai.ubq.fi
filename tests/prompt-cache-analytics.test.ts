@@ -5,6 +5,7 @@ import {
   PROMPT_CACHE_ANALYTICS_RETENTION_MS,
   PROMPT_CACHE_ANALYTICS_WINDOW_MS,
   promptCacheAnalyticsCounterKey,
+  prunePromptCacheAnalytics,
   readPromptCacheAnalytics,
   recordPromptCacheAnalytics,
 } from "../src/prompt_cache_analytics.ts";
@@ -164,9 +165,14 @@ Deno.test("prompt cache analytics returns only valid buckets in the trailing sev
   assert.deepEqual(unavailable.buckets, []);
 
   const expiredBucket = NOW_MS - PROMPT_CACHE_ANALYTICS_RETENTION_MS;
+  const olderExpiredBucket = expiredBucket - 37 * PROMPT_CACHE_ANALYTICS_BUCKET_MS;
   seedBucket(kv, expiredBucket, validCounters);
-  await recordPromptCacheAnalytics(event(), { kv: kv as unknown as Deno.Kv, release: RELEASE, now: () => NOW_MS });
+  seedBucket(kv, olderExpiredBucket, validCounters);
+  const pruned = await prunePromptCacheAnalytics({ kv: kv as unknown as Deno.Kv, now: () => NOW_MS });
+  assert.deepEqual(pruned, { status: "pruned", deleted: 6 });
   for (const counter of ["input_tokens", "cached_input_tokens", "sample_count"] as const) {
     assert.equal(kv.entries.has(JSON.stringify(promptCacheAnalyticsCounterKey(expiredBucket, counter))), false);
+    assert.equal(kv.entries.has(JSON.stringify(promptCacheAnalyticsCounterKey(olderExpiredBucket, counter))), false);
+    assert.equal(kv.entries.has(JSON.stringify(promptCacheAnalyticsCounterKey(windowStart, counter))), true);
   }
 });
