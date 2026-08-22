@@ -592,9 +592,11 @@ const isPersistableSentinelFailure = (
 export const shouldPersistSentinelReplay = (
   observation: SentinelFailureObservation,
   clientObservation?: SentinelClientFailureObservation,
-): boolean =>
-  isPersistableSentinelFailure(observation) ||
-  (clientObservation !== undefined && isPersistableSentinelFailure(clientObservation));
+): boolean => {
+  if (observation.terminal_type === "cancelled") return false;
+  return isPersistableSentinelFailure(observation) ||
+    (clientObservation !== undefined && isPersistableSentinelFailure(clientObservation));
+};
 
 export const decodeSentinelReplayKey = (raw: string): Uint8Array<ArrayBuffer> | null => {
   if (!/^[A-Za-z0-9_-]{43}=?$/.test(raw)) return null;

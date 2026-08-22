@@ -12,6 +12,7 @@ import {
   evaluateRollbackPreflight,
   IMPLEMENTATION_CONTINUATION_MS,
   IMPLEMENTATION_INITIAL_MS,
+  implementationPrompt,
   isObserveOnlyMode,
   MAX_MATCHING_REPLAY_ARCHIVE_BYTES,
   MAX_MATCHING_REPLAY_ARTIFACTS,
@@ -101,10 +102,30 @@ Deno.test("implementation scope protects Sentinel and nested Codex instruction s
       ".agents/skills/reviewer/SKILL.md",
       "skills/reviewer/SKILL.md",
       "scripts/sentinel/main.ts",
+      "src/sentinel_replay_capture.ts",
+      "tests/sentinel-replay-capture.test.ts",
       ".github/workflows/other.yml",
     ]
   ) assert.equal(isSentinelProtectedImplementationPath(path), true, path);
   assert.equal(isSentinelProtectedImplementationPath("src/openai.ts"), false);
+});
+
+Deno.test("implementation prompt tells agents to block protected repairs before editing", () => {
+  const prompt = implementationPrompt(
+    {
+      schema_version: 1,
+      interval: computeSentinelInterval("daily", now),
+      findings: [],
+      no_findings_reason: "No evidence-backed finding in the fixture.",
+    },
+    [],
+    null,
+  );
+  assert.match(prompt, /isSentinelProtectedImplementationPath/);
+  assert.match(prompt, /status `blocked`/);
+  assert.match(prompt, /src\/sentinel_replay_capture\.ts/);
+  assert.match(prompt, /tests\/sentinel-replay-capture\.test\.ts/);
+  assert.match(prompt, /empty `changed_files` array/);
 });
 
 Deno.test("implementation timeout gets one continuation and never retries another failure", async () => {
@@ -850,14 +871,12 @@ Deno.test("implementation contract requires a disposition for every triage findi
       }),
     /every triage finding/,
   );
-  assert.throws(
-    () =>
-      assertActionableFindingsResolved(triage, {
-        ...valid,
-        dispositions: [{ ...valid.dispositions[0]!, status: "blocked" }],
-      }),
-    /remain unresolved/,
-  );
+  const blocked = {
+    ...valid,
+    dispositions: [{ ...valid.dispositions[0]!, status: "blocked" as const }],
+  };
+  assert.doesNotThrow(() => assertCompleteFindingDispositions(triage, blocked));
+  assert.throws(() => assertActionableFindingsResolved(triage, blocked), /remain unresolved/);
 });
 
 Deno.test("triage requires a concrete reason only when it has no findings", () => {

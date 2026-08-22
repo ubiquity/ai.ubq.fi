@@ -214,6 +214,37 @@ Deno.test("sentinel failure classifier excludes success and client cancellation"
     })),
     false,
   );
+  const cancelled = failedObservation({
+    status: 499,
+    stream: true,
+    terminal_type: "cancelled",
+    failure_kind: "request_cancelled",
+  });
+  assert.equal(
+    shouldPersistSentinelReplay(
+      cancelled,
+      failedClientObservation({
+        status: 499,
+        stream: false,
+        terminal_type: "http.error",
+        failure_kind: "request_cancelled",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldPersistSentinelReplay(
+      cancelled,
+      failedClientObservation({
+        status: 499,
+        stream: true,
+        terminal_type: null,
+        failure_kind: "missing_sse_terminal",
+        framing_valid: false,
+      }),
+    ),
+    false,
+  );
   assert.equal(
     shouldPersistSentinelReplay(failedObservation({
       status: 200,
@@ -946,6 +977,57 @@ Deno.test("stream capture distinguishes gateway read failure from downstream can
   await consumption;
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(observations.length, 1);
+});
+
+Deno.test("stream cancellation while a provider read resolves done never persists replay", async () => {
+  const capture = acceptedInput();
+  const providerPullStarted = Promise.withResolvers<void>();
+  const providerCancelled = Promise.withResolvers<void>();
+  let pullStarted = false;
+  let persisted = 0;
+  const pendingBody = new ReadableStream<Uint8Array>({
+    pull() {
+      if (!pullStarted) {
+        pullStarted = true;
+        providerPullStarted.resolve();
+      }
+      return new Promise<void>(() => {});
+    },
+    cancel() {
+      providerCancelled.resolve();
+    },
+  });
+  const response = await withTerminalRequestLog(
+    new Response(pendingBody, { headers: { "Content-Type": "text/event-stream" } }),
+    {
+      route: "responses",
+      startedAtMonotonicMs: performance.now(),
+      requestId: "stream-cancelled-pending-read",
+      sentinelReplayInput: capture,
+      persistSentinelReplay: () => {
+        persisted += 1;
+        return Promise.resolve({ status: "duplicate", fingerprint: "fixture" });
+      },
+      recordTelemetry: () =>
+        Promise.resolve({
+          status: "ignored" as const,
+          reason: "unknown_release" as const,
+          release: null,
+          provider: null,
+          route: null,
+          model_hash: null,
+        }),
+    },
+  );
+  const reader = response.body!.getReader();
+  const read = reader.read();
+  await providerPullStarted.promise;
+  await reader.cancel("client disconnected");
+  await providerCancelled.promise;
+  await read;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(persisted, 0);
+  assert.ok(capture.body.every((byte) => byte === 0));
 });
 
 Deno.test("SSE provider read failure persists and clears request bytes before delivery settles", async () => {

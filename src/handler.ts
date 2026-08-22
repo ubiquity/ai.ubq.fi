@@ -520,6 +520,19 @@ export const withTerminalRequestLog = (
       }
       if (result.done) {
         clientBodyObservation = finishSseInspection();
+        const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
+        if (downstreamAborted) {
+          await finalizeCompletion();
+          zeroSentinelReplayInput(input.sentinelReplayInput);
+          try {
+            controller.close();
+          } catch {
+            // The downstream cancellation may already have closed the wrapper.
+          }
+          if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
+          settleBody?.("interrupted");
+          return;
+        }
         // Snapshot the downstream drain before finalization. Accounting can
         // wait on KV and belongs in total latency, not drain telemetry.
         downstreamDrainedAtMonotonicMs = performance.now();

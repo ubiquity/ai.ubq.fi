@@ -508,7 +508,7 @@ Immutable untrusted raw Deno log file metadata:
 ${JSON.stringify(rawLogs)}
 `;
 
-const implementationPrompt = (
+export const implementationPrompt = (
   triage: TriageReport,
   blockers: readonly NativeReviewFinding[],
   replayResults: readonly ReplayResult[] | null,
@@ -516,6 +516,10 @@ const implementationPrompt = (
 ${createAgentPromptPreamble("implementation")}
 
 Work only in the current candidate checkout. Implement the complete actionable triage set. Keep OpenAI wire contracts intact. Do not change Sentinel policy, workflow, schemas, models, credentials, review rules, deployment targets, or Git configuration. Do not commit, push, create branches, deploy, promote, or use the network. Record exactly one disposition for every triage finding. Run focused local checks when useful.
+
+Before every edit, read and apply \`isSentinelProtectedImplementationPath\` in \`scripts/sentinel/policy.ts\` to the proposed repository-relative path. That matcher is authoritative. Its exact protected path list is:
+${JSON.stringify(SENTINEL_POLICY.protectedImplementationPaths)}
+It also protects every workflow, Sentinel script, Sentinel replay source or test, Codex instruction file, project configuration file, and skill path matched by the function. Never edit or work around a matching path. For a finding whose correction requires any protected path, return status \`blocked\`, name the protected path and reason in the summary, use an empty \`changed_files\` array, and continue with findings that only need permitted paths. Return exactly one disposition for every finding even when one or more are blocked.
 
 Triage report:
 ${JSON.stringify(triage)}
@@ -1668,8 +1672,8 @@ const run = async (): Promise<void> => {
     await assertProtectedFilesUnchanged(checkout, protectedHashes);
     implementationReport = parseStructuredResult(implementationResult, isImplementationReport, "Implementation agent");
     assertCompleteFindingDispositions(triage, implementationReport);
-    assertActionableFindingsResolved(triage, implementationReport);
     await writeJson(`${reportsDir}/implementation-round-1.json`, implementationReport);
+    assertActionableFindingsResolved(triage, implementationReport);
   } catch (error) {
     await preserveFailedImplementation(error, "implementation", beforeAgentSha);
     throw error;
@@ -1753,8 +1757,8 @@ const run = async (): Promise<void> => {
           "Implementation review-fix agent",
         );
         assertCompleteFindingDispositions(triage, implementationReport);
-        assertActionableFindingsResolved(triage, implementationReport);
         await writeJson(`${reportsDir}/implementation-round-${reviewRound + 1}.json`, implementationReport);
+        assertActionableFindingsResolved(triage, implementationReport);
         if (!await hasChanges(checkout)) {
           throw new Error("Implementation agent did not correct blocking review findings");
         }
@@ -1868,9 +1872,9 @@ const run = async (): Promise<void> => {
       await assertProtectedFilesUnchanged(checkout, protectedHashes);
       implementationReport = parseStructuredResult(replayEvaluation, isImplementationReport, "Replay evaluation agent");
       assertCompleteFindingDispositions(triage, implementationReport);
+      await writeJson(`${reportsDir}/replay-evaluation-round-${reviewRound}.json`, implementationReport);
       assertActionableFindingsResolved(triage, implementationReport);
       assertReplayEvaluation(implementationReport, replayResults);
-      await writeJson(`${reportsDir}/replay-evaluation-round-${reviewRound}.json`, implementationReport);
       if (await hasChanges(checkout)) continue;
     } catch (error) {
       await preserveFailedImplementation(error, replayEvaluationStage, preReplayEvaluationSha);
