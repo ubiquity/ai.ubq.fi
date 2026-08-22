@@ -398,8 +398,11 @@ export const withTerminalRequestLog = (
   const persistReplayAtApplicationTerminal = (streamReadFailure = false): Promise<void> => {
     if (replayFinalization) return replayFinalization;
     const sentinelReplayInput = input.sentinelReplayInput;
+    const detachedReplayInput = sentinelReplayInput
+      ? { ...sentinelReplayInput, body: new Uint8Array(sentinelReplayInput.body) }
+      : null;
     replayFinalization = (async () => {
-      if (!sentinelReplayInput) return;
+      if (!detachedReplayInput) return;
       const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
       const observation: SentinelFailureObservation = {
         status: response.status,
@@ -414,18 +417,30 @@ export const withTerminalRequestLog = (
         synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
         provider_route: telemetry?.provider ?? response.headers.get("x-uos-upstream") ?? "gateway",
       };
-      const bodyObservation = clientBodyObservation ?? await bufferedObservation;
+      // An HTTP failure is already persistable without reading the cloned
+      // response body. Start the detached write immediately so a slow clone
+      // or a slow KV cannot delay the response; retain body-level inspection
+      // for successful-status responses whose failure is semantic.
+      const bodyObservation = clientBodyObservation ??
+        (response.status >= 400 ? null : await bufferedObservation);
       const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
       if (shouldPersistSentinelReplay(observation, clientObservation)) {
         await (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
-          sentinelReplayInput,
+          detachedReplayInput,
           observation,
           clientObservation,
         );
       }
     })().catch(() => {
       // Capture persistence is best effort and must not replace the response.
-    }).finally(() => zeroSentinelReplayInput(sentinelReplayInput));
+    }).finally(() => {
+      zeroSentinelReplayInput(detachedReplayInput);
+      zeroSentinelReplayInput(sentinelReplayInput);
+    });
+    // The detached task owns an independent snapshot. Release the request's
+    // caller-owned bytes as soon as the persistence call has started so a
+    // slow background write cannot retain the original capture.
+    zeroSentinelReplayInput(sentinelReplayInput);
     return replayFinalization;
   };
   let terminalLog: Promise<void> | null = null;
@@ -439,6 +454,10 @@ export const withTerminalRequestLog = (
     if (terminalLog) return terminalLog;
     terminalLog = logTerminalRequest({
       ...input,
+      // A detached replay finalization owns the capture until its own
+      // finally block zeroes it. Do not let terminal logging reclaim those
+      // bytes while compression, encryption, or KV writes are pending.
+      sentinelReplayInput: replayFinalization === null ? input.sentinelReplayInput : null,
       response,
       downstreamDrainedAtMonotonicMs,
       deliveryOutcome,
@@ -475,7 +494,9 @@ export const withTerminalRequestLog = (
     return (async () => {
       try {
         await finalizeCompletion();
-        await persistReplayAtApplicationTerminal();
+        // Replay capture is best effort. Let the runtime continue this work
+        // after the already-computed non-SSE response is ready for delivery.
+        void persistReplayAtApplicationTerminal();
         return response;
       } finally {
         if (deliveryOutcome) {
