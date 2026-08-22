@@ -111,6 +111,35 @@ type RequestDeliveryInfo = Readonly<{
 type DeliveryOutcome = "delivered" | "interrupted" | "unobserved";
 type BodyOutcome = "drained" | "interrupted" | "failed";
 
+type SentinelBackgroundTaskRegistrar = (task: Promise<unknown>) => void;
+type SentinelBackgroundRuntime = Readonly<{
+  waitUntil?: SentinelBackgroundTaskRegistrar;
+}>;
+
+const sentinelBackgroundTaskRegistrar = (): SentinelBackgroundTaskRegistrar | null => {
+  const globals = globalThis as unknown as Readonly<{
+    Deno?: SentinelBackgroundRuntime;
+    waitUntil?: SentinelBackgroundTaskRegistrar;
+  }>;
+  if (typeof globals.Deno?.waitUntil === "function") return globals.Deno.waitUntil.bind(globals.Deno);
+  if (typeof globals.waitUntil === "function") return globals.waitUntil.bind(globals);
+  return null;
+};
+
+const scheduleSentinelBackgroundTask = (
+  task: Promise<void>,
+  registrar: SentinelBackgroundTaskRegistrar | undefined,
+): boolean => {
+  const waitUntil = registrar ?? sentinelBackgroundTaskRegistrar();
+  if (!waitUntil) return false;
+  try {
+    waitUntil(task);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const shouldSignalSentinelProviderDegradation = (
   input: Readonly<{ status: number; completed: boolean; removedProviderTriggerClass: string | null }>,
 ): boolean =>
@@ -378,6 +407,7 @@ export const withTerminalRequestLog = (
     sentinelReplayInput?: AcceptedSentinelReplayInput | null;
     persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
+    waitUntil?: SentinelBackgroundTaskRegistrar;
   }>,
 ): Promise<Response> => {
   const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
@@ -514,7 +544,8 @@ export const withTerminalRequestLog = (
         // capture continues in the background. In particular, buffered replay
         // inspection, compression, encryption, and KV writes must not extend
         // client-visible gateway error latency.
-        void persistReplayAtApplicationTerminal();
+        const replayTask = persistReplayAtApplicationTerminal();
+        if (!scheduleSentinelBackgroundTask(replayTask, input.waitUntil)) await replayTask;
         return response;
       } finally {
         if (deliveryOutcome) {
