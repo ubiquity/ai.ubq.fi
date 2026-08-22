@@ -110,6 +110,12 @@ import {
   runPromptCacheScopeExperiment,
 } from "./prompt_cache_scope_experiment.ts";
 import {
+  isValidPromptCacheAnalyticsGroupBy,
+  type PromptCacheAnalyticsReadOptions,
+  type PromptCacheAnalyticsView,
+  readPromptCacheAnalytics,
+} from "./prompt_cache_analytics.ts";
+import {
   buildRuntimeConfig,
   cacheRuntimeConfig,
   loadRuntimeConfig,
@@ -260,6 +266,49 @@ export const handleAdminCodexCacheScopeExperimentTelemetryBaseline = async (
       503,
       "Prompt-cache Stage 0 telemetry baseline could not be read.",
       "prompt_cache_scope_experiment_unavailable",
+      { type: "server_error", headers: { "Cache-Control": "no-store" } },
+    );
+  }
+};
+
+/**
+ * Read-only, bounded cache analytics. The query deliberately accepts no raw
+ * cache key, model, request, account, or general filter value.
+ */
+export const handleAdminPromptCacheAnalytics = async (
+  req: Request,
+  readAnalytics: (options: PromptCacheAnalyticsReadOptions) => Promise<PromptCacheAnalyticsView> =
+    readPromptCacheAnalytics,
+): Promise<Response> => {
+  const url = new URL(req.url);
+  for (const key of url.searchParams.keys()) {
+    if (key !== "group_by") {
+      return openaiError(400, "Only group_by is supported for prompt-cache analytics", "invalid_request_error", {
+        param: key,
+      });
+    }
+  }
+  const groupByParameters = url.searchParams.getAll("group_by");
+  if (groupByParameters.length > 1) {
+    return openaiError(400, "group_by may appear only once", "invalid_request_error", { param: "group_by" });
+  }
+  const groupBy = (groupByParameters[0] ?? "key_presence").split(",").map((value) => value.trim());
+  if (!isValidPromptCacheAnalyticsGroupBy(groupBy)) {
+    return openaiError(
+      400,
+      "group_by must contain up to two distinct values from provider, model, route, key_presence, mode, or fallback",
+      "invalid_request_error",
+      { param: "group_by" },
+    );
+  }
+  try {
+    return json(200, await readAnalytics({ groupBy }), { "Cache-Control": "no-store" });
+  } catch {
+    console.error("[ai.ubq.fi] Prompt-cache analytics could not be read.");
+    return openaiError(
+      503,
+      "Prompt-cache analytics are unavailable",
+      "prompt_cache_analytics_unavailable",
       { type: "server_error", headers: { "Cache-Control": "no-store" } },
     );
   }
