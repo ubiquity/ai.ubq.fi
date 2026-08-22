@@ -217,6 +217,7 @@ const logTerminalRequest = async (
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
     streamReadFailure?: boolean;
     suppressSentinelReplay?: boolean;
+    deferSentinelReplayCleanup?: boolean;
     resolveClientBodyObservation?: () =>
       | SentinelClientBodyObservation
       | null
@@ -334,7 +335,7 @@ const logTerminalRequest = async (
       : Promise.resolve();
     await Promise.all([telemetryWrite, cacheAnalyticsWrite, replayWrite, degradationWrite]);
   } finally {
-    zeroSentinelReplayInput(input.sentinelReplayInput);
+    if (!input.deferSentinelReplayCleanup) zeroSentinelReplayInput(input.sentinelReplayInput);
   }
 };
 
@@ -444,6 +445,7 @@ export const withTerminalRequestLog = (
       deliveryOutcome,
       streamReadFailure,
       suppressSentinelReplay: suppressSentinelReplay || replayFinalization !== null,
+      deferSentinelReplayCleanup: replayFinalization !== null,
       resolveClientBodyObservation: async () => clientBodyObservation ?? await bufferedObservation,
     }).catch(() => {
       // Terminal logging and its durable baseline counters are best effort;
@@ -475,7 +477,10 @@ export const withTerminalRequestLog = (
     return (async () => {
       try {
         await finalizeCompletion();
-        await persistReplayAtApplicationTerminal();
+        // Replay persistence is best effort; schedule it after the response is
+        // ready so compression, encryption, and remote KV cannot delay
+        // non-SSE delivery.
+        void persistReplayAtApplicationTerminal();
         return response;
       } finally {
         if (deliveryOutcome) {
