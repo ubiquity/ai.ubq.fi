@@ -1031,22 +1031,25 @@ export const listEncryptedSentinelReplays = async (
     {
       prefix: SENTINEL_REPLAY_MANIFEST_PREFIX,
       start: [...SENTINEL_REPLAY_MANIFEST_PREFIX, options.afterMs],
-      end: [...SENTINEL_REPLAY_MANIFEST_PREFIX, options.beforeMs + 1],
     },
     { cursor: options.cursor, limit: SENTINEL_REPLAY_EXPORT_PAGE_LIMIT },
   );
   const captures: ExportedSentinelReplayCapture[] = [];
+  let rangeExhausted = false;
   for await (const entry of iterator) {
     if (!isSentinelReplayManifest(entry.value) || !manifestEntryMatchesKey(entry)) {
       throw new Error("Sentinel replay manifest is invalid");
     }
     if (entry.value.captured_at_ms < options.afterMs) throw new Error("Sentinel replay manifest order is invalid");
-    if (entry.value.captured_at_ms > options.beforeMs) throw new Error("Sentinel replay manifest range is invalid");
+    if (entry.value.captured_at_ms > options.beforeMs) {
+      rangeExhausted = true;
+      break;
+    }
     const chunks = await getChunks(kv, entry.value);
     captures.push({ manifest: entry.value, chunks: chunks.map(base64UrlEncode) });
     break;
   }
-  return { captures, cursor: iterator.cursor };
+  return { captures, cursor: rangeExhausted ? "" : iterator.cursor };
 };
 
 export const decryptExportedSentinelReplay = async (

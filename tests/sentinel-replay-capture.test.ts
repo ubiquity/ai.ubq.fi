@@ -536,12 +536,13 @@ Deno.test("sentinel manifest export seeks to the requested timestamp and returns
   assert.equal(page.captures.length, 1);
   assert.equal(page.cursor, "next_cursor");
   const selector = observedSelector as unknown as Deno.KvListSelector;
+  assert.ok("prefix" in selector);
+  if (!("prefix" in selector)) throw new Error("fixture selector missing prefix");
+  assert.deepEqual(selector.prefix, SENTINEL_REPLAY_MANIFEST_PREFIX);
   assert.ok("start" in selector);
   if (!("start" in selector)) throw new Error("fixture selector missing start");
   assert.deepEqual(selector.start, [...SENTINEL_REPLAY_MANIFEST_PREFIX, afterMs]);
-  assert.ok("end" in selector);
-  if (!("end" in selector)) throw new Error("fixture selector missing end");
-  assert.deepEqual(selector.end, [...SENTINEL_REPLAY_MANIFEST_PREFIX, beforeMs + 1]);
+  assert.equal("end" in selector, false);
   assert.equal(observedOptions?.limit, 1);
 });
 
