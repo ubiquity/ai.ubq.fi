@@ -414,7 +414,12 @@ export const withTerminalRequestLog = (
         synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
         provider_route: telemetry?.provider ?? response.headers.get("x-uos-upstream") ?? "gateway",
       };
-      const bodyObservation = clientBodyObservation ?? await bufferedObservation;
+      // An HTTP failure is already persistable without reading the cloned
+      // response body. Start the detached write immediately so a slow clone
+      // or a slow KV cannot delay the response; retain body-level inspection
+      // for successful-status responses whose failure is semantic.
+      const bodyObservation = clientBodyObservation ??
+        (response.status >= 400 ? null : await bufferedObservation);
       const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
       if (shouldPersistSentinelReplay(observation, clientObservation)) {
         await (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
