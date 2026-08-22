@@ -9,7 +9,7 @@ const nonNegativeInteger = (value: string | null, fallback: number): number | nu
 };
 
 const validCursor = (value: string | null): boolean =>
-  value === null || value === "" || (value.length <= 2_048 && /^[A-Za-z0-9_-]+$/.test(value));
+  value === null || value === "" || (value.length <= 2_048 && /^[A-Za-z0-9_-]+={0,2}$/.test(value));
 
 type SentinelReplayAdminDependencies = Readonly<{
   getKv?: typeof getKv;

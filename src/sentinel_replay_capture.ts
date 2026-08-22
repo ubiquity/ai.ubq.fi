@@ -25,6 +25,7 @@ const MAX_CAPTURE_ID_CHARS = 128;
 const MAX_SSE_EVENT_CHARS = 16 * 1_024 * 1_024;
 const HEX_DIGEST = /^[0-9a-f]{64}$/;
 const CAPTURE_ID = /^[A-Za-z0-9_-]+$/;
+const KV_CURSOR = /^[A-Za-z0-9_-]+={0,2}$/;
 const KEY_DERIVATION_SALT = TEXT_ENCODER.encode("uos-sentinel-replay-v1");
 
 const COMPATIBILITY_HEADER_NAMES = [
@@ -1023,7 +1024,7 @@ export const listEncryptedSentinelReplays = async (
   }
   if (
     options.cursor !== undefined &&
-    (options.cursor.length < 1 || options.cursor.length > 2_048 || !/^[A-Za-z0-9_-]+$/.test(options.cursor))
+    (options.cursor.length < 1 || options.cursor.length > 2_048 || !KV_CURSOR.test(options.cursor))
   ) {
     throw new Error("Sentinel replay export cursor is invalid");
   }

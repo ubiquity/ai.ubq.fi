@@ -516,7 +516,7 @@ Deno.test("sentinel manifest export seeks to the requested timestamp and returns
           versionstamp: "0000000000000001",
         };
       })() as unknown as Deno.KvListIterator<typeof fixture.manifest>;
-      Object.defineProperty(iterator, "cursor", { get: () => "next_cursor" });
+      Object.defineProperty(iterator, "cursor", { get: () => "next_cursor==" });
       return iterator;
     },
     getMany(keys: readonly Deno.KvKey[]) {
@@ -532,9 +532,14 @@ Deno.test("sentinel manifest export seeks to the requested timestamp and returns
   };
   const afterMs = fixture.manifest.captured_at_ms;
   const beforeMs = afterMs + 10;
-  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, { afterMs, beforeMs, limit: 1 });
+  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs,
+    beforeMs,
+    limit: 1,
+    cursor: "prior_cursor==",
+  });
   assert.equal(page.captures.length, 1);
-  assert.equal(page.cursor, "next_cursor");
+  assert.equal(page.cursor, "next_cursor==");
   const selector = observedSelector as unknown as Deno.KvListSelector;
   assert.ok("prefix" in selector);
   if (!("prefix" in selector)) throw new Error("fixture selector missing prefix");
@@ -543,6 +548,7 @@ Deno.test("sentinel manifest export seeks to the requested timestamp and returns
   if (!("start" in selector)) throw new Error("fixture selector missing start");
   assert.deepEqual(selector.start, [...SENTINEL_REPLAY_MANIFEST_PREFIX, afterMs]);
   assert.equal("end" in selector, false);
+  assert.equal(observedOptions?.cursor, "prior_cursor==");
   assert.equal(observedOptions?.limit, 1);
 });
 
@@ -1016,7 +1022,7 @@ Deno.test("sentinel replay admin separates invalid input from storage failure", 
   assert.equal(SENTINEL_REPLAY_EXPORT_PAGE_LIMIT, 1);
 
   const unavailable = await handleAdminSentinelReplayCaptures(
-    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?before_ms=2000000000000&cursor=valid_cursor"),
+    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?before_ms=2000000000000&cursor=valid_cursor%3D%3D"),
     {
       getKv: () => Promise.resolve({} as Deno.Kv),
       listEncryptedSentinelReplays: () => Promise.reject(new Error("KV unavailable")),
@@ -1032,19 +1038,21 @@ Deno.test("sentinel replay admin separates invalid input from storage failure", 
 });
 
 Deno.test("sentinel replay admin forwards the closed capture interval", async () => {
-  let observed: { afterMs: number; beforeMs: number } | null = null;
+  let observed: { afterMs: number; beforeMs: number; cursor?: string } | null = null;
   const response = await handleAdminSentinelReplayCaptures(
-    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?after_ms=100&before_ms=200&limit=1"),
+    new Request(
+      "https://ai.ubq.fi/admin/sentinel/replay-captures?after_ms=100&before_ms=200&limit=1&cursor=opaque%3D",
+    ),
     {
       getKv: () => Promise.resolve({} as Deno.Kv),
       listEncryptedSentinelReplays: (_kv, options) => {
-        observed = { afterMs: options.afterMs, beforeMs: options.beforeMs };
+        observed = { afterMs: options.afterMs, beforeMs: options.beforeMs, cursor: options.cursor };
         return Promise.resolve({ captures: [], cursor: "" });
       },
     },
   );
   assert.equal(response.status, 200);
-  assert.deepEqual(observed, { afterMs: 100, beforeMs: 200 });
+  assert.deepEqual(observed, { afterMs: 100, beforeMs: 200, cursor: "opaque=" });
 });
 
 Deno.test("replay export and preview reads enforce declared and streamed byte limits", async () => {
@@ -1218,10 +1226,12 @@ Deno.test("replay export pagination rejects repeated cursors and stops at the fi
         adminToken: "admin-fixture",
         afterMs: 0,
         beforeMs: 2_000_000_000_000,
-        fetchImpl: (() => {
+        fetchImpl: ((input: URL | Request | string) => {
           const index = repeatedCalls++;
+          const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
+          assert.equal(url.searchParams.get("cursor"), index === 0 ? null : "repeated_cursor==");
           return Promise.resolve(
-            Response.json({ data: [pageCapture(index)], cursor: "repeated_cursor" }),
+            Response.json({ data: [pageCapture(index)], cursor: "repeated_cursor==" }),
           );
         }) as typeof fetch,
       }),

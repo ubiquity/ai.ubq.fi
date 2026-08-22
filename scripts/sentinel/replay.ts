@@ -156,7 +156,7 @@ export const fetchEncryptedReplayCaptures = async (
       parsed.data.length > 1 ||
       !(parsed.cursor === null ||
         (typeof parsed.cursor === "string" && parsed.cursor.length <= 2_048 &&
-          /^[A-Za-z0-9_-]+$/.test(parsed.cursor))) ||
+          /^[A-Za-z0-9_-]+={0,2}$/.test(parsed.cursor))) ||
       !parsed.data.every(isExportedSentinelReplayCapture)
     ) {
       throw new Error("Sentinel replay export returned an invalid encrypted page");
