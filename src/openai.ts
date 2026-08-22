@@ -2199,6 +2199,7 @@ const fetchResponsesWithPaidFallback = async (
     try {
       primary = await fetchCodexResponses(body, {
         clientVersion: options.clientVersion,
+        cacheScope: options.usageContext?.idempotencyPrincipal || options.usageContext?.keyId,
         signal: options.signal,
         requestId: options.usageContext?.requestId,
         // Keep terminal telemetry bounded: only the first real Codex transport
@@ -7946,6 +7947,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       "tools",
       "tool_choice",
       "parallel_tool_calls",
+      "max_output_tokens",
       "prompt_cache_key",
       "prompt_cache_options",
       "prompt_cache_retention",
@@ -8128,6 +8130,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "max_output_tokens")) {
+    codexBody.max_output_tokens = rawRecord.max_output_tokens;
+  }
   const passthroughKeys: PassthroughToolSchemaKey[] = [
     "tools",
     "tool_choice",
@@ -8438,6 +8443,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     "max_output_tokens",
     "max_tool_calls",
     "metadata",
+    "prompt_cache_options",
+    "prompt_cache_retention",
     "safety_identifier",
     "service_tier",
     "temperature",
@@ -8451,6 +8458,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     ...responseWarnings(ready.response),
   ].filter((warning) => {
     if (!removedProviderAttempt) return true;
+    if (warning === "prompt_cache_breakpoint_ignored" && countExplicitPromptCacheBreakpoints(input) > 0) {
+      return false;
+    }
     return ![...forwardedRemovedProviderControls].some((key) =>
       Object.prototype.hasOwnProperty.call(rawRecord, key) &&
       warning === (WARNING_KEY_MAP.get(key) ?? `${key}_ignored`)

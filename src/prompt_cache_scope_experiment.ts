@@ -474,7 +474,6 @@ const buildExperimentRequest = (model: string, cycleId: string, cacheKey: string
     input,
     store: false,
     stream: true,
-    max_output_tokens: 16,
     reasoning: { effort: "none" },
     prompt_cache_key: cacheKey,
   };

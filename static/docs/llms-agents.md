@@ -428,31 +428,34 @@ header (comma-separated).
 For the most portable request, start with only `model`, `messages`, `stream`, and `reasoning_effort`. Add optional
 OpenAI parameters only after checking this section or validating the target endpoint.
 
-Keys forwarded for chat completions:
+Keys forwarded to ChatGPT Codex for chat completions:
 
 - `tools`
 - `tool_choice`
 - `parallel_tool_calls`
 - `prompt_cache_key`
-- `prompt_cache_options`
-- `prompt_cache_retention`
 
-Keys forwarded for responses:
+Keys forwarded to ChatGPT Codex for responses:
 
 - `tools`
 - `tool_choice`
 - `parallel_tool_calls`
 - `prompt_cache_key`
-- `prompt_cache_options`
-- `prompt_cache_retention`
 - `text`
 - `include`
+- `context_management`
+
+The public endpoints accept `prompt_cache_options`, `prompt_cache_retention`, and explicit cache breakpoints, but the
+ChatGPT Codex subscription transport does not. The gateway omits those controls only from that upstream leg and reports
+`prompt_cache_options_ignored`, `prompt_cache_retention_ignored`, or `prompt_cache_breakpoint_ignored` as applicable.
+Validated controls remain available to a paid fallback that supports them.
 
 The Codex CLI compatibility extension `client_metadata` is accepted as a string map and stripped before the gateway
 builds the upstream request. It remains separate from the official OpenAI request schema. The gateway generates its own
 upstream request metadata instead of forwarding client-supplied session identifiers.
 
-`store` is always set to `false` by the gateway. The following are always ignored and will produce warnings:
+`store` is always set to `false` by the gateway. The following are ignored by the ChatGPT Codex subscription transport
+and will produce warnings when that transport handles the request:
 
 - `temperature` -> `temperature_ignored`
 - `max_tokens`, `max_completion_tokens`, `max_output_tokens` -> `max_output_tokens_ignored`
