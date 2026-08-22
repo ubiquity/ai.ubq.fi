@@ -6,6 +6,7 @@ import {
   type CodexFilesystem,
   CodexInvocationError,
   createCodexAuthRelayFactory,
+  runCodexCommandWithRuntime,
   runNativeCodexReview,
   runStructuredCodexAgent,
   syntheticCodexAuthJson,
@@ -136,6 +137,23 @@ const commonDependencies = (filesystem: MemoryFilesystem, fetcher: CodexUsageFet
     Promise.resolve({ baseUrl: "http://127.0.0.1:41771/backend-api", close: () => Promise.resolve() }),
 });
 
+const codexCommandResult = (
+  overrides: Partial<CodexCommandResult> = {},
+): CodexCommandResult => {
+  const stdout = overrides.stdout ?? "";
+  const stderr = overrides.stderr ?? "";
+  return {
+    code: overrides.code ?? 0,
+    stdout,
+    stderr,
+    outputExceeded: overrides.outputExceeded ?? false,
+    timedOut: overrides.timedOut ?? false,
+    stdoutBytes: overrides.stdoutBytes ?? new TextEncoder().encode(stdout).byteLength,
+    stderrBytes: overrides.stderrBytes ?? new TextEncoder().encode(stderr).byteLength,
+    durationMs: overrides.durationMs ?? 10,
+  };
+};
+
 Deno.test("auth parsing requires a complete document and rejects tokens inside the expiry safety window", () => {
   const parsed = parseCodexAuthJsonB64(slot1.encoded, 1, { nowMs, minimumValidityMs: 60_000 });
   assert.equal(parsed.rawJson, slot1.raw);
@@ -243,6 +261,49 @@ Deno.test("Codex bubblewrap exposes only system files, the repository, and the s
   assert.ok(joined.includes("--bind\0/tmp/uos-sentinel-codex-1\0/tmp/uos-sentinel-codex-1"));
   assert.equal(joined.includes("/home/runner/runners"), false);
   assert.deepEqual(args.slice(-3), ["--", "codex", "exec"]);
+});
+
+Deno.test("Codex command records timeout when status resolves or rejects after abort", async () => {
+  const request: CodexCommandRequest = {
+    executable: "codex",
+    args: ["exec"],
+    cwd: "/checkout",
+    repositoryRoot: "/checkout",
+    workspaceWritable: false,
+    env: { CODEX_HOME: "/private/codex" },
+    clearEnv: true,
+    stdin: "prompt",
+    outputLimitBytes: 1_024,
+    timeoutMs: 1_000,
+  };
+  for (const statusKind of ["resolved", "rejected"] as const) {
+    const controller = new AbortController();
+    let now = 100;
+    const result = await runCodexCommandWithRuntime(request, {
+      createTimeoutSignal: () => controller.signal,
+      spawn: () => {
+        controller.abort(new DOMException("deadline", "TimeoutError"));
+        return {
+          status: statusKind === "resolved"
+            ? Promise.resolve({ code: 143 })
+            : Promise.reject(new DOMException("deadline", "AbortError")),
+          stdout: new Blob(["partial output"]).stream(),
+          stderr: new Blob(["deadline reached"]).stream(),
+          stdin: new WritableStream<Uint8Array>(),
+        };
+      },
+      now: () => {
+        const value = now;
+        now = 1_150;
+        return value;
+      },
+    });
+    assert.equal(result.timedOut, true);
+    assert.equal(result.code, statusKind === "resolved" ? 143 : -1);
+    assert.equal(result.stdoutBytes, 14);
+    assert.equal(result.stderrBytes, 16);
+    assert.equal(result.durationMs, 1_050);
+  }
 });
 
 Deno.test("usage parsing replaces base with the best matching model pool and fails closed", () => {
@@ -489,7 +550,7 @@ Deno.test("structured execution uses fixed policy, relay-only auth, a private ho
       runtimeAuth = filesystem.files.get(`${request.env.CODEX_HOME}/auth.json`) ?? "";
       const lastMessagePath = request.args[request.args.indexOf("--output-last-message") + 1]!;
       filesystem.files.set(lastMessagePath, JSON.stringify({ findings: [] }));
-      return Promise.resolve({ code: 0, stdout: "json event", stderr: "", outputExceeded: false });
+      return Promise.resolve(codexCommandResult({ stdout: "json event" }));
     },
   });
   assert.equal(result.slot, 1);
@@ -563,7 +624,7 @@ Deno.test("account quota is re-probed before every Codex invocation", async () =
   const commandRunner = (request: CodexCommandRequest): Promise<CodexCommandResult> => {
     const lastMessagePath = request.args[request.args.indexOf("--output-last-message") + 1]!;
     filesystem.files.set(lastMessagePath, "{}");
-    return Promise.resolve({ code: 0, stdout: "", stderr: "", outputExceeded: false });
+    return Promise.resolve(codexCommandResult());
   };
   const options = {
     role: "monitoring" as const,
@@ -603,7 +664,7 @@ Deno.test("Codex output containing a credential is rejected and never returned",
         commandRunner: (request) => {
           const lastMessagePath = request.args[request.args.indexOf("--output-last-message") + 1]!;
           filesystem.files.set(lastMessagePath, "{}");
-          return Promise.resolve({ code: 0, stdout: slot1.refresh, stderr: "", outputExceeded: false });
+          return Promise.resolve(codexCommandResult({ stdout: slot1.refresh }));
         },
       }),
     (error) =>
@@ -630,7 +691,7 @@ Deno.test("Codex auth mutation is fail-closed", async () => {
           filesystem.files.set(`${request.env.CODEX_HOME}/auth.json`, "{}");
           const lastMessagePath = request.args[request.args.indexOf("--output-last-message") + 1]!;
           filesystem.files.set(lastMessagePath, "{}");
-          return Promise.resolve({ code: 0, stdout: "", stderr: "", outputExceeded: false });
+          return Promise.resolve(codexCommandResult());
         },
       }),
     (error) => error instanceof CodexInvocationError && error.failure === "auth_mutated",
@@ -661,9 +722,29 @@ Deno.test("Codex invocation timeout is fail-closed and closes the authentication
             },
           }),
         commandRunner: () =>
-          Promise.resolve({ code: -1, stdout: "", stderr: "", outputExceeded: false, timedOut: true }),
+          Promise.resolve(codexCommandResult({
+            code: 143,
+            stdout: "private partial model output",
+            stderr: "private process diagnostics",
+            timedOut: true,
+            stdoutBytes: 12_345,
+            stderrBytes: 678,
+            durationMs: 2_700_001,
+          })),
       }),
-    (error) => error instanceof CodexInvocationError && error.failure === "invocation_timeout",
+    (error) => {
+      assert.ok(error instanceof CodexInvocationError);
+      assert.equal(error.failure, "invocation_timeout");
+      assert.equal(error.exitCode, 143);
+      assert.equal(error.stdoutBytes, 12_345);
+      assert.equal(error.stderrBytes, 678);
+      assert.equal(error.durationMs, 2_700_001);
+      assert.equal(error.outputExceeded, false);
+      assert.equal(error.timedOut, true);
+      assert.equal(error.message.includes("private partial model output"), false);
+      assert.equal(error.message.includes("private process diagnostics"), false);
+      return true;
+    },
   );
   assert.equal(relayClosed, true);
   assert.equal(filesystem.removed.length, 1);
@@ -680,7 +761,7 @@ Deno.test("native review delegates reviewer model selection to Codex", async () 
     ...commonDependencies(filesystem, healthyFetcher()),
     commandRunner: (request) => {
       command = request;
-      return Promise.resolve({ code: 0, stdout: "No findings.", stderr: "", outputExceeded: false });
+      return Promise.resolve(codexCommandResult({ stdout: "No findings." }));
     },
   });
   assert.equal(result.lastMessage, null);

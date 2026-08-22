@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type { GitHubActionsClient, GitHubArtifact } from "../scripts/sentinel/github.ts";
 import {
+  captureFailedCandidateSnapshot,
   loadMatchingRetainedCaptures,
   replayIndexArtifactName,
   writeReplayArtifactMetadata,
@@ -37,6 +38,84 @@ const capture = (
     ciphertext_bytes: 16,
   },
   chunks: [encodeBase64Url(new Uint8Array(16))],
+});
+
+Deno.test({
+  name: "failed implementation snapshot preserves exact Git-visible candidate state as sidecars",
+  ignore: requiredPermissions.some((permission) => permission.state !== "granted"),
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "sentinel-failed-candidate-" });
+    const checkout = `${root}/checkout`;
+    const reportDirectory = `${root}/reports/failed-implementation-candidate`;
+    const git = async (args: string[]): Promise<string> => {
+      const output = await new Deno.Command("git", {
+        args,
+        cwd: checkout,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (!output.success) throw new Error(new TextDecoder().decode(output.stderr));
+      return new TextDecoder().decode(output.stdout).trim();
+    };
+    try {
+      await Deno.mkdir(checkout);
+      await git(["init", "-b", "development"]);
+      await Deno.writeTextFile(`${checkout}/modified.txt`, "before\n");
+      await Deno.writeTextFile(`${checkout}/deleted.txt`, "delete me\n");
+      await Deno.writeTextFile(`${checkout}/executable.sh`, "#!/bin/sh\nexit 0\n");
+      await Deno.writeTextFile(`${checkout}/rename-source.txt`, "renamed bytes\n");
+      await Deno.chmod(`${checkout}/executable.sh`, 0o755);
+      await git(["add", "modified.txt", "deleted.txt", "executable.sh", "rename-source.txt"]);
+      await git([
+        "-c",
+        "user.name=Sentinel Test",
+        "-c",
+        "user.email=sentinel@example.invalid",
+        "commit",
+        "-m",
+        "base",
+      ]);
+      const baseSha = await git(["rev-parse", "HEAD"]);
+
+      await Deno.writeTextFile(`${checkout}/modified.txt`, "after\n");
+      await Deno.remove(`${checkout}/deleted.txt`);
+      await Deno.writeTextFile(`${checkout}/executable.sh`, "#!/bin/sh\nexit 7\n");
+      await Deno.writeFile(`${checkout}/new.bin`, new Uint8Array([0, 1, 254, 255]));
+      await Deno.symlink("modified.txt", `${checkout}/linked.txt`);
+      await Deno.rename(`${checkout}/rename-source.txt`, `${checkout}/rename-target.txt`);
+      await captureFailedCandidateSnapshot(checkout, reportDirectory, baseSha);
+
+      const snapshot = JSON.parse(await Deno.readTextFile(`${reportDirectory}/manifest.json`));
+      assert.equal(snapshot.schema_version, 1);
+      assert.equal(snapshot.base_sha, baseSha);
+      assert.equal(snapshot.file_count, 7);
+      const entries = new Map<string, Record<string, unknown>>(
+        snapshot.files.map((entry: Record<string, unknown>) => [String(entry.path), entry]),
+      );
+      assert.deepEqual(entries.get("deleted.txt"), {
+        path: "deleted.txt",
+        source: "tracked",
+        kind: "deleted",
+      });
+      const payload = async (path: string): Promise<Uint8Array> => {
+        const entry = entries.get(path)!;
+        return await Deno.readFile(`${reportDirectory}/${String(entry.payload)}`);
+      };
+      assert.equal(new TextDecoder().decode(await payload("modified.txt")), "after\n");
+      assert.equal(entries.get("modified.txt")!.source, "tracked");
+      assert.deepEqual(await payload("new.bin"), new Uint8Array([0, 1, 254, 255]));
+      assert.equal(entries.get("new.bin")!.source, "untracked");
+      assert.equal(entries.get("linked.txt")!.kind, "symlink");
+      assert.equal(new TextDecoder().decode(await payload("linked.txt")), "modified.txt");
+      assert.equal(entries.get("rename-source.txt")!.kind, "deleted");
+      assert.equal(entries.get("rename-target.txt")!.source, "untracked");
+      assert.equal(new TextDecoder().decode(await payload("rename-target.txt")), "renamed bytes\n");
+      assert.equal(Number(entries.get("executable.sh")!.mode) & 0o111, 0o111);
+      assert.equal(new TextDecoder().decode(await payload("executable.sh")), "#!/bin/sh\nexit 7\n");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
 });
 
 Deno.test({

@@ -133,14 +133,21 @@ Deno.test({
     try {
       await Deno.mkdir(`${root}/raw-logs`, { recursive: true });
       await Deno.mkdir(`${root}/reports`, { recursive: true });
+      await Deno.mkdir(`${root}/reports/failed-implementation-candidate/files`, { recursive: true });
+      await Deno.mkdir(`${root}/candidate-worktree`, { recursive: true });
+      await Deno.mkdir(`${root}/private`, { recursive: true });
       const raw = new TextEncoder().encode("raw provider log fixture");
       const report = new TextEncoder().encode('{"status":"observed"}');
+      const candidatePayload = new Uint8Array([0, 1, 254, 255]);
       await Deno.writeFile(`${root}/raw-logs/deno.jsonl`, raw);
       await Deno.writeFile(`${root}/reports/triage.json`, report);
+      await Deno.writeFile(`${root}/reports/failed-implementation-candidate/files/0000.bin`, candidatePayload);
       const result = await encryptAndScrubGeneratedEvidence(root, key);
-      assert(result.fileCount === 2, "Unexpected encrypted file count");
+      assert(result.fileCount === 3, "Unexpected encrypted file count");
       await assertRejects(() => Deno.stat(`${root}/raw-logs`));
       await assertRejects(() => Deno.stat(`${root}/reports`));
+      await assertRejects(() => Deno.stat(`${root}/candidate-worktree`));
+      await assertRejects(() => Deno.stat(`${root}/private`));
       const encrypted = await Deno.readFile(result.outputPath);
       const decrypted = await decryptSentinelArtifact(encrypted, key);
       assert(
@@ -149,14 +156,20 @@ Deno.test({
       );
       assert(equalBytes(decrypted[0]!.bytes, raw), "Raw-log bytes differ");
       assert(
-        decrypted[1]!.path === "reports/triage.json",
+        decrypted[1]!.path === "reports/failed-implementation-candidate/files/0000.bin",
+        "Failed candidate payload path missing",
+      );
+      assert(equalBytes(decrypted[1]!.bytes, candidatePayload), "Failed candidate payload bytes differ");
+      assert(
+        decrypted[2]!.path === "reports/triage.json",
         "Report path missing",
       );
-      assert(equalBytes(decrypted[1]!.bytes, report), "Report bytes differ");
+      assert(equalBytes(decrypted[2]!.bytes, report), "Report bytes differ");
       for (const file of decrypted) file.bytes.fill(0);
       encrypted.fill(0);
       raw.fill(0);
       report.fill(0);
+      candidatePayload.fill(0);
     } finally {
       key.fill(0);
       await Deno.remove(root, { recursive: true });

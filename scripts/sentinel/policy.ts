@@ -54,6 +54,7 @@ export const SENTINEL_POLICY = Object.freeze({
   productionLatestStartMs: 90 * 60 * 1_000,
   monitorDurationMs: 30 * 60 * 1_000,
   monitorPollMs: 30 * 1_000,
+  monitorCheckpointMs: 5 * 60 * 1_000,
   triage: Object.freeze({ model: "gpt-5.6-sol", reasoning: "medium" as const }),
   implementation: Object.freeze({ model: "gpt-5.6-luna", reasoning: "max" as const }),
   monitoring: Object.freeze({ model: "gpt-5.6-sol", reasoning: "medium" as const }),

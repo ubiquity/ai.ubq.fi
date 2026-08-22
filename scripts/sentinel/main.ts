@@ -1,4 +1,9 @@
-import { type CodexInvocationResult, runNativeCodexReview, runStructuredCodexAgent } from "./codex.ts";
+import {
+  CodexInvocationError,
+  type CodexInvocationResult,
+  runNativeCodexReview,
+  runStructuredCodexAgent,
+} from "./codex.ts";
 import { defaultRevisionBaseUrl, DenoDeployClient, type RollbackTarget } from "./deploy.ts";
 import { GitHubActionsClient, type GitHubArtifact } from "./github.ts";
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY, type SentinelMode } from "./policy.ts";
@@ -81,6 +86,12 @@ const EVIDENCE_ARTIFACT_PREFIX = "sentinel-evidence-v1-";
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 const MAX_REPLAY_BUNDLE_BYTES = 512 * 1024 * 1024;
 const MAX_DEPLOYMENT_ATTESTATION_BYTES = 1024 * 1024;
+const CODEX_HEARTBEAT_INTERVAL_MS = 60_000;
+export const IMPLEMENTATION_INITIAL_MS = 20 * 60 * 1_000;
+export const IMPLEMENTATION_CONTINUATION_MS = 10 * 60 * 1_000;
+export const MONITOR_AGENT_MS = 5 * 60 * 1_000;
+const FAILED_CANDIDATE_MAX_FILES = 1_024;
+const FAILED_CANDIDATE_MAX_BYTES = 64 * 1_024 * 1_024;
 export const MAX_MATCHING_REPLAY_ARTIFACTS = 256;
 export const MAX_MATCHING_REPLAY_ARCHIVE_BYTES = 512 * 1024 * 1024;
 export const MAX_MATCHING_REPLAY_EXTRACTED_BYTES = 512 * 1024 * 1024;
@@ -196,6 +207,73 @@ export const evaluateRollbackPreflight = (
 
 const writeJson = async (path: string, value: unknown): Promise<void> => {
   await Deno.writeTextFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+};
+
+const safeErrorSummary = (error: unknown): Record<string, unknown> => ({
+  error_class: error instanceof Error ? error.name : "unknown",
+  message: error instanceof Error ? error.message : "Unknown Sentinel failure",
+  ...(error instanceof CodexInvocationError
+    ? {
+      codex_failure: error.failure,
+      codex_exit_code: error.exitCode,
+      codex_stdout_bytes: error.stdoutBytes,
+      codex_stderr_bytes: error.stderrBytes,
+      codex_duration_ms: error.durationMs,
+      codex_output_exceeded: error.outputExceeded,
+      codex_timed_out: error.timedOut,
+    }
+    : {}),
+});
+
+export const runWithSingleTimeoutContinuation = async <T>(
+  invoke: (attempt: 1 | 2) => Promise<T>,
+  onTimeout: (error: CodexInvocationError) => Promise<void>,
+): Promise<T> => {
+  try {
+    return await invoke(1);
+  } catch (error) {
+    if (!(error instanceof CodexInvocationError) || error.failure !== "invocation_timeout") throw error;
+    await onTimeout(error);
+    return await invoke(2);
+  }
+};
+
+type StageHeartbeatTimer = ReturnType<typeof globalThis.setInterval> | number;
+
+type StageHeartbeatDependencies = Readonly<{
+  intervalMs?: number;
+  now?: () => number;
+  log?: (message: string) => void;
+  setInterval?: (callback: () => void, intervalMs: number) => StageHeartbeatTimer;
+  clearInterval?: (timer: StageHeartbeatTimer) => void;
+}>;
+
+export const withStageHeartbeat = async <T>(
+  stage: string,
+  operation: () => Promise<T>,
+  dependencies: StageHeartbeatDependencies = {},
+): Promise<T> => {
+  const now = dependencies.now ?? Date.now;
+  const log = dependencies.log ?? console.log;
+  const intervalMs = dependencies.intervalMs ?? CODEX_HEARTBEAT_INTERVAL_MS;
+  if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
+    throw new TypeError("Heartbeat interval must be a positive integer");
+  }
+  const schedule = dependencies.setInterval ??
+    ((callback: () => void, delay: number): StageHeartbeatTimer => globalThis.setInterval(callback, delay));
+  const cancel = dependencies.clearInterval ??
+    ((timer: StageHeartbeatTimer): void =>
+      globalThis.clearInterval(timer as ReturnType<typeof globalThis.setInterval>));
+  const startedAt = now();
+  const timer = schedule(() => {
+    const elapsedSeconds = Math.max(1, Math.floor((now() - startedAt) / 1_000));
+    log(`[sentinel] stage=${stage} status=running elapsed_seconds=${elapsedSeconds}`);
+  }, intervalMs);
+  try {
+    return await operation();
+  } finally {
+    cancel(timer);
+  }
 };
 
 const gitText = async (cwd: string, args: readonly string[]): Promise<string> =>
@@ -727,10 +805,17 @@ const assertAgentDidNotCommitOrSwitch = async (
   if (staged.code !== 0) throw new Error("The implementation agent left an unreadable Git index");
 };
 
-const implementationAgentChangedPaths = async (checkout: string): Promise<Set<string>> => {
+type ImplementationPathState = "tracked" | "untracked";
+
+const decodeGitPathList = (bytes: Uint8Array): string[] =>
+  new TextDecoder("utf-8", { fatal: true }).decode(bytes).split("\0").filter(Boolean);
+
+const implementationAgentChangedPathStates = async (
+  checkout: string,
+): Promise<Map<string, ImplementationPathState>> => {
   const [tracked, untracked] = await Promise.all([
     runTrustedGit({
-      args: ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD"],
+      args: ["diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD"],
       cwd: checkout,
     }),
     runTrustedGit({
@@ -738,11 +823,88 @@ const implementationAgentChangedPaths = async (checkout: string): Promise<Set<st
       cwd: checkout,
     }),
   ]);
-  const changed = new Set<string>();
-  for (const bytes of [tracked.stdout, untracked.stdout]) {
-    for (const path of textDecoder.decode(bytes).split("\0").filter(Boolean)) changed.add(path);
-  }
+  const changed = new Map<string, ImplementationPathState>();
+  for (const path of decodeGitPathList(tracked.stdout)) changed.set(path, "tracked");
+  for (const path of decodeGitPathList(untracked.stdout)) changed.set(path, "untracked");
   return changed;
+};
+
+const implementationAgentChangedPaths = async (checkout: string): Promise<Set<string>> =>
+  new Set((await implementationAgentChangedPathStates(checkout)).keys());
+
+export const captureFailedCandidateSnapshot = async (
+  checkout: string,
+  reportDirectory: string,
+  baseSha: string,
+): Promise<void> => {
+  ensureFullSha(baseSha, "Failed candidate base SHA");
+  const pathStates = await implementationAgentChangedPathStates(checkout);
+  const paths = [...pathStates.keys()].sort();
+  if (pathStates.size > FAILED_CANDIDATE_MAX_FILES) {
+    throw new Error("Failed implementation candidate contains too many changed files to preserve safely");
+  }
+  const payloadDirectory = `${reportDirectory}/files`;
+  await Deno.mkdir(payloadDirectory, { recursive: true, mode: 0o700 });
+  const files: Array<Record<string, unknown>> = [];
+  let totalBytes = 0;
+  for (const [index, path] of paths.entries()) {
+    if (
+      path.startsWith("/") || path.includes("\\") || path.includes("\0") ||
+      path.split("/").some((part) => part === "" || part === "." || part === "..")
+    ) {
+      throw new Error("Failed implementation candidate contains an invalid path");
+    }
+    const absolute = `${checkout}/${path}`;
+    let information: Deno.FileInfo;
+    try {
+      information = await Deno.lstat(absolute);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        files.push({ path, source: pathStates.get(path), kind: "deleted" });
+        continue;
+      }
+      throw error;
+    }
+    let bytes: Uint8Array<ArrayBuffer>;
+    let kind: "file" | "symlink";
+    if (information.isFile) {
+      kind = "file";
+      bytes = await Deno.readFile(absolute);
+    } else if (information.isSymlink) {
+      kind = "symlink";
+      bytes = textEncoder.encode(await Deno.readLink(absolute));
+    } else {
+      throw new Error("Failed implementation candidate contains an unsupported changed path type");
+    }
+    totalBytes += bytes.byteLength;
+    if (!Number.isSafeInteger(totalBytes) || totalBytes > FAILED_CANDIDATE_MAX_BYTES) {
+      bytes.fill(0);
+      throw new Error("Failed implementation candidate exceeds the preservation byte limit");
+    }
+    try {
+      const payload = `files/${index.toString().padStart(4, "0")}.bin`;
+      await Deno.writeFile(`${reportDirectory}/${payload}`, bytes, { mode: 0o600 });
+      files.push({
+        path,
+        source: pathStates.get(path),
+        kind,
+        mode: information.mode,
+        size: bytes.byteLength,
+        sha256: await sha256Hex(bytes),
+        payload,
+      });
+    } finally {
+      bytes.fill(0);
+    }
+  }
+  await writeJson(`${reportDirectory}/manifest.json`, {
+    schema_version: 1,
+    base_sha: baseSha,
+    captured_at: new Date().toISOString(),
+    file_count: files.length,
+    total_bytes: totalBytes,
+    files,
+  });
 };
 
 const assertImplementationAgentScope = async (checkout: string): Promise<void> => {
@@ -1018,6 +1180,7 @@ const verifyPolicyHealthIdentity = async (
 const monitorDeployment = async (
   input: Readonly<{
     deno: DenoDeployClient;
+    stage: "preview_monitoring" | "monitoring_production";
     sha: string;
     revision: string;
     healthUrls: readonly string[];
@@ -1026,6 +1189,7 @@ const monitorDeployment = async (
 ): Promise<{ start: number; end: number; samples: unknown[] }> => {
   const start = Date.now();
   const endTarget = start + input.durationMs;
+  let nextCheckpoint = start + SENTINEL_POLICY.monitorCheckpointMs;
   const samples: unknown[] = [];
   while (Date.now() < endTarget) {
     const observedAt = new Date().toISOString();
@@ -1043,11 +1207,39 @@ const monitorDeployment = async (
         identity_matches: false,
         error_class: error instanceof Error ? error.name : "unknown",
       });
+      console.log(`[sentinel] stage=${input.stage} identity_check=failed observed_at=${observedAt}`);
+    }
+    const now = Date.now();
+    if (now >= nextCheckpoint || now >= endTarget) {
+      const failedChecks = samples.filter((sample) =>
+        typeof sample === "object" && sample !== null &&
+        (sample as { identity_matches?: unknown }).identity_matches === false
+      ).length;
+      console.log(
+        `[sentinel] stage=${input.stage} checkpoint_minutes=${
+          Math.min(
+            Math.floor((now - start) / 60_000),
+            Math.floor(input.durationMs / 60_000),
+          )
+        } identity_checks=${samples.length} identity_failures=${failedChecks}`,
+      );
+      while (nextCheckpoint <= now) nextCheckpoint += SENTINEL_POLICY.monitorCheckpointMs;
     }
     const remaining = endTarget - Date.now();
     if (remaining > 0) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(SENTINEL_POLICY.monitorPollMs, remaining)));
     }
+  }
+  if (nextCheckpoint <= endTarget) {
+    const failedChecks = samples.filter((sample) =>
+      typeof sample === "object" && sample !== null &&
+      (sample as { identity_matches?: unknown }).identity_matches === false
+    ).length;
+    console.log(
+      `[sentinel] stage=${input.stage} checkpoint_minutes=${
+        Math.floor(input.durationMs / 60_000)
+      } identity_checks=${samples.length} identity_failures=${failedChecks}`,
+    );
   }
   return { start, end: Date.now(), samples };
 };
@@ -1281,13 +1473,14 @@ const run = async (): Promise<void> => {
       },
       analyze: async (rawLogs) => {
         await updateState("triage");
-        const invocation = await runStructuredCodexAgent({
-          role: "triage",
-          checkoutPath: agentCheckoutPath("triage", root, root),
-          prompt: triagePrompt(state.interval, rawLogs, []),
-          outputSchemaPath: triageSchemaPath,
-          authSlots,
-        });
+        const invocation = await withStageHeartbeat("triage", () =>
+          runStructuredCodexAgent({
+            role: "triage",
+            checkoutPath: agentCheckoutPath("triage", root, root),
+            prompt: triagePrompt(state.interval, rawLogs, []),
+            outputSchemaPath: triageSchemaPath,
+            authSlots,
+          }));
         const triage = parseStructuredResult(invocation, isTriageReport, "Triage agent");
         if (JSON.stringify(triage.interval) !== JSON.stringify(state.interval)) {
           throw new Error("Triage agent changed the requested interval");
@@ -1377,13 +1570,14 @@ const run = async (): Promise<void> => {
 
   await updateState("triage");
   const rawLogs = await immutableFileEvidence(rawLogPath);
-  const triageResult = await runStructuredCodexAgent({
-    role: "triage",
-    checkoutPath: agentCheckoutPath("triage", root, root),
-    prompt: triagePrompt(state.interval, rawLogs, currentEncrypted.map((capture) => capture.manifest)),
-    outputSchemaPath: triageSchemaPath,
-    authSlots,
-  });
+  const triageResult = await withStageHeartbeat("triage", () =>
+    runStructuredCodexAgent({
+      role: "triage",
+      checkoutPath: agentCheckoutPath("triage", root, root),
+      prompt: triagePrompt(state.interval, rawLogs, currentEncrypted.map((capture) => capture.manifest)),
+      outputSchemaPath: triageSchemaPath,
+      authSlots,
+    }));
   await assertImmutableFileEvidence(rawLogs);
   const triage = parseStructuredResult(triageResult, isTriageReport, "Triage agent");
   if (JSON.stringify(triage.interval) !== JSON.stringify(state.interval)) {
@@ -1408,21 +1602,78 @@ const run = async (): Promise<void> => {
   const gitControlState = await snapshotGitControlState(checkout);
   let implementationReport: ImplementationReport;
   const beforeAgentSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Pre-agent SHA");
-  const implementationResult = await runStructuredCodexAgent({
-    role: "implementation",
-    checkoutPath: checkout,
-    prompt: implementationPrompt(triage, [], null),
-    outputSchemaPath: implementationSchemaPath,
-    authSlots,
-  });
-  await assertAgentDidNotCommitOrSwitch(checkout, beforeAgentSha, branch, gitControlState);
-  await assertImplementationAgentScope(checkout);
-  await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-  await assertProtectedFilesUnchanged(checkout, protectedHashes);
-  implementationReport = parseStructuredResult(implementationResult, isImplementationReport, "Implementation agent");
-  assertCompleteFindingDispositions(triage, implementationReport);
-  assertActionableFindingsResolved(triage, implementationReport);
-  await writeJson(`${reportsDir}/implementation-round-1.json`, implementationReport);
+  const preserveFailedImplementation = async (
+    error: unknown,
+    stage: string,
+    preInvocationSha: string,
+  ): Promise<void> => {
+    if (!/^[a-z0-9_-]+$/u.test(stage)) throw new Error("Failed implementation stage label is invalid");
+    let preservation: Record<string, unknown>;
+    try {
+      await assertAgentDidNotCommitOrSwitch(checkout, preInvocationSha, branch, gitControlState);
+      await assertImplementationAgentScope(checkout);
+      await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
+      await assertProtectedFilesUnchanged(checkout, protectedHashes);
+      await scanCandidateWithGitleaks({
+        cwd: checkout,
+        reportPath: `${reportsDir}/secret-scan-failed-${stage}.json`,
+      });
+      const snapshotDirectory = `${reportsDir}/failed-${stage}-candidate`;
+      await captureFailedCandidateSnapshot(checkout, snapshotDirectory, preInvocationSha);
+      preservation = {
+        preserved: true,
+        location: `reports/failed-${stage}-candidate/manifest.json in encrypted evidence artifact`,
+      };
+    } catch (preservationError) {
+      preservation = { preserved: false, ...safeErrorSummary(preservationError) };
+    }
+    await writeJson(`${reportsDir}/failed-${stage}-preservation.json`, {
+      ...safeErrorSummary(error),
+      candidate: preservation,
+    });
+  };
+  let implementationResult: CodexInvocationResult;
+  try {
+    implementationResult = await runWithSingleTimeoutContinuation(
+      (attempt) =>
+        withStageHeartbeat(attempt === 1 ? "implementing" : "implementing_continuation", () =>
+          runStructuredCodexAgent({
+            role: "implementation",
+            checkoutPath: checkout,
+            prompt: `${implementationPrompt(triage, [], null)}${
+              attempt === 2
+                ? "\n\nThe first bounded invocation timed out. Continue from the existing candidate changes. Do not redo completed work. Finish the actionable set and return the required JSON within this final 10-minute continuation."
+                : "\n\nFinish the actionable set and return the required JSON within this 20-minute invocation. Prioritize a correct focused repair over broad optional checks."
+            }`,
+            outputSchemaPath: implementationSchemaPath,
+            authSlots,
+            expectedMaximumRuntimeMs: attempt === 1 ? IMPLEMENTATION_INITIAL_MS : IMPLEMENTATION_CONTINUATION_MS,
+          })),
+      async (timeoutError) => {
+        await assertAgentDidNotCommitOrSwitch(checkout, beforeAgentSha, branch, gitControlState);
+        await assertImplementationAgentScope(checkout);
+        await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
+        await assertProtectedFilesUnchanged(checkout, protectedHashes);
+        await scanCandidateWithGitleaks({
+          cwd: checkout,
+          reportPath: `${reportsDir}/secret-scan-implementation-timeout.json`,
+        });
+        await writeJson(`${reportsDir}/implementation-invocation-1-timeout.json`, safeErrorSummary(timeoutError));
+        await updateState("implementing_continuation");
+      },
+    );
+    await assertAgentDidNotCommitOrSwitch(checkout, beforeAgentSha, branch, gitControlState);
+    await assertImplementationAgentScope(checkout);
+    await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
+    await assertProtectedFilesUnchanged(checkout, protectedHashes);
+    implementationReport = parseStructuredResult(implementationResult, isImplementationReport, "Implementation agent");
+    assertCompleteFindingDispositions(triage, implementationReport);
+    assertActionableFindingsResolved(triage, implementationReport);
+    await writeJson(`${reportsDir}/implementation-round-1.json`, implementationReport);
+  } catch (error) {
+    await preserveFailedImplementation(error, "implementation", beforeAgentSha);
+    throw error;
+  }
 
   if (!await hasChanges(checkout)) {
     if (
@@ -1451,7 +1702,10 @@ const run = async (): Promise<void> => {
     reviewRound += 1;
     let candidateSha = await commitChanges(checkout, `fix: Provider Sentinel repair round ${reviewRound}`);
     await updateState(`native_review_${reviewRound}`, { candidate_sha: candidateSha });
-    const reviewResult = await runNativeCodexReview({ checkoutPath: checkout, authSlots });
+    const reviewResult = await withStageHeartbeat(
+      `native_review_${reviewRound}`,
+      () => runNativeCodexReview({ checkoutPath: checkout, authSlots }),
+    );
     await assertGitControlStateUnchanged(gitControlState);
     const rawReview = `${reviewResult.stdout}\n${reviewResult.stderr}`;
     await Deno.writeTextFile(`${reportsDir}/native-review-round-${reviewRound}.txt`, rawReview, { mode: 0o600 });
@@ -1478,26 +1732,36 @@ const run = async (): Promise<void> => {
         throw new Error("Native Codex review still has P0/P1 findings after round three");
       }
       const preFixSha = candidateSha;
-      const fixResult = await runStructuredCodexAgent({
-        role: "implementation",
-        checkoutPath: checkout,
-        prompt: implementationPrompt(triage, blockers, replayResults),
-        outputSchemaPath: implementationSchemaPath,
-        authSlots,
-      });
-      await assertAgentDidNotCommitOrSwitch(checkout, preFixSha, branch, gitControlState);
-      await assertImplementationAgentScope(checkout);
-      await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-      await assertProtectedFilesUnchanged(checkout, protectedHashes);
-      implementationReport = parseStructuredResult(
-        fixResult,
-        isImplementationReport,
-        "Implementation review-fix agent",
-      );
-      assertCompleteFindingDispositions(triage, implementationReport);
-      assertActionableFindingsResolved(triage, implementationReport);
-      await writeJson(`${reportsDir}/implementation-round-${reviewRound + 1}.json`, implementationReport);
-      if (!await hasChanges(checkout)) throw new Error("Implementation agent did not correct blocking review findings");
+      const stage = `implementation_review_fix_${reviewRound}`;
+      try {
+        const fixResult = await withStageHeartbeat(stage, () =>
+          runStructuredCodexAgent({
+            role: "implementation",
+            checkoutPath: checkout,
+            prompt: implementationPrompt(triage, blockers, replayResults),
+            outputSchemaPath: implementationSchemaPath,
+            authSlots,
+            expectedMaximumRuntimeMs: IMPLEMENTATION_INITIAL_MS,
+          }));
+        await assertAgentDidNotCommitOrSwitch(checkout, preFixSha, branch, gitControlState);
+        await assertImplementationAgentScope(checkout);
+        await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
+        await assertProtectedFilesUnchanged(checkout, protectedHashes);
+        implementationReport = parseStructuredResult(
+          fixResult,
+          isImplementationReport,
+          "Implementation review-fix agent",
+        );
+        assertCompleteFindingDispositions(triage, implementationReport);
+        assertActionableFindingsResolved(triage, implementationReport);
+        await writeJson(`${reportsDir}/implementation-round-${reviewRound + 1}.json`, implementationReport);
+        if (!await hasChanges(checkout)) {
+          throw new Error("Implementation agent did not correct blocking review findings");
+        }
+      } catch (error) {
+        await preserveFailedImplementation(error, stage, preFixSha);
+        throw error;
+      }
       continue;
     }
 
@@ -1587,23 +1851,31 @@ const run = async (): Promise<void> => {
     await deno.verifyHealthIdentity([immutablePreviewHealthUrl], candidateSha, preview.revision);
     await writeJson(`${reportsDir}/replay-round-${reviewRound}.json`, { results: replayResults });
     const preReplayEvaluationSha = candidateSha;
-    const replayEvaluation = await runStructuredCodexAgent({
-      role: "implementation",
-      checkoutPath: checkout,
-      prompt: implementationPrompt(triage, [], replayResults),
-      outputSchemaPath: implementationSchemaPath,
-      authSlots,
-    });
-    await assertAgentDidNotCommitOrSwitch(checkout, preReplayEvaluationSha, branch, gitControlState);
-    await assertImplementationAgentScope(checkout);
-    await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-    await assertProtectedFilesUnchanged(checkout, protectedHashes);
-    implementationReport = parseStructuredResult(replayEvaluation, isImplementationReport, "Replay evaluation agent");
-    assertCompleteFindingDispositions(triage, implementationReport);
-    assertActionableFindingsResolved(triage, implementationReport);
-    assertReplayEvaluation(implementationReport, replayResults);
-    await writeJson(`${reportsDir}/replay-evaluation-round-${reviewRound}.json`, implementationReport);
-    if (await hasChanges(checkout)) continue;
+    const replayEvaluationStage = `replay_evaluation_${reviewRound}`;
+    try {
+      const replayEvaluation = await withStageHeartbeat(replayEvaluationStage, () =>
+        runStructuredCodexAgent({
+          role: "implementation",
+          checkoutPath: checkout,
+          prompt: implementationPrompt(triage, [], replayResults),
+          outputSchemaPath: implementationSchemaPath,
+          authSlots,
+          expectedMaximumRuntimeMs: IMPLEMENTATION_CONTINUATION_MS,
+        }));
+      await assertAgentDidNotCommitOrSwitch(checkout, preReplayEvaluationSha, branch, gitControlState);
+      await assertImplementationAgentScope(checkout);
+      await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
+      await assertProtectedFilesUnchanged(checkout, protectedHashes);
+      implementationReport = parseStructuredResult(replayEvaluation, isImplementationReport, "Replay evaluation agent");
+      assertCompleteFindingDispositions(triage, implementationReport);
+      assertActionableFindingsResolved(triage, implementationReport);
+      assertReplayEvaluation(implementationReport, replayResults);
+      await writeJson(`${reportsDir}/replay-evaluation-round-${reviewRound}.json`, implementationReport);
+      if (await hasChanges(checkout)) continue;
+    } catch (error) {
+      await preserveFailedImplementation(error, replayEvaluationStage, preReplayEvaluationSha);
+      throw error;
+    }
     break;
   }
 
@@ -1616,6 +1888,7 @@ const run = async (): Promise<void> => {
     await updateState("preview_monitoring");
     const previewMonitoring = await monitorDeployment({
       deno,
+      stage: "preview_monitoring",
       sha: candidateSha,
       revision: previewRevision,
       healthUrls: [SENTINEL_POLICY.deno.previewHealthUrl],
@@ -1632,18 +1905,20 @@ const run = async (): Promise<void> => {
       destination: previewMonitorLogPath,
     });
     const previewMonitorEvidence = await immutableFileEvidence(previewMonitorLogPath);
-    const previewMonitorResult = await runStructuredCodexAgent({
-      role: "monitoring",
-      checkoutPath: agentCheckoutPath("monitoring", root, checkout),
-      prompt: monitorPrompt({
-        candidate: { git_sha: candidateSha, revision: previewRevision },
-        previous: previewRollbackTarget,
-        healthSamples: previewMonitoring.samples,
-        logs: previewMonitorEvidence,
-      }),
-      outputSchemaPath: monitorSchemaPath,
-      authSlots,
-    });
+    const previewMonitorResult = await withStageHeartbeat("preview_monitoring_agent", () =>
+      runStructuredCodexAgent({
+        role: "monitoring",
+        checkoutPath: agentCheckoutPath("monitoring", root, checkout),
+        prompt: monitorPrompt({
+          candidate: { git_sha: candidateSha, revision: previewRevision },
+          previous: previewRollbackTarget,
+          healthSamples: previewMonitoring.samples,
+          logs: previewMonitorEvidence,
+        }),
+        outputSchemaPath: monitorSchemaPath,
+        authSlots,
+        expectedMaximumRuntimeMs: MONITOR_AGENT_MS,
+      }));
     await assertImmutableFileEvidence(previewMonitorEvidence);
     const previewDecision = parseMonitorDecision(previewMonitorResult.lastMessage);
     const previewCandidateIdentity = deploymentIdentity(
@@ -1947,6 +2222,7 @@ const run = async (): Promise<void> => {
     await updateState("monitoring_production");
     const monitoring = await monitorDeployment({
       deno,
+      stage: "monitoring_production",
       sha: candidateSha,
       revision: production.revision,
       healthUrls: SENTINEL_POLICY.deno.productionHealthUrls,
@@ -1963,18 +2239,20 @@ const run = async (): Promise<void> => {
       destination: monitorLogPath,
     });
     const monitorEvidence = await immutableFileEvidence(monitorLogPath);
-    const monitorResult = await runStructuredCodexAgent({
-      role: "monitoring",
-      checkoutPath: agentCheckoutPath("monitoring", root, checkout),
-      prompt: monitorPrompt({
-        candidate: { git_sha: candidateSha, revision: production.revision },
-        previous,
-        healthSamples: monitoring.samples,
-        logs: monitorEvidence,
-      }),
-      outputSchemaPath: monitorSchemaPath,
-      authSlots,
-    });
+    const monitorResult = await withStageHeartbeat("production_monitoring_agent", () =>
+      runStructuredCodexAgent({
+        role: "monitoring",
+        checkoutPath: agentCheckoutPath("monitoring", root, checkout),
+        prompt: monitorPrompt({
+          candidate: { git_sha: candidateSha, revision: production.revision },
+          previous,
+          healthSamples: monitoring.samples,
+          logs: monitorEvidence,
+        }),
+        outputSchemaPath: monitorSchemaPath,
+        authSlots,
+        expectedMaximumRuntimeMs: MONITOR_AGENT_MS,
+      }));
     await assertImmutableFileEvidence(monitorEvidence);
     const decision = parseMonitorDecision(monitorResult.lastMessage);
     if (decision.decision === "keep") {
@@ -2044,8 +2322,7 @@ if (import.meta.main) {
     }
     await writeJson(`${reportsDir}/failure.json`, {
       failed_at: new Date().toISOString(),
-      error_class: error instanceof Error ? error.name : "unknown",
-      message: error instanceof Error ? error.message : "Unknown Sentinel failure",
+      ...safeErrorSummary(error),
     }).catch(() => undefined);
     throw error;
   }

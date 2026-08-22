@@ -254,6 +254,18 @@ jobs:
                   ", P3=" + ([.findings[] | select(.severity == "P3")] | length | tostring)
               ' .sentinel/reports/triage.json
             fi
+            if [ -f .sentinel/reports/failure.json ]; then
+              jq -r '
+                "- Failure: " + (.codex_failure // .error_class // "unavailable"),
+                "- Codex duration: " + (if .codex_duration_ms == null then "unavailable" else ((.codex_duration_ms / 1000 | floor | tostring) + " seconds") end),
+                "- Codex output retained: metadata only; stdout and stderr remain private"
+              ' .sentinel/reports/failure.json
+            fi
+            for preservation in .sentinel/reports/failed-*-preservation.json; do
+              if [ -f "$preservation" ]; then
+                jq -r '"- Failed candidate preserved in encrypted evidence: " + (.candidate.preserved | tostring)' "$preservation"
+              fi
+            done
             echo "- Evidence artifact: encrypted AES-256-GCM ciphertext only"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -272,6 +284,8 @@ jobs:
             scripts/sentinel/encrypt-artifacts.ts
           test ! -e .sentinel/raw-logs
           test ! -e .sentinel/reports
+          test ! -e .sentinel/candidate-worktree
+          test ! -e .sentinel/private
           test -f .sentinel/encrypted/sentinel-evidence-v1.json
           echo "SENTINEL_ARTIFACTS_SAFE=true" >> "$GITHUB_ENV"
 

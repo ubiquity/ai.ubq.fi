@@ -10,9 +10,12 @@ import {
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
   evaluateRollbackPreflight,
+  IMPLEMENTATION_CONTINUATION_MS,
+  IMPLEMENTATION_INITIAL_MS,
   isObserveOnlyMode,
   MAX_MATCHING_REPLAY_ARCHIVE_BYTES,
   MAX_MATCHING_REPLAY_ARTIFACTS,
+  MONITOR_AGENT_MS,
   parseMode,
   parseMonitorDecision,
   parseSentinelDeploymentAttestation,
@@ -21,11 +24,14 @@ import {
   replayIndexArtifactName,
   resolveCycleAnchorMs,
   runObserveCycle,
+  runWithSingleTimeoutContinuation,
   sentinelDeploymentInputs,
   sentinelEvidenceArtifactName,
   sentinelRevisionControlInputs,
+  withStageHeartbeat,
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
+import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
 import {
   inspectSse,
   isInferenceOnlyReplayEndpoint,
@@ -101,6 +107,98 @@ Deno.test("implementation scope protects Sentinel and nested Codex instruction s
   assert.equal(isSentinelProtectedImplementationPath("src/openai.ts"), false);
 });
 
+Deno.test("implementation timeout gets one continuation and never retries another failure", async () => {
+  assert.equal(IMPLEMENTATION_INITIAL_MS, 20 * 60_000);
+  assert.equal(IMPLEMENTATION_CONTINUATION_MS, 10 * 60_000);
+  const attempts: number[] = [];
+  let timeoutCallbacks = 0;
+  const result = await runWithSingleTimeoutContinuation(
+    (attempt) => {
+      attempts.push(attempt);
+      if (attempt === 1) throw new CodexInvocationError("invocation_timeout");
+      return Promise.resolve("completed");
+    },
+    () => {
+      timeoutCallbacks++;
+      return Promise.resolve();
+    },
+  );
+  assert.equal(result, "completed");
+  assert.deepEqual(attempts, [1, 2]);
+  assert.equal(timeoutCallbacks, 1);
+
+  attempts.length = 0;
+  await assert.rejects(
+    () =>
+      runWithSingleTimeoutContinuation(
+        (attempt) => {
+          attempts.push(attempt);
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        () => Promise.resolve(),
+      ),
+    (error) => error instanceof CodexInvocationError && error.failure === "invocation_timeout",
+  );
+  assert.deepEqual(attempts, [1, 2]);
+
+  attempts.length = 0;
+  await assert.rejects(
+    () =>
+      runWithSingleTimeoutContinuation(
+        (attempt) => {
+          attempts.push(attempt);
+          throw new CodexInvocationError("command_failed");
+        },
+        () => Promise.resolve(),
+      ),
+    (error) => error instanceof CodexInvocationError && error.failure === "command_failed",
+  );
+  assert.deepEqual(attempts, [1]);
+});
+
+Deno.test("stage heartbeat emits safe progress and always cancels its timer", async () => {
+  let scheduled: (() => void) | null = null;
+  const cleared: number[] = [];
+  const messages: string[] = [];
+  let nowMs = 1_000;
+  const result = await withStageHeartbeat(
+    "implementing",
+    () => {
+      nowMs = 62_000;
+      scheduled!();
+      return Promise.resolve("done");
+    },
+    {
+      intervalMs: 60_000,
+      now: () => nowMs,
+      log: (message) => messages.push(message),
+      setInterval: (callback, intervalMs) => {
+        assert.equal(intervalMs, 60_000);
+        scheduled = callback;
+        return 17;
+      },
+      clearInterval: (timer) => {
+        assert.equal(typeof timer, "number");
+        cleared.push(timer as number);
+      },
+    },
+  );
+  assert.equal(result, "done");
+  assert.deepEqual(messages, ["[sentinel] stage=implementing status=running elapsed_seconds=61"]);
+  assert.deepEqual(cleared, [17]);
+
+  await assert.rejects(() =>
+    withStageHeartbeat("triage", () => Promise.reject(new Error("failed")), {
+      setInterval: () => 23,
+      clearInterval: (timer) => {
+        assert.equal(typeof timer, "number");
+        cleared.push(timer as number);
+      },
+    })
+  );
+  assert.deepEqual(cleared, [17, 23]);
+});
+
 Deno.test("sentinel schedule windows cover 24 hours daily and an overlapping 20 minutes for incidents", () => {
   const daily = computeSentinelInterval("daily", now);
   const incident = computeSentinelInterval("incident", now);
@@ -113,6 +211,14 @@ Deno.test("sentinel schedule windows cover 24 hours daily and an overlapping 20 
   assert.equal(observe.duration_ms, OBSERVE_WINDOW_MS);
   assert.equal(observe.start, "2026-08-21T03:55:00.000Z");
   assert.deepEqual(preview, incident);
+});
+
+Deno.test("deployment monitoring keeps 30-second identity probes and reports every five minutes", () => {
+  assert.equal(SENTINEL_POLICY.monitorPollMs, 30_000);
+  assert.equal(SENTINEL_POLICY.monitorCheckpointMs, 5 * 60_000);
+  assert.equal(SENTINEL_POLICY.monitorCheckpointMs % SENTINEL_POLICY.monitorPollMs, 0);
+  assert.equal(SENTINEL_POLICY.monitorDurationMs % SENTINEL_POLICY.monitorCheckpointMs, 0);
+  assert.equal(MONITOR_AGENT_MS, 5 * 60_000);
 });
 
 Deno.test("observe mode is triage-only and never enables autonomous repair", () => {
