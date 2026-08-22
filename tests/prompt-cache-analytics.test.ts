@@ -6,6 +6,7 @@ import {
   PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET,
   PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS,
   PROMPT_CACHE_ANALYTICS_RETENTION_MS,
+  type PromptCacheAnalyticsBucket,
   promptCacheAnalyticsCounterKey,
   PromptCacheAnalyticsQueryError,
   prunePromptCacheAnalytics,
@@ -44,6 +45,16 @@ const options = (kv: CountingKv, now = NOW_MS) => ({
   kv: kv as unknown as Deno.Kv,
   release: RELEASE,
   now: () => now,
+});
+
+const groupedCounters = (bucket: PromptCacheAnalyticsBucket) => ({
+  input: bucket.input_tokens,
+  cached: bucket.cached_input_tokens,
+  write: bucket.cache_write_input_tokens,
+  writeSamples: bucket.cache_write_reported_sample_count,
+  samples: bucket.sample_count,
+  hits: bucket.request_cache_hit_sample_count,
+  reported: bucket.usage_reported_sample_count,
 });
 
 Deno.test("prompt-cache analytics v2 aggregates safe cohorts and keeps model and key material opaque", async () => {
@@ -138,6 +149,133 @@ Deno.test("prompt-cache analytics v2 aggregates safe cohorts and keeps model and
   assert.doesNotMatch(persisted, new RegExp(rawModel));
   assert.doesNotMatch(persisted, new RegExp(rawKey));
   assert.ok(byProvider.buckets.every((bucket) => !JSON.stringify(bucket).includes(rawModel)));
+});
+
+Deno.test("prompt-cache analytics groups and aggregates model, route, mode, and fallback cohorts", async () => {
+  const kv = new CountingKv();
+  const models = [
+    "gpt-dimension-shared",
+    "gpt-dimension-route",
+    "gpt-dimension-mode",
+    "gpt-dimension-fallback",
+  ];
+  for (
+    const input of [
+      event({
+        model: models[0],
+        route: "responses",
+        promptCacheKeyPresent: true,
+        promptCacheMode: "explicit",
+        fallbackReason: null,
+        inputTokens: 100,
+        cachedInputTokens: 10,
+        cacheWriteInputTokens: 5,
+      }),
+      event({
+        model: models[0],
+        route: "chat.completions",
+        promptCacheKeyPresent: false,
+        promptCacheMode: "implicit",
+        fallbackReason: "primary_429",
+        inputTokens: 200,
+        cachedInputTokens: 20,
+        cacheWriteInputTokens: 10,
+      }),
+      event({
+        model: models[1],
+        route: "responses",
+        promptCacheKeyPresent: false,
+        promptCacheMode: "implicit",
+        fallbackReason: "primary_429",
+        inputTokens: 300,
+        cachedInputTokens: 30,
+        cacheWriteInputTokens: 15,
+      }),
+      event({
+        model: models[2],
+        route: "chat.completions",
+        promptCacheKeyPresent: true,
+        promptCacheMode: "explicit",
+        fallbackReason: "primary_429",
+        inputTokens: 400,
+        cachedInputTokens: 40,
+        cacheWriteInputTokens: 20,
+      }),
+      event({
+        model: models[3],
+        route: "responses",
+        promptCacheKeyPresent: false,
+        promptCacheMode: "explicit",
+        fallbackReason: null,
+        inputTokens: 500,
+        cachedInputTokens: 50,
+        cacheWriteInputTokens: 25,
+      }),
+    ]
+  ) {
+    assert.equal((await recordPromptCacheAnalytics(input, options(kv))).status, "recorded");
+  }
+
+  const byModel = await readPromptCacheAnalytics({ ...options(kv), groupBy: ["model"] });
+  const modelRows = byModel.buckets.map((bucket) => ({
+    modelHash: bucket.group?.model_hash,
+    ...groupedCounters(bucket),
+  })).sort((left, right) => left.samples - right.samples || (left.input ?? -1) - (right.input ?? -1));
+  assert.equal(modelRows.length, 4);
+  assert.ok(modelRows.every((row) => typeof row.modelHash === "string" && /^[a-f0-9]{64}$/.test(row.modelHash)));
+  assert.equal(new Set(modelRows.map((row) => row.modelHash)).size, 4);
+  assert.deepEqual(
+    modelRows.map(({ modelHash: _modelHash, ...counters }) => counters),
+    [
+      { input: 300, cached: 30, write: 15, writeSamples: 1, samples: 1, hits: 1, reported: 1 },
+      { input: 400, cached: 40, write: 20, writeSamples: 1, samples: 1, hits: 1, reported: 1 },
+      { input: 500, cached: 50, write: 25, writeSamples: 1, samples: 1, hits: 1, reported: 1 },
+      { input: 300, cached: 30, write: 15, writeSamples: 2, samples: 2, hits: 2, reported: 2 },
+    ],
+  );
+  assert.ok(models.every((model) => !JSON.stringify(byModel.buckets).includes(model)));
+
+  const byRoute = await readPromptCacheAnalytics({ ...options(kv), groupBy: ["route"] });
+  assert.deepEqual(
+    byRoute.buckets.map((bucket) => ({ route: bucket.group?.route, ...groupedCounters(bucket) })).sort((left, right) =>
+      String(left.route).localeCompare(String(right.route))
+    ),
+    [
+      {
+        route: "chat.completions",
+        input: 600,
+        cached: 60,
+        write: 30,
+        writeSamples: 2,
+        samples: 2,
+        hits: 2,
+        reported: 2,
+      },
+      { route: "responses", input: 900, cached: 90, write: 45, writeSamples: 3, samples: 3, hits: 3, reported: 3 },
+    ],
+  );
+
+  const byMode = await readPromptCacheAnalytics({ ...options(kv), groupBy: ["mode"] });
+  assert.deepEqual(
+    byMode.buckets.map((bucket) => ({ mode: bucket.group?.mode, ...groupedCounters(bucket) })).sort((left, right) =>
+      String(left.mode).localeCompare(String(right.mode))
+    ),
+    [
+      { mode: "explicit", input: 1_000, cached: 100, write: 50, writeSamples: 3, samples: 3, hits: 3, reported: 3 },
+      { mode: "implicit", input: 500, cached: 50, write: 25, writeSamples: 2, samples: 2, hits: 2, reported: 2 },
+    ],
+  );
+
+  const byFallback = await readPromptCacheAnalytics({ ...options(kv), groupBy: ["fallback"] });
+  assert.deepEqual(
+    byFallback.buckets.map((bucket) => ({ fallback: bucket.group?.fallback, ...groupedCounters(bucket) })).sort(
+      (left, right) => String(left.fallback).localeCompare(String(right.fallback)),
+    ),
+    [
+      { fallback: "none", input: 600, cached: 60, write: 30, writeSamples: 2, samples: 2, hits: 2, reported: 2 },
+      { fallback: "primary_429", input: 900, cached: 90, write: 45, writeSamples: 3, samples: 3, hits: 3, reported: 3 },
+    ],
+  );
 });
 
 Deno.test("prompt-cache analytics distinguishes reported zeroes from missing and invalid telemetry", async () => {
