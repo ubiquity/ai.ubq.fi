@@ -3541,6 +3541,79 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
       assert.equal(kvStore.has(healthKey), false);
     });
 
+    await t.step("tool-bearing requests fail before every provider and paid ledger", async () => {
+      clearSurplusHealth();
+      for (const route of ["responses", "chat"] as const) {
+        const keyId = `free-glm-tools-${route}-key`;
+        const requestId = `free-glm-tools-${route}-request`;
+        const dispatchedProviders: string[] = [];
+        let fetchCalls = 0;
+        const response = await withFetchMock(
+          () => {
+            fetchCalls += 1;
+            throw new Error("tool-bearing GLM requests must not reach a provider");
+          },
+          () => {
+            const context = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+              beforeProviderDispatch: (provider: string) => {
+                dispatchedProviders.push(provider);
+                return Promise.resolve();
+              },
+            };
+            const tool = {
+              type: "function",
+              name: "inspect_workspace",
+              description: "Inspect the workspace.",
+              parameters: { type: "object", properties: {}, additionalProperties: false },
+            };
+            return route === "responses"
+              ? handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                    input: "inspect the workspace",
+                    tools: [tool],
+                  }),
+                }),
+                context,
+              )
+              : handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                    messages: [{ role: "user", content: "inspect the workspace" }],
+                    tools: [{ type: "function", function: tool }],
+                  }),
+                }),
+                context,
+              );
+          },
+        );
+
+        assert.equal(response.status, 400, route);
+        const payload = await response.json() as {
+          error?: { code?: string; param?: string };
+        };
+        assert.equal(payload.error?.code, "unsupported_model_capability", route);
+        assert.equal(payload.error?.param, "tools", route);
+        assert.equal(fetchCalls, 0, route);
+        assert.deepEqual(dispatchedProviders, [], route);
+        assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, [], route);
+        assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null, route);
+        assert.equal(kvStore.has(healthKey), false, route);
+      }
+    });
+
     await t.step("Surplus 429 remains quota health and never falls through", async () => {
       clearSurplusHealth();
       const keyId = "free-glm-provider-quota-key";

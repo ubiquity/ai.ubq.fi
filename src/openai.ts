@@ -136,6 +136,19 @@ const TEMPORARY_FREE_SURPLUS_MODEL = "glm-5.2";
 
 const isTemporaryFreeSurplusModel = (model: string): boolean => model === TEMPORARY_FREE_SURPLUS_MODEL;
 
+const temporaryFreeSurplusCapabilityError = (
+  model: string,
+  body: Record<string, unknown>,
+): Response | null =>
+  isTemporaryFreeSurplusModel(model) && Array.isArray(body.tools) && body.tools.length > 0
+    ? openaiError(
+      400,
+      `The model '${model}' does not support tools through this gateway.`,
+      "unsupported_model_capability",
+      { param: "tools" },
+    )
+    : null;
+
 const getDefaultModel = async (): Promise<string | null> => {
   const runtime = await loadRuntimeConfig();
   return runtime?.default_model ?? getCodexModelsSnapshotDefaultModel(runtime?.codex_models ?? null);
@@ -7763,6 +7776,8 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   const modelMetadata = await getCodexModelMetadata(model, "chat.completions");
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "chat.completions", modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
+  const modelCapabilityError = temporaryFreeSurplusCapabilityError(model, rawRecord);
+  if (modelCapabilityError) return modelCapabilityError;
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
   if (messagesRaw.length === 0) return openaiError(400, "messages must be a non-empty array", "invalid_request_error");
@@ -8115,6 +8130,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const modelMetadata = await getCodexModelMetadata(model, "responses");
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
+  const modelCapabilityError = temporaryFreeSurplusCapabilityError(model, rawRecord);
+  if (modelCapabilityError) return modelCapabilityError;
 
   const inputRaw = rawBody.input;
   let input: ResponseInputItem[];
