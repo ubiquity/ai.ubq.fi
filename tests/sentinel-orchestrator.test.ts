@@ -29,6 +29,9 @@ import {
   sentinelDeploymentInputs,
   sentinelEvidenceArtifactName,
   sentinelRevisionControlInputs,
+  TRIAGE_INCIDENT_MS,
+  triageExpectedMaximumRuntimeMs,
+  triagePrompt,
   withStageHeartbeat,
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
@@ -75,6 +78,25 @@ Deno.test("triage reads the repository root while monitoring reads the accepted 
   assert.equal(agentCheckoutPath("triage", root, candidate), root);
   assert.equal(agentCheckoutPath("implementation", root, candidate), candidate);
   assert.equal(agentCheckoutPath("monitoring", root, candidate), candidate);
+});
+
+Deno.test("incident triage is bounded and unauthenticated model probes are classified by ownership", () => {
+  assert.equal(TRIAGE_INCIDENT_MS, 6 * 60_000);
+  assert.equal(triageExpectedMaximumRuntimeMs("incident"), TRIAGE_INCIDENT_MS);
+  assert.equal(triageExpectedMaximumRuntimeMs("preview"), TRIAGE_INCIDENT_MS);
+  assert.equal(triageExpectedMaximumRuntimeMs("daily"), undefined);
+  assert.equal(triageExpectedMaximumRuntimeMs("observe"), undefined);
+
+  const prompt = triagePrompt(
+    computeSentinelInterval("incident", now),
+    { path: "/tmp/raw-logs.jsonl", byte_count: 123, sha256: "a".repeat(64) },
+    [],
+  );
+  assert.match(prompt, /Expected client rejections are not gateway defects/);
+  assert.match(prompt, /Report a repeated evidence-backed external caller misconfiguration as actionable false/);
+  assert.match(prompt, /GET \/v1\/models response with 401 invalid_api_key is expected gateway behavior/);
+  assert.match(prompt, /not repository-actionable without evidence of a repository-owned caller/);
+  assert.match(prompt, /public model catalog is GET \/uos\/models\/catalog/);
 });
 
 Deno.test("preview completion restores only a candidate accepted by monitoring", () => {
@@ -126,6 +148,7 @@ Deno.test("implementation prompt tells agents to block protected repairs before 
   assert.match(prompt, /src\/sentinel_replay_capture\.ts/);
   assert.match(prompt, /tests\/sentinel-replay-capture\.test\.ts/);
   assert.match(prompt, /empty `changed_files` array/);
+  assert.match(prompt, /agent model or reasoning selections/);
 });
 
 Deno.test("implementation timeout gets one continuation and never retries another failure", async () => {
