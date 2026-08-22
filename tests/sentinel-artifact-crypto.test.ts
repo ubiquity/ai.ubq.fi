@@ -293,6 +293,10 @@ Deno.test({
       "Candidate validation failures must consume an existing implementation-review round",
     );
     assert(
+      orchestrator.match(/runImplementationStageWithContinuation\(\{/gu)?.length === 4,
+      "Every implementation, review-fix, validation-fix, and replay-evaluation stage must share continuation policy",
+    );
+    assert(
       /- name: Install isolated-agent prerequisites\n\s+if: steps\.agent-work\.outputs\.needs_agent == 'true'/.test(
         workflow,
       ),

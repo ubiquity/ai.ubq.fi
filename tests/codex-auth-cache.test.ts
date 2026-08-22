@@ -184,6 +184,116 @@ Deno.test("Codex auth account ordering rotates from the selected account", () =>
   ]);
 });
 
+Deno.test("Codex responses use the native prompt-cache wire contract and stable keyed sessions", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const requests: Request[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  globalThis.fetch = (input, init) => {
+    requests.push(new Request(input, init));
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  const cacheableBody = {
+    model: "gpt-5.6-luna",
+    prompt_cache_key: "stable-cache-key",
+    prompt_cache_options: { mode: "explicit", ttl: "30m" },
+    prompt_cache_retention: "24h",
+    max_output_tokens: 64,
+    max_completion_tokens: 64,
+    input: [{
+      type: "message",
+      role: "user",
+      content: [{
+        type: "input_text",
+        text: "stable prefix",
+        prompt_cache_breakpoint: { mode: "explicit" },
+      }],
+    }],
+    tools: [{
+      type: "function",
+      name: "cache_schema_fixture",
+      parameters: {
+        type: "object",
+        properties: { prompt_cache_breakpoint: { type: "string" } },
+      },
+    }],
+  };
+  const originalBody = structuredClone(cacheableBody);
+
+  try {
+    const first = await fetchCodexResponses(cacheableBody, { cacheScope: "principal-one" });
+    const second = await fetchCodexResponses(cacheableBody, { cacheScope: "principal-one" });
+    const differentKey = await fetchCodexResponses(
+      { ...cacheableBody, prompt_cache_key: "different-cache-key" },
+      { cacheScope: "principal-one" },
+    );
+    const differentPrincipal = await fetchCodexResponses(cacheableBody, { cacheScope: "principal-two" });
+    await fetchCodexResponses(cacheableBody);
+    await fetchCodexResponses(cacheableBody);
+    await fetchCodexResponses({ model: "gpt-5.6-luna", input: "no key" }, { cacheScope: "principal-one" });
+    await fetchCodexResponses({ model: "gpt-5.6-luna", input: "no key" }, { cacheScope: "principal-one" });
+
+    assert.deepEqual(cacheableBody, originalBody);
+    assert.equal(requests.length, 8);
+    const bodies = await Promise.all(
+      requests.map((request) => request.clone().json() as Promise<Record<string, unknown>>),
+    );
+    const firstBody = bodies[0]!;
+    assert.equal(firstBody.prompt_cache_key, "stable-cache-key");
+    assert.equal("prompt_cache_options" in firstBody, false);
+    assert.equal("prompt_cache_retention" in firstBody, false);
+    assert.equal("max_output_tokens" in firstBody, false);
+    assert.equal("max_completion_tokens" in firstBody, false);
+    const input = firstBody.input as Array<Record<string, unknown>>;
+    const content = input[0]?.content as Array<Record<string, unknown>>;
+    assert.equal("prompt_cache_breakpoint" in content[0]!, false);
+    const tools = firstBody.tools as Array<Record<string, unknown>>;
+    assert.deepEqual(tools[0], cacheableBody.tools[0]);
+    assert.deepEqual(bodies[1], firstBody);
+
+    const identityHeaders = ["conversation_id", "session-id", "thread-id", "x-client-request-id"] as const;
+    const stableIdentity = requests[0]!.headers.get("conversation_id");
+    assert.match(stableIdentity ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    for (const header of identityHeaders) {
+      assert.equal(requests[0]!.headers.get(header), stableIdentity);
+      assert.equal(requests[1]!.headers.get(header), stableIdentity);
+      assert.notEqual(requests[2]!.headers.get(header), stableIdentity);
+      assert.notEqual(requests[3]!.headers.get(header), stableIdentity);
+    }
+    for (const request of requests.slice(4)) {
+      assert.equal(request.headers.get("session-id"), null);
+      assert.equal(request.headers.get("thread-id"), null);
+      assert.equal(request.headers.get("x-client-request-id"), null);
+    }
+    assert.notEqual(requests[4]!.headers.get("conversation_id"), requests[5]!.headers.get("conversation_id"));
+    assert.notEqual(requests[6]!.headers.get("conversation_id"), requests[7]!.headers.get("conversation_id"));
+
+    const expectedWarnings = [
+      "prompt_cache_options_ignored",
+      "prompt_cache_retention_ignored",
+      "max_output_tokens_ignored",
+      "prompt_cache_breakpoint_ignored",
+    ];
+    for (const response of [first, second, differentKey, differentPrincipal]) {
+      const warnings = response.headers.get("x-uos-warning")?.split(",").map((value) => value.trim()) ?? [];
+      assert.deepEqual(warnings, expectedWarnings);
+    }
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
 Deno.test("Codex responses retry the other account after an account-level 429", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;

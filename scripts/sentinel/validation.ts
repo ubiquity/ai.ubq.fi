@@ -436,6 +436,7 @@ export const runCandidateValidation = async (
         "--allow-run",
         "tests/sentinel-artifact-crypto.test.ts",
         "tests/sentinel-artifact-integration.test.ts",
+        "tests/sentinel-implementation-process-integration.test.ts",
       ],
       sandboxHome,
       input.denoDirectory,
