@@ -25,6 +25,7 @@ import {
   handleAdminKernelUsageSet,
   handleAdminKvMigrationImport,
   handleAdminKvMigrationValidate,
+  handleAdminPromptCacheAnalytics,
 } from "./admin.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
 import {
@@ -297,6 +298,7 @@ const logTerminalRequest = async (
   });
   const cacheAnalyticsWrite = (input.recordCacheAnalytics ?? recordPromptCacheAnalytics)({
     provider: terminal.provider,
+    model: terminal.model,
     route: terminal.route,
     status: terminal.status,
     completed: input.streamReadFailure ? false : telemetry?.completed ?? false,
@@ -304,6 +306,9 @@ const logTerminalRequest = async (
     inputTokens: terminal.input_tokens,
     cachedInputTokens: terminal.cached_input_tokens,
     cacheWriteInputTokens: terminal.cache_write_input_tokens,
+    promptCacheKeyPresent: terminal.prompt_cache_key_present,
+    promptCacheMode: terminal.prompt_cache_mode,
+    fallbackReason: terminal.fallback_reason,
   });
   const replayObservation: SentinelFailureObservation = {
     status: terminal.status,
@@ -808,6 +813,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleProviderCapacity(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/prompt-cache-analytics") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminPromptCacheAnalytics(req));
   }
 
   if (req.method === "POST" && path === "/admin/api-keys") {
