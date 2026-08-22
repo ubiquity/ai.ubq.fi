@@ -6,8 +6,56 @@
 
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>UbiquityOS — AI Gateway</title>
-    <meta name="description" content="OpenAI API-compatible gateway for the UbiquityOS ecosystem." />
+    <title>AI.UBQ.FI — UbiquityOS AI Gateway for Developers and Agents</title>
+    <meta
+      name="description"
+      content="UbiquityOS AI Gateway at AI.UBQ.FI is an OpenAI-compatible inference service with API docs, OpenAPI, and agent instructions."
+    />
+    <link rel="canonical" href="https://ai.ubq.fi/" />
+    <link rel="alternate" type="text/markdown" href="/llms-full.txt" title="UbiquityOS AI Gateway agent guide" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="AI.UBQ.FI — UbiquityOS AI Gateway" />
+    <meta
+      property="og:description"
+      content="OpenAI-compatible inference, machine-readable API docs, and agent instructions for approved UbiquityOS integrations."
+    />
+    <meta property="og:url" content="https://ai.ubq.fi/" />
+    <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
+    <meta property="og:image:alt" content="UbiquityOS AI Gateway mark" />
+    <meta name="robots" content="index,follow" />
+
+    <script type="application/ld+json">
+    [
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "UbiquityOS AI Gateway",
+        "alternateName": "AI.UBQ.FI",
+        "url": "https://ai.ubq.fi/",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Web",
+        "description": "An OpenAI-compatible AI inference gateway for approved UbiquityOS applications and autonomous agents.",
+        "featureList": [
+          "OpenAI-compatible Chat Completions",
+          "OpenAI-compatible Responses API",
+          "Authenticated runtime model discovery",
+          "Machine-readable OpenAPI and agent instructions"
+        ],
+        "publisher": {
+          "@type": "Organization",
+          "name": "UbiquityOS",
+          "url": "https://ai.ubq.fi/"
+        }
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "UbiquityOS",
+        "url": "https://ai.ubq.fi/",
+        "logo": "https://ai.ubq.fi/favicon.png"
+      }
+    ]
+    </script>
 
     <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/home.css" />
@@ -32,6 +80,7 @@
         </div>
         <nav data-actions aria-label="Primary">
           <a data-button href="/models">Models</a>
+          <a data-button href="/developers">Developers</a>
           <a data-button data-variant="primary" href="/docs">Docs</a>
           <a data-button href="/chat">Chat playground</a>
           <a data-button href="/admin">Admin</a>
@@ -40,10 +89,15 @@
 
       <main>
         <section data-hero>
-          <h1>AI Gateway</h1>
-          <p data-lead>OpenAI-compatible gateway for the UbiquityOS ecosystem.</p>
+          <h1>UbiquityOS AI Gateway</h1>
+          <p data-lead>
+            AI.UBQ.FI is an OpenAI-compatible inference gateway for approved UbiquityOS applications and autonomous
+            agents. Discover the current model catalog at runtime, use Chat Completions or Responses, and start from
+            machine-readable API documentation instead of guessing an integration contract.
+          </p>
           <div data-layout="row">
-            <a data-button data-variant="primary" href="/docs">Read the full docs</a>
+            <a data-button data-variant="primary" href="/developers">Developer portal</a>
+            <a data-button href="/docs">Read the full docs</a>
             <a data-button href="/chat">Open the chat playground</a>
           </div>
         </section>
@@ -77,6 +131,52 @@
               <div data-layout="row">
                 <span id="status-badge" data-badge data-state="unknown">Checking...</span>
                 <a data-button href="/health">View JSON</a>
+              </div>
+            </div>
+          </article>
+
+          <article data-card data-span="half" role="listitem" aria-labelledby="card-agents">
+            <header>
+              <h2 id="card-agents">For developers and agents</h2>
+              <p>Use a documented, inspectable integration surface.</p>
+            </header>
+            <div data-card-body>
+              <p>
+                Start with the <a href="/developers">AI.UBQ.FI developer portal</a>, then read
+                <a href="/openapi.json">the OpenAPI contract</a> and <a href="/llms.txt">agent instructions</a>.
+                Configure an OpenAI-compatible SDK with <code>https://ai.ubq.fi/v1</code>, supply an approved
+                <code>UOS_AI_TOKEN</code>, and query <code>GET /v1/models</code> before choosing a model. The service
+                supports <code>POST /v1/chat/completions</code> and <code>POST /v1/responses</code>, including
+                streaming and documented function tools.
+              </p>
+              <p>
+                Use this gateway for inference from approved UbiquityOS workloads. Do not use it to create credentials,
+                administer keys, or access private operational routes. Never place bearer tokens in prompts, browser
+                URLs, source control, or agent transcripts; obtain them through the approved operator workflow.
+              </p>
+              <div data-layout="row">
+                <a data-button data-variant="primary" href="/openapi.json">OpenAPI</a>
+                <a data-button href="/llms-full.txt">Full agent guide</a>
+              </div>
+            </div>
+          </article>
+
+          <article data-card data-span="half" role="listitem" aria-labelledby="card-discovery">
+            <header>
+              <h2 id="card-discovery">Public service information</h2>
+              <p>Stable links for discovery, operational context, and policy information.</p>
+            </header>
+            <div data-card-body>
+              <p>
+                The public documentation is available without JavaScript. It explains authentication, error envelopes,
+                function tools, streaming, and rate-limit behavior. The interactive chat playground is a browser tool
+                for a token that you already hold; it is not a self-service credential issuer.
+              </p>
+              <div data-layout="row">
+                <a data-button href="/about">About</a>
+                <a data-button href="/contact">Contact</a>
+                <a data-button href="/privacy">Privacy</a>
+                <a data-button href="/sitemap.xml">Sitemap</a>
               </div>
             </div>
           </article>

@@ -1,9 +1,18 @@
 import { config } from "./config.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
+import aboutHtmlText from "../static/about.html" with { type: "text" };
+import contactHtmlText from "../static/contact.html" with { type: "text" };
+import developersHtmlText from "../static/developers.html" with { type: "text" };
+import homeMarkdownText from "../static/home.md" with { type: "text" };
+import indexHtmlText from "../static/index.html" with { type: "text" };
 import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
 import llmsText from "../static/llms.txt" with { type: "text" };
+import modelsHtmlText from "../static/models.html" with { type: "text" };
 import openApiText from "../static/openapi.json" with { type: "text" };
+import privacyHtmlText from "../static/privacy.html" with { type: "text" };
+import robotsText from "../static/robots.txt" with { type: "text" };
+import sitemapText from "../static/sitemap.xml" with { type: "text" };
 
 type StaticBody = string | Uint8Array<ArrayBuffer>;
 
@@ -62,11 +71,29 @@ const bytesAsset = (
     security: "asset",
   });
 
-const indexHtmlAsset = textAsset(["/index.html"], "index.html", "text/html; charset=utf-8", "html");
+const indexHtmlAsset = textAsset(["/index.html"], "index.html", "text/html; charset=utf-8", "html", indexHtmlText);
+const indexMarkdownAsset: StaticAsset = {
+  url: fromStatic("home.md"),
+  label: "static/home.md",
+  contentType: "text/markdown; charset=utf-8",
+  readAs: "text",
+  security: "asset",
+  body: homeMarkdownText,
+};
 
 textAsset(["/docs", "/docs.html"], "docs.html", "text/html; charset=utf-8", "html");
+textAsset(
+  ["/developers", "/developers.html"],
+  "developers.html",
+  "text/html; charset=utf-8",
+  "html",
+  developersHtmlText,
+);
+textAsset(["/about", "/about.html"], "about.html", "text/html; charset=utf-8", "html", aboutHtmlText);
+textAsset(["/contact", "/contact.html"], "contact.html", "text/html; charset=utf-8", "html", contactHtmlText);
+textAsset(["/privacy", "/privacy.html"], "privacy.html", "text/html; charset=utf-8", "html", privacyHtmlText);
 textAsset(["/chat", "/chat.html"], "chat.html", "text/html; charset=utf-8", "html");
-textAsset(["/models", "/models.html"], "models.html", "text/html; charset=utf-8", "html");
+textAsset(["/models", "/models.html"], "models.html", "text/html; charset=utf-8", "html", modelsHtmlText);
 textAsset(["/admin", "/admin.html"], "admin.html", "text/html; charset=utf-8", "html");
 
 textAsset(["/style.css"], "style.css", "text/css; charset=utf-8");
@@ -98,6 +125,8 @@ textAsset(
   llmsFullText,
 );
 textAsset(["/openapi.json"], "openapi.json", "application/json; charset=utf-8", "asset", openApiText);
+textAsset(["/robots.txt"], "robots.txt", "text/plain; charset=utf-8", "asset", robotsText);
+textAsset(["/sitemap.xml"], "sitemap.xml", "application/xml; charset=utf-8", "asset", sitemapText);
 
 bytesAsset(["/favicon.ico", "/favicon.png"], "favicon.png", "image/png");
 bytesAsset(["/favicon-32.png"], "favicon-32.png", "image/png");
@@ -120,9 +149,12 @@ const readAsset = async (asset: StaticAsset): Promise<StaticBody | null> => {
 };
 
 const notFoundResponse = (): Response =>
-  new Response("Not found", {
-    status: 404,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  json(404, {
+    error: {
+      message: "Public resource not found. Read /openapi.json for API endpoints or /llms.txt for agent guidance.",
+      type: "not_found",
+      code: "not_found",
+    },
   });
 
 const htmlSecurityHeaders = (): HeadersInit => ({
@@ -160,15 +192,97 @@ export const handleStaticAsset = async (path: string): Promise<Response | null> 
 
 export const hasStaticAsset = (path: string): boolean => staticAssets.has(path);
 
+type RootRepresentation = "html" | "markdown" | "json";
+
+type MediaPreference = Readonly<{
+  quality: number;
+  specificity: number;
+  index: number;
+}>;
+
+const mediaPreference = (accept: string, target: string): MediaPreference | null => {
+  const [targetType, targetSubtype] = target.split("/");
+  if (!targetType || !targetSubtype) return null;
+
+  let best: MediaPreference | null = null;
+  for (const [index, rawEntry] of accept.split(",").entries()) {
+    const [rawRange, ...rawParameters] = rawEntry.trim().toLowerCase().split(";");
+    const [rangeType, rangeSubtype] = rawRange.trim().split("/");
+    if (!rangeType || !rangeSubtype) continue;
+    if (rangeType !== "*" && rangeType !== targetType) continue;
+    if (rangeSubtype !== "*" && rangeSubtype !== targetSubtype) continue;
+
+    const rawQuality = rawParameters
+      .map((parameter) => parameter.trim().split("=", 2))
+      .find(([name]) => name === "q")?.[1];
+    const parsedQuality = rawQuality === undefined ? 1 : Number(rawQuality);
+    const quality = Number.isFinite(parsedQuality) && parsedQuality >= 0 && parsedQuality <= 1 ? parsedQuality : 0;
+    const specificity = rangeType === "*" ? 0 : rangeSubtype === "*" ? 1 : 2;
+    const candidate = { quality, specificity, index };
+    if (
+      !best || candidate.specificity > best.specificity ||
+      (candidate.specificity === best.specificity && candidate.index < best.index)
+    ) {
+      best = candidate;
+    }
+  }
+  return best;
+};
+
+const preferredMedia = (...preferences: readonly (MediaPreference | null)[]): MediaPreference | null => {
+  let best: MediaPreference | null = null;
+  for (const candidate of preferences) {
+    if (
+      !candidate || !best || candidate.quality > best.quality ||
+      (candidate.quality === best.quality && candidate.specificity > best.specificity) ||
+      (candidate.quality === best.quality && candidate.specificity === best.specificity && candidate.index < best.index)
+    ) {
+      if (candidate) best = candidate;
+    }
+  }
+  return best;
+};
+
+const rootRepresentation = (accept: string): RootRepresentation | null => {
+  if (!accept.trim()) return "html";
+  const candidates = ([
+    ["html", preferredMedia(mediaPreference(accept, "text/html"), mediaPreference(accept, "application/xhtml+xml")), 2],
+    ["markdown", mediaPreference(accept, "text/markdown"), 1],
+    ["json", mediaPreference(accept, "application/json"), 0],
+  ] as const).flatMap(([representation, preference, defaultPriority]) => {
+    return preference?.quality ? [{ representation, preference, defaultPriority }] : [];
+  });
+  if (!candidates.length) return null;
+  candidates.sort((left, right) =>
+    right.preference.quality - left.preference.quality ||
+    right.preference.specificity - left.preference.specificity ||
+    left.preference.index - right.preference.index ||
+    right.defaultPriority - left.defaultPriority
+  );
+  return candidates[0]!.representation;
+};
+
+const rootVaryHeaders = { "Vary": "Accept, Accept-Encoding" };
+
+const notAcceptable = (): Response =>
+  json(406, {
+    error: {
+      message: "The homepage is available as text/html, text/markdown, or application/json.",
+      type: "not_acceptable",
+      code: "not_acceptable",
+    },
+  }, rootVaryHeaders);
+
 export const handleRoot = async (req: Request): Promise<Response> => {
   const url = new URL(req.url);
   const path = url.pathname;
 
-  const accept = req.headers.get("Accept") ?? "";
-  const wantsHtml = path === "/index.html" || accept.includes("text/html") || accept.includes("application/xhtml+xml");
-  if (wantsHtml) {
-    return await serveAsset(indexHtmlAsset, { "Vary": "Accept" });
-  }
+  if (path === "/index.html") return await serveAsset(indexHtmlAsset, rootVaryHeaders);
+
+  const representation = rootRepresentation(req.headers.get("Accept") ?? "");
+  if (representation === null) return notAcceptable();
+  if (representation === "html") return await serveAsset(indexHtmlAsset, rootVaryHeaders);
+  if (representation === "markdown") return await serveAsset(indexMarkdownAsset, rootVaryHeaders);
 
   const kv = await getKv();
   const auth = config.isDeploy && config.authTokens.size === 0 && !kv
@@ -180,8 +294,8 @@ export const handleRoot = async (req: Request): Promise<Response> => {
   return json(
     200,
     {
-      ok: true,
       service: "ai.ubq.fi",
+      name: "UbiquityOS AI Gateway",
       upstream: "chatgpt_codex",
       auth,
       endpoints: {
@@ -192,8 +306,10 @@ export const handleRoot = async (req: Request): Promise<Response> => {
         llms: "/llms.txt",
         llms_full: "/llms-full.txt",
         openapi: "/openapi.json",
+        developers: "/developers",
+        sitemap: "/sitemap.xml",
       },
     },
-    { "Vary": "Accept" },
+    rootVaryHeaders,
   );
 };

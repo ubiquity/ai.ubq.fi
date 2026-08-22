@@ -4,6 +4,7 @@ import {
   API_KEY_USAGE_V3_RESERVATION_LEASE_MS,
   type ApiKeyPolicy,
   apiKeyPolicyFromHashRecord,
+  apiKeyRateLimitPolicyHeaders,
   type ApiKeyUsageReservation,
   apiKeyUsageV3RequestKey,
   apiKeyUsageV3WindowKey,
@@ -254,4 +255,26 @@ Deno.test("V3 abandoned reservations remain reclaimable after a simulated proces
     },
     { committed: 0, reserved: 0 },
   );
+});
+
+Deno.test("bounded API-key quota responses publish standard rate-limit headers", async () => {
+  const nowMs = Date.now();
+  const { kv, policy } = setupPolicy("rate-limit-headers", 1, nowMs);
+  await reserve(kv, policy, "first-request", nowMs);
+
+  const decision = await reserveApiKeyUsageV3(policy, "blocked-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+    nowMs,
+  });
+  if (decision.ok) throw new Error("second bounded request should be rate limited");
+
+  assert.equal(decision.response.status, 429);
+  assert.equal(decision.response.headers.get("RateLimit-Limit"), "1");
+  assert.equal(decision.response.headers.get("RateLimit-Remaining"), "0");
+  assert.equal(decision.response.headers.get("RateLimit-Policy"), "1;w=3600");
+  assert.match(decision.response.headers.get("RateLimit") ?? "", /^limit=1, remaining=0, reset=\d+$/);
+  assert.match(decision.response.headers.get("RateLimit-Reset") ?? "", /^\d+$/);
+  assert.match(decision.response.headers.get("Retry-After") ?? "", /^\d+$/);
+  assert.equal((await decision.response.json()).error.code, "rate_limit_exceeded");
+  assert.deepEqual(apiKeyRateLimitPolicyHeaders(policy), { "RateLimit-Policy": "1;w=3600" });
 });

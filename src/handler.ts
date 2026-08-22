@@ -39,6 +39,7 @@ import {
   type ApiKeyPolicy,
   ApiKeyQuotaDispatchError,
   apiKeyQuotaUsedPercent,
+  apiKeyRateLimitPolicyHeaders,
   type ApiKeyUsageReservation,
   reserveApiKeyUsageV3,
 } from "./api_key_policy.ts";
@@ -154,7 +155,14 @@ const decorateInferenceQuota = (
   const usedPercent = telemetry?.quotaUsedPercent !== undefined
     ? telemetry.quotaUsedPercent
     : apiKeyQuotaUsedPercent(policy);
-  return withCodexQuotaHeaders(response, usedPercent === null ? null : { used_percent: usedPercent });
+  const codexDecorated = withCodexQuotaHeaders(response, usedPercent === null ? null : { used_percent: usedPercent });
+  const headers = new Headers(codexDecorated.headers);
+  for (const [name, value] of Object.entries(apiKeyRateLimitPolicyHeaders(policy))) headers.set(name, value);
+  return new Response(codexDecorated.body, {
+    status: codexDecorated.status,
+    statusText: codexDecorated.statusText,
+    headers,
+  });
 };
 
 const providerRequestIdHeaderValue = (value: string | null): string | null => {
@@ -1021,13 +1029,13 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
         : new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
       return openaiError(quotaError.status, quotaError.message, quotaError.code, {
         type: quotaError.errorType,
-        ...(quotaError.retryAfter ? { headers: { "Retry-After": quotaError.retryAfter } } : {}),
+        headers: quotaError.headers,
       });
     }
     if (runError instanceof ApiKeyQuotaDispatchError) {
       return openaiError(runError.status, runError.message, runError.code, {
         type: runError.errorType,
-        ...(runError.retryAfter ? { headers: { "Retry-After": runError.retryAfter } } : {}),
+        headers: runError.headers,
       });
     }
     if (runError) {

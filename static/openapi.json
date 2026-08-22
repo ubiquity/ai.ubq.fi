@@ -1,13 +1,32 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "UbiquityOS AI Gateway",
-    "version": "1.0.0",
-    "description": "OpenAI-compatible model discovery, Responses, and Chat Completions endpoints. Query /v1/models before selecting a model."
+    "title": "UbiquityOS AI Gateway API",
+    "version": "1.1.0",
+    "description": "The OpenAI-compatible inference API for AI.UBQ.FI. Authenticate with an approved UbiquityOS gateway token, query /v1/models before choosing a model, and use the published JSON error envelope and rate-limit fields for autonomous clients."
   },
   "servers": [
     {
-      "url": "https://ai.ubq.fi"
+      "url": "https://ai.ubq.fi",
+      "description": "Canonical production service"
+    }
+  ],
+  "externalDocs": {
+    "description": "Developer portal, authentication guidance, and examples",
+    "url": "https://ai.ubq.fi/developers"
+  },
+  "tags": [
+    {
+      "name": "OpenAI compatibility",
+      "description": "OpenAI-shaped model discovery and inference endpoints."
+    },
+    {
+      "name": "UbiquityOS extensions",
+      "description": "Documented gateway capabilities that are separate from the official OpenAI schema."
+    },
+    {
+      "name": "Service discovery",
+      "description": "Public liveness and machine-readable service documentation."
     }
   ],
   "security": [
@@ -16,104 +35,147 @@
     }
   ],
   "paths": {
-    "/v1/models": {
+    "/health": {
       "get": {
-        "operationId": "listModels",
-        "summary": "List available models",
+        "tags": ["Service discovery"],
+        "operationId": "getPublicHealth",
+        "summary": "Get public release liveness",
+        "description": "Returns public release liveness only. It does not send an inference request, query provider health, or require a bearer token.",
+        "security": [],
         "responses": {
           "200": {
-            "description": "OpenAI-compatible model list",
+            "description": "The active release is serving requests.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ModelList"
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "tags": ["OpenAI compatibility"],
+        "operationId": "listModels",
+        "summary": "List available models",
+        "description": "Without query parameters, returns the strict OpenAI-compatible model-list shape. Supplying one exact client_version uses the separate Codex-native compatibility contract and returns the richer upstream catalog for that client version; do not treat that versioned response as an official OpenAI schema.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ClientVersion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The OpenAI-compatible list, or the documented Codex-native catalog when client_version is supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ModelList" },
+                    { "$ref": "#/components/schemas/CodexNativeModelCatalog" }
+                  ]
                 }
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "502": { "$ref": "#/components/responses/UpstreamFailure" }
         }
       }
     },
     "/v1/chat/completions": {
       "post": {
+        "tags": ["OpenAI compatibility"],
         "operationId": "createChatCompletion",
         "summary": "Create a chat completion",
+        "description": "Creates an OpenAI-compatible Chat Completions response. Set stream to true for server-sent events. Function tools use the typed FunctionTool schema; select a model from GET /v1/models first.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChatCompletionRequest"
-              }
+              "schema": { "$ref": "#/components/schemas/ChatCompletionRequest" }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "A JSON chat completion when stream is false, or server-sent events when stream is true",
+            "description": "A JSON chat-completion object when stream is false, or server-sent events when stream is true.",
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
+                "schema": { "$ref": "#/components/schemas/ChatCompletionResponse" }
               },
               "text/event-stream": {
-                "schema": {
-                  "type": "string"
-                }
+                "schema": { "type": "string" }
               }
+            },
+            "headers": {
+              "RateLimit-Policy": { "$ref": "#/components/headers/RateLimitPolicy" }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/InvalidRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
     },
     "/v1/responses": {
       "post": {
+        "tags": ["OpenAI compatibility"],
         "operationId": "createResponse",
         "summary": "Create a model response",
+        "description": "Creates an OpenAI-compatible Responses API result. The request body is required, but input is optional when the caller supplies instructions or a supported continuation context. Responses function tools use direct name, description, and parameters fields; the nested Chat Completions form is accepted only as a gateway compatibility extension. Set stream to true for OpenAI Responses server-sent events.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResponseRequest"
-              }
+              "schema": { "$ref": "#/components/schemas/ResponseRequest" }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "A JSON response when stream is false, or OpenAI Responses server-sent events when stream is true",
+            "description": "A JSON Responses object when stream is false, or OpenAI Responses server-sent events when stream is true.",
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
+                "schema": { "$ref": "#/components/schemas/ResponseObject" }
               },
               "text/event-stream": {
-                "schema": {
-                  "type": "string"
-                }
+                "schema": { "type": "string" }
+              }
+            },
+            "headers": {
+              "RateLimit-Policy": { "$ref": "#/components/headers/RateLimitPolicy" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/uos/models/capabilities": {
+      "get": {
+        "tags": ["UbiquityOS extensions"],
+        "operationId": "getModelCapabilities",
+        "summary": "Get gateway-specific model capabilities",
+        "description": "Returns gateway metadata such as reasoning support and context-window limits. This extension is intentionally separate from the strict OpenAI /v1/models response.",
+        "responses": {
+          "200": {
+            "description": "Gateway-specific capabilities for the current model catalog.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ModelCapabilitiesResponse" }
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/InvalidRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
     }
@@ -123,23 +185,64 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "A UOS gateway token supplied through the UOS_AI_TOKEN environment variable or an approved secret manager."
+        "bearerFormat": "UOS_AI_TOKEN",
+        "description": "An approved UbiquityOS gateway token. Obtain it through an authorized operator workflow; never paste it into prompts, source control, or a public URL."
+      }
+    },
+    "parameters": {
+      "ClientVersion": {
+        "name": "client_version",
+        "in": "query",
+        "required": false,
+        "description": "An exact Codex CLI version. Supplying this field switches GET /v1/models to the separately documented Codex-native catalog contract.",
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        }
+      }
+    },
+    "headers": {
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying a 429 response.",
+        "schema": { "type": "integer", "minimum": 1 }
+      },
+      "RateLimit": {
+        "description": "RFC 9449 structured rate-limit field, emitted only when the gateway has an authoritative API-key request window. Example: limit=100, remaining=0, reset=60.",
+        "schema": { "type": "string" }
+      },
+      "RateLimitPolicy": {
+        "description": "RFC 9449 rate-limit policy, emitted for bounded gateway API keys. Example: 100;w=3600.",
+        "schema": { "type": "string" }
+      },
+      "RateLimitLimit": {
+        "description": "Compatibility field for the request limit in the active API-key window.",
+        "schema": { "type": "integer", "minimum": 0 }
+      },
+      "RateLimitRemaining": {
+        "description": "Compatibility field for requests remaining in the active API-key window.",
+        "schema": { "type": "integer", "minimum": 0 }
+      },
+      "RateLimitReset": {
+        "description": "Compatibility field for seconds until the active API-key window resets.",
+        "schema": { "type": "integer", "minimum": 1 }
       }
     },
     "schemas": {
       "Model": {
         "type": "object",
+        "description": "An OpenAI-compatible model object.",
         "required": ["id", "object", "created", "owned_by"],
         "properties": {
-          "id": { "type": "string" },
+          "id": { "type": "string", "description": "Model identifier accepted by inference routes." },
           "object": { "const": "model" },
-          "created": { "type": "integer" },
+          "created": { "type": "integer", "description": "Unix timestamp in seconds." },
           "owned_by": { "type": "string" }
         },
         "additionalProperties": false
       },
       "ModelList": {
         "type": "object",
+        "description": "The strict OpenAI-compatible unversioned model-list response.",
         "required": ["object", "data"],
         "properties": {
           "object": { "const": "list" },
@@ -150,57 +253,220 @@
         },
         "additionalProperties": false
       },
-      "ChatMessage": {
+      "CodexNativeModelCatalog": {
         "type": "object",
-        "required": ["role", "content"],
+        "description": "The rich catalog returned only by GET /v1/models?client_version=X.Y.Z. Its records follow the supporting Codex client contract rather than the official OpenAI model-list schema.",
+        "required": ["models"],
         "properties": {
-          "role": {
-            "type": "string",
-            "enum": ["system", "developer", "user", "assistant", "tool"]
-          },
-          "content": {}
-        },
-        "additionalProperties": true
-      },
-      "ChatCompletionRequest": {
-        "type": "object",
-        "required": ["messages"],
-        "properties": {
-          "model": { "type": "string" },
-          "messages": {
-            "type": "array",
-            "minItems": 1,
-            "items": { "$ref": "#/components/schemas/ChatMessage" }
-          },
-          "stream": { "type": "boolean", "default": false },
-          "reasoning_effort": { "type": "string" }
-        },
-        "additionalProperties": true
-      },
-      "ResponseRequest": {
-        "type": "object",
-        "required": ["input"],
-        "properties": {
-          "model": { "type": "string" },
-          "instructions": { "type": "string" },
-          "input": {},
-          "stream": { "type": "boolean", "default": false },
-          "reasoning": {
-            "type": "object",
-            "properties": {
-              "effort": { "type": "string" }
-            },
-            "additionalProperties": true
-          },
-          "tools": {
+          "models": {
             "type": "array",
             "items": { "type": "object", "additionalProperties": true }
           }
         },
         "additionalProperties": true
       },
-      "Error": {
+      "ChatMessage": {
         "type": "object",
+        "description": "A Chat Completions message. Content may be text or a supported multimodal content array.",
+        "required": ["role"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["system", "developer", "user", "assistant", "tool"]
+          },
+          "content": {},
+          "name": { "type": "string" },
+          "tool_call_id": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "JsonSchema": {
+        "type": "object",
+        "description": "A JSON Schema object used to validate function arguments. Use explicit properties, required fields, and additionalProperties: false whenever possible.",
+        "additionalProperties": true
+      },
+      "FunctionDefinition": {
+        "type": "object",
+        "description": "A callable function definition for an LLM tool.",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "Stable function name." },
+          "description": {
+            "type": "string",
+            "description": "Clear instruction for when the model should call the function."
+          },
+          "parameters": { "$ref": "#/components/schemas/JsonSchema" },
+          "strict": {
+            "type": "boolean",
+            "description": "Request strict argument generation when supported by the selected model."
+          }
+        },
+        "additionalProperties": true
+      },
+      "FunctionTool": {
+        "type": "object",
+        "description": "An OpenAI function tool. Tool execution remains the client's responsibility; never use a tool definition to disclose credentials.",
+        "required": ["type", "function"],
+        "properties": {
+          "type": { "const": "function" },
+          "function": { "$ref": "#/components/schemas/FunctionDefinition" }
+        },
+        "additionalProperties": true
+      },
+      "ToolChoice": {
+        "description": "Controls whether and how the model may select a function tool.",
+        "oneOf": [
+          { "type": "string", "enum": ["none", "auto", "required"] },
+          {
+            "type": "object",
+            "required": ["type", "function"],
+            "properties": {
+              "type": { "const": "function" },
+              "function": {
+                "type": "object",
+                "required": ["name"],
+                "properties": { "name": { "type": "string", "minLength": 1 } },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ResponseFunctionTool": {
+        "type": "object",
+        "description": "An OpenAI Responses function tool. Name, description, and parameters are direct properties. The gateway also accepts the nested Chat Completions function object as a compatibility extension, but clients should use this portable Responses shape.",
+        "required": ["type", "name"],
+        "properties": {
+          "type": { "const": "function" },
+          "name": { "type": "string", "minLength": 1, "description": "Stable function name." },
+          "description": {
+            "type": "string",
+            "description": "Clear instruction for when the model should call the function."
+          },
+          "parameters": { "$ref": "#/components/schemas/JsonSchema" },
+          "strict": {
+            "type": "boolean",
+            "description": "Request strict argument generation when supported by the selected model."
+          }
+        },
+        "additionalProperties": true
+      },
+      "ResponseToolChoice": {
+        "description": "Controls whether and how the Responses API may select a function tool. A forced function choice uses a direct name property.",
+        "oneOf": [
+          { "type": "string", "enum": ["none", "auto", "required"] },
+          {
+            "type": "object",
+            "required": ["type", "name"],
+            "properties": {
+              "type": { "const": "function" },
+              "name": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ChatCompletionRequest": {
+        "type": "object",
+        "description": "An OpenAI-compatible Chat Completions request. Additional documented OpenAI fields may be accepted by the gateway, but clients should start with this portable shape.",
+        "required": ["messages"],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "A model returned by GET /v1/models. Omit only when an operator-configured default is acceptable."
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/components/schemas/ChatMessage" }
+          },
+          "stream": { "type": "boolean", "default": false },
+          "reasoning_effort": {
+            "type": "string",
+            "description": "A tier advertised by the selected model catalog, or none."
+          },
+          "tools": { "type": "array", "items": { "$ref": "#/components/schemas/FunctionTool" } },
+          "tool_choice": { "$ref": "#/components/schemas/ToolChoice" },
+          "parallel_tool_calls": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      },
+      "ResponseInput": {
+        "description": "A Responses API input string or structured input-item array.",
+        "oneOf": [
+          { "type": "string" },
+          { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+        ]
+      },
+      "ResponseRequest": {
+        "type": "object",
+        "description": "An OpenAI-compatible Responses API request. Input is optional so an approved continuation or instructions-only request can use the configured default behavior.",
+        "properties": {
+          "model": { "type": "string", "description": "A model returned by GET /v1/models." },
+          "instructions": { "type": "string" },
+          "input": { "$ref": "#/components/schemas/ResponseInput" },
+          "stream": { "type": "boolean", "default": false },
+          "reasoning": {
+            "type": "object",
+            "properties": { "effort": { "type": "string" } },
+            "additionalProperties": true
+          },
+          "tools": { "type": "array", "items": { "$ref": "#/components/schemas/ResponseFunctionTool" } },
+          "tool_choice": { "$ref": "#/components/schemas/ResponseToolChoice" },
+          "parallel_tool_calls": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      },
+      "ChatCompletionResponse": {
+        "type": "object",
+        "description": "A Chat Completions response. The concrete payload depends on the selected model and whether tools were called.",
+        "required": ["id", "object", "created", "choices"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "type": "string" },
+          "created": { "type": "integer" },
+          "model": { "type": "string" },
+          "choices": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+        },
+        "additionalProperties": true
+      },
+      "ResponseObject": {
+        "type": "object",
+        "description": "A Responses API response. Output items can contain text, tool calls, and tool-call outputs according to the selected request.",
+        "required": ["id", "object"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "type": "string" },
+          "status": { "type": "string" },
+          "output": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+        },
+        "additionalProperties": true
+      },
+      "ModelCapabilitiesResponse": {
+        "type": "object",
+        "description": "Gateway-specific model capability metadata. This is not an official OpenAI response shape.",
+        "additionalProperties": true
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": ["status", "release"],
+        "properties": {
+          "status": { "type": "string", "const": "available" },
+          "release": {
+            "type": "object",
+            "properties": {
+              "git_sha": { "type": "string" },
+              "deployment_id": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "description": "The OpenAI-style JSON error envelope returned for API failures. Read error.message for an actionable resolution hint and error.code for programmatic handling.",
         "required": ["error"],
         "properties": {
           "error": {
@@ -220,19 +486,41 @@
     },
     "responses": {
       "InvalidRequest": {
-        "description": "The request is invalid",
+        "description": "The request body, query, or model selection is invalid. Read error.message and error.param before changing the request.",
         "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/Error" }
-          }
+          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
         }
       },
       "Unauthorized": {
-        "description": "A valid bearer token is required",
+        "description": "A valid bearer token is required. Obtain access through the authorized operator workflow; do not submit a token in a prompt.",
         "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/Error" }
-          }
+          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+        }
+      },
+      "RateLimited": {
+        "description": "The authoritative gateway API-key request window is exhausted. Honor Retry-After and RateLimit fields before retrying.",
+        "headers": {
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+          "RateLimit": { "$ref": "#/components/headers/RateLimit" },
+          "RateLimit-Policy": { "$ref": "#/components/headers/RateLimitPolicy" },
+          "RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+          "RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+          "RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+        },
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+        }
+      },
+      "UpstreamFailure": {
+        "description": "The gateway could not obtain a required upstream catalog response. Retry according to the returned JSON error.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "The gateway or a required upstream dependency is temporarily unavailable. Read the JSON error and retry only when appropriate.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
         }
       }
     }

@@ -6030,7 +6030,55 @@ Deno.test("openai: normalize function-style tools for codex compatibility", asyn
     assert.equal(Object.prototype.hasOwnProperty.call(recordedToolChoice, "function"), false);
   });
 
-  await t.step("responses flattens tools", async () => {
+  await t.step("responses preserves official direct tools and tool_choice", async () => {
+    let recordedBody: Record<string, unknown> | null = null;
+
+    const response = await withFetchMock(
+      (_url, bodyText) => {
+        recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+        return sseResponse(baseSseChunks());
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              input: "get weather",
+              tools: [
+                {
+                  type: "function",
+                  name: "fetch_weather",
+                  description: "Fetch weather for a city.",
+                  parameters: { type: "object", properties: { city: { type: "string" } } },
+                  strict: true,
+                },
+              ],
+              tool_choice: { type: "function", name: "fetch_weather" },
+            }),
+          }),
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(recordedBody);
+    const recorded = recordedBody as Record<string, unknown>;
+    const recordedTools = recorded["tools"] as Array<Record<string, unknown>> | undefined;
+    assert.ok(Array.isArray(recordedTools));
+    assert.equal(recordedTools.length, 1);
+    assert.equal(recordedTools[0]?.name, "fetch_weather");
+    assert.equal(recordedTools[0]?.description, "Fetch weather for a city.");
+    assert.deepEqual(recordedTools[0]?.parameters, { type: "object", properties: { city: { type: "string" } } });
+    assert.equal(recordedTools[0]?.strict, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedTools[0], "function"), false);
+    const recordedToolChoice = recorded["tool_choice"] as Record<string, unknown> | undefined;
+    assert.ok(recordedToolChoice);
+    assert.equal(recordedToolChoice.type, "function");
+    assert.equal(recordedToolChoice.name, "fetch_weather");
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedToolChoice, "function"), false);
+  });
+
+  await t.step("responses flattens nested compatibility tools and tool_choice", async () => {
     let recordedBody: Record<string, unknown> | null = null;
 
     const response = await withFetchMock(
@@ -6055,6 +6103,7 @@ Deno.test("openai: normalize function-style tools for codex compatibility", asyn
                   },
                 },
               ],
+              tool_choice: { type: "function", function: { name: "fetch_weather" } },
             }),
           }),
         ),
@@ -6070,6 +6119,11 @@ Deno.test("openai: normalize function-style tools for codex compatibility", asyn
     assert.equal(recordedTools[0]?.description, "Fetch weather for a city.");
     assert.deepEqual(recordedTools[0]?.parameters, { type: "object", properties: { city: { type: "string" } } });
     assert.equal(Object.prototype.hasOwnProperty.call(recordedTools[0], "function"), false);
+    const recordedToolChoice = recorded["tool_choice"] as Record<string, unknown> | undefined;
+    assert.ok(recordedToolChoice);
+    assert.equal(recordedToolChoice.type, "function");
+    assert.equal(recordedToolChoice.name, "fetch_weather");
+    assert.equal(Object.prototype.hasOwnProperty.call(recordedToolChoice, "function"), false);
   });
 });
 
