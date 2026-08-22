@@ -58,6 +58,7 @@ import {
   nativeReviewParseInput,
   parseNativeReview,
   parseReviewBacklog,
+  parseStructuredNativeReview,
   renderReviewBacklog,
   type ReviewBacklogEntry,
   selectNextReviewBacklogEntry,
@@ -452,6 +453,7 @@ Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion
           stdout: "",
           stderr: "",
           lastMessage: null,
+          nativeReviewOutput: null,
         },
       });
     },
@@ -726,7 +728,7 @@ Deno.test("sentinel event fingerprints are deterministic and duplicate events co
   ]);
 });
 
-Deno.test("native review parser blocks P0/P1, backlogs P2/P3, and fails closed on unknown output", async () => {
+Deno.test("native review parser blocks P0/P1, backlogs P2/P3, and fails closed on missing output", async () => {
   const parsed = await parseNativeReview(
     `Review findings:\n- [P1] Preserve terminal SSE failure — src/openai.ts:100\n  The stream can close early.\n- [P2] Bound a retry loop — scripts/job.ts:20\n  This can waste one request.`,
     1,
@@ -735,9 +737,10 @@ Deno.test("native review parser blocks P0/P1, backlogs P2/P3, and fails closed o
   assert.equal(parsed.findings.length, 2);
   assert.deepEqual(blockingReviewFindings(parsed).map((finding) => finding.severity), ["P1"]);
   assert.equal((await parseNativeReview("No findings.", 1)).parse_status, "no_findings");
-  const unknown = await parseNativeReview("Looks reasonable to me.", 1);
-  assert.equal(unknown.parse_status, "unparseable");
-  assert.throws(() => blockingReviewFindings(unknown), /not parseable/);
+  assert.equal((await parseNativeReview("Looks reasonable to me.", 1)).parse_status, "unparseable");
+  const missing = await parseNativeReview("", 1);
+  assert.equal(missing.parse_status, "unparseable");
+  assert.throws(() => blockingReviewFindings(missing), /not parseable/);
 });
 
 Deno.test("native review parsing uses the final stdout and normalizes ephemeral checkout paths", async () => {
@@ -745,6 +748,7 @@ Deno.test("native review parsing uses the final stdout and normalizes ephemeral 
     "- [P2] Avoid blocking persistence — /tmp/uos-final/checkout/src/handler.ts:439\n  Return the response first.";
   const stderr = `${stdout}\nCodex progress that must not enter the finding body.`;
   assert.equal(nativeReviewParseInput(stdout, stderr), stdout);
+  assert.equal(nativeReviewParseInput("", "Codex progress without a final review."), "");
 
   const absolute = await parseNativeReview(stdout, 1);
   const relative = await parseNativeReview(
@@ -757,7 +761,7 @@ Deno.test("native review parsing uses the final stdout and normalizes ephemeral 
   assert.equal(absolute.findings[0]?.fingerprint, relative.findings[0]?.fingerprint);
 });
 
-Deno.test("native review parser accepts explicit Codex clean verdicts and official location ranges", async () => {
+Deno.test("rendered native review parser accepts only explicit clean verdicts and rejects malformed output", async () => {
   assert.equal(
     (await parseNativeReview(
       "No actionable defects were found in the changes. Focused Sentinel tests pass.",
@@ -771,19 +775,27 @@ Deno.test("native review parser accepts explicit Codex clean verdicts and offici
   );
   assert.equal(
     (await parseNativeReview(
-      "No actionable defects were found in the replay code. However, the workflow can lose a repair signal under load.",
+      "Review comment:\n\nThe workflow can lose a repair signal under load.",
       1,
     )).parse_status,
     "unparseable",
   );
   assert.equal(
     (await parseNativeReview(
-      "No actionable defects were found in the replay code, but the workflow can lose a repair signal under load.",
+      "Full review comments:\n\n- Preserve the repair signal under load.",
       1,
     )).parse_status,
     "unparseable",
   );
   assert.equal((await parseNativeReview("The patch looks correct.", 1)).parse_status, "unparseable");
+  assert.equal((await parseNativeReview("[P1]", 1)).parse_status, "unparseable");
+  assert.equal(
+    (await parseNativeReview(
+      "Review comment:\n\n- [P1] Valid finding — src/review.ts:12\n  This finding is complete.\n- [P2]",
+      1,
+    )).parse_status,
+    "unparseable",
+  );
   assert.equal(
     (await parseNativeReview("Reviewer failed to output a response.", 1)).parse_status,
     "unparseable",
@@ -795,6 +807,119 @@ Deno.test("native review parser accepts explicit Codex clean verdicts and offici
   assert.equal(rendered.parse_status, "findings");
   assert.equal(rendered.findings[0]?.location, "src/handler.ts:439-444");
   assert.match(rendered.findings[0]?.title ?? "", /src\/handler\.ts:439-444/u);
+});
+
+Deno.test("structured native review parser uses protocol fields and rejects Codex prose fallback", async () => {
+  const checkout = "/tmp/uos/candidate-worktree";
+  const structured = await parseStructuredNativeReview(
+    {
+      findings: [{
+        title: "[P1] Preserve the capture snapshot",
+        body: "Concurrent cleanup can zero the body.",
+        confidence_score: 0.98,
+        priority: 1,
+        code_location: {
+          absolute_file_path: `${checkout}/src/handler.ts`,
+          line_range: { start: 439, end: 444 },
+        },
+      }, {
+        title: "Bound retries",
+        body: "The loop needs a fixed maximum.",
+        confidence_score: 0.8,
+        priority: 2,
+        code_location: {
+          absolute_file_path: `${checkout}/scripts/job.ts`,
+          line_range: { start: 20, end: 20 },
+        },
+      }],
+      overall_correctness: "patch is incorrect",
+      overall_explanation: "Two defects remain.",
+      overall_confidence_score: 0.96,
+    },
+    1,
+    checkout,
+  );
+  assert.equal(structured.parse_status, "findings");
+  assert.deepEqual(structured.findings.map((finding) => finding.severity), ["P1", "P2"]);
+  assert.equal(structured.findings[0]?.location, "src/handler.ts:439-444");
+  assert.equal(structured.findings[0]?.title, "Preserve the capture snapshot — src/handler.ts:439-444");
+  assert.deepEqual(blockingReviewFindings(structured).map((finding) => finding.severity), ["P1"]);
+
+  const clean = await parseStructuredNativeReview(
+    {
+      findings: [],
+      overall_correctness: "patch is correct",
+      overall_explanation: "The patch is correct.",
+      overall_confidence_score: 0.9,
+    },
+    1,
+    checkout,
+  );
+  assert.equal(clean.parse_status, "no_findings");
+
+  for (
+    const malformed of [
+      {
+        findings: [],
+        overall_correctness: "",
+        overall_explanation: "There is a blocking race in src/handler.ts.",
+        overall_confidence_score: 0,
+      },
+      {
+        findings: [],
+        overall_correctness: "patch is incorrect",
+        overall_explanation: "A defect remains.",
+        overall_confidence_score: 0.9,
+      },
+      {
+        findings: [{
+          title: "[P2] Contradictory finding",
+          body: "A clean verdict cannot include a defect.",
+          confidence_score: 0.9,
+          priority: 2,
+          code_location: {
+            absolute_file_path: `${checkout}/src/handler.ts`,
+            line_range: { start: 1, end: 2 },
+          },
+        }],
+        overall_correctness: "patch is correct",
+        overall_explanation: "The patch is correct.",
+        overall_confidence_score: 0.9,
+      },
+      {
+        findings: [{
+          title: "[P2] Mismatched priority",
+          body: "The title disagrees with the protocol field.",
+          confidence_score: 0.9,
+          priority: 1,
+          code_location: {
+            absolute_file_path: `${checkout}/src/handler.ts`,
+            line_range: { start: 1, end: 2 },
+          },
+        }],
+        overall_correctness: "patch is incorrect",
+        overall_explanation: "A defect remains.",
+        overall_confidence_score: 0.9,
+      },
+      {
+        findings: [{
+          title: "Relative location",
+          body: "The protocol location must be absolute and inside the checkout.",
+          confidence_score: 0.9,
+          priority: 1,
+          code_location: {
+            absolute_file_path: "src/handler.ts",
+            line_range: { start: 1, end: 2 },
+          },
+        }],
+        overall_correctness: "patch is incorrect",
+        overall_explanation: "A defect remains.",
+        overall_confidence_score: 0.9,
+      },
+    ]
+  ) {
+    assert.equal((await parseStructuredNativeReview(malformed, 1, checkout)).parse_status, "unparseable");
+  }
 });
 
 Deno.test("review backlog deduplicates fingerprints while retaining first observation and disposition", async () => {

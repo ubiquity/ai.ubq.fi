@@ -18,9 +18,8 @@ import {
   blockingReviewFindings,
   canStartReviewRound,
   mergeReviewBacklog,
-  nativeReviewParseInput,
-  parseNativeReview,
   parseReviewBacklog,
+  parseStructuredNativeReview,
   type ReviewBacklogEntry,
   reviewBacklogLocationPath,
   reviewBacklogTriageReport,
@@ -2207,10 +2206,7 @@ const run = async (): Promise<void> => {
     await assertGitControlStateUnchanged(gitControlState);
     const rawReview = `${reviewResult.stdout}\n${reviewResult.stderr}`;
     await Deno.writeTextFile(`${reportsDir}/native-review-round-${reviewRound}.txt`, rawReview, { mode: 0o600 });
-    const review = await parseNativeReview(
-      nativeReviewParseInput(reviewResult.stdout, reviewResult.stderr),
-      reviewRound,
-    );
+    const review = await parseStructuredNativeReview(reviewResult.nativeReviewOutput, reviewRound, checkout);
     await writeJson(`${reportsDir}/native-review-round-${reviewRound}.json`, review);
     const requiredBacklogFingerprint = selectedBacklogState.disposition === "resolved"
       ? workSelection.backlogEntry?.fingerprint

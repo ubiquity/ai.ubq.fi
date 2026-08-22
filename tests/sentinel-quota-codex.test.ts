@@ -6,6 +6,7 @@ import {
   type CodexFilesystem,
   CodexInvocationError,
   createCodexAuthRelayFactory,
+  extractNativeReviewOutputFromRollouts,
   runCodexCommandWithRuntime,
   runNativeCodexReview,
   runStructuredCodexAgent,
@@ -105,6 +106,15 @@ class MemoryFilesystem implements CodexFilesystem {
     const value = this.files.get(path);
     if (value === undefined) return Promise.reject(new Error("not found"));
     return Promise.resolve(value);
+  }
+
+  readPrivateRolloutFiles(codexHome: string): Promise<readonly string[]> {
+    return Promise.resolve(
+      [...this.files.entries()]
+        .filter(([path]) => path.startsWith(`${codexHome}/sessions/`) && path.endsWith(".jsonl"))
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([, contents]) => contents),
+    );
   }
 
   removeTree(path: string): Promise<void> {
@@ -753,6 +763,12 @@ Deno.test("Codex invocation timeout is fail-closed and closes the authentication
 Deno.test("native review delegates reviewer model selection to Codex", async () => {
   const filesystem = new MemoryFilesystem();
   let command: CodexCommandRequest | null = null;
+  const nativeReviewOutput = {
+    findings: [],
+    overall_correctness: "patch is correct",
+    overall_explanation: "No defects found.",
+    overall_confidence_score: 0.94,
+  };
   const result = await runNativeCodexReview({
     checkoutPath: "/checkout",
     authSlots: slots,
@@ -761,10 +777,24 @@ Deno.test("native review delegates reviewer model selection to Codex", async () 
     ...commonDependencies(filesystem, healthyFetcher()),
     commandRunner: (request) => {
       command = request;
-      return Promise.resolve(codexCommandResult({ stdout: "No findings." }));
+      filesystem.files.set(
+        `${request.env.CODEX_HOME}/sessions/2026/08/22/rollout-review.jsonl`,
+        `${
+          JSON.stringify({
+            timestamp: "2026-08-22T00:00:00Z",
+            type: "event_msg",
+            payload: {
+              type: "item_completed",
+              item: { type: "ExitedReviewMode", review_output: nativeReviewOutput },
+            },
+          })
+        }\n`,
+      );
+      return Promise.resolve(codexCommandResult({ stdout: "Arbitrary rendered explanation." }));
     },
   });
   assert.equal(result.lastMessage, null);
+  assert.deepEqual(result.nativeReviewOutput, nativeReviewOutput);
   assert.ok(command);
   const args = (command as unknown as CodexCommandRequest).args;
   assert.deepEqual(args.slice(-4), ["review", "--strict-config", "--base", "origin/development"]);
@@ -775,4 +805,46 @@ Deno.test("native review delegates reviewer model selection to Codex", async () 
   assert.equal(args.some((arg) => arg.includes("gpt-5.6-sol")), false);
   assert.ok(args.includes('model_provider="sentinel_relay"'));
   assert.ok(args.includes("model_providers.sentinel_relay.supports_websockets=false"));
+});
+
+Deno.test("native review rollout extraction fails closed on missing, duplicate, or malformed output", () => {
+  const line = JSON.stringify({
+    type: "event_msg",
+    payload: {
+      type: "item_completed",
+      item: {
+        type: "ExitedReviewMode",
+        review_output: {
+          findings: [],
+          overall_correctness: "patch is correct",
+          overall_explanation: "Clean.",
+          overall_confidence_score: 0.9,
+        },
+      },
+    },
+  });
+  assert.deepEqual(
+    extractNativeReviewOutputFromRollouts([`${JSON.stringify({ type: "session_meta" })}\n${line}\n`]),
+    JSON.parse(line).payload.item.review_output,
+  );
+  assert.throws(() => extractNativeReviewOutputFromRollouts([]), /exactly one/);
+  assert.throws(() => extractNativeReviewOutputFromRollouts([`${line}\n${line}\n`]), /exactly one/);
+  assert.throws(() => extractNativeReviewOutputFromRollouts(["not-json\n"]), /invalid JSONL/);
+});
+
+Deno.test("native review stops when the private rollout has no structured completion", async () => {
+  const filesystem = new MemoryFilesystem();
+  await assert.rejects(
+    () =>
+      runNativeCodexReview({
+        checkoutPath: "/checkout",
+        authSlots: slots,
+        expectedMaximumRuntimeMs: 1_000,
+      }, {
+        ...commonDependencies(filesystem, healthyFetcher()),
+        commandRunner: () => Promise.resolve(codexCommandResult({ stdout: "The patch looks correct." })),
+      }),
+    (error) => error instanceof CodexInvocationError && error.failure === "native_review_missing",
+  );
+  assert.equal(filesystem.removed.length, 1);
 });

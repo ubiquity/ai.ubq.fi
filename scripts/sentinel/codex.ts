@@ -12,6 +12,10 @@ import {
 export const CODEX_COMMAND_OUTPUT_LIMIT_BYTES = 8 * 1_024 * 1_024;
 export const CODEX_EXPECTED_INVOCATION_MS = 45 * 60_000;
 export const CODEX_MAX_PROMPT_BYTES = 8 * 1_024 * 1_024;
+const CODEX_ROLLOUT_AGGREGATE_LIMIT_BYTES = 64 * 1_024 * 1_024;
+const CODEX_ROLLOUT_FILE_LIMIT_BYTES = CODEX_ROLLOUT_AGGREGATE_LIMIT_BYTES;
+const CODEX_ROLLOUT_MAX_FILES = 4;
+const CODEX_ROLLOUT_MAX_ENTRIES = 128;
 
 export type SentinelAgentRole = "triage" | "implementation" | "monitoring";
 
@@ -71,6 +75,7 @@ export type CodexFilesystem = Readonly<{
   chmod(path: string, mode: number): Promise<void>;
   writePrivateTextFile(path: string, contents: string): Promise<void>;
   readTextFile(path: string): Promise<string>;
+  readPrivateRolloutFiles(codexHome: string): Promise<readonly string[]>;
   removeTree(path: string): Promise<void>;
 }>;
 
@@ -116,6 +121,7 @@ export type CodexInvocationResult = Readonly<{
   stdout: string;
   stderr: string;
   lastMessage: string | null;
+  nativeReviewOutput: unknown | null;
 }>;
 
 export type CodexInvocationFailureCode =
@@ -127,6 +133,7 @@ export type CodexInvocationFailureCode =
   | "secret_in_output"
   | "auth_mutated"
   | "last_message_missing"
+  | "native_review_missing"
   | "runtime_failure";
 
 export class CodexInvocationError extends Error {
@@ -172,6 +179,51 @@ const defaultFilesystem: CodexFilesystem = {
   chmod: (path, mode) => Deno.chmod(path, mode),
   writePrivateTextFile: (path, contents) => Deno.writeTextFile(path, contents, { mode: 0o600 }),
   readTextFile: (path) => Deno.readTextFile(path),
+  async readPrivateRolloutFiles(codexHome) {
+    const sessionsRoot = `${codexHome}/sessions`;
+    const files: string[] = [];
+    let observedEntries = 0;
+    let observedBytes = 0;
+    const visit = async (directory: string, depth: number): Promise<void> => {
+      if (depth > 4) throw new Error("Codex rollout directory depth exceeded its bound");
+      let entries: Deno.DirEntry[];
+      try {
+        entries = [];
+        for await (const entry of Deno.readDir(directory)) entries.push(entry);
+      } catch (error) {
+        if (error instanceof Deno.errors.NotFound && directory === sessionsRoot) return;
+        throw error;
+      }
+      entries.sort((left, right) => left.name.localeCompare(right.name));
+      for (const entry of entries) {
+        observedEntries += 1;
+        if (observedEntries > CODEX_ROLLOUT_MAX_ENTRIES) {
+          throw new Error("Codex rollout directory exceeded its entry bound");
+        }
+        if (entry.isSymlink) throw new Error("Codex rollout directory contains a symbolic link");
+        const path = `${directory}/${entry.name}`;
+        if (entry.isDirectory) {
+          await visit(path, depth + 1);
+          continue;
+        }
+        if (!entry.isFile || !/^rollout-[A-Za-z0-9:.+_-]+\.jsonl$/u.test(entry.name)) continue;
+        if (files.length >= CODEX_ROLLOUT_MAX_FILES) {
+          throw new Error("Codex rollout file count exceeded its bound");
+        }
+        const stat = await Deno.stat(path);
+        if (!stat.isFile || stat.size > CODEX_ROLLOUT_FILE_LIMIT_BYTES) {
+          throw new Error("Codex rollout file exceeded its size bound");
+        }
+        observedBytes += stat.size;
+        if (observedBytes > CODEX_ROLLOUT_AGGREGATE_LIMIT_BYTES) {
+          throw new Error("Codex rollout files exceeded their aggregate size bound");
+        }
+        files.push(await Deno.readTextFile(path));
+      }
+    };
+    await visit(sessionsRoot, 0);
+    return files;
+  },
   async removeTree(path) {
     try {
       await Deno.remove(path, { recursive: true });
@@ -638,8 +690,38 @@ type PrivateInvocationOptions = Readonly<{
   quotaModel: string | null;
   args: (lastMessagePath: string, relayBaseUrl: string) => readonly string[];
   requireLastMessage: boolean;
+  requireNativeReviewOutput: boolean;
   workspaceWritable: boolean;
 }>;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const extractNativeReviewOutputFromRollouts = (rollouts: readonly string[]): unknown => {
+  const outputs: unknown[] = [];
+  for (const rollout of rollouts) {
+    for (const line of rollout.split("\n")) {
+      if (!line.trim()) continue;
+      let record: unknown;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        throw new Error("Codex rollout contained invalid JSONL");
+      }
+      if (!isRecord(record) || record.type !== "event_msg" || !isRecord(record.payload)) continue;
+      if (
+        record.payload.type === "item_completed" && isRecord(record.payload.item) &&
+        record.payload.item.type === "ExitedReviewMode"
+      ) {
+        outputs.push(record.payload.item.review_output);
+      }
+    }
+  }
+  if (outputs.length !== 1 || outputs[0] === null || outputs[0] === undefined) {
+    throw new Error("Codex rollout did not contain exactly one completed native review output");
+  }
+  return outputs[0];
+};
 
 const repositoryRootForCheckout = (checkoutPath: string): string => {
   const current = Deno.cwd();
@@ -741,6 +823,27 @@ const invokePrivately = async (
         commandResult,
       });
     }
+    let nativeReviewOutput: unknown | null = null;
+    if (options.requireNativeReviewOutput) {
+      try {
+        nativeReviewOutput = extractNativeReviewOutputFromRollouts(
+          await filesystem.readPrivateRolloutFiles(codexHome),
+        );
+      } catch {
+        throw new CodexInvocationError("native_review_missing", {
+          slot: selection.slot,
+          probes: selection.probes,
+          commandResult,
+        });
+      }
+      if (outputContainsCodexSecret(selection.auth, JSON.stringify(nativeReviewOutput))) {
+        throw new CodexInvocationError("secret_in_output", {
+          slot: selection.slot,
+          probes: selection.probes,
+          commandResult,
+        });
+      }
+    }
     result = {
       slot: selection.slot,
       headroomPercent: selection.headroomPercent,
@@ -748,6 +851,7 @@ const invokePrivately = async (
       stdout: commandResult.stdout,
       stderr: commandResult.stderr,
       lastMessage,
+      nativeReviewOutput,
     };
   } catch (error) {
     failure = error instanceof CodexInvocationError
@@ -805,6 +909,7 @@ export const runStructuredCodexAgent = async (
     args: (lastMessagePath, relayBaseUrl) =>
       execConfigArgs(checkoutPath, policy, outputSchemaPath, lastMessagePath, relayBaseUrl),
     requireLastMessage: true,
+    requireNativeReviewOutput: false,
     workspaceWritable: policy.sandbox === "workspace-write",
   }, dependencies);
 };
@@ -832,6 +937,7 @@ export const runNativeCodexReview = async (
     quotaModel: null,
     args: (_lastMessagePath, relayBaseUrl) => nativeReviewArgs(checkoutPath, relayBaseUrl),
     requireLastMessage: false,
+    requireNativeReviewOutput: true,
     workspaceWritable: false,
   }, dependencies);
 };

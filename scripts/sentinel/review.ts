@@ -8,6 +8,7 @@ import type {
 } from "./types.ts";
 
 const PRIORITY_PATTERN = /(?:^|\s)\[(P[0-3])\]\s+(.+)$/;
+const ANY_PRIORITY_PATTERN = /\[P[0-3]\]/u;
 const LOCATION_PATTERN = /(?:`)?([A-Za-z0-9_.@/+\-]+:\d+(?:-\d+)?(?::\d+)?)(?:`)?/;
 const NO_FINDINGS_PATTERNS = [
   /^no findings\.?$/i,
@@ -27,9 +28,8 @@ const normalizeLocation = (value: string): string => {
 const normalizeReviewLocations = (value: string): string =>
   value.replace(/\/[A-Za-z0-9_.@/+\-]+:\d+(?:-\d+)?(?::\d+)?/gu, (location) => normalizeLocation(location));
 
-/** Codex writes the final native review to stdout; stderr is only a fallback for older clients. */
-export const nativeReviewParseInput = (stdout: string, stderr: string): string =>
-  stdout.trim().length > 0 ? stdout : stderr;
+/** The pinned Codex CLI writes the final native review to stdout; stderr contains only progress and diagnostics. */
+export const nativeReviewParseInput = (stdout: string, _stderr: string): string => stdout;
 
 const sha256 = async (value: string): Promise<string> => {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -78,12 +78,20 @@ export const parseNativeReview = async (raw: string, round: number): Promise<Nat
   }
   if (current) pending.push(current);
 
+  const priorityMarkerCount = raw.match(/\[P[0-3]\]/gu)?.length ?? 0;
+  if (pending.length > 0 && pending.length !== priorityMarkerCount) {
+    return { schema_version: 1, round, parse_status: "unparseable", findings: [] };
+  }
+
   if (pending.length === 0) {
     const normalized = raw.trim().replace(/\s+/g, " ");
     return {
       schema_version: 1,
       round,
-      parse_status: NO_FINDINGS_PATTERNS.some((pattern) => pattern.test(normalized)) ? "no_findings" : "unparseable",
+      parse_status: NO_FINDINGS_PATTERNS.some((pattern) => pattern.test(normalized)) &&
+          !ANY_PRIORITY_PATTERN.test(raw)
+        ? "no_findings"
+        : "unparseable",
       findings: [],
     };
   }
@@ -99,6 +107,89 @@ export const parseNativeReview = async (raw: string, round: number): Promise<Nat
     });
   }
   return { schema_version: 1, round, parse_status: "findings", findings };
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isConfidence = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+
+const structuredReviewPath = (value: string, checkoutPath: string): string | null => {
+  if (!value.startsWith("/")) return null;
+  const checkoutPrefix = `${checkoutPath.replace(/\/+$/u, "")}/`;
+  const normalized = value.startsWith(checkoutPrefix) ? value.slice(checkoutPrefix.length) : normalizeLocation(value);
+  if (
+    normalized.startsWith("/") ||
+    normalized.split("/").some((part) => !part || part === "." || part === ".." || !/^[A-Za-z0-9_.@+\-]+$/u.test(part))
+  ) return null;
+  return normalized;
+};
+
+/** Parses the structured ReviewOutputEvent retained in the native review's private Codex rollout. */
+export const parseStructuredNativeReview = async (
+  raw: unknown,
+  round: number,
+  checkoutPath: string,
+): Promise<NativeReviewReport> => {
+  if (!Number.isSafeInteger(round) || round < 1 || round > SENTINEL_POLICY.maximumReviewRounds) {
+    throw new Error("Native review round is outside the configured limit");
+  }
+  const unparseable = (): NativeReviewReport => ({
+    schema_version: 1,
+    round,
+    parse_status: "unparseable",
+    findings: [],
+  });
+  if (
+    !checkoutPath.startsWith("/") || !isRecord(raw) || !Array.isArray(raw.findings) ||
+    (raw.overall_correctness !== "patch is correct" && raw.overall_correctness !== "patch is incorrect") ||
+    typeof raw.overall_explanation !== "string" || !isConfidence(raw.overall_confidence_score) ||
+    raw.findings.length > 100
+  ) {
+    return unparseable();
+  }
+  if (
+    (raw.overall_correctness === "patch is correct") !== (raw.findings.length === 0)
+  ) return unparseable();
+
+  const findings: NativeReviewFinding[] = [];
+  for (const value of raw.findings) {
+    if (
+      !isRecord(value) || typeof value.title !== "string" || !value.title.trim() ||
+      typeof value.body !== "string" || !isConfidence(value.confidence_score) ||
+      !Number.isInteger(value.priority) || (value.priority as number) < 0 || (value.priority as number) > 3 ||
+      !isRecord(value.code_location) || typeof value.code_location.absolute_file_path !== "string" ||
+      !isRecord(value.code_location.line_range) ||
+      !Number.isSafeInteger(value.code_location.line_range.start) ||
+      !Number.isSafeInteger(value.code_location.line_range.end)
+    ) {
+      return unparseable();
+    }
+    const start = value.code_location.line_range.start as number;
+    const end = value.code_location.line_range.end as number;
+    const path = structuredReviewPath(value.code_location.absolute_file_path, checkoutPath);
+    if (path === null || !path || start < 1 || end < start) return unparseable();
+    const priority = value.priority as number;
+    const titlePriority = value.title.match(/^\[P([0-3])\]\s+/u)?.[1];
+    if (titlePriority !== undefined && Number(titlePriority) !== priority) return unparseable();
+    const location = `${path}:${start}${end === start ? "" : `-${end}`}`;
+    const title = `${value.title.replace(/^\[P[0-3]\]\s+/u, "").trim()} — ${location}`;
+    const body = value.body.trim();
+    findings.push({
+      fingerprint: await findingFingerprint(title, body, location),
+      severity: `P${priority}` as TriageSeverity,
+      title,
+      body,
+      location,
+    });
+  }
+  return {
+    schema_version: 1,
+    round,
+    parse_status: findings.length === 0 ? "no_findings" : "findings",
+    findings,
+  };
 };
 
 export const blockingReviewFindings = (
