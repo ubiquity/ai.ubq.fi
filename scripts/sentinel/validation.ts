@@ -176,6 +176,19 @@ export const captureRawDenoLogs = async (
 
 const decode = (value: Uint8Array): string => new TextDecoder().decode(value).trim();
 
+export const CANDIDATE_DENO_CHECK_ARGS = Object.freeze(
+  [
+    "check",
+    "--frozen",
+    "serve.ts",
+    "scripts/setup-instance.ts",
+    "scripts/sentinel/artifact-crypto.ts",
+    "scripts/sentinel/encrypt-artifacts.ts",
+    "scripts/sentinel/main.ts",
+    "scripts/sentinel/revision-control.ts",
+  ] as const,
+);
+
 const changedFiles = async (cwd: string): Promise<string[]> => {
   const result = await runTrustedGit({
     args: ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR", "origin/development...HEAD"],
@@ -278,17 +291,7 @@ export const runCandidateValidation = async (
     await runValidationCommand(
       input.cwd,
       "deno",
-      [
-        "check",
-        "--frozen",
-        "--no-remote",
-        "serve.ts",
-        "scripts/setup-instance.ts",
-        "scripts/sentinel/artifact-crypto.ts",
-        "scripts/sentinel/encrypt-artifacts.ts",
-        "scripts/sentinel/main.ts",
-        "scripts/sentinel/revision-control.ts",
-      ],
+      CANDIDATE_DENO_CHECK_ARGS,
       sandboxHome,
       input.denoDirectory,
       report,

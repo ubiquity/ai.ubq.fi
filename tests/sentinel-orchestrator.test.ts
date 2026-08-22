@@ -82,6 +82,7 @@ import {
   INCIDENT_WINDOW_MS,
   OBSERVE_WINDOW_MS,
 } from "../scripts/sentinel/windows.ts";
+import { CANDIDATE_DENO_CHECK_ARGS } from "../scripts/sentinel/validation.ts";
 import type { ExportedSentinelReplayCapture } from "../src/sentinel_replay_capture.ts";
 
 const now = Date.parse("2026-08-21T06:00:00.000Z");
@@ -1011,6 +1012,13 @@ Deno.test("review policy permits exactly three implementation-review rounds", ()
   assert.equal(canStartReviewRound(2), true);
   assert.equal(canStartReviewRound(3), false);
   assert.equal(canStartReviewRound(4), false);
+});
+
+Deno.test("candidate type checking uses the populated cache without remote access", () => {
+  const argumentsSet = new Set<string>(CANDIDATE_DENO_CHECK_ARGS);
+  assert.deepEqual(CANDIDATE_DENO_CHECK_ARGS.slice(0, 2), ["check", "--frozen"]);
+  assert.equal(argumentsSet.has("--no-remote"), false);
+  assert.equal(argumentsSet.has("--cached-only"), false);
 });
 
 const replayCase = (overrides: Partial<ReplayCase> = {}): ReplayCase => ({
