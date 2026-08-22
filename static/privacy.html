@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy information — AI.UBQ.FI</title>
+    <meta
+      name="description"
+      content="Operational privacy information for the authenticated UbiquityOS AI Gateway service."
+    />
+    <link rel="canonical" href="https://ai.ubq.fi/privacy" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Privacy information — AI.UBQ.FI" />
+    <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/docs.css" />
+  </head>
+  <body data-page="docs" data-role="public">
+    <div data-shell>
+      <header data-shared-header>
+        <div data-brand>
+          <a data-brand-link href="/">
+            <svg data-logo viewBox="0 0 96 96" aria-hidden="true" focusable="false">
+              <path
+                fill="currentColor"
+                d="M90.245 26.095c0-1.471-.832-2.878-2.111-3.646L50.201.576A4.03 4.03 0 0 0 48.091 0c-.704 0-1.472.192-2.111.576L8.11 22.449C6.833 23.216 6 24.559 6 26.095v43.81c0 1.471.832 2.879 2.11 3.646l37.934 21.873a4.04 4.04 0 0 0 4.157 0l37.933-21.873c1.28-.767 2.11-2.11 2.11-3.646zm-7.612 39.973c0 1.727-.896 3.326-2.367 4.157L50.457 87.814c-.703.447-1.535.639-2.367.639-.831 0-1.599-.192-2.366-.64l-29.81-17.588c-1.47-.831-2.366-2.43-2.366-4.157V34.409c0-.767.384-1.535 1.088-1.919a2.2 2.2 0 0 1 2.175 0l5.117 3.006c1.215.704 1.919 2.11 2.814 3.71.192.32.32.64.512.895 2.239 4.03 3.326 8.315 4.35 12.472 1.919 7.61 3.838 15.478 13.625 18.036 3.198.831 6.653.831 9.85 0 9.724-2.558 11.707-10.425 13.626-18.036 1.023-4.157 2.11-8.442 4.35-12.472.192-.32.32-.64.511-.895.832-1.6 1.6-2.942 2.815-3.71l5.117-3.006c.64-.383 1.472-.383 2.175 0 .704.384 1.088 1.088 1.088 1.92v31.658zM45.852 8.57a4.45 4.45 0 0 1 4.541 0l25.78 15.286c.639.384 1.023.64 1.023 1.407 0 .768-.384 1.215-1.024 1.6l-4.925 2.941c-2.175 1.28-3.263 3.326-4.222 5.18l-.064.129c-.128.255-.256.447-.384.703-2.43 4.35-4.222 8.954-5.245 13.047-2.047 7.931-2.815 13.176-9.468 14.903-1.215.32-2.494.447-3.71.447-1.279 0-2.494-.192-3.71-.447-6.652-1.727-7.484-6.972-9.467-14.966-1.023-4.094-2.814-8.699-5.245-13.048-.128-.192-.256-.448-.384-.64l-.064-.191c-.96-1.791-2.11-3.902-4.222-5.18l-4.925-2.943c-.64-.384-1.024-.831-1.024-1.599 0-.767.384-1.023 1.024-1.407z"
+              />
+            </svg>
+            <span>UbiquityOS</span>
+          </a>
+          <span data-muted>/ AI Gateway</span>
+        </div>
+        <div data-pill><strong>Privacy</strong></div>
+        <nav data-actions aria-label="Primary">
+          <a data-button href="/">Home</a>
+          <a data-button href="/developers">Developers</a>
+          <a data-button href="/docs">Docs</a>
+          <a data-button href="/contact">Contact</a>
+        </nav>
+      </header>
+
+      <main>
+        <section data-hero data-docs-hero>
+          <div>
+            <h1>Operational privacy information</h1>
+            <p data-lead>How the UbiquityOS AI Gateway handles authenticated API traffic during service operation.</p>
+          </div>
+        </section>
+        <section data-docs-layout>
+          <article data-card data-docs-content>
+            <h2>Service data flow</h2>
+            <p>
+              The gateway processes an authenticated request so it can validate access, select a configured upstream
+              path, and return an API response. Request content is used to perform the requested inference operation.
+              Client bearer tokens are used for gateway authentication and are not forwarded upstream. The gateway uses
+              server-side upstream credentials for configured providers instead. Clients should treat prompts, model
+              inputs, and outputs as data that may be processed by the configured service path needed to complete the
+              request.
+            </p>
+            <p>
+              Do not submit passwords, raw bearer tokens, private keys, unredacted credentials, or other secrets in a
+              prompt. Do not put tokens in URLs, source control, screenshots, or agent transcripts. Use the
+              <a href="/developers">developer portal</a> to learn the required authentication header and use the
+              <a href="/contact">authorized operator channel</a> when you need a credential, revocation, or support.
+            </p>
+            <h2>Operational records</h2>
+            <p>
+              The service may return request identifiers, route warnings, and status information that help an authorized
+              operator diagnose an integration. Share only redacted diagnostic details. This page describes the current
+              technical service boundary and does not replace a legal agreement, a customer-specific data-processing
+              agreement, or a retention commitment. Product owners must provide those terms before relying on the
+              service for a use case that requires them.
+            </p>
+          </article>
+          <aside data-card data-docs-sidebar>
+            <h2>Related pages</h2>
+            <nav data-docs-toc aria-label="Related pages">
+              <a href="/developers">Developer portal</a>
+              <a href="/llms.txt">Agent instructions</a>
+              <a href="/contact">Contact routing</a>
+              <a href="/about">About</a>
+            </nav>
+          </aside>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

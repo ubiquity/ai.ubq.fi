@@ -1,6 +1,14 @@
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras_rate_limits.ts";
 
+export const STANDARD_RATE_LIMIT_HEADERS = [
+  "RateLimit",
+  "RateLimit-Policy",
+  "RateLimit-Limit",
+  "RateLimit-Remaining",
+  "RateLimit-Reset",
+] as const;
+
 const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-warning",
   "x-uos-request-id",
@@ -12,6 +20,7 @@ const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-cache",
   "ETag",
   "Retry-After",
+  ...STANDARD_RATE_LIMIT_HEADERS,
   ...CEREBRAS_RATE_LIMIT_HEADERS,
   "x-codex-limit-name",
   "x-codex-primary-used-percent",

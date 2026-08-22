@@ -1,6 +1,6 @@
-# UbiquityOS AI Gateway
+# UbiquityOS AI Gateway (AI.UBQ.FI)
 
-OpenAI-compatible AI inference service for the UbiquityOS ecosystem.
+OpenAI-compatible AI inference service and developer API for the UbiquityOS ecosystem.
 
 Canonical service URL: https://ai.ubq.fi
 OpenAI-compatible base URL: https://ai.ubq.fi/v1
@@ -9,10 +9,22 @@ Authentication: Authorization: Bearer <UOS_AI_TOKEN>
 ## Authoritative resources
 
 - OpenAPI 3.1 contract: https://ai.ubq.fi/openapi.json
+- Developer portal and quickstart: https://ai.ubq.fi/developers
 - Complete agent instructions: https://ai.ubq.fi/llms-full.txt
 - Supported models: GET https://ai.ubq.fi/v1/models
 - Responses: POST https://ai.ubq.fi/v1/responses
 - Chat completions: POST https://ai.ubq.fi/v1/chat/completions
+
+## When to use this service
+
+Use the UbiquityOS AI Gateway when an approved UbiquityOS application or autonomous agent needs
+OpenAI-compatible inference, runtime model discovery, streaming Responses or Chat Completions, or documented function
+tools. Start with the OpenAPI contract, query `/v1/models` before choosing a model, and call the `/v1` endpoints with an
+approved bearer token.
+
+Do not use this service to create credentials, administer API keys, access private admin or provider-health routes, or
+guess model names. The browser chat playground is an authenticated test surface for a token already issued to the user;
+it is not a self-service key issuer. If no approved token is available, stop and ask the authorized operator for access.
 
 ## Autonomous use
 
@@ -21,6 +33,7 @@ Authentication: Authorization: Bearer <UOS_AI_TOKEN>
 3. Configure an OpenAI-compatible client with base URL `https://ai.ubq.fi/v1` and the token as its API key.
 4. Query `/v1/models` and select a returned model. Do not assume that an OpenAI public model alias is available.
 5. Use `/v1/responses` or `/v1/chat/completions` with the official OpenAI request shape.
+6. On a `429`, parse the JSON error and honor `Retry-After`; use `RateLimit` fields when they are present.
 
 Never print, log, persist, transmit elsewhere, or commit the token. If no token is available, tell the user that service
 authentication is required. Do not request that the user paste a token into chat.

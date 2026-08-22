@@ -4,7 +4,7 @@ import {
   apiKeyHashKey,
   normalizeApiKeyWindowMs,
 } from "./api_keys.ts";
-import { openaiError } from "./http.ts";
+import { openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import { getKv } from "./kv.ts";
 import { hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "./types.ts";
@@ -70,6 +70,7 @@ export class ApiKeyQuotaDispatchError extends Error {
   readonly code: string;
   readonly errorType: string;
   readonly retryAfter: string | null;
+  readonly headers: Readonly<Record<string, string>>;
 
   constructor(
     message = "API key quota reservation is no longer available",
@@ -78,6 +79,7 @@ export class ApiKeyQuotaDispatchError extends Error {
       code?: string;
       errorType?: string;
       retryAfter?: string | null;
+      headers?: Readonly<Record<string, string>>;
     }> = {},
   ) {
     super(message);
@@ -85,7 +87,10 @@ export class ApiKeyQuotaDispatchError extends Error {
     this.status = options.status ?? 503;
     this.code = options.code ?? "api_key_quota_reservation_unavailable";
     this.errorType = options.errorType ?? "server_error";
-    this.retryAfter = options.retryAfter ?? null;
+    const headers = { ...(options.headers ?? {}) };
+    this.retryAfter = options.retryAfter ?? headers["Retry-After"] ?? null;
+    if (this.retryAfter && !headers["Retry-After"]) headers["Retry-After"] = this.retryAfter;
+    this.headers = headers;
   }
 }
 
@@ -230,8 +235,30 @@ const expiredPolicyResponse = (): ApiKeyUsageReservationDecision => ({
   response: openaiError(401, "Unauthorized", "invalid_api_key"),
 });
 
-const quotaExceededResponse = (window: ApiKeyUsageWindowV3, policy: ApiKeyPolicy): ApiKeyUsageReservationDecision => {
+export const apiKeyRateLimitPolicyHeaders = (policy: ApiKeyPolicy | null): Record<string, string> => {
+  if (!policy || policy.usage_limit_requests === API_KEY_NO_USAGE_LIMIT) return {};
+  return {
+    "RateLimit-Policy": `${policy.usage_limit_requests};w=${Math.max(1, Math.ceil(policy.window_ms / 1000))}`,
+  };
+};
+
+const rateLimitExceededHeaders = (window: ApiKeyUsageWindowV3, policy: ApiKeyPolicy): Record<string, string> => {
   const retryAfterSeconds = Math.max(1, Math.ceil(Math.max(0, window.window_reset_at_ms - Date.now()) / 1000));
+  const remaining = Math.max(0, policy.usage_limit_requests - window.committed_requests - window.reserved_requests);
+  const windowSeconds = Math.max(1, Math.ceil((window.window_reset_at_ms - window.window_start_ms) / 1000));
+  return {
+    "Retry-After": String(retryAfterSeconds),
+    "RateLimit": `limit=${policy.usage_limit_requests}, remaining=${remaining}, reset=${retryAfterSeconds}`,
+    "RateLimit-Policy": `${policy.usage_limit_requests};w=${windowSeconds}`,
+    // Older API clients still look for this de facto field family. Keep it in
+    // addition to RFC 9449's structured RateLimit fields.
+    "RateLimit-Limit": String(policy.usage_limit_requests),
+    "RateLimit-Remaining": String(remaining),
+    "RateLimit-Reset": String(retryAfterSeconds),
+  };
+};
+
+const quotaExceededResponse = (window: ApiKeyUsageWindowV3, policy: ApiKeyPolicy): ApiKeyUsageReservationDecision => {
   return {
     ok: false,
     response: openaiError(
@@ -240,7 +267,7 @@ const quotaExceededResponse = (window: ApiKeyUsageWindowV3, policy: ApiKeyPolicy
         new Date(window.window_reset_at_ms).toISOString()
       }`,
       "rate_limit_exceeded",
-      { type: "rate_limit_error", headers: { "Retry-After": String(retryAfterSeconds) } },
+      { type: "rate_limit_error", headers: rateLimitExceededHeaders(window, policy) },
     ),
   };
 };
@@ -582,6 +609,11 @@ const quotaDispatchErrorFromResponse = async (response: Response): Promise<ApiKe
   const message = error && typeof error.message === "string"
     ? error.message
     : "API key quota reservation is no longer available";
+  const headers: Record<string, string> = {};
+  for (const name of ["Retry-After", ...STANDARD_RATE_LIMIT_HEADERS]) {
+    const value = response.headers.get(name);
+    if (value) headers[name] = value;
+  }
   return new ApiKeyQuotaDispatchError(message, {
     status: response.status,
     code: error && typeof error.code === "string"
@@ -595,6 +627,7 @@ const quotaDispatchErrorFromResponse = async (response: Response): Promise<ApiKe
       ? "rate_limit_error"
       : "server_error",
     retryAfter: response.headers.get("Retry-After"),
+    headers,
   });
 };
 

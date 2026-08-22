@@ -460,6 +460,38 @@ upstream request metadata instead of forwarding client-supplied session identifi
 
 Any other accepted-but-unused key will emit a `<key>_ignored` warning.
 
+### Function-tool example
+
+For an agent that can safely call an application-owned function, send a typed OpenAI function tool. Give every function
+a stable name, a clear description, and a JSON Schema `parameters` object. The tool result must be returned through the
+normal endpoint-specific tool-result format; never use a tool schema to carry a bearer token or an administrator action.
+
+```json
+{
+  "model": "<a model returned by /v1/models>",
+  "input": "Find the current status for issue 42.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_issue_status",
+        "description": "Read the status of one application issue by its numeric identifier.",
+        "parameters": {
+          "type": "object",
+          "properties": { "issue_id": { "type": "integer", "minimum": 1 } },
+          "required": ["issue_id"],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}
+```
+
+The machine-readable request schema, response variants, and error envelopes are published at `/openapi.json`. Query the
+live model list before a tool-enabled inference request so a client does not assume an unavailable model alias.
+
 ## Agent Messages (LLM agents)
 
 `/uos/agent-messages` stores and retrieves agent messages in Deno KV. It requires GitHub token auth with kernel
@@ -559,6 +591,18 @@ Common status codes:
 - `403` forbidden (e.g., GitHub token required for agent messages)
 - `429` rate limit exceeded for KV API keys
 - `5xx` upstream or server errors
+
+### Rate-limit headers
+
+Every `429` uses the JSON error envelope and includes `Retry-After` when the gateway has a retry delay. For an enforced
+KV API-key request window, the gateway also returns the RFC 9449 structured `RateLimit` field and `RateLimit-Policy`,
+plus `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` compatibility fields. The structured field has the
+form `limit=100, remaining=0, reset=60`; `reset` and `Retry-After` are seconds from the response time.
+
+Only fields backed by the gateway's own authoritative API-key window are emitted. An absent `RateLimit` field does not
+mean unlimited upstream capacity, and clients must not invent a quota from provider-specific or Metered balance headers.
+When a `429` includes `Retry-After`, wait at least that duration before retrying. Otherwise use bounded exponential
+backoff, preserve idempotency where supported, and surface a persistent quota or authentication failure to the operator.
 
 When a Codex account's server-side access or refresh token expires, the gateway adds
 `x-uos-warning: codex_auth_reauthentication_required` and includes an actionable re-authentication message in the OpenAI
