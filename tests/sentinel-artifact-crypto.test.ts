@@ -288,6 +288,11 @@ Deno.test({
       "Manual backlog pushes must use the non-recursive workflow GITHUB_TOKEN",
     );
     assert(
+      orchestrator.includes("error instanceof CandidateValidationError") &&
+        orchestrator.includes("implementation_validation_fix_"),
+      "Candidate validation failures must consume an existing implementation-review round",
+    );
+    assert(
       /- name: Install isolated-agent prerequisites\n\s+if: steps\.agent-work\.outputs\.needs_agent == 'true'/.test(
         workflow,
       ),

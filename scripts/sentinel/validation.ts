@@ -4,6 +4,45 @@ export type CommandResult = Readonly<{
   stderr: Uint8Array<ArrayBuffer>;
 }>;
 
+export type CandidateValidationPhase =
+  | "format_check"
+  | "lint"
+  | "type_check"
+  | "sentinel_artifact_tests"
+  | "repository_tests"
+  | "usage_measurement"
+  | "served_http_sse_tests";
+
+export type CandidateValidationFailure = Readonly<{
+  phase: CandidateValidationPhase;
+  command: readonly string[];
+  exit_code: number;
+  duration_ms: number;
+  stdout_path: string;
+  stdout_bytes: number;
+  stdout_sha256: string;
+  stdout_excerpt: string;
+  stdout_truncated: boolean;
+  stderr_path: string;
+  stderr_bytes: number;
+  stderr_sha256: string;
+  stderr_excerpt: string;
+  stderr_truncated: boolean;
+}>;
+
+export class CandidateValidationError extends Error {
+  readonly failure: CandidateValidationFailure;
+
+  constructor(failure: CandidateValidationFailure) {
+    super("Candidate validation failed");
+    this.name = "CandidateValidationError";
+    this.failure = failure;
+  }
+}
+
+const VALIDATION_REPAIR_EXCERPT_BYTES = 32 * 1024;
+const VALIDATION_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
+
 const TRUSTED_GIT_CONFIGURATION = Object.freeze([
   "core.hooksPath=/dev/null",
   "core.fsmonitor=false",
@@ -176,6 +215,67 @@ export const captureRawDenoLogs = async (
 
 const decode = (value: Uint8Array): string => new TextDecoder().decode(value).trim();
 
+const sha256Hex = async (value: Uint8Array<ArrayBuffer>): Promise<string> =>
+  [...new Uint8Array(await crypto.subtle.digest("SHA-256", value))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+
+const validationOutputExcerpt = (
+  value: Uint8Array<ArrayBuffer>,
+): Readonly<{ text: string; truncated: boolean }> => {
+  const decoder = new TextDecoder();
+  if (value.byteLength <= VALIDATION_REPAIR_EXCERPT_BYTES) {
+    return { text: decoder.decode(value), truncated: false };
+  }
+  const half = Math.floor(VALIDATION_REPAIR_EXCERPT_BYTES / 2);
+  return {
+    text: `${decoder.decode(value.subarray(0, half))}\n...[validation output truncated]...\n${
+      decoder.decode(value.subarray(value.byteLength - half))
+    }`,
+    truncated: true,
+  };
+};
+
+export const persistCandidateValidationFailure = async (
+  input: Readonly<{
+    reportPath: string;
+    phase: CandidateValidationPhase;
+    command: readonly string[];
+    exitCode: number;
+    durationMs: number;
+    stdout: Uint8Array<ArrayBuffer>;
+    stderr: Uint8Array<ArrayBuffer>;
+  }>,
+): Promise<CandidateValidationFailure> => {
+  if (!input.reportPath.startsWith("/")) throw new Error("Candidate validation report path must be absolute");
+  const stdoutPath = `${input.reportPath}.${input.phase}.stdout.bin`;
+  const stderrPath = `${input.reportPath}.${input.phase}.stderr.bin`;
+  const [stdoutSha256, stderrSha256] = await Promise.all([
+    sha256Hex(input.stdout),
+    sha256Hex(input.stderr),
+    Deno.writeFile(stdoutPath, input.stdout, { createNew: true, mode: 0o600 }),
+    Deno.writeFile(stderrPath, input.stderr, { createNew: true, mode: 0o600 }),
+  ]).then(([stdoutDigest, stderrDigest]) => [stdoutDigest, stderrDigest] as const);
+  const stdoutExcerpt = validationOutputExcerpt(input.stdout);
+  const stderrExcerpt = validationOutputExcerpt(input.stderr);
+  return {
+    phase: input.phase,
+    command: [...input.command],
+    exit_code: input.exitCode,
+    duration_ms: input.durationMs,
+    stdout_path: stdoutPath,
+    stdout_bytes: input.stdout.byteLength,
+    stdout_sha256: stdoutSha256,
+    stdout_excerpt: stdoutExcerpt.text,
+    stdout_truncated: stdoutExcerpt.truncated,
+    stderr_path: stderrPath,
+    stderr_bytes: input.stderr.byteLength,
+    stderr_sha256: stderrSha256,
+    stderr_excerpt: stderrExcerpt.text,
+    stderr_truncated: stderrExcerpt.truncated,
+  };
+};
+
 export const CANDIDATE_DENO_CHECK_ARGS = Object.freeze(
   [
     "check",
@@ -199,10 +299,12 @@ const changedFiles = async (cwd: string): Promise<string[]> => {
 
 const runValidationCommand = async (
   cwd: string,
+  phase: CandidateValidationPhase,
   command: string,
   args: readonly string[],
   sandboxHome: string,
   denoDirectory: string,
+  reportPath: string,
   report: Array<Record<string, unknown>>,
 ): Promise<void> => {
   const started = Date.now();
@@ -243,10 +345,30 @@ const runValidationCommand = async (
     args: sandboxArgs,
     cwd,
     env: { HOME: sandboxHome, DENO_DIR: denoDirectory },
-    maximumOutputBytes: 32 * 1024 * 1024,
+    maximumOutputBytes: VALIDATION_OUTPUT_MAX_BYTES,
   });
-  report.push({ command: [command, ...args], exit_code: result.code, duration_ms: Date.now() - started });
-  if (result.code !== 0) throw new Error(`${command} validation failed with exit code ${result.code}`);
+  const durationMs = Date.now() - started;
+  const commandLine = [command, ...args];
+  try {
+    if (result.code === 0) {
+      report.push({ phase, command: commandLine, exit_code: result.code, duration_ms: durationMs });
+      return;
+    }
+    const failure = await persistCandidateValidationFailure({
+      reportPath,
+      phase,
+      command: commandLine,
+      exitCode: result.code,
+      durationMs,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    });
+    report.push(failure);
+    throw new CandidateValidationError(failure);
+  } finally {
+    result.stdout.fill(0);
+    result.stderr.fill(0);
+  }
 };
 
 export const runCandidateValidation = async (
@@ -271,33 +393,40 @@ export const runCandidateValidation = async (
     if (formattable.length) {
       await runValidationCommand(
         input.cwd,
+        "format_check",
         "deno",
         ["fmt", "--check", ...formattable],
         sandboxHome,
         input.denoDirectory,
+        input.reportPath,
         report,
       );
     }
     if (lintable.length) {
       await runValidationCommand(
         input.cwd,
+        "lint",
         "deno",
         ["lint", ...lintable],
         sandboxHome,
         input.denoDirectory,
+        input.reportPath,
         report,
       );
     }
     await runValidationCommand(
       input.cwd,
+      "type_check",
       "deno",
       CANDIDATE_DENO_CHECK_ARGS,
       sandboxHome,
       input.denoDirectory,
+      input.reportPath,
       report,
     );
     await runValidationCommand(
       input.cwd,
+      "sentinel_artifact_tests",
       "deno",
       [
         "test",
@@ -310,10 +439,12 @@ export const runCandidateValidation = async (
       ],
       sandboxHome,
       input.denoDirectory,
+      input.reportPath,
       report,
     );
     await runValidationCommand(
       input.cwd,
+      "repository_tests",
       "deno",
       [
         "test",
@@ -326,10 +457,12 @@ export const runCandidateValidation = async (
       ],
       sandboxHome,
       input.denoDirectory,
+      input.reportPath,
       report,
     );
     await runValidationCommand(
       input.cwd,
+      "usage_measurement",
       "deno",
       [
         "test",
@@ -340,10 +473,12 @@ export const runCandidateValidation = async (
       ],
       sandboxHome,
       input.denoDirectory,
+      input.reportPath,
       report,
     );
     await runValidationCommand(
       input.cwd,
+      "served_http_sse_tests",
       "deno",
       [
         "test",
@@ -356,6 +491,7 @@ export const runCandidateValidation = async (
       ],
       sandboxHome,
       input.denoDirectory,
+      input.reportPath,
       report,
     );
   } catch (error) {

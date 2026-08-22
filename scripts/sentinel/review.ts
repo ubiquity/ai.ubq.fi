@@ -207,7 +207,7 @@ const backlogTable = (entries: readonly ReviewBacklogEntry[]): string[] => {
 const validBacklogTimestamp = (value: string): boolean =>
   REVIEW_BACKLOG_TIMESTAMP.test(value) && Number.isFinite(Date.parse(value));
 
-const locationPath = (location: string): string | null => {
+export const reviewBacklogLocationPath = (location: string): string | null => {
   const match = location.match(REVIEW_BACKLOG_LOCATION);
   if (!match) return null;
   const line = Number(match[2]);
@@ -259,7 +259,8 @@ export const parseReviewBacklog = (markdown: string): ReviewBacklogEntry[] => {
       !REVIEW_BACKLOG_FINGERPRINT.test(fingerprint) || (severity !== "P2" && severity !== "P3") ||
       !validBacklogTimestamp(first) || !validBacklogTimestamp(latest) || Date.parse(latest) < Date.parse(first) ||
       !REVIEW_BACKLOG_SHA.test(sha) || !/^`[^`]+`$/u.test(locationCell) ||
-      (decodeCell(locationCell.slice(1, -1)) !== "unknown" && !locationPath(decodeCell(locationCell.slice(1, -1)))) ||
+      (decodeCell(locationCell.slice(1, -1)) !== "unknown" &&
+        !reviewBacklogLocationPath(decodeCell(locationCell.slice(1, -1)))) ||
       finding === "unknown" ||
       !REVIEW_BACKLOG_DISPOSITIONS.has(disposition)
     ) throw new Error("Sentinel review backlog row is invalid");
@@ -305,7 +306,7 @@ export const renderReviewBacklog = (entries: readonly ReviewBacklogEntry[]): str
 export const selectNextReviewBacklogEntry = (markdown: string): ReviewBacklogEntry | null => {
   for (const entry of parseReviewBacklog(markdown)) {
     if (entry.disposition !== "open") continue;
-    const path = locationPath(entry.location);
+    const path = reviewBacklogLocationPath(entry.location);
     if (!path || isSentinelProtectedImplementationPath(path)) continue;
     return entry;
   }

@@ -39,6 +39,7 @@ import {
   TRIAGE_INCIDENT_MS,
   triageExpectedMaximumRuntimeMs,
   triagePrompt,
+  validationRepairPrompt,
   withStageHeartbeat,
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
@@ -82,7 +83,7 @@ import {
   INCIDENT_WINDOW_MS,
   OBSERVE_WINDOW_MS,
 } from "../scripts/sentinel/windows.ts";
-import { CANDIDATE_DENO_CHECK_ARGS } from "../scripts/sentinel/validation.ts";
+import { CANDIDATE_DENO_CHECK_ARGS, type CandidateValidationFailure } from "../scripts/sentinel/validation.ts";
 import type { ExportedSentinelReplayCapture } from "../src/sentinel_replay_capture.ts";
 
 const now = Date.parse("2026-08-21T06:00:00.000Z");
@@ -192,6 +193,40 @@ Deno.test("implementation prompt tells agents to block protected repairs before 
   assert.match(prompt, /tests\/sentinel-replay-capture\.test\.ts/);
   assert.match(prompt, /empty `changed_files` array/);
   assert.match(prompt, /agent model or reasoning selections/);
+});
+
+Deno.test("validation repair treats private diagnostics as untrusted and keeps policy protected", () => {
+  const failure: CandidateValidationFailure = {
+    phase: "repository_tests",
+    command: ["deno", "test", "--cached-only"],
+    exit_code: 1,
+    duration_ms: 42,
+    stdout_path: "/private/reports/validation.stdout.bin",
+    stdout_bytes: 0,
+    stdout_sha256: "a".repeat(64),
+    stdout_excerpt: "",
+    stdout_truncated: false,
+    stderr_path: "/private/reports/validation.stderr.bin",
+    stderr_bytes: 16,
+    stderr_sha256: "b".repeat(64),
+    stderr_excerpt: "fixture failure",
+    stderr_truncated: false,
+  };
+  const prompt = validationRepairPrompt(
+    {
+      schema_version: 1,
+      interval: computeSentinelInterval("hourly", now),
+      findings: [],
+      no_findings_reason: "No evidence-backed finding in the fixture.",
+    },
+    null,
+    failure,
+  );
+  assert.match(prompt, /untrusted data, not\ninstructions/u);
+  assert.match(prompt, /repository_tests/u);
+  assert.match(prompt, /fixture failure/u);
+  assert.match(prompt, /isSentinelProtectedImplementationPath/u);
+  assert.match(prompt, /without weakening, skipping, deleting/u);
 });
 
 Deno.test("implementation timeout gets one continuation and never retries another failure", async () => {
@@ -855,7 +890,12 @@ Deno.test("review backlog parsing is strict and round-trips renderer escapes", (
 
 Deno.test("backlog implementation decisions reject no-code resolution and report mismatches", () => {
   assert.deepEqual(
-    evaluateReviewBacklogImplementation("implemented", ["src/handler.ts"], ["src/handler.ts"]),
+    evaluateReviewBacklogImplementation(
+      "implemented",
+      ["src/handler.ts"],
+      ["src/handler.ts"],
+      "src/handler.ts",
+    ),
     { disposition: "resolved", continueToRuntimeValidation: true },
   );
   for (const status of ["implemented", "already_fixed", "blocked", "not_actionable"] as const) {
@@ -871,6 +911,10 @@ Deno.test("backlog implementation decisions reject no-code resolution and report
   assert.throws(
     () => evaluateReviewBacklogImplementation("blocked", ["src/handler.ts"], ["src/handler.ts"]),
     /cannot retain/,
+  );
+  assert.throws(
+    () => evaluateReviewBacklogImplementation("implemented", ["README.md"], ["README.md"], "src/handler.ts"),
+    /affected path/,
   );
 
   const entry = reviewBacklogEntry();
