@@ -303,6 +303,7 @@ const logTerminalRequest = async (
     usageTelemetryStatus: terminal.usage_telemetry_status,
     inputTokens: terminal.input_tokens,
     cachedInputTokens: terminal.cached_input_tokens,
+    cacheWriteInputTokens: terminal.cache_write_input_tokens,
   });
   const replayObservation: SentinelFailureObservation = {
     status: terminal.status,

@@ -7,6 +7,14 @@ import { setStreamFirstEventDeadlineMsForTest } from "../src/inference_deadline.
 import { RELEASE_GIT_SHA } from "../src/release.ts";
 import { MAX_RESPONSES_SSE_EVENT_BYTES } from "../src/responses_stream.ts";
 import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
+import { readPromptCacheAnalytics, recordPromptCacheAnalytics } from "../src/prompt_cache_analytics.ts";
+import { CountingKv } from "./helpers/counting_kv.ts";
+
+if (typeof Deno.KvU64 !== "function") {
+  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
+    constructor(readonly value: bigint) {}
+  } as typeof Deno.KvU64;
+}
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 const DEFAULT_TEST_MODEL = "gpt-5-fixture-default";
@@ -127,7 +135,7 @@ const {
 } = await import("../src/surplus.ts");
 const { ApiKeyQuotaDispatchError } = await import("../src/api_key_policy.ts");
 const { withCors } = await import("../src/http.ts");
-const { default: gatewayHandler } = await import("../src/handler.ts");
+const { default: gatewayHandler, withTerminalRequestLog } = await import("../src/handler.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 const { DEBUG_ROUTING_KEY, resetDebugRoutingCacheForTest } = await import("../src/debug_routing.ts");
 const {
@@ -7229,6 +7237,117 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
     );
     assert.equal(response.status, 200);
     assert.equal(getResponseTelemetry(response)?.promptCacheMode, "implicit");
+  });
+
+  await t.step("keyed Codex warnings retain cache usage through persisted analytics", async () => {
+    const analyticsKv = new CountingKv();
+    const analyticsNow = 1_800_000_000_000;
+    const analyticsUsage = {
+      input_tokens: 2048,
+      input_tokens_details: { cached_tokens: 1024, cache_write_tokens: 512 },
+      output_tokens: 16,
+      total_tokens: 2064,
+    };
+    const analyticsCompleted = () =>
+      sseResponse([
+        `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_cache_analytics" } })}\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.completed",
+            response: { model: DEFAULT_TEST_MODEL, output: [], usage: analyticsUsage },
+          })
+        }\n\n`,
+      ]);
+    const requests = [
+      {
+        route: "chat.completions",
+        request: new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            prompt_cache_key: "stable-analytics-key",
+            prompt_cache_options: { ttl: "30m" },
+            messages: [{ role: "user", content: "stable cache analytics prefix" }],
+          }),
+        }),
+        handle: handleChatCompletions,
+        expectsCacheOptionsWarning: true,
+      },
+      {
+        route: "responses",
+        request: new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            prompt_cache_key: "stable-analytics-key",
+            input: "stable cache analytics prefix",
+          }),
+        }),
+        handle: handleResponses,
+        expectsCacheOptionsWarning: false,
+      },
+    ] as const;
+
+    for (const [index, fixture] of requests.entries()) {
+      const forwarded: { body: Record<string, unknown> | null } = { body: null };
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          forwarded.body = JSON.parse(bodyText ?? "{}") as Record<string, unknown>;
+          return analyticsCompleted();
+        },
+        () => fixture.handle(fixture.request),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(forwarded.body?.prompt_cache_key, "stable-analytics-key");
+      assert.equal(Object.prototype.hasOwnProperty.call(forwarded.body, "prompt_cache_options"), false);
+      if (fixture.expectsCacheOptionsWarning) {
+        assert.match(response.headers.get("x-uos-warning") ?? "", /prompt_cache_options_ignored/);
+      } else {
+        assert.doesNotMatch(response.headers.get("x-uos-warning") ?? "", /prompt_cache_options_ignored/);
+      }
+      assert.equal(getResponseTelemetry(response)?.promptCacheKeyPresent, true);
+      assert.equal(getResponseTelemetry(response)?.cachedInputTokens, 1024);
+      assert.equal(getResponseTelemetry(response)?.cacheWriteInputTokens, 512);
+
+      const logged = await withTerminalRequestLog(response, {
+        route: fixture.route,
+        startedAtMonotonicMs: performance.now(),
+        requestId: `cache-analytics-${index}`,
+        recordCacheAnalytics: (event) =>
+          recordPromptCacheAnalytics(event, {
+            kv: analyticsKv as unknown as Deno.Kv,
+            release: "0123456789abcdef0123456789abcdef01234567",
+            now: () => analyticsNow,
+          }),
+        recordTelemetry: () =>
+          Promise.resolve({
+            status: "ignored" as const,
+            reason: "unknown_release" as const,
+            release: null,
+            provider: null,
+            route: null,
+            model_hash: null,
+          }),
+      });
+      await logged.body?.cancel();
+    }
+
+    const analytics = await readPromptCacheAnalytics({
+      kv: analyticsKv as unknown as Deno.Kv,
+      now: () => analyticsNow,
+    });
+    assert.deepEqual(analytics.buckets[0], {
+      bucket_start_at_ms: analyticsNow,
+      bucket_end_at_ms: analyticsNow + 15 * 60_000,
+      input_tokens: 4096,
+      cached_input_tokens: 2048,
+      cache_write_input_tokens: 1024,
+      cache_write_reported_sample_count: 2,
+      cached_percentage: 50,
+      sample_count: 2,
+    });
   });
 
   await t.step("buffered Chat maps standard usage details", async () => {

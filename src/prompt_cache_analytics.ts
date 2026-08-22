@@ -8,7 +8,13 @@ export const PROMPT_CACHE_ANALYTICS_WINDOW_MS = 7 * 24 * 60 * 60_000;
 export const PROMPT_CACHE_ANALYTICS_RETENTION_MS = 8 * 24 * 60 * 60_000;
 
 const RELEASE_SHA = /^[a-f0-9]{7,64}$/i;
-const COUNTERS = ["input_tokens", "cached_input_tokens", "sample_count"] as const;
+const COUNTERS = [
+  "input_tokens",
+  "cached_input_tokens",
+  "cache_write_input_tokens",
+  "cache_write_reported_sample_count",
+  "sample_count",
+] as const;
 type Counter = typeof COUNTERS[number];
 
 export type PromptCacheAnalyticsEvent = Readonly<{
@@ -19,6 +25,7 @@ export type PromptCacheAnalyticsEvent = Readonly<{
   usageTelemetryStatus: string;
   inputTokens: number | null;
   cachedInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
 }>;
 
 export type PromptCacheAnalyticsOptions = Readonly<{
@@ -46,6 +53,8 @@ export type PromptCacheAnalyticsBucket = Readonly<{
   bucket_end_at_ms: number;
   input_tokens: number;
   cached_input_tokens: number;
+  cache_write_input_tokens: number | null;
+  cache_write_reported_sample_count: number;
   cached_percentage: number | null;
   sample_count: number;
 }>;
@@ -136,7 +145,11 @@ export const recordPromptCacheAnalytics = async (
   if (
     !safeCounter(event.inputTokens) ||
     !safeCounter(event.cachedInputTokens) ||
-    event.cachedInputTokens > event.inputTokens
+    event.cachedInputTokens > event.inputTokens ||
+    // Cache-write tokens are an independent breakpoint dimension and can
+    // overlap cache reads. Preserve the upstream value without imposing a
+    // separate input-total invariant that extractUsageTokens does not use.
+    (event.cacheWriteInputTokens !== null && !safeCounter(event.cacheWriteInputTokens))
   ) return recordResult("ignored", "invalid_usage");
 
   const nowMs = safeNow(options.now ?? Date.now);
@@ -145,11 +158,19 @@ export const recordPromptCacheAnalytics = async (
   if (!kv) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
 
   try {
-    const committed = await kv.atomic()
+    let operation = kv.atomic()
       .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "input_tokens"), BigInt(event.inputTokens))
       .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "cached_input_tokens"), BigInt(event.cachedInputTokens))
-      .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "sample_count"), 1n)
-      .commit();
+      .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "sample_count"), 1n);
+    if (event.cacheWriteInputTokens !== null) {
+      operation = operation
+        .sum(
+          promptCacheAnalyticsCounterKey(bucketStartAtMs, "cache_write_input_tokens"),
+          BigInt(event.cacheWriteInputTokens),
+        )
+        .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "cache_write_reported_sample_count"), 1n);
+    }
+    const committed = await operation.commit();
     if (!committed.ok) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
   } catch {
     return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
@@ -200,12 +221,20 @@ export const prunePromptCacheAnalytics = async (
 
 const projectedBucket = (
   bucketStartAtMs: number,
-  counters: Readonly<Record<Counter, number>>,
+  counters: Readonly<{
+    input_tokens: number;
+    cached_input_tokens: number;
+    cache_write_input_tokens: number | null;
+    cache_write_reported_sample_count: number;
+    sample_count: number;
+  }>,
 ): PromptCacheAnalyticsBucket => ({
   bucket_start_at_ms: bucketStartAtMs,
   bucket_end_at_ms: bucketStartAtMs + PROMPT_CACHE_ANALYTICS_BUCKET_MS,
   input_tokens: counters.input_tokens,
   cached_input_tokens: counters.cached_input_tokens,
+  cache_write_input_tokens: counters.cache_write_input_tokens,
+  cache_write_reported_sample_count: counters.cache_write_reported_sample_count,
   cached_percentage: counters.input_tokens === 0
     ? null
     : Math.round((counters.cached_input_tokens / counters.input_tokens) * 1_000_000) / 10_000,
@@ -256,16 +285,33 @@ export const readPromptCacheAnalytics = async (
   for (const [bucketStartAtMs, counters] of storedBuckets) {
     const inputTokens = counters.input_tokens;
     const cachedInputTokens = counters.cached_input_tokens;
+    const cacheWriteInputTokens = counters.cache_write_input_tokens;
+    const cacheWriteReportedSampleCount = counters.cache_write_reported_sample_count;
     const sampleCount = counters.sample_count;
+    const cacheWriteMissing = cacheWriteInputTokens === undefined && cacheWriteReportedSampleCount === undefined;
     if (
       !safeCounter(inputTokens) ||
       !safeCounter(cachedInputTokens) ||
       cachedInputTokens > inputTokens ||
       !safeCounter(sampleCount)
     ) continue;
+    let projectedCacheWriteInputTokens: number | null = null;
+    let projectedCacheWriteReportedSampleCount = 0;
+    if (!cacheWriteMissing) {
+      if (
+        !safeCounter(cacheWriteInputTokens) ||
+        !safeCounter(cacheWriteReportedSampleCount) ||
+        cacheWriteReportedSampleCount === 0 ||
+        cacheWriteReportedSampleCount > sampleCount
+      ) continue;
+      projectedCacheWriteInputTokens = cacheWriteInputTokens;
+      projectedCacheWriteReportedSampleCount = cacheWriteReportedSampleCount;
+    }
     buckets.push(projectedBucket(bucketStartAtMs, {
       input_tokens: inputTokens,
       cached_input_tokens: cachedInputTokens,
+      cache_write_input_tokens: projectedCacheWriteInputTokens,
+      cache_write_reported_sample_count: projectedCacheWriteReportedSampleCount,
       sample_count: sampleCount,
     }));
   }

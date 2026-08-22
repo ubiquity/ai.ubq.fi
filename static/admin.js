@@ -1787,6 +1787,10 @@ const capacityChartPromptCacheBuckets = (snapshot, chartWindow) => {
     const bucketStartAtMs = bucket?.bucket_start_at_ms;
     const inputTokens = bucket?.input_tokens;
     const cachedInputTokens = bucket?.cached_input_tokens;
+    const cacheWriteFieldsMissing = bucket?.cache_write_input_tokens === undefined &&
+      bucket?.cache_write_reported_sample_count === undefined;
+    const cacheWriteInputTokens = cacheWriteFieldsMissing ? null : bucket?.cache_write_input_tokens;
+    const cacheWriteReportedSampleCount = cacheWriteFieldsMissing ? 0 : bucket?.cache_write_reported_sample_count;
     const sampleCount = bucket?.sample_count;
     if (
       typeof bucketStartAtMs !== "number" || !Number.isFinite(bucketStartAtMs) ||
@@ -1794,6 +1798,12 @@ const capacityChartPromptCacheBuckets = (snapshot, chartWindow) => {
       typeof inputTokens !== "number" || !Number.isSafeInteger(inputTokens) || inputTokens <= 0 ||
       typeof cachedInputTokens !== "number" || !Number.isSafeInteger(cachedInputTokens) ||
       cachedInputTokens < 0 || cachedInputTokens > inputTokens ||
+      (cacheWriteInputTokens !== null &&
+        (typeof cacheWriteInputTokens !== "number" || !Number.isSafeInteger(cacheWriteInputTokens) ||
+          cacheWriteInputTokens < 0)) ||
+      typeof cacheWriteReportedSampleCount !== "number" || !Number.isSafeInteger(cacheWriteReportedSampleCount) ||
+      cacheWriteReportedSampleCount < 0 || cacheWriteReportedSampleCount > sampleCount ||
+      (cacheWriteInputTokens === null) !== (cacheWriteReportedSampleCount === 0) ||
       typeof sampleCount !== "number" || !Number.isSafeInteger(sampleCount) || sampleCount <= 0
     ) continue;
     buckets.push({
@@ -1801,6 +1811,8 @@ const capacityChartPromptCacheBuckets = (snapshot, chartWindow) => {
       bucketEndAtMs: bucketStartAtMs + bucketMs,
       inputTokens,
       cachedInputTokens,
+      cacheWriteInputTokens,
+      cacheWriteReportedSampleCount,
       sampleCount,
       cachedPercent: clampCapacityChartPercent((cachedInputTokens / inputTokens) * 100),
     });
@@ -2022,11 +2034,18 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     });
     cached.dataset.capacityCacheFill = "";
     const tooltip = capacityChartSvgElement("title");
+    const cacheWriteText = bucket.cacheWriteInputTokens === null
+      ? "cache writes unavailable"
+      : `${formatNumber(bucket.cacheWriteInputTokens)} written to cache across ${
+        formatNumber(bucket.cacheWriteReportedSampleCount)
+      } response${bucket.cacheWriteReportedSampleCount === 1 ? "" : "s"}`;
     tooltip.textContent = `${formatCapacityTimestamp(bucket.bucketStartAtMs)} · ${
       quotaPercentFormatter.format(bucket.cachedPercent)
-    }% cached · ${formatNumber(bucket.cachedInputTokens)} of ${formatNumber(bucket.inputTokens)} input tokens · ${
-      formatNumber(bucket.sampleCount)
-    } response${bucket.sampleCount === 1 ? "" : "s"}`;
+    }% cached · ${formatNumber(bucket.cachedInputTokens)} of ${
+      formatNumber(bucket.inputTokens)
+    } input tokens · ${cacheWriteText} · ${formatNumber(bucket.sampleCount)} response${
+      bucket.sampleCount === 1 ? "" : "s"
+    }`;
     group.setAttribute("aria-label", tooltip.textContent);
     group.append(tooltip, traffic, cached);
     svg.appendChild(group);
@@ -2345,12 +2364,17 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     ? ` · ${downtimeBridgeCount} OpenAI downtime bridge${downtimeBridgeCount === 1 ? "" : "s"}`
     : "";
   const latestCacheBucket = promptCacheBuckets.at(-1);
+  const latestCacheWrite = latestCacheBucket?.cacheWriteInputTokens === null
+    ? "cache writes unavailable"
+    : latestCacheBucket
+    ? `${formatNumber(latestCacheBucket.cacheWriteInputTokens)} written to cache`
+    : null;
   const cacheSuffix = snapshot?.prompt_cache?.status !== "ready"
     ? " · cache analytics unavailable"
     : latestCacheBucket
     ? ` · ${promptCacheBuckets.length} cache bucket${promptCacheBuckets.length === 1 ? "" : "s"} · latest ${
       quotaPercentFormatter.format(latestCacheBucket.cachedPercent)
-    }% cached at ${formatCapacityTimestamp(latestCacheBucket.bucketStartAtMs)}`
+    }% cached · ${latestCacheWrite} at ${formatCapacityTimestamp(latestCacheBucket.bucketStartAtMs)}`
     : " · no cache-token history yet";
   caption.textContent = samples.length
     ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${

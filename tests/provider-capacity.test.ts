@@ -580,6 +580,11 @@ Deno.test("capacity endpoint reads persisted state by default and probes only fo
   seed();
   kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "input_tokens"), { value: 200n } as Deno.KvU64);
   kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "cached_input_tokens"), { value: 100n } as Deno.KvU64);
+  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "cache_write_input_tokens"), { value: 50n } as Deno.KvU64);
+  kvStore.put(
+    promptCacheAnalyticsCounterKey(nowMs, "cache_write_reported_sample_count"),
+    { value: 2n } as Deno.KvU64,
+  );
   kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "sample_count"), { value: 2n } as Deno.KvU64);
   let calls = 0;
   const fetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -596,12 +601,13 @@ Deno.test("capacity endpoint reads persisted state by default and probes only fo
     cache_state?: string;
     prompt_cache?: {
       bucket_ms?: number;
-      buckets?: Array<{ cached_percentage?: number }>;
+      buckets?: Array<{ cached_percentage?: number; cache_write_input_tokens?: number }>;
     };
   };
   assert.equal(passiveBody.cache_state, "unavailable");
   assert.equal(passiveBody.prompt_cache?.bucket_ms, PROMPT_CACHE_ANALYTICS_BUCKET_MS);
   assert.equal(passiveBody.prompt_cache?.buckets?.[0]?.cached_percentage, 50);
+  assert.equal(passiveBody.prompt_cache?.buckets?.[0]?.cache_write_input_tokens, 50);
   assert.equal(calls, 0);
 
   const live = await handleProviderCapacity(

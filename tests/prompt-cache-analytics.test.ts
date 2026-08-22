@@ -28,13 +28,20 @@ const event = (overrides: Partial<Parameters<typeof recordPromptCacheAnalytics>[
   usageTelemetryStatus: "reported",
   inputTokens: 100,
   cachedInputTokens: 25,
+  cacheWriteInputTokens: 10,
   ...overrides,
 });
 
 const seedBucket = (
   kv: CountingKv,
   bucketStartAtMs: number,
-  counters: Readonly<{ inputTokens: number; cachedInputTokens: number; sampleCount: number }>,
+  counters: Readonly<{
+    inputTokens: number;
+    cachedInputTokens: number;
+    cacheWriteInputTokens?: number;
+    cacheWriteReportedSampleCount?: number;
+    sampleCount: number;
+  }>,
 ): void => {
   kv.seed(
     promptCacheAnalyticsCounterKey(bucketStartAtMs, "input_tokens"),
@@ -44,6 +51,18 @@ const seedBucket = (
     promptCacheAnalyticsCounterKey(bucketStartAtMs, "cached_input_tokens"),
     new Deno.KvU64(BigInt(counters.cachedInputTokens)),
   );
+  if (counters.cacheWriteInputTokens !== undefined) {
+    kv.seed(
+      promptCacheAnalyticsCounterKey(bucketStartAtMs, "cache_write_input_tokens"),
+      new Deno.KvU64(BigInt(counters.cacheWriteInputTokens)),
+    );
+  }
+  if (counters.cacheWriteReportedSampleCount !== undefined) {
+    kv.seed(
+      promptCacheAnalyticsCounterKey(bucketStartAtMs, "cache_write_reported_sample_count"),
+      new Deno.KvU64(BigInt(counters.cacheWriteReportedSampleCount)),
+    );
+  }
   kv.seed(
     promptCacheAnalyticsCounterKey(bucketStartAtMs, "sample_count"),
     new Deno.KvU64(BigInt(counters.sampleCount)),
@@ -56,7 +75,7 @@ Deno.test("prompt cache analytics aggregates cached-token share into UTC-aligned
 
   const first = await recordPromptCacheAnalytics(event(), { ...options, now: () => NOW_MS + 1 });
   const second = await recordPromptCacheAnalytics(
-    event({ inputTokens: 300, cachedInputTokens: 225 }),
+    event({ inputTokens: 300, cachedInputTokens: 225, cacheWriteInputTokens: 75 }),
     { ...options, now: () => NOW_MS + 5 * 60_000 },
   );
   const zero = await recordPromptCacheAnalytics(
@@ -78,6 +97,8 @@ Deno.test("prompt cache analytics aggregates cached-token share into UTC-aligned
       bucket_end_at_ms: NOW_MS + PROMPT_CACHE_ANALYTICS_BUCKET_MS,
       input_tokens: 400,
       cached_input_tokens: 250,
+      cache_write_input_tokens: 85,
+      cache_write_reported_sample_count: 2,
       cached_percentage: 62.5,
       sample_count: 2,
     },
@@ -86,6 +107,8 @@ Deno.test("prompt cache analytics aggregates cached-token share into UTC-aligned
       bucket_end_at_ms: NOW_MS + 2 * PROMPT_CACHE_ANALYTICS_BUCKET_MS,
       input_tokens: 200,
       cached_input_tokens: 0,
+      cache_write_input_tokens: 10,
+      cache_write_reported_sample_count: 1,
       cached_percentage: 0,
       sample_count: 1,
     },
@@ -103,6 +126,7 @@ Deno.test("prompt cache analytics keeps missing telemetry distinct from a report
     recordPromptCacheAnalytics(event({ provider: "gateway" }), options),
     recordPromptCacheAnalytics(event({ route: "embeddings" }), options),
     recordPromptCacheAnalytics(event({ cachedInputTokens: 101 }), options),
+    recordPromptCacheAnalytics(event({ cacheWriteInputTokens: -1 }), options),
     recordPromptCacheAnalytics(event(), { ...options, release: "unknown" }),
   ]);
 
@@ -112,6 +136,7 @@ Deno.test("prompt cache analytics keeps missing telemetry distinct from a report
     "not_completed_2xx",
     "unsupported_provider",
     "unsupported_route",
+    "invalid_usage",
     "invalid_usage",
     "unknown_release",
   ]);
@@ -136,6 +161,8 @@ Deno.test("prompt cache analytics preserves concurrent completions with atomic c
     bucket_end_at_ms: NOW_MS + PROMPT_CACHE_ANALYTICS_BUCKET_MS,
     input_tokens: 10_000,
     cached_input_tokens: 2_500,
+    cache_write_input_tokens: 1_000,
+    cache_write_reported_sample_count: 100,
     cached_percentage: 25,
     sample_count: 100,
   });
@@ -146,7 +173,13 @@ Deno.test("prompt cache analytics returns only valid buckets in the trailing sev
   const currentBucket = NOW_MS;
   const windowEnd = currentBucket + PROMPT_CACHE_ANALYTICS_BUCKET_MS;
   const windowStart = windowEnd - PROMPT_CACHE_ANALYTICS_WINDOW_MS;
-  const validCounters = { inputTokens: 80, cachedInputTokens: 40, sampleCount: 2 };
+  const validCounters = {
+    inputTokens: 80,
+    cachedInputTokens: 40,
+    cacheWriteInputTokens: 20,
+    cacheWriteReportedSampleCount: 2,
+    sampleCount: 2,
+  };
   seedBucket(kv, windowStart - PROMPT_CACHE_ANALYTICS_BUCKET_MS, validCounters);
   seedBucket(kv, windowStart, validCounters);
   seedBucket(kv, currentBucket, {
@@ -169,10 +202,42 @@ Deno.test("prompt cache analytics returns only valid buckets in the trailing sev
   seedBucket(kv, expiredBucket, validCounters);
   seedBucket(kv, olderExpiredBucket, validCounters);
   const pruned = await prunePromptCacheAnalytics({ kv: kv as unknown as Deno.Kv, now: () => NOW_MS });
-  assert.deepEqual(pruned, { status: "pruned", deleted: 6 });
-  for (const counter of ["input_tokens", "cached_input_tokens", "sample_count"] as const) {
+  assert.deepEqual(pruned, { status: "pruned", deleted: 10 });
+  for (
+    const counter of [
+      "input_tokens",
+      "cached_input_tokens",
+      "cache_write_input_tokens",
+      "cache_write_reported_sample_count",
+      "sample_count",
+    ] as const
+  ) {
     assert.equal(kv.entries.has(JSON.stringify(promptCacheAnalyticsCounterKey(expiredBucket, counter))), false);
     assert.equal(kv.entries.has(JSON.stringify(promptCacheAnalyticsCounterKey(olderExpiredBucket, counter))), false);
     assert.equal(kv.entries.has(JSON.stringify(promptCacheAnalyticsCounterKey(windowStart, counter))), true);
   }
+});
+
+Deno.test("prompt cache analytics keeps cache-write coverage explicit when providers omit it", async () => {
+  const kv = new CountingKv();
+  const options = { kv: kv as unknown as Deno.Kv, release: RELEASE, now: () => NOW_MS };
+
+  await recordPromptCacheAnalytics(event({ cacheWriteInputTokens: null }), options);
+  const unavailableWrite = await readPromptCacheAnalytics({ kv: kv as unknown as Deno.Kv, now: () => NOW_MS });
+  assert.deepEqual(unavailableWrite.buckets[0], {
+    bucket_start_at_ms: NOW_MS,
+    bucket_end_at_ms: NOW_MS + PROMPT_CACHE_ANALYTICS_BUCKET_MS,
+    input_tokens: 100,
+    cached_input_tokens: 25,
+    cache_write_input_tokens: null,
+    cache_write_reported_sample_count: 0,
+    cached_percentage: 25,
+    sample_count: 1,
+  });
+
+  await recordPromptCacheAnalytics(event({ cacheWriteInputTokens: 0 }), options);
+  const mixedCoverage = await readPromptCacheAnalytics({ kv: kv as unknown as Deno.Kv, now: () => NOW_MS });
+  assert.equal(mixedCoverage.buckets[0]?.cache_write_input_tokens, 0);
+  assert.equal(mixedCoverage.buckets[0]?.cache_write_reported_sample_count, 1);
+  assert.equal(mixedCoverage.buckets[0]?.sample_count, 2);
 });
