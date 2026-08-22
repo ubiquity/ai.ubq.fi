@@ -202,12 +202,14 @@ Deno.test("stage heartbeat emits safe progress and always cancels its timer", as
 Deno.test("sentinel schedule windows cover 24 hours daily and an overlapping 20 minutes for incidents", () => {
   const daily = computeSentinelInterval("daily", now);
   const incident = computeSentinelInterval("incident", now);
+  const nextIncident = computeSentinelInterval("incident", now + 5 * 60_000);
   const observe = computeSentinelInterval("observe", now);
   const preview = computeSentinelInterval("preview", now);
   assert.equal(daily.duration_ms, DAILY_WINDOW_MS);
   assert.equal(daily.start, "2026-08-20T06:00:00.000Z");
   assert.equal(incident.duration_ms, INCIDENT_WINDOW_MS);
   assert.equal(incident.start, "2026-08-21T05:40:00.000Z");
+  assert.equal(Date.parse(incident.end) - Date.parse(nextIncident.start), 15 * 60_000);
   assert.equal(observe.duration_ms, OBSERVE_WINDOW_MS);
   assert.equal(observe.start, "2026-08-21T03:55:00.000Z");
   assert.deepEqual(preview, incident);
@@ -555,6 +557,7 @@ Deno.test("retained replay loading fails closed on aggregate budgets and dedupli
 
 Deno.test("sentinel event fingerprints are deterministic and duplicate events collapse", async () => {
   const interval = computeSentinelInterval("incident", now);
+  const nextScheduledInterval = computeSentinelInterval("incident", now + 5 * 60_000);
   const first = await eventDedupeKey({ repository: "ubiquity/ai.ubq.fi", event: "incident", interval, signalId: "a" });
   const again = await eventDedupeKey({ repository: "ubiquity/ai.ubq.fi", event: "incident", interval, signalId: "a" });
   const delayedWindow = await eventDedupeKey({
@@ -569,9 +572,16 @@ Deno.test("sentinel event fingerprints are deterministic and duplicate events co
     interval,
     signalId: "b",
   });
+  const scheduled = await eventDedupeKey({ repository: "ubiquity/ai.ubq.fi", event: "incident", interval });
+  const nextScheduled = await eventDedupeKey({
+    repository: "ubiquity/ai.ubq.fi",
+    event: "incident",
+    interval: nextScheduledInterval,
+  });
   assert.equal(first, again);
   assert.equal(first, delayedWindow);
   assert.notEqual(first, different);
+  assert.notEqual(scheduled, nextScheduled);
   assert.equal(sentinelEvidenceArtifactName(first), `sentinel-evidence-v1-${first}`);
   assert.deepEqual(deduplicateEvents([{ id: first }, { id: first }, { id: different }], (item) => item.id), [
     { id: first },

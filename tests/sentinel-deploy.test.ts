@@ -5,13 +5,18 @@ import {
   normalizeRevisionStatus,
   type SentinelFetch,
 } from "../scripts/sentinel/deploy.ts";
-import { GitHubActionsClient, type GitHubFetch } from "../scripts/sentinel/github.ts";
+import { GitHubActionsClient, type GitHubFetch, MAX_ARTIFACT_METADATA_PAGES } from "../scripts/sentinel/github.ts";
 
 const OLD_SHA = "1".repeat(40);
 const NEW_SHA = "2".repeat(40);
 const WRONG_SHA = "3".repeat(40);
 const DENO_TOKEN = "deno-test-token";
 const GITHUB_TOKEN = "github-test-token";
+
+Deno.test("GitHub artifact pagination covers ninety days of five-minute Sentinel runs", () => {
+  assert.ok(MAX_ARTIFACT_METADATA_PAGES >= 521);
+  assert.ok(MAX_ARTIFACT_METADATA_PAGES <= 600);
+});
 
 interface SeenRequest {
   readonly url: URL;
