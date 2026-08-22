@@ -21,6 +21,7 @@ import {
   refreshProviderCapacity,
   sampleProviderCapacityForCron,
 } from "../src/provider_capacity.ts";
+import { PROMPT_CACHE_ANALYTICS_BUCKET_MS, promptCacheAnalyticsBucketKey } from "../src/prompt_cache_analytics.ts";
 import {
   listProviderCapacityDowntimeEvents,
   PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX,
@@ -577,6 +578,14 @@ Deno.test("capacity view backfills recent verified reset events from the redacte
 
 Deno.test("capacity endpoint reads persisted state by default and probes only for refresh=live", async () => {
   seed();
+  kvStore.put(promptCacheAnalyticsBucketKey(nowMs), {
+    v: 1,
+    bucket_start_at_ms: nowMs,
+    input_tokens: 200,
+    cached_input_tokens: 100,
+    sample_count: 2,
+    updated_at_ms: nowMs,
+  });
   let calls = 0;
   const fetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     calls += 1;
@@ -588,7 +597,16 @@ Deno.test("capacity endpoint reads persisted state by default and probes only fo
     { kv: kvStub, fetcher: () => Promise.reject(new Error("passive capacity must not fetch")), now: () => nowMs },
   );
   assert.equal(passive.status, 200);
-  assert.equal((await passive.json() as { cache_state?: string }).cache_state, "unavailable");
+  const passiveBody = await passive.json() as {
+    cache_state?: string;
+    prompt_cache?: {
+      bucket_ms?: number;
+      buckets?: Array<{ cached_percentage?: number }>;
+    };
+  };
+  assert.equal(passiveBody.cache_state, "unavailable");
+  assert.equal(passiveBody.prompt_cache?.bucket_ms, PROMPT_CACHE_ANALYTICS_BUCKET_MS);
+  assert.equal(passiveBody.prompt_cache?.buckets?.[0]?.cached_percentage, 50);
   assert.equal(calls, 0);
 
   const live = await handleProviderCapacity(
