@@ -4,9 +4,9 @@ import type { NativeReviewFinding, NativeReviewReport, TriageSeverity } from "./
 const PRIORITY_PATTERN = /(?:^|\s)\[(P[0-3])\]\s+(.+)$/;
 const LOCATION_PATTERN = /(?:`)?([A-Za-z0-9_.@/+\-]+:\d+(?:-\d+)?(?::\d+)?)(?:`)?/;
 const NO_FINDINGS_PATTERNS = [
-  /\bno findings\b/i,
-  /\bdid not find any (?:actionable )?(?:issues|findings|defects?)\b/i,
-  /\bno (?:actionable )?(?:issues|findings|defects?)(?: (?:was|were))? (?:found|identified|detected)\b/i,
+  /^no findings\.?$/i,
+  /^(?:i|we) did not find any (?:actionable )?(?:issues|findings|defects?)\.?$/i,
+  /^no (?:actionable )?(?:issues|findings|defects?)(?: (?:was|were))? (?:found|identified|detected)(?: in (?:the )?(?:changes|patch|diff|candidate|implementation|code under review))?\.(?: (?:focused )?(?:sentinel )?tests? (?:pass|passed)\.)?$/i,
 ];
 const CHECKOUT_PATH_MARKERS = ["/candidate-worktree/", "/checkout/"];
 
@@ -73,10 +73,11 @@ export const parseNativeReview = async (raw: string, round: number): Promise<Nat
   if (current) pending.push(current);
 
   if (pending.length === 0) {
+    const normalized = raw.trim().replace(/\s+/g, " ");
     return {
       schema_version: 1,
       round,
-      parse_status: NO_FINDINGS_PATTERNS.some((pattern) => pattern.test(raw)) ? "no_findings" : "unparseable",
+      parse_status: NO_FINDINGS_PATTERNS.some((pattern) => pattern.test(normalized)) ? "no_findings" : "unparseable",
       findings: [],
     };
   }

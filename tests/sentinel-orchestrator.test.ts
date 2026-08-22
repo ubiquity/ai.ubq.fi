@@ -676,6 +676,20 @@ Deno.test("native review parser accepts explicit Codex clean verdicts and offici
     (await parseNativeReview("I did not find any actionable defects.", 1)).parse_status,
     "no_findings",
   );
+  assert.equal(
+    (await parseNativeReview(
+      "No actionable defects were found in the replay code. However, the workflow can lose a repair signal under load.",
+      1,
+    )).parse_status,
+    "unparseable",
+  );
+  assert.equal(
+    (await parseNativeReview(
+      "No actionable defects were found in the replay code, but the workflow can lose a repair signal under load.",
+      1,
+    )).parse_status,
+    "unparseable",
+  );
   assert.equal((await parseNativeReview("The patch looks correct.", 1)).parse_status, "unparseable");
   assert.equal(
     (await parseNativeReview("Reviewer failed to output a response.", 1)).parse_status,

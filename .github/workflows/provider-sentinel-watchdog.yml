@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           dispatch_failures=0
-          for iteration in $(seq 1 68); do
+          for iteration in $(seq 1 67); do
             next_tick_epoch=$(( $(date +%s) + 300 ))
             slot="$(date -u +%Y%m%dT%H%M%SZ)"
             signal_id="watchdog-${GITHUB_RUN_ID}-${iteration}-${slot}"
@@ -52,16 +52,14 @@ jobs:
             else
               echo "Dispatched ${signal_id} at $(date -u +%Y-%m-%dT%H:%M:%SZ)."
             fi
-            if [ "$iteration" -lt 68 ]; then
-              while [ "$(date +%s)" -lt "$next_tick_epoch" ]; do
-                remaining=$((next_tick_epoch - $(date +%s)))
-                if [ "$remaining" -gt 60 ]; then
-                  sleep 60
-                elif [ "$remaining" -gt 0 ]; then
-                  sleep "$remaining"
-                fi
-              done
-            fi
+            while [ "$(date +%s)" -lt "$next_tick_epoch" ]; do
+              remaining=$((next_tick_epoch - $(date +%s)))
+              if [ "$remaining" -gt 60 ]; then
+                sleep 60
+              elif [ "$remaining" -gt 0 ]; then
+                sleep "$remaining"
+              fi
+            done
           done
           if [ "$dispatch_failures" -gt 0 ]; then
             echo "::error::Provider Sentinel watchdog missed ${dispatch_failures} incident dispatches."
@@ -73,17 +71,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          queued="$({
-            gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/provider-sentinel-watchdog.yml/runs?per_page=100" \
-              --jq '[.workflow_runs[] | select((.id | tostring) != env.GITHUB_RUN_ID and (.status == "queued" or .status == "pending" or .status == "waiting" or .status == "requested"))] | length'
-          })"
+          queued=""
+          for attempt in 1 2 3; do
+            if queued="$(
+              timeout 30s gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/provider-sentinel-watchdog.yml/runs?per_page=100" \
+                --jq '[.workflow_runs[] | select((.id | tostring) != env.GITHUB_RUN_ID and (.status == "queued" or .status == "pending" or .status == "waiting" or .status == "requested"))] | length'
+            )"; then
+              break
+            fi
+            queued=""
+            sleep 10
+          done
+          if ! [[ "$queued" =~ ^[0-9]+$ ]]; then
+            echo "::error::Provider Sentinel watchdog could not inspect queued successors."
+            exit 1
+          fi
           if [ "$queued" -gt 0 ]; then
             echo "A queued watchdog successor already exists."
             exit 0
           fi
-          gh api \
-            --method POST \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/provider-sentinel-watchdog.yml/dispatches" \
-            -f ref=development
-          echo "Dispatched the next resident watchdog."
+          for attempt in 1 2 3; do
+            if timeout 30s gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/provider-sentinel-watchdog.yml/dispatches" \
+              -f ref=development; then
+              echo "Dispatched the next resident watchdog."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Provider Sentinel watchdog could not dispatch its successor."
+          exit 1

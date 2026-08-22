@@ -239,13 +239,18 @@ Deno.test({
   ignore: fileSystemTestsUnavailable,
   async fn() {
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel-watchdog.yml");
-    assert(workflow.includes("for iteration in $(seq 1 68)"), "Watchdog must stay below the six-hour runner limit");
+    assert(workflow.includes("for iteration in $(seq 1 67)"), "Watchdog must stay below the six-hour runner limit");
     assert(workflow.includes("next_tick_epoch=$(( $(date +%s) + 300 ))"), "Watchdog must use fixed five-minute ticks");
+    assert(!workflow.includes('if [ "$iteration" -lt'), "Watchdog must wait one final tick before handing off");
     assert(workflow.includes("event_type=provider_incident"), "Watchdog must dispatch the incident event");
     assert(!workflow.includes('cron: "*/5 * * * *"'), "Watchdog must not duplicate the incident schedule");
     assert(
       workflow.includes('"repos/${GITHUB_REPOSITORY}/actions/workflows/provider-sentinel-watchdog.yml/dispatches"'),
       "Watchdog must rearm its successor",
+    );
+    assert(
+      workflow.match(/for attempt in 1 2 3/gu)?.length === 3,
+      "Watchdog dispatch and rearm API calls must use bounded retries",
     );
   },
 });
