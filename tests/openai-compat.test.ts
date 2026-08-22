@@ -3413,6 +3413,7 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
           const dispatchedProviders: string[] = [];
           let upstreamModel: unknown = null;
           let upstreamReasoningEffort: unknown = null;
+          let upstreamTextFormat: unknown = null;
           const response = await withFetchMock(
             (url, bodyText, init) => {
               upstreamUrls.push(url);
@@ -3422,6 +3423,7 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
               upstreamModel = upstreamRequest?.model ?? null;
               upstreamReasoningEffort = (upstreamRequest?.reasoning as Record<string, unknown> | undefined)?.effort ??
                 null;
+              upstreamTextFormat = (upstreamRequest?.text as Record<string, unknown> | undefined)?.format ?? null;
               return new Response(sseResponse(baseSseChunks()).body, {
                 status: 200,
                 headers: {
@@ -3480,6 +3482,8 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
           assert.deepEqual(dispatchedProviders, ["surplus"]);
           assert.equal(upstreamModel, TEMPORARY_FREE_SURPLUS_TEST_MODEL);
           assert.equal(upstreamReasoningEffort, routeCase.reasoningEffort);
+          assert.deepEqual(upstreamTextFormat, routeCase.route === "chat" ? { type: "json_object" } : null);
+          assert.ok(!parseWarnings(response.headers.get("x-uos-warning")).includes("response_format_ignored"));
           const telemetry = getResponseTelemetry(response);
           assert.equal(telemetry?.provider, "surplus");
           assert.equal(telemetry?.fallbackReason, null);

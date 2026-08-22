@@ -7778,22 +7778,28 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   if (!promptCacheControls.ok) {
     return openaiError(400, promptCacheControls.message, "invalid_request_error", { param: promptCacheControls.param });
   }
+  const jsonObjectTextFormat = isRecord(rawRecord.response_format) &&
+      Object.keys(rawRecord.response_format).length === 1 && rawRecord.response_format.type === "json_object"
+    ? { type: "json_object" as const }
+    : null;
+  const handledKeys = new Set([
+    "messages",
+    "model",
+    "stream",
+    "reasoning_effort",
+    "max_completion_tokens",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "prompt_cache_key",
+    "prompt_cache_options",
+    "prompt_cache_retention",
+    "stream_options",
+  ]);
+  if (jsonObjectTextFormat) handledKeys.add("response_format");
   const warnings = buildIgnoredWarnings(
     rawRecord,
-    new Set([
-      "messages",
-      "model",
-      "stream",
-      "reasoning_effort",
-      "max_completion_tokens",
-      "tools",
-      "tool_choice",
-      "parallel_tool_calls",
-      "prompt_cache_key",
-      "prompt_cache_options",
-      "prompt_cache_retention",
-      "stream_options",
-    ]),
+    handledKeys,
   );
 
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
@@ -7901,6 +7907,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     reasoning: reasoningValue,
     instructions,
   });
+  if (jsonObjectTextFormat) codexBody.text = { format: jsonObjectTextFormat };
   if (maxCompletionTokens.value !== undefined) codexBody.max_output_tokens = maxCompletionTokens.value;
   const passthroughKeys: PassthroughToolSchemaKey[] = [
     "tools",
