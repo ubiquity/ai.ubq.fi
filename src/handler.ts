@@ -444,6 +444,9 @@ export const withTerminalRequestLog = (
       deliveryOutcome,
       streamReadFailure,
       suppressSentinelReplay: suppressSentinelReplay || replayFinalization !== null,
+      // A replay finalization owns the capture until its background cleanup
+      // finishes. Do not let terminal logging zero the request bytes first.
+      sentinelReplayInput: replayFinalization === null ? input.sentinelReplayInput : null,
       resolveClientBodyObservation: async () => clientBodyObservation ?? await bufferedObservation,
     }).catch(() => {
       // Terminal logging and its durable baseline counters are best effort;
@@ -475,7 +478,11 @@ export const withTerminalRequestLog = (
     return (async () => {
       try {
         await finalizeCompletion();
-        await persistReplayAtApplicationTerminal();
+        // Replay capture is best effort. It may perform compression,
+        // encryption, and several remote KV operations, none of which may
+        // delay a response that is already computed. The finalization promise
+        // retains ownership of the capture bytes until its cleanup finishes.
+        void persistReplayAtApplicationTerminal();
         return response;
       } finally {
         if (deliveryOutcome) {
