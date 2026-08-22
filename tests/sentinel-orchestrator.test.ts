@@ -85,6 +85,7 @@ Deno.test("preview completion restores only a candidate accepted by monitoring",
 Deno.test("implementation scope protects Sentinel and nested Codex instruction surfaces", () => {
   for (
     const path of [
+      ".gitleaksignore",
       "AGENTS.md",
       "src/AGENTS.md",
       "nested/AGENTS.override.md",

@@ -32,11 +32,11 @@ provide `client_payload.signal_id`; repeated deliveries of that ID share one key
 anchored interval in the key. Before raw-log capture, the cycle looks for a 90-day evidence artifact named exactly for
 that key and exits as a duplicate when one exists. Evidence artifacts from separate runs may use the same name.
 
-The workflow uses one repository-wide concurrency group, does not cancel an active run, and sets `queue: max`. GitHub
-can therefore retain up to 100 waiting cycles instead of replacing the one pending cycle. This keeps the daily 06:00 run
-and the simultaneous incident run distinct. Scheduled and repository-dispatch runs are skipped unless the repository
-variable `SENTINEL_AUTONOMY_ENABLED` is exactly `true`. Manual preview runs remain eligible while that gate is disabled,
-so the first real repair cycle can be supervised before autonomous production operation begins.
+The workflow uses one repository-wide concurrency group and does not cancel an active run. GitHub retains at most one
+running and one pending cycle for that group; a newer queued event may replace the existing pending event. Scheduled and
+repository-dispatch runs are skipped unless the repository variable `SENTINEL_AUTONOMY_ENABLED` is exactly `true`.
+Manual preview runs remain eligible while that gate is disabled, so the first real repair cycle can be supervised before
+autonomous production operation begins.
 
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective

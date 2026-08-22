@@ -1,4 +1,5 @@
 const PROTECTED_IMPLEMENTATION_PATHS = Object.freeze([
+  ".gitleaksignore",
   ".github/workflows/provider-sentinel.yml",
   ".github/workflows/deno-deploy.yml",
   "AGENTS.md",

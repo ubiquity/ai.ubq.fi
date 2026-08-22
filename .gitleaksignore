@@ -1,0 +1,5 @@
+# Exact false positives: PEM parser delimiters and a documented 40-character Git commit SHA.
+scripts/setup-instance.ts:private-key:95
+docs/sub2api-internal-reliability-gap-audit-handoff-2026-08-21.md:generic-api-key:33
+809c69c5714c3b3cb7e0dbf69c298d4b90952e4a:scripts/setup-instance.ts:private-key:95
+f78251f4e995a189f6f0626ea0abab4a0ac2ec95:docs/sub2api-internal-reliability-gap-audit-handoff-2026-08-21.md:generic-api-key:33
