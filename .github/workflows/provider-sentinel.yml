@@ -3,8 +3,8 @@ run-name: Provider Sentinel ${{ github.event_name }} ${{ github.run_id }}
 
 on:
   schedule:
-    # Daily repair cycle for the preceding 24 hours.
-    - cron: "0 6 * * *"
+    # Hourly encrypted evidence archival. Incidents trigger repair separately.
+    - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       sentinel_mode:
@@ -155,8 +155,8 @@ jobs:
               esac
               ;;
             schedule)
-              if [ "${{ github.event.schedule }}" = "0 6 * * *" ]; then
-                mode=daily
+              if [ "${{ github.event.schedule }}" = "0 * * * *" ]; then
+                mode=hourly
               else
                 echo "::error::Unsupported Provider Sentinel schedule."
                 exit 1
@@ -228,6 +228,7 @@ jobs:
           deno-version: 2.9.5
 
       - name: Install isolated-agent prerequisites
+        if: github.event_name != 'schedule'
         shell: bash
         run: |
           set -euo pipefail
@@ -254,6 +255,7 @@ jobs:
             tests/*.ts
 
       - name: Validate pinned Codex CLI argument contract
+        if: github.event_name != 'schedule'
         shell: bash
         run: |
           set -euo pipefail

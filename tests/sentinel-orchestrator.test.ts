@@ -10,6 +10,7 @@ import {
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
   evaluateRollbackPreflight,
+  evaluateSentinelTriageGate,
   IMPLEMENTATION_CONTINUATION_MS,
   IMPLEMENTATION_INITIAL_MS,
   implementationPrompt,
@@ -63,9 +64,10 @@ import {
 } from "../scripts/sentinel/types.ts";
 import {
   computeSentinelInterval,
-  DAILY_WINDOW_MS,
   deduplicateEvents,
   eventDedupeKey,
+  HOURLY_OVERLAP_MS,
+  HOURLY_WINDOW_MS,
   INCIDENT_WINDOW_MS,
   OBSERVE_WINDOW_MS,
 } from "../scripts/sentinel/windows.ts";
@@ -85,7 +87,7 @@ Deno.test("incident triage is bounded and unauthenticated model probes are class
   assert.equal(TRIAGE_INCIDENT_MS, 6 * 60_000);
   assert.equal(triageExpectedMaximumRuntimeMs("incident"), TRIAGE_INCIDENT_MS);
   assert.equal(triageExpectedMaximumRuntimeMs("preview"), TRIAGE_INCIDENT_MS);
-  assert.equal(triageExpectedMaximumRuntimeMs("daily"), undefined);
+  assert.equal(triageExpectedMaximumRuntimeMs("hourly"), undefined);
   assert.equal(triageExpectedMaximumRuntimeMs("observe"), undefined);
 
   const prompt = triagePrompt(
@@ -98,6 +100,34 @@ Deno.test("incident triage is bounded and unauthenticated model probes are class
   assert.match(prompt, /GET \/v1\/models response with 401 invalid_api_key is expected gateway behavior/);
   assert.match(prompt, /not repository-actionable without evidence of a repository-owned caller/);
   assert.match(prompt, /public model catalog is GET \/uos\/models\/catalog/);
+});
+
+Deno.test("automatic Codex triage runs only for durable incidents", () => {
+  assert.deepEqual(evaluateSentinelTriageGate("hourly", 0), {
+    required: false,
+    reason: "hourly_archive_only",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("hourly", 3), {
+    required: false,
+    reason: "hourly_archive_only",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("incident", 0), {
+    required: true,
+    reason: "incident_signal",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("preview", 0), {
+    required: false,
+    reason: "preview_no_failure_capture",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("preview", 1), {
+    required: true,
+    reason: "preview_failure_capture",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("observe", 0), {
+    required: true,
+    reason: "explicit_observation",
+  });
+  assert.throws(() => evaluateSentinelTriageGate("hourly", -1), /capture count/);
 });
 
 Deno.test("preview completion restores only a candidate accepted by monitoring", () => {
@@ -137,7 +167,7 @@ Deno.test("implementation prompt tells agents to block protected repairs before 
   const prompt = implementationPrompt(
     {
       schema_version: 1,
-      interval: computeSentinelInterval("daily", now),
+      interval: computeSentinelInterval("hourly", now),
       findings: [],
       no_findings_reason: "No evidence-backed finding in the fixture.",
     },
@@ -244,14 +274,17 @@ Deno.test("stage heartbeat emits safe progress and always cancels its timer", as
   assert.deepEqual(cleared, [17, 23]);
 });
 
-Deno.test("sentinel schedule windows cover 24 hours daily and an overlapping 20 minutes for incidents", () => {
-  const daily = computeSentinelInterval("daily", now);
+Deno.test("sentinel schedule windows overlap hourly and incident runs", () => {
+  const hourly = computeSentinelInterval("hourly", now);
+  const delayedHourly = computeSentinelInterval("hourly", now + 70 * 60_000);
   const incident = computeSentinelInterval("incident", now);
   const nextIncident = computeSentinelInterval("incident", now + 5 * 60_000);
   const observe = computeSentinelInterval("observe", now);
   const preview = computeSentinelInterval("preview", now);
-  assert.equal(daily.duration_ms, DAILY_WINDOW_MS);
-  assert.equal(daily.start, "2026-08-20T06:00:00.000Z");
+  assert.equal(HOURLY_OVERLAP_MS, 20 * 60_000);
+  assert.equal(hourly.duration_ms, HOURLY_WINDOW_MS);
+  assert.equal(hourly.start, "2026-08-21T04:40:00.000Z");
+  assert.ok(Date.parse(delayedHourly.start) <= Date.parse(hourly.end));
   assert.equal(incident.duration_ms, INCIDENT_WINDOW_MS);
   assert.equal(incident.start, "2026-08-21T05:40:00.000Z");
   assert.equal(Date.parse(incident.end) - Date.parse(nextIncident.start), 15 * 60_000);
@@ -267,9 +300,9 @@ Deno.test("durable incident windows include the first failure within replay rete
   assert.equal(interval.duration_ms, 2 * 60 * 60_000);
   assert.equal(parseIncidentStartMs("incident", String(firstFailure)), firstFailure);
   assert.throws(() => parseIncidentStartMs("incident", undefined), /positive integer/);
-  assert.throws(() => parseIncidentStartMs("daily", String(firstFailure)), /Only incident mode/);
+  assert.throws(() => parseIncidentStartMs("hourly", String(firstFailure)), /Only incident mode/);
   assert.throws(() => computeSentinelInterval("incident", now, now - 49 * 60 * 60_000), /retained interval/);
-  assert.throws(() => computeSentinelInterval("daily", now, firstFailure), /Only incident mode/);
+  assert.throws(() => computeSentinelInterval("hourly", now, firstFailure), /Only incident mode/);
 });
 
 Deno.test("deployment monitoring keeps 30-second identity probes and reports every five minutes", () => {
@@ -285,7 +318,7 @@ Deno.test("observe mode is triage-only and never enables autonomous repair", () 
   assert.equal(isObserveOnlyMode("observe"), true);
   assert.equal(isObserveOnlyMode("incident"), false);
   assert.equal(isAutonomousMode("observe"), false);
-  assert.throws(() => parseMode(["--mode", "unknown"]), /daily\|incident\|observe\|preview/);
+  assert.throws(() => parseMode(["--mode", "unknown"]), /hourly\|incident\|observe\|preview/);
 });
 
 Deno.test("every structured-output property declares an explicit JSON Schema type", () => {
@@ -912,7 +945,7 @@ Deno.test("SSE inspection recognizes failure terminals and retained replay selec
 Deno.test("implementation contract requires a disposition for every triage finding", () => {
   const triage: TriageReport = {
     schema_version: 1,
-    interval: computeSentinelInterval("daily", now),
+    interval: computeSentinelInterval("hourly", now),
     findings: [{
       id: "one",
       fingerprint: "1".repeat(64),
@@ -956,7 +989,7 @@ Deno.test("implementation contract requires a disposition for every triage findi
 });
 
 Deno.test("triage requires a concrete reason only when it has no findings", () => {
-  const interval = computeSentinelInterval("daily", now);
+  const interval = computeSentinelInterval("hourly", now);
   assert.equal(isTriageReport({ schema_version: 1, interval, findings: [], no_findings_reason: "" }), false);
   assert.equal(
     isTriageReport({ schema_version: 1, interval, findings: [], no_findings_reason: "No failures in the interval." }),

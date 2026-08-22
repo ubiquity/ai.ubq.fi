@@ -1,7 +1,8 @@
 import type { SentinelMode } from "./policy.ts";
 import type { SentinelInterval } from "./types.ts";
 
-export const DAILY_WINDOW_MS = 24 * 60 * 60 * 1_000;
+export const HOURLY_OVERLAP_MS = 20 * 60 * 1_000;
+export const HOURLY_WINDOW_MS = 60 * 60 * 1_000 + HOURLY_OVERLAP_MS;
 export const INCIDENT_WINDOW_MS = 20 * 60 * 1_000;
 export const INCIDENT_MAX_LOOKBACK_MS = 48 * 60 * 60 * 1_000;
 // The private observation workflow runs every two hours. Five minutes of
@@ -29,7 +30,7 @@ export const computeSentinelInterval = (
       duration_ms: nowMs - startMs,
     };
   }
-  const durationMs = mode === "daily" ? DAILY_WINDOW_MS : mode === "observe" ? OBSERVE_WINDOW_MS : INCIDENT_WINDOW_MS;
+  const durationMs = mode === "hourly" ? HOURLY_WINDOW_MS : mode === "observe" ? OBSERVE_WINDOW_MS : INCIDENT_WINDOW_MS;
   return {
     start: new Date(nowMs - durationMs).toISOString(),
     end: new Date(nowMs).toISOString(),

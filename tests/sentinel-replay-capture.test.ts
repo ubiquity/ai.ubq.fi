@@ -26,6 +26,7 @@ import {
   type SentinelFailureObservation,
   sentinelFailureSignature,
   shouldPersistSentinelReplay,
+  shouldSignalSentinelIncident,
   zeroSentinelReplayInput,
 } from "../src/sentinel_replay_capture.ts";
 import {
@@ -328,6 +329,171 @@ Deno.test("sentinel failure classifier excludes success and client cancellation"
       terminal_type: "response.completed",
       failure_kind: "stale_primary_failure",
     })),
+    false,
+  );
+});
+
+Deno.test("sentinel incident signals require trusted provider or gateway evidence", () => {
+  for (const status of [400, 401, 404, 429]) {
+    const internal = failedObservation({
+      status,
+      stream: false,
+      terminal_type: "http.error",
+      failure_kind: null,
+    });
+    assert.equal(
+      shouldSignalSentinelIncident(
+        internal,
+        failedClientObservation({
+          status,
+          stream: false,
+          terminal_type: "http.error",
+          failure_kind: null,
+        }),
+      ),
+      false,
+    );
+    assert.equal(shouldPersistSentinelReplay(internal), true);
+  }
+
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 200, stream: true, terminal_type: "response.failed", failure_kind: null }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        terminal_type: "response.failed",
+        failure_kind: null,
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 200, stream: true, terminal_type: "response.failed", failure_kind: null }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        terminal_type: "response.failed",
+        failure_kind: "server_error",
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 400, stream: false, terminal_type: "http.error", failure_kind: null }),
+      failedClientObservation({
+        status: 400,
+        stream: false,
+        terminal_type: "http.error",
+        failure_kind: "invalid_request_error",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 500, terminal_type: "http.error", failure_kind: null }),
+      failedClientObservation({ status: 500, terminal_type: "http.error", failure_kind: null }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 200, stream: true, terminal_type: "error", failure_kind: "read_error" }),
+      failedClientObservation({ status: 200, stream: true, terminal_type: "error", failure_kind: "read_error" }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({
+        status: 200,
+        stream: true,
+        completed: true,
+        terminal_type: "response.completed",
+        failure_kind: null,
+      }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        completed: true,
+        terminal_type: "response.completed",
+        failure_kind: null,
+        framing_valid: false,
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({
+        status: 200,
+        stream: true,
+        completed: false,
+        terminal_type: "response.incomplete",
+        failure_kind: "max_output_tokens",
+      }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        completed: false,
+        terminal_type: "response.incomplete",
+        failure_kind: "max_output_tokens",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({
+        status: 200,
+        stream: true,
+        completed: false,
+        terminal_type: "response.incomplete",
+        failure_kind: "response_incomplete:provider_internal_deadline",
+      }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        completed: false,
+        terminal_type: "response.incomplete",
+        failure_kind: "response_incomplete:provider_internal_deadline",
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({
+        status: 200,
+        stream: true,
+        completed: true,
+        terminal_type: "response.completed",
+        failure_kind: "stale_primary_failure",
+      }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        completed: true,
+        terminal_type: "response.completed",
+        failure_kind: "stale_primary_failure",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 499, stream: true, terminal_type: "cancelled", failure_kind: "request_cancelled" }),
+      failedClientObservation({
+        status: 499,
+        stream: true,
+        terminal_type: "cancelled",
+        failure_kind: "request_cancelled",
+        framing_valid: false,
+      }),
+    ),
     false,
   );
 });

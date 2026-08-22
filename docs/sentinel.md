@@ -12,7 +12,9 @@ The `Provider Sentinel` Actions workflow has three modes:
 - `preview`: a manual `workflow_dispatch` run on the trusted `development` ref. It is supervised and may deploy only the
   exact candidate SHA to `p-ai-ubq-fi`. It does not push `development` or promote production. A manual run selected on
   any other ref is skipped.
-- `daily`: the 06:00 UTC schedule inspects the previous 24 hours.
+- `hourly`: the top-of-hour schedule archives an overlapping 80-minute window of raw logs and encrypted failed-request
+  captures. It returns before Codex authentication, replay decryption, or any agent call. Automatic LLM triage is
+  incident-only.
 - `incident`: an accepted gateway or provider failure writes a durable Deno KV incident before dispatching this workflow
   through the dedicated Ubiquity Sentinel GitHub App. One repair is active at a time; failures during it coalesce into
   one pending successor. A production-only Deno cron retries pending delivery and creates no runs while the outbox is
@@ -25,13 +27,13 @@ unconditionally. It never exports or decrypts replay captures, creates a candida
 inference, pushes Git, dispatches a deployment, promotes a revision, or rolls back production. Observation mode needs
 only the Deno log token and the two Codex auth slots; it does not receive preview credentials or the replay key.
 
-On GitHub Actions, daily and preview intervals are anchored to the workflow run's immutable `created_at` value. An
+On GitHub Actions, hourly and preview intervals are anchored to the workflow run's immutable `created_at` value. An
 incident also receives its durable first-failure timestamp and expands the interval back to that point, bounded by the
 48-hour replay retention window.
 
 After anchoring the interval, the orchestrator computes one event deduplication key. Incident attempts use the durable
 `<incident-id>-a<attempt>` signal. Ambiguous delivery retries reuse an attempt; a confirmed failed workflow advances it.
-Daily and preview cycles exit before raw-log capture when a 90-day evidence artifact already has that key. Incident
+Hourly and preview cycles exit before raw-log capture when a 90-day evidence artifact already has that key. Incident
 retries never trust artifact existence as success because failed runs also preserve encrypted evidence; every delivered
 incident run must complete and write its nonce-bound acknowledgement.
 
@@ -39,7 +41,8 @@ The workflow uses one repository-wide concurrency group and does not cancel an a
 retains pending incident delivery instead of replacing a signal while a repair or deployment is active. Scheduled and
 App-authenticated incident runs are skipped unless `SENTINEL_AUTONOMY_ENABLED` is exactly `true`. Incident dispatch also
 requires the fixed GitHub App actor, trusted `development` ref, opaque incident ID, attempt, and first-failure
-timestamp. Manual preview runs remain eligible while that gate is disabled.
+timestamp. Manual preview runs remain eligible while that gate is disabled, but return without Codex when the interval
+contains no failed-request capture.
 
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective
@@ -162,4 +165,4 @@ satisfy the gates above and one manual preview cycle on `development` demonstrat
 5. The exact SHA reaches `p-ai-ubq-fi`; a simulated keep and rollback both restore the expected revision identity.
 
 After the supervised run has a complete durable report, set the repository variable `SENTINEL_AUTONOMY_ENABLED=true`.
-Remove or change that variable to stop new autonomous daily and incident cycles.
+Remove or change that variable to stop new autonomous hourly archival and incident cycles.

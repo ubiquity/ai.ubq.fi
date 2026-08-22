@@ -609,6 +609,28 @@ export const shouldPersistSentinelReplay = (
     (clientObservation !== undefined && isPersistableSentinelFailure(clientObservation));
 };
 
+export const shouldSignalSentinelIncident = (
+  observation: SentinelFailureObservation,
+  clientObservation: SentinelClientFailureObservation,
+): boolean => {
+  if (observation.terminal_type === "cancelled") return false;
+  if (clientObservation.stream && !clientObservation.framing_valid) return true;
+  if (observation.status < 400 && observation.completed && observation.terminal_type === "response.completed") {
+    return false;
+  }
+  if (observation.status >= 500) return true;
+  if (isGatewayOrProviderIncompleteReason(clientObservation.failure_kind)) return true;
+  if (observation.terminal_type === "response.incomplete") {
+    return isGatewayOrProviderIncompleteReason(observation.failure_kind) ||
+      observation.synthetic_terminal_type !== null ||
+      (clientObservation.terminal_type === "response.incomplete" &&
+        isGatewayOrProviderIncompleteReason(clientObservation.failure_kind));
+  }
+  if (observation.synthetic_terminal_type !== null || observation.failure_kind !== null) return true;
+  return observation.terminal_type === "deadline" || observation.terminal_type === "eof" ||
+    observation.terminal_type === "error";
+};
+
 export const decodeSentinelReplayKey = (raw: string): Uint8Array<ArrayBuffer> | null => {
   if (!/^[A-Za-z0-9_-]{43}=?$/.test(raw)) return null;
   try {
@@ -989,13 +1011,15 @@ export const persistSentinelReplayFromEnvironment = async (
     }
     kv = await getKv();
     if (!kv) return { status: "disabled", reason: "kv_unavailable" };
-    try {
-      incidentEvent = (await createSentinelIncidentFailureEventFromEnvironment(kv, now)) ?? undefined;
-    } catch {
-      console.warn(
-        "[ai.ubq.fi] sentinel_incident",
-        JSON.stringify({ status: "deferred", reason: "outbox_write_failed" }),
-      );
+    if (shouldSignalSentinelIncident(observation, resolvedClientObservation)) {
+      try {
+        incidentEvent = (await createSentinelIncidentFailureEventFromEnvironment(kv, now)) ?? undefined;
+      } catch {
+        console.warn(
+          "[ai.ubq.fi] sentinel_incident",
+          JSON.stringify({ status: "deferred", reason: "outbox_write_failed" }),
+        );
+      }
     }
     keyBytes = readReplayKeyFromEnvironment();
     if (!keyBytes) {

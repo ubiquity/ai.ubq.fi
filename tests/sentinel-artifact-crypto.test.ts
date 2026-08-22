@@ -251,6 +251,16 @@ Deno.test({
       assert(workflow.includes(input), `Sentinel workflow is missing ${input}`);
     }
     assert(workflow.includes("github.actor_id == '319834869'"), "Incident mode must require the Sentinel App actor");
+    assert(workflow.includes('- cron: "0 * * * *"'), "Sentinel archival must run hourly");
+    assert(workflow.includes("mode=hourly"), "Scheduled runs must use archive-only hourly mode");
+    assert(
+      /- name: Install isolated-agent prerequisites\n\s+if: github\.event_name != 'schedule'/.test(workflow),
+      "Hourly archival must not install Codex",
+    );
+    assert(
+      /- name: Validate pinned Codex CLI argument contract\n\s+if: github\.event_name != 'schedule'/.test(workflow),
+      "Hourly archival must not run Codex CLI validation",
+    );
     assert(workflow.includes("github.run_attempt == 1"), "Incident mode must reject human-triggered workflow re-runs");
     assert(workflow.includes("SENTINEL_AUTONOMY_ENABLED == 'true'"), "Incident mode must require autonomy");
     assert(workflow.includes("Acknowledge completed incident"), "Successful incident runs must ACK the durable outbox");

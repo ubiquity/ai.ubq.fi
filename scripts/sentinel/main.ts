@@ -133,8 +133,8 @@ export const previewCompletionForDecision = (
     };
 
 export const parseMode = (args: readonly string[]): SentinelMode => {
-  if (args.length !== 2 || args[0] !== "--mode" || !["daily", "incident", "observe", "preview"].includes(args[1])) {
-    throw new Error("Usage: main.ts --mode daily|incident|observe|preview");
+  if (args.length !== 2 || args[0] !== "--mode" || !["hourly", "incident", "observe", "preview"].includes(args[1])) {
+    throw new Error("Usage: main.ts --mode hourly|incident|observe|preview");
   }
   return args[1] as SentinelMode;
 };
@@ -143,6 +143,31 @@ export const isObserveOnlyMode = (mode: SentinelMode): boolean => mode === "obse
 
 export const triageExpectedMaximumRuntimeMs = (mode: SentinelMode): number | undefined =>
   mode === "incident" || mode === "preview" ? TRIAGE_INCIDENT_MS : undefined;
+
+export type SentinelTriageGate = Readonly<{
+  required: boolean;
+  reason:
+    | "hourly_archive_only"
+    | "incident_signal"
+    | "preview_failure_capture"
+    | "preview_no_failure_capture"
+    | "explicit_observation";
+}>;
+
+export const evaluateSentinelTriageGate = (
+  mode: SentinelMode,
+  currentCaptureCount: number,
+): SentinelTriageGate => {
+  if (!Number.isSafeInteger(currentCaptureCount) || currentCaptureCount < 0) {
+    throw new Error("Sentinel capture count must be a non-negative integer");
+  }
+  if (mode === "hourly") return { required: false, reason: "hourly_archive_only" };
+  if (mode === "incident") return { required: true, reason: "incident_signal" };
+  if (mode === "observe") return { required: true, reason: "explicit_observation" };
+  return currentCaptureCount > 0
+    ? { required: true, reason: "preview_failure_capture" }
+    : { required: false, reason: "preview_no_failure_capture" };
+};
 
 export const resolveCycleAnchorMs = (
   workflowRunCreatedAt: string | null,
@@ -486,6 +511,14 @@ const authSlotsFromEnvironment = () => ({
   slot1B64: optionalEnvironment("SENTINEL_CODEX_AUTH_SLOT_1_B64"),
   slot2B64: optionalEnvironment("SENTINEL_CODEX_AUTH_SLOT_2_B64"),
 });
+
+const requiredAuthSlotsFromEnvironment = (): ReturnType<typeof authSlotsFromEnvironment> => {
+  const authSlots = authSlotsFromEnvironment();
+  if (!authSlots.slot1B64 && !authSlots.slot2B64) {
+    throw new Error("At least one Sentinel Codex auth slot is required");
+  }
+  return authSlots;
+};
 
 const sensitiveAuthValues = (encoded: string | undefined): string[] => {
   if (!encoded) return [];
@@ -1433,8 +1466,6 @@ const run = async (): Promise<void> => {
   const denoToken = requiredEnvironment("DENO_DEPLOY_TOKEN");
   const githubToken = requiredEnvironment("GITHUB_TOKEN");
   const repository = requiredEnvironment("GITHUB_REPOSITORY");
-  const authSlots = authSlotsFromEnvironment();
-  if (!authSlots.slot1B64 && !authSlots.slot2B64) throw new Error("At least one Sentinel Codex auth slot is required");
   const github = new GitHubActionsClient({ repository, token: githubToken });
 
   let workflowRunCreatedAt: string | null = null;
@@ -1484,6 +1515,7 @@ const run = async (): Promise<void> => {
 
   const rawLogPath = `${rawLogsDir}/triage-${runId}.jsonl`;
   if (observeOnly) {
+    const authSlots = requiredAuthSlotsFromEnvironment();
     const triageSchemaPath = `${reportsDir}/triage.schema.json`;
     await writeJson(triageSchemaPath, TRIAGE_OUTPUT_SCHEMA);
     await runObserveCycle(state.interval, {
@@ -1529,22 +1561,6 @@ const run = async (): Promise<void> => {
     return;
   }
 
-  const previewCredential = requiredEnvironment("PREVIEW_UOS_AI_USER_TOKEN");
-  const replayKey = requiredEnvironment("SENTINEL_REPLAY_KEY");
-  const runnerTemp = requiredEnvironment("RUNNER_TEMP");
-  if (!runnerTemp.startsWith("/")) throw new Error("RUNNER_TEMP must be absolute");
-  const denoDirectory = `${runnerTemp}/sentinel-deno-cache`;
-  const sensitiveValues = [
-    denoToken,
-    previewCredential,
-    replayKey,
-    githubToken,
-    ...sensitiveAuthValues(authSlots.slot1B64),
-    ...sensitiveAuthValues(authSlots.slot2B64),
-  ];
-  const deno = new DenoDeployClient({ token: denoToken });
-  const gitEnvironment = gitNetworkEnvironment(githubToken);
-
   await updateState("capturing_raw_logs");
   await captureRawDenoLogs({
     cwd: root,
@@ -1588,6 +1604,40 @@ const run = async (): Promise<void> => {
     replayIndexDir,
     runId,
   });
+  const triageGate = evaluateSentinelTriageGate(mode, currentEncrypted.length);
+  await writeJson(`${reportsDir}/triage-gate.json`, {
+    schema_version: 1,
+    required: triageGate.required,
+    reason: triageGate.reason,
+    current_capture_count: currentEncrypted.length,
+  });
+  if (!triageGate.required) {
+    await updateState("complete", {
+      status: "no_change",
+      branch_disposition: triageGate.reason === "hourly_archive_only"
+        ? "not_created_archive_only"
+        : "not_created_no_failure_evidence",
+    });
+    return;
+  }
+
+  const authSlots = requiredAuthSlotsFromEnvironment();
+  const previewCredential = requiredEnvironment("PREVIEW_UOS_AI_USER_TOKEN");
+  const replayKey = requiredEnvironment("SENTINEL_REPLAY_KEY");
+  const runnerTemp = requiredEnvironment("RUNNER_TEMP");
+  if (!runnerTemp.startsWith("/")) throw new Error("RUNNER_TEMP must be absolute");
+  const denoDirectory = `${runnerTemp}/sentinel-deno-cache`;
+  const sensitiveValues = [
+    denoToken,
+    previewCredential,
+    replayKey,
+    githubToken,
+    ...sensitiveAuthValues(authSlots.slot1B64),
+    ...sensitiveAuthValues(authSlots.slot2B64),
+  ];
+  const deno = new DenoDeployClient({ token: denoToken });
+  const gitEnvironment = gitNetworkEnvironment(githubToken);
+
   const retainedEncrypted = await loadMatchingRetainedCaptures({
     github,
     current: currentEncrypted,
