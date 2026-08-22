@@ -420,15 +420,38 @@ export const withTerminalRequestLog = (
         synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
         provider_route: telemetry?.provider ?? response.headers.get("x-uos-upstream") ?? "gateway",
       };
+      const startReplayPersistence = (
+        clientObservation: ReturnType<typeof resolveSentinelClientFailureObservation>,
+      ): Promise<void> => {
+        if (!shouldPersistSentinelReplay(observation, clientObservation)) return Promise.resolve();
+        try {
+          return Promise.resolve(
+            (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
+              backgroundReplayInput,
+              observation,
+              clientObservation,
+            ),
+          ).then(() => undefined);
+        } catch {
+          return Promise.resolve();
+        }
+      };
+      const fallbackClientObservation = resolveSentinelClientFailureObservation(observation);
+      // An HTTP failure is already sufficient to decide that the capture is
+      // persistable. Start the best-effort write before waiting for the body
+      // clone so a stalled inspection or delivery cannot delay its handoff.
+      if (
+        input.deliveryCompleted !== undefined && !isSse &&
+        shouldPersistSentinelReplay(observation, fallbackClientObservation)
+      ) {
+        const replayWrite = startReplayPersistence(fallbackClientObservation);
+        zeroSentinelReplayInput(originalReplayInput);
+        await replayWrite;
+        return;
+      }
       const bodyObservation = clientBodyObservation ?? await bufferedObservation;
       const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
-      if (shouldPersistSentinelReplay(observation, clientObservation)) {
-        await (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
-          backgroundReplayInput,
-          observation,
-          clientObservation,
-        );
-      }
+      await startReplayPersistence(clientObservation);
     })().catch(() => {
       // Capture persistence is best effort and must not replace the response.
     }).finally(() => {
