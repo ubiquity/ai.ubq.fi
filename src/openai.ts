@@ -8657,3 +8657,169 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
       }
     },
   );
+
+/**
+ * OpenAI-compatible image endpoints.
+ *
+ * ChatGPT/Codex has no native image endpoint. It exposes image generation as
+ * an `image_generation` tool on the Responses API, so an images request is
+ * rewritten into a tool-bearing Responses call and dispatched through the
+ * normal provider waterfall. A live Codex subscription therefore serves images
+ * at no extra cost, and paid providers are used only when Codex cannot serve
+ * the request, exactly as for text.
+ */
+
+const IMAGE_BASE_MODEL_ENV = "IMAGE_BASE_MODEL";
+const IMAGE_TOOL_TYPE = "image_generation";
+
+export type ImageRouteKind = "generations" | "edits";
+
+/** Resolve the text model that hosts the image tool. */
+export const resolveImageBaseModel = async (): Promise<string | null> => {
+  let configured: string | null = null;
+  try {
+    const raw = Deno.env.get(IMAGE_BASE_MODEL_ENV)?.trim();
+    configured = raw && raw.length > 0 ? raw : null;
+  } catch {
+    configured = null;
+  }
+  return configured ?? await getDefaultModel();
+};
+
+/**
+ * Rewrite an OpenAI images request as a Responses request carrying the
+ * image_generation tool. The caller-supplied image model becomes tool options
+ * rather than the request model, because the tool runs on a text model.
+ */
+export const buildImageResponsesRequest = (
+  body: Record<string, unknown>,
+  baseModel: string,
+  kind: ImageRouteKind,
+): Record<string, unknown> => {
+  const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+  const tool: Record<string, unknown> = { type: IMAGE_TOOL_TYPE };
+  const requestedModel = typeof body.model === "string" ? body.model.trim() : "";
+  if (requestedModel) tool.model = requestedModel;
+  for (const key of ["size", "quality", "background", "output_format", "output_compression"]) {
+    if (body[key] !== undefined) tool[key] = body[key];
+  }
+  if (kind === "edits") {
+    // Edits supply source images; the Responses input carries them alongside
+    // the instruction so the tool can operate on the provided pixels.
+    const images = Array.isArray(body.images) ? body.images : body.image === undefined ? [] : [body.image];
+    return {
+      model: baseModel,
+      input: [{
+        role: "user",
+        content: [
+          { type: "input_text", text: prompt },
+          ...images.flatMap((entry) => {
+            const url = typeof entry === "string"
+              ? entry
+              : isPlainRecord(entry) && typeof entry.image_url === "string"
+              ? entry.image_url
+              : null;
+            return url ? [{ type: "input_image", image_url: url }] : [];
+          }),
+        ],
+      }],
+      tools: [tool],
+    };
+  }
+  return { model: baseModel, input: prompt, tools: [tool] };
+};
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Collect generated images from a Responses payload. The tool reports each
+ * image as an `image_generation_call` output item whose `result` is base64.
+ */
+export const extractImagesFromResponses = (
+  payload: unknown,
+): Array<Record<string, unknown>> => {
+  if (!isPlainRecord(payload) || !Array.isArray(payload.output)) return [];
+  const images: Array<Record<string, unknown>> = [];
+  for (const item of payload.output) {
+    if (!isPlainRecord(item) || item.type !== "image_generation_call") continue;
+    const result = typeof item.result === "string" ? item.result : "";
+    if (!result) continue;
+    const image: Record<string, unknown> = { b64_json: result };
+    if (typeof item.output_format === "string") image.output_format = item.output_format;
+    images.push(image);
+  }
+  return images;
+};
+
+export const handleImages = async (
+  req: Request,
+  kind: ImageRouteKind,
+  usageContext?: UsageContext,
+  options: Readonly<{ dispatch?: (request: Request) => Promise<Response> }> = {},
+): Promise<Response> => {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return openaiError(400, "Image requests must use a JSON object body.", "invalid_request_error");
+  }
+  if (!isPlainRecord(body)) {
+    return openaiError(400, "Image requests must use a JSON object body.", "invalid_request_error");
+  }
+  if (typeof body.prompt !== "string" || body.prompt.trim().length === 0) {
+    return openaiError(400, "Image requests must include a prompt.", "invalid_request_error", {
+      param: "prompt",
+    });
+  }
+
+  const baseModel = await resolveImageBaseModel();
+  if (!baseModel) {
+    return openaiError(
+      503,
+      "No base model is available to host image generation.",
+      "model_unavailable",
+    );
+  }
+
+  const responsesRequest = new Request(new URL("/v1/responses", req.url), {
+    method: "POST",
+    headers: req.headers,
+    body: JSON.stringify(buildImageResponsesRequest(body, baseModel, kind)),
+  });
+  const dispatch = options.dispatch ?? ((request: Request) => handleResponses(request, usageContext));
+  const upstream = await dispatch(responsesRequest);
+  const upstreamHeaders = new Headers(upstream.headers);
+  const passthroughHeaders: Record<string, string> = {};
+  const upstreamLabel = upstreamHeaders.get("x-uos-upstream");
+  if (upstreamLabel) passthroughHeaders["x-uos-upstream"] = upstreamLabel;
+
+  let payload: unknown = null;
+  const text = await upstream.text();
+  if (text.length > 0) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return openaiError(502, "Image upstream returned a non-JSON response.", "upstream_invalid", {
+        headers: passthroughHeaders,
+      });
+    }
+  }
+  // A failed Responses call already carries an OpenAI-shaped error body; pass
+  // it through unchanged so quota and roster errors stay actionable.
+  if (!upstream.ok) return json(upstream.status, payload, passthroughHeaders);
+
+  const images = extractImagesFromResponses(payload);
+  if (images.length === 0) {
+    return openaiError(
+      502,
+      "The model did not return an image for this request.",
+      "image_generation_failed",
+      { headers: passthroughHeaders },
+    );
+  }
+  const created = isPlainRecord(payload) && typeof payload.created_at === "number"
+    ? payload.created_at
+    : Math.floor(Date.now() / 1000);
+  return json(200, { created, data: images }, passthroughHeaders);
+};

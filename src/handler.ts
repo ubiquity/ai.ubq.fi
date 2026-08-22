@@ -57,6 +57,7 @@ import {
   handleChatCompletions,
   handleEmbeddingsJobCreate,
   handleEmbeddingsJobGet,
+  handleImages,
   handleModelCapabilities,
   handleModels,
   handlePublicModelCatalog,
@@ -609,6 +610,8 @@ const terminalRouteForRequest = (method: string, path: string): string | null =>
   if (method === "GET" && path.startsWith("/uos/embedding-jobs/")) return "embeddings.jobs.get";
   if (method === "POST" && path === "/v1/chat/completions") return "chat.completions";
   if (method === "POST" && path === "/v1/responses") return "responses";
+  if (method === "POST" && path === "/v1/images/generations") return "images.generations";
+  if (method === "POST" && path === "/v1/images/edits") return "images.edits";
   return null;
 };
 
@@ -1133,6 +1136,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     }
     const response = await executeInference(() => handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext));
     return await finishTerminalResponse(response, "embeddings.jobs.get");
+  }
+
+  if (req.method === "POST" && (path === "/v1/images/generations" || path === "/v1/images/edits")) {
+    const kind = path === "/v1/images/edits" ? "edits" : "generations";
+    const response = await executeInference(() => handleImages(req, kind, usageContext));
+    return await finishTerminalResponse(response, `images.${kind}`, true, incrementKernelLimitUsage);
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
