@@ -8,11 +8,12 @@ on:
   workflow_dispatch:
     inputs:
       sentinel_mode:
-        description: Run a supervised preview or an App-authenticated production incident
+        description: Run an hourly backlog cycle, supervised preview, or App-authenticated production incident
         required: true
         type: choice
         default: preview
         options:
+          - hourly
           - preview
           - incident
       incident_id:
@@ -55,6 +56,10 @@ jobs:
         github.ref == 'refs/heads/development' &&
         (
           inputs.sentinel_mode == 'preview' ||
+          (
+            inputs.sentinel_mode == 'hourly' &&
+            vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+          ) ||
           (
             inputs.sentinel_mode == 'incident' &&
             github.actor_id == '319834869' &&
@@ -113,8 +118,8 @@ jobs:
           case "$GITHUB_EVENT_NAME" in
             workflow_dispatch)
               case "$REQUESTED_MODE" in
-                preview)
-                  mode=preview
+                preview|hourly)
+                  mode="$REQUESTED_MODE"
                   ;;
                 incident)
                   if [ "$EVENT_ACTOR_ID" != "$EXPECTED_SENTINEL_ACTOR_ID" ]; then
