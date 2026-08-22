@@ -397,9 +397,15 @@ export const withTerminalRequestLog = (
   let replayFinalization: Promise<void> | null = null;
   const persistReplayAtApplicationTerminal = (streamReadFailure = false): Promise<void> => {
     if (replayFinalization) return replayFinalization;
-    const sentinelReplayInput = input.sentinelReplayInput;
+    const originalReplayInput = input.sentinelReplayInput;
+    const backgroundReplayInput = originalReplayInput
+      ? { ...originalReplayInput, body: new Uint8Array(originalReplayInput.body) }
+      : null;
+    // The request-owned body may be cleared as soon as terminal logging has
+    // finished. Give the background task its own snapshot before any await so
+    // delayed KV or crypto work cannot race request cleanup.
     replayFinalization = (async () => {
-      if (!sentinelReplayInput) return;
+      if (!backgroundReplayInput) return;
       const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
       const observation: SentinelFailureObservation = {
         status: response.status,
@@ -418,14 +424,17 @@ export const withTerminalRequestLog = (
       const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
       if (shouldPersistSentinelReplay(observation, clientObservation)) {
         await (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
-          sentinelReplayInput,
+          backgroundReplayInput,
           observation,
           clientObservation,
         );
       }
     })().catch(() => {
       // Capture persistence is best effort and must not replace the response.
-    }).finally(() => zeroSentinelReplayInput(sentinelReplayInput));
+    }).finally(() => {
+      zeroSentinelReplayInput(backgroundReplayInput);
+      zeroSentinelReplayInput(originalReplayInput);
+    });
     return replayFinalization;
   };
   let terminalLog: Promise<void> | null = null;
@@ -439,6 +448,9 @@ export const withTerminalRequestLog = (
     if (terminalLog) return terminalLog;
     terminalLog = logTerminalRequest({
       ...input,
+      // Replay persistence owns cleanup after it has taken its snapshot. Do
+      // not let terminal logging clear the original body first.
+      sentinelReplayInput: replayFinalization === null ? input.sentinelReplayInput : null,
       response,
       downstreamDrainedAtMonotonicMs,
       deliveryOutcome,
@@ -475,7 +487,11 @@ export const withTerminalRequestLog = (
     return (async () => {
       try {
         await finalizeCompletion();
-        await persistReplayAtApplicationTerminal();
+        // Deno can return the already-computed response while this best-effort
+        // capture continues in the background. In particular, buffered replay
+        // inspection, compression, encryption, and KV writes must not extend
+        // client-visible gateway error latency.
+        void persistReplayAtApplicationTerminal();
         return response;
       } finally {
         if (deliveryOutcome) {
