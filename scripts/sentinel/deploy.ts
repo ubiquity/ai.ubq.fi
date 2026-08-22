@@ -68,6 +68,7 @@ const DEFAULT_HEALTH_IDENTITY_TIMEOUT_MS = 30_000;
 const DEFAULT_HEALTH_IDENTITY_POLL_INTERVAL_MS = 2_000;
 const REVISION_PAGE_LIMIT = 100;
 const MAX_REVISION_PAGES = 1_000;
+const MAX_REVISION_CURSOR_LENGTH = 4_096;
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
 
 class HealthIdentityMismatchError extends Error {
@@ -145,6 +146,32 @@ const nextLinkTarget = (header: string | null): string | null => {
   }
   if (targets.length > 1) throw new Error("Deno revision list returned more than one next-page link");
   return targets[0] ?? null;
+};
+
+const nextRevisionPageUrl = (target: string, currentPageUrl: URL, initialUrl: URL): URL => {
+  const candidate = new URL(target, currentPageUrl);
+  const sameEndpoint = candidate.origin === initialUrl.origin && candidate.pathname === initialUrl.pathname;
+  const isDefaultDenoApi = initialUrl.origin === new URL(DEFAULT_DENO_API_BASE_URL).origin;
+  const knownConsoleAlias = isDefaultDenoApi &&
+    candidate.origin === "https://console.deno.com" &&
+    candidate.pathname === `/api${initialUrl.pathname}`;
+  const cursors = candidate.searchParams.getAll("cursor");
+  const limits = candidate.searchParams.getAll("limit");
+  const hasOnlyExpectedParameters = [...candidate.searchParams.keys()].every((key) =>
+    key === "cursor" || key === "limit"
+  );
+  const cursor = cursors[0] ?? "";
+  if (
+    (!sameEndpoint && !knownConsoleAlias) || candidate.username !== "" || candidate.password !== "" ||
+    candidate.hash !== "" || !hasOnlyExpectedParameters || cursors.length !== 1 || cursor === "" ||
+    cursor.length > MAX_REVISION_CURSOR_LENGTH || limits.length > 1 ||
+    (limits.length === 1 && limits[0] !== String(REVISION_PAGE_LIMIT))
+  ) {
+    throw new Error("Deno revision list returned an unsafe next-page link");
+  }
+  const nextPage = new URL(initialUrl);
+  nextPage.searchParams.set("cursor", cursor);
+  return nextPage;
 };
 
 const revisionIdFrom = (record: Record<string, unknown>): string | null =>
@@ -256,8 +283,6 @@ export class DenoDeployClient {
     if (app.trim() === "") throw new Error("A Deno application name is required");
     const initialUrl = this.#apiUrl(`apps/${encodeURIComponent(app)}/revisions`);
     initialUrl.searchParams.set("limit", String(REVISION_PAGE_LIMIT));
-    const expectedOrigin = initialUrl.origin;
-    const expectedPath = initialUrl.pathname;
     const visited = new Set<string>();
     const revisions = new Map<string, DenoRevision>();
     let pageUrl: URL | null = initialUrl;
@@ -277,8 +302,10 @@ export class DenoDeployClient {
       }
       const target = nextLinkTarget(response.headers.get("Link"));
       if (target === null) return [...revisions.values()];
-      const nextPage: URL = new URL(target, pageUrl);
-      if (nextPage.origin !== expectedOrigin || nextPage.pathname !== expectedPath) {
+      let nextPage: URL;
+      try {
+        nextPage = nextRevisionPageUrl(target, pageUrl, initialUrl);
+      } catch {
         throw new Error(`List revisions for ${app} returned an unsafe next-page link`);
       }
       pageUrl = nextPage;

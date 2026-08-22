@@ -129,6 +129,93 @@ Deno.test("Deno revision listing follows same-endpoint Link pagination and retai
   fake.assertDrained();
 });
 
+Deno.test("Deno revision listing re-homes the exact console pagination alias before authorizing it", async () => {
+  const fake = queuedFetch([
+    (request) => {
+      assert.equal(request.url.origin, "https://api.deno.com");
+      assert.equal(request.url.pathname, "/v2/apps/p-ai-ubq-fi/revisions");
+      assert.equal(request.url.searchParams.get("cursor"), null);
+      assert.equal(request.headers.get("Authorization"), `Bearer ${DENO_TOKEN}`);
+      return json(
+        [{ id: "first-revision", status: "succeeded" }],
+        200,
+        {
+          Link: '<https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100>; rel="next"',
+        },
+      );
+    },
+    (request) => {
+      assert.equal(request.url.origin, "https://api.deno.com");
+      assert.equal(request.url.pathname, "/v2/apps/p-ai-ubq-fi/revisions");
+      assert.equal(request.url.searchParams.get("cursor"), "next-page");
+      assert.equal(request.url.searchParams.get("limit"), "100");
+      assert.equal(request.headers.get("Authorization"), `Bearer ${DENO_TOKEN}`);
+      return json([{ id: "second-revision", status: "building" }]);
+    },
+  ]);
+  const client = new DenoDeployClient({
+    token: DENO_TOKEN,
+    apiBaseUrl: "https://api.deno.com/v2/",
+    fetcher: fake.fetcher,
+  });
+
+  const revisions = await client.listRevisions("p-ai-ubq-fi");
+
+  assert.deepEqual(revisions.map((revision) => revision.id), ["first-revision", "second-revision"]);
+  assert.ok(fake.seen.every((request) => request.url.origin === "https://api.deno.com"));
+  fake.assertDrained();
+});
+
+Deno.test("Deno revision listing preserves opaque cursors when the documented Link omits limit", async () => {
+  const fake = queuedFetch([
+    () =>
+      json([{ id: "first-revision", status: "succeeded" }], 200, {
+        Link: '</v2/apps/ai-ubq-fi/revisions?cursor=%20opaque%20>; rel="next"',
+      }),
+    (request) => {
+      assertDenoApiRequest(request, "/v2/apps/ai-ubq-fi/revisions");
+      assert.equal(request.url.searchParams.get("cursor"), " opaque ");
+      assert.equal(request.url.searchParams.get("limit"), "100");
+      return json([{ id: "second-revision", status: "succeeded" }]);
+    },
+  ]);
+
+  const revisions = await denoClient(fake.fetcher).listRevisions("ai-ubq-fi");
+
+  assert.deepEqual(revisions.map((revision) => revision.id), ["first-revision", "second-revision"]);
+  fake.assertDrained();
+});
+
+Deno.test("Deno revision listing rejects unsafe console pagination variants", async () => {
+  const links = [
+    "https://console.deno.com/api/v2/apps/other-app/revisions?cursor=next-page&limit=100",
+    "https://console.deno.com.evil.example/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100",
+    "https://user@console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=one&cursor=two&limit=100",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=&limit=100",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=99",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100&status=succeeded",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100#fragment",
+  ];
+  for (const link of links) {
+    const fake = queuedFetch([
+      () =>
+        json([{ id: "first-revision", status: "succeeded" }], 200, {
+          Link: `<${link}>; rel="next"`,
+        }),
+    ]);
+    const client = new DenoDeployClient({
+      token: DENO_TOKEN,
+      apiBaseUrl: "https://api.deno.com/v2/",
+      fetcher: fake.fetcher,
+    });
+
+    await assert.rejects(() => client.listRevisions("p-ai-ubq-fi"), /unsafe next-page link/);
+    assert.equal(fake.seen.length, 1);
+    fake.assertDrained();
+  }
+});
+
 Deno.test("Deno requests install a bounded timeout signal and fail closed on timeout", async () => {
   const timeouts: number[] = [];
   const controller = new AbortController();
