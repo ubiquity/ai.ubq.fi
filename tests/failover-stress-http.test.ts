@@ -278,7 +278,7 @@ Deno.test({
       };
 
       const { default: handler } = await import("../src/handler.ts");
-      const { createServeHandler } = await import("../serve.ts");
+      const { createServeHandler } = await import("../src/serve_handler.ts");
       (config as { isDeploy: boolean }).isDeploy = true;
       const {
         paidFallbackWindowV3Key,

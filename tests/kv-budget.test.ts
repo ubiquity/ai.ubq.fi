@@ -217,7 +217,7 @@ const kv = new CountingKv();
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
 
 const { default: handler } = await import("../src/handler.ts");
-const { createRequestDeliveryLifecycle } = await import("../serve.ts");
+const { createRequestDeliveryLifecycle } = await import("../src/serve_handler.ts");
 const { handleResponses } = await import("../src/openai.ts");
 const {
   API_KEY_USAGE_V3_REQUEST_PREFIX,

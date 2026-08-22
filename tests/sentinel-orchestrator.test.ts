@@ -17,6 +17,7 @@ import {
   MAX_MATCHING_REPLAY_ARCHIVE_BYTES,
   MAX_MATCHING_REPLAY_ARTIFACTS,
   MONITOR_AGENT_MS,
+  parseIncidentStartMs,
   parseMode,
   parseMonitorDecision,
   parseSentinelDeploymentAttestation,
@@ -257,6 +258,18 @@ Deno.test("sentinel schedule windows cover 24 hours daily and an overlapping 20 
   assert.equal(observe.duration_ms, OBSERVE_WINDOW_MS);
   assert.equal(observe.start, "2026-08-21T03:55:00.000Z");
   assert.deepEqual(preview, incident);
+});
+
+Deno.test("durable incident windows include the first failure within replay retention", () => {
+  const firstFailure = now - 2 * 60 * 60_000;
+  const interval = computeSentinelInterval("incident", now, firstFailure);
+  assert.equal(interval.start, new Date(firstFailure).toISOString());
+  assert.equal(interval.duration_ms, 2 * 60 * 60_000);
+  assert.equal(parseIncidentStartMs("incident", String(firstFailure)), firstFailure);
+  assert.throws(() => parseIncidentStartMs("incident", undefined), /positive integer/);
+  assert.throws(() => parseIncidentStartMs("daily", String(firstFailure)), /Only incident mode/);
+  assert.throws(() => computeSentinelInterval("incident", now, now - 49 * 60 * 60_000), /retained interval/);
+  assert.throws(() => computeSentinelInterval("daily", now, firstFailure), /Only incident mode/);
 });
 
 Deno.test("deployment monitoring keeps 30-second identity probes and reports every five minutes", () => {

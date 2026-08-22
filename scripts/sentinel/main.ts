@@ -162,6 +162,21 @@ export const resolveCycleAnchorMs = (
   return createdAtMs;
 };
 
+export const parseIncidentStartMs = (mode: SentinelMode, value: string | undefined): number | undefined => {
+  if (mode !== "incident") {
+    if (value !== undefined) throw new Error("Only incident mode accepts SENTINEL_INCIDENT_START_MS");
+    return undefined;
+  }
+  if (!value || !/^(?:0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error("SENTINEL_INCIDENT_START_MS must be a positive integer");
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error("SENTINEL_INCIDENT_START_MS must be a positive integer");
+  }
+  return parsed;
+};
+
 export const sentinelEvidenceArtifactName = (dedupeKey: string): string => {
   if (!/^[0-9a-f]{64}$/u.test(dedupeKey)) throw new Error("Sentinel event dedupe key must be lowercase hex");
   return `${EVIDENCE_ARTIFACT_PREFIX}${dedupeKey}`;
@@ -1431,7 +1446,9 @@ const run = async (): Promise<void> => {
     workflowRunCreatedAt = (await github.getWorkflowRun(githubRunId)).createdAt;
   }
   const intervalAnchorMs = resolveCycleAnchorMs(workflowRunCreatedAt, invocationStartedAtMs);
-  state.interval = computeSentinelInterval(mode, intervalAnchorMs);
+  const incidentStartMs = parseIncidentStartMs(mode, optionalEnvironment("SENTINEL_INCIDENT_START_MS"));
+  const incidentId = mode === "incident" ? requiredEnvironment("SENTINEL_INCIDENT_ID") : undefined;
+  state.interval = computeSentinelInterval(mode, intervalAnchorMs, incidentStartMs);
   state.run_created_at = workflowRunCreatedAt;
   const dedupeKey = await eventDedupeKey({
     repository,
@@ -1451,16 +1468,18 @@ const run = async (): Promise<void> => {
     );
   }
   await updateState("checking_event_deduplication");
-  const duplicateEvidence = await github.listRepositoryArtifacts({
-    name: evidenceArtifactName,
-    createdAfterMs: invocationStartedAtMs - RETENTION_MS,
-  });
-  if (duplicateEvidence.length > 0) {
-    await updateState("duplicate_event", {
-      status: "no_change",
-      branch_disposition: "not_created_duplicate_event",
+  if (mode !== "incident") {
+    const duplicateEvidence = await github.listRepositoryArtifacts({
+      name: evidenceArtifactName,
+      createdAfterMs: invocationStartedAtMs - RETENTION_MS,
     });
-    return;
+    if (duplicateEvidence.length > 0) {
+      await updateState("duplicate_event", {
+        status: "no_change",
+        branch_disposition: "not_created_duplicate_event",
+      });
+      return;
+    }
   }
 
   const rawLogPath = `${rawLogsDir}/triage-${runId}.jsonl`;
@@ -1540,12 +1559,22 @@ const run = async (): Promise<void> => {
   let currentEncrypted: ExportedSentinelReplayCapture[] = [];
   await updateState("exporting_replay_cases");
   try {
-    currentEncrypted = await fetchEncryptedReplayCaptures({
+    const intervalCaptures = await fetchEncryptedReplayCaptures({
       baseUrl: "https://ai-ubq-fi.ubiquity-dao.deno.net",
       adminToken: denoToken,
       afterMs: Date.parse(state.interval.start),
       beforeMs: Date.parse(state.interval.end),
     });
+    const incidentCaptures = incidentId
+      ? await fetchEncryptedReplayCaptures({
+        baseUrl: "https://ai-ubq-fi.ubiquity-dao.deno.net",
+        adminToken: denoToken,
+        afterMs: Date.parse(state.interval.start),
+        beforeMs: Date.parse(state.interval.end),
+        incidentId,
+      })
+      : [];
+    currentEncrypted = deduplicateRetainedReplayCaptures([...intervalCaptures, ...incidentCaptures]);
   } catch (error) {
     if (mode !== "preview") throw error;
     await writeJson(`${reportsDir}/preview-bootstrap-replay-export.json`, {

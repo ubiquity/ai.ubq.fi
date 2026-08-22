@@ -13,9 +13,10 @@ The `Provider Sentinel` Actions workflow has three modes:
   exact candidate SHA to `p-ai-ubq-fi`. It does not push `development` or promote production. A manual run selected on
   any other ref is skipped.
 - `daily`: the 06:00 UTC schedule inspects the previous 24 hours.
-- `incident`: the resident `Provider Sentinel Watchdog` sends a `provider_incident` repository-dispatch event every five
-  minutes. Each event inspects the previous 20 minutes, so adjacent scans overlap by 15 minutes. The watchdog rearms
-  itself before the six-hour hosted-runner limit; its six-hour cron is a recovery trigger, not the cadence.
+- `incident`: an accepted gateway or provider failure writes a durable Deno KV incident before dispatching this workflow
+  through the dedicated Ubiquity Sentinel GitHub App. One repair is active at a time; failures during it coalesce into
+  one pending successor. A production-only Deno cron retries pending delivery and creates no runs while the outbox is
+  empty. Each batch includes at least the preceding 20 minutes and expands back to its first failure.
 
 The orchestrator also has an observation mode for a supervised soak period. `--mode observe` inspects the previous 125
 minutes, which supports a two-hour schedule with five minutes of overlap. It captures complete production logs, runs
@@ -24,20 +25,21 @@ unconditionally. It never exports or decrypts replay captures, creates a candida
 inference, pushes Git, dispatches a deployment, promotes a revision, or rolls back production. Observation mode needs
 only the Deno log token and the two Codex auth slots; it does not receive preview credentials or the replay key.
 
-On GitHub Actions, each interval is anchored to the current workflow run's immutable `created_at` value from the GitHub
-API. A cycle that waited for the repository concurrency lock therefore inspects the window associated with its trigger,
-not a later window calculated when the runner finally starts.
+On GitHub Actions, daily and preview intervals are anchored to the workflow run's immutable `created_at` value. An
+incident also receives its durable first-failure timestamp and expands the interval back to that point, bounded by the
+48-hour replay retention window.
 
-After anchoring the interval, the orchestrator computes one event deduplication key. A `provider_incident` payload may
-provide `client_payload.signal_id`; repeated deliveries of that ID share one key, while events without an ID include the
-anchored interval in the key. Before raw-log capture, the cycle looks for a 90-day evidence artifact named exactly for
-that key and exits as a duplicate when one exists. Evidence artifacts from separate runs may use the same name.
+After anchoring the interval, the orchestrator computes one event deduplication key. Incident attempts use the durable
+`<incident-id>-a<attempt>` signal. Ambiguous delivery retries reuse an attempt; a confirmed failed workflow advances it.
+Daily and preview cycles exit before raw-log capture when a 90-day evidence artifact already has that key. Incident
+retries never trust artifact existence as success because failed runs also preserve encrypted evidence; every delivered
+incident run must complete and write its nonce-bound acknowledgement.
 
 The workflow uses one repository-wide concurrency group and does not cancel an active run. Its `queue: max` policy
-retains up to 100 pending incident cycles instead of replacing the pending signal while a repair or deployment is
-active. Scheduled and repository-dispatch runs are skipped unless the repository variable `SENTINEL_AUTONOMY_ENABLED` is
-exactly `true`. Manual preview runs remain eligible while that gate is disabled, so the first real repair cycle can be
-supervised before autonomous production operation begins.
+retains pending incident delivery instead of replacing a signal while a repair or deployment is active. Scheduled and
+App-authenticated incident runs are skipped unless `SENTINEL_AUTONOMY_ENABLED` is exactly `true`. Incident dispatch also
+requires the fixed GitHub App actor, trusted `development` ref, opaque incident ID, attempt, and first-failure
+timestamp. Manual preview runs remain eligible while that gate is disabled.
 
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective
@@ -56,6 +58,9 @@ Add these Actions secrets:
 - `SENTINEL_REPLAY_KEY`: one cryptographically random 32-byte value encoded as base64url. The deployment workflow
   validates its decoded size without printing it, then synchronizes it to preview and production with
   `deno deploy env load --replace`.
+- `SENTINEL_GITHUB_APP_PRIVATE_KEY`: the private key for App ID `4682172`, installed only on this repository with
+  Actions write and Metadata read. The deployment workflow sends it through one Deno v2 app patch as a secret limited to
+  the production context. It never enters the general deploy environment file or a preview timeline.
 
 The workflow also requires existing secrets `DENO_DEPLOY_TOKEN` and `PREVIEW_UOS_AI_USER_TOKEN`. The deployment workflow
 installs the preview credential only on `p-ai-ubq-fi`, and replay uses that same credential to replace authorization.
@@ -80,8 +85,8 @@ index manifest. The keyed case-group Bloom filter in the artifact name lets futu
 that may match the current incident. The index contains no request bodies, decrypted capture fields, authorization
 values, cookies, or credentials. Matching retained bundles are subject to fail-closed aggregate artifact-count,
 compressed-byte, and extracted-byte limits. Duplicate retained captures are collapsed by capture fingerprint before
-decryption and replay. The export request includes both interval boundaries. KV iteration and the orchestrator reject a
-capture before the interval start or after the interval end.
+decryption and replay. Time-window exports enforce both interval boundaries. Incident exports also follow opaque KV
+references to an earlier encrypted manifest when the same failed input was deduplicated during the active batch.
 
 Generate a replay key locally without writing the plaintext to shell history:
 

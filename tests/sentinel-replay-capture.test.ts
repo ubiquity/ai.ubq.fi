@@ -9,6 +9,7 @@ import {
   inspectSentinelBufferedResponse,
   inspectSentinelBufferedResponseBody,
   isExportedSentinelReplayCapture,
+  listEncryptedSentinelIncidentReplays,
   listEncryptedSentinelReplays,
   materializeSentinelReplayInput,
   normalizeSentinelCompatibilityHeaders,
@@ -27,8 +28,13 @@ import {
   shouldPersistSentinelReplay,
   zeroSentinelReplayInput,
 } from "../src/sentinel_replay_capture.ts";
+import {
+  coalesceSentinelIncidentFailureEvents,
+  createSentinelIncidentFailureEvent,
+  type SentinelIncidentFailureEvent,
+} from "../src/sentinel_incident_outbox.ts";
 import { handleAdminSentinelReplayCaptures } from "../src/sentinel_replay_admin.ts";
-import { withTerminalRequestLog } from "../src/handler.ts";
+import { shouldSignalSentinelProviderDegradation, withTerminalRequestLog } from "../src/handler.ts";
 import { MAX_ACCEPTED_JSON_BODY_BYTES, readJsonBody } from "../src/request.ts";
 import { base64UrlDecode, base64UrlEncode } from "../src/utils.ts";
 import {
@@ -326,6 +332,26 @@ Deno.test("sentinel failure classifier excludes success and client cancellation"
   );
 });
 
+Deno.test("masked provider degradation signals an incident without capturing a successful request", () => {
+  assert.equal(
+    shouldSignalSentinelProviderDegradation({
+      status: 200,
+      completed: true,
+      removedProviderTriggerClass: "read_error",
+    }),
+    true,
+  );
+  for (
+    const input of [
+      { status: 502, completed: false, removedProviderTriggerClass: "read_error" },
+      { status: 200, completed: false, removedProviderTriggerClass: "read_error" },
+      { status: 200, completed: true, removedProviderTriggerClass: null },
+    ]
+  ) {
+    assert.equal(shouldSignalSentinelProviderDegradation(input), false);
+  }
+});
+
 Deno.test("sentinel encrypted persistence rejects a cancelled request even with stale failure state", async () => {
   await assert.rejects(
     () =>
@@ -514,6 +540,39 @@ Deno.test("sentinel replay encrypts, chunks, exports, decrypts, and deduplicates
     () => decryptExportedSentinelReplay(tampered, keyBytes),
     /integrity check failed/,
   );
+});
+
+Deno.test("durable incidents retain references to exact encrypted replay captures", async () => {
+  const kv = new CountingKv();
+  const now = 1_777_000_000_000;
+  const incidentEvent = await createSentinelIncidentFailureEvent(kv as unknown as Deno.Kv, now, {
+    randomUuid: () => "00000000-0000-4000-8000-000000000001",
+  });
+  const persisted = await persistEncryptedSentinelReplay(acceptedInput(), failedObservation(), {
+    kv: kv as unknown as Deno.Kv,
+    keyBytes,
+    now: () => now,
+    randomUuid: () => "incident-capture",
+    incidentEvent,
+  });
+  assert.equal(persisted.status, "stored");
+  if (persisted.status !== "stored" || !persisted.manifest_key) throw new Error("capture fixture failed");
+  const readyEvent = (await kv.get<SentinelIncidentFailureEvent>(incidentEvent.key)).value;
+  assert.equal(readyEvent?.state, "ready");
+  assert.equal(readyEvent?.manifest_key?.join("/"), persisted.manifest_key.join("/"));
+  assert.equal(
+    await coalesceSentinelIncidentFailureEvents(kv as unknown as Deno.Kv, now + 1, {
+      randomAckNonce: () => "A".repeat(43),
+    }),
+    1,
+  );
+  const page = await listEncryptedSentinelIncidentReplays(kv as unknown as Deno.Kv, {
+    incidentId: incidentEvent.value.incident_id,
+  });
+  assert.equal(page.captures.length, 1);
+  const plaintext = await decryptExportedSentinelReplay(page.captures[0]!, keyBytes);
+  assert.deepEqual(plaintext.body, acceptedInput().body);
+  plaintext.body.fill(0);
 });
 
 Deno.test("sentinel replay snapshots exact bytes before concurrent request cleanup", async () => {
@@ -1168,6 +1227,23 @@ Deno.test("sentinel replay admin forwards the closed capture interval", async ()
   );
   assert.equal(response.status, 200);
   assert.deepEqual(observed, { afterMs: 100, beforeMs: 200, cursor: "opaque=" });
+
+  const incidentId = "provider-00000000-0000-4000-8000-000000000001";
+  let observedIncident: { incidentId: string; cursor?: string } | null = null;
+  const incidentResponse = await handleAdminSentinelReplayCaptures(
+    new Request(
+      `https://ai.ubq.fi/admin/sentinel/replay-captures?after_ms=100&before_ms=200&limit=1&incident_id=${incidentId}`,
+    ),
+    {
+      getKv: () => Promise.resolve({} as Deno.Kv),
+      listEncryptedSentinelIncidentReplays: (_kv, options) => {
+        observedIncident = { incidentId: options.incidentId, cursor: options.cursor };
+        return Promise.resolve({ captures: [], cursor: "" });
+      },
+    },
+  );
+  assert.equal(incidentResponse.status, 200);
+  assert.deepEqual(observedIncident, { incidentId, cursor: undefined });
 });
 
 Deno.test("replay export and preview reads enforce declared and streamed byte limits", async () => {

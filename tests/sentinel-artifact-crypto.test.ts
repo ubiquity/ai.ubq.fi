@@ -207,21 +207,11 @@ Deno.test({
 });
 
 Deno.test({
-  name: "Sentinel repair and watchdog workflows retain queued incident signals",
+  name: "Sentinel repair workflow retains queued incident signals",
   ignore: fileSystemTestsUnavailable,
   async fn() {
-    for (
-      const path of [
-        ".github/workflows/provider-sentinel.yml",
-        ".github/workflows/provider-sentinel-watchdog.yml",
-      ]
-    ) {
-      const workflow = await Deno.readTextFile(path);
-      assert(
-        /^\s+queue: max$/mu.test(workflow),
-        `${path} must retain concurrent incident signals in the maximum queue`,
-      );
-    }
+    const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
+    assert(/^\s+queue: max$/mu.test(workflow), "Sentinel must retain concurrent incident signals");
     for (
       const path of [
         ".github/workflows/deno-deploy.yml",
@@ -235,22 +225,52 @@ Deno.test({
 });
 
 Deno.test({
-  name: "Sentinel watchdog dispatches incident signals on a resident five-minute ticker",
+  name: "Sentinel uses failure events with durable retry and no resident watchdog",
   ignore: fileSystemTestsUnavailable,
   async fn() {
-    const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel-watchdog.yml");
-    assert(workflow.includes("for iteration in $(seq 1 67)"), "Watchdog must stay below the six-hour runner limit");
-    assert(workflow.includes("next_tick_epoch=$(( $(date +%s) + 300 ))"), "Watchdog must use fixed five-minute ticks");
-    assert(!workflow.includes('if [ "$iteration" -lt'), "Watchdog must wait one final tick before handing off");
-    assert(workflow.includes("event_type=provider_incident"), "Watchdog must dispatch the incident event");
-    assert(!workflow.includes('cron: "*/5 * * * *"'), "Watchdog must not duplicate the incident schedule");
+    let watchdogExists = true;
+    try {
+      await Deno.stat(".github/workflows/provider-sentinel-watchdog.yml");
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+      watchdogExists = false;
+    }
+    assert(!watchdogExists, "The resident watchdog workflow must be removed");
+    const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
+    const server = await Deno.readTextFile("serve.ts");
+    const deploy = await Deno.readTextFile(".github/workflows/deno-deploy.yml");
+    for (
+      const input of [
+        "sentinel_mode:",
+        "incident_id:",
+        "incident_attempt:",
+        "incident_start_ms:",
+        "incident_ack_nonce:",
+      ]
+    ) {
+      assert(workflow.includes(input), `Sentinel workflow is missing ${input}`);
+    }
+    assert(workflow.includes("github.actor_id == '319834869'"), "Incident mode must require the Sentinel App actor");
+    assert(workflow.includes("github.run_attempt == 1"), "Incident mode must reject human-triggered workflow re-runs");
+    assert(workflow.includes("SENTINEL_AUTONOMY_ENABLED == 'true'"), "Incident mode must require autonomy");
+    assert(workflow.includes("Acknowledge completed incident"), "Successful incident runs must ACK the durable outbox");
+    assert(workflow.includes("Claim incident workflow run"), "Incident runs must claim one durable workflow identity");
     assert(
-      workflow.includes('"repos/${GITHUB_REPOSITORY}/actions/workflows/provider-sentinel-watchdog.yml/dispatches"'),
-      "Watchdog must rearm its successor",
+      workflow.indexOf("Claim incident workflow run") < workflow.indexOf("Check out full repository history"),
+      "Duplicate incident runs must stop before checkout or repair work",
     );
     assert(
-      workflow.match(/for attempt in 1 2 3/gu)?.length === 3,
-      "Watchdog dispatch and rearm API calls must use bounded retries",
+      server.includes('Deno.cron("deliver pending Provider Sentinel incidents", "* * * * *"'),
+      "Deno cron must retry only durable pending incidents",
+    );
+    assert(
+      deploy.includes('method: "PATCH"') && deploy.includes('contexts: ["production"]') &&
+        deploy.includes("secret: true"),
+      "The GitHub App key must use one production-only secret patch",
+    );
+    assert(
+      !/lines\.push\(`SENTINEL_GITHUB_APP_PRIVATE_KEY=/u.test(deploy),
+      "The GitHub App key must never enter the general deploy environment file",
     );
   },
 });

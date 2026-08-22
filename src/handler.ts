@@ -94,6 +94,8 @@ import {
   zeroSentinelReplayInput,
 } from "./sentinel_replay_capture.ts";
 import { handleAdminSentinelReplayCaptures } from "./sentinel_replay_admin.ts";
+import { handleAdminSentinelIncidentAck, handleAdminSentinelIncidentClaim } from "./sentinel_incident_admin.ts";
+import { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
 
 type AuthenticatedClientResult = Extract<
   Awaited<ReturnType<typeof authenticateClient>>,
@@ -107,6 +109,11 @@ type RequestDeliveryInfo = Readonly<{
 
 type DeliveryOutcome = "delivered" | "interrupted" | "unobserved";
 type BodyOutcome = "drained" | "interrupted" | "failed";
+
+export const shouldSignalSentinelProviderDegradation = (
+  input: Readonly<{ status: number; completed: boolean; removedProviderTriggerClass: string | null }>,
+): boolean =>
+  input.status >= 200 && input.status < 400 && input.completed && input.removedProviderTriggerClass !== null;
 
 export const resolveIdempotencyPrincipal = async (
   authResult: Readonly<{
@@ -205,6 +212,7 @@ const logTerminalRequest = async (
     recordTelemetry?: typeof recordPromptCacheTelemetry;
     sentinelReplayInput?: AcceptedSentinelReplayInput | null;
     persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
+    recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
     streamReadFailure?: boolean;
     suppressSentinelReplay?: boolean;
     resolveClientBodyObservation?: () =>
@@ -305,7 +313,14 @@ const logTerminalRequest = async (
         clientObservation,
       )
       : Promise.resolve();
-    await Promise.all([telemetryWrite, replayWrite]);
+    const degradationWrite = shouldSignalSentinelProviderDegradation({
+        status: terminal.status,
+        completed: telemetry?.completed ?? false,
+        removedProviderTriggerClass: terminal.removed_provider_trigger_class,
+      })
+      ? (input.recordSentinelDegradation ?? recordSentinelProviderDegradationFromEnvironment)(Date.now())
+      : Promise.resolve();
+    await Promise.all([telemetryWrite, replayWrite, degradationWrite]);
   } finally {
     zeroSentinelReplayInput(input.sentinelReplayInput);
   }
@@ -348,6 +363,7 @@ export const withTerminalRequestLog = (
     /** Test seam for proving failed replay persistence and successful-request exclusion. */
     sentinelReplayInput?: AcceptedSentinelReplayInput | null;
     persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
+    recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
   }>,
 ): Promise<Response> => {
   const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
@@ -742,6 +758,18 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const authError = await requireSuperAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminSentinelReplayCaptures(req));
+  }
+
+  if (req.method === "POST" && path === "/admin/sentinel/incidents/ack") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminSentinelIncidentAck(req));
+  }
+
+  if (req.method === "POST" && path === "/admin/sentinel/incidents/claim") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminSentinelIncidentClaim(req));
   }
 
   if ((req.method === "GET" || req.method === "POST") && path === "/admin/defaults") {

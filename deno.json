@@ -1,5 +1,5 @@
 {
-  "unstable": ["no-legacy-abort"],
+  "unstable": ["no-legacy-abort", "cron"],
   "imports": {
     "@deno/kv-utils/import-export": "jsr:@deno/kv-utils@0.1.4/import-export",
     "@deno/kv-utils/json": "jsr:@deno/kv-utils@0.1.4/json",
