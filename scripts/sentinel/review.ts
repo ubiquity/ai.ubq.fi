@@ -8,6 +8,22 @@ const NO_FINDINGS_PATTERNS = [
   /\bdid not find any (?:actionable )?(?:issues|findings)\b/i,
   /\bno (?:actionable )?issues (?:found|identified)\b/i,
 ];
+const CHECKOUT_PATH_MARKERS = ["/candidate-worktree/", "/checkout/"];
+
+const normalizeLocation = (value: string): string => {
+  for (const marker of CHECKOUT_PATH_MARKERS) {
+    const index = value.lastIndexOf(marker);
+    if (index >= 0) return value.slice(index + marker.length);
+  }
+  return value;
+};
+
+const normalizeReviewLocations = (value: string): string =>
+  value.replace(/\/[A-Za-z0-9_.@/+\-]+:\d+(?::\d+)?/gu, (location) => normalizeLocation(location));
+
+/** Codex writes the final native review to stdout; stderr is only a fallback for older clients. */
+export const nativeReviewParseInput = (stdout: string, stderr: string): string =>
+  stdout.trim().length > 0 ? stdout : stderr;
 
 const sha256 = async (value: string): Promise<string> => {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -36,8 +52,8 @@ export const parseNativeReview = async (raw: string, round: number): Promise<Nat
     const match = line.match(PRIORITY_PATTERN);
     if (match) {
       if (current) pending.push(current);
-      const titleAndLocation = match[2].trim().replace(/^[-*]\s+/, "");
-      const location = titleAndLocation.match(LOCATION_PATTERN)?.[1] ?? "unknown";
+      const titleAndLocation = normalizeReviewLocations(match[2].trim().replace(/^[-*]\s+/, ""));
+      const location = normalizeLocation(titleAndLocation.match(LOCATION_PATTERN)?.[1] ?? "unknown");
       current = { severity: match[1] as TriageSeverity, title: titleAndLocation, body: [], location };
       continue;
     }
@@ -46,8 +62,11 @@ export const parseNativeReview = async (raw: string, round: number): Promise<Nat
         pending.push(current);
         current = null;
       } else if (line.trim()) {
-        current.body.push(line.trim());
-        if (current.location === "unknown") current.location = line.match(LOCATION_PATTERN)?.[1] ?? "unknown";
+        const bodyLine = normalizeReviewLocations(line.trim());
+        current.body.push(bodyLine);
+        if (current.location === "unknown") {
+          current.location = normalizeLocation(bodyLine.match(LOCATION_PATTERN)?.[1] ?? "unknown");
+        }
       }
     }
   }

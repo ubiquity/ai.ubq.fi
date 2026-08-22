@@ -8,7 +8,13 @@ import {
   replayCases,
   selectCurrentAndMatchingRegressionCases,
 } from "./replay.ts";
-import { blockingReviewFindings, canStartReviewRound, mergeReviewBacklog, parseNativeReview } from "./review.ts";
+import {
+  blockingReviewFindings,
+  canStartReviewRound,
+  mergeReviewBacklog,
+  nativeReviewParseInput,
+  parseNativeReview,
+} from "./review.ts";
 import {
   assertActionableFindingsResolved,
   assertCompleteFindingDispositions,
@@ -1449,7 +1455,10 @@ const run = async (): Promise<void> => {
     await assertGitControlStateUnchanged(gitControlState);
     const rawReview = `${reviewResult.stdout}\n${reviewResult.stderr}`;
     await Deno.writeTextFile(`${reportsDir}/native-review-round-${reviewRound}.txt`, rawReview, { mode: 0o600 });
-    const review = await parseNativeReview(rawReview, reviewRound);
+    const review = await parseNativeReview(
+      nativeReviewParseInput(reviewResult.stdout, reviewResult.stderr),
+      reviewRound,
+    );
     await writeJson(`${reportsDir}/native-review-round-${reviewRound}.json`, review);
     const blockers = blockingReviewFindings(review);
     const backlogFindings = review.findings.filter((finding) => finding.severity === "P2" || finding.severity === "P3");

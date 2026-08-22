@@ -36,6 +36,7 @@ import {
   blockingReviewFindings,
   canStartReviewRound,
   mergeReviewBacklog,
+  nativeReviewParseInput,
   parseNativeReview,
 } from "../scripts/sentinel/review.ts";
 import {
@@ -484,6 +485,23 @@ Deno.test("native review parser blocks P0/P1, backlogs P2/P3, and fails closed o
   const unknown = await parseNativeReview("Looks reasonable to me.", 1);
   assert.equal(unknown.parse_status, "unparseable");
   assert.throws(() => blockingReviewFindings(unknown), /not parseable/);
+});
+
+Deno.test("native review parsing uses the final stdout and normalizes ephemeral checkout paths", async () => {
+  const stdout =
+    "- [P2] Avoid blocking persistence — /tmp/uos-final/checkout/src/handler.ts:439\n  Return the response first.";
+  const stderr = `${stdout}\nCodex progress that must not enter the finding body.`;
+  assert.equal(nativeReviewParseInput(stdout, stderr), stdout);
+
+  const absolute = await parseNativeReview(stdout, 1);
+  const relative = await parseNativeReview(
+    "- [P2] Avoid blocking persistence — src/handler.ts:439\n  Return the response first.",
+    1,
+  );
+  assert.equal(absolute.findings.length, 1);
+  assert.equal(absolute.findings[0]?.location, "src/handler.ts:439");
+  assert.equal(absolute.findings[0]?.title, relative.findings[0]?.title);
+  assert.equal(absolute.findings[0]?.fingerprint, relative.findings[0]?.fingerprint);
 });
 
 Deno.test("review backlog deduplicates fingerprints while retaining first observation and disposition", async () => {
