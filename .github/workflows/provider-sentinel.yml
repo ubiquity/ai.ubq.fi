@@ -3,7 +3,7 @@ run-name: Provider Sentinel ${{ github.event_name }} ${{ github.run_id }}
 
 on:
   schedule:
-    # Hourly encrypted evidence archival. Incidents trigger repair separately.
+    # Hourly encrypted evidence archival and one eligible backlog repair. Incidents trigger separately.
     - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
@@ -227,8 +227,74 @@ jobs:
         with:
           deno-version: 2.9.5
 
+      - name: Select agent work
+        id: agent-work
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          needs_agent=true
+          if [ "$SENTINEL_MODE" = "hourly" ]; then
+            hint_path="$RUNNER_TEMP/sentinel-review-backlog.md"
+            hint_sha=""
+            basic_token="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+            unset GITHUB_TOKEN
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic_token"
+            export GIT_TERMINAL_PROMPT=0
+            hint_ready=false
+            if git fetch --no-tags origin development; then
+              candidate_hint_sha="$(git rev-parse origin/development)"
+              backlog_blob_size="$(git cat-file -s origin/development:docs/sentinel-review-backlog.md 2>/dev/null || true)"
+              if [[ "$candidate_hint_sha" =~ ^[0-9a-f]{40}$ ]] && \
+                [[ "$backlog_blob_size" =~ ^[0-9]+$ ]] && \
+                [ "$backlog_blob_size" -le 262144 ] && \
+                git show origin/development:docs/sentinel-review-backlog.md > "$hint_path"
+              then
+                hint_sha="$candidate_hint_sha"
+                hint_ready=true
+              fi
+            fi
+            unset basic_token GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+            if [ "$hint_ready" = "true" ]; then
+              if ! needs_agent="$(
+                SENTINEL_BACKLOG_HINT_PATH="$hint_path" deno eval \
+                  --no-remote \
+                  --no-npm \
+                  --frozen \
+                  --lock=deno.lock \
+                  '
+                    import { selectNextReviewBacklogEntry } from "./scripts/sentinel/review.ts";
+                    const path = Deno.env.get("SENTINEL_BACKLOG_HINT_PATH");
+                    if (!path) throw new Error("Sentinel backlog hint path is missing");
+                    const markdown = await Deno.readTextFile(path);
+                    console.log(selectNextReviewBacklogEntry(markdown) === null ? "false" : "true");
+                  '
+              )"; then
+                needs_agent=true
+                echo "::warning::Sentinel backlog hint could not be parsed; installing agent prerequisites conservatively."
+              fi
+            else
+              echo "::warning::Current development backlog could not be read; installing agent prerequisites conservatively."
+            fi
+            if [ -n "$hint_sha" ]; then
+              echo "SENTINEL_BACKLOG_HINT_SHA=$hint_sha" >> "$GITHUB_ENV"
+            fi
+          fi
+          case "$needs_agent" in
+            true|false) ;;
+            *)
+              echo "::error::Sentinel agent work selector returned an invalid result."
+              exit 1
+              ;;
+          esac
+          echo "needs_agent=$needs_agent" >> "$GITHUB_OUTPUT"
+          echo "Sentinel agent work required: $needs_agent" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install isolated-agent prerequisites
-        if: github.event_name != 'schedule'
+        if: steps.agent-work.outputs.needs_agent == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -255,7 +321,7 @@ jobs:
             tests/*.ts
 
       - name: Validate pinned Codex CLI argument contract
-        if: github.event_name != 'schedule'
+        if: steps.agent-work.outputs.needs_agent == 'true'
         shell: bash
         run: |
           set -euo pipefail

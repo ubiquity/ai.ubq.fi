@@ -237,6 +237,7 @@ Deno.test({
     }
     assert(!watchdogExists, "The resident watchdog workflow must be removed");
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
+    const orchestrator = await Deno.readTextFile("scripts/sentinel/main.ts");
     const server = await Deno.readTextFile("serve.ts");
     const deploy = await Deno.readTextFile(".github/workflows/deno-deploy.yml");
     for (
@@ -252,14 +253,50 @@ Deno.test({
     }
     assert(workflow.includes("github.actor_id == '319834869'"), "Incident mode must require the Sentinel App actor");
     assert(workflow.includes('- cron: "0 * * * *"'), "Sentinel archival must run hourly");
-    assert(workflow.includes("mode=hourly"), "Scheduled runs must use archive-only hourly mode");
+    assert(workflow.includes("mode=hourly"), "Scheduled runs must use hourly mode");
+    assert(workflow.includes("selectNextReviewBacklogEntry"), "Hourly runs must preflight eligible backlog work");
     assert(
-      /- name: Install isolated-agent prerequisites\n\s+if: github\.event_name != 'schedule'/.test(workflow),
-      "Hourly archival must not install Codex",
+      workflow.includes("git show origin/development:docs/sentinel-review-backlog.md"),
+      "Hourly agent setup must inspect the current development backlog",
     );
     assert(
-      /- name: Validate pinned Codex CLI argument contract\n\s+if: github\.event_name != 'schedule'/.test(workflow),
-      "Hourly archival must not run Codex CLI validation",
+      workflow.includes('echo "SENTINEL_BACKLOG_HINT_SHA=$hint_sha" >> "$GITHUB_ENV"'),
+      "Hourly work must bind the orchestrator to the prerequisite hint revision",
+    );
+    assert(
+      workflow.includes("installing agent prerequisites conservatively"),
+      "Backlog hint failures must fail toward installing the agent",
+    );
+    const manualStart = orchestrator.indexOf('if (selectedBacklogState.disposition === "manual_required")');
+    const manualEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", manualStart);
+    assert(
+      manualStart >= 0 && manualEnd > manualStart,
+      "Manual backlog completion must have a bounded early-return lane",
+    );
+    const manualLane = orchestrator.slice(manualStart, manualEnd);
+    assert(
+      manualLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}"),
+      "Manual backlog completion must persist its trusted documentation change",
+    );
+    for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
+      assert(!manualLane.includes(forbidden), `Manual backlog completion must not call ${forbidden}`);
+    }
+    assert(
+      orchestrator.includes("const gitEnvironment = gitNetworkEnvironment(githubToken)"),
+      "Manual backlog pushes must use the non-recursive workflow GITHUB_TOKEN",
+    );
+    assert(
+      /- name: Install isolated-agent prerequisites\n\s+if: steps\.agent-work\.outputs\.needs_agent == 'true'/.test(
+        workflow,
+      ),
+      "Quiet hourly archival must not install Codex",
+    );
+    assert(
+      /- name: Validate pinned Codex CLI argument contract\n\s+if: steps\.agent-work\.outputs\.needs_agent == 'true'/
+        .test(
+          workflow,
+        ),
+      "Quiet hourly archival must not run Codex CLI validation",
     );
     assert(workflow.includes("github.run_attempt == 1"), "Incident mode must reject human-triggered workflow re-runs");
     assert(workflow.includes("SENTINEL_AUTONOMY_ENABLED == 'true'"), "Incident mode must require autonomy");

@@ -9,6 +9,7 @@ import {
   assertRetainedReplayArtifactBudget,
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
+  evaluateReviewBacklogImplementation,
   evaluateRollbackPreflight,
   evaluateSentinelTriageGate,
   IMPLEMENTATION_CONTINUATION_MS,
@@ -25,12 +26,16 @@ import {
   previewCompletionForDecision,
   replayIndexArtifactMayMatch,
   replayIndexArtifactName,
+  requiresReplayEvaluation,
   resolveCycleAnchorMs,
+  reviewBacklogEntriesMatch,
   runObserveCycle,
   runWithSingleTimeoutContinuation,
+  selectSentinelWork,
   sentinelDeploymentInputs,
   sentinelEvidenceArtifactName,
   sentinelRevisionControlInputs,
+  shouldDeferHourlyBacklogWork,
   TRIAGE_INCIDENT_MS,
   triageExpectedMaximumRuntimeMs,
   triagePrompt,
@@ -45,11 +50,16 @@ import {
   selectCurrentAndMatchingRegressionCases,
 } from "../scripts/sentinel/replay.ts";
 import {
+  applyReviewBacklogImplementationDisposition,
   blockingReviewFindings,
   canStartReviewRound,
   mergeReviewBacklog,
   nativeReviewParseInput,
   parseNativeReview,
+  parseReviewBacklog,
+  renderReviewBacklog,
+  type ReviewBacklogEntry,
+  selectNextReviewBacklogEntry,
 } from "../scripts/sentinel/review.ts";
 import {
   assertActionableFindingsResolved,
@@ -59,6 +69,7 @@ import {
   isTriageReport,
   MONITOR_OUTPUT_SCHEMA,
   type ReplayCase,
+  type ReplayResult,
   TRIAGE_OUTPUT_SCHEMA,
   type TriageReport,
 } from "../scripts/sentinel/types.ts";
@@ -755,9 +766,9 @@ Deno.test("review backlog deduplicates fingerprints while retaining first observ
   const finding = report.findings[0]!;
   const firstAt = new Date("2026-08-20T00:00:00.000Z");
   const latestAt = new Date("2026-08-21T00:00:00.000Z");
-  const initial = mergeReviewBacklog("", [finding], "a".repeat(40), firstAt).replace(
-    /open\s+\|/u,
-    "accepted_risk |",
+  const initialOpen = mergeReviewBacklog(renderReviewBacklog([]), [finding], "a".repeat(40), firstAt);
+  const initial = renderReviewBacklog(
+    parseReviewBacklog(initialOpen).map((entry) => ({ ...entry, disposition: "accepted_risk" as const })),
   );
   const latest = mergeReviewBacklog(initial, [finding], "b".repeat(40), latestAt);
   assert.equal(latest.match(new RegExp(finding.fingerprint, "g"))?.length, 1);
@@ -773,10 +784,10 @@ Deno.test("review backlog output is deterministic and uses canonical Deno Markdo
     1,
   );
   const observedAt = new Date("2026-08-21T00:00:00.000Z");
-  const first = mergeReviewBacklog("", report.findings, "a".repeat(40), observedAt);
-  const again = mergeReviewBacklog("", report.findings, "a".repeat(40), observedAt);
+  const first = mergeReviewBacklog(renderReviewBacklog([]), report.findings, "a".repeat(40), observedAt);
+  const again = mergeReviewBacklog(renderReviewBacklog([]), report.findings, "a".repeat(40), observedAt);
   assert.equal(first, again);
-  assert.match(first, /never enter\nthis backlog\./u);
+  assert.match(first, /never enter this\nbacklog\./u);
   assert.ok([...first].every((character) => character.charCodeAt(0) <= 0x7f));
   assert.match(first, /&#96;Markdown&#96; &#124; safely &#x2014;/u);
 
@@ -786,6 +797,206 @@ Deno.test("review backlog output is deterministic and uses canonical Deno Markdo
   for (const line of tableLines) {
     assert.deepEqual([...line.matchAll(/\|/gu)].map((match) => match.index), separators);
   }
+});
+
+const reviewBacklogEntry = (overrides: Partial<ReviewBacklogEntry> = {}): ReviewBacklogEntry => ({
+  fingerprint: "a".repeat(64),
+  severity: "P2",
+  first: "2026-08-20T00:00:00.000Z",
+  latest: "2026-08-20T00:00:00.000Z",
+  sha: "b".repeat(40),
+  location: "src/handler.ts:439",
+  finding: "Keep `Markdown` | text — exact.",
+  disposition: "open",
+  ...overrides,
+});
+
+Deno.test("review backlog parsing is strict and round-trips renderer escapes", () => {
+  const entry = reviewBacklogEntry();
+  const markdown = renderReviewBacklog([entry]);
+  assert.deepEqual(parseReviewBacklog(markdown), [entry]);
+
+  const duplicate = renderReviewBacklog([entry, entry]);
+  assert.throws(() => parseReviewBacklog(duplicate), /duplicate fingerprint/);
+  assert.throws(() => parseReviewBacklog(""), /canonical complete form/);
+  assert.throws(() => parseReviewBacklog("# Sentinel Review Backlog\n"), /canonical complete form/);
+  assert.throws(
+    () => parseReviewBacklog(markdown.replace(/^\| `/mu, "  `")),
+    /canonical complete form/,
+  );
+  assert.throws(
+    () => parseReviewBacklog(markdown.replace(/open\s+\|/u, "unknown |")),
+    /row is invalid|canonical complete form/,
+  );
+  assert.throws(
+    () => parseReviewBacklog(renderReviewBacklog([{ ...entry, first: "not-a-timestamp" }])),
+    /row is invalid/,
+  );
+  const unknownLocation = renderReviewBacklog([{ ...entry, location: "unknown" }]);
+  assert.equal(parseReviewBacklog(unknownLocation)[0]?.location, "unknown");
+  assert.equal(selectNextReviewBacklogEntry(unknownLocation), null);
+  assert.throws(
+    () => renderReviewBacklog([{ ...entry, finding: "—".repeat(800) }]),
+    /row exceeds its length limit/,
+  );
+  assert.throws(
+    () =>
+      renderReviewBacklog(
+        Array.from({ length: 256 }, (_, index) => ({
+          ...entry,
+          fingerprint: index.toString(16).padStart(64, "0"),
+          finding: "x".repeat(800),
+        })),
+      ),
+    /byte limit/,
+  );
+});
+
+Deno.test("backlog implementation decisions reject no-code resolution and report mismatches", () => {
+  assert.deepEqual(
+    evaluateReviewBacklogImplementation("implemented", ["src/handler.ts"], ["src/handler.ts"]),
+    { disposition: "resolved", continueToRuntimeValidation: true },
+  );
+  for (const status of ["implemented", "already_fixed", "blocked", "not_actionable"] as const) {
+    assert.deepEqual(evaluateReviewBacklogImplementation(status, [], []), {
+      disposition: "manual_required",
+      continueToRuntimeValidation: false,
+    });
+  }
+  assert.throws(
+    () => evaluateReviewBacklogImplementation("implemented", ["src/handler.ts"], []),
+    /does not match/,
+  );
+  assert.throws(
+    () => evaluateReviewBacklogImplementation("blocked", ["src/handler.ts"], ["src/handler.ts"]),
+    /cannot retain/,
+  );
+
+  const entry = reviewBacklogEntry();
+  assert.equal(reviewBacklogEntriesMatch(entry, { ...entry }), true);
+  assert.equal(reviewBacklogEntriesMatch(entry, { ...entry, latest: "2026-08-21T00:00:00.000Z" }), false);
+  assert.equal(reviewBacklogEntriesMatch(entry, null), false);
+
+  const sha = "a".repeat(40);
+  assert.equal(shouldDeferHourlyBacklogWork(undefined, sha), false);
+  assert.equal(shouldDeferHourlyBacklogWork(sha, sha), false);
+  assert.equal(shouldDeferHourlyBacklogWork("b".repeat(40), sha), true);
+  assert.throws(() => shouldDeferHourlyBacklogWork("invalid", sha), /hint SHA is invalid/);
+});
+
+Deno.test("quiet backlog work selects one eligible P2 before P3 and skips protected paths", () => {
+  const entries: ReviewBacklogEntry[] = [
+    reviewBacklogEntry({
+      fingerprint: "1".repeat(64),
+      first: "2026-08-18T00:00:00.000Z",
+      latest: "2026-08-18T00:00:00.000Z",
+      location: "scripts/sentinel/main.ts:10",
+    }),
+    reviewBacklogEntry({
+      fingerprint: "2".repeat(64),
+      severity: "P3",
+      first: "2026-08-17T00:00:00.000Z",
+      latest: "2026-08-17T00:00:00.000Z",
+      location: "src/handler.ts:20",
+    }),
+    reviewBacklogEntry({
+      fingerprint: "3".repeat(64),
+      first: "2026-08-19T00:00:00.000Z",
+      latest: "2026-08-19T00:00:00.000Z",
+      location: "src/handler.ts:30",
+    }),
+    reviewBacklogEntry({
+      fingerprint: "4".repeat(64),
+      first: "2026-08-19T00:00:00.000Z",
+      latest: "2026-08-19T00:00:00.000Z",
+      location: "src/handler.ts:40",
+    }),
+    reviewBacklogEntry({
+      fingerprint: "0".repeat(64),
+      first: "2026-08-16T00:00:00.000Z",
+      latest: "2026-08-16T00:00:00.000Z",
+      disposition: "resolved",
+    }),
+  ];
+  const markdown = renderReviewBacklog(entries);
+  assert.equal(selectNextReviewBacklogEntry(markdown)?.fingerprint, "3".repeat(64));
+
+  const interval = computeSentinelInterval("hourly", now);
+  const selection = selectSentinelWork("hourly", 0, interval, markdown);
+  assert.equal(selection.source, "review_backlog");
+  assert.equal(selection.reason, "hourly_review_backlog");
+  assert.equal(selection.backlogEntry?.fingerprint, "3".repeat(64));
+  assert.ok(selection.triage && isTriageReport(selection.triage));
+  assert.equal(selection.triage?.findings[0]?.id, `review-backlog:${"3".repeat(64)}`);
+  assert.equal(selectSentinelWork("incident", 0, interval, markdown).source, "triage");
+  assert.equal(selectSentinelWork("preview", 0, interval, markdown).source, null);
+  assert.equal(
+    selectSentinelWork("hourly", 0, interval, renderReviewBacklog([entries[0]!])).source,
+    null,
+  );
+});
+
+Deno.test("backlog implementation dispositions stop retries and recurrence reopens resolved work", async () => {
+  const report = await parseNativeReview(
+    "- [P2] Avoid blocking persistence — src/handler.ts:439\n  Return the response first.",
+    1,
+  );
+  const finding = report.findings[0]!;
+  const observedAt = new Date("2026-08-20T00:00:00.000Z");
+  const open = mergeReviewBacklog(renderReviewBacklog([]), [finding], "a".repeat(40), observedAt);
+  const resolved = applyReviewBacklogImplementationDisposition(
+    open,
+    finding.fingerprint,
+    "resolved",
+  );
+  assert.equal(resolved.disposition, "resolved");
+  assert.equal(parseReviewBacklog(resolved.markdown)[0]?.disposition, "resolved");
+  assert.equal(parseReviewBacklog(resolved.markdown)[0]?.latest, observedAt.toISOString());
+  assert.equal(selectNextReviewBacklogEntry(resolved.markdown), null);
+  assert.throws(
+    () =>
+      applyReviewBacklogImplementationDisposition(
+        resolved.markdown,
+        finding.fingerprint,
+        "resolved",
+      ),
+    /selected open/,
+  );
+
+  const manual = applyReviewBacklogImplementationDisposition(
+    open,
+    finding.fingerprint,
+    "manual_required",
+  );
+  assert.equal(manual.disposition, "manual_required");
+  assert.equal(selectNextReviewBacklogEntry(manual.markdown), null);
+
+  const recurrence = mergeReviewBacklog(
+    resolved.markdown,
+    [finding],
+    "b".repeat(40),
+    new Date("2026-08-22T00:00:00.000Z"),
+  );
+  assert.equal(parseReviewBacklog(recurrence)[0]?.disposition, "open");
+  const retainedManual = mergeReviewBacklog(
+    manual.markdown,
+    [finding],
+    "b".repeat(40),
+    new Date("2026-08-22T00:00:00.000Z"),
+  );
+  assert.equal(parseReviewBacklog(retainedManual)[0]?.disposition, "manual_required");
+});
+
+Deno.test("targeted backlog recurrence blocks review and empty replay skips another model call", async () => {
+  const report = await parseNativeReview(
+    "- [P2] Avoid blocking persistence — src/handler.ts:439\n  Return the response first.",
+    1,
+  );
+  const fingerprint = report.findings[0]!.fingerprint;
+  assert.equal(blockingReviewFindings(report).length, 0);
+  assert.deepEqual(blockingReviewFindings(report, fingerprint), report.findings);
+  assert.equal(requiresReplayEvaluation([]), false);
+  assert.equal(requiresReplayEvaluation([{ capture_fingerprint: "a".repeat(64) } as ReplayResult]), true);
 });
 
 Deno.test("review finding identity does not change when only severity changes", async () => {

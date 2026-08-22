@@ -13,8 +13,9 @@ The `Provider Sentinel` Actions workflow has three modes:
   exact candidate SHA to `p-ai-ubq-fi`. It does not push `development` or promote production. A manual run selected on
   any other ref is skipped.
 - `hourly`: the top-of-hour schedule archives an overlapping 80-minute window of raw logs and encrypted failed-request
-  captures. It returns before Codex authentication, replay decryption, or any agent call. Automatic LLM triage is
-  incident-only.
+  captures. If the native-review backlog has an eligible open P2/P3 item, it selects exactly one item and sends it
+  directly to implementation without a triage-model call. Otherwise it returns before Codex authentication, replay
+  decryption, or any agent call. Automatic LLM triage is incident-only.
 - `incident`: an accepted gateway or provider failure writes a durable Deno KV incident before dispatching this workflow
   through the dedicated Ubiquity Sentinel GitHub App. One repair is active at a time; failures during it coalesce into
   one pending successor. A production-only Deno cron retries pending delivery and creates no runs while the outbox is
@@ -43,6 +44,18 @@ App-authenticated incident runs are skipped unless `SENTINEL_AUTONOMY_ENABLED` i
 requires the fixed GitHub App actor, trusted `development` ref, opaque incident ID, attempt, and first-failure
 timestamp. Manual preview runs remain eligible while that gate is disabled, but return without Codex when the interval
 contains no failed-request capture.
+
+Hourly backlog selection is deterministic: P2 before P3, then oldest first observation, then fingerprint. Only exact
+`open` entries with an implementation-eligible repository location are selected. Sentinel-control paths remain protected
+and require manual work. Selection reads one exact freshly fetched `development` revision and revalidates the complete
+entry in the candidate before an agent starts. Only an `implemented` result with a matching nonempty diff becomes
+tentatively `resolved`. No-code, already-fixed, blocked, and non-actionable results become `manual_required` through a
+trusted backlog-only development commit. That push uses the workflow `GITHUB_TOKEN`, so it does not recursively start
+the push deployment workflow, and the lane never dispatches or promotes a runtime revision. If native review reports the
+targeted fingerprint again, that finding blocks the backlog cycle within the same three-round limit. Other new P2/P3
+findings remain nonblocking and are merged into the backlog. If `development` advances after the prerequisite hint, the
+cycle archives evidence and defers the new backlog state to the next hour. Empty replay sets skip the replay-evaluation
+model call.
 
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective

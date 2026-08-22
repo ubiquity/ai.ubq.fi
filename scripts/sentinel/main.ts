@@ -14,16 +14,22 @@ import {
   selectCurrentAndMatchingRegressionCases,
 } from "./replay.ts";
 import {
+  applyReviewBacklogImplementationDisposition,
   blockingReviewFindings,
   canStartReviewRound,
   mergeReviewBacklog,
   nativeReviewParseInput,
   parseNativeReview,
+  parseReviewBacklog,
+  type ReviewBacklogEntry,
+  reviewBacklogTriageReport,
+  selectNextReviewBacklogEntry,
 } from "./review.ts";
 import {
   assertActionableFindingsResolved,
   assertCompleteFindingDispositions,
   type DeploymentIdentity,
+  type FindingDisposition,
   IMPLEMENTATION_OUTPUT_SCHEMA,
   type ImplementationReport,
   isImplementationReport,
@@ -167,6 +173,88 @@ export const evaluateSentinelTriageGate = (
   return currentCaptureCount > 0
     ? { required: true, reason: "preview_failure_capture" }
     : { required: false, reason: "preview_no_failure_capture" };
+};
+
+export type SentinelWorkSelection = Readonly<{
+  source: "triage" | "review_backlog" | null;
+  reason: SentinelTriageGate["reason"] | "hourly_review_backlog";
+  backlogEntry: ReviewBacklogEntry | null;
+  triage: TriageReport | null;
+}>;
+
+export const selectSentinelWork = (
+  mode: SentinelMode,
+  currentCaptureCount: number,
+  interval: CycleState["interval"],
+  reviewBacklogMarkdown: string,
+): SentinelWorkSelection => {
+  const triageGate = evaluateSentinelTriageGate(mode, currentCaptureCount);
+  if (triageGate.required) {
+    return { source: "triage", reason: triageGate.reason, backlogEntry: null, triage: null };
+  }
+  if (mode === "hourly") {
+    const backlogEntry = selectNextReviewBacklogEntry(reviewBacklogMarkdown);
+    if (backlogEntry) {
+      return {
+        source: "review_backlog",
+        reason: "hourly_review_backlog",
+        backlogEntry,
+        triage: reviewBacklogTriageReport(backlogEntry, interval),
+      };
+    }
+  }
+  return { source: null, reason: triageGate.reason, backlogEntry: null, triage: null };
+};
+
+export const requiresReplayEvaluation = (results: readonly ReplayResult[]): boolean => results.length > 0;
+
+export type ReviewBacklogImplementationDecision = Readonly<{
+  disposition: "resolved" | "manual_required";
+  continueToRuntimeValidation: boolean;
+}>;
+
+const sortedUniquePaths = (paths: readonly string[], label: string): string[] => {
+  if (paths.some((path) => path.length === 0)) throw new Error(`${label} contains an empty path`);
+  const unique = new Set(paths);
+  if (unique.size !== paths.length) throw new Error(`${label} contains duplicate paths`);
+  return [...unique].sort();
+};
+
+export const evaluateReviewBacklogImplementation = (
+  status: FindingDisposition["status"],
+  actualChangedPaths: readonly string[],
+  reportedChangedPaths: readonly string[],
+): ReviewBacklogImplementationDecision => {
+  const actual = sortedUniquePaths(actualChangedPaths, "Backlog implementation diff");
+  const reported = sortedUniquePaths(reportedChangedPaths, "Backlog implementation report");
+  const pathsMatch = actual.length === reported.length && actual.every((path, index) => path === reported[index]);
+  if (!pathsMatch) throw new Error("Backlog implementation report changed_files does not match the candidate diff");
+  if (status === "implemented" && actual.length > 0) {
+    return { disposition: "resolved", continueToRuntimeValidation: true };
+  }
+  if (actual.length > 0) {
+    throw new Error(`Backlog implementation status ${status} cannot retain candidate code changes`);
+  }
+  return { disposition: "manual_required", continueToRuntimeValidation: false };
+};
+
+export const reviewBacklogEntriesMatch = (
+  expected: ReviewBacklogEntry,
+  actual: ReviewBacklogEntry | null,
+): boolean =>
+  actual !== null && expected.fingerprint === actual.fingerprint && expected.severity === actual.severity &&
+  expected.first === actual.first && expected.latest === actual.latest && expected.sha === actual.sha &&
+  expected.location === actual.location && expected.finding === actual.finding &&
+  expected.disposition === actual.disposition;
+
+export const shouldDeferHourlyBacklogWork = (
+  hintedDevelopmentSha: string | undefined,
+  currentDevelopmentSha: string,
+): boolean => {
+  if (!FULL_SHA.test(currentDevelopmentSha)) throw new Error("Current development SHA is invalid");
+  if (hintedDevelopmentSha === undefined) return false;
+  if (!FULL_SHA.test(hintedDevelopmentSha)) throw new Error("Sentinel backlog hint SHA is invalid");
+  return hintedDevelopmentSha !== currentDevelopmentSha;
 };
 
 export const resolveCycleAnchorMs = (
@@ -571,6 +659,8 @@ ${createAgentPromptPreamble("implementation")}
 
 Work only in the current candidate checkout. Implement the complete actionable triage set. Keep OpenAI wire contracts intact. Do not change Sentinel policy, workflow, output schemas, agent model or reasoning selections, credentials, review rules, deployment targets, or Git configuration. Do not commit, push, create branches, deploy, promote, or use the network. Record exactly one disposition for every triage finding. Run focused local checks when useful.
 
+For each disposition, changed_files must contain the exact sorted repository-relative paths currently changed for that finding. Do not claim implemented when no matching candidate diff exists.
+
 Before every edit, read and apply \`isSentinelProtectedImplementationPath\` in \`scripts/sentinel/policy.ts\` to the proposed repository-relative path. That matcher is authoritative. Its exact protected path list is:
 ${JSON.stringify(SENTINEL_POLICY.protectedImplementationPaths)}
 It also protects every workflow, Sentinel script, Sentinel replay source or test, Codex instruction file, project configuration file, and skill path matched by the function. Never edit or work around a matching path. For a finding whose correction requires any protected path, return status \`blocked\`, name the protected path and reason in the summary, use an empty \`changed_files\` array, and continue with findings that only need permitted paths. Return exactly one disposition for every finding even when one or more are blocked.
@@ -827,10 +917,8 @@ export const loadMatchingRetainedCaptures = async (
   return deduplicateRetainedReplayCaptures(captures);
 };
 
-const createCandidateWorktree = async (
+const fetchDevelopmentBase = async (
   root: string,
-  checkout: string,
-  branch: string,
   gitEnvironment: Readonly<Record<string, string>>,
 ): Promise<string> => {
   await runTrustedGit({
@@ -838,9 +926,27 @@ const createCandidateWorktree = async (
     cwd: root,
     env: gitEnvironment,
   });
-  const base = ensureFullSha(await gitText(root, ["rev-parse", "origin/development"]), "Development base");
+  return ensureFullSha(await gitText(root, ["rev-parse", "origin/development"]), "Development base");
+};
+
+const readReviewBacklogAtRevision = async (root: string, revision: string): Promise<string> => {
+  ensureFullSha(revision, "Review backlog revision");
+  const result = await runTrustedGit({
+    args: ["show", `${revision}:${SENTINEL_POLICY.paths.reviewBacklog}`],
+    cwd: root,
+    maximumOutputBytes: 512 * 1024,
+  });
+  return new TextDecoder("utf-8", { fatal: true }).decode(result.stdout);
+};
+
+const addCandidateWorktree = async (
+  root: string,
+  checkout: string,
+  branch: string,
+  base: string,
+): Promise<void> => {
+  ensureFullSha(base, "Candidate worktree base");
   await runTrustedGit({ args: ["worktree", "add", "-b", branch, checkout, base], cwd: root });
-  return base;
 };
 
 const assertAgentDidNotCommitOrSwitch = async (
@@ -1467,6 +1573,7 @@ const run = async (): Promise<void> => {
   const githubToken = requiredEnvironment("GITHUB_TOKEN");
   const repository = requiredEnvironment("GITHUB_REPOSITORY");
   const github = new GitHubActionsClient({ repository, token: githubToken });
+  const gitEnvironment = gitNetworkEnvironment(githubToken);
 
   let workflowRunCreatedAt: string | null = null;
   if (githubRunIdValue !== undefined) {
@@ -1604,17 +1711,48 @@ const run = async (): Promise<void> => {
     replayIndexDir,
     runId,
   });
-  const triageGate = evaluateSentinelTriageGate(mode, currentEncrypted.length);
+  let selectedDevelopmentSha: string | null = null;
+  let reviewBacklogMarkdown = "";
+  if (mode === "hourly") {
+    selectedDevelopmentSha = await fetchDevelopmentBase(root, gitEnvironment);
+    const hintedDevelopmentSha = optionalEnvironment("SENTINEL_BACKLOG_HINT_SHA");
+    if (shouldDeferHourlyBacklogWork(hintedDevelopmentSha, selectedDevelopmentSha)) {
+      await writeJson(`${reportsDir}/triage-gate.json`, {
+        schema_version: 1,
+        required: false,
+        reason: "hourly_deferred_development_advanced",
+        work_source: null,
+        current_capture_count: currentEncrypted.length,
+        review_backlog_fingerprint: null,
+        hinted_development_sha: hintedDevelopmentSha,
+        current_development_sha: selectedDevelopmentSha,
+      });
+      await updateState("complete", {
+        status: "no_change",
+        branch_disposition: "not_created_development_advanced_after_hint",
+      });
+      return;
+    }
+    reviewBacklogMarkdown = await readReviewBacklogAtRevision(root, selectedDevelopmentSha);
+  }
+  const workSelection = selectSentinelWork(
+    mode,
+    currentEncrypted.length,
+    state.interval,
+    reviewBacklogMarkdown,
+  );
   await writeJson(`${reportsDir}/triage-gate.json`, {
     schema_version: 1,
-    required: triageGate.required,
-    reason: triageGate.reason,
+    required: workSelection.source === "triage",
+    reason: workSelection.reason,
+    work_source: workSelection.source,
     current_capture_count: currentEncrypted.length,
+    review_backlog_fingerprint: workSelection.backlogEntry?.fingerprint ?? null,
   });
-  if (!triageGate.required) {
+  if (workSelection.source === null) {
     await updateState("complete", {
       status: "no_change",
-      branch_disposition: triageGate.reason === "hourly_archive_only"
+      branch_disposition: workSelection.reason === "hourly_archive_only"
         ? "not_created_archive_only"
         : "not_created_no_failure_evidence",
     });
@@ -1636,8 +1774,6 @@ const run = async (): Promise<void> => {
     ...sensitiveAuthValues(authSlots.slot2B64),
   ];
   const deno = new DenoDeployClient({ token: denoToken });
-  const gitEnvironment = gitNetworkEnvironment(githubToken);
-
   const retainedEncrypted = await loadMatchingRetainedCaptures({
     github,
     current: currentEncrypted,
@@ -1658,21 +1794,37 @@ const run = async (): Promise<void> => {
     writeJson(monitorSchemaPath, MONITOR_OUTPUT_SCHEMA),
   ]);
 
-  await updateState("triage");
-  const rawLogs = await immutableFileEvidence(rawLogPath);
-  const triageResult = await withStageHeartbeat("triage", () =>
-    runStructuredCodexAgent({
-      role: "triage",
-      checkoutPath: agentCheckoutPath("triage", root, root),
-      prompt: triagePrompt(state.interval, rawLogs, currentEncrypted.map((capture) => capture.manifest)),
-      outputSchemaPath: triageSchemaPath,
-      authSlots,
-      expectedMaximumRuntimeMs: triageExpectedMaximumRuntimeMs(mode),
-    }));
-  await assertImmutableFileEvidence(rawLogs);
-  const triage = parseStructuredResult(triageResult, isTriageReport, "Triage agent");
-  if (JSON.stringify(triage.interval) !== JSON.stringify(state.interval)) {
-    throw new Error("Triage agent changed the requested interval");
+  let triage: TriageReport;
+  if (workSelection.source === "review_backlog") {
+    if (!workSelection.triage || !workSelection.backlogEntry) {
+      throw new Error("Sentinel backlog work selection is incomplete");
+    }
+    await updateState("review_backlog_selected");
+    triage = workSelection.triage;
+    await writeJson(`${reportsDir}/review-backlog-selection.json`, {
+      schema_version: 1,
+      fingerprint: workSelection.backlogEntry.fingerprint,
+      severity: workSelection.backlogEntry.severity,
+      location: workSelection.backlogEntry.location,
+      affected_sha: workSelection.backlogEntry.sha,
+    });
+  } else {
+    await updateState("triage");
+    const rawLogs = await immutableFileEvidence(rawLogPath);
+    const triageResult = await withStageHeartbeat("triage", () =>
+      runStructuredCodexAgent({
+        role: "triage",
+        checkoutPath: agentCheckoutPath("triage", root, root),
+        prompt: triagePrompt(state.interval, rawLogs, currentEncrypted.map((capture) => capture.manifest)),
+        outputSchemaPath: triageSchemaPath,
+        authSlots,
+        expectedMaximumRuntimeMs: triageExpectedMaximumRuntimeMs(mode),
+      }));
+    await assertImmutableFileEvidence(rawLogs);
+    triage = parseStructuredResult(triageResult, isTriageReport, "Triage agent");
+    if (JSON.stringify(triage.interval) !== JSON.stringify(state.interval)) {
+      throw new Error("Triage agent changed the requested interval");
+    }
   }
   await writeJson(`${reportsDir}/triage.json`, triage);
 
@@ -1687,10 +1839,103 @@ const run = async (): Promise<void> => {
     temporary_branch: branch,
     branch_disposition: "runner_local_pending_review",
   });
-  const baseSha = await createCandidateWorktree(root, checkout, branch, gitEnvironment);
+  let baseSha: string;
+  if (workSelection.source === "review_backlog") {
+    if (!selectedDevelopmentSha || !workSelection.backlogEntry) {
+      throw new Error("Sentinel backlog selection is not bound to a development revision");
+    }
+    const currentDevelopmentSha = await fetchDevelopmentBase(root, gitEnvironment);
+    if (currentDevelopmentSha !== selectedDevelopmentSha) {
+      throw new Error("origin/development advanced after Sentinel backlog selection");
+    }
+    baseSha = selectedDevelopmentSha;
+  } else {
+    baseSha = await fetchDevelopmentBase(root, gitEnvironment);
+  }
+  await addCandidateWorktree(root, checkout, branch, baseSha);
+  if (workSelection.backlogEntry) {
+    const candidateBacklog = await Deno.readTextFile(`${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`);
+    const candidateEntry = selectNextReviewBacklogEntry(candidateBacklog);
+    if (!reviewBacklogEntriesMatch(workSelection.backlogEntry, candidateEntry)) {
+      throw new Error("Candidate backlog selection does not match the exact fetched development base");
+    }
+  }
   await updateState("implementing", { base_development_sha: baseSha });
   let protectedHashes = await hashProtectedFiles(checkout, SENTINEL_POLICY.protectedImplementationPaths);
   const gitControlState = await snapshotGitControlState(checkout);
+  const selectedBacklogState: {
+    disposition: "open" | "resolved" | "manual_required" | null;
+    continueToRuntimeValidation: boolean;
+  } = {
+    disposition: workSelection.backlogEntry ? "open" : null,
+    continueToRuntimeValidation: workSelection.backlogEntry === null,
+  };
+  const selectedBacklogReportDisposition = (report: ImplementationReport): FindingDisposition => {
+    if (!workSelection.backlogEntry) throw new Error("No Sentinel review backlog item was selected");
+    const findingId = `review-backlog:${workSelection.backlogEntry.fingerprint}`;
+    const disposition = report.dispositions.find((item) => item.finding_id === findingId);
+    if (!disposition) throw new Error("Backlog implementation report omitted the selected finding");
+    return disposition;
+  };
+  const writeSelectedBacklogDisposition = async (
+    reportDisposition: FindingDisposition,
+    disposition: "resolved" | "manual_required",
+    phase: string,
+  ): Promise<void> => {
+    if (!workSelection.backlogEntry) throw new Error("No Sentinel review backlog item was selected");
+    if (selectedBacklogState.disposition === disposition) return;
+    if (selectedBacklogState.disposition !== "open") {
+      throw new Error("Sentinel review backlog disposition cannot be rewritten from its current state");
+    }
+    const backlogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
+    const currentBacklog = await Deno.readTextFile(backlogPath);
+    const completion = applyReviewBacklogImplementationDisposition(
+      currentBacklog,
+      workSelection.backlogEntry.fingerprint,
+      disposition,
+    );
+    await Deno.writeTextFile(backlogPath, completion.markdown);
+    selectedBacklogState.disposition = completion.disposition;
+    protectedHashes = await hashProtectedFiles(checkout, SENTINEL_POLICY.protectedImplementationPaths);
+    await writeJson(`${reportsDir}/review-backlog-disposition.json`, {
+      schema_version: 1,
+      fingerprint: workSelection.backlogEntry.fingerprint,
+      phase,
+      implementation_status: reportDisposition.status,
+      disposition: completion.disposition,
+    });
+  };
+  const applyInitialSelectedBacklogDisposition = async (report: ImplementationReport): Promise<void> => {
+    if (!workSelection.backlogEntry) return;
+    const reportDisposition = selectedBacklogReportDisposition(report);
+    const actualPaths = [...await implementationAgentChangedPaths(checkout)].sort();
+    const decision = evaluateReviewBacklogImplementation(
+      reportDisposition.status,
+      actualPaths,
+      reportDisposition.changed_files,
+    );
+    await writeSelectedBacklogDisposition(reportDisposition, decision.disposition, "initial_implementation");
+    selectedBacklogState.continueToRuntimeValidation = decision.continueToRuntimeValidation;
+  };
+  const reconcileSelectedBacklogDisposition = async (report: ImplementationReport, phase: string): Promise<void> => {
+    if (!workSelection.backlogEntry) return;
+    const reportDisposition = selectedBacklogReportDisposition(report);
+    if (reportDisposition.status === "blocked" || reportDisposition.status === "not_actionable") {
+      throw new Error("A later implementation stage downgraded the selected backlog repair");
+    }
+    if (selectedBacklogState.disposition === "resolved") return;
+    const actualPaths = [...await implementationAgentChangedPaths(checkout)].sort();
+    const decision = evaluateReviewBacklogImplementation(
+      reportDisposition.status,
+      actualPaths,
+      reportDisposition.changed_files,
+    );
+    if (decision.disposition !== "resolved" || !decision.continueToRuntimeValidation) {
+      throw new Error("A recurring selected backlog finding was not corrected by a matching candidate diff");
+    }
+    await writeSelectedBacklogDisposition(reportDisposition, "resolved", phase);
+    selectedBacklogState.continueToRuntimeValidation = true;
+  };
   let implementationReport: ImplementationReport;
   const beforeAgentSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Pre-agent SHA");
   const preserveFailedImplementation = async (
@@ -1760,10 +2005,62 @@ const run = async (): Promise<void> => {
     implementationReport = parseStructuredResult(implementationResult, isImplementationReport, "Implementation agent");
     assertCompleteFindingDispositions(triage, implementationReport);
     await writeJson(`${reportsDir}/implementation-round-1.json`, implementationReport);
-    assertActionableFindingsResolved(triage, implementationReport);
+    if (workSelection.source === "review_backlog") {
+      await applyInitialSelectedBacklogDisposition(implementationReport);
+    } else {
+      assertActionableFindingsResolved(triage, implementationReport);
+    }
   } catch (error) {
     await preserveFailedImplementation(error, "implementation", beforeAgentSha);
     throw error;
+  }
+
+  if (selectedBacklogState.disposition === "manual_required") {
+    if (selectedBacklogState.continueToRuntimeValidation) {
+      throw new Error("Manual-required backlog work cannot continue to runtime deployment");
+    }
+    const changedPaths = [...await implementationAgentChangedPaths(checkout)].sort();
+    if (
+      changedPaths.length !== 1 || changedPaths[0] !== SENTINEL_POLICY.paths.reviewBacklog
+    ) {
+      throw new Error("Manual-required backlog completion must change only the trusted backlog file");
+    }
+    const manualBacklogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
+    parseReviewBacklog(await Deno.readTextFile(manualBacklogPath));
+    await updateState("validating_manual_backlog");
+    await scanCandidateWithGitleaks({
+      cwd: checkout,
+      reportPath: `${reportsDir}/secret-scan-manual-backlog.json`,
+    });
+    await runCandidateValidation({
+      cwd: checkout,
+      reportPath: `${reportsDir}/validation-manual-backlog.json`,
+      privateDir,
+      denoDirectory,
+    });
+    await assertGitControlStateUnchanged(gitControlState);
+    const manualSha = await commitChanges(checkout, "docs: classify Sentinel backlog item for manual review");
+    await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
+    const remoteDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
+    if (remoteDevelopment !== baseSha) {
+      throw new Error("origin/development advanced before manual backlog classification could be pushed");
+    }
+    await updateState("pushing_manual_backlog", { candidate_sha: manualSha });
+    await runTrustedGit({
+      args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
+      cwd: checkout,
+      env: gitEnvironment,
+    });
+    const pushedDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
+    if (pushedDevelopment !== manualSha) {
+      throw new Error("Manual backlog classification did not become the exact development tip");
+    }
+    await updateState("complete", {
+      status: "no_change",
+      branch_disposition: "development_docs_only_manual_required",
+    });
+    for (const replayCase of applicableCases) replayCase.body.fill(0);
+    return;
   }
 
   if (!await hasChanges(checkout)) {
@@ -1788,7 +2085,9 @@ const run = async (): Promise<void> => {
   let previewRollbackTarget: RollbackTarget | null | undefined;
   while (true) {
     if (!canStartReviewRound(reviewRound)) {
-      throw new Error("P0/P1 findings or replay-driven changes remain after three implementation-review rounds");
+      throw new Error(
+        "Blocking review findings or replay-driven changes remain after three implementation-review rounds",
+      );
     }
     reviewRound += 1;
     let candidateSha = await commitChanges(checkout, `fix: Provider Sentinel repair round ${reviewRound}`);
@@ -1805,22 +2104,31 @@ const run = async (): Promise<void> => {
       reviewRound,
     );
     await writeJson(`${reportsDir}/native-review-round-${reviewRound}.json`, review);
-    const blockers = blockingReviewFindings(review);
+    const requiredBacklogFingerprint = selectedBacklogState.disposition === "resolved"
+      ? workSelection.backlogEntry?.fingerprint
+      : undefined;
+    const blockers = blockingReviewFindings(review, requiredBacklogFingerprint);
     const backlogFindings = review.findings.filter((finding) => finding.severity === "P2" || finding.severity === "P3");
     if (backlogFindings.length) {
       const backlogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
-      const currentBacklog = await Deno.readTextFile(backlogPath).catch(() => "");
+      const currentBacklog = await Deno.readTextFile(backlogPath);
       await Deno.writeTextFile(
         backlogPath,
         mergeReviewBacklog(currentBacklog, backlogFindings, candidateSha, new Date()),
       );
       candidateSha = await commitChanges(checkout, `docs: record Sentinel review backlog round ${reviewRound}`);
       protectedHashes = await hashProtectedFiles(checkout, SENTINEL_POLICY.protectedImplementationPaths);
+      if (
+        selectedBacklogState.disposition === "resolved" && workSelection.backlogEntry &&
+        backlogFindings.some((finding) => finding.fingerprint === workSelection.backlogEntry!.fingerprint)
+      ) {
+        selectedBacklogState.disposition = "open";
+      }
       await updateState(`native_review_${reviewRound}`, { candidate_sha: candidateSha });
     }
     if (blockers.length) {
       if (!canStartReviewRound(reviewRound)) {
-        throw new Error("Native Codex review still has P0/P1 findings after round three");
+        throw new Error("Native Codex review still has blocking findings after round three");
       }
       const preFixSha = candidateSha;
       const stage = `implementation_review_fix_${reviewRound}`;
@@ -1845,7 +2153,11 @@ const run = async (): Promise<void> => {
         );
         assertCompleteFindingDispositions(triage, implementationReport);
         await writeJson(`${reportsDir}/implementation-round-${reviewRound + 1}.json`, implementationReport);
-        assertActionableFindingsResolved(triage, implementationReport);
+        if (workSelection.source === "review_backlog") {
+          await reconcileSelectedBacklogDisposition(implementationReport, `native_review_fix_${reviewRound}`);
+        } else {
+          assertActionableFindingsResolved(triage, implementationReport);
+        }
         if (!await hasChanges(checkout)) {
           throw new Error("Implementation agent did not correct blocking review findings");
         }
@@ -1856,6 +2168,9 @@ const run = async (): Promise<void> => {
       continue;
     }
 
+    if (workSelection.source === "review_backlog" && selectedBacklogState.disposition !== "resolved") {
+      throw new Error("Selected review backlog work is not resolved before runtime validation");
+    }
     await updateState(`validation_${reviewRound}`);
     await scanCandidateWithGitleaks({
       cwd: checkout,
@@ -1941,6 +2256,7 @@ const run = async (): Promise<void> => {
     });
     await deno.verifyHealthIdentity([immutablePreviewHealthUrl], candidateSha, preview.revision);
     await writeJson(`${reportsDir}/replay-round-${reviewRound}.json`, { results: replayResults });
+    if (!requiresReplayEvaluation(replayResults)) break;
     const preReplayEvaluationSha = candidateSha;
     const replayEvaluationStage = `replay_evaluation_${reviewRound}`;
     try {
@@ -1960,7 +2276,11 @@ const run = async (): Promise<void> => {
       implementationReport = parseStructuredResult(replayEvaluation, isImplementationReport, "Replay evaluation agent");
       assertCompleteFindingDispositions(triage, implementationReport);
       await writeJson(`${reportsDir}/replay-evaluation-round-${reviewRound}.json`, implementationReport);
-      assertActionableFindingsResolved(triage, implementationReport);
+      if (workSelection.source === "review_backlog") {
+        await reconcileSelectedBacklogDisposition(implementationReport, `replay_evaluation_${reviewRound}`);
+      } else {
+        assertActionableFindingsResolved(triage, implementationReport);
+      }
       assertReplayEvaluation(implementationReport, replayResults);
       if (await hasChanges(checkout)) continue;
     } catch (error) {
