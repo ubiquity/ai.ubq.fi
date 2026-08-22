@@ -565,9 +565,6 @@ export const admitPaidFallbackV3 = async (
       created_at_ms: input.createdAtMs,
       updated_at_ms: now,
     };
-    const gateEntry = input.dispatchIntent
-      ? await kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" })
-      : null;
     let atomic = kv.atomic().check(requestEntry).check(deletionGuardEntry);
     if (input.policyCheck) atomic = atomic.check(input.policyCheck);
     atomic = atomic.set(requestKey, request).set(
@@ -577,11 +574,15 @@ export const admitPaidFallbackV3 = async (
         next_reconciliation_at_ms: now,
       } satisfies PaidFallbackPendingV3,
     );
-    if (gateEntry) {
-      // A dispatch-intent admission creates a new billable marker. Always
-      // advance the gate version with it so a concurrent recompute cannot
-      // publish a scan that predates this marker.
-      atomic = atomic.check(gateEntry).set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
+    if (input.dispatchIntent) {
+      // Version the gate in the marker transaction so a recompute that scanned
+      // before this marker cannot publish stale state. A blind due-now sentinel
+      // preserves that fence without serializing every admission on one global
+      // gate CAS.
+      atomic = atomic.set(
+        gateKey,
+        { next_due_at_ms: 0 } satisfies PaidFallbackReconciliationGateV3,
+      );
     }
     if (!unlimited) {
       atomic = atomic.check(windowEntry).set(windowKey, {
