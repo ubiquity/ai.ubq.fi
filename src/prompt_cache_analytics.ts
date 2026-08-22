@@ -1,7 +1,6 @@
 import { getKv } from "./kv.ts";
 import { PROMPT_CACHE_TELEMETRY_PROVIDERS, PROMPT_CACHE_TELEMETRY_ROUTES } from "./prompt_cache_telemetry_gate.ts";
 import { RELEASE_GIT_SHA } from "./release.ts";
-import { isRecord } from "./utils.ts";
 
 export const PROMPT_CACHE_ANALYTICS_KV_PREFIX = ["uos_ai", "prompt_cache_analytics", "v1"] as const;
 export const PROMPT_CACHE_ANALYTICS_BUCKET_MS = 15 * 60_000;
@@ -9,7 +8,8 @@ export const PROMPT_CACHE_ANALYTICS_WINDOW_MS = 7 * 24 * 60 * 60_000;
 export const PROMPT_CACHE_ANALYTICS_RETENTION_MS = 8 * 24 * 60 * 60_000;
 
 const RELEASE_SHA = /^[a-f0-9]{7,64}$/i;
-const MAX_WRITE_ATTEMPTS = 6;
+const COUNTERS = ["input_tokens", "cached_input_tokens", "sample_count"] as const;
+type Counter = typeof COUNTERS[number];
 
 export type PromptCacheAnalyticsEvent = Readonly<{
   provider: string | null;
@@ -37,9 +37,7 @@ export type PromptCacheAnalyticsRecordResult = Readonly<{
     | "unsupported_route"
     | "usage_unavailable"
     | "invalid_usage"
-    | "invalid_bucket"
-    | "kv_unavailable"
-    | "write_contention";
+    | "kv_unavailable";
   bucket_start_at_ms: number | null;
 }>;
 
@@ -60,15 +58,6 @@ export type PromptCacheAnalyticsView = Readonly<{
   buckets: readonly PromptCacheAnalyticsBucket[];
 }>;
 
-type StoredPromptCacheAnalyticsBucket = Readonly<{
-  v: 1;
-  bucket_start_at_ms: number;
-  input_tokens: number;
-  cached_input_tokens: number;
-  sample_count: number;
-  updated_at_ms: number;
-}>;
-
 const safeNow = (now: () => number): number => {
   const value = Math.trunc(now());
   return Number.isSafeInteger(value) && value >= 0 ? value : Date.now();
@@ -86,29 +75,11 @@ const knownRelease = (value: unknown): boolean => {
 const safeCounter = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-const parseStoredBucket = (
-  value: unknown,
-  expectedBucketStartAtMs?: number,
-): StoredPromptCacheAnalyticsBucket | null => {
-  if (!isRecord(value) || value.v !== 1) return null;
-  if (
-    !safeCounter(value.bucket_start_at_ms) ||
-    value.bucket_start_at_ms % PROMPT_CACHE_ANALYTICS_BUCKET_MS !== 0 ||
-    !safeCounter(value.input_tokens) ||
-    !safeCounter(value.cached_input_tokens) ||
-    value.cached_input_tokens > value.input_tokens ||
-    !safeCounter(value.sample_count) ||
-    !safeCounter(value.updated_at_ms)
-  ) return null;
-  if (expectedBucketStartAtMs !== undefined && value.bucket_start_at_ms !== expectedBucketStartAtMs) return null;
-  return {
-    v: 1,
-    bucket_start_at_ms: value.bucket_start_at_ms,
-    input_tokens: value.input_tokens,
-    cached_input_tokens: value.cached_input_tokens,
-    sample_count: value.sample_count,
-    updated_at_ms: value.updated_at_ms,
-  };
+const storedCounter = (value: unknown): number | null => {
+  if (typeof value !== "object" || value === null || !("value" in value)) return null;
+  const counter = (value as { value?: unknown }).value;
+  if (typeof counter !== "bigint" || counter < 0n || counter > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return Number(counter);
 };
 
 const recordResult = (
@@ -128,6 +99,11 @@ const resolveKv = async (options: PromptCacheAnalyticsOptions): Promise<Deno.Kv 
 export const promptCacheAnalyticsBucketKey = (
   bucketStartAtMs: number,
 ): Deno.KvKey => [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, bucketStartAtMs];
+
+export const promptCacheAnalyticsCounterKey = (
+  bucketStartAtMs: number,
+  counter: Counter,
+): Deno.KvKey => [...promptCacheAnalyticsBucketKey(bucketStartAtMs), counter];
 
 /**
  * Adds one completed response to its UTC-aligned 15-minute cache bucket.
@@ -162,47 +138,35 @@ export const recordPromptCacheAnalytics = async (
   const bucketStartAtMs = alignedBucketStart(nowMs);
   const kv = await resolveKv(options);
   if (!kv) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
-  const key = promptCacheAnalyticsBucketKey(bucketStartAtMs);
 
   try {
-    for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
-      const entry = await kv.get<StoredPromptCacheAnalyticsBucket>(key, { consistency: "strong" });
-      const current = entry.value === null ? null : parseStoredBucket(entry.value, bucketStartAtMs);
-      if (entry.value !== null && !current) return recordResult("unavailable", "invalid_bucket", bucketStartAtMs);
-      const inputTokens = (current?.input_tokens ?? 0) + event.inputTokens;
-      const cachedInputTokens = (current?.cached_input_tokens ?? 0) + event.cachedInputTokens;
-      const sampleCount = (current?.sample_count ?? 0) + 1;
-      if (!safeCounter(inputTokens) || !safeCounter(cachedInputTokens) || !safeCounter(sampleCount)) {
-        return recordResult("ignored", "invalid_usage", bucketStartAtMs);
-      }
-      const next: StoredPromptCacheAnalyticsBucket = {
-        v: 1,
-        bucket_start_at_ms: bucketStartAtMs,
-        input_tokens: inputTokens,
-        cached_input_tokens: cachedInputTokens,
-        sample_count: sampleCount,
-        updated_at_ms: nowMs,
-      };
-      const expireIn = Math.max(1, bucketStartAtMs + PROMPT_CACHE_ANALYTICS_RETENTION_MS - nowMs);
-      const committed = await kv.atomic().check(entry).set(key, next, { expireIn }).commit();
-      if (committed.ok) return recordResult("recorded", "recorded", bucketStartAtMs);
-    }
+    const expiredBucketStartAtMs = bucketStartAtMs - PROMPT_CACHE_ANALYTICS_RETENTION_MS;
+    const operation = kv.atomic()
+      .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "input_tokens"), BigInt(event.inputTokens))
+      .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "cached_input_tokens"), BigInt(event.cachedInputTokens))
+      .sum(promptCacheAnalyticsCounterKey(bucketStartAtMs, "sample_count"), 1n);
+    for (const counter of COUNTERS) operation.delete(promptCacheAnalyticsCounterKey(expiredBucketStartAtMs, counter));
+    const committed = await operation.commit();
+    if (!committed.ok) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
   } catch {
     return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
   }
 
-  return recordResult("unavailable", "write_contention", bucketStartAtMs);
+  return recordResult("recorded", "recorded", bucketStartAtMs);
 };
 
-const projectedBucket = (stored: StoredPromptCacheAnalyticsBucket): PromptCacheAnalyticsBucket => ({
-  bucket_start_at_ms: stored.bucket_start_at_ms,
-  bucket_end_at_ms: stored.bucket_start_at_ms + PROMPT_CACHE_ANALYTICS_BUCKET_MS,
-  input_tokens: stored.input_tokens,
-  cached_input_tokens: stored.cached_input_tokens,
-  cached_percentage: stored.input_tokens === 0
+const projectedBucket = (
+  bucketStartAtMs: number,
+  counters: Readonly<Record<Counter, number>>,
+): PromptCacheAnalyticsBucket => ({
+  bucket_start_at_ms: bucketStartAtMs,
+  bucket_end_at_ms: bucketStartAtMs + PROMPT_CACHE_ANALYTICS_BUCKET_MS,
+  input_tokens: counters.input_tokens,
+  cached_input_tokens: counters.cached_input_tokens,
+  cached_percentage: counters.input_tokens === 0
     ? null
-    : Math.round((stored.cached_input_tokens / stored.input_tokens) * 1_000_000) / 10_000,
-  sample_count: stored.sample_count,
+    : Math.round((counters.cached_input_tokens / counters.input_tokens) * 1_000_000) / 10_000,
+  sample_count: counters.sample_count,
 });
 
 export const readPromptCacheAnalytics = async (
@@ -222,22 +186,46 @@ export const readPromptCacheAnalytics = async (
   const kv = await resolveKv(options);
   if (!kv) return unavailable();
 
-  const buckets: PromptCacheAnalyticsBucket[] = [];
+  const storedBuckets = new Map<number, Partial<Record<Counter, number>>>();
   try {
-    for await (const entry of kv.list<StoredPromptCacheAnalyticsBucket>({ prefix: PROMPT_CACHE_ANALYTICS_KV_PREFIX })) {
+    for await (const entry of kv.list<Deno.KvU64>({ prefix: PROMPT_CACHE_ANALYTICS_KV_PREFIX })) {
       const keyBucketStartAtMs = entry.key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length];
+      const counter = entry.key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length + 1];
       if (
+        entry.key.length !== PROMPT_CACHE_ANALYTICS_KV_PREFIX.length + 2 ||
         !safeCounter(keyBucketStartAtMs) ||
         keyBucketStartAtMs < windowStartAtMs ||
-        keyBucketStartAtMs > currentBucketStartAtMs
+        keyBucketStartAtMs > currentBucketStartAtMs ||
+        typeof counter !== "string" ||
+        !(COUNTERS as readonly string[]).includes(counter)
       ) continue;
-      const stored = parseStoredBucket(entry.value, keyBucketStartAtMs);
-      if (stored) buckets.push(projectedBucket(stored));
+      const value = storedCounter(entry.value);
+      if (value === null) continue;
+      const bucket = storedBuckets.get(keyBucketStartAtMs) ?? {};
+      bucket[counter as Counter] = value;
+      storedBuckets.set(keyBucketStartAtMs, bucket);
     }
   } catch {
     return unavailable();
   }
 
+  const buckets: PromptCacheAnalyticsBucket[] = [];
+  for (const [bucketStartAtMs, counters] of storedBuckets) {
+    const inputTokens = counters.input_tokens;
+    const cachedInputTokens = counters.cached_input_tokens;
+    const sampleCount = counters.sample_count;
+    if (
+      !safeCounter(inputTokens) ||
+      !safeCounter(cachedInputTokens) ||
+      cachedInputTokens > inputTokens ||
+      !safeCounter(sampleCount)
+    ) continue;
+    buckets.push(projectedBucket(bucketStartAtMs, {
+      input_tokens: inputTokens,
+      cached_input_tokens: cachedInputTokens,
+      sample_count: sampleCount,
+    }));
+  }
   buckets.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
   return {
     status: "ready",

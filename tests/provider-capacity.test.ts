@@ -21,7 +21,7 @@ import {
   refreshProviderCapacity,
   sampleProviderCapacityForCron,
 } from "../src/provider_capacity.ts";
-import { PROMPT_CACHE_ANALYTICS_BUCKET_MS, promptCacheAnalyticsBucketKey } from "../src/prompt_cache_analytics.ts";
+import { PROMPT_CACHE_ANALYTICS_BUCKET_MS, promptCacheAnalyticsCounterKey } from "../src/prompt_cache_analytics.ts";
 import {
   listProviderCapacityDowntimeEvents,
   PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX,
@@ -578,14 +578,9 @@ Deno.test("capacity view backfills recent verified reset events from the redacte
 
 Deno.test("capacity endpoint reads persisted state by default and probes only for refresh=live", async () => {
   seed();
-  kvStore.put(promptCacheAnalyticsBucketKey(nowMs), {
-    v: 1,
-    bucket_start_at_ms: nowMs,
-    input_tokens: 200,
-    cached_input_tokens: 100,
-    sample_count: 2,
-    updated_at_ms: nowMs,
-  });
+  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "input_tokens"), { value: 200n } as Deno.KvU64);
+  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "cached_input_tokens"), { value: 100n } as Deno.KvU64);
+  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "sample_count"), { value: 2n } as Deno.KvU64);
   let calls = 0;
   const fetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     calls += 1;

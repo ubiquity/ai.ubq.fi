@@ -1778,6 +1778,7 @@ const capacityChartMarkerX = (observedAtMs, chartWindow, plot) =>
 const capacityChartPromptCacheBuckets = (snapshot, chartWindow) => {
   const bucketMs = snapshot?.prompt_cache?.bucket_ms;
   if (
+    snapshot?.prompt_cache?.status !== "ready" ||
     bucketMs !== CAPACITY_CHART_BUCKET_MS ||
     !Array.isArray(snapshot?.prompt_cache?.buckets)
   ) return [];
@@ -2344,7 +2345,9 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     ? ` · ${downtimeBridgeCount} OpenAI downtime bridge${downtimeBridgeCount === 1 ? "" : "s"}`
     : "";
   const latestCacheBucket = promptCacheBuckets.at(-1);
-  const cacheSuffix = latestCacheBucket
+  const cacheSuffix = snapshot?.prompt_cache?.status !== "ready"
+    ? " · cache analytics unavailable"
+    : latestCacheBucket
     ? ` · ${promptCacheBuckets.length} cache bucket${promptCacheBuckets.length === 1 ? "" : "s"} · latest ${
       quotaPercentFormatter.format(latestCacheBucket.cachedPercent)
     }% cached at ${formatCapacityTimestamp(latestCacheBucket.bucketStartAtMs)}`
@@ -2378,12 +2381,15 @@ const renderProviderCapacity = (snapshot) => {
 
   const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
   const staleCount = sources.filter((source) => source.state === "stale").length;
+  const cacheAnalyticsUnavailable = snapshot?.prompt_cache?.status !== "ready";
   if (unavailableCount === sources.length) {
     setBadge(providerCapacityBadge, "unknown", "Quota unavailable");
   } else if (unavailableCount > 0) {
     setBadge(providerCapacityBadge, "unknown", `Partial quota · ${unavailableCount} unavailable`);
   } else if (staleCount > 0) {
     setBadge(providerCapacityBadge, "unknown", `Quota stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
+  } else if (cacheAnalyticsUnavailable) {
+    setBadge(providerCapacityBadge, "unknown", "Cache analytics unavailable");
   } else {
     setBadge(providerCapacityBadge, "ok", "Snapshot ready");
   }
