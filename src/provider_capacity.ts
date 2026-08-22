@@ -12,6 +12,7 @@ import {
   type ProviderCapacityDowntimeEvent,
   type ProviderCapacityResetEvent,
 } from "./provider_capacity_events.ts";
+import { readPromptCacheAnalytics } from "./prompt_cache_analytics.ts";
 import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
 import {
   getConfiguredMeteredQuotaSnapshot,
@@ -1069,11 +1070,16 @@ export const handleProviderCapacity = async (
   request: Request = new Request("https://ai.ubq.fi/admin/providers/capacity"),
   options: ProviderCapacitySnapshotOptions = {},
 ): Promise<Response> => {
+  const promptCache = readPromptCacheAnalytics({ kv: options.kv, now: options.now });
   try {
     const live = new URL(request.url).searchParams.get("refresh") === "live";
     const view = live ? await refreshProviderCapacity(options) : await getPersistedProviderCapacityView(options);
-    return json(200, view, { "Cache-Control": "no-store" });
+    return json(200, { ...view, prompt_cache: await promptCache }, { "Cache-Control": "no-store" });
   } catch {
-    return json(200, unavailableView(Date.now(), [], [], []), { "Cache-Control": "no-store" });
+    return json(
+      200,
+      { ...unavailableView(Date.now(), [], [], []), prompt_cache: await promptCache },
+      { "Cache-Control": "no-store" },
+    );
   }
 };

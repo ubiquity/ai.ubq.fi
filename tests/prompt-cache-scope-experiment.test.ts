@@ -478,7 +478,6 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
       const body = JSON.parse(rows[0]?.body ?? "") as Record<string, unknown>;
       assert.deepEqual(Object.keys(body).sort(), [
         "input",
-        "max_output_tokens",
         "model",
         "prompt_cache_key",
         "reasoning",
@@ -488,7 +487,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
       assert.equal(body.model, MODEL);
       assert.equal(body.store, false);
       assert.equal(body.stream, true);
-      assert.equal(body.max_output_tokens, 16);
+      assert.equal("max_output_tokens" in body, false);
       assert.deepEqual(body.reasoning, { effort: "none" });
       assert.equal("prompt_cache_options" in body, false);
       assert.match(String(body.prompt_cache_key), /^uos-cache-scope-v5-[0-9a-f-]{36}$/);

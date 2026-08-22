@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { warnQuotaAccountingFailure, withTerminalRequestLog } from "../src/handler.ts";
+import { recordPromptCacheAnalytics } from "../src/prompt_cache_analytics.ts";
 import {
   PROMPT_CACHE_TELEMETRY_MIN_COMPLETED,
   readPromptCacheTelemetryBaseline,
@@ -260,9 +261,14 @@ Deno.test("terminal telemetry failures do not change non-stream or SSE responses
   const originalInfo = console.info;
   const terminalLogs: unknown[][] = [];
   let telemetryAttempts = 0;
+  let analyticsAttempts = 0;
   const failTelemetry: typeof recordPromptCacheTelemetry = () => {
     telemetryAttempts += 1;
     return Promise.reject(new Error("optional terminal telemetry unavailable"));
+  };
+  const failAnalytics: typeof recordPromptCacheAnalytics = () => {
+    analyticsAttempts += 1;
+    return Promise.reject(new Error("optional cache analytics unavailable"));
   };
   console.info = (...args: unknown[]): void => {
     if (args[0] === "[ai.ubq.fi] request_terminal") terminalLogs.push(args);
@@ -275,6 +281,7 @@ Deno.test("terminal telemetry failures do not change non-stream or SSE responses
         route: "responses",
         startedAtMonotonicMs: performance.now(),
         requestId: "telemetry-failure-non-stream",
+        recordCacheAnalytics: failAnalytics,
         recordTelemetry: failTelemetry,
       },
     );
@@ -287,12 +294,14 @@ Deno.test("terminal telemetry failures do not change non-stream or SSE responses
         route: "responses",
         startedAtMonotonicMs: performance.now(),
         requestId: "telemetry-failure-sse",
+        recordCacheAnalytics: failAnalytics,
         recordTelemetry: failTelemetry,
       },
     );
     assert.equal(stream.status, 200);
     assert.equal(await stream.text(), "data: complete\n\n");
     assert.equal(telemetryAttempts, 2, "both injected telemetry writes must have failed");
+    assert.equal(analyticsAttempts, 2, "both injected cache analytics writes must have failed");
     assert.equal(terminalLogs.length, 2, "each response emits at most one terminal log");
   } finally {
     console.info = originalInfo;
