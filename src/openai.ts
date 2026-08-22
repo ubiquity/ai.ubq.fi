@@ -9,6 +9,7 @@ import {
   fetchCodexResponses,
   getCodexModelsSnapshotDefaultModel,
   getCodexResponseAccountCohortId,
+  getCodexResponseAffinityOutcome,
   getCodexResponseSlot,
   getCodexRoutingError,
   loadCodexModelsSnapshot,
@@ -190,7 +191,13 @@ export type InferenceFallbackReason =
   | "primary_quota_blocked";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
-export type AffinityOutcome = "none" | "preferred" | "failover" | "shadow_only";
+export type AffinityOutcome =
+  | "none"
+  | "preferred"
+  | "preferred_unavailable"
+  | "remapped"
+  | "failover"
+  | "shadow_only";
 
 export type ResponseTelemetry = Readonly<{
   provider: string;
@@ -2222,6 +2229,7 @@ const fetchResponsesWithPaidFallback = async (
   if (telemetry) {
     telemetry.accountSlot = getCodexResponseSlot(primary);
     telemetry.accountCohortId = await getCodexResponseAccountCohortId(primary);
+    telemetry.affinityOutcome = getCodexResponseAffinityOutcome(primary);
     telemetry.providerRequestId = providerRequestIdFromResponse(primary);
   }
   const routingError = getCodexRoutingError(primary);

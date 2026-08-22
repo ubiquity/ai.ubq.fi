@@ -245,6 +245,14 @@ Deno.test("Stage 0 cache telemetry analyzer reports bounded failed and incomplet
     account_slot: 1,
     affinity_outcome: "preferred",
   });
+  const preferredUnavailable = terminalLine({
+    model: "gpt-preferred-unavailable-secret",
+    affinity_outcome: "preferred_unavailable",
+  });
+  const remapped = terminalLine({
+    model: "gpt-remapped-secret",
+    affinity_outcome: "remapped",
+  });
   const invalidCompleted = terminalLine({
     model: "gpt-invalid-secret",
     input_tokens: null,
@@ -304,41 +312,50 @@ Deno.test("Stage 0 cache telemetry analyzer reports bounded failed and incomplet
 
   const report = analyzeStage0CacheTelemetryLines([
     completed,
+    preferredUnavailable,
+    remapped,
     invalidCompleted,
     failedWithUsage,
     failedWithoutUsage,
     incompleteWithUsage,
   ]);
-  const completedOnlyReport = analyzeStage0CacheTelemetryLines([completed, invalidCompleted]);
+  const completedOnlyReport = analyzeStage0CacheTelemetryLines([
+    completed,
+    preferredUnavailable,
+    remapped,
+    invalidCompleted,
+  ]);
   const outcomes = report.inference_terminal_outcomes;
 
   // Failed and incomplete terminals are available for diagnosis but do not
   // participate in the completed-only evidence gates.
-  assert.equal(report.completed_inference, 2);
+  assert.equal(report.completed_inference, 4);
   assert.deepEqual(report.gates, completedOnlyReport.gates);
   assert.deepEqual(report.cohorts, completedOnlyReport.cohorts);
-  assert.deepEqual(report.usage_telemetry_status_totals, { invalid: 1, reported: 1 });
-  assert.deepEqual(report.reported_over_completed, { reported: 1, completed: 2, ratio: 0.5 });
+  assert.deepEqual(report.usage_telemetry_status_totals, { invalid: 1, reported: 3 });
+  assert.deepEqual(report.reported_over_completed, { reported: 3, completed: 4, ratio: 0.75 });
 
-  assert.equal(outcomes.terminal_events, 5);
+  assert.equal(outcomes.terminal_events, 7);
   assert.equal(outcomes.terminal_without_usage, 1);
-  assert.deepEqual(outcomes.outcome_totals, { completed: 2, failed: 2, incomplete: 1, cancelled: 0 });
-  assert.deepEqual(outcomes.usage_telemetry_status_totals, { invalid: 1, missing: 1, reported: 3 });
-  assert.deepEqual(outcomes.prompt_cache_key_presence, { present: 2, absent: 3 });
+  assert.deepEqual(outcomes.outcome_totals, { completed: 4, failed: 2, incomplete: 1, cancelled: 0 });
+  assert.deepEqual(outcomes.usage_telemetry_status_totals, { invalid: 1, missing: 1, reported: 5 });
+  assert.deepEqual(outcomes.prompt_cache_key_presence, { present: 2, absent: 5 });
   assert.deepEqual(outcomes.prompt_cache_mode_totals, {
     implicit: 1,
     explicit: 2,
     legacy_retention: 1,
-    unspecified: 1,
+    unspecified: 3,
   });
   assert.deepEqual(outcomes.account_slot_summary, {
     assigned_terminal_events: 4,
-    unassigned_terminal_events: 1,
+    unassigned_terminal_events: 3,
     distinct_assigned_slots: 3,
   });
   assert.deepEqual(outcomes.affinity_outcome_totals, {
     none: 2,
     preferred: 1,
+    preferred_unavailable: 1,
+    remapped: 1,
     failover: 1,
     shadow_only: 1,
   });
