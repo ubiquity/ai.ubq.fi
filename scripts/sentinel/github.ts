@@ -288,7 +288,14 @@ export class GitHubActionsClient {
         throw new Error(`Workflow run ${run.id} has the wrong head SHA`);
       }
       if (options.displayTitle !== undefined && run.displayTitle !== options.displayTitle) {
-        throw new Error(`Workflow run ${run.id} has the wrong dispatch correlation`);
+        // GitHub can expose the exact dispatched run before its run-name input
+        // has reached the workflow-run API. Keep following only that run ID and
+        // head SHA, but never accept a completed run with a stale correlation.
+        if (run.status === "completed" || this.#now() >= deadline) {
+          throw new Error(`Workflow run ${run.id} has the wrong dispatch correlation`);
+        }
+        await this.#sleep(Math.min(pollIntervalMs, Math.max(0, deadline - this.#now())));
+        continue;
       }
       if (run.status === "completed") {
         if (run.conclusion !== "success") {
