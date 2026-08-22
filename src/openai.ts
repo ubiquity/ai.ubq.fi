@@ -5583,11 +5583,20 @@ const responseOutputText = (output: unknown): string => {
   return text;
 };
 
-const reconcileResponseOutputText = (emittedText: string, output: unknown): string => {
-  const finalText = responseOutputText(output);
-  if (!finalText || finalText === emittedText || emittedText.startsWith(finalText)) return "";
-  if (finalText.startsWith(emittedText)) return finalText.slice(emittedText.length);
+const reconcileCompletedOutputText = (emittedText: string, completedText: string): string => {
+  if (!completedText || completedText === emittedText || emittedText.startsWith(completedText)) return "";
+  if (completedText.startsWith(emittedText)) return completedText.slice(emittedText.length);
   return malformedFunctionCallStream("Upstream response output text conflicts with prior text deltas.");
+};
+
+const reconcileResponseOutputText = (emittedText: string, output: unknown): string => {
+  return reconcileCompletedOutputText(emittedText, responseOutputText(output));
+};
+
+const chatOutputTextPartKey = (event: Record<string, unknown>): string => {
+  const itemId = getString(event.item_id)?.trim();
+  if (itemId) return `item:${itemId}:${String(event.content_index ?? 0)}`;
+  return `output:${String(event.output_index ?? 0)}:${String(event.content_index ?? 0)}`;
 };
 
 const withAccumulatedResponseText = (
@@ -5867,6 +5876,7 @@ const streamChatCompletions = (
   let sentRole = false;
   let closed = false;
   let outputText = "";
+  const outputTextParts = new Map<string, string>();
   const functionCalls = new ChatFunctionCallAccumulator();
   const queuedDeltas: Array<
     | Readonly<{ kind: "content"; content: string }>
@@ -5967,9 +5977,28 @@ const streamChatCompletions = (
             if (delta === null) {
               return malformedFunctionCallStream("Upstream output-text delta is not a string.");
             }
+            const key = chatOutputTextPartKey(ev);
+            outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
             outputText += delta;
             emitContent(delta);
             return;
+          }
+
+          if (type === "response.output_text.done") {
+            const completedText = getString(ev.text);
+            if (completedText === null) {
+              return malformedFunctionCallStream("Upstream completed output text is not a string.");
+            }
+            const key = chatOutputTextPartKey(ev);
+            const partText = outputTextParts.get(key) ?? "";
+            const suffix = reconcileCompletedOutputText(partText, completedText);
+            outputTextParts.set(key, `${partText}${suffix}`);
+            if (suffix) {
+              outputText += suffix;
+              emitContent(suffix);
+              return;
+            }
+            continue;
           }
 
           if (type === "response.output_item.added") {
@@ -6162,6 +6191,7 @@ const completeChatCompletions = async (
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
   let content = "";
+  const outputTextParts = new Map<string, string>();
   let usage: Record<string, unknown> | null = null;
   const functionCalls = new ChatFunctionCallAccumulator();
 
@@ -6201,7 +6231,21 @@ const completeChatCompletions = async (
         if (delta === null) {
           return malformedFunctionCallStream("Upstream output-text delta is not a string.");
         }
+        const key = chatOutputTextPartKey(ev);
+        outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
         content += delta;
+        continue;
+      }
+      if (type === "response.output_text.done") {
+        const completedText = getString(ev.text);
+        if (completedText === null) {
+          return malformedFunctionCallStream("Upstream completed output text is not a string.");
+        }
+        const key = chatOutputTextPartKey(ev);
+        const partText = outputTextParts.get(key) ?? "";
+        const suffix = reconcileCompletedOutputText(partText, completedText);
+        outputTextParts.set(key, `${partText}${suffix}`);
+        content += suffix;
         continue;
       }
       if (type === "response.output_item.added") {

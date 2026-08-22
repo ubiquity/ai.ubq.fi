@@ -7520,6 +7520,101 @@ Deno.test("openai: streamed Chat preserves final-only text alongside function ca
   assert.match(text, /data: \[DONE\]/);
 });
 
+Deno.test("openai: Chat recovers completed output text without duplicating streamed deltas", async (t) => {
+  const completedText = '{"subjects":[{"title":"Recovered"}]}';
+  const finalOutput = [{
+    id: "msg_done_text",
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: completedText }],
+  }];
+  const cases = [
+    {
+      name: "done-only text with empty terminal output",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.output_text.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            text: completedText,
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "delta prefix plus repeated done and terminal text",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.output_text.delta",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            delta: completedText.slice(0, 12),
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.output_text.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            text: completedText,
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: finalOutput } })}\n\n`,
+      ],
+    },
+  ];
+
+  for (const testCase of cases) {
+    for (const stream of [false, true]) {
+      await t.step(`${testCase.name} (${stream ? "streamed" : "buffered"})`, async () => {
+        const response = await withFetchMock(
+          () => sseResponse(testCase.events),
+          () =>
+            handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  stream,
+                  messages: [{ role: "user", content: "subjects" }],
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 200);
+        if (!stream) {
+          const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+          assert.equal(payload.choices?.[0]?.message?.content, completedText);
+          return;
+        }
+
+        const serialized = await response.text();
+        const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
+          .map((match) => match[1]!)
+          .filter((value) => value !== "[DONE]")
+          .map((value) =>
+            JSON.parse(value) as {
+              choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }>;
+            }
+          );
+        const content = chunks.map((chunk) => chunk.choices?.[0]?.delta?.content)
+          .filter((value): value is string => typeof value === "string")
+          .join("");
+        assert.equal(content, completedText);
+        assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
+        assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+      });
+    }
+  }
+});
+
 Deno.test("openai: native Responses preserve files and key while omitting unsupported cache controls", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
