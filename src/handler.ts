@@ -439,6 +439,10 @@ export const withTerminalRequestLog = (
     if (terminalLog) return terminalLog;
     terminalLog = logTerminalRequest({
       ...input,
+      // A detached replay finalization owns the capture until its own
+      // finally block zeroes it. Do not let terminal logging reclaim those
+      // bytes while compression, encryption, or KV writes are pending.
+      sentinelReplayInput: replayFinalization === null ? input.sentinelReplayInput : null,
       response,
       downstreamDrainedAtMonotonicMs,
       deliveryOutcome,
@@ -475,7 +479,9 @@ export const withTerminalRequestLog = (
     return (async () => {
       try {
         await finalizeCompletion();
-        await persistReplayAtApplicationTerminal();
+        // Replay capture is best effort. Let the runtime continue this work
+        // after the already-computed non-SSE response is ready for delivery.
+        void persistReplayAtApplicationTerminal();
         return response;
       } finally {
         if (deliveryOutcome) {
