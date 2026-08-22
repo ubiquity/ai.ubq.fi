@@ -2,6 +2,7 @@
 
 import { getKv } from "./src/kv.ts";
 import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
+import { prunePromptCacheAnalytics } from "./src/prompt_cache_analytics.ts";
 import { sampleProviderCapacityForCron } from "./src/provider_capacity.ts";
 import { createServeHandler } from "./src/serve_handler.ts";
 import {
@@ -38,6 +39,20 @@ Deno.cron("sample Codex provider capacity", "*/15 * * * *", async () => {
       "[ai.ubq.fi] Provider capacity sampler failed:",
       error instanceof Error ? error.message : String(error),
     );
+  }
+});
+
+Deno.cron("prune prompt cache analytics", "7 * * * *", async () => {
+  if (!isSentinelProductionRuntime()) return;
+  try {
+    const kv = await getKv();
+    if (!kv) return;
+    const result = await prunePromptCacheAnalytics({ kv });
+    if (result.status === "unavailable") {
+      console.warn("[ai.ubq.fi] prompt_cache_analytics", JSON.stringify({ status: "prune_unavailable" }));
+    }
+  } catch {
+    console.warn("[ai.ubq.fi] prompt_cache_analytics", JSON.stringify({ status: "prune_failed" }));
   }
 });
 

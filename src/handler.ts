@@ -64,6 +64,7 @@ import {
   handleUosEmbeddings,
   type ResponseTelemetry,
 } from "./openai.ts";
+import { recordPromptCacheAnalytics } from "./prompt_cache_analytics.ts";
 import { recordPromptCacheTelemetry } from "./prompt_cache_telemetry_gate.ts";
 import {
   handlePasskeyLoginFinish,
@@ -209,6 +210,7 @@ const logTerminalRequest = async (
     downstreamDrainedAtMonotonicMs?: number;
     deliveryOutcome: DeliveryOutcome;
     requestId: string;
+    recordCacheAnalytics?: typeof recordPromptCacheAnalytics;
     recordTelemetry?: typeof recordPromptCacheTelemetry;
     sentinelReplayInput?: AcceptedSentinelReplayInput | null;
     persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
@@ -293,6 +295,15 @@ const logTerminalRequest = async (
     usageTelemetryStatus: terminal.usage_telemetry_status,
     cacheWriteTokensPresent: terminal.cache_write_input_tokens !== null,
   });
+  const cacheAnalyticsWrite = (input.recordCacheAnalytics ?? recordPromptCacheAnalytics)({
+    provider: terminal.provider,
+    route: terminal.route,
+    status: terminal.status,
+    completed: input.streamReadFailure ? false : telemetry?.completed ?? false,
+    usageTelemetryStatus: terminal.usage_telemetry_status,
+    inputTokens: terminal.input_tokens,
+    cachedInputTokens: terminal.cached_input_tokens,
+  });
   const replayObservation: SentinelFailureObservation = {
     status: terminal.status,
     stream: terminal.stream,
@@ -320,7 +331,7 @@ const logTerminalRequest = async (
       })
       ? (input.recordSentinelDegradation ?? recordSentinelProviderDegradationFromEnvironment)(Date.now())
       : Promise.resolve();
-    await Promise.all([telemetryWrite, replayWrite, degradationWrite]);
+    await Promise.all([telemetryWrite, cacheAnalyticsWrite, replayWrite, degradationWrite]);
   } finally {
     zeroSentinelReplayInput(input.sentinelReplayInput);
   }
@@ -358,6 +369,8 @@ export const withTerminalRequestLog = (
     onCompleted?: () => Promise<void>;
     deliveryCompleted?: Promise<void>;
     deliverySignal?: AbortSignal;
+    /** Test seam for proving aggregate cache analytics remains best effort. */
+    recordCacheAnalytics?: typeof recordPromptCacheAnalytics;
     /** Test seam for proving terminal telemetry remains best effort. */
     recordTelemetry?: typeof recordPromptCacheTelemetry;
     /** Test seam for proving failed replay persistence and successful-request exclusion. */

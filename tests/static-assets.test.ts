@@ -92,10 +92,16 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.ok(chartIndex >= 0);
   assert.ok(listIndex > chartIndex);
 
-  assert.match(adminHtml, /admin\.js\?v=browser-cache-20260816-v2/);
+  assert.match(adminHtml, /Provider analytics/);
+  assert.match(adminHtml, /Fifteen-minute capacity and cached-input history/);
+  assert.match(adminHtml, /admin\.js\?v=prompt-cache-analytics-20260822/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
+  assert.match(adminScript, /Cached input share/);
+  assert.match(adminScript, /snapshot\?\.prompt_cache\?\.buckets/);
+  assert.match(adminScript, /snapshot\?\.prompt_cache\?\.status !== "ready"/);
+  assert.match(adminScript, /cache analytics unavailable/);
   assert.match(adminScript, /const loadId = \+\+providersLoadId/);
   assert.match(adminScript, /if \(loadId !== providersLoadId\) return/);
   assert.match(adminScript, /cache: "no-store"/);
