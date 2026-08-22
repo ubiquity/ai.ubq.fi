@@ -111,6 +111,21 @@ type RequestDeliveryInfo = Readonly<{
 type DeliveryOutcome = "delivered" | "interrupted" | "unobserved";
 type BodyOutcome = "drained" | "interrupted" | "failed";
 
+type SentinelBackgroundRuntime = Readonly<{
+  waitUntil: (task: Promise<unknown>) => void;
+}>;
+
+const scheduleSentinelBackgroundTask = (task: Promise<void>): boolean => {
+  const runtime = (globalThis as typeof globalThis & { EdgeRuntime?: SentinelBackgroundRuntime }).EdgeRuntime;
+  if (!runtime || typeof runtime.waitUntil !== "function") return false;
+  try {
+    runtime.waitUntil(task);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const shouldSignalSentinelProviderDegradation = (
   input: Readonly<{ status: number; completed: boolean; removedProviderTriggerClass: string | null }>,
 ): boolean =>
@@ -480,7 +495,11 @@ export const withTerminalRequestLog = (
         // Replay persistence is best effort; schedule it after the response is
         // ready so compression, encryption, and remote KV cannot delay
         // non-SSE delivery.
-        void persistReplayAtApplicationTerminal();
+        const replayTask = persistReplayAtApplicationTerminal();
+        // Deno Deploy keeps registered tasks alive after the response is
+        // returned. Local runtimes do not expose that hook, so await the task
+        // there to retain deterministic cleanup without delaying delivery.
+        if (!scheduleSentinelBackgroundTask(replayTask)) await replayTask;
         return response;
       } finally {
         if (deliveryOutcome) {
