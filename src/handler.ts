@@ -398,8 +398,11 @@ export const withTerminalRequestLog = (
   const persistReplayAtApplicationTerminal = (streamReadFailure = false): Promise<void> => {
     if (replayFinalization) return replayFinalization;
     const sentinelReplayInput = input.sentinelReplayInput;
+    const detachedReplayInput = sentinelReplayInput
+      ? { ...sentinelReplayInput, body: new Uint8Array(sentinelReplayInput.body) }
+      : null;
     replayFinalization = (async () => {
-      if (!sentinelReplayInput) return;
+      if (!detachedReplayInput) return;
       const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
       const observation: SentinelFailureObservation = {
         status: response.status,
@@ -423,14 +426,21 @@ export const withTerminalRequestLog = (
       const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
       if (shouldPersistSentinelReplay(observation, clientObservation)) {
         await (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
-          sentinelReplayInput,
+          detachedReplayInput,
           observation,
           clientObservation,
         );
       }
     })().catch(() => {
       // Capture persistence is best effort and must not replace the response.
-    }).finally(() => zeroSentinelReplayInput(sentinelReplayInput));
+    }).finally(() => {
+      zeroSentinelReplayInput(detachedReplayInput);
+      zeroSentinelReplayInput(sentinelReplayInput);
+    });
+    // The detached task owns an independent snapshot. Release the request's
+    // caller-owned bytes as soon as the persistence call has started so a
+    // slow background write cannot retain the original capture.
+    zeroSentinelReplayInput(sentinelReplayInput);
     return replayFinalization;
   };
   let terminalLog: Promise<void> | null = null;
