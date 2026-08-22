@@ -394,6 +394,43 @@ export const runWithSingleTimeoutContinuation = async <T>(
   }
 };
 
+export type ImplementationStageAttempt = Readonly<{
+  attempt: 1 | 2;
+  prompt: string;
+  timeoutMs: number;
+}>;
+
+export const runImplementationStageWithContinuation = async <T>(
+  options: Readonly<{
+    basePrompt: string;
+    initialTimeoutMs: number;
+    continuationTimeoutMs?: number;
+    invoke: (input: ImplementationStageAttempt) => Promise<T>;
+    onTimeout: (error: CodexInvocationError) => Promise<void>;
+  }>,
+): Promise<T> => {
+  const continuationTimeoutMs = options.continuationTimeoutMs ?? IMPLEMENTATION_CONTINUATION_MS;
+  if (!Number.isSafeInteger(options.initialTimeoutMs) || options.initialTimeoutMs <= 0) {
+    throw new TypeError("initialTimeoutMs must be a positive integer");
+  }
+  if (!Number.isSafeInteger(continuationTimeoutMs) || continuationTimeoutMs <= 0) {
+    throw new TypeError("continuationTimeoutMs must be a positive integer");
+  }
+  return await runWithSingleTimeoutContinuation(
+    (attempt) =>
+      options.invoke({
+        attempt,
+        timeoutMs: attempt === 1 ? options.initialTimeoutMs : continuationTimeoutMs,
+        prompt: `${options.basePrompt}\n\n${
+          attempt === 1
+            ? "Finish this implementation stage and return the required JSON within this bounded invocation. Prioritize a correct focused repair over optional work."
+            : "The first bounded implementation invocation timed out. Continue from the existing candidate changes. Inspect the current diff and validation artifacts, do not redo completed work, and return the required JSON within this final bounded continuation."
+        }`,
+      }),
+    options.onTimeout,
+  );
+};
+
 type StageHeartbeatTimer = ReturnType<typeof globalThis.setInterval> | number;
 
 type StageHeartbeatDependencies = Readonly<{
@@ -2077,22 +2114,20 @@ const run = async (): Promise<void> => {
   };
   let implementationResult: CodexInvocationResult;
   try {
-    implementationResult = await runWithSingleTimeoutContinuation(
-      (attempt) =>
+    implementationResult = await runImplementationStageWithContinuation({
+      basePrompt: stageImplementationPrompt([], null),
+      initialTimeoutMs: IMPLEMENTATION_INITIAL_MS,
+      invoke: ({ attempt, prompt, timeoutMs }) =>
         withStageHeartbeat(attempt === 1 ? "implementing" : "implementing_continuation", () =>
           runStructuredCodexAgent({
             role: "implementation",
             checkoutPath: checkout,
-            prompt: `${stageImplementationPrompt([], null)}${
-              attempt === 2
-                ? "\n\nThe first bounded invocation timed out. Continue from the existing candidate changes. Do not redo completed work. Finish the actionable set and return the required JSON within this final 10-minute continuation."
-                : "\n\nFinish the actionable set and return the required JSON within this 20-minute invocation. Prioritize a correct focused repair over broad optional checks."
-            }`,
+            prompt,
             outputSchemaPath: implementationSchemaPath,
             authSlots,
-            expectedMaximumRuntimeMs: attempt === 1 ? IMPLEMENTATION_INITIAL_MS : IMPLEMENTATION_CONTINUATION_MS,
+            expectedMaximumRuntimeMs: timeoutMs,
           })),
-      async (timeoutError) => {
+      onTimeout: async (timeoutError) => {
         await assertAgentDidNotCommitOrSwitch(checkout, beforeAgentSha, branch, gitControlState);
         await assertImplementationAgentScope(checkout);
         await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
@@ -2104,7 +2139,7 @@ const run = async (): Promise<void> => {
         await writeJson(`${reportsDir}/implementation-invocation-1-timeout.json`, safeErrorSummary(timeoutError));
         await updateState("implementing_continuation");
       },
-    );
+    });
     await assertAgentDidNotCommitOrSwitch(checkout, beforeAgentSha, branch, gitControlState);
     await assertImplementationAgentScope(checkout);
     await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
@@ -2237,15 +2272,32 @@ const run = async (): Promise<void> => {
       const preFixSha = candidateSha;
       const stage = `implementation_review_fix_${reviewRound}`;
       try {
-        const fixResult = await withStageHeartbeat(stage, () =>
-          runStructuredCodexAgent({
-            role: "implementation",
-            checkoutPath: checkout,
-            prompt: stageImplementationPrompt(blockers, replayResults),
-            outputSchemaPath: implementationSchemaPath,
-            authSlots,
-            expectedMaximumRuntimeMs: IMPLEMENTATION_INITIAL_MS,
-          }));
+        const fixResult = await runImplementationStageWithContinuation({
+          basePrompt: stageImplementationPrompt(blockers, replayResults),
+          initialTimeoutMs: IMPLEMENTATION_INITIAL_MS,
+          invoke: ({ attempt, prompt, timeoutMs }) =>
+            withStageHeartbeat(attempt === 1 ? stage : `${stage}_continuation`, () =>
+              runStructuredCodexAgent({
+                role: "implementation",
+                checkoutPath: checkout,
+                prompt,
+                outputSchemaPath: implementationSchemaPath,
+                authSlots,
+                expectedMaximumRuntimeMs: timeoutMs,
+              })),
+          onTimeout: async (timeoutError) => {
+            await assertAgentDidNotCommitOrSwitch(checkout, preFixSha, branch, gitControlState);
+            await assertImplementationAgentScope(checkout);
+            await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
+            await assertProtectedFilesUnchanged(checkout, protectedHashes);
+            await scanCandidateWithGitleaks({
+              cwd: checkout,
+              reportPath: `${reportsDir}/secret-scan-${stage}-timeout.json`,
+            });
+            await writeJson(`${reportsDir}/${stage}-timeout.json`, safeErrorSummary(timeoutError));
+            await updateState(`${stage}_continuation`);
+          },
+        });
         await assertAgentDidNotCommitOrSwitch(checkout, preFixSha, branch, gitControlState);
         await assertImplementationAgentScope(checkout);
         await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
@@ -2296,15 +2348,32 @@ const run = async (): Promise<void> => {
       const preValidationFixSha = candidateSha;
       const stage = `implementation_validation_fix_${reviewRound}`;
       try {
-        const fixResult = await withStageHeartbeat(stage, () =>
-          runStructuredCodexAgent({
-            role: "implementation",
-            checkoutPath: checkout,
-            prompt: validationRepairPrompt(triage, replayResults, error.failure, backlogPromptBinding),
-            outputSchemaPath: implementationSchemaPath,
-            authSlots,
-            expectedMaximumRuntimeMs: IMPLEMENTATION_CONTINUATION_MS,
-          }));
+        const fixResult = await runImplementationStageWithContinuation({
+          basePrompt: validationRepairPrompt(triage, replayResults, error.failure, backlogPromptBinding),
+          initialTimeoutMs: IMPLEMENTATION_CONTINUATION_MS,
+          invoke: ({ attempt, prompt, timeoutMs }) =>
+            withStageHeartbeat(attempt === 1 ? stage : `${stage}_continuation`, () =>
+              runStructuredCodexAgent({
+                role: "implementation",
+                checkoutPath: checkout,
+                prompt,
+                outputSchemaPath: implementationSchemaPath,
+                authSlots,
+                expectedMaximumRuntimeMs: timeoutMs,
+              })),
+          onTimeout: async (timeoutError) => {
+            await assertAgentDidNotCommitOrSwitch(checkout, preValidationFixSha, branch, gitControlState);
+            await assertImplementationAgentScope(checkout);
+            await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
+            await assertProtectedFilesUnchanged(checkout, protectedHashes);
+            await scanCandidateWithGitleaks({
+              cwd: checkout,
+              reportPath: `${reportsDir}/secret-scan-${stage}-timeout.json`,
+            });
+            await writeJson(`${reportsDir}/${stage}-timeout.json`, safeErrorSummary(timeoutError));
+            await updateState(`${stage}_continuation`);
+          },
+        });
         await assertAgentDidNotCommitOrSwitch(checkout, preValidationFixSha, branch, gitControlState);
         await assertImplementationAgentScope(checkout);
         await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
@@ -2407,15 +2476,38 @@ const run = async (): Promise<void> => {
     const preReplayEvaluationSha = candidateSha;
     const replayEvaluationStage = `replay_evaluation_${reviewRound}`;
     try {
-      const replayEvaluation = await withStageHeartbeat(replayEvaluationStage, () =>
-        runStructuredCodexAgent({
-          role: "implementation",
-          checkoutPath: checkout,
-          prompt: stageImplementationPrompt([], replayResults),
-          outputSchemaPath: implementationSchemaPath,
-          authSlots,
-          expectedMaximumRuntimeMs: IMPLEMENTATION_CONTINUATION_MS,
-        }));
+      const replayEvaluation = await runImplementationStageWithContinuation({
+        basePrompt: stageImplementationPrompt([], replayResults),
+        initialTimeoutMs: IMPLEMENTATION_CONTINUATION_MS,
+        invoke: ({ attempt, prompt, timeoutMs }) =>
+          withStageHeartbeat(
+            attempt === 1 ? replayEvaluationStage : `${replayEvaluationStage}_continuation`,
+            () =>
+              runStructuredCodexAgent({
+                role: "implementation",
+                checkoutPath: checkout,
+                prompt,
+                outputSchemaPath: implementationSchemaPath,
+                authSlots,
+                expectedMaximumRuntimeMs: timeoutMs,
+              }),
+          ),
+        onTimeout: async (timeoutError) => {
+          await assertAgentDidNotCommitOrSwitch(checkout, preReplayEvaluationSha, branch, gitControlState);
+          await assertImplementationAgentScope(checkout);
+          await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
+          await assertProtectedFilesUnchanged(checkout, protectedHashes);
+          await scanCandidateWithGitleaks({
+            cwd: checkout,
+            reportPath: `${reportsDir}/secret-scan-${replayEvaluationStage}-timeout.json`,
+          });
+          await writeJson(
+            `${reportsDir}/${replayEvaluationStage}-timeout.json`,
+            safeErrorSummary(timeoutError),
+          );
+          await updateState(`${replayEvaluationStage}_continuation`);
+        },
+      });
       await assertAgentDidNotCommitOrSwitch(checkout, preReplayEvaluationSha, branch, gitControlState);
       await assertImplementationAgentScope(checkout);
       await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
