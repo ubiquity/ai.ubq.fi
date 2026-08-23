@@ -3,12 +3,7 @@ import { apiKeyIdKey, coerceApiKeyExpiresAtMs } from "./api_keys.ts";
 import { type ApiKeyPolicy, authenticateApiKeyToken, getApiKeyUsageV3, looksLikeUosApiKey } from "./api_key_policy.ts";
 import { json, openaiError } from "./http.ts";
 import { getBearerToken } from "./http.ts";
-import {
-  checkKernelOrgUsageLimit,
-  checkKernelUsageLimit,
-  getKernelOrgUsageLimitSnapshot,
-  getKernelUsageLimitSnapshot,
-} from "./kernel_usage.ts";
+import { resolveKernelQuotaPolicyState } from "./kernel_usage.ts";
 import { recordKernelPolicyQueue } from "./kernel_policy_queue.ts";
 import { getKv } from "./kv.ts";
 import { getPasskeySession, isPasskeyUserAdmin } from "./passkeys.ts";
@@ -545,35 +540,11 @@ const authenticateGitHubToken = async (
   const { owner, repo } = attestation.payload;
   const stateId = attestation.payload.state_id;
 
-  const resolveKernelPolicyState = async (): Promise<{ limit_scope: "org" | "repo"; has_policy: boolean }> => {
-    const repoSnapshot = await getKernelUsageLimitSnapshot(owner, repo);
-    if (repoSnapshot?.source === "kv") {
-      return { limit_scope: "repo", has_policy: true };
-    }
-    const orgSnapshot = await getKernelOrgUsageLimitSnapshot(owner);
-    return { limit_scope: "org", has_policy: orgSnapshot?.source === "kv" };
-  };
-
-  const enforceKernelLimit = async (
-    limitScope: "org" | "repo",
-  ): Promise<{ ok: true } | { ok: false; response: Response }> => {
-    if (limitScope === "repo") {
-      const repoLimitResult = await checkKernelUsageLimit(owner, repo);
-      if (!repoLimitResult.ok) return { ok: false, response: repoLimitResult.response };
-      return { ok: true };
-    }
-
-    const orgLimitResult = await checkKernelOrgUsageLimit(owner);
-    if (!orgLimitResult.ok) return { ok: false, response: orgLimitResult.response };
-    return { ok: true };
-  };
-
   const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
   const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
   if (cachedUntil > Date.now()) {
-    const policyState = await resolveKernelPolicyState();
-    const limitResult = await enforceKernelLimit(policyState.limit_scope);
-    if (!limitResult.ok) return { ok: false, response: limitResult.response };
+    const policyState = await resolveKernelQuotaPolicyState(owner, repo);
+    if (!policyState.ok) return { ok: false, response: policyState.response };
     if (!policyState.has_policy) {
       await recordKernelPolicyQueue(owner, repo, getRequestPath(req));
     }
@@ -590,9 +561,8 @@ const authenticateGitHubToken = async (
     }
 
     githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
-    const policyState = await resolveKernelPolicyState();
-    const limitResult = await enforceKernelLimit(policyState.limit_scope);
-    if (!limitResult.ok) return { ok: false, response: limitResult.response };
+    const policyState = await resolveKernelQuotaPolicyState(owner, repo);
+    if (!policyState.ok) return { ok: false, response: policyState.response };
     if (!policyState.has_policy) {
       await recordKernelPolicyQueue(owner, repo, getRequestPath(req));
     }

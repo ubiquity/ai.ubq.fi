@@ -271,10 +271,10 @@ Deno.test("bounded API-key quota responses publish standard rate-limit headers",
   assert.equal(decision.response.status, 429);
   assert.equal(decision.response.headers.get("RateLimit-Limit"), "1");
   assert.equal(decision.response.headers.get("RateLimit-Remaining"), "0");
-  assert.equal(decision.response.headers.get("RateLimit-Policy"), "1;w=3600");
-  assert.match(decision.response.headers.get("RateLimit") ?? "", /^limit=1, remaining=0, reset=\d+$/);
+  assert.equal(decision.response.headers.get("RateLimit-Policy"), '"api-key";q=1;w=3600');
+  assert.match(decision.response.headers.get("RateLimit") ?? "", /^"api-key";r=0;t=\d+$/);
   assert.match(decision.response.headers.get("RateLimit-Reset") ?? "", /^\d+$/);
   assert.match(decision.response.headers.get("Retry-After") ?? "", /^\d+$/);
   assert.equal((await decision.response.json()).error.code, "rate_limit_exceeded");
-  assert.deepEqual(apiKeyRateLimitPolicyHeaders(policy), { "RateLimit-Policy": "1;w=3600" });
+  assert.deepEqual(apiKeyRateLimitPolicyHeaders(policy), { "RateLimit-Policy": '"api-key";q=1;w=3600' });
 });

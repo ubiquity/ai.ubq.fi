@@ -653,7 +653,7 @@ Deno.test("a successful class probe does not leave recovery pending on another c
   }
 });
 
-Deno.test("response-header timeouts fence one account and fail closed when every account is blocked", async () => {
+Deno.test("durable reads discard legacy response-header timeout fences", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
   resetCodexAccountRoutingForTest();
@@ -671,45 +671,18 @@ Deno.test("response-header timeouts fence one account and fail closed when every
     );
 
     resetCodexAccountRoutingForTest();
-    const sibling = await selectCodexRoutingAccounts(pool, pool.accounts, now + 1);
-    assert.equal(sibling.kind, "eligible");
-    if (sibling.kind !== "eligible") return;
-    assert.deepEqual(sibling.accounts.map((account) => account.slot), [1]);
-    assert.deepEqual(sibling.skippedSlots, [1]);
-
-    await markCodexUpstreamTimeout(sibling.accounts[0]!, now + 1);
-    resetCodexAccountRoutingForTest();
-    const unavailable = await selectCodexRoutingAccounts(pool, pool.accounts, now + 2);
-    assert.equal(unavailable.kind, "upstream_blocked");
-    if (unavailable.kind !== "upstream_blocked") return;
-    assert.equal(unavailable.retryAtMs, now + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS);
-
-    resetCodexAccountRoutingForTest();
-    const halfOpen = await selectCodexRoutingAccounts(
-      pool,
-      pool.accounts,
-      now + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS + 1,
-    );
-    assert.equal(halfOpen.kind, "eligible");
-    if (halfOpen.kind !== "eligible") return;
-    assert.equal(halfOpen.accounts[0]?.probeRequired, true);
-    const claimed = await claimCodexRoutingProbe(
-      pool,
-      halfOpen.accounts[0]!,
-      now + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS + 1,
-    );
-    assert.ok(claimed);
-    await markCodexSuccess(claimed!);
-    const recovered = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
-    assert.equal(recovered?.slots[0]?.upstream_timeout_blocked_until_ms, null);
-    assert.equal(recovered?.slots[0]?.probe_lease, null);
+    const selected = await selectCodexRoutingAccounts(pool, pool.accounts, now + 1);
+    assert.equal(selected.kind, "eligible");
+    if (selected.kind !== "eligible") return;
+    assert.deepEqual(selected.accounts.map((account) => account.slot), [0, 1]);
+    assert.deepEqual(selected.skippedSlots, []);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
   }
 });
 
-Deno.test("an expired quota timestamp does not misclassify a held timeout probe", async () => {
+Deno.test("a durable legacy timeout probe is discarded", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
   resetCodexAccountRoutingForTest();
@@ -747,9 +720,10 @@ Deno.test("an expired quota timestamp does not misclassify a held timeout probe"
     resetCodexAccountRoutingForTest();
 
     const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
-    assert.equal(selected.kind, "upstream_blocked");
-    if (selected.kind !== "upstream_blocked") return;
-    assert.equal(selected.retryAtMs, probeExpiresAtMs);
+    assert.equal(selected.kind, "eligible");
+    if (selected.kind !== "eligible") return;
+    assert.equal(selected.accounts[0]?.probeRequired, true);
+    assert.equal(selected.accounts[0]?.probeCircuit, "quota");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -803,7 +777,7 @@ Deno.test("a held quota probe does not misclassify a stale timeout as upstream b
   }
 });
 
-Deno.test("timeout blocks take precedence over quota blocks in a mixed unavailable pool", async () => {
+Deno.test("discarding a legacy timeout block preserves an independent quota block", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
   resetCodexAccountRoutingForTest();
@@ -827,17 +801,17 @@ Deno.test("timeout blocks take precedence over quota blocks in a mixed unavailab
 
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(pool, pool.accounts, now + 1);
-    assert.equal(selected.kind, "upstream_blocked");
-    if (selected.kind === "upstream_blocked") {
-      assert.equal(selected.retryAtMs, now + 60_000);
-    }
+    assert.equal(selected.kind, "eligible");
+    if (selected.kind !== "eligible") return;
+    assert.deepEqual(selected.accounts.map((account) => account.slot), [1]);
+    assert.deepEqual(selected.skippedSlots, [1]);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
   }
 });
 
-Deno.test("fetchCodexResponses uses the sibling account on the request after a timeout", async () => {
+Deno.test("fetchCodexResponses retries the preferred account on the request after a timeout", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
@@ -846,6 +820,7 @@ Deno.test("fetchCodexResponses uses the sibling account on the request after a t
     updated_at_ms: now,
   };
   const calls: string[] = [];
+  let dispatches = 0;
   const timeoutController = new AbortController();
   setKvForTest(kv as unknown as Deno.Kv);
   resetCodexAuthCacheForTest();
@@ -864,15 +839,81 @@ Deno.test("fetchCodexResponses uses the sibling account on the request after a t
     };
 
     await assert.rejects(
-      fetchCodexResponses({ model: "gpt-5-routing", input: "timeout" }, { signal: timeoutController.signal }),
+      fetchCodexResponses(
+        { model: "gpt-5-routing", input: "timeout" },
+        {
+          signal: timeoutController.signal,
+          beforeDispatch: () => {
+            dispatches += 1;
+            return Promise.resolve();
+          },
+        },
+      ),
       (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
     );
+    assert.equal(dispatches, 1, "an expired request deadline must not dispatch or record a sibling attempt");
     resetCodexAccountRoutingForTest();
 
     const response = await fetchCodexResponses({ model: "gpt-5-routing", input: "next request" });
     assert.equal(response.status, 200);
-    assert.deepEqual(calls, ["one", "two"]);
+    assert.deepEqual(calls, ["one", "one"]);
     await response.arrayBuffer();
+  } finally {
+    globalThis.fetch = originalFetch;
+    setKvForTest(null);
+    resetCodexAuthCacheForTest();
+  }
+});
+
+Deno.test("fetchCodexResponses preserves a JSON 429 without Retry-After when no retry time is known", async () => {
+  const kv = new RoutingKv();
+  const originalFetch = globalThis.fetch;
+  const now = Date.now();
+  const authPool: CodexAuthPoolState = {
+    accounts: [{ ...pool.accounts[0]!, updated_at_ms: now }],
+    updated_at_ms: now,
+  };
+  let calls = 0;
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAuthCacheForTest();
+  await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
+  try {
+    globalThis.fetch = (input): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (!url.endsWith("/responses")) throw new Error(`Unexpected Codex URL: ${url}`);
+      calls += 1;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              message: "Codex is temporarily rate limited.",
+              type: "rate_limit_error",
+              code: "codex_rate_limited",
+              param: null,
+            },
+          }),
+          { status: 429, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    };
+
+    const response = await fetchCodexResponses(
+      { model: "gpt-5-routing", input: "rate-limit" },
+      { retrySleep: async () => {} },
+    );
+
+    assert.equal(calls, 2);
+    assert.equal(response.status, 429);
+    assert.equal(response.headers.get("content-type"), "application/json");
+    assert.equal(response.headers.get("Retry-After"), null);
+    assert.deepEqual(await response.json(), {
+      error: {
+        message: "Codex is temporarily rate limited.",
+        type: "rate_limit_error",
+        code: "codex_rate_limited",
+        param: null,
+      },
+    });
   } finally {
     globalThis.fetch = originalFetch;
     setKvForTest(null);
@@ -2147,7 +2188,7 @@ Deno.test("fresh capacity cannot reopen a credential marked invalid", async () =
   }
 });
 
-Deno.test("same-account credential rotation retains an active upstream timeout circuit", async () => {
+Deno.test("same-account credential rotation drops a legacy upstream timeout circuit", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
   resetCodexAccountRoutingForTest();
@@ -2164,17 +2205,14 @@ Deno.test("same-account credential rotation retains an active upstream timeout c
     };
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(rotated, rotated.accounts, now + 1);
-    assert.equal(selected.kind, "upstream_blocked");
-    if (selected.kind === "upstream_blocked") {
-      assert.equal(selected.retryAtMs, now + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS);
-    }
+    assert.equal(selected.kind, "eligible");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
   }
 });
 
-Deno.test("credential refresh transfers an owned upstream-timeout probe", async () => {
+Deno.test("credential refresh drops an owned legacy upstream-timeout probe", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
   resetCodexAccountRoutingForTest();
@@ -2197,12 +2235,12 @@ Deno.test("credential refresh transfers an owned upstream-timeout probe", async 
       updated_at_ms: now + 1,
     };
     const reconciled = await reconcileCodexRoutingAccount(probe, rotated);
-    assert.equal(reconciled.probeCircuit, "upstream_timeout");
-    assert.equal(reconciled.probeToken, probe.probeToken);
-    assert.notEqual(reconciled.probeGeneration, probe.probeGeneration);
+    assert.equal(reconciled.probeCircuit, null);
+    assert.equal(reconciled.probeToken, null);
+    assert.equal(reconciled.probeGeneration, null);
     const transferred = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
-    assert.equal(transferred?.slots[0]?.probe_lease?.circuit, "upstream_timeout");
-    assert.equal(transferred?.slots[0]?.probe_lease?.generation, reconciled.probeGeneration);
+    assert.equal(transferred?.slots[0]?.upstream_timeout_blocked_until_ms, null);
+    assert.equal(transferred?.slots[0]?.probe_lease, null);
 
     await markCodexSuccess(reconciled);
     const recovered = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));

@@ -14,8 +14,10 @@ import {
 } from "./api_key_policy.ts";
 import {
   KERNEL_ORG_POLICY_V2_PREFIX,
+  KERNEL_ORG_RESERVATION_V2_PREFIX,
   KERNEL_ORG_WINDOW_V2_PREFIX,
   KERNEL_REPO_POLICY_V2_PREFIX,
+  KERNEL_REPO_RESERVATION_V2_PREFIX,
   KERNEL_REPO_WINDOW_V2_PREFIX,
   kernelOrgPolicyKey,
   kernelOrgWindowKey,
@@ -24,7 +26,9 @@ import {
   kernelRepoPolicyKey,
   kernelRepoWindowKey,
   normalizeKernelQuotaPolicyV2,
+  normalizeKernelQuotaReservationRowV2,
   normalizeKernelQuotaWindowV2,
+  reconcileKernelQuotaWindowReservations,
 } from "./kernel_quota_v2.ts";
 import {
   DEFAULT_KERNEL_POLICY_LIMIT_KEY,
@@ -100,6 +104,8 @@ export type KvMigrationValidationResult = {
     kernel_v2_org_policies: number;
     kernel_v2_repo_windows: number;
     kernel_v2_org_windows: number;
+    kernel_v2_repo_reservations: number;
+    kernel_v2_org_reservations: number;
     passkey_users: number;
     passkey_credentials: number;
     agent_messages: number;
@@ -149,6 +155,14 @@ const DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "kernel_quota_v2_org_policy", prefix: ["uos_ai", "kernel_quota", "v2", "org_policy"] },
   { group: "kernel_quota_v2_repo_window", prefix: ["uos_ai", "kernel_quota", "v2", "repo_window"] },
   { group: "kernel_quota_v2_org_window", prefix: ["uos_ai", "kernel_quota", "v2", "org_window"] },
+  {
+    group: "kernel_quota_v2_repo_reservation",
+    prefix: ["uos_ai", "kernel_quota", "v2", "repo_reservation"],
+  },
+  {
+    group: "kernel_quota_v2_org_reservation",
+    prefix: ["uos_ai", "kernel_quota", "v2", "org_reservation"],
+  },
   // Kept importable until the two-phase incident migration has replayed old
   // isolate increments into the split V2 window records.
   { group: "kernel_limits_legacy", prefix: ["ubq_ai", "kernel_auth", "limits"] },
@@ -949,7 +963,7 @@ const migrateLegacyKernelScope = async (
       continue;
     }
     const effectiveWindowMs = defaultBacked ? defaults.windowMs : legacy.window_ms;
-    const currentWindow = normalizeKernelQuotaWindowV2(windowEntry.value, scope, owner, repo);
+    const currentWindow = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
     const sameWindow = currentWindow?.applied_window_ms === effectiveWindowMs &&
       currentWindow.usage_reset_at_ms === legacy.usage_reset_at_ms;
     const window: KernelQuotaWindowV2 = sameWindow
@@ -964,6 +978,7 @@ const migrateLegacyKernelScope = async (
         owner,
         ...(scope === "repo" ? { repo } : {}),
         usage_requests: legacy.usage_reset_at_ms <= nowMs ? 0 : legacy.usage_requests,
+        reserved_requests: 0,
         usage_reset_at_ms: legacy.usage_reset_at_ms <= nowMs ? nowMs + effectiveWindowMs : legacy.usage_reset_at_ms,
         applied_window_ms: effectiveWindowMs,
         created_at_ms: legacy.created_at_ms,
@@ -1078,15 +1093,24 @@ type KernelQuotaV2Inventory = Readonly<{
   orgPolicies: number;
   repoWindows: number;
   orgWindows: number;
+  repoReservations: number;
+  orgReservations: number;
   errors: string[];
 }>;
 
 const inspectKernelQuotaV2 = async (kv: Deno.Kv): Promise<KernelQuotaV2Inventory> => {
   const errors: string[] = [];
-  const inspect = async (
+  const windows = new Map<string, Readonly<{ window: KernelQuotaWindowV2; hasReservationAggregate: boolean }>>();
+  const reservedByWindow = new Map<string, number>();
+  const windowReference = (
+    scope: "repo" | "org",
+    owner: string,
+    repo: string | undefined,
+    createdAtMs: number,
+  ): string => JSON.stringify(scope === "repo" ? [scope, owner, repo, createdAtMs] : [scope, owner, createdAtMs]);
+  const inspectPolicy = async (
     prefix: Deno.KvKey,
     scope: "repo" | "org",
-    kind: "policy" | "window",
   ): Promise<number> => {
     let count = 0;
     for await (const entry of kv.list<unknown>({ prefix })) {
@@ -1098,20 +1122,87 @@ const inspectKernelQuotaV2 = async (kv: Deno.Kv): Promise<KernelQuotaV2Inventory
           ? entry.key.length === prefix.length + 1
           : typeof repo === "string" && repo && entry.key.length === prefix.length + 2);
       const validValue = validKey &&
-        (kind === "policy"
-          ? normalizeKernelQuotaPolicyV2(entry.value, scope, owner, scope === "repo" ? repo as string : undefined)
-          : normalizeKernelQuotaWindowV2(entry.value, scope, owner, scope === "repo" ? repo as string : undefined));
-      if (!validValue) errors.push(`kernel quota V2 ${kind} is malformed: ${JSON.stringify(entry.key)}`);
+        normalizeKernelQuotaPolicyV2(entry.value, scope, owner, scope === "repo" ? repo as string : undefined);
+      if (!validValue) errors.push(`kernel quota V2 policy is malformed: ${JSON.stringify(entry.key)}`);
     }
     return count;
   };
-  const [repoPolicies, orgPolicies, repoWindows, orgWindows] = await Promise.all([
-    inspect(KERNEL_REPO_POLICY_V2_PREFIX, "repo", "policy"),
-    inspect(KERNEL_ORG_POLICY_V2_PREFIX, "org", "policy"),
-    inspect(KERNEL_REPO_WINDOW_V2_PREFIX, "repo", "window"),
-    inspect(KERNEL_ORG_WINDOW_V2_PREFIX, "org", "window"),
+  const inspectWindow = async (prefix: Deno.KvKey, scope: "repo" | "org"): Promise<number> => {
+    let count = 0;
+    for await (const entry of kv.list<unknown>({ prefix })) {
+      count += 1;
+      const owner = entry.key[prefix.length];
+      const repo = entry.key[prefix.length + 1];
+      const validKey = typeof owner === "string" && owner &&
+        (scope === "org"
+          ? entry.key.length === prefix.length + 1
+          : typeof repo === "string" && repo && entry.key.length === prefix.length + 2);
+      const window = validKey
+        ? normalizeKernelQuotaWindowV2(entry.value, scope, owner, scope === "repo" ? repo as string : undefined)
+        : null;
+      if (!window) {
+        errors.push(`kernel quota V2 window is malformed: ${JSON.stringify(entry.key)}`);
+        continue;
+      }
+      windows.set(
+        windowReference(scope, window.owner, window.repo, window.created_at_ms),
+        {
+          window,
+          hasReservationAggregate: isRecord(entry.value) && Object.hasOwn(entry.value, "reserved_requests"),
+        },
+      );
+    }
+    return count;
+  };
+  const inspectReservation = async (prefix: Deno.KvKey, scope: "repo" | "org"): Promise<number> => {
+    let count = 0;
+    for await (const entry of kv.list<unknown>({ prefix })) {
+      count += 1;
+      const owner = entry.key[prefix.length];
+      const repo = scope === "repo" ? entry.key[prefix.length + 1] : undefined;
+      const windowCreatedAtMs = entry.key[prefix.length + (scope === "repo" ? 2 : 1)];
+      const requestId = entry.key[prefix.length + (scope === "repo" ? 3 : 2)];
+      const validKey = typeof owner === "string" && owner &&
+        (scope === "org" || typeof repo === "string" && repo) &&
+        typeof windowCreatedAtMs === "number" && Number.isSafeInteger(windowCreatedAtMs) && windowCreatedAtMs >= 0 &&
+        typeof requestId === "string" && requestId &&
+        entry.key.length === prefix.length + (scope === "repo" ? 4 : 3);
+      const reservation = validKey
+        ? normalizeKernelQuotaReservationRowV2(entry.value, scope, owner, scope === "repo" ? repo as string : undefined)
+        : null;
+      if (
+        !reservation || reservation.request_id !== requestId ||
+        reservation.window_created_at_ms !== windowCreatedAtMs
+      ) {
+        errors.push(`kernel quota V2 reservation is malformed: ${JSON.stringify(entry.key)}`);
+        continue;
+      }
+      const reference = windowReference(
+        scope,
+        reservation.owner,
+        reservation.repo,
+        reservation.window_created_at_ms,
+      );
+      if (reservation.state === "reserved") {
+        reservedByWindow.set(reference, (reservedByWindow.get(reference) ?? 0) + 1);
+      }
+    }
+    return count;
+  };
+  const [repoPolicies, orgPolicies, repoWindows, orgWindows, repoReservations, orgReservations] = await Promise.all([
+    inspectPolicy(KERNEL_REPO_POLICY_V2_PREFIX, "repo"),
+    inspectPolicy(KERNEL_ORG_POLICY_V2_PREFIX, "org"),
+    inspectWindow(KERNEL_REPO_WINDOW_V2_PREFIX, "repo"),
+    inspectWindow(KERNEL_ORG_WINDOW_V2_PREFIX, "org"),
+    inspectReservation(KERNEL_REPO_RESERVATION_V2_PREFIX, "repo"),
+    inspectReservation(KERNEL_ORG_RESERVATION_V2_PREFIX, "org"),
   ]);
-  return { repoPolicies, orgPolicies, repoWindows, orgWindows, errors };
+  for (const [reference, { window, hasReservationAggregate }] of windows) {
+    if (hasReservationAggregate && window.reserved_requests !== (reservedByWindow.get(reference) ?? 0)) {
+      errors.push(`kernel quota V2 reserved aggregate is inconsistent: ${reference}`);
+    }
+  }
+  return { repoPolicies, orgPolicies, repoWindows, orgWindows, repoReservations, orgReservations, errors };
 };
 
 const inspectStrictApiKeyPairs = async (
@@ -2001,6 +2092,8 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
       kernel_v2_org_policies: kernelV2OrgPolicies,
       kernel_v2_repo_windows: kernelV2RepoWindows,
       kernel_v2_org_windows: kernelV2OrgWindows,
+      kernel_v2_repo_reservations: kernelQuotaV2.repoReservations,
+      kernel_v2_org_reservations: kernelQuotaV2.orgReservations,
       passkey_users: passkeyUsers,
       passkey_credentials: passkeyCredentials,
       agent_messages: agentMessages,

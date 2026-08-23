@@ -46,11 +46,7 @@ import {
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
-import {
-  getKernelUsageLimitSnapshot,
-  incrementKernelOrgUsageLimit,
-  incrementKernelUsageLimit,
-} from "./kernel_usage.ts";
+import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
 import {
   getResponseAccountCohortId,
   getResponseTelemetry,
@@ -400,7 +396,7 @@ export const withTerminalRequestLog = (
     telemetryResponse?: Response;
     startedAtMonotonicMs: number;
     requestId: string;
-    onCompleted?: () => Promise<void>;
+    onTerminal?: (outcome: "completed" | "incomplete", reason?: string) => Promise<void>;
     deliveryCompleted?: Promise<void>;
     deliverySignal?: AbortSignal;
     /** Test seam for proving aggregate cache analytics remains best effort. */
@@ -496,7 +492,9 @@ export const withTerminalRequestLog = (
     return replayFinalization;
   };
   let terminalLog: Promise<void> | null = null;
-  let completionFinalization: Promise<void> | null = null;
+  let terminalFinalization: Promise<void> | null = null;
+  let terminalIntent: Readonly<{ outcome: "completed" | "incomplete"; reason?: string }> | null = null;
+  let terminalSettled = false;
   const log = (
     downstreamDrainedAtMonotonicMs?: number,
     deliveryOutcome: DeliveryOutcome = "unobserved",
@@ -527,24 +525,49 @@ export const withTerminalRequestLog = (
       () => "interrupted" as const,
     )
     : null;
-  const finalizeCompletion = (): Promise<void> => {
-    const onCompleted = input.onCompleted;
-    if (!onCompleted || !response.ok) return Promise.resolve();
+  const finalizeTerminal = (outcome: "completed" | "incomplete", reason?: string): Promise<void> => {
+    const onTerminal = input.onTerminal;
+    if (!onTerminal) return Promise.resolve();
+    if (outcome === "completed" && !terminalSettled) terminalIntent = { outcome, reason };
+    else terminalIntent ??= { outcome, reason };
+    if (terminalSettled) return Promise.resolve();
+    if (terminalFinalization) {
+      const pending = terminalFinalization;
+      return pending.then(() => terminalSettled ? undefined : finalizeTerminal(outcome, reason));
+    }
+    const intended = terminalIntent;
+    const current = (async () => {
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          await onTerminal(intended.outcome, intended.reason);
+          terminalSettled = true;
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      warnQuotaAccountingFailure(input, lastError);
+    })().finally(() => {
+      if (terminalFinalization === current) terminalFinalization = null;
+    });
+    terminalFinalization = current;
+    return current;
+  };
+  const finalizeObservedCompletion = (): Promise<void> => {
+    if (!response.ok) return Promise.resolve();
     const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
     if (!telemetry?.completed) return Promise.resolve();
-    completionFinalization ??= (async () => {
-      try {
-        await onCompleted();
-      } catch (error) {
-        warnQuotaAccountingFailure(input, error);
-      }
-    })();
-    return completionFinalization;
+    return finalizeTerminal("completed");
+  };
+  const finalizeFromTelemetry = (reason: string): Promise<void> => {
+    const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
+    return response.ok && telemetry?.completed ? finalizeTerminal("completed") : finalizeTerminal("incomplete", reason);
   };
   if (!response.body || !isSse) {
     return (async () => {
       try {
-        await finalizeCompletion();
+        await finalizeFromTelemetry(response.ok ? "response_incomplete" : "response_error");
         // Deno can return the already-computed response while this best-effort
         // capture continues in the background. In particular, buffered replay
         // inspection, compression, encryption, and KV writes must not extend
@@ -612,6 +635,7 @@ export const withTerminalRequestLog = (
       } catch (error) {
         clientBodyObservation = finishSseInspection("read_error");
         const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
+        await finalizeFromTelemetry(downstreamAborted ? "downstream_cancelled" : "stream_read_error");
         if (downstreamAborted) zeroSentinelReplayInput(input.sentinelReplayInput);
         else await persistReplayAtApplicationTerminal(true);
         if (!deliveryOutcome) await log(undefined, "interrupted", !downstreamAborted, true);
@@ -627,7 +651,7 @@ export const withTerminalRequestLog = (
         clientBodyObservation = finishSseInspection();
         const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
         if (downstreamAborted) {
-          await finalizeCompletion();
+          await finalizeFromTelemetry("downstream_cancelled");
           zeroSentinelReplayInput(input.sentinelReplayInput);
           try {
             controller.close();
@@ -644,7 +668,7 @@ export const withTerminalRequestLog = (
         // The application stream has drained, but Deno still owns delivery.
         // Finish one-shot usage accounting before closing this wrapper, then
         // let `completed` classify the separate delivery outcome.
-        await finalizeCompletion();
+        await finalizeFromTelemetry("stream_eof_without_completion");
         await persistReplayAtApplicationTerminal();
         try {
           controller.close();
@@ -660,13 +684,14 @@ export const withTerminalRequestLog = (
       // The OpenAI stream observer marks response.completed before yielding
       // the chunk that contains it. Schedule accounting, but never hold back
       // the provider bytes that are already ready for the client.
-      void finalizeCompletion();
+      void finalizeObservedCompletion();
       inspectSseChunk(result.value);
       try {
         controller.enqueue(result.value);
       } catch {
         downstreamCancelled = true;
         void reader.cancel().catch(() => {});
+        void finalizeFromTelemetry("downstream_enqueue_failed");
         zeroSentinelReplayInput(input.sentinelReplayInput);
         if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
         settleBody?.("interrupted");
@@ -677,7 +702,7 @@ export const withTerminalRequestLog = (
       // that pull observes the cancellation and performs layered cleanup.
       downstreamCancelled = true;
       void reader.cancel(reason).catch(() => {});
-      void finalizeCompletion();
+      void finalizeFromTelemetry("downstream_cancelled");
       zeroSentinelReplayInput(input.sentinelReplayInput);
       if (!deliveryOutcome) void log(undefined, "interrupted", false, true);
       settleBody?.("interrupted");
@@ -696,6 +721,16 @@ const terminalRouteForRequest = (method: string, path: string): string | null =>
   if (method === "POST" && path === "/uos/embeddings") return "embeddings";
   if (method === "POST" && path === "/uos/embedding-jobs") return "embeddings.jobs.create";
   if (method === "GET" && path.startsWith("/uos/embedding-jobs/")) return "embeddings.jobs.get";
+  if (method === "POST" && path === "/v1/chat/completions") return "chat.completions";
+  if (method === "POST" && path === "/v1/responses") return "responses";
+  if (method === "POST" && path === "/v1/images/generations") return "images.generations";
+  if (method === "POST" && path === "/v1/images/edits") return "images.edits";
+  return null;
+};
+
+const kernelQuotaRouteForRequest = (method: string, path: string): string | null => {
+  if (method === "POST" && path === "/uos/embeddings") return "embeddings";
+  if (method === "POST" && path === "/uos/embedding-jobs") return "embeddings.jobs.create";
   if (method === "POST" && path === "/v1/chat/completions") return "chat.completions";
   if (method === "POST" && path === "/v1/responses") return "responses";
   if (method === "POST" && path === "/v1/images/generations") return "images.generations";
@@ -1026,7 +1061,6 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   }
   const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
   let usagePolicy = authResult.method.kind === "kv_api_key" ? authResult.method.policy : null;
-  const kernelLimitScope = authResult.method.kind === "github_token" ? authResult.method.limit_scope : null;
   let usageReservation: ApiKeyUsageReservation | null = null;
   if (usagePolicy && terminalRoute) {
     const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute, { deferWhenFull: true });
@@ -1056,6 +1090,32 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     }
   }
   const kernelOrg = kernelRepo ? { owner: kernelRepo.owner } : null;
+  let kernelReservation: KernelQuotaReservation | null = null;
+  const kernelQuotaRoute = kernelQuotaRouteForRequest(req.method, path);
+  if (kernelRepo && kernelQuotaRoute) {
+    const admission = await reserveEffectiveKernelUsageLimit(
+      kernelRepo.owner,
+      kernelRepo.repo,
+      requestId,
+      kernelQuotaRoute,
+    );
+    if (!admission.ok) {
+      try {
+        await usageReservation?.release("kernel_quota_rejected");
+      } catch (error) {
+        warnQuotaAccountingFailure({ route: kernelQuotaRoute, requestId }, error);
+      }
+      const response = withCors(withRequestId(admission.response, requestId));
+      return await withTerminalRequestLog(response, {
+        route: kernelQuotaRoute,
+        startedAtMonotonicMs: requestStartedAtMonotonicMs,
+        requestId,
+        deliveryCompleted: delivery?.completed,
+        deliverySignal: delivery?.downstreamSignal,
+      });
+    }
+    kernelReservation = admission.reservation;
+  }
   const usageContext = {
     keyId: usageKeyId,
     kernelRepo,
@@ -1065,7 +1125,9 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,
-    downstreamSignal: delivery?.downstreamSignal,
+    downstreamSignal: kernelReservation
+      ? AbortSignal.any([delivery?.downstreamSignal ?? req.signal, kernelReservation.signal])
+      : delivery?.downstreamSignal,
     beforeProviderDispatch: usageReservation?.beforeProviderDispatch,
   };
   if (terminalRoute) {
@@ -1085,27 +1147,29 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     discardSentinelReplayCaptureCandidate(sentinelReplayCandidate);
     return materialized;
   };
-  const resolveKernelLimitScope = async (): Promise<"org" | "repo" | null> => {
-    if (!kernelRepo) return null;
-    if (kernelLimitScope) return kernelLimitScope;
-    const snapshot = await getKernelUsageLimitSnapshot(kernelRepo.owner, kernelRepo.repo);
-    if (snapshot?.source === "kv") return "repo";
-    return "org";
+  const settleKernelQuota = async (
+    outcome: "completed" | "incomplete",
+    reason = "request_incomplete",
+  ): Promise<void> => {
+    if (!kernelReservation) return;
+    if (outcome === "completed") await kernelReservation.commit();
+    else await kernelReservation.release(reason);
   };
-  const incrementKernelLimitUsage = async (): Promise<void> => {
-    const limitScope = await resolveKernelLimitScope();
-    if (!kernelRepo || !limitScope) return;
-    if (limitScope === "repo") {
-      await incrementKernelUsageLimit(kernelRepo.owner, kernelRepo.repo);
-      return;
+  const bestEffortSettleKernelQuota = async (
+    outcome: "completed" | "incomplete",
+    reason = "request_incomplete",
+  ): Promise<void> => {
+    try {
+      await settleKernelQuota(outcome, reason);
+    } catch (error) {
+      warnQuotaAccountingFailure({ route: terminalRoute ?? "inference", requestId }, error);
     }
-    if (kernelOrg) await incrementKernelOrgUsageLimit(kernelOrg.owner);
   };
   const finishTerminalResponse = async (
     response: Response,
     route: string,
     includeQuota = false,
-    onCompleted?: () => Promise<void>,
+    trackKernelTerminal = false,
   ): Promise<Response> => {
     const telemetry = getResponseTelemetry(response);
     const correlated = withProviderRequestId(response, telemetry?.providerRequestId ?? null);
@@ -1117,24 +1181,15 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
         telemetryResponse: response,
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
         requestId,
-        onCompleted,
+        onTerminal: trackKernelTerminal ? settleKernelQuota : undefined,
         deliveryCompleted: delivery?.completed,
         deliverySignal: delivery?.downstreamSignal,
         sentinelReplayInput,
       });
     } catch (error) {
       zeroSentinelReplayInput(sentinelReplayInput);
+      await bestEffortSettleKernelQuota("incomplete", "terminal_wrapper_error");
       throw error;
-    }
-  };
-  const bestEffortKernelInferenceUsage = async (): Promise<void> => {
-    try {
-      await incrementKernelLimitUsage();
-    } catch (error) {
-      warnQuotaAccountingFailure(
-        { route: terminalRoute ?? "inference", requestId },
-        error,
-      );
     }
   };
   const executeInference = async (run: () => Promise<Response>): Promise<Response> => {
@@ -1150,6 +1205,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       // cache, idempotency, queue, and synthetic-routing path is released.
       await usageReservation?.release();
     } catch (error) {
+      await bestEffortSettleKernelQuota("incomplete", "api_key_quota_accounting_error");
       if (runError) {
         warnQuotaAccountingFailure(
           { route: terminalRoute ?? "inference", requestId },
@@ -1165,12 +1221,14 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       });
     }
     if (runError instanceof ApiKeyQuotaDispatchError) {
+      await bestEffortSettleKernelQuota("incomplete", "api_key_quota_dispatch_error");
       return openaiError(runError.status, runError.message, runError.code, {
         type: runError.errorType,
         headers: runError.headers,
       });
     }
     if (runError) {
+      await bestEffortSettleKernelQuota("incomplete", "inference_exception");
       const sentinelReplayInput = takeSentinelReplayInput();
       if (sentinelReplayInput) {
         const observation: SentinelFailureObservation = {
@@ -1193,7 +1251,10 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       }
       throw runError;
     }
-    if (!response) throw new Error("Inference handler completed without a response");
+    if (!response) {
+      await bestEffortSettleKernelQuota("incomplete", "missing_inference_response");
+      throw new Error("Inference handler completed without a response");
+    }
     return response;
   };
 
@@ -1204,7 +1265,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   if (req.method === "POST" && path === "/uos/embeddings") {
     const response = await executeInference(() => handleUosEmbeddings(req, usageContext));
     if (response.ok && response.headers.get("x-uos-idempotency-replayed") !== "true") {
-      await bestEffortKernelInferenceUsage();
+      await bestEffortSettleKernelQuota("completed");
+    } else {
+      await bestEffortSettleKernelQuota(
+        "incomplete",
+        response.headers.get("x-uos-idempotency-replayed") === "true" ? "idempotency_replay" : "embedding_failed",
+      );
     }
     return await finishTerminalResponse(response, "embeddings");
   }
@@ -1212,7 +1278,9 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   if (req.method === "POST" && path === "/uos/embedding-jobs") {
     const response = await executeInference(() => handleEmbeddingsJobCreate(req, authResult.token, usageContext));
     if (response.ok) {
-      await bestEffortKernelInferenceUsage();
+      await bestEffortSettleKernelQuota("completed");
+    } else {
+      await bestEffortSettleKernelQuota("incomplete", "embedding_job_create_failed");
     }
     return await finishTerminalResponse(response, "embeddings.jobs.create");
   }
@@ -1220,26 +1288,28 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   if (req.method === "GET" && path.startsWith("/uos/embedding-jobs/")) {
     const jobId = path.slice("/uos/embedding-jobs/".length).trim();
     if (!jobId) {
+      await bestEffortSettleKernelQuota("incomplete", "missing_embedding_job_id");
       return await finishTerminalResponse(openaiError(404, "Not found", "not_found"), "embeddings.jobs.get");
     }
     const response = await executeInference(() => handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext));
+    await bestEffortSettleKernelQuota("incomplete", "embedding_job_read_not_counted");
     return await finishTerminalResponse(response, "embeddings.jobs.get");
   }
 
   if (req.method === "POST" && (path === "/v1/images/generations" || path === "/v1/images/edits")) {
     const kind = path === "/v1/images/edits" ? "edits" : "generations";
     const response = await executeInference(() => handleImages(req, kind, usageContext));
-    return await finishTerminalResponse(response, `images.${kind}`, true, incrementKernelLimitUsage);
+    return await finishTerminalResponse(response, `images.${kind}`, true, true);
   }
 
   if (req.method === "POST" && path === "/v1/chat/completions") {
     const response = await executeInference(() => handleChatCompletions(req, usageContext));
-    return await finishTerminalResponse(response, "chat.completions", true, incrementKernelLimitUsage);
+    return await finishTerminalResponse(response, "chat.completions", true, true);
   }
 
   if (req.method === "POST" && path === "/v1/responses") {
     const response = await executeInference(() => handleResponses(req, usageContext));
-    return await finishTerminalResponse(response, "responses", true, incrementKernelLimitUsage);
+    return await finishTerminalResponse(response, "responses", true, true);
   }
 
   return withCors(openaiError(404, "Not found", "not_found"));
