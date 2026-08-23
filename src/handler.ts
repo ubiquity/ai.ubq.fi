@@ -46,7 +46,7 @@ import {
 } from "./api_key_policy.ts";
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
-import { corsHeaders, notFound, openaiError, withCors } from "./http.ts";
+import { corsHeaders, notFound, openaiError, withCors as withCorsHeaders } from "./http.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
 import {
   getResponseAccountCohortId,
@@ -747,8 +747,9 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   const requestStartedAtMs = Date.now();
   const requestStartedAtMonotonicMs = performance.now();
   const requestId = crypto.randomUUID();
+  const withCors = (response: Response): Response => withCorsHeaders(response, req);
   if (req.method === "OPTIONS") {
-    return withCors(new Response(null, { status: 204, headers: corsHeaders() }));
+    return withCors(new Response(null, { status: 204, headers: corsHeaders(req) }));
   }
 
   const url = new URL(req.url);

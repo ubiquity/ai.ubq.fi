@@ -5,12 +5,15 @@ import {
   parseAuthRelayAction,
   parseTrustedAuthRelayOrigin,
 } from "../static/auth-relay.js";
+import { parseTrustedAuthRelayOrigin as parseTrustedServerAuthRelayOrigin } from "../src/auth_relay.ts";
 
 Deno.test("auth relay identifies approved Deno relay client origins", () => {
   for (
     const origin of [
       "https://ai-ubq-fi.ubiquity-dao.deno.net",
       "https://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
+      "https://p-ai-ubq-fi.ubiquity-dao.deno.net",
+      "https://p-ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
       "https://telegram-daily-exporter.0x4007.deno.net",
       "https://telegram-daily-exporter-4d2p9cx7m1ab.0x4007.deno.net",
       "https://agent-worker.ubiquity-os.deno.net",
@@ -30,16 +33,22 @@ Deno.test("auth relay rejects local development origins", () => {
   for (const hostname of ["localhost", "127.0.0.1", "[::1]"]) {
     assert.equal(parseTrustedAuthRelayOrigin(`http://${hostname}:8000`), "");
     assert.equal(parseTrustedAuthRelayOrigin(`https://${hostname}`), "");
+    assert.equal(parseTrustedServerAuthRelayOrigin(`http://${hostname}:8000`), null);
+    assert.equal(parseTrustedServerAuthRelayOrigin(`https://${hostname}`), null);
   }
 });
 
 Deno.test("auth relay accepts canonical and owned Deno organization origins", () => {
   assert.equal(parseTrustedAuthRelayOrigin("https://ai.ubq.fi"), "https://ai.ubq.fi");
   assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi.deno.dev"), "https://ai-ubq-fi.deno.dev");
+  assert.equal(parseTrustedServerAuthRelayOrigin("https://ai.ubq.fi"), "https://ai.ubq.fi");
+  assert.equal(parseTrustedServerAuthRelayOrigin("https://ai-ubq-fi.deno.dev"), "https://ai-ubq-fi.deno.dev");
   for (
     const origin of [
       "https://ai-ubq-fi.ubiquity-dao.deno.net",
       "https://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
+      "https://p-ai-ubq-fi.ubiquity-dao.deno.net",
+      "https://p-ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
       "https://telegram-daily-exporter.0x4007.deno.net",
       "https://telegram-daily-exporter-4d2p9cx7m1ab.0x4007.deno.net",
       "https://agent-worker.ubiquity-os.deno.net",
@@ -48,26 +57,34 @@ Deno.test("auth relay accepts canonical and owned Deno organization origins", ()
     ]
   ) {
     assert.equal(parseTrustedAuthRelayOrigin(origin), origin);
+    assert.equal(parseTrustedServerAuthRelayOrigin(origin), origin);
   }
 });
 
 Deno.test("auth relay rejects untrusted or malformed origins", () => {
-  assert.equal(parseTrustedAuthRelayOrigin("https://example.com"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://app.other-org.deno.net"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://untrusted-app.0x4007.deno.net"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://untrusted-app.ubiquity-os.deno.net"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://checkout-ubq-fi.ubiquity-dao.deno.net"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://app.0x4007.deno.net.evil.example"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://nested.app.0x4007.deno.net"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://unowned-app.deno.dev"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi-evil.deno.dev"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi-cv5fc93pzb5a.evil.example"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("http://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://app.0x4007.deno.net:8443"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://app.0x4007.deno.net/admin"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://ai.ubq.fi:8443"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("https://ai.ubq.fi/admin"), "");
-  assert.equal(parseTrustedAuthRelayOrigin("javascript:alert(1)"), "");
+  for (
+    const origin of [
+      "https://example.com",
+      "https://app.other-org.deno.net",
+      "https://untrusted-app.0x4007.deno.net",
+      "https://untrusted-app.ubiquity-os.deno.net",
+      "https://checkout-ubq-fi.ubiquity-dao.deno.net",
+      "https://app.0x4007.deno.net.evil.example",
+      "https://nested.app.0x4007.deno.net",
+      "https://unowned-app.deno.dev",
+      "https://ai-ubq-fi-evil.deno.dev",
+      "https://ai-ubq-fi-cv5fc93pzb5a.evil.example",
+      "http://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
+      "https://app.0x4007.deno.net:8443",
+      "https://app.0x4007.deno.net/admin",
+      "https://ai.ubq.fi:8443",
+      "https://ai.ubq.fi/admin",
+      "javascript:alert(1)",
+    ]
+  ) {
+    assert.equal(parseTrustedAuthRelayOrigin(origin), "", origin);
+    assert.equal(parseTrustedServerAuthRelayOrigin(origin), null, origin);
+  }
 });
 
 Deno.test("auth relay only accepts the passkey login action", () => {

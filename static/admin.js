@@ -12,7 +12,7 @@ import {
   signOut,
   storage,
   STORAGE_KEYS as AUTH_STORAGE_KEYS,
-} from "./auth.js?v=passkey-relay-20260814-v2";
+} from "./auth.js?v=passkey-relay-20260823-v5";
 import {
   AUTH_RELAY_MESSAGE_TYPE,
   isTrustedAuthRelayClientOrigin,
@@ -37,6 +37,12 @@ const STORAGE_KEYS = {
 const AUTH_RELAY_TIMEOUT_MS = 120_000;
 const API_KEY_REQUEST_LOGS_LIMIT = 20;
 const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
+
+const fetch = (input, init = {}) => {
+  const headers = new Headers(init.headers);
+  if (!getAdminToken()) headers.delete("Authorization");
+  return globalThis.fetch(input, { ...init, headers, credentials: "include" });
+};
 
 const readStorageJson = (key) => {
   const raw = storage.get(key);
@@ -194,6 +200,7 @@ let currentKeyView = "active";
 let currentAdminView = "loading";
 let pendingAdminView = null;
 let adminAccessState = { checked: false, isAdmin: false, isSuperAdmin: false };
+let relaySessionActive = false;
 let localDevelopmentAutoAuth = false;
 let adminPrefetchRunId = 0;
 let adminPrefetchSignature = "";
@@ -388,7 +395,8 @@ const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
   const canRegisterPasskey = options.canRegisterPasskey ?? false;
   passkeyLoginBtn.hidden = signedIn;
-  passkeyRegisterBtn.hidden = isAuthRelayMode || deviceRegistered || (signedIn && !canRegisterPasskey);
+  passkeyRegisterBtn.hidden = isAuthRelayMode || isRemoteRelayOrigin() || deviceRegistered ||
+    (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
   if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
   else setPasskeyStatus("unknown", "Passkey idle");
@@ -428,7 +436,13 @@ const getBaseChoice = () => (baseSelect.value === "ai" ? "ai" : "local");
 
 const resolveBaseUrl = () => resolveBackendBase(getBaseChoice());
 
-const apiUrl = (path) => buildBackendUrl(path, resolveBaseUrl());
+const apiUrl = (path) => {
+  const endpoint = new URL(buildBackendUrl(path, resolveBaseUrl()));
+  if (isRemoteRelayOrigin() && endpoint.origin === PASSKEY_CANONICAL_ORIGIN) {
+    endpoint.searchParams.set("cors_origin", globalThis.location.origin);
+  }
+  return endpoint.toString();
+};
 
 const updateBasePreview = () => {
   basePreview.textContent = resolveBaseUrl();
@@ -445,6 +459,7 @@ const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
 const isRemoteRelayOrigin = () => isTrustedAuthRelayClientOrigin(globalThis.location.origin);
 
 const getAdminToken = () => tokenInput.value.trim();
+const hasAdminCredential = () => Boolean(getAdminToken()) || relaySessionActive || adminAccessState.isAdmin;
 
 const canUseLocalDevelopmentAuth = () => isLocalDevelopmentOrigin() && getBaseChoice() === "local";
 
@@ -510,10 +525,10 @@ const applySignedInToken = (token, options = {}) => {
 };
 
 const postAuthRelayResult = (result) => {
-  if (!isAuthRelayMode || !result?.token) return false;
+  if (!isAuthRelayMode || result?.relay_session !== true) return false;
   globalThis.opener.postMessage({
     type: AUTH_RELAY_MESSAGE_TYPE,
-    token: result.token,
+    authenticated: true,
     handle: result.handle ?? getPasskeyHandle(),
     expires_at_ms: result.expires_at_ms ?? null,
   }, authRelayOrigin);
@@ -567,7 +582,7 @@ const requestRemotePasskeySession = () => {
     const onMessage = (event) => {
       if (event.origin !== targetOrigin) return;
       const data = event.data;
-      if (!data || data.type !== AUTH_RELAY_MESSAGE_TYPE || typeof data.token !== "string") return;
+      if (!data || data.type !== AUTH_RELAY_MESSAGE_TYPE || data.authenticated !== true) return;
       try {
         popup.close();
       } catch {
@@ -594,7 +609,12 @@ const signInAdminWithPasskey = async () => {
   if (!isAuthRelayMode && isRemoteRelayOrigin()) {
     const relay = await requestRemotePasskeySession();
     if (relay.handle) setPasskeyHandleValue(relay.handle);
-    applySignedInToken(relay.token, { deviceRegistered: true });
+    relaySessionActive = true;
+    const authenticated = await testAdminToken();
+    if (!authenticated) {
+      relaySessionActive = false;
+      throw new Error("The ai.ubq.fi sign-in session was not established.");
+    }
     setPasskeyStatus("ok", "Passkey signed in");
     return relay;
   }
@@ -606,9 +626,13 @@ const signInAdminWithPasskey = async () => {
     audienceOrigin: isAuthRelayMode ? authRelayOrigin : "",
   });
   if (result.handle) setPasskeyHandleValue(result.handle);
+  if (isAuthRelayMode) {
+    setPasskeyStatus("ok", "Passkey signed in");
+    postAuthRelayResult(result);
+    return result;
+  }
   applySignedInToken(result.token, { deviceRegistered: true });
   setPasskeyStatus("ok", "Passkey signed in");
-  postAuthRelayResult(result);
   return result;
 };
 
@@ -632,14 +656,10 @@ const runPasskeyLogin = async ({ automatic = false } = {}) => {
   }
 };
 
-const getRegistrationAdminToken = async () => {
+const getRegistrationAdminToken = () => {
   const token = getAdminToken();
   if (token || !isRemoteRelayOrigin()) return token;
-  setPasskeyStatus("unknown", "Sign in on ai.ubq.fi to authorize registration...");
-  const relay = await requestRemotePasskeySession();
-  if (relay.handle) setPasskeyHandleValue(relay.handle);
-  applySignedInToken(relay.token, { deviceRegistered: true });
-  return relay.token;
+  throw new Error("Register a passkey from the ai.ubq.fi admin page.");
 };
 
 const restoreSettings = () => {
@@ -2472,7 +2492,7 @@ const renderProviderCapacity = (snapshot) => {
 const loadProviderCapacity = async () => {
   if (providerCapacityLoading) return false;
   const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !token) {
+  if (!adminAccessState.isAdmin || !hasAdminCredential()) {
     setBadge(providerCapacityBadge, "bad", "Sign in required");
     return false;
   }
@@ -2627,7 +2647,7 @@ const renderPromptCacheAnalytics = (snapshot) => {
 const loadPromptCacheAnalytics = async () => {
   if (promptCacheAnalyticsLoading) return false;
   const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !token) {
+  if (!adminAccessState.isAdmin || !hasAdminCredential()) {
     promptCacheAnalyticsPanel.hidden = true;
     return false;
   }
@@ -2680,7 +2700,7 @@ globalThis.addEventListener("resize", scheduleProviderCapacityChartResize);
 const loadProviders = async () => {
   if (providersLoading) return;
   const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !token) {
+  if (!adminAccessState.isAdmin || !hasAdminCredential()) {
     return;
   }
   const loadId = ++providersLoadId;
@@ -2869,7 +2889,7 @@ const setAccessValue = (el, value, fallback = "—") => {
 };
 
 const updateAccessApiKeysSummary = () => {
-  if (!getAdminToken()) {
+  if (!hasAdminCredential()) {
     setAccessValue(accessApiKeys, "Missing token");
     return;
   }
@@ -2887,7 +2907,7 @@ const updateAccessApiKeysSummary = () => {
 };
 
 const updateAccessGithubSummary = () => {
-  if (!getAdminToken()) {
+  if (!hasAdminCredential()) {
     setAccessValue(accessGithubRepos, "Missing token");
     setAccessValue(accessGithubQueue, "Missing token");
     return;
@@ -2913,7 +2933,7 @@ const updateAccessGithubSummary = () => {
 };
 
 const updateAccessPubkeysSummary = () => {
-  if (!getAdminToken()) {
+  if (!hasAdminCredential()) {
     setAccessValue(accessKernelPubkeys, "Missing token");
     return;
   }
@@ -2933,7 +2953,7 @@ let accessUpstreamLoadedAt = 0;
 const refreshAccessUpstreamSummary = async () => {
   if (accessUpstreamLoading) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setAccessValue(accessUpstreamSource, "Missing token");
     setAccessValue(accessUpstreamExpiry, "Missing token");
     return;
@@ -3383,7 +3403,7 @@ const renderKernelPolicyQueue = (records) => {
 
 const refreshKernelPolicyQueue = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelQueueBadge("bad", "Missing token");
     setKernelQueueMessage(getKernelQueueMissingTokenMessage());
     updateAccessGithubSummary();
@@ -3428,7 +3448,7 @@ const ensureKernelPolicyQueueLoaded = async () => {
   if (currentAdminView !== "kernel") return;
   if (kernelQueueLoading) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelQueueBadge("bad", "Missing token");
     setKernelQueueMessage(getKernelQueueMissingTokenMessage());
     updateAccessGithubSummary();
@@ -3516,7 +3536,7 @@ const parseKernelExpiresValue = (raw, never, setBadgeFn) => {
 const saveNewKernelLimit = async () => {
   if (kernelNewSaving) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelNewBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     tokenInput.focus();
@@ -3710,7 +3730,7 @@ const mergeKernelRecords = (usageRecords, policyRecords, scope) => {
 
 const loadKernelList = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelListBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     setKernelListMessage(getKernelListMissingTokenMessage());
@@ -4085,7 +4105,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
     if (!expiresResult.ok) return;
 
     const token = getAdminToken();
-    if (!token) {
+    if (!token && !hasAdminCredential()) {
       setEditBadge("bad", "Missing token");
       setAuthBadge("bad", "Missing token");
       tokenInput.focus();
@@ -4138,7 +4158,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
 
   const deleteLimit = async () => {
     const token = getAdminToken();
-    if (!token) {
+    if (!token && !hasAdminCredential()) {
       setKernelListBadge("bad", "Missing token");
       setAuthBadge("bad", "Missing token");
       tokenInput.focus();
@@ -4521,7 +4541,7 @@ const renderKernelPubKeys = (records) => {
 
 const refreshKernelPubKeys = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelPubKeysBadge("bad", "Missing token");
     setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
     updateAccessPubkeysSummary();
@@ -4563,7 +4583,7 @@ const ensureKernelPubKeysLoaded = async () => {
   if (currentAdminView !== "pubkeys") return;
   if (kernelPubKeysLoading) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelPubKeysBadge("bad", "Missing token");
     setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
     updateAccessPubkeysSummary();
@@ -4580,7 +4600,7 @@ const ensureKernelPubKeysLoaded = async () => {
 const createKernelPubKey = async () => {
   if (kernelPubKeysSaving) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelPubKeyCreateBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     tokenInput.focus();
@@ -4640,7 +4660,7 @@ const createKernelPubKey = async () => {
 
 const deleteKernelPubKey = async (appId, button) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKernelPubKeysBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     tokenInput.focus();
@@ -5305,7 +5325,7 @@ const loadApiKeyRequestLogs = (keyId) => {
   if (!cacheKey) return { ok: false, records: [], error: "Missing key id" };
 
   const token = getAdminToken();
-  if (!token) return { ok: false, records: [], error: "Missing token" };
+  if (!token && !hasAdminCredential()) return { ok: false, records: [], error: "Missing token" };
 
   const now = Date.now();
   const cached = apiKeyRequestLogCache.get(cacheKey);
@@ -5977,7 +5997,7 @@ const renderKeys = (keys, view = "all") => {
       const result = buildEditPayload();
       if (!result) return;
       const token = getAdminToken();
-      if (!token) {
+      if (!token && !hasAdminCredential()) {
         setEditBadge("bad", "Missing token");
         setAuthBadge("bad", "Missing token");
         tokenInput.focus();
@@ -6241,7 +6261,7 @@ const renderPasskeyUsers = (users) => {
 
 const refreshPasskeyUsers = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setPasskeyUsersBadge("bad", "Missing token");
     setPasskeyUsersMessage("Paste a fallback admin token to manage passkey users.");
     return;
@@ -6291,7 +6311,7 @@ const ensurePasskeyUsersLoaded = async () => {
 
 const updatePasskeyUserAdmin = async (id, isAdmin, checkbox) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setPasskeyUsersBadge("bad", "Missing token");
     checkbox.checked = !isAdmin;
     tokenInput.focus();
@@ -6459,8 +6479,7 @@ const runAdminPrefetchTask = async (runId, task) => {
 };
 
 const startAdminPrefetch = () => {
-  const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !token) {
+  if (!adminAccessState.isAdmin) {
     return Promise.resolve({ ready: 0, failed: 0, skipped: 0 });
   }
 
@@ -6701,18 +6720,19 @@ const computeExpiresAtMs = (preset) => {
 
 const testAdminToken = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !relaySessionActive && !isRemoteRelayOrigin()) {
     setAuthBadge("bad", "Missing token");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
     tokenInput.focus();
-    return;
+    return false;
   }
 
   setAuthBadge("unknown", "Checking...");
   try {
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const res = await fetch(apiUrl("/uos/auth"), {
-      headers: { Authorization: `Bearer ${token}` },
+      headers,
       cache: "no-store",
     });
     const data = await res.json().catch(() => null);
@@ -6720,13 +6740,13 @@ const testAdminToken = async () => {
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
       setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
       setSignedInState(false);
-      return;
+      return false;
     }
     if (!data?.auth?.is_admin) {
       setAuthBadge("bad", "Not admin");
       setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
       setSignedInState(false);
-      return;
+      return false;
     }
     const kind = data?.auth?.method?.kind;
     const isSuperAdmin = data?.auth?.is_super_admin === true;
@@ -6737,15 +6757,17 @@ const testAdminToken = async () => {
       deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials(),
       statusText: formatAuthSessionLabel(data?.auth),
     });
+    return true;
   } catch {
     setAuthBadge("bad", "Offline");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
+    return false;
   }
 };
 
 const scheduleTokenCheck = debounce(() => {
-  if (!getAdminToken()) {
+  if (!getAdminToken() && !relaySessionActive && !isRemoteRelayOrigin()) {
     setAuthBadge("bad", "Missing token");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
@@ -6757,7 +6779,7 @@ const scheduleTokenCheck = debounce(() => {
 
 const createKey = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setCreateBadge("bad", "Missing token");
     setAuthBadge("bad", "Missing token");
     tokenInput.focus();
@@ -6866,7 +6888,7 @@ const createKey = async () => {
 
 const refreshKeys = async () => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     setKeyListMessage("Paste an admin token to load API keys.");
     updateAccessApiKeysSummary();
@@ -6907,7 +6929,7 @@ const ensureKeysLoaded = async () => {
   if (currentAdminView !== "keys") return;
   if (keysLoading) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     setKeyListMessage("Paste an admin token to load API keys.");
     return;
@@ -6935,7 +6957,7 @@ const updateKeyRevocationState = (id, revokedAtMs) => {
 
 const revokeKey = async (id, name, button) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     tokenInput.focus();
     return;
@@ -6970,7 +6992,7 @@ const revokeKey = async (id, name, button) => {
 
 const unrevokeKey = async (id, name, button) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     tokenInput.focus();
     return;
@@ -7005,7 +7027,7 @@ const unrevokeKey = async (id, name, button) => {
 
 const deleteKey = async (id, name, button) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setKeysBadge("bad", "Missing token");
     tokenInput.focus();
     return;
@@ -7240,7 +7262,7 @@ const updateReasoningOptions = (modelSlug, preferred) => {
 
 const loadDefaults = async (options = {}) => {
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setDefaultsBadge("bad", "Missing token");
     clearMeteredQuotaDiagnostics();
     setMeteredQuotaBadge("unknown", "Not loaded");
@@ -7343,7 +7365,7 @@ const loadDefaults = async (options = {}) => {
 const saveDefaults = async () => {
   if (!defaultsLoaded) return;
   const token = getAdminToken();
-  if (!token) {
+  if (!token && !hasAdminCredential()) {
     setDefaultsBadge("bad", "Missing token");
     return;
   }
@@ -7444,11 +7466,13 @@ setKernelNewPanelOpen(false);
 resetKernelPubKeyForm();
 const initialHashView = getHashView();
 if (initialHashView === "session") setAuthWidgetOpen(true);
-const hasInitialAdminToken = Boolean(getAdminToken());
-resetAdminPrefetchState(hasInitialAdminToken ? "Checking admin session..." : "Sign in to prepare the admin views.");
+const hasInitialAdminCredential = Boolean(getAdminToken()) || isRemoteRelayOrigin();
+resetAdminPrefetchState(
+  hasInitialAdminCredential ? "Checking admin session..." : "Sign in to prepare the admin views.",
+);
 setAdminView(ADMIN_VIEW_DEFAULT, { allowInaccessible: true });
 if (initialHashView && initialHashView !== "session") setAdminView(initialHashView, { focusAuth: false });
-if (hasInitialAdminToken) {
+if (hasInitialAdminCredential) {
   setAuthBadge("unknown", "Checking...");
   scheduleTokenCheck();
 } else {
@@ -7457,7 +7481,7 @@ if (hasInitialAdminToken) {
 }
 
 bindForegroundRefresh(() => {
-  if (currentAdminView !== "defaults" || !adminAccessState.isAdmin || !getAdminToken()) return;
+  if (currentAdminView !== "defaults" || !adminAccessState.isAdmin || !hasAdminCredential()) return;
   void loadDefaults({ preserveInputs: true });
 });
 
@@ -7501,7 +7525,7 @@ tokenInput.addEventListener("input", () => {
   promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
   promptCacheAnalyticsState.textContent = "Waiting for an authenticated admin session.";
   clearApiKeyRequestLogCaches();
-  if (!getAdminToken()) {
+  if (!hasAdminCredential()) {
     setAuthBadge("bad", "Missing token");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
@@ -7555,7 +7579,7 @@ rememberTokenInput.addEventListener("change", () => {
   }
   storage.remove(STORAGE_KEYS.rememberToken);
   storage.remove(STORAGE_KEYS.token);
-  setSignedInState(Boolean(getAdminToken()));
+  setSignedInState(hasAdminCredential());
 });
 
 passkeyHandleInput.addEventListener("input", () => {
@@ -7594,8 +7618,13 @@ signOutBtn.addEventListener("click", async () => {
   const token = getAdminToken();
   signOutBtn.disabled = true;
   try {
-    await signOut({ token, baseUrl: resolveBaseUrl() });
+    await signOut({
+      token,
+      baseUrl: resolveBaseUrl(),
+      corsOrigin: isRemoteRelayOrigin() ? globalThis.location.origin : "",
+    });
   } finally {
+    relaySessionActive = false;
     tokenInput.value = "";
     rememberTokenInput.checked = false;
     setAuthBadge("bad", "Missing token");
@@ -7615,7 +7644,7 @@ globalThis.addEventListener("storage", (event) => {
     return;
   }
   if (event.key === STORAGE_KEYS.passkeyCredentialIds) {
-    setSignedInState(Boolean(getAdminToken()));
+    setSignedInState(hasAdminCredential());
     return;
   }
   if (event.key !== STORAGE_KEYS.token) return;
@@ -7688,7 +7717,7 @@ baseSelect.addEventListener("change", () => {
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
-  resetAdminPrefetchState(getAdminToken() ? "Checking admin session..." : "Sign in to prepare the admin views.");
+  resetAdminPrefetchState(hasAdminCredential() ? "Checking admin session..." : "Sign in to prepare the admin views.");
   scheduleTokenCheck();
   if (currentAdminView === "keys") {
     void ensureKeysLoaded();

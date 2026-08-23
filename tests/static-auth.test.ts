@@ -7,6 +7,7 @@ const {
   hasAuthPasskeyCredential,
   isLocalDevelopmentOrigin,
   signInWithPasskey,
+  signOut,
   registerPasskey,
 } = await import(
   "../static/auth.js"
@@ -140,7 +141,7 @@ const captureRegisterStartBody = async (
 };
 
 const captureLoginStartBody = async (
-  input: { handle?: string; useHandle?: boolean; baseUrl?: string },
+  input: { handle?: string; useHandle?: boolean; audienceOrigin?: string; baseUrl?: string },
 ): Promise<Record<string, unknown>> => {
   let requestBody: Record<string, unknown> | null = null;
   const originalFetch = globalThis.fetch;
@@ -174,6 +175,35 @@ Deno.test("signInWithPasskey sends username only when explicitly requested", asy
     const body = await captureLoginStartBody({ handle: " Admin Laptop ", useHandle: true });
     assert.equal(body.handle, "admin-laptop");
   });
+});
+
+Deno.test("signInWithPasskey sends the relay audience only when requested", async () => {
+  await withPasskeyBrowser(async () => {
+    const body = await captureLoginStartBody({
+      audienceOrigin: "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net",
+    });
+    assert.equal(body.relay_origin, "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net");
+  });
+});
+
+Deno.test("signOut clears a relay cookie without sending an empty bearer header", async () => {
+  let requestUrl = "";
+  let requestInit: RequestInit | undefined;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    requestUrl = String(input);
+    requestInit = init;
+    return Promise.resolve(new Response(null, { status: 204 }));
+  };
+  try {
+    const audienceOrigin = "https://telegram-daily-exporter.0x4007.deno.net";
+    await signOut({ baseUrl: "https://ai.ubq.fi", corsOrigin: audienceOrigin });
+    assert.equal(new URL(requestUrl).searchParams.get("cors_origin"), audienceOrigin);
+    assert.equal(requestInit?.credentials, "include");
+    assert.equal(new Headers(requestInit?.headers).has("Authorization"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("signInWithPasskey does not restrict discoverable login to cached credential ids", async () => {

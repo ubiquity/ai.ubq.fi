@@ -6,6 +6,7 @@ import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts"
 import adminHtml from "../static/admin.html" with { type: "text" };
 import aboutHtml from "../static/about.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
+import authScript from "../static/auth.js" with { type: "text" };
 import companyLogoSvg from "../static/company-logo.svg" with { type: "text" };
 import contactHtml from "../static/contact.html" with { type: "text" };
 import developersHtml from "../static/developers.html" with { type: "text" };
@@ -95,7 +96,7 @@ Deno.test("admin provider view places capacity history before current providers"
 
   assert.match(adminHtml, /Provider analytics/);
   assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.js\?v=gateway-hardening-analytics-v1-20260823/);
+  assert.match(adminHtml, /admin\.js\?v=gateway-hardening-analytics-v2-passkey-relay-20260823/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -110,6 +111,15 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.match(adminScript, /if \(loadId !== providersLoadId\) return/);
   assert.match(adminScript, /cache: "no-store"/);
   assert.match(adminScript, /Authorization: `Bearer \$\{token\}`/);
+  assert.match(adminScript, /auth\.js\?v=passkey-relay-20260823-v5/);
+  assert.match(adminScript, /credentials: "include"/);
+  assert.match(adminScript, /if \(!getAdminToken\(\)\) headers\.delete\("Authorization"\)/);
+  assert.match(adminScript, /authenticated: true/);
+  assert.doesNotMatch(adminScript, /token: result\.token/);
+  assert.doesNotMatch(adminScript, /applySignedInToken\(relay\.token/);
+  assert.match(adminScript, /!adminAccessState\.isAdmin \|\| !hasAdminCredential\(\)/);
+  assert.match(authScript, /relay_session !== true/);
+  assert.match(authScript, /credentials: init\?\.credentials \?\? "include"/);
 });
 
 Deno.test("static assets register autonomous agent discovery documents", () => {

@@ -5,6 +5,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
+import { parseTrustedAuthRelayOrigin } from "./auth_relay.ts";
 import { getBearerToken, json, openaiError } from "./http.ts";
 import { getKv } from "./kv.ts";
 import { readJsonBodyWithLimit } from "./request.ts";
@@ -33,6 +34,7 @@ export type PasskeySessionRecord = {
   user_id: string;
   created_at_ms: number;
   expires_at_ms: number;
+  audience_origin?: string;
 };
 
 type PasskeyChallengeRecord = {
@@ -40,6 +42,7 @@ type PasskeyChallengeRecord = {
   type: "registration" | "authentication";
   origin: string;
   rp_id: string;
+  audience_origin?: string;
   user_id?: string;
   handle?: string;
   is_admin?: boolean;
@@ -56,6 +59,7 @@ export type PasskeySession = {
 export const PASSKEY_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export const PASSKEY_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const PASSKEY_MAX_REQUEST_BODY_BYTES = 64 * 1024;
+export const PASSKEY_RELAY_COOKIE_NAME = "__Host-uos_ai_relay_session";
 
 const AUTH_PREFIX = ["uos_ai", "auth"] as const;
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
@@ -247,7 +251,11 @@ const consumeChallenge = async (kv: Deno.Kv, challenge: string): Promise<Passkey
   return entry.value;
 };
 
-const createSession = async (kv: Deno.Kv, userId: string): Promise<PasskeySessionRecord> => {
+const createSession = async (
+  kv: Deno.Kv,
+  userId: string,
+  audienceOrigin?: string,
+): Promise<PasskeySessionRecord> => {
   const createdAtMs = nowMs();
   const token = `uos_ai_session_${crypto.randomUUID()}`;
   const record: PasskeySessionRecord = {
@@ -255,6 +263,7 @@ const createSession = async (kv: Deno.Kv, userId: string): Promise<PasskeySessio
     user_id: userId,
     created_at_ms: createdAtMs,
     expires_at_ms: createdAtMs + PASSKEY_SESSION_TTL_MS,
+    ...(audienceOrigin ? { audience_origin: audienceOrigin } : {}),
   };
   await kv.set(passkeySessionKey(token), record, { expireIn: PASSKEY_SESSION_TTL_MS });
   return record;
@@ -344,9 +353,47 @@ export const getPasskeySession = async (token: string): Promise<PasskeySession |
   return { token, user: userEntry.value, session: sessionEntry.value };
 };
 
+const getCookieValue = (req: Request, name: string): string | null => {
+  const cookieHeader = req.headers.get("cookie") ?? "";
+  for (const part of cookieHeader.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    const rawValue = part.slice(separator + 1).trim();
+    if (!rawValue) return null;
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const buildRelayCookie = (token: string, expiresAtMs: number): string => {
+  const maxAge = Math.max(0, Math.ceil((expiresAtMs - nowMs()) / 1000));
+  return `${PASSKEY_RELAY_COOKIE_NAME}=${
+    encodeURIComponent(token)
+  }; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=None`;
+};
+
+const clearRelayCookie = (): string =>
+  `${PASSKEY_RELAY_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`;
+
 export const getPasskeySessionFromRequest = async (req: Request): Promise<PasskeySession | null> => {
-  const token = getBearerToken(req);
+  const token = getBearerToken(req) ?? getCookieValue(req, PASSKEY_RELAY_COOKIE_NAME);
   return token ? await getPasskeySession(token) : null;
+};
+
+const getRequestAudienceOrigin = (req: Request): string | null => {
+  const headerOrigin = req.headers.get("origin");
+  if (headerOrigin !== null) return parseTrustedAuthRelayOrigin(headerOrigin);
+  return parseTrustedAuthRelayOrigin(new URL(req.url).searchParams.get("cors_origin"));
+};
+
+export const getPasskeySessionForRequest = async (req: Request): Promise<PasskeySession | null> => {
+  const session = await getPasskeySessionFromRequest(req);
+  if (!session?.session.audience_origin) return session;
+  return getRequestAudienceOrigin(req) === session.session.audience_origin ? session : null;
 };
 
 export const handlePasskeyRegisterStart = async (
@@ -360,7 +407,7 @@ export const handlePasskeyRegisterStart = async (
   const kv = kvOrError;
 
   const token = getBearerToken(req) ?? "";
-  const existingSession = token ? await getPasskeySession(token) : null;
+  const existingSession = token ? await getPasskeySessionForRequest(req) : null;
   const requestedHandle = normalizePasskeyHandle(raw.handle);
   const tokenHandle = token ? await buildPasskeyHandle(token) : "";
   const requestedUser = requestedHandle ? await getUserByHandle(kv, requestedHandle) : null;
@@ -495,6 +542,11 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
   const kv = kvOrError;
 
   const handle = normalizePasskeyHandle(raw.handle);
+  const rawAudienceOrigin = getString(raw.relay_origin)?.trim() ?? "";
+  const audienceOrigin = rawAudienceOrigin ? parseTrustedAuthRelayOrigin(rawAudienceOrigin) : null;
+  if (rawAudienceOrigin && !audienceOrigin) {
+    return openaiError(400, "Invalid passkey relay origin", "invalid_request_error");
+  }
 
   let allowCredentials: Array<{ id: string; type: "public-key" }> | undefined;
   let userVerification: "preferred" | "required" = "preferred";
@@ -514,7 +566,13 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
     userVerification,
   });
 
-  await saveChallenge(kv, { challenge: publicKey.challenge, type: "authentication", origin, rp_id: rpId });
+  await saveChallenge(kv, {
+    challenge: publicKey.challenge,
+    type: "authentication",
+    origin,
+    rp_id: rpId,
+    ...(audienceOrigin ? { audience_origin: audienceOrigin } : {}),
+  });
   return json(200, { publicKey }, { "Cache-Control": "no-store" });
 };
 
@@ -575,17 +633,21 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
       return openaiError(409, "Passkey credential was modified concurrently; retry", "invalid_request_error");
     }
 
-    const session = await createSession(kv, credential.user_id);
+    const session = await createSession(kv, credential.user_id, challengeRecord.audience_origin);
+    const relaySession = Boolean(challengeRecord.audience_origin);
     return json(
       200,
       {
-        token: session.token,
+        ...(relaySession ? { relay_session: true } : { token: session.token }),
         user_id: userEntry.value.id,
         handle: userEntry.value.handle,
         credential_count: userEntry.value.credential_ids.length,
         expires_at_ms: session.expires_at_ms,
       },
-      { "Cache-Control": "no-store" },
+      {
+        "Cache-Control": "no-store",
+        ...(relaySession ? { "Set-Cookie": buildRelayCookie(session.token, session.expires_at_ms) } : {}),
+      },
     );
   } catch (error) {
     console.warn("[ai.ubq.fi] passkey assertion verification failed", {
@@ -601,7 +663,7 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
 };
 
 export const handlePasskeySession = async (req: Request): Promise<Response> => {
-  const session = await getPasskeySessionFromRequest(req);
+  const session = await getPasskeySessionForRequest(req);
   if (!session) return openaiError(401, "Unauthorized", "invalid_api_key");
   return json(
     200,
@@ -622,12 +684,21 @@ export const handlePasskeySession = async (req: Request): Promise<Response> => {
 };
 
 export const handlePasskeyLogout = async (req: Request): Promise<Response> => {
-  const token = getBearerToken(req);
+  const token = getBearerToken(req) ?? getCookieValue(req, PASSKEY_RELAY_COOKIE_NAME);
   if (token) {
-    const kv = await getKv();
-    if (kv) await kv.delete(passkeySessionKey(token));
+    const session = await getPasskeySessionForRequest(req);
+    if (session) {
+      const kv = await getKv();
+      if (kv) await kv.delete(passkeySessionKey(token));
+    }
   }
-  return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Cache-Control": "no-store",
+      "Set-Cookie": clearRelayCookie(),
+    },
+  });
 };
 
 export const handlePasskeyUsersList = async (): Promise<Response> => {

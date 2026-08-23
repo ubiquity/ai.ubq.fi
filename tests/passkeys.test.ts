@@ -97,11 +97,14 @@ const kvStub = {
 
 const {
   PASSKEY_MAX_REQUEST_BODY_BYTES,
+  PASSKEY_RELAY_COOKIE_NAME,
   PASSKEY_SESSION_TTL_MS,
   buildPasskeyHandle,
   getPasskeyRequestMeta,
+  getPasskeySessionForRequest,
   handlePasskeyLoginFinish,
   handlePasskeyLoginStart,
+  handlePasskeyLogout,
   handlePasskeyRegisterFinish,
   handlePasskeyRegisterStart,
   handlePasskeySession,
@@ -133,7 +136,10 @@ const withEnv = async (updates: Record<string, string | null>, fn: () => Promise
   }
 };
 
-const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true } = {}) => {
+const seedPasskeySession = (
+  token = "uos_ai_session_test",
+  { isAdmin = true, audienceOrigin = "" }: { isAdmin?: boolean; audienceOrigin?: string } = {},
+) => {
   const now = Date.now();
   const user = {
     id: "user-test",
@@ -150,6 +156,7 @@ const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true } = 
     user_id: user.id,
     created_at_ms: now,
     expires_at_ms: now + PASSKEY_SESSION_TTL_MS,
+    ...(audienceOrigin ? { audience_origin: audienceOrigin } : {}),
   });
   return { token, user };
 };
@@ -943,6 +950,168 @@ Deno.test("passkey login start accepts an explicit zero-byte body only on the al
     const payload = await response.json() as { error?: { message?: unknown } };
     assert.equal(payload.error?.message, "Invalid JSON body", name);
   }
+});
+
+Deno.test("passkey login challenges bind only to exact trusted relay audiences", async () => {
+  kvStore.clear();
+  for (
+    const audienceOrigin of [
+      "https://p-ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
+      "https://telegram-daily-exporter-4d2p9cx7m1ab.0x4007.deno.net",
+      "https://agent-worker.ubiquity-os.deno.net",
+    ]
+  ) {
+    const response = await handlePasskeyLoginStart(
+      new Request("https://ai.ubq.fi/api/auth/login/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ relay_origin: audienceOrigin }),
+      }),
+    );
+    assert.equal(response.status, 200, audienceOrigin);
+    const body = await response.json() as { publicKey: { challenge: string } };
+    const challenge = await kvStub.get(passkeyChallengeKey(body.publicKey.challenge));
+    assert.equal((challenge.value as { audience_origin?: string } | null)?.audience_origin, audienceOrigin);
+  }
+
+  for (const relayOrigin of ["http://localhost:8000", "https://evil.example", "https://app.0x4007.deno.net"]) {
+    const response = await handlePasskeyLoginStart(
+      new Request("https://ai.ubq.fi/api/auth/login/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ relay_origin: relayOrigin }),
+      }),
+    );
+    assert.equal(response.status, 400, relayOrigin);
+    assert.equal(
+      (await response.json() as { error?: { message?: string } }).error?.message,
+      "Invalid passkey relay origin",
+    );
+  }
+});
+
+Deno.test("audience-bound relay cookies authenticate auth checks and admin actions", async () => {
+  kvStore.clear();
+  const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
+  const { token } = seedPasskeySession("uos_ai_session_relay_cookie", { audienceOrigin });
+  const cookie = `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`;
+
+  const clientAuth = await authenticateClient(
+    new Request("https://ai.ubq.fi/v1/models", { headers: { Cookie: cookie, Origin: audienceOrigin } }),
+  );
+  assert.equal(clientAuth.ok, true);
+  if (clientAuth.ok) {
+    assert.equal(clientAuth.token, token);
+    assert.equal(clientAuth.method.kind, "passkey_session");
+  }
+
+  const adminAuth = await authenticateAdmin(
+    new Request("https://ai.ubq.fi/uos/auth", { headers: { Cookie: cookie, Origin: audienceOrigin } }),
+  );
+  assert.equal(adminAuth.ok, true);
+  if (adminAuth.ok) assert.equal(adminAuth.token, token);
+
+  const { default: handler } = await import("../src/handler.ts");
+  const encodedAudience = encodeURIComponent(audienceOrigin);
+  const authCheck = await handler(
+    new Request(`https://ai.ubq.fi/uos/auth?cors_origin=${encodedAudience}`, { headers: { Cookie: cookie } }),
+  );
+  assert.equal(authCheck.status, 200);
+  assert.equal(authCheck.headers.get("access-control-allow-origin"), audienceOrigin);
+  assert.equal(authCheck.headers.get("access-control-allow-credentials"), "true");
+
+  const adminAction = await handler(
+    new Request(`https://ai.ubq.fi/admin/api-keys?include_usage=1&cors_origin=${encodedAudience}`, {
+      headers: { Cookie: cookie },
+    }),
+  );
+  assert.equal(adminAction.status, 200);
+
+  const conflictingOrigin = await handler(
+    new Request(`https://ai.ubq.fi/uos/auth?cors_origin=${encodedAudience}`, {
+      headers: { Cookie: cookie, Origin: "https://evil.example" },
+    }),
+  );
+  assert.equal(conflictingOrigin.status, 401);
+
+  const missingAudience = await getPasskeySessionForRequest(
+    new Request("https://ai.ubq.fi/uos/auth", { headers: { Cookie: cookie } }),
+  );
+  assert.equal(missingAudience, null);
+});
+
+Deno.test("relay logout clears the audience cookie and bound server session", async () => {
+  kvStore.clear();
+  const audienceOrigin = "https://telegram-daily-exporter.0x4007.deno.net";
+  const { token } = seedPasskeySession("uos_ai_session_relay_logout", { audienceOrigin });
+  const response = await handlePasskeyLogout(
+    new Request("https://ai.ubq.fi/api/auth/logout", {
+      method: "POST",
+      headers: {
+        Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`,
+        Origin: audienceOrigin,
+      },
+    }),
+  );
+
+  assert.equal(response.status, 204);
+  assert.equal(
+    response.headers.get("set-cookie"),
+    `${PASSKEY_RELAY_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`,
+  );
+  assert.equal((await kvStub.get(passkeySessionKey(token))).value, null);
+});
+
+Deno.test("credentialed CORS reflects only exact trusted relay origins", async () => {
+  const { default: handler } = await import("../src/handler.ts");
+  for (
+    const audienceOrigin of [
+      "https://ai-ubq-fi-cv5fc93pzb5a.deno.dev",
+      "https://p-ai-ubq-fi.ubiquity-dao.deno.net",
+      "https://telegram-daily-exporter-4d2p9cx7m1ab.0x4007.deno.net",
+      "https://agent-worker.ubiquity-os.deno.net",
+    ]
+  ) {
+    const response = await handler(
+      new Request("https://ai.ubq.fi/api/auth/session", {
+        method: "OPTIONS",
+        headers: { Origin: audienceOrigin, "Access-Control-Request-Method": "GET" },
+      }),
+    );
+    assert.equal(response.status, 204, audienceOrigin);
+    assert.equal(response.headers.get("access-control-allow-origin"), audienceOrigin);
+    assert.equal(response.headers.get("access-control-allow-credentials"), "true");
+  }
+
+  const fallbackOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
+  const cloudflareFallback = await handler(
+    new Request(`https://ai.ubq.fi/api/auth/session?cors_origin=${encodeURIComponent(fallbackOrigin)}`, {
+      method: "OPTIONS",
+      headers: { "Access-Control-Request-Method": "GET" },
+    }),
+  );
+  assert.equal(cloudflareFallback.headers.get("access-control-allow-origin"), fallbackOrigin);
+  assert.equal(cloudflareFallback.headers.get("access-control-allow-credentials"), "true");
+
+  for (const origin of ["http://localhost:8000", "https://evil.example", "https://app.0x4007.deno.net"]) {
+    const response = await handler(
+      new Request("https://ai.ubq.fi/api/auth/session", {
+        method: "OPTIONS",
+        headers: { Origin: origin, "Access-Control-Request-Method": "GET" },
+      }),
+    );
+    assert.equal(response.headers.get("access-control-allow-origin"), "*", origin);
+    assert.equal(response.headers.get("access-control-allow-credentials"), null, origin);
+  }
+
+  const conflictingOrigin = await handler(
+    new Request(`https://ai.ubq.fi/api/auth/session?cors_origin=${encodeURIComponent(fallbackOrigin)}`, {
+      method: "OPTIONS",
+      headers: { Origin: "https://evil.example", "Access-Control-Request-Method": "GET" },
+    }),
+  );
+  assert.equal(conflictingOrigin.headers.get("access-control-allow-origin"), "*");
+  assert.equal(conflictingOrigin.headers.get("access-control-allow-credentials"), null);
 });
 
 Deno.test("passkey login finish does not log raw user handles on assertion failure", async () => {
