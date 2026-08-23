@@ -449,6 +449,22 @@ const neutralSlot = (credentialVersion: string, accountIdHash: string | null): C
   probe_lease: null,
 });
 
+/**
+ * Timeout fences were a shared provider gate. They are retained in the parser
+ * only for a safe hard cut from existing durable rows, then discarded before
+ * any live routing decision.
+ */
+const withoutLegacyTimeoutCircuit = (slot: CodexRoutingSlot): CodexRoutingSlot => {
+  const hasTimeoutLease = slot.probe_lease?.circuit === "upstream_timeout";
+  if (!slot.upstream_timeout_blocked_until_ms && !hasTimeoutLease) return slot;
+  return {
+    ...slot,
+    upstream_timeout_blocked_until_ms: null,
+    probe_lease: hasTimeoutLease ? null : slot.probe_lease,
+    generation: slot.generation + 1,
+  };
+};
+
 const preservesStableResetIdentity = (slot: CodexRoutingSlot): boolean =>
   slot.banked_reset_generation_ambiguous ||
   (slot.observed_reset_at_ms !== null && slot.observed_reset_at_is_stable);
@@ -549,9 +565,11 @@ export const normalizeRoutingState = async (
     );
     if (!prior) return neutralSlot(identity.credentialVersion, identity.accountIdHash);
     if (prior.credential_version === identity.credentialVersion) {
-      return prior.account_id_hash === identity.accountIdHash ? prior : attachLegacyAccountIdentity(prior, identity);
+      return withoutLegacyTimeoutCircuit(
+        prior.account_id_hash === identity.accountIdHash ? prior : attachLegacyAccountIdentity(prior, identity),
+      );
     }
-    return rotateCredentialForSameAccount(prior, identity);
+    return withoutLegacyTimeoutCircuit(rotateCredentialForSameAccount(prior, identity));
   });
   // Do not attach an unidentifiable legacy identity to whichever account now
   // occupies its old slot. A global claim fence keeps ordinary routing usable
@@ -2352,14 +2370,6 @@ const selectCodexRoutingAccountsFromState = async (
       skipped.push(mapped.slot + 1);
       continue;
     }
-    if (slot.upstream_timeout_blocked_until_ms && slot.upstream_timeout_blocked_until_ms > now) {
-      skipped.push(mapped.slot + 1);
-      hasUpstreamTimeoutBlock = true;
-      retryAt = retryAt === null
-        ? slot.upstream_timeout_blocked_until_ms
-        : Math.min(retryAt, slot.upstream_timeout_blocked_until_ms);
-      continue;
-    }
     if (
       requestedClassBlock && requestedClassBlock.blocked_until_ms > now &&
       !capacityOverride
@@ -2385,9 +2395,9 @@ const selectCodexRoutingAccountsFromState = async (
     // A verified banked reset releases the quota deadline but retains its
     // recovery-probe lease. Ordinary routing stays unavailable until that
     // exact fenced probe succeeds, fails, or expires.
-    const leaseBlocksRequest = slot.probe_lease?.circuit === "upstream_timeout" ||
-      slot.probe_lease?.quota_class === null || slot.probe_lease?.quota_class === undefined ||
-      slot.probe_lease?.quota_class === requestedQuotaClass;
+    const leaseBlocksRequest = slot.probe_lease?.circuit !== "upstream_timeout" &&
+      (slot.probe_lease?.quota_class === null || slot.probe_lease?.quota_class === undefined ||
+        slot.probe_lease?.quota_class === requestedQuotaClass);
     if ((slot.probe_lease?.expires_at_ms ?? 0) > now && leaseBlocksRequest) {
       skipped.push(mapped.slot + 1);
       if (slot.probe_lease!.circuit === "upstream_timeout") {
@@ -2407,12 +2417,6 @@ const selectCodexRoutingAccountsFromState = async (
         probeRequired: !capacityOverride,
         probeCircuit: capacityOverride ? null : "quota",
       });
-      continue;
-    }
-    if (slot.upstream_timeout_blocked_until_ms) {
-      // A timeout circuit uses the same fenced half-open lease as a quota
-      // circuit. Only the first request after expiry may probe this account.
-      available.push({ ...routedAccount, probeRequired: true, probeCircuit: "upstream_timeout" });
       continue;
     }
     available.push(routedAccount);

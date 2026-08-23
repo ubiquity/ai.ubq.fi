@@ -72,6 +72,15 @@ class MemoryKv {
     } as Deno.KvEntryMaybe<T>);
   }
 
+  getMany<T extends readonly unknown[]>(
+    keys: readonly Deno.KvKey[],
+    options?: { consistency?: Deno.KvConsistencyLevel },
+  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+    return Promise.all(keys.map((key) => this.get(key, options))) as Promise<
+      { [K in keyof T]: Deno.KvEntryMaybe<T[K]> }
+    >;
+  }
+
   set(
     key: Deno.KvKey,
     value: unknown,
@@ -404,6 +413,9 @@ const runCase = async (
       }),
       {
         keyId: KEY_ID,
+        // This stable principal hashes to account-one first, preserving the
+        // matrix's explicit first-account/second-account outcome ordering.
+        idempotencyPrincipal: "matrix-0",
         kernelRepo: null,
         kernelOrg: null,
         requestId: `routing-matrix-${sequence}-${first.name}-${second.name}`,

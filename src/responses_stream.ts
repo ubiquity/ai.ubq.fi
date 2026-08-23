@@ -95,7 +95,12 @@ const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
 export const readResponsesStream = async function* (
   stream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
-  options: Readonly<{ firstEventTimeoutMs?: number; inactivityTimeoutMs?: number }> = {},
+  options: Readonly<{
+    firstEventTimeoutMs?: number;
+    inactivityTimeoutMs?: number;
+    /** Runs for every non-empty raw read, including comments and partial SSE frames. */
+    onActivity?: () => void | Promise<void>;
+  }> = {},
 ): ResponsesStreamIterator {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -212,6 +217,8 @@ export const readResponsesStream = async function* (
       if (signal?.aborted) throw signal.reason;
       readerDone = done;
       if (value?.byteLength) {
+        await options.onActivity?.();
+        if (signal?.aborted) throw signal.reason;
         let segmentStart = 0;
         for (let index = 0; index < value.byteLength; index += 1) {
           const byte = value[index]!;
@@ -256,10 +263,11 @@ export const readResponsesStream = async function* (
 export const preflightResponsesStream = async (
   upstream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
+  options: Readonly<{ onActivity?: () => void | Promise<void> }> = {},
 ): Promise<PreflightedResponsesStream> => {
   const cancellation = new AbortController();
   const streamSignal = signal ? AbortSignal.any([signal, cancellation.signal]) : cancellation.signal;
-  const iterator = readResponsesStream(upstream, streamSignal);
+  const iterator = readResponsesStream(upstream, streamSignal, options);
   const cancel = async (reason?: unknown): Promise<void> => {
     if (!cancellation.signal.aborted) cancellation.abort(reason);
     await iterator.return(reason).catch(() => {});

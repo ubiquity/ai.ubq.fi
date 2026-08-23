@@ -9,6 +9,8 @@ import { MAX_RESPONSES_SSE_EVENT_BYTES } from "../src/responses_stream.ts";
 import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
 import { readPromptCacheAnalytics, recordPromptCacheAnalytics } from "../src/prompt_cache_analytics.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
+import { setKvForTest } from "../src/kv.ts";
+import { acquireCodexAdmission, type CodexAdmissionLease, releaseCodexAdmission } from "../src/codex_admission.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
@@ -65,11 +67,21 @@ kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
 });
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
-const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv;
-
 const kvStub = {
   get: (key: Deno.KvKey) =>
-    Promise.resolve(({ key, value: kvStore.get(keyToString(key)) ?? null }) as Deno.KvEntryMaybe<unknown>),
+    Promise.resolve(
+      ({
+        key,
+        value: kvStore.get(keyToString(key)) ?? null,
+        versionstamp: kvStore.has(keyToString(key)) ? "00000000000000000001" : null,
+      }) as Deno.KvEntryMaybe<unknown>,
+    ),
+  getMany: (keys: readonly Deno.KvKey[]) =>
+    Promise.resolve(keys.map((key) => ({
+      key,
+      value: kvStore.get(keyToString(key)) ?? null,
+      versionstamp: kvStore.has(keyToString(key)) ? "00000000000000000001" : null,
+    }))),
   set: (key: Deno.KvKey, value: unknown) => {
     kvStore.set(keyToString(key), value);
     return Promise.resolve({ ok: true } as const);
@@ -114,7 +126,7 @@ const kvStub = {
   close: () => {},
 } as unknown as Deno.Kv;
 
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
+setKvForTest(kvStub);
 
 const {
   extractUsageTokens,
@@ -146,6 +158,7 @@ const {
 const {
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
+  CODEX_ADMISSION_BUSY_ERROR_CODE,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
 const { attemptCodexBankedReset } = await import("../src/codex_banked_reset.ts");
@@ -811,10 +824,12 @@ Deno.test("openai: an unknown banked reset returns an ordinary error with no suc
   }
 });
 
-Deno.test("openai: timeout-circuit short circuits remain gateway-generated", async () => {
+Deno.test("openai: legacy timeout circuits do not short-circuit later requests", async () => {
+  let inferenceCalls = 0;
   const response = await withFetchMock(
     () => {
-      throw new Error("a timeout circuit response must not dispatch to Codex");
+      inferenceCalls += 1;
+      return sseResponse(baseSseChunks());
     },
     async () => {
       const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
@@ -832,16 +847,77 @@ Deno.test("openai: timeout-circuit short circuits remain gateway-generated", asy
     },
   );
 
-  assert.equal(response.status, 503);
-  assert.equal(response.headers.get("x-uos-upstream"), null);
-  assert.deepEqual(await response.json(), {
-    error: {
-      message: "Codex upstream is temporarily unavailable after response-header timeouts; retry later.",
-      type: "server_error",
-      code: "codex_upstream_degraded",
-      param: null,
+  assert.equal(response.status, 200);
+  assert.equal(inferenceCalls, 1);
+});
+
+Deno.test("openai: subscription admission busy never enters a paid provider", async () => {
+  const leases: CodexAdmissionLease[] = [];
+  let removedProviderCalls = 0;
+  let transportCalls = 0;
+
+  setRemovedProviderApiKeyForTest("removed-provider-must-not-run");
+  setRemovedProviderTestAdapterForTest({
+    fetchResponses: () => {
+      removedProviderCalls += 1;
+      throw new Error("admission busy must not enter RemovedProvider");
     },
+    modelFromEvent: () => null,
+    isEligibleModel: () => true,
   });
+  try {
+    const response = await withFetchMock(
+      () => {
+        transportCalls += 1;
+        throw new Error("admission busy must not dispatch any provider transport");
+      },
+      async () => {
+        const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+        const selected = await selectCodexRoutingAccounts(
+          authPool,
+          authPool.accounts,
+          Date.now(),
+          DEFAULT_TEST_MODEL,
+        );
+        assert.equal(selected.kind, "eligible");
+        if (selected.kind !== "eligible") throw new Error("expected eligible admission fixture accounts");
+        for (const account of selected.accounts) {
+          for (let index = 0; index < 4; index += 1) {
+            const fixtureId = `busy-fixture-${account.accountIdHash}-${index}`;
+            const decision = await acquireCodexAdmission({
+              accountIdHash: account.accountIdHash,
+              quotaClass: "standard",
+              callerLaneHash: await sha256Hex(fixtureId),
+            });
+            assert.equal(decision.kind, "acquired");
+            if (decision.kind === "acquired") leases.push(decision.lease);
+          }
+        }
+        return await handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              input: "wait for subscription capacity",
+              client_metadata: { thread_id: "busy-agent", session_id: "shared-session" },
+            }),
+          }),
+        );
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("Retry-After"), "1");
+    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
+    assert.equal(transportCalls, 0);
+    assert.equal(removedProviderCalls, 0);
+  } finally {
+    await Promise.all(leases.map((lease) => releaseCodexAdmission(lease)));
+    setRemovedProviderTestAdapterForTest(null);
+    setRemovedProviderApiKeyForTest(undefined);
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+  }
 });
 
 Deno.test("openai: a post-reset 429 is returned once without a successful stream", async (t) => {
@@ -3342,6 +3418,14 @@ Deno.test("openai: an all-blocked Codex response continues through paid Metered 
   };
   let meteredCalls = 0;
   Deno.env.set("METERED_API_KEY", "metered-test-key");
+  resetMeteredModelsCacheForTest();
+  await fetchMeteredModels({
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response"] }],
+      })),
+  });
   seedPaidFallbackKey(keyId);
 
   try {
@@ -3406,6 +3490,7 @@ Deno.test("openai: an all-blocked Codex response continues through paid Metered 
     kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
     kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
     resetCodexAuthCacheForTest();
+    resetMeteredModelsCacheForTest();
     if (previousMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
     else Deno.env.set("METERED_API_KEY", previousMeteredKey);
   }
@@ -4392,15 +4477,23 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("Codex timeout circuit returns 503 without spending paid quota", async () => {
+    await t.step("a legacy timeout marker does not authorize paid fallback", async () => {
       const keyId = "fallback-upstream-degraded";
       const requestId = "request-fallback-upstream-degraded";
       seedPaidFallbackKey(keyId);
+      let codexCalls = 0;
       let meteredCalls = 0;
       const response = await withFetchMock(
-        () => {
-          meteredCalls += 1;
-          throw new Error("a timeout circuit must not dispatch to a paid provider");
+        (url) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            throw new Error("a transient Codex failure must not dispatch to a paid provider");
+          }
+          codexCalls += 1;
+          return new Response(JSON.stringify({ error: { message: "transient upstream failure" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
         },
         async () => {
           const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
@@ -4426,8 +4519,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       );
 
       assert.equal(response.status, 503);
-      assert.equal(response.headers.get("x-uos-upstream"), null);
+      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
       assert.equal(getResponseTelemetry(response)?.fallbackReason, null);
+      assert.equal(codexCalls, 1);
       assert.equal(meteredCalls, 0);
     });
 
@@ -11237,5 +11331,5 @@ Deno.test("auth: kernel attestation tokens are reusable within TTL", async () =>
 });
 
 addEventListener("unload", () => {
-  (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
+  setKvForTest(null);
 });
