@@ -461,7 +461,7 @@ const assertOrderedTerminalTimings = (
     return;
   }
   const downstreamDrain = requiredTerminalTiming(terminal, "downstream_drain_ms");
-  assert.ok(ordered[3]! + downstreamDrain <= ordered[4]!);
+  assert.ok(ordered[4]! + downstreamDrain <= ordered[5]!);
 };
 
 Deno.test("V3 dispatch ledger commits unlimited API-key requests exactly once", async () => {
