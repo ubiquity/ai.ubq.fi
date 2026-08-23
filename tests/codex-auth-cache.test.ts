@@ -310,6 +310,37 @@ Deno.test("Codex responses try the second account after 403", async () => {
   }
 });
 
+Deno.test("Codex responses try the second account after a transient transport failure", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    if (accountIds.length === 1) {
+      return Promise.reject(new DOMException("upstream socket closed", "TimeoutError"));
+    }
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "timeout-failover" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(accountIds, ["account-one", "account-two"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
 Deno.test("Codex responses make one bounded final retry after both accounts return 429", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;

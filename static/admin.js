@@ -15,10 +15,10 @@ import {
 } from "./auth.js?v=passkey-relay-20260814-v2";
 import {
   AUTH_RELAY_MESSAGE_TYPE,
-  isAiGatewayPreviewOrigin,
+  isTrustedAuthRelayClientOrigin,
   parseAuthRelayAction,
   parseTrustedAuthRelayOrigin,
-} from "./auth-relay.js?v=passkey-relay-20260814-v2";
+} from "./auth-relay.js?v=passkey-relay-20260823-v4";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
@@ -392,10 +392,7 @@ const isAuthRelayMode = Boolean(authRelayOrigin && authRelayAction && globalThis
 const getPasskeyBaseUrl = () => isAuthRelayMode ? globalThis.location.origin : resolveBaseUrl();
 
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
-const isPreviewOrigin = () => isAiGatewayPreviewOrigin(globalThis.location.origin);
-const isRemoteAiTarget = () => new URL(resolveBaseUrl()).origin === PASSKEY_CANONICAL_ORIGIN;
-
-const isCrossOriginTarget = () => new URL(resolveBaseUrl()).origin !== globalThis.location.origin;
+const isRemoteRelayOrigin = () => isTrustedAuthRelayClientOrigin(globalThis.location.origin);
 
 const getAdminToken = () => tokenInput.value.trim();
 
@@ -470,7 +467,7 @@ const postAuthRelayResult = (result) => {
     handle: result.handle ?? getPasskeyHandle(),
     expires_at_ms: result.expires_at_ms ?? null,
   }, authRelayOrigin);
-  setPasskeyStatus("ok", "Signed in. Returning to local admin...");
+  setPasskeyStatus("ok", "Signed in. Returning to the requesting admin...");
   setTimeout(() => globalThis.close(), 300);
   return true;
 };
@@ -478,7 +475,7 @@ const postAuthRelayResult = (result) => {
 const formatPasskeyLoginError = (error) => {
   const message = error?.message ?? "Passkey sign-in failed";
   if (
-    !isAuthRelayMode && !isRemoteAiTarget() &&
+    !isAuthRelayMode && isLocalDevelopmentOrigin() &&
     /invalid passkey assertion|unknown passkey|passkey account not found|no passkeys registered/i.test(message)
   ) {
     return `${message}. This origin uses localhost passkeys; choose ai.ubq.fi or add a local passkey with the fallback token.`;
@@ -488,8 +485,11 @@ const formatPasskeyLoginError = (error) => {
 
 let authRelayRequest = null;
 const requestRemotePasskeySession = () => {
+  if (!isRemoteRelayOrigin()) {
+    return Promise.reject(new Error("Remote passkey relay is available only from an approved Deno Deploy origin."));
+  }
   if (authRelayRequest) return authRelayRequest;
-  const targetOrigin = isPreviewOrigin() ? PASSKEY_CANONICAL_ORIGIN : new URL(resolveBaseUrl()).origin;
+  const targetOrigin = PASSKEY_CANONICAL_ORIGIN;
   const relayUrl = new URL("/admin", targetOrigin);
   relayUrl.searchParams.set("auth_relay_origin", globalThis.location.origin);
   relayUrl.searchParams.set("auth_relay_action", "passkey-login");
@@ -541,10 +541,7 @@ const requestRemotePasskeySession = () => {
 };
 
 const signInAdminWithPasskey = async () => {
-  if (
-    !isAuthRelayMode &&
-    (isPreviewOrigin() || (isCrossOriginTarget() && isRemoteAiTarget() && !hasStoredPasskeyCredentials()))
-  ) {
+  if (!isAuthRelayMode && isRemoteRelayOrigin()) {
     const relay = await requestRemotePasskeySession();
     if (relay.handle) setPasskeyHandleValue(relay.handle);
     applySignedInToken(relay.token, { deviceRegistered: true });
@@ -587,7 +584,7 @@ const runPasskeyLogin = async ({ automatic = false } = {}) => {
 
 const getRegistrationAdminToken = async () => {
   const token = getAdminToken();
-  if (token || !isCrossOriginTarget() || !isRemoteAiTarget()) return token;
+  if (token || !isRemoteRelayOrigin()) return token;
   setPasskeyStatus("unknown", "Sign in on ai.ubq.fi to authorize registration...");
   const relay = await requestRemotePasskeySession();
   if (relay.handle) setPasskeyHandleValue(relay.handle);
@@ -601,8 +598,8 @@ const restoreSettings = () => {
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
   passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
-  baseSelect.value = isPreviewOrigin() ? "ai" : storage.get(STORAGE_KEYS.base) ?? "local";
-  if (isPreviewOrigin()) storage.set(STORAGE_KEYS.base, "ai");
+  baseSelect.value = isRemoteRelayOrigin() ? "ai" : storage.get(STORAGE_KEYS.base) ?? "local";
+  if (isRemoteRelayOrigin()) storage.set(STORAGE_KEYS.base, "ai");
   applyLocalDevelopmentAuth();
   updateBasePreview();
 };
@@ -916,7 +913,7 @@ const renderMeteredCapacitySource = (source, provider = null) => {
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
-  title.textContent = "Metered fallback";
+  title.textContent = "Metered 2";
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   const status = capacityProviderStatus(source, provider);
@@ -977,7 +974,7 @@ const renderSurplusProviderHealthSource = (provider = null) => {
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
-  title.textContent = "Surplus Intelligence";
+  title.textContent = "Metered 1";
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   const configured = provider?.configured === true;
@@ -1086,7 +1083,7 @@ const CAPACITY_CHART_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
 });
 const CAPACITY_CHART_SERIES = [
   { key: "available-capacity", label: "Codex capacity", source: "aggregate" },
-  { key: "metered-refill", label: "Metered refill", source: "metered", valueKey: "refill_cycle_remaining_percent" },
+  { key: "metered-refill", label: "Metered 2 refill", source: "metered", valueKey: "refill_cycle_remaining_percent" },
 ];
 
 const capacityChartFailureIsDowntime = (source) =>
@@ -1909,7 +1906,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     viewBox: `0 0 ${width} ${height}`,
     preserveAspectRatio: "none",
     role: "img",
-    "aria-label": "Codex and Metered available capacity over the trailing seven days, including rate-limit resets",
+    "aria-label": "Codex and Metered 2 available capacity over the trailing seven days, including rate-limit resets",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
@@ -5200,10 +5197,10 @@ const renderKeys = (keys, view = "all") => {
     const paidResetInfo = appendKeyInfo(paidFallbackInfo, "Window resets", "unknown");
     const lifetimeSpendInfo = appendKeyInfo(paidFallbackInfo, "Lifetime spend", "unknown");
     const fallbackCountInfo = appendKeyInfo(paidFallbackInfo, "Fallbacks", "unknown");
-    const meteredWindowCountInfo = appendKeyInfo(paidFallbackInfo, "Metered window requests", "unknown");
-    const surplusWindowCountInfo = appendKeyInfo(paidFallbackInfo, "Surplus window requests", "unknown");
-    const meteredWindowSpendInfo = appendKeyInfo(paidFallbackInfo, "Metered window spend", "unknown");
-    const surplusWindowSpendInfo = appendKeyInfo(paidFallbackInfo, "Surplus window spend", "unknown");
+    const meteredWindowCountInfo = appendKeyInfo(paidFallbackInfo, "Metered 2 window requests", "unknown");
+    const surplusWindowCountInfo = appendKeyInfo(paidFallbackInfo, "Metered 1 window requests", "unknown");
+    const meteredWindowSpendInfo = appendKeyInfo(paidFallbackInfo, "Metered 2 window spend", "unknown");
+    const surplusWindowSpendInfo = appendKeyInfo(paidFallbackInfo, "Metered 1 window spend", "unknown");
 
     paidFallbackSummary.appendChild(paidFallbackHeader);
     paidFallbackSummary.appendChild(paidFallbackInfo);

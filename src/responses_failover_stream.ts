@@ -7,19 +7,13 @@ import {
 } from "./responses_stream.ts";
 import { getString, isRecord } from "./utils.ts";
 
-export type ResponsesSemanticKind = "text" | "reasoning" | "tool_call";
+export type ResponsesSemanticKind = "text" | "tool_call";
 
 export const MAX_RESPONSES_PRECOMMIT_EVENTS = 10_000;
 export const MAX_RESPONSES_PRECOMMIT_CHARS = 32 * 1024 * 1024;
 
 const textTypes = new Set(["response.output_text.delta", "response.output_text.done"]);
 const refusalTypes = new Set(["response.refusal.delta", "response.refusal.done"]);
-const reasoningTypes = new Set([
-  "response.reasoning_summary_text.delta",
-  "response.reasoning_summary_text.done",
-  "response.reasoning_text.delta",
-  "response.reasoning_text.done",
-]);
 const executableToolTypes = new Set(["function_call", "custom_tool_call"]);
 const hostedToolTypes = new Set([
   "code_interpreter_call",
@@ -62,17 +56,7 @@ const semanticKindFromOutput = (output: unknown): ResponsesSemanticKind | null =
     ) {
       return "tool_call";
     }
-    if (item.type === "reasoning") {
-      const values = [item.content, item.summary];
-      if (
-        values.some((value) =>
-          Array.isArray(value) &&
-          value.some((part) =>
-            isRecord(part) && [part.text, part.delta].some((text) => typeof text === "string" && text.length > 0)
-          )
-        )
-      ) return "reasoning";
-    }
+    if (item.type === "reasoning") continue;
     if (!Array.isArray(item.content)) continue;
     if (
       item.content.some((part) =>
@@ -94,7 +78,13 @@ export const responsesEventSemanticKind = (event: ResponsesStreamEvent): Respons
       ? "text"
       : null;
   }
-  if (reasoningTypes.has(event.type)) return nonEmptyText(event.value) ? "reasoning" : null;
+  if (event.type === "response.content_part.done" && isRecord(event.value.part)) {
+    const part = event.value.part;
+    if (
+      (part.type === "output_text" || part.type === "text") && typeof part.text === "string" && part.text.length > 0
+    ) return "text";
+    if (part.type === "refusal" && typeof part.refusal === "string" && part.refusal.length > 0) return "text";
+  }
   if (hostedToolTerminalEventTypes.has(event.type)) return "tool_call";
   if (event.type === imagePartialEventType) {
     return [event.value.partial_image_b64, event.value.partial_image, event.value.result]

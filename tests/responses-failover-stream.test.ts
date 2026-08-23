@@ -26,11 +26,11 @@ Deno.test("Responses semantic detector ignores setup and empty deltas", () => {
   assert.equal(responsesEventSemanticKind(event({ type: "response.reasoning_summary_text.delta", delta: "" })), null);
 });
 
-Deno.test("Responses semantic detector commits on text, reasoning, and completed executable tools", () => {
+Deno.test("Responses semantic detector commits on visible text, refusal, and completed tools", () => {
   assert.equal(responsesEventSemanticKind(event({ type: "response.output_text.delta", delta: "x" })), "text");
   assert.equal(
     responsesEventSemanticKind(event({ type: "response.reasoning_summary_text.delta", delta: "thinking" })),
-    "reasoning",
+    null,
   );
   assert.equal(
     responsesEventSemanticKind(event({
@@ -56,6 +56,13 @@ Deno.test("Responses semantic detector commits on text, reasoning, and completed
   assert.equal(responsesEventSemanticKind(event({ type: "response.refusal.delta", delta: "blocked" })), "text");
   assert.equal(
     responsesEventSemanticKind(event({ type: "response.refusal.done", refusal: "I cannot help with that." })),
+    "text",
+  );
+  assert.equal(
+    responsesEventSemanticKind(event({
+      type: "response.content_part.done",
+      part: { type: "refusal", refusal: "I cannot help with that." },
+    })),
     "text",
   );
   assert.equal(

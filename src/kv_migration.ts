@@ -964,6 +964,7 @@ const migrateLegacyKernelScope = async (
         owner,
         ...(scope === "repo" ? { repo } : {}),
         usage_requests: legacy.usage_reset_at_ms <= nowMs ? 0 : legacy.usage_requests,
+        reserved_requests: 0,
         usage_reset_at_ms: legacy.usage_reset_at_ms <= nowMs ? nowMs + effectiveWindowMs : legacy.usage_reset_at_ms,
         applied_window_ms: effectiveWindowMs,
         created_at_ms: legacy.created_at_ms,

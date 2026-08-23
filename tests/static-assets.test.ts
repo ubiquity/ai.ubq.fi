@@ -93,7 +93,7 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.ok(chartIndex >= 0);
   assert.ok(listIndex > chartIndex);
 
-  assert.match(adminHtml, /admin\.js\?v=browser-cache-20260816-v2/);
+  assert.match(adminHtml, /admin\.js\?v=browser-cache-20260823-v3/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);

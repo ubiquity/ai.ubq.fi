@@ -820,6 +820,7 @@ Deno.test("fetchCodexResponses retries the preferred account on the request afte
     updated_at_ms: now,
   };
   const calls: string[] = [];
+  let dispatches = 0;
   const timeoutController = new AbortController();
   setKvForTest(kv as unknown as Deno.Kv);
   resetCodexAuthCacheForTest();
@@ -838,9 +839,19 @@ Deno.test("fetchCodexResponses retries the preferred account on the request afte
     };
 
     await assert.rejects(
-      fetchCodexResponses({ model: "gpt-5-routing", input: "timeout" }, { signal: timeoutController.signal }),
+      fetchCodexResponses(
+        { model: "gpt-5-routing", input: "timeout" },
+        {
+          signal: timeoutController.signal,
+          beforeDispatch: () => {
+            dispatches += 1;
+            return Promise.resolve();
+          },
+        },
+      ),
       (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
     );
+    assert.equal(dispatches, 1, "an expired request deadline must not dispatch or record a sibling attempt");
     resetCodexAccountRoutingForTest();
 
     const response = await fetchCodexResponses({ model: "gpt-5-routing", input: "next request" });

@@ -1506,6 +1506,7 @@ const fetchCodexResponseWithAuth = async (
     if (error instanceof ApiKeyQuotaDispatchError) throw error;
     if (error instanceof CodexBankedResetRetryFenceError) throw error;
     const timedOut = deadline.signal.aborted ||
+      (error instanceof Error && error.name === "TimeoutError") ||
       (signal?.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError");
     if (timedOut) {
       throw new CodexError(
@@ -1739,6 +1740,7 @@ export const fetchCodexResponses = async (
   };
   let lastResponse: Response | null = null;
   let lastError: unknown = null;
+  let transportFailure: CodexError | null = null;
   let authWarning: string | null = null;
   let authFailure: CodexError | null = null;
   let probeUnavailable = false;
@@ -2583,11 +2585,34 @@ export const fetchCodexResponses = async (
         noteCodexAuthFailure(error);
         continue;
       }
+      if (
+        error instanceof CodexError &&
+        (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable")
+      ) {
+        transportFailure = error;
+        await releaseCodexRoutingProbe(routing);
+        // A transport failure from a later eligible sibling supersedes an
+        // earlier auth/quota response. Keeping that stale response could turn
+        // an ambiguous cohort into paid fallback or a misleading auth error.
+        if (lastResponse) {
+          cancelResponseBody(lastResponse);
+          lastResponse = null;
+        }
+        retryState.candidate = null;
+        bankedResetCandidates.clear();
+        if (options.signal?.aborted) break;
+        continue;
+      }
       await releaseCodexRoutingProbe(routing);
       // Transport failures, aborts, and deadlines remain request-local.
       if (lastResponse) cancelResponseBody(lastResponse);
       throw error;
     }
+  }
+
+  if (transportFailure) {
+    if (lastResponse) cancelResponseBody(lastResponse);
+    throw transportFailure;
   }
 
   if (probeUnavailableCircuit === "upstream_timeout") {

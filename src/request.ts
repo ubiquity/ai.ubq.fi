@@ -4,6 +4,17 @@ const rawJsonBodyObservers = new WeakMap<Request, RawJsonBodyObserver>();
 
 export const MAX_ACCEPTED_JSON_BODY_BYTES = 32 * 1_024 * 1_024;
 
+export type JsonBodyReadResult =
+  | Readonly<{ ok: true; value: unknown }>
+  | Readonly<{ ok: false; kind: "invalid" | "too_large" }>;
+
+class RequestBodyTooLargeError extends Error {
+  constructor() {
+    super("Request body is too large");
+    this.name = "RequestBodyTooLargeError";
+  }
+}
+
 export const observeRawJsonBodyOnce = (req: Request, observer: RawJsonBodyObserver): void => {
   rawJsonBodyObservers.set(req, observer);
 };
@@ -17,11 +28,14 @@ const declaredContentLength = (req: Request): number | null => {
   return parsed;
 };
 
-const readBoundedRequestBody = async (req: Request): Promise<Uint8Array<ArrayBuffer>> => {
+const readBoundedRequestBody = async (
+  req: Request,
+  maxBytes: number,
+): Promise<Uint8Array<ArrayBuffer>> => {
   const declared = declaredContentLength(req);
-  if (declared !== null && declared > MAX_ACCEPTED_JSON_BODY_BYTES) {
+  if (declared !== null && declared > maxBytes) {
     await req.body?.cancel().catch(() => {});
-    throw new Error("Request body is too large");
+    throw new RequestBodyTooLargeError();
   }
   if (!req.body) return new Uint8Array();
   const reader = req.body.getReader();
@@ -31,9 +45,9 @@ const readBoundedRequestBody = async (req: Request): Promise<Uint8Array<ArrayBuf
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value.byteLength > MAX_ACCEPTED_JSON_BODY_BYTES - total) {
+      if (value.byteLength > maxBytes - total) {
         await reader.cancel().catch(() => {});
-        throw new Error("Request body is too large");
+        throw new RequestBodyTooLargeError();
       }
       total += value.byteLength;
       chunks.push(new Uint8Array(value));
@@ -55,22 +69,30 @@ const readBoundedRequestBody = async (req: Request): Promise<Uint8Array<ArrayBuf
   }
 };
 
-export const readJsonBody = async (req: Request): Promise<unknown> => {
+export const readJsonBodyWithLimit = async (
+  req: Request,
+  maxBytes: number,
+): Promise<JsonBodyReadResult> => {
   const observer = rawJsonBodyObservers.get(req);
   rawJsonBodyObservers.delete(req);
   let bytes: Uint8Array<ArrayBuffer> | null = null;
   let captured = false;
   try {
-    bytes = await readBoundedRequestBody(req);
+    bytes = await readBoundedRequestBody(req, maxBytes);
     const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
     if (observer) {
       observer(bytes);
       captured = true;
     }
-    return parsed;
-  } catch {
-    return null;
+    return { ok: true, value: parsed };
+  } catch (error) {
+    return { ok: false, kind: error instanceof RequestBodyTooLargeError ? "too_large" : "invalid" };
   } finally {
     if (bytes && !captured) bytes.fill(0);
   }
+};
+
+export const readJsonBody = async (req: Request): Promise<unknown> => {
+  const result = await readJsonBodyWithLimit(req, MAX_ACCEPTED_JSON_BODY_BYTES);
+  return result.ok ? result.value : null;
 };

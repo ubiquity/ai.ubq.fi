@@ -188,7 +188,7 @@ type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "met
 export type InferenceFallbackReason =
   | "primary_429"
   | "primary_quota_blocked"
-  | "primary_upstream_timeout";
+  | "primary_model_unsupported";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 export type AffinityOutcome = "none" | "preferred" | "failover" | "shadow_only";
@@ -865,6 +865,7 @@ type ResponsesAttemptTrigger =
   | "premature_eof"
   | "semantic_timeout"
   | "terminal_failure"
+  | "empty_upstream_completion"
   | "read_error"
   | "invalid_model";
 
@@ -884,6 +885,7 @@ type FailedResponsesAttempt = Readonly<{
   provider: UpstreamProvider;
   response: Response;
   trigger: ResponsesAttemptTrigger;
+  terminal?: ResponsesStreamEvent | null;
   signal: AbortSignal;
   clearDeadline: () => void;
 }>;
@@ -919,6 +921,8 @@ const failureKindForResponsesAttemptTrigger = (
       return "event_too_large";
     case "semantic_timeout":
       return "inactivity_timeout";
+    case "empty_upstream_completion":
+      return "empty_upstream_completion";
     case "read_error":
     case "missing_body":
       return "read_error";
@@ -934,6 +938,17 @@ const safeFailedAttemptResponse = (
   warnings: readonly string[],
 ): Response => {
   if (!response.ok) return response;
+  if (trigger === "empty_upstream_completion") {
+    return streamErrorResponse(
+      502,
+      "The upstream completed without visible output.",
+      "empty_upstream_completion",
+      provider,
+      warnings,
+      "server_error",
+      null,
+    );
+  }
   if (trigger === "semantic_timeout") {
     return streamErrorResponse(
       504,
@@ -975,7 +990,11 @@ const prepareResponsesAttempt = async (
     rejectPresemanticFailureTerminal?: boolean;
   }> = {},
 ): Promise<ResponsesAttemptResult> => {
-  const fail = (trigger: ResponsesAttemptTrigger, failedResponse = response): ResponsesAttemptResult => {
+  const fail = (
+    trigger: ResponsesAttemptTrigger,
+    failedResponse = response,
+    terminal: ResponsesStreamEvent | null = null,
+  ): ResponsesAttemptResult => {
     deadline.clear();
     return {
       kind: "failed",
@@ -983,6 +1002,7 @@ const prepareResponsesAttempt = async (
         provider,
         response: safeFailedAttemptResponse(failedResponse, provider, trigger, warnings),
         trigger,
+        terminal,
         signal: deadline.signal,
         clearDeadline: deadline.clear,
       },
@@ -1007,6 +1027,10 @@ const prepareResponsesAttempt = async (
       onEvent: (event) => recordResponsesEventTelemetry(options.usageContext, event),
     });
     preparedStream = prepared;
+    if (prepared.terminal?.type === "response.completed" && prepared.semantic === null) {
+      await iterator.return("empty upstream completion").catch(() => {});
+      return fail("empty_upstream_completion", response, prepared.terminal);
+    }
     if (
       prepared.terminal &&
       ((options.rejectFailedTerminal &&
@@ -1152,7 +1176,7 @@ const responseFailureTerminalType = (
   if (downstreamSignal.aborted) return "cancelled";
   if (signal.aborted) return "deadline";
   if (trigger === "premature_eof") return "eof";
-  if (trigger === "terminal_failure") return "response.failed";
+  if (trigger === "terminal_failure" || trigger === "empty_upstream_completion") return "response.failed";
   return "error";
 };
 
@@ -1170,8 +1194,6 @@ const fetchAndPreparePrimaryResponses = async (
     attemptDeadline: StreamDeadline;
     fallbackSignal?: AbortSignal;
     createFallbackDeadline?: () => StreamDeadline;
-    primaryResponse?: Response;
-    primaryFailureReason?: InferenceFallbackReason;
     rejectPresemanticFailureTerminal?: boolean;
   }>,
 ): Promise<{ kind: "ready"; value: ResponsesRouteAttempt } | { kind: "failed"; value: ResponsesRouteFailure }> => {
@@ -1187,8 +1209,6 @@ const fetchAndPreparePrimaryResponses = async (
       clientVersion: options.clientVersion,
       signal: deadline.signal,
       fallbackSignal: options.fallbackSignal,
-      primaryResponse: options.primaryResponse,
-      primaryFailureReason: options.primaryFailureReason,
     });
   } catch (error) {
     deadline.clear();
@@ -1285,25 +1305,6 @@ const fetchAndPreparePrimaryResponses = async (
   if (prepared.kind === "ready") {
     return { kind: "ready", value: { routed, prepared: prepared.attempt, lifecycle } };
   }
-  if (
-    routed.provider === "chatgpt_codex" &&
-    routed.fallbackReason === null &&
-    prepared.attempt.trigger === "semantic_timeout" &&
-    options.fallbackSignal?.aborted !== true &&
-    options.createFallbackDeadline
-  ) {
-    // No downstream bytes have been committed, so the paid attempt can still
-    // produce one coherent response. Codex transport may already have started;
-    // this is an intentional at-least-once replay for availability.
-    await finalizeAbandonedPrimaryAttempt(routed, lifecycle, { failureTrigger: prepared.attempt.trigger });
-    return await fetchAndPreparePrimaryResponses(body, {
-      ...options,
-      attemptDeadline: options.createFallbackDeadline(),
-      createFallbackDeadline: undefined,
-      primaryResponse: prepared.attempt.response,
-      primaryFailureReason: "primary_upstream_timeout",
-    });
-  }
   return { kind: "failed", value: { routed, failed: prepared.attempt, lifecycle } };
 };
 
@@ -1379,7 +1380,10 @@ const finalizeAbandonedPrimaryAttempt = async (
     await transition.catch(() => {});
   } else if ((routed.provider === "metered" || routed.provider === "surplus") && !routed.gatewayResponse) {
     if (options.cancelled) lifecycle.cancelled();
-    else if (options.failureTrigger === "http_5xx" || options.failureTrigger === "terminal_failure") {
+    else if (
+      options.failureTrigger === "http_5xx" || options.failureTrigger === "terminal_failure" ||
+      options.failureTrigger === "empty_upstream_completion"
+    ) {
       lifecycle.terminal("response.failed");
     } else lifecycle.ambiguous();
   }
@@ -1991,6 +1995,32 @@ const canAttemptPaidFallback = (context: UsageContext | undefined): boolean =>
   Boolean(context?.keyId && context.requestId && context.startedAtMs !== undefined) &&
   (Boolean(readSurplusApiKey()) || Boolean(readMeteredApiKey()));
 
+const isCodexModelUnsupportedResponse = async (response: Response, signal?: AbortSignal): Promise<boolean> => {
+  if (response.status !== 400) return false;
+  let clone: Response;
+  try {
+    clone = response.clone();
+  } catch {
+    return false;
+  }
+  const { bytes, complete } = await readBoundedResponseBody(clone, {
+    signal,
+    cancellationReason: "Codex model-support error body captured",
+  });
+  if (!complete) return false;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+  } catch {
+    return false;
+  }
+  if (!isRecord(payload)) return false;
+  const error = isRecord(payload.error) ? payload.error : payload;
+  const message = getString(error.message)?.trim().toLowerCase() ?? "";
+  return message.includes("model") && message.includes("not supported") && message.includes("codex") &&
+    message.includes("chatgpt account");
+};
+
 const bestEffortPaidFallbackBookkeeping = async (
   operation: string,
   run: () => Promise<unknown>,
@@ -2119,8 +2149,6 @@ const fetchResponsesWithPaidFallback = async (
     clientVersion?: string | null;
     signal?: AbortSignal;
     fallbackSignal?: AbortSignal;
-    primaryResponse?: Response;
-    primaryFailureReason?: InferenceFallbackReason;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
   const fallbackSignal = options.fallbackSignal ?? options.signal;
@@ -2218,9 +2246,8 @@ const fetchResponsesWithPaidFallback = async (
     )
     : null;
   if (telemetry) telemetry.provider = "chatgpt_codex";
-  if (!options.primaryResponse) recordAttemptedProvider(options.usageContext, "chatgpt_codex");
+  recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
-  let primaryFailureReason = options.primaryFailureReason ?? null;
   const debugScenario = (await loadDebugRoutingConfig()).scenario;
   const forcedStatus = debugScenario === "metered_first" || debugScenario === "codex_429"
     ? 429
@@ -2229,9 +2256,7 @@ const fetchResponsesWithPaidFallback = async (
     : debugScenario === "codex_401"
     ? 401
     : null;
-  if (options.primaryResponse) {
-    primary = options.primaryResponse;
-  } else if (meteredOnlyPrimary) {
+  if (meteredOnlyPrimary) {
     primary = meteredOnlyPrimary;
   } else if (forcedStatus !== null) {
     primary = openaiError(
@@ -2256,19 +2281,8 @@ const fetchResponsesWithPaidFallback = async (
         bankedReset: codexBankedResetOptionsForTest ?? undefined,
       });
     } catch (error) {
-      if (
-        error instanceof CodexError && error.code === "gateway_timeout" &&
-        fallbackSignal?.aborted !== true
-      ) {
-        // The request is still uncommitted downstream. Treat the ambiguous
-        // Codex attempt as a wire-only failover, not an at-most-once retry.
-        logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
-        primary = toCodexErrorResponse(error, "chatgpt_codex");
-        primaryFailureReason = "primary_upstream_timeout";
-      } else {
-        if (!(error instanceof CodexError) || error.status !== 401) throw error;
-        primary = openaiError(error.status, error.message, error.code);
-      }
+      if (!(error instanceof CodexError) || error.status !== 401) throw error;
+      primary = openaiError(error.status, error.message, error.code);
     }
   }
   const primaryStatus = primary.status;
@@ -2281,8 +2295,7 @@ const fetchResponsesWithPaidFallback = async (
   }
   const routingError = getCodexRoutingError(primary);
   const gatewayResponse = routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
-    routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE ||
-    primaryFailureReason === "primary_upstream_timeout";
+    routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {
       status: 503,
@@ -2295,11 +2308,19 @@ const fetchResponsesWithPaidFallback = async (
   const createdAtMs = options.usageContext?.startedAtMs;
   // Authentication and authorization failures are not capacity evidence.
   // Fail closed instead of converting bad Codex credentials into paid spend.
-  const fallbackReason: InferenceFallbackReason | null = primaryFailureReason
-    ? primaryFailureReason
+  const modelUnsupported = await isCodexModelUnsupportedResponse(primary, options.signal);
+  const fallbackReason: InferenceFallbackReason | null = modelUnsupported
+    ? "primary_model_unsupported"
     : primaryStatus === 429
     ? routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ? "primary_quota_blocked" : "primary_429"
     : null;
+  const toolCallingUnavailableResponse = (): Response =>
+    openaiError(
+      400,
+      `Model '${options.model}' does not support tool calling through the configured providers.`,
+      "model_tool_calling_unsupported",
+      { headers: { "x-uos-upstream": "chatgpt_codex" } },
+    );
   if (telemetry) telemetry.fallbackReason = fallbackReason;
   if (
     !fallbackReason ||
@@ -2308,6 +2329,16 @@ const fetchResponsesWithPaidFallback = async (
     !requestId ||
     createdAtMs === undefined
   ) {
+    if (modelUnsupported && requestUsesTools) {
+      cancelResponseBody(primary);
+      return {
+        response: toolCallingUnavailableResponse(),
+        provider: "chatgpt_codex",
+        paidFallback: null,
+        gatewayResponse: true,
+        fallbackReason,
+      };
+    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2339,6 +2370,16 @@ const fetchResponsesWithPaidFallback = async (
   }
   if (paidProviders.length) refreshStalePaidCatalogsInBackground();
   if (!paidProviders.length) {
+    if (modelUnsupported && requestUsesTools) {
+      cancelResponseBody(primary);
+      return {
+        response: toolCallingUnavailableResponse(),
+        provider: "chatgpt_codex",
+        paidFallback: null,
+        gatewayResponse: true,
+        fallbackReason,
+      };
+    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -5503,11 +5544,32 @@ const responseOutputText = (output: unknown): string => {
   return text;
 };
 
+const responseOutputRefusal = (output: unknown): string => {
+  if (!Array.isArray(output)) return "";
+  let refusal = "";
+  for (const item of output) {
+    if (!isRecord(item) || !Array.isArray(item.content)) continue;
+    for (const contentItem of item.content) {
+      if (!isRecord(contentItem) || getString(contentItem.type) !== "refusal") continue;
+      const value = getString(contentItem.refusal);
+      if (value !== null) refusal += value;
+    }
+  }
+  return refusal;
+};
+
 const reconcileResponseOutputText = (emittedText: string, output: unknown): string => {
   const finalText = responseOutputText(output);
   if (!finalText || finalText === emittedText || emittedText.startsWith(finalText)) return "";
   if (finalText.startsWith(emittedText)) return finalText.slice(emittedText.length);
   return malformedFunctionCallStream("Upstream response output text conflicts with prior text deltas.");
+};
+
+const reconcileResponseOutputRefusal = (emittedRefusal: string, output: unknown): string => {
+  const finalRefusal = responseOutputRefusal(output);
+  if (!finalRefusal || finalRefusal === emittedRefusal || emittedRefusal.startsWith(finalRefusal)) return "";
+  if (finalRefusal.startsWith(emittedRefusal)) return finalRefusal.slice(emittedRefusal.length);
+  return malformedFunctionCallStream("Upstream response refusal conflicts with prior refusal deltas.");
 };
 
 const withAccumulatedResponseText = (
@@ -5752,6 +5814,89 @@ class ChatFunctionCallAccumulator {
   }
 }
 
+const preparedChatCompletionIsEmpty = (prepared: PreparedResponsesStream): boolean => {
+  let content = "";
+  let refusal = "";
+  const functionCalls = new ChatFunctionCallAccumulator();
+  let completed = false;
+
+  for (const event of prepared.buffered) {
+    const ev = event.value;
+    switch (event.type) {
+      case "response.output_text.delta": {
+        const delta = getString(ev.delta);
+        if (delta === null) return malformedFunctionCallStream("Upstream output-text delta is not a string.");
+        content += delta;
+        break;
+      }
+      case "response.output_text.done": {
+        const text = getString(ev.text);
+        if (text === null) return malformedFunctionCallStream("Upstream output-text completion is not a string.");
+        content += reconcileResponseOutputText(content, [{ content: [{ type: "output_text", text }] }]);
+        break;
+      }
+      case "response.refusal.delta": {
+        const delta = getString(ev.delta);
+        if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
+        refusal += delta;
+        break;
+      }
+      case "response.refusal.done": {
+        const finalRefusal = getString(ev.refusal);
+        if (finalRefusal === null) {
+          return malformedFunctionCallStream("Upstream refusal completion is not a string.");
+        }
+        refusal += reconcileResponseOutputRefusal(refusal, [{ content: [{ type: "refusal", refusal: finalRefusal }] }]);
+        break;
+      }
+      case "response.content_part.done": {
+        if (isRecord(ev.part)) {
+          content += reconcileResponseOutputText(content, [{ content: [ev.part] }]);
+          refusal += reconcileResponseOutputRefusal(refusal, [{ content: [ev.part] }]);
+        }
+        break;
+      }
+      case "response.output_item.added":
+        functionCalls.add(ev, ev.item);
+        break;
+      case "response.function_call_arguments.delta":
+        functionCalls.delta(ev);
+        break;
+      case "response.function_call_arguments.done":
+        functionCalls.done(ev);
+        break;
+      case "response.output_item.done":
+        functionCalls.reconcileItem(ev, ev.item);
+        content += reconcileResponseOutputText(content, [ev.item]);
+        refusal += reconcileResponseOutputRefusal(refusal, [ev.item]);
+        break;
+      case "response.output": {
+        const output = ev.output ?? (isRecord(ev.response) ? ev.response.output : undefined);
+        content += reconcileResponseOutputText(content, output);
+        refusal += reconcileResponseOutputRefusal(refusal, output);
+        functionCalls.reconcileOutput(ev, output);
+        break;
+      }
+      case "response.completed": {
+        if (!isRecord(ev.response) || Array.isArray(ev.response)) {
+          return malformedFunctionCallStream("Upstream response.completed event is missing its response object.");
+        }
+        content += reconcileResponseOutputText(content, ev.response.output);
+        refusal += reconcileResponseOutputRefusal(refusal, ev.response.output);
+        functionCalls.reconcileOutput(ev, ev.response.output);
+        functionCalls.assertFinalized();
+        completed = true;
+        break;
+      }
+    }
+  }
+
+  if (!completed) {
+    return malformedFunctionCallStream("Chat semantic preflight did not retain a completed terminal.");
+  }
+  return !content && !refusal && !functionCalls.hasCalls;
+};
+
 const chatToolCallDelta = (
   call: ChatFunctionCall,
   options: Readonly<{ includeIdentity: boolean; argumentsDelta?: string }> = { includeIdentity: false },
@@ -5767,6 +5912,31 @@ const chatToolCallDelta = (
   return value;
 };
 
+const chatSourceFromPrepared = (
+  source: PreflightedResponsesStream,
+  prepared: PreparedResponsesStream,
+): PreflightedResponsesStream => {
+  const first = prepared.buffered[0];
+  if (!first) throw new ResponsesStreamError("Chat preflight did not retain its first event.", { kind: "read_error" });
+  const iterator = (async function* (): ResponsesStreamIterator {
+    try {
+      for (const event of prepared.buffered.slice(1)) yield event;
+      for await (const event of prepared.iterator) yield event;
+      return undefined;
+    } finally {
+      await prepared.iterator.return("Chat prepared stream closed").catch(() => {});
+    }
+  })();
+  return {
+    first,
+    iterator,
+    cancel: async (reason?: unknown): Promise<void> => {
+      await source.cancel(reason);
+      await iterator.return(reason).catch(() => {});
+    },
+  };
+};
+
 const streamChatCompletions = (
   source: PreflightedResponsesStream,
   model: string,
@@ -5780,16 +5950,17 @@ const streamChatCompletions = (
 ): Response => {
   const encoder = new TextEncoder();
   const iterator = source.iterator;
-  const initialTerminalAlreadyValidated = source.first.terminal;
   let pending: ResponsesStreamEvent | undefined = source.first;
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
   let sentRole = false;
   let closed = false;
   let outputText = "";
+  let refusalText = "";
   const functionCalls = new ChatFunctionCallAccumulator();
   const queuedDeltas: Array<
     | Readonly<{ kind: "content"; content: string }>
+    | Readonly<{ kind: "refusal"; refusal: string }>
     | Readonly<{
       kind: "tool";
       call: ChatFunctionCall;
@@ -5811,6 +5982,23 @@ const streamChatCompletions = (
               {
                 index: 0,
                 delta: sentRole ? { content } : { role: "assistant", content },
+                finish_reason: null,
+              },
+            ],
+          };
+          sentRole = true;
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        };
+        const emitRefusal = (refusal: string): void => {
+          const chunk: Record<string, unknown> = {
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [
+              {
+                index: 0,
+                delta: sentRole ? { refusal } : { role: "assistant", refusal },
                 finish_reason: null,
               },
             ],
@@ -5843,6 +6031,11 @@ const streamChatCompletions = (
             outputText += textSuffix;
             queuedDeltas.push({ kind: "content", content: textSuffix });
           }
+          const refusalSuffix = reconcileResponseOutputRefusal(refusalText, output);
+          if (refusalSuffix) {
+            refusalText += refusalSuffix;
+            queuedDeltas.push({ kind: "refusal", refusal: refusalSuffix });
+          }
           const beforeCount = functionCalls.calls.length;
           const reconciled = functionCalls.reconcileOutput(event, output);
           for (const result of reconciled) {
@@ -5860,6 +6053,7 @@ const streamChatCompletions = (
         const queued = queuedDeltas.shift();
         if (queued) {
           if (queued.kind === "content") emitContent(queued.content);
+          else if (queued.kind === "refusal") emitRefusal(queued.refusal);
           else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
           return;
         }
@@ -5890,6 +6084,56 @@ const streamChatCompletions = (
             outputText += delta;
             emitContent(delta);
             return;
+          }
+
+          if (type === "response.output_text.done") {
+            const text = getString(ev.text);
+            if (text === null) {
+              return malformedFunctionCallStream("Upstream output-text completion is not a string.");
+            }
+            const suffix = reconcileResponseOutputText(outputText, [{ content: [{ type: "output_text", text }] }]);
+            if (suffix) {
+              outputText += suffix;
+              emitContent(suffix);
+              return;
+            }
+            continue;
+          }
+
+          if (type === "response.refusal.delta") {
+            const delta = getString(ev.delta);
+            if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
+            refusalText += delta;
+            emitRefusal(delta);
+            return;
+          }
+
+          if (type === "response.refusal.done") {
+            const refusal = getString(ev.refusal);
+            if (refusal === null) return malformedFunctionCallStream("Upstream refusal completion is not a string.");
+            const suffix = reconcileResponseOutputRefusal(refusalText, [{ content: [{ type: "refusal", refusal }] }]);
+            if (suffix) {
+              refusalText += suffix;
+              emitRefusal(suffix);
+              return;
+            }
+            continue;
+          }
+
+          if (type === "response.content_part.done" && isRecord(ev.part)) {
+            const textSuffix = reconcileResponseOutputText(outputText, [{ content: [ev.part] }]);
+            if (textSuffix) {
+              outputText += textSuffix;
+              emitContent(textSuffix);
+              return;
+            }
+            const refusalSuffix = reconcileResponseOutputRefusal(refusalText, [{ content: [ev.part] }]);
+            if (refusalSuffix) {
+              refusalText += refusalSuffix;
+              emitRefusal(refusalSuffix);
+              return;
+            }
+            continue;
           }
 
           if (type === "response.output_item.added") {
@@ -5931,6 +6175,12 @@ const streamChatCompletions = (
                 emitContent(textSuffix);
                 return;
               }
+              const refusalSuffix = reconcileResponseOutputRefusal(refusalText, [ev.item]);
+              if (refusalSuffix) {
+                refusalText += refusalSuffix;
+                emitRefusal(refusalSuffix);
+                return;
+              }
             }
             continue;
           }
@@ -5942,6 +6192,7 @@ const streamChatCompletions = (
               pending = event;
               const queued = queuedDeltas.shift()!;
               if (queued.kind === "content") emitContent(queued.content);
+              else if (queued.kind === "refusal") emitRefusal(queued.refusal);
               else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
               return;
             }
@@ -5959,16 +6210,37 @@ const streamChatCompletions = (
               pending = event;
               const queued = queuedDeltas.shift()!;
               if (queued.kind === "content") emitContent(queued.content);
+              else if (queued.kind === "refusal") emitRefusal(queued.refusal);
               else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
               return;
             }
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-            if (!initialTerminalAlreadyValidated) {
-              onResponseTerminal?.("response.completed");
-              lifecycle.terminal(type, usageTokens);
-              recordStreamTerminalType(usageContext, "response.completed");
-              void recordCompletionUsage(usageContext, usageTokens);
+            if (!outputText && !refusalText && !functionCalls.hasCalls) {
+              onResponseTerminal?.("response.failed");
+              lifecycle.terminal("response.failed", usageTokens);
+              recordStreamTerminalType(usageContext, "response.failed");
+              recordTerminalUsage(usageContext, usageTokens, false);
+              if (usageContext?.responseTelemetry) {
+                usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+              }
+              const errorValue = {
+                error: {
+                  message: "The upstream completed without visible output.",
+                  type: "server_error",
+                  code: "empty_upstream_completion",
+                  param: null,
+                },
+              };
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorValue)}\n\n`));
+              closed = true;
+              controller.close();
+              void iterator.return("Empty Responses terminal translated").catch(() => {});
+              return;
             }
+            onResponseTerminal?.("response.completed");
+            lifecycle.terminal(type, usageTokens);
+            recordStreamTerminalType(usageContext, "response.completed");
+            void recordCompletionUsage(usageContext, usageTokens);
             const chunk: Record<string, unknown> = {
               id,
               object: "chat.completion.chunk",
@@ -6001,12 +6273,10 @@ const streamChatCompletions = (
           }
           if (event.terminal) {
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-            if (!initialTerminalAlreadyValidated) {
-              onResponseTerminal?.(type as ResponseStreamTerminalType);
-              lifecycle.terminal(type, usageTokens);
-              recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
-              recordTerminalUsage(usageContext, usageTokens, false);
-            }
+            onResponseTerminal?.(type as ResponseStreamTerminalType);
+            lifecycle.terminal(type, usageTokens);
+            recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
+            recordTerminalUsage(usageContext, usageTokens, false);
             const errorValue = {
               error: {
                 message: `Upstream terminated with ${type}.`,
@@ -6023,14 +6293,13 @@ const streamChatCompletions = (
         }
       } catch (error) {
         if (closed) return;
-        if (!initialTerminalAlreadyValidated) {
-          const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
-          onResponseTerminal?.(terminalType);
-          recordStreamTerminalType(usageContext, terminalType);
-          if (terminalType === "cancelled") lifecycle.cancelled();
-          else lifecycle.ambiguous();
-          void recordErrorUsage(usageContext);
-        }
+        await iterator.return(error).catch(() => {});
+        const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
+        onResponseTerminal?.(terminalType);
+        recordStreamTerminalType(usageContext, terminalType);
+        if (terminalType === "cancelled") lifecycle.cancelled();
+        else lifecycle.ambiguous();
+        void recordErrorUsage(usageContext);
         const errorValue = {
           error: {
             message: "The upstream stream ended unexpectedly.",
@@ -6048,12 +6317,10 @@ const streamChatCompletions = (
     async cancel(reason) {
       if (closed) return;
       closed = true;
-      if (!initialTerminalAlreadyValidated) {
-        onResponseTerminal?.("cancelled");
-        recordStreamTerminalType(usageContext, "cancelled");
-        lifecycle.cancelled();
-        void recordErrorUsage(usageContext);
-      }
+      onResponseTerminal?.("cancelled");
+      recordStreamTerminalType(usageContext, "cancelled");
+      lifecycle.cancelled();
+      void recordErrorUsage(usageContext);
       await source.cancel(reason);
     },
   });
@@ -6082,12 +6349,12 @@ const completeChatCompletions = async (
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
   let content = "";
+  let refusal = "";
   let usage: Record<string, unknown> | null = null;
   const functionCalls = new ChatFunctionCallAccumulator();
 
   let completed = false;
   let terminalType: ResponseStreamTerminalType | null = null;
-  const initialTerminalAlreadyValidated = source.first.terminal;
   try {
     let pending: ResponsesStreamEvent | undefined = source.first;
     for (;;) {
@@ -6100,13 +6367,11 @@ const completeChatCompletions = async (
       if (event.terminal) {
         terminalType = type as ResponseStreamTerminalType;
         const terminalUsage = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-        if (!initialTerminalAlreadyValidated) {
-          if (type !== "response.completed") onResponseTerminal?.(type as ResponseStreamTerminalType);
+        if (type !== "response.completed") {
+          onResponseTerminal?.(type as ResponseStreamTerminalType);
           lifecycle.terminal(type, terminalUsage);
           recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
-          if (type !== "response.completed") {
-            recordTerminalUsage(usageContext, terminalUsage, false);
-          }
+          recordTerminalUsage(usageContext, terminalUsage, false);
         }
       }
       if (type === "response.created" && isRecord(ev.response)) {
@@ -6124,6 +6389,29 @@ const completeChatCompletions = async (
         content += delta;
         continue;
       }
+      if (type === "response.output_text.done") {
+        const text = getString(ev.text);
+        if (text === null) return malformedFunctionCallStream("Upstream output-text completion is not a string.");
+        content += reconcileResponseOutputText(content, [{ content: [{ type: "output_text", text }] }]);
+        continue;
+      }
+      if (type === "response.refusal.delta") {
+        const delta = getString(ev.delta);
+        if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
+        refusal += delta;
+        continue;
+      }
+      if (type === "response.refusal.done") {
+        const finalRefusal = getString(ev.refusal);
+        if (finalRefusal === null) return malformedFunctionCallStream("Upstream refusal completion is not a string.");
+        refusal += reconcileResponseOutputRefusal(refusal, [{ content: [{ type: "refusal", refusal: finalRefusal }] }]);
+        continue;
+      }
+      if (type === "response.content_part.done" && isRecord(ev.part)) {
+        content += reconcileResponseOutputText(content, [{ content: [ev.part] }]);
+        refusal += reconcileResponseOutputRefusal(refusal, [{ content: [ev.part] }]);
+        continue;
+      }
       if (type === "response.output_item.added") {
         functionCalls.add(ev, ev.item);
         continue;
@@ -6138,25 +6426,48 @@ const completeChatCompletions = async (
       }
       if (type === "response.output_item.done") {
         functionCalls.reconcileItem(ev, ev.item);
+        content += reconcileResponseOutputText(content, [ev.item]);
+        refusal += reconcileResponseOutputRefusal(refusal, [ev.item]);
         continue;
       }
       if (type === "response.output") {
         const output = ev.output ?? (isRecord(ev.response) ? ev.response.output : undefined);
         content += reconcileResponseOutputText(content, output);
+        refusal += reconcileResponseOutputRefusal(refusal, output);
         functionCalls.reconcileOutput(ev, output);
         continue;
       }
       if (type === "response.completed" && isRecord(ev.response) && !Array.isArray(ev.response)) {
         content += reconcileResponseOutputText(content, ev.response.output);
+        refusal += reconcileResponseOutputRefusal(refusal, ev.response.output);
         functionCalls.reconcileOutput(ev, ev.response.output);
         functionCalls.assertFinalized();
         const usageTokens = extractUsageTokens(ev.response.usage);
         usage = toChatUsage(usageTokens);
-        completed = true;
-        if (!initialTerminalAlreadyValidated) {
-          onResponseTerminal?.("response.completed");
-          await recordCompletionUsage(usageContext, usageTokens);
+        if (!content && !refusal && !functionCalls.hasCalls) {
+          terminalType = "response.failed";
+          onResponseTerminal?.("response.failed");
+          lifecycle.terminal("response.failed", usageTokens);
+          recordStreamTerminalType(usageContext, "response.failed");
+          recordTerminalUsage(usageContext, usageTokens, false);
+          if (usageContext?.responseTelemetry) {
+            usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+          }
+          return streamErrorResponse(
+            502,
+            "The upstream completed without visible output.",
+            "empty_upstream_completion",
+            provider,
+            warnings,
+            "server_error",
+            null,
+          );
         }
+        completed = true;
+        onResponseTerminal?.("response.completed");
+        lifecycle.terminal("response.completed", usageTokens);
+        recordStreamTerminalType(usageContext, "response.completed");
+        await recordCompletionUsage(usageContext, usageTokens);
         break;
       }
       if (event.terminal) break;
@@ -6210,8 +6521,9 @@ const completeChatCompletions = async (
 
   const message: Record<string, unknown> = {
     role: "assistant",
-    content: content || !functionCalls.hasCalls ? content : null,
+    content: content || (!functionCalls.hasCalls && !refusal) ? content : null,
   };
+  if (refusal) message.refusal = refusal;
   if (functionCalls.hasCalls) {
     message.tool_calls = functionCalls.calls.map((call) => ({
       id: call.callId,
@@ -7885,8 +8197,52 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
 
   let preflight: PreflightedResponsesStream;
   try {
-    preflight = await preflightResponsesStream(upstream.body, requestInferenceSignal);
+    const firstEvent = await preflightResponsesStream(upstream.body, requestInferenceSignal);
+    recordFirstSseEvent(usageContext);
+    const replay = (async function* (): ResponsesStreamIterator {
+      try {
+        yield firstEvent.first;
+        for await (const event of firstEvent.iterator) yield event;
+        return undefined;
+      } finally {
+        await firstEvent.iterator.return("Chat semantic preflight closed").catch(() => {});
+      }
+    })();
+    const prepared = await prepareResponsesStreamForCommit(replay);
     clearStreamFirstEventDeadline();
+    const completedTerminalUsage = prepared.terminal?.type === "response.completed" &&
+        isRecord(prepared.terminal.value.response)
+      ? extractUsageTokens(prepared.terminal.value.response.usage)
+      : null;
+    let emptyCompletion = false;
+    if (prepared.terminal?.type === "response.completed" && prepared.semantic === null) {
+      try {
+        emptyCompletion = preparedChatCompletionIsEmpty(prepared);
+      } catch (error) {
+        recordTerminalUsage(usageContext, completedTerminalUsage, false);
+        throw error;
+      }
+    }
+    if (emptyCompletion) {
+      resolveCodexProbe("response.failed");
+      lifecycle.terminal("response.failed", completedTerminalUsage);
+      recordStreamTerminalType(usageContext, "response.failed");
+      recordTerminalUsage(usageContext, completedTerminalUsage, false);
+      if (usageContext?.responseTelemetry) {
+        usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+      }
+      await prepared.iterator.return("Empty Chat completion rejected").catch(() => {});
+      return streamErrorResponse(
+        502,
+        "The upstream completed without visible output.",
+        "empty_upstream_completion",
+        routed.provider,
+        [...warnings, ...providerWarnings],
+        "server_error",
+        null,
+      );
+    }
+    preflight = chatSourceFromPrepared(firstEvent, prepared);
   } catch (error) {
     clearStreamFirstEventDeadline();
     const terminalType = classifyStreamFailure(error, requestInferenceSignal, downstreamSignal);
@@ -7897,18 +8253,6 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     else lifecycle.ambiguous();
     await recordErrorUsage(usageContext);
     return streamPreflightFailureResponse(terminalType, routed.provider, [...warnings, ...providerWarnings]);
-  }
-  recordFirstSseEvent(usageContext);
-  if (preflight.first.terminal) {
-    const terminalType = preflight.first.type as ResponseStreamTerminalType;
-    const terminalUsage = isRecord(preflight.first.value.response)
-      ? extractUsageTokens(preflight.first.value.response.usage)
-      : null;
-    resolveCodexProbe(terminalType);
-    lifecycle.terminal(terminalType, terminalUsage);
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType === "response.completed") void recordCompletionUsage(usageContext, terminalUsage);
-    else recordTerminalUsage(usageContext, terminalUsage, false);
   }
   const response = stream
     ? streamChatCompletions(
@@ -8321,6 +8665,15 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           if (failureKind && usageContext?.responseTelemetry) {
             usageContext.responseTelemetry.failureKind = failureKind;
           }
+          if (failed.trigger === "empty_upstream_completion") {
+            const terminalUsage = failed.terminal && isRecord(failed.terminal.value.response)
+              ? extractUsageTokens(failed.terminal.value.response.usage)
+              : null;
+            recordTerminalUsage(usageContext, terminalUsage, false);
+            await finalizeAbandonedPrimaryAttempt(routed, lifecycle, { failureTrigger: failed.trigger });
+            if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
+            return failed.response;
+          }
           if (routed.gatewayResponse && !isEligibleResponsesAttemptStatus(failed.response)) {
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
@@ -8386,6 +8739,18 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
         });
       } else {
         void persistFailedRemovedProviderAttempt(usageContext, fallbackStartedAt, removedProvider.attempt.trigger);
+        if (removedProvider.attempt.trigger === "empty_upstream_completion") {
+          if (usageContext?.responseTelemetry) {
+            usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+          }
+          const terminalUsage = removedProvider.attempt.terminal &&
+              isRecord(removedProvider.attempt.terminal.value.response)
+            ? extractUsageTokens(removedProvider.attempt.terminal.value.response.usage)
+            : null;
+          recordTerminalUsage(usageContext, terminalUsage, false);
+          recordStreamTerminalType(usageContext, "response.failed");
+          return removedProvider.attempt.response;
+        }
         if (primaryFailureResponse || removedProvider.attempt.trigger === "terminal_failure") {
           if (primaryFailureResponse && usageContext?.responseTelemetry) {
             const telemetry = usageContext.responseTelemetry;
@@ -8440,6 +8805,22 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
             cancelled: terminalType === "cancelled",
             failureTrigger: recovery.value.failed.trigger,
           });
+          if (recovery.value.failed.trigger === "empty_upstream_completion") {
+            if (usageContext?.responseTelemetry) {
+              usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+            }
+            const terminalUsage = recovery.value.failed.terminal &&
+                isRecord(recovery.value.failed.terminal.value.response)
+              ? extractUsageTokens(recovery.value.failed.terminal.value.response.usage)
+              : null;
+            recordTerminalUsage(usageContext, terminalUsage, false);
+            recordStreamTerminalType(usageContext, "response.failed");
+            const transition = recoveryProbe ? await releaseGlobalRemovedProviderProbe(recoveryProbe) : "none";
+            if (transition !== "none") {
+              recordRemovedProviderFields(usageContext, { circuitTransition: transition });
+            }
+            return recovery.value.failed.response;
+          }
           if (terminalType === "cancelled") {
             const transition = recoveryProbe ? await releaseGlobalRemovedProviderProbe(recoveryProbe) : "none";
             if (transition !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: transition });

@@ -40,6 +40,10 @@ class CountingKv {
   failNextSumCommits = 0;
   failNextCommits = 0;
   failApiKeyV3Reads = false;
+  failKernelQuotaReads = false;
+  kernelQuotaReadGate: Promise<void> | null = null;
+  failNextKernelSettlementCommits = 0;
+  onKernelReservationCommit: (() => void) | null = null;
   sumCommitDelayMs = 0;
   apiKeyV3DispatchCommitGate: Promise<void> | null = null;
   onApiKeyV3DispatchCommit: (() => void) | null = null;
@@ -81,6 +85,10 @@ class CountingKv {
     this.sumCommitAttempts = 0;
     this.failNextSumCommits = 0;
     this.failNextCommits = 0;
+    this.failKernelQuotaReads = false;
+    this.kernelQuotaReadGate = null;
+    this.failNextKernelSettlementCommits = 0;
+    this.onKernelReservationCommit = null;
     this.sumCommitDelayMs = 0;
     this.apiKeyV3DispatchCommitGate = null;
     this.onApiKeyV3DispatchCommit = null;
@@ -89,11 +97,21 @@ class CountingKv {
     this.readKeys.length = 0;
   }
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  async get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+    if (
+      this.kernelQuotaReadGate && key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2"
+    ) {
+      await this.kernelQuotaReadGate;
+    }
     if (
       this.failApiKeyV3Reads && key[0] === "uos_ai" && key[1] === "api_key_usage" && key[2] === "v3"
     ) {
       return Promise.reject(new Error("injected API-key V3 ledger read failure"));
+    }
+    if (
+      this.failKernelQuotaReads && key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2"
+    ) {
+      return Promise.reject(new Error("injected Kernel quota read failure"));
     }
     this.reads += 1;
     this.readKeys.push(key);
@@ -103,11 +121,11 @@ class CountingKv {
       : new TextEncoder().encode(JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item))
         .length;
     this.readUnits += Math.max(1, Math.ceil(bytes / 4096));
-    return Promise.resolve({
+    return {
       key,
       value: value ?? null,
       versionstamp: this.versionstamp(key),
-    } as Deno.KvEntryMaybe<T>);
+    } as Deno.KvEntryMaybe<T>;
   }
 
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
@@ -166,6 +184,17 @@ class CountingKv {
           this.failNextCommits -= 1;
           return { ok: false, versionstamp: null };
         }
+        const kernelReservation = mutations.some((mutation) =>
+          mutation.kind === "set" && mutation.key[0] === "uos_ai" && mutation.key[1] === "kernel_quota" &&
+          mutation.key[2] === "v2" && String(mutation.key[3]).endsWith("reservation") &&
+          typeof mutation.value === "object" && mutation.value !== null &&
+          (mutation.value as { state?: unknown }).state === "reserved"
+        );
+        if (kernelReservation && this.onKernelReservationCommit) {
+          const callback = this.onKernelReservationCommit;
+          this.onKernelReservationCommit = null;
+          callback();
+        }
         for (const entry of checks) {
           if (this.versionstamp(entry.key) !== entry.versionstamp) {
             return { ok: false, versionstamp: null };
@@ -181,6 +210,17 @@ class CountingKv {
         }
         if (hasSum && this.sumCommitDelayMs > 0) {
           await new Promise<void>((resolve) => setTimeout(resolve, this.sumCommitDelayMs));
+        }
+        const kernelSettlement = mutations.some((mutation) =>
+          mutation.kind === "set" && mutation.key[0] === "uos_ai" && mutation.key[1] === "kernel_quota" &&
+          mutation.key[2] === "v2" && String(mutation.key[3]).endsWith("reservation") &&
+          typeof mutation.value === "object" && mutation.value !== null &&
+          ((mutation.value as { state?: unknown }).state === "committed" ||
+            (mutation.value as { state?: unknown }).state === "released")
+        );
+        if (kernelSettlement && this.failNextKernelSettlementCommits > 0) {
+          this.failNextKernelSettlementCommits -= 1;
+          throw new Error("injected Kernel quota settlement failure");
         }
         const apiKeyV3Dispatch = mutations.some((mutation) =>
           mutation.kind === "set" &&
@@ -231,7 +271,22 @@ const {
   invalidateApiKeyPolicy,
   resetApiKeyPolicyCacheForTest,
 } = await import("../src/api_key_policy.ts");
-const { kernelOrgWindowKey } = await import("../src/kernel_quota_v2.ts");
+const {
+  deleteKernelOrgUsageLimit,
+  KERNEL_QUOTA_RESERVATION_LEASE_MS,
+  kernelOrgReservationKey,
+  kernelOrgWindowKey,
+  kernelRepoPolicyKey,
+  reserveEffectiveKernelUsageLimit,
+  reserveKernelOrgUsageLimit,
+  setKernelOrgUsageLimit,
+  setKernelUsageLimit,
+} = await import("../src/kernel_quota_v2.ts");
+const { handleAdminDefaults } = await import("../src/admin.ts");
+const {
+  DEFAULT_KERNEL_POLICY_LIMIT_KEY,
+  DEFAULT_KERNEL_POLICY_WINDOW_KEY,
+} = await import("../src/defaults.ts");
 const { paidFallbackRequestV3Key } = await import("../src/paid_fallback_ledger.ts");
 const { setStreamFirstEventDeadlineMsForTest } = await import("../src/inference_deadline.ts");
 const {
@@ -355,7 +410,11 @@ const completedSseEvent = (inputTokens = 1, outputTokens = 1): string =>
       type: "response.completed",
       response: {
         model: MODEL,
-        output: [],
+        output: [{
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "fixture output" }],
+        }],
         usage: {
           input_tokens: inputTokens,
           output_tokens: outputTokens,
@@ -380,7 +439,15 @@ const sse = (
     `data: ${
       JSON.stringify({
         type: "response.completed",
-        response: { model: MODEL, output: [], usage },
+        response: {
+          model: MODEL,
+          output: [{
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "fixture output" }],
+          }],
+          usage,
+        },
       })
     }\n\n`,
     { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -430,6 +497,71 @@ const prepareApiKeyInference = async (tokenDigit: string, keyId: string, limit: 
   assert.ok(policy);
   return { token, hash, record, policy };
 };
+
+const kernelTestKeyPair = await crypto.subtle.generateKey(
+  {
+    name: "RSASSA-PKCS1-v1_5",
+    modulusLength: 2048,
+    publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+    hash: "SHA-256",
+  },
+  true,
+  ["sign", "verify"],
+);
+
+const seedKernelTestPublicKey = async (): Promise<void> => {
+  const publicKey = new Uint8Array(await crypto.subtle.exportKey("spki", kernelTestKeyPair.publicKey));
+  kv.values.set(encodeKey(["uos_ai", "kernel_pubkeys"]), [{ pem: toPublicKeyPem(publicKey) }]);
+};
+
+const makeKernelTestToken = async (
+  apiToken: string,
+  owner: string,
+  repo: string,
+): Promise<string> => {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const header = encodeJsonBase64Url({ alg: "RS256", typ: "JWT" });
+  const payload = encodeJsonBase64Url({
+    iss: "ubiquity-os-kernel",
+    aud: "ai.ubq.fi",
+    iat: nowSeconds,
+    exp: nowSeconds + 600,
+    jti: `jti_${crypto.randomUUID()}`,
+    owner,
+    repo,
+    installation_id: null,
+    auth_token_sha256: await sha256Base64Url(apiToken),
+    state_id: `state_${crypto.randomUUID()}`,
+  });
+  const signingInput = `${header}.${payload}`;
+  const signature = new Uint8Array(
+    await crypto.subtle.sign("RSASSA-PKCS1-v1_5", kernelTestKeyPair.privateKey, textEncoder.encode(signingInput)),
+  );
+  return `${signingInput}.${encodeBase64Url(signature)}`;
+};
+
+const withKernelTestToken = async (
+  request: Request,
+  apiToken: string,
+  owner: string,
+  repo: string,
+): Promise<Request> => {
+  const headers = new Headers(request.headers);
+  headers.set("X-Ubiquity-Kernel-Token", await makeKernelTestToken(apiToken, owner, repo));
+  return new Request(request, { headers });
+};
+
+const seedKernelDefaultLimit = (limit: number, windowMs = 60_000): void => {
+  kv.values.set(encodeKey(DEFAULT_KERNEL_POLICY_LIMIT_KEY), limit);
+  kv.values.set(encodeKey(DEFAULT_KERNEL_POLICY_WINDOW_KEY), windowMs);
+};
+
+const validStreamingSse = (): Response =>
+  new Response(
+    `data: ${JSON.stringify({ type: "response.created", response: { id: crypto.randomUUID() } })}\n\n` +
+      semanticSseEvent() + completedSseEvent(),
+    { status: 200, headers: { "Content-Type": "text/event-stream" } },
+  );
 
 const requiredTerminalTiming = (terminal: Record<string, unknown>, field: string): number => {
   const value = terminal[field];
@@ -1127,7 +1259,12 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(response.status, 200);
     const orgWindowKey = kernelOrgWindowKey("lifecycle-org");
     assert.equal(usageWindow(policy).committed_requests, 1);
-    assert.equal(kv.values.has(encodeKey(orgWindowKey)), false);
+    const reservedKernelWindow = kv.values.get(encodeKey(orgWindowKey)) as {
+      usage_requests?: number;
+      reserved_requests?: number;
+    } | undefined;
+    assert.equal(reservedKernelWindow?.usage_requests, 0);
+    assert.equal(reservedKernelWindow?.reserved_requests, 1);
 
     const body = response.text();
     upstream.controller!.enqueue(textEncoder.encode(completedSseEvent(2, 3)));
@@ -1136,11 +1273,550 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     await body;
 
     assert.equal(usageWindow(policy).committed_requests, 1);
-    const kernelWindow = kv.values.get(encodeKey(orgWindowKey)) as { usage_requests?: number } | undefined;
+    const kernelWindow = kv.values.get(encodeKey(orgWindowKey)) as {
+      usage_requests?: number;
+      reserved_requests?: number;
+    } | undefined;
     assert.equal(kernelWindow?.usage_requests, 1);
+    assert.equal(kernelWindow?.reserved_requests, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("Kernel quota reserves one concurrent limit-one request and commits only its semantic completion", async () => {
+  const { token } = await prepareApiKeyInference("1", "kernel-concurrent-limit-one", 100);
+  await seedKernelTestPublicKey();
+  seedKernelDefaultLimit(1);
+  const owner = "kernel-concurrency-org";
+  const repo = "kernel-concurrency-repo";
+  const upstream = { controller: null as ReadableStreamDefaultController<Uint8Array> | null };
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    return Promise.resolve(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            upstream.controller = controller;
+            controller.enqueue(
+              textEncoder.encode(
+                `data: ${JSON.stringify({ type: "response.created", response: { id: "kernel-concurrent" } })}\n\n`,
+              ),
+            );
+            controller.enqueue(textEncoder.encode(semanticSseEvent()));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+  };
+  try {
+    const requests = await Promise.all(
+      Array.from(
+        { length: 8 },
+        () => withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo),
+      ),
+    );
+    const responses = await Promise.all(requests.map((request) => handler(request)));
+    assert.equal(fetchCalls, 1);
+    assert.deepEqual(
+      responses.map((response) => response.status).sort((left, right) => left - right),
+      [200, 429, 429, 429, 429, 429, 429, 429],
+    );
+    const windowKey = kernelOrgWindowKey(owner);
+    const reserved = kv.values.get(encodeKey(windowKey)) as {
+      usage_requests?: number;
+      reserved_requests?: number;
+    };
+    assert.equal(reserved.usage_requests, 0);
+    assert.equal(reserved.reserved_requests, 1);
+
+    const admitted = responses.find((response) => response.status === 200);
+    assert.ok(admitted);
+    const body = admitted.text();
+    upstream.controller!.enqueue(textEncoder.encode(completedSseEvent()));
+    upstream.controller!.close();
+    await body;
+    await waitFor(() => {
+      const window = kv.values.get(encodeKey(windowKey)) as {
+        usage_requests?: number;
+        reserved_requests?: number;
+      } | undefined;
+      return window?.usage_requests === 1 && window.reserved_requests === 0;
+    }, "Kernel semantic completion commit");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Kernel quota releases a cancelled stream before admitting its replacement", async () => {
+  const { token } = await prepareApiKeyInference("2", "kernel-cancel-release", 100);
+  await seedKernelTestPublicKey();
+  seedKernelDefaultLimit(1);
+  const owner = "kernel-cancel-org";
+  const repo = "kernel-cancel-repo";
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  let upstreamCancelled = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    if (fetchCalls > 1) return Promise.resolve(validStreamingSse());
+    return Promise.resolve(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              textEncoder.encode(
+                `data: ${JSON.stringify({ type: "response.created", response: { id: "kernel-cancel" } })}\n\n`,
+              ),
+            );
+            controller.enqueue(textEncoder.encode(semanticSseEvent()));
+          },
+          cancel() {
+            upstreamCancelled += 1;
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+  };
+  try {
+    const first = await handler(await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo));
+    assert.equal(first.status, 200);
+    await first.body!.cancel("client cancelled");
+    const windowKey = kernelOrgWindowKey(owner);
+    await waitFor(() => {
+      const window = kv.values.get(encodeKey(windowKey)) as { reserved_requests?: number } | undefined;
+      return window?.reserved_requests === 0;
+    }, "Kernel cancellation release");
+    await waitFor(() => upstreamCancelled === 1, "Kernel upstream cancellation");
+
+    const replacement = await handler(
+      await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo),
+    );
+    assert.equal(replacement.status, 200);
+    await replacement.text();
+    const committed = kv.values.get(encodeKey(windowKey)) as {
+      usage_requests?: number;
+      reserved_requests?: number;
+    };
+    assert.equal(committed.usage_requests, 1);
+    assert.equal(committed.reserved_requests, 0);
+    assert.equal(fetchCalls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Kernel quota releases validation failures and admits a later valid request", async () => {
+  const { token } = await prepareApiKeyInference("3", "kernel-validation-release", 100);
+  await seedKernelTestPublicKey();
+  seedKernelDefaultLimit(1);
+  const owner = "kernel-validation-org";
+  const repo = "kernel-validation-repo";
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    return Promise.resolve(validStreamingSse());
+  };
+  try {
+    const invalidBase = new Request("https://ai.ubq.fi/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "ping", unsupported_kernel_test_field: true }),
+    });
+    const invalid = await handler(await withKernelTestToken(invalidBase, token, owner, repo));
+    assert.equal(invalid.status, 400);
+    assert.equal(fetchCalls, 0);
+    const windowKey = kernelOrgWindowKey(owner);
+    const released = kv.values.get(encodeKey(windowKey)) as {
+      usage_requests?: number;
+      reserved_requests?: number;
+    };
+    assert.equal(released.usage_requests, 0);
+    assert.equal(released.reserved_requests, 0);
+
+    const replacement = await handler(
+      await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo),
+    );
+    assert.equal(replacement.status, 200);
+    await replacement.text();
+    const committed = kv.values.get(encodeKey(windowKey)) as {
+      usage_requests?: number;
+      reserved_requests?: number;
+    };
+    assert.equal(committed.usage_requests, 1);
+    assert.equal(committed.reserved_requests, 0);
+    assert.equal(fetchCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Kernel quota reclaims an expired reservation lease before admission", async () => {
+  const { token } = await prepareApiKeyInference("4", "kernel-lease-recovery", 100);
+  await seedKernelTestPublicKey();
+  seedKernelDefaultLimit(1);
+  const owner = "kernel-lease-org";
+  const repo = "kernel-lease-repo";
+  const nowMs = Date.now();
+  const windowCreatedAtMs = nowMs - 10_000;
+  const windowResetAtMs = nowMs + 60_000;
+  const expiredRequestId = "expired-kernel-request";
+  const windowKey = kernelOrgWindowKey(owner);
+  const expiredReservationKey = kernelOrgReservationKey(owner, windowCreatedAtMs, expiredRequestId);
+  kv.values.set(encodeKey(windowKey), {
+    v: 2,
+    scope: "org",
+    owner,
+    usage_requests: 0,
+    reserved_requests: 1,
+    usage_reset_at_ms: windowResetAtMs,
+    applied_window_ms: 60_000,
+    created_at_ms: windowCreatedAtMs,
+    updated_at_ms: nowMs,
+  });
+  kv.values.set(encodeKey(expiredReservationKey), {
+    v: 2,
+    scope: "org",
+    owner,
+    request_id: expiredRequestId,
+    route: "responses",
+    window_created_at_ms: windowCreatedAtMs,
+    window_reset_at_ms: windowResetAtMs,
+    state: "reserved",
+    reserved_at_ms: nowMs - 10_000,
+    lease_expires_at_ms: nowMs - 1,
+    committed_at_ms: null,
+    released_at_ms: null,
+    release_reason: null,
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => Promise.resolve(validStreamingSse());
+  try {
+    const response = await handler(
+      await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo),
+    );
+    assert.equal(response.status, 200);
+    await response.text();
+    const expired = kv.values.get(encodeKey(expiredReservationKey)) as {
+      state?: string;
+      release_reason?: string;
+    };
+    assert.equal(expired.state, "released");
+    assert.equal(expired.release_reason, "lease_expired");
+    const committed = kv.values.get(encodeKey(windowKey)) as {
+      usage_requests?: number;
+      reserved_requests?: number;
+    };
+    assert.equal(committed.usage_requests, 1);
+    assert.equal(committed.reserved_requests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Kernel quota reservation fails closed when KV is unavailable", async () => {
+  const decision = await reserveKernelOrgUsageLimit("kernel-unavailable-org", "request-id", "responses", {
+    kv: null,
+  });
+  assert.equal(decision.ok, false);
+  if (decision.ok) return;
+  assert.equal(decision.response.status, 503);
+});
+
+Deno.test("Kernel quota rejects malformed effective-scope policy records", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(10);
+  const owner = "kernel-malformed-scope-org";
+  const repo = "kernel-malformed-scope-repo";
+  kv.values.set(encodeKey(kernelRepoPolicyKey(owner, repo)), {
+    v: 2,
+    scope: "repo",
+    owner,
+    repo,
+    usage_limit_requests: "not-a-limit",
+  });
+  const decision = await reserveEffectiveKernelUsageLimit(owner, repo, "malformed-scope-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
+  assert.equal(decision.ok, false);
+  if (decision.ok) return;
+  assert.equal(decision.response.status, 503);
+  assert.equal(kv.values.has(encodeKey(kernelOrgWindowKey(owner))), false);
+});
+
+Deno.test("Kernel quota CAS-checks repo-policy absence before org admission", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(10);
+  const owner = "kernel-scope-race-org";
+  const repo = "kernel-scope-race-repo";
+  kv.onKernelReservationCommit = () => {
+    const nowMs = Date.now();
+    kv.values.set(encodeKey(kernelRepoPolicyKey(owner, repo)), {
+      v: 2,
+      scope: "repo",
+      owner,
+      repo,
+      usage_limit_requests: 0,
+      window_ms: 60_000,
+      expires_at_ms: -1,
+      created_at_ms: nowMs,
+      updated_at_ms: nowMs,
+    });
+  };
+  const decision = await reserveEffectiveKernelUsageLimit(owner, repo, "scope-race-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
+  assert.equal(decision.ok, false);
+  if (decision.ok) return;
+  assert.equal(decision.response.status, 503);
+  assert.equal(kv.values.has(encodeKey(kernelOrgWindowKey(owner))), false);
+});
+
+Deno.test("Kernel quota CAS-checks default policy entries before admission", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(10);
+  const owner = "kernel-default-race-org";
+  kv.onKernelReservationCommit = () => {
+    kv.values.set(encodeKey(DEFAULT_KERNEL_POLICY_LIMIT_KEY), 0);
+  };
+  const decision = await reserveKernelOrgUsageLimit(owner, "default-race-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
+  assert.equal(decision.ok, false);
+  if (decision.ok) return;
+  assert.equal(decision.response.status, 429);
+  assert.equal(kv.values.has(encodeKey(kernelOrgWindowKey(owner))), false);
+});
+
+Deno.test("Kernel quota renews an active reservation and aborts if renewal cannot reach KV before expiry", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(1, KERNEL_QUOTA_RESERVATION_LEASE_MS * 2);
+  const owner = "kernel-renewal-org";
+  const requestId = "kernel-renewal-request";
+  const nowMs = Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 30;
+  const decision = await reserveKernelOrgUsageLimit(owner, requestId, "responses", {
+    kv: kv as unknown as Deno.Kv,
+    nowMs,
+    renewalIntervalMs: 5,
+  });
+  assert.equal(decision.ok, true);
+  if (!decision.ok) return;
+  const window = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as { created_at_ms: number };
+  const reservationKey = kernelOrgReservationKey(owner, window.created_at_ms, requestId);
+  const initialLease = (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms: number })
+    .lease_expires_at_ms;
+  await waitFor(() =>
+    (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms?: number } | undefined)
+      ?.lease_expires_at_ms !== initialLease, "Kernel lease renewal");
+  assert.equal(decision.reservation.signal.aborted, false);
+  const renewedLease = (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms: number })
+    .lease_expires_at_ms;
+  assert.ok(renewedLease > initialLease);
+  await decision.reservation.release("test_cleanup");
+
+  const failingOwner = "kernel-renewal-failure-org";
+  const failingDecision = await reserveKernelOrgUsageLimit(
+    failingOwner,
+    "kernel-renewal-failure-request",
+    "responses",
+    {
+      kv: kv as unknown as Deno.Kv,
+      nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 30,
+      renewalIntervalMs: 5,
+    },
+  );
+  assert.equal(failingDecision.ok, true);
+  if (!failingDecision.ok) return;
+  kv.failKernelQuotaReads = true;
+  await waitFor(() => failingDecision.reservation.signal.aborted, "Kernel lease renewal fail-closed abort");
+  kv.failKernelQuotaReads = false;
+  await failingDecision.reservation.release("test_cleanup");
+});
+
+Deno.test("Kernel quota lease expiry aborts independently while a renewal read hangs", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(1, KERNEL_QUOTA_RESERVATION_LEASE_MS * 2);
+  const decision = await reserveKernelOrgUsageLimit(
+    "kernel-hung-renewal-org",
+    "kernel-hung-renewal-request",
+    "responses",
+    {
+      kv: kv as unknown as Deno.Kv,
+      nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 80,
+      renewalIntervalMs: 5,
+    },
+  );
+  assert.equal(decision.ok, true);
+  if (!decision.ok) return;
+  let unblockRead!: () => void;
+  let readUnblocked = false;
+  kv.kernelQuotaReadGate = new Promise<void>((resolve) => {
+    unblockRead = () => {
+      readUnblocked = true;
+      resolve();
+    };
+  });
+  await waitFor(() => decision.reservation.signal.aborted, "Kernel hung-renewal lease expiry abort");
+  assert.equal(readUnblocked, false, "lease expiry must not wait for the renewal read");
+  kv.kernelQuotaReadGate = null;
+  unblockRead();
+  await decision.reservation.release("test_cleanup");
+});
+
+Deno.test("Kernel quota retries failed settlement and rejects terminal-state changes", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(1, KERNEL_QUOTA_RESERVATION_LEASE_MS * 2);
+  const owner = "kernel-settlement-retry-org";
+  const requestId = "settlement-retry-request";
+  const decision = await reserveKernelOrgUsageLimit(owner, requestId, "responses", {
+    kv: kv as unknown as Deno.Kv,
+    nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 80,
+  });
+  assert.equal(decision.ok, true);
+  if (!decision.ok) return;
+  const window = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as {
+    created_at_ms: number;
+    usage_requests?: number;
+    reserved_requests?: number;
+  };
+  const reservationKey = kernelOrgReservationKey(owner, window.created_at_ms, requestId);
+  kv.failNextKernelSettlementCommits = 3;
+  await assert.rejects(() => decision.reservation.commit(), /could not be settled/);
+  const pending = kv.values.get(encodeKey(reservationKey)) as {
+    state?: string;
+    terminal_intent?: string | null;
+    lease_expires_at_ms?: number;
+  };
+  assert.equal(pending.state, "reserved");
+  assert.equal(pending.terminal_intent, "committed");
+  assert.ok((pending.lease_expires_at_ms ?? 0) > Date.now() + KERNEL_QUOTA_RESERVATION_LEASE_MS / 2);
+  await new Promise<void>((resolve) => setTimeout(resolve, 120));
+  assert.equal(decision.reservation.signal.aborted, false, "terminal intent must renew the near-expiry lease");
+  await waitFor(() => {
+    const current = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as {
+      usage_requests?: number;
+      reserved_requests?: number;
+    } | undefined;
+    return current?.usage_requests === 1 && current.reserved_requests === 0;
+  }, "Kernel background settlement retry");
+  await decision.reservation.commit();
+  await assert.rejects(() => decision.reservation.release("late_cancel"), /terminal state is already committed/);
+  const settledWindow = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as {
+    usage_requests?: number;
+    reserved_requests?: number;
+  };
+  assert.equal(settledWindow.usage_requests, 1);
+  assert.equal(settledWindow.reserved_requests, 0);
+});
+
+Deno.test("Kernel quota blocks reset and deletion while a reservation is active", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(10);
+  const owner = "kernel-policy-cutover-org";
+  const configured = await setKernelOrgUsageLimit(owner, 5);
+  assert.ok(configured);
+  const decision = await reserveKernelOrgUsageLimit(owner, "policy-cutover-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
+  assert.equal(decision.ok, true);
+  if (!decision.ok) return;
+  assert.equal(await setKernelOrgUsageLimit(owner, 5, { resetUsage: true }), null);
+  assert.equal(await deleteKernelOrgUsageLimit(owner), "conflict");
+  await decision.reservation.release("test_cleanup");
+  assert.ok(await setKernelOrgUsageLimit(owner, 5, { resetUsage: true }));
+  assert.equal(await deleteKernelOrgUsageLimit(owner), true);
+});
+
+Deno.test("Kernel quota blocks repo override creation while its effective org reservation is active", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(1);
+  const owner = "kernel-org-repo-cutover-org";
+  const repo = "kernel-org-repo-cutover-repo";
+  const decision = await reserveEffectiveKernelUsageLimit(owner, repo, "org-repo-cutover-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
+  assert.equal(decision.ok, true);
+  if (!decision.ok) return;
+  assert.equal(await setKernelUsageLimit(owner, repo, 1), null);
+  assert.equal(kv.values.has(encodeKey(kernelRepoPolicyKey(owner, repo))), false);
+  await decision.reservation.release("test_cleanup");
+  assert.ok(await setKernelUsageLimit(owner, repo, 1));
+});
+
+Deno.test("Kernel default-window cutover blocks active default-backed reservations", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(2, 60_000);
+  const decision = await reserveKernelOrgUsageLimit(
+    "kernel-default-window-cutover-org",
+    "default-window-cutover-request",
+    "responses",
+    { kv: kv as unknown as Deno.Kv },
+  );
+  assert.equal(decision.ok, true);
+  if (!decision.ok) return;
+  const updateDefaults = () =>
+    handleAdminDefaults(
+      new Request("https://ai.ubq.fi/admin/defaults", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kernel_policy_window_ms: 120_000 }),
+      }),
+    );
+  const blocked = await updateDefaults();
+  assert.equal(blocked.status, 409);
+  assert.equal(kv.values.get(encodeKey(DEFAULT_KERNEL_POLICY_WINDOW_KEY)), 60_000);
+  await decision.reservation.release("test_cleanup");
+  const updated = await updateDefaults();
+  assert.equal(updated.status, 200);
+  assert.equal(kv.values.get(encodeKey(DEFAULT_KERNEL_POLICY_WINDOW_KEY)), 120_000);
+});
+
+Deno.test("Kernel quota preserves the requested terminal state after natural window replacement", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(1);
+  const owner = "kernel-window-replaced-org";
+  const requestId = "window-replaced-request";
+  const decision = await reserveKernelOrgUsageLimit(owner, requestId, "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
+  assert.equal(decision.ok, true);
+  if (!decision.ok) return;
+  const originalWindow = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as Record<string, unknown> & {
+    created_at_ms: number;
+  };
+  const reservationKey = kernelOrgReservationKey(owner, originalWindow.created_at_ms, requestId);
+  const replacementNowMs = Date.now() + 1;
+  kv.values.set(encodeKey(kernelOrgWindowKey(owner)), {
+    ...originalWindow,
+    usage_requests: 0,
+    reserved_requests: 0,
+    created_at_ms: replacementNowMs,
+    updated_at_ms: replacementNowMs,
+  });
+  await decision.reservation.commit();
+  const reservation = kv.values.get(encodeKey(reservationKey)) as {
+    state?: string;
+    committed_at_ms?: number | null;
+    release_reason?: string | null;
+  };
+  assert.equal(reservation.state, "committed");
+  assert.equal(typeof reservation.committed_at_ms, "number");
+  assert.equal(reservation.release_reason, null);
 });
 
 Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates", async () => {
