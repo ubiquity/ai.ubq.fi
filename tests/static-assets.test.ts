@@ -218,6 +218,10 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.equal(imageRef.properties.image_url.format, "uri");
   assert.equal(imageRef.properties.image_url.minLength, 1);
   assert.equal(imageRef.properties.image_url.maxLength, 20_971_520);
+  assert.equal(
+    imageRef.properties.image_url.pattern,
+    "^(?:[hH][tT][tT][pP][sS]?://|[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/(?:[pP][nN][gG]|[xX]-[pP][nN][gG]|[jJ][pP](?:[eE][gG]|[gG])|[wW][eE][bB][pP]);[bB][aA][sS][eE]64,)",
+  );
   assert.equal(imageRef.properties.file_id, undefined);
   const imageMaskRef = document.components.schemas.ImageMaskRef;
   assert.deepEqual(imageMaskRef.required, ["image_url"]);

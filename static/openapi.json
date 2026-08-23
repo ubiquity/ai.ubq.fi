@@ -523,6 +523,7 @@
             "format": "uri",
             "minLength": 1,
             "maxLength": 20971520,
+            "pattern": "^(?:[hH][tT][tT][pP][sS]?://|[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/(?:[pP][nN][gG]|[xX]-[pP][nN][gG]|[jJ][pP](?:[eE][gG]|[gG])|[wW][eE][bB][pP]);[bB][aA][sS][eE]64,)",
             "description": "A fully qualified HTTP(S) URL or supported base64 image data URL."
           }
         },
