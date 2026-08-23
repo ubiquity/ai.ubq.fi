@@ -33,7 +33,14 @@ const INFERENCE_PROVIDER_VALUES = ["chatgpt_codex", "metered", "surplus"] as con
 const INFERENCE_PROVIDERS = new Set(INFERENCE_PROVIDER_VALUES);
 const PROMPT_CACHE_MODE_VALUES = ["implicit", "explicit", "legacy_retention", "unspecified"] as const;
 const PROMPT_CACHE_MODES = new Set(PROMPT_CACHE_MODE_VALUES);
-const AFFINITY_OUTCOME_VALUES = ["none", "preferred", "failover", "shadow_only"] as const;
+const AFFINITY_OUTCOME_VALUES = [
+  "none",
+  "preferred",
+  "preferred_unavailable",
+  "remapped",
+  "failover",
+  "shadow_only",
+] as const;
 const AFFINITY_OUTCOMES = new Set(AFFINITY_OUTCOME_VALUES);
 const INFERENCE_TERMINAL_OUTCOMES = ["completed", "failed", "incomplete", "cancelled"] as const;
 const MAX_MODEL_LABEL_CHARS = 128;
@@ -64,7 +71,7 @@ type TerminalRoute = "responses" | "chat.completions" | "embeddings" | "embeddin
 type InferenceRoute = "responses" | "chat.completions";
 type InferenceTerminalOutcome = typeof INFERENCE_TERMINAL_OUTCOMES[number];
 type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
-type AffinityOutcome = "none" | "preferred" | "failover" | "shadow_only";
+type AffinityOutcome = typeof AFFINITY_OUTCOME_VALUES[number];
 type StreamTerminalType =
   | "response.completed"
   | "response.failed"

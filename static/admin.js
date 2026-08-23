@@ -143,6 +143,53 @@ const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
 
+const PROMPT_CACHE_ANALYTICS_GROUPS = [
+  ["key_presence", "Keyed / unkeyed"],
+  ["provider", "Provider"],
+  ["model", "Model cohort"],
+  ["route", "Route"],
+  ["mode", "Cache mode"],
+  ["fallback", "Fallback class"],
+];
+const promptCacheAnalyticsPanel = document.createElement("section");
+promptCacheAnalyticsPanel.dataset.promptCacheAnalytics = "";
+promptCacheAnalyticsPanel.hidden = true;
+const promptCacheAnalyticsHeader = document.createElement("header");
+const promptCacheAnalyticsTitle = document.createElement("h3");
+promptCacheAnalyticsTitle.textContent = "Prompt-cache analytics";
+const promptCacheAnalyticsControl = document.createElement("label");
+promptCacheAnalyticsControl.dataset.field = "";
+const promptCacheAnalyticsControlLabel = document.createElement("span");
+promptCacheAnalyticsControlLabel.dataset.label = "";
+promptCacheAnalyticsControlLabel.textContent = "Group by";
+const promptCacheAnalyticsGroupBy = document.createElement("select");
+promptCacheAnalyticsGroupBy.id = "prompt-cache-analytics-group-by";
+for (const [value, label] of PROMPT_CACHE_ANALYTICS_GROUPS) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  promptCacheAnalyticsGroupBy.appendChild(option);
+}
+promptCacheAnalyticsControl.append(promptCacheAnalyticsControlLabel, promptCacheAnalyticsGroupBy);
+promptCacheAnalyticsHeader.append(promptCacheAnalyticsTitle, promptCacheAnalyticsControl);
+const promptCacheAnalyticsState = document.createElement("p");
+promptCacheAnalyticsState.dataset.muted = "";
+promptCacheAnalyticsState.setAttribute("aria-live", "polite");
+const promptCacheAnalyticsList = document.createElement("div");
+promptCacheAnalyticsList.dataset.promptCacheAnalyticsList = "";
+promptCacheAnalyticsList.setAttribute("role", "list");
+const promptCacheAnalyticsRetention = document.createElement("p");
+promptCacheAnalyticsRetention.dataset.muted = "";
+promptCacheAnalyticsRetention.textContent =
+  "This view shows the trailing seven days. Storage retains fifteen-minute buckets for eight days to keep the window complete. Raw cache keys and request identifiers are not shown.";
+promptCacheAnalyticsPanel.append(
+  promptCacheAnalyticsHeader,
+  promptCacheAnalyticsState,
+  promptCacheAnalyticsList,
+  promptCacheAnalyticsRetention,
+);
+providerCapacityChart.after(promptCacheAnalyticsPanel);
+
 let currentKeyView = "active";
 let currentAdminView = "loading";
 let pendingAdminView = null;
@@ -160,6 +207,9 @@ let providersLoadId = 0;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
+let promptCacheAnalyticsLoading = false;
+let promptCacheAnalyticsLoadedForOpen = false;
+let promptCacheAnalyticsLoadId = 0;
 let latestProviderCapacityChartState = null;
 let capacityChartResizeFrame = 0;
 let capacityChartScrollState = null;
@@ -2449,6 +2499,169 @@ const loadProviderCapacity = async () => {
     providerCapacityLoading = false;
   }
 };
+
+const promptCacheAnalyticsPercent = (value) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? `${quotaPercentFormatter.format(value)}%`
+    : "Not reported";
+
+const promptCacheAnalyticsNumber = (value) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? formatNumber(value) : "Not reported";
+
+const promptCacheAnalyticsRatio = (value) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? String(value) : "Not calculable";
+
+const promptCacheAnalyticsProviderLabels = Object.freeze({
+  chatgpt_codex: "Codex",
+  surplus: "Metered 1",
+  metered: "Metered 2",
+});
+
+const promptCacheAnalyticsGroupLabel = (group) => {
+  if (!group || typeof group !== "object") return "All cache-eligible traffic";
+  if (group.cardinality_limited === true) return "Cohort detail capped";
+  const labels = [];
+  if (typeof group.provider === "string") {
+    labels.push(promptCacheAnalyticsProviderLabels[group.provider] ?? group.provider);
+  }
+  if (typeof group.model_hash === "string") {
+    labels.push(
+      group.model_hash === "unknown" ? "Model cohort unknown" : `Model cohort ${group.model_hash.slice(0, 12)}`,
+    );
+  }
+  if (typeof group.route === "string") labels.push(group.route);
+  if (typeof group.prompt_cache_key_present === "boolean") {
+    labels.push(group.prompt_cache_key_present ? "Keyed" : "Unkeyed");
+  }
+  if (typeof group.mode === "string") labels.push(group.mode);
+  if (typeof group.fallback === "string") labels.push(group.fallback);
+  return labels.length ? labels.join(" · ") : "All cache-eligible traffic";
+};
+
+const promptCacheAnalyticsGroupIdentity = (group) => {
+  try {
+    return JSON.stringify(group && typeof group === "object" ? group : {});
+  } catch {
+    return "{}";
+  }
+};
+
+const renderPromptCacheAnalytics = (snapshot) => {
+  promptCacheAnalyticsPanel.hidden = false;
+  promptCacheAnalyticsList.replaceChildren();
+  promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
+  if (snapshot?.status !== "ready") {
+    promptCacheAnalyticsState.setAttribute("data-prompt-cache-analytics-unavailable", "");
+    promptCacheAnalyticsState.textContent = "Cache analytics unavailable. Cache-hit values are not shown as zero.";
+    return;
+  }
+
+  const latestByGroup = new Map();
+  for (const bucket of Array.isArray(snapshot.buckets) ? snapshot.buckets : []) {
+    const bucketStartAtMs = bucket?.bucket_start_at_ms;
+    if (typeof bucketStartAtMs !== "number" || !Number.isFinite(bucketStartAtMs)) continue;
+    const identity = promptCacheAnalyticsGroupIdentity(bucket.group);
+    const existing = latestByGroup.get(identity);
+    if (!existing || bucketStartAtMs > existing.bucket_start_at_ms) latestByGroup.set(identity, bucket);
+  }
+  const rows = [...latestByGroup.values()].sort((left, right) =>
+    promptCacheAnalyticsGroupLabel(left.group).localeCompare(promptCacheAnalyticsGroupLabel(right.group))
+  );
+  if (!rows.length) {
+    promptCacheAnalyticsState.textContent =
+      "No retained cache-token history yet. Zero is shown only after usage telemetry reports a real zero.";
+    return;
+  }
+
+  const cappedCohortVisible = rows.some((bucket) => bucket?.group?.cardinality_limited === true);
+  const cardinalityLimited = snapshot.cardinality_limited === true || cappedCohortVisible;
+  const truncated = snapshot.truncated === true;
+  promptCacheAnalyticsState.textContent = cardinalityLimited
+    ? cappedCohortVisible
+      ? "Cohort detail reached the per-bucket cap. Cardinality-limited samples are included in the capped cohort row."
+      : "Cohort detail reached the per-bucket cap. The current response does not include the capped cohort row."
+    : truncated
+    ? `Showing the newest ${rows.length} grouped buckets within the response limit.`
+    : `Latest bucket for ${rows.length} cache cohort${rows.length === 1 ? "" : "s"}.`;
+  for (const bucket of rows) {
+    const row = document.createElement("article");
+    row.dataset.promptCacheAnalyticsRow = "";
+    row.setAttribute("role", "listitem");
+    const header = document.createElement("header");
+    const title = document.createElement("h4");
+    title.textContent = promptCacheAnalyticsGroupLabel(bucket.group);
+    const observed = document.createElement("span");
+    observed.dataset.muted = "";
+    observed.textContent = formatCapacityTimestamp(bucket.bucket_start_at_ms);
+    header.append(title, observed);
+    const facts = document.createElement("dl");
+    facts.dataset.capacityFacts = "";
+    appendProviderFact(facts, "Token hit rate", promptCacheAnalyticsPercent(bucket.token_hit_percentage));
+    appendProviderFact(facts, "Request hit rate", promptCacheAnalyticsPercent(bucket.request_hit_percentage));
+    appendProviderFact(
+      facts,
+      "Telemetry coverage",
+      promptCacheAnalyticsPercent(bucket.usage_telemetry_coverage_percentage),
+    );
+    appendProviderFact(facts, "Samples", promptCacheAnalyticsNumber(bucket.sample_count));
+    appendProviderFact(facts, "Cached input", promptCacheAnalyticsNumber(bucket.cached_input_tokens));
+    appendProviderFact(facts, "Cache reads per write", promptCacheAnalyticsRatio(bucket.cache_reads_per_write));
+    if (
+      typeof bucket.dimension_cardinality_limited_sample_count === "number" &&
+      bucket.dimension_cardinality_limited_sample_count > 0
+    ) {
+      appendProviderFact(
+        facts,
+        "Cardinality-limited samples",
+        promptCacheAnalyticsNumber(bucket.dimension_cardinality_limited_sample_count),
+      );
+    }
+    if (typeof bucket.group?.prompt_cache_key_present === "boolean") {
+      appendProviderFact(facts, "Cache key", bucket.group.prompt_cache_key_present ? "Keyed" : "Unkeyed");
+    }
+    row.append(header, facts);
+    promptCacheAnalyticsList.appendChild(row);
+  }
+};
+
+const loadPromptCacheAnalytics = async () => {
+  if (promptCacheAnalyticsLoading) return false;
+  const token = getAdminToken();
+  if (!adminAccessState.isAdmin || !token) {
+    promptCacheAnalyticsPanel.hidden = true;
+    return false;
+  }
+  const groupBy = promptCacheAnalyticsGroupBy.value;
+  if (!PROMPT_CACHE_ANALYTICS_GROUPS.some(([value]) => value === groupBy)) return false;
+  const loadId = ++promptCacheAnalyticsLoadId;
+  promptCacheAnalyticsLoading = true;
+  promptCacheAnalyticsPanel.hidden = false;
+  promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
+  promptCacheAnalyticsState.textContent = "Loading cache analytics…";
+  try {
+    const response = await fetch(apiUrl(`/admin/prompt-cache-analytics?group_by=${encodeURIComponent(groupBy)}`), {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = await response.json().catch(() => null);
+    if (loadId !== promptCacheAnalyticsLoadId) return false;
+    if (!response.ok || !payload) {
+      renderPromptCacheAnalytics({ status: "unavailable", buckets: [] });
+      return false;
+    }
+    renderPromptCacheAnalytics(payload);
+    return payload.status === "ready";
+  } catch {
+    if (loadId === promptCacheAnalyticsLoadId) renderPromptCacheAnalytics({ status: "unavailable", buckets: [] });
+    return false;
+  } finally {
+    if (loadId === promptCacheAnalyticsLoadId) promptCacheAnalyticsLoading = false;
+  }
+};
+
+promptCacheAnalyticsGroupBy.addEventListener("change", () => {
+  if (currentAdminView === "providers") void loadPromptCacheAnalytics();
+});
 
 const scheduleProviderCapacityChartResize = () => {
   if (capacityChartResizeFrame) return;
@@ -6368,8 +6581,15 @@ const loadAdminView = (view) => {
         if (!loaded) providerCapacityLoadedForOpen = false;
       });
     }
+    if (!promptCacheAnalyticsLoadedForOpen) {
+      promptCacheAnalyticsLoadedForOpen = true;
+      void loadPromptCacheAnalytics().then((loaded) => {
+        if (!loaded) promptCacheAnalyticsLoadedForOpen = false;
+      });
+    }
   } else {
     providerCapacityLoadedForOpen = false;
+    promptCacheAnalyticsLoadedForOpen = false;
   }
 };
 
@@ -7270,9 +7490,16 @@ tokenInput.addEventListener("input", () => {
   providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
+  promptCacheAnalyticsLoadId += 1;
+  promptCacheAnalyticsLoading = false;
+  promptCacheAnalyticsLoadedForOpen = false;
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
+  promptCacheAnalyticsPanel.hidden = true;
+  promptCacheAnalyticsList.replaceChildren();
+  promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
+  promptCacheAnalyticsState.textContent = "Waiting for an authenticated admin session.";
   clearApiKeyRequestLogCaches();
   if (!getAdminToken()) {
     setAuthBadge("bad", "Missing token");

@@ -148,6 +148,10 @@ const {
   CODEX_AUTH_REAUTH_WARNING,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
+const {
+  deriveCodexAccountAffinityIdentity,
+  recordCodexAccountAffinity,
+} = await import("../src/codex_account_affinity.ts");
 const { attemptCodexBankedReset } = await import("../src/codex_banked_reset.ts");
 const {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
@@ -5523,12 +5527,58 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       const codexContent = codexInput[0]?.content as Array<Record<string, unknown>>;
       assert.equal("prompt_cache_breakpoint" in codexContent[0]!, false);
       assert.equal(bodies[2].max_output_tokens, 64);
+      assert.equal(bodies[2].prompt_cache_key, "fallback-cache-key");
       assert.deepEqual(bodies[2].prompt_cache_options, { mode: "explicit", ttl: "30m" });
       assert.equal(bodies[2].prompt_cache_retention, "24h");
       const meteredInput = bodies[2].input as Array<Record<string, unknown>>;
       const meteredContent = meteredInput[0]?.content as Array<Record<string, unknown>>;
       assert.deepEqual(meteredContent[0]?.prompt_cache_breakpoint, { mode: "explicit" });
       assert.deepEqual(bodies[2].reasoning, { effort: "max" });
+
+      const recordedAnalyticsEvents: Parameters<typeof recordPromptCacheAnalytics>[0][] = [];
+      await withTerminalRequestLog(response, {
+        route: "responses",
+        startedAtMonotonicMs: performance.now(),
+        requestId: "cache-analytics-metered-fallback",
+        recordCacheAnalytics: (event) => {
+          recordedAnalyticsEvents.push(event);
+          return Promise.resolve({
+            status: "ignored" as const,
+            reason: "unknown_release" as const,
+            bucket_start_at_ms: null,
+          });
+        },
+        recordTelemetry: () =>
+          Promise.resolve({
+            status: "ignored" as const,
+            reason: "unknown_release" as const,
+            release: null,
+            provider: null,
+            route: null,
+            model_hash: null,
+          }),
+      });
+      const recordedAnalyticsEvent = recordedAnalyticsEvents[0];
+      assert.ok(recordedAnalyticsEvent);
+      assert.deepEqual(
+        {
+          provider: recordedAnalyticsEvent.provider,
+          model: recordedAnalyticsEvent.model,
+          route: recordedAnalyticsEvent.route,
+          promptCacheKeyPresent: recordedAnalyticsEvent.promptCacheKeyPresent,
+          promptCacheMode: recordedAnalyticsEvent.promptCacheMode,
+          fallbackReason: recordedAnalyticsEvent.fallbackReason,
+        },
+        {
+          provider: "metered",
+          model: DEFAULT_TEST_MODEL,
+          route: "responses",
+          promptCacheKeyPresent: true,
+          promptCacheMode: "explicit",
+          fallbackReason: "primary_429",
+        },
+      );
+      assert.equal("affinityOutcome" in recordedAnalyticsEvent, false);
     });
 
     await t.step(
@@ -5781,14 +5831,24 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
         const suffix = `${routeCase.route}-${routeCase.stream ? "stream" : "buffered"}`;
         const keyId = `fallback-network-error-${suffix}`;
         const requestId = `request-${keyId}`;
+        const promptCacheKey = `fallback-cache-key-${suffix}`;
+        const codexSessionHeaders = ["conversation_id", "session-id", "thread-id", "x-client-request-id"] as const;
         seedPaidFallbackKey(keyId);
         let meteredAttempts = 0;
+        const codexRequestHeaders: Headers[] = [];
+        const paidRequests: Array<Readonly<{ body: Record<string, unknown>; headers: Headers }>> = [];
         await withFetchMock(
-          (url) => {
+          (url, bodyText, init) => {
+            const headers = new Headers(init?.headers);
             if (url === "https://api.openlux.ai/v1/responses") {
               meteredAttempts += 1;
+              paidRequests.push({
+                body: JSON.parse(bodyText ?? "{}") as Record<string, unknown>,
+                headers,
+              });
               throw new TypeError("network connection reset before response headers");
             }
+            codexRequestHeaders.push(headers);
             return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
               status: 429,
               headers: { "Content-Type": "application/json" },
@@ -5811,6 +5871,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                     model: DEFAULT_TEST_MODEL,
                     input: "ping",
                     stream: routeCase.stream,
+                    prompt_cache_key: promptCacheKey,
+                    prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                    prompt_cache_retention: "24h",
                   }),
                 }),
                 context,
@@ -5823,6 +5886,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                     model: DEFAULT_TEST_MODEL,
                     messages: [{ role: "user", content: "ping" }],
                     stream: routeCase.stream,
+                    prompt_cache_key: promptCacheKey,
+                    prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                    prompt_cache_retention: "24h",
                   }),
                 }),
                 context,
@@ -5830,6 +5896,22 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
             assert.equal(response.status, 502, suffix);
             assert.equal(response.headers.get("x-uos-upstream"), "metered", suffix);
             assert.equal(meteredAttempts, 1, suffix);
+            assert.ok(codexRequestHeaders.length > 0, suffix);
+            for (const headers of codexRequestHeaders) {
+              const sessionIdentity = headers.get("conversation_id");
+              assert.ok(sessionIdentity, suffix);
+              for (const header of codexSessionHeaders) {
+                assert.equal(headers.get(header), sessionIdentity, `${suffix}:${header}`);
+              }
+            }
+            assert.equal(paidRequests.length, 1, suffix);
+            const paidRequest = paidRequests[0]!;
+            assert.equal(paidRequest.body.prompt_cache_key, promptCacheKey, suffix);
+            assert.deepEqual(paidRequest.body.prompt_cache_options, { mode: "explicit", ttl: "30m" }, suffix);
+            assert.equal(paidRequest.body.prompt_cache_retention, "24h", suffix);
+            for (const header of codexSessionHeaders) {
+              assert.equal(paidRequest.headers.has(header), false, `${suffix}:${header}`);
+            }
             const payload = await response.json() as {
               error?: { type?: unknown; code?: unknown };
             };
@@ -5881,19 +5963,34 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
           const suffix = `${routeCase.route}-${routeCase.stream ? "stream" : "buffered"}`;
           const keyId = `fallback-surplus-network-${suffix}`;
           const requestId = `request-${keyId}`;
+          const promptCacheKey = `fallback-cache-key-${suffix}`;
+          const codexSessionHeaders = [
+            "conversation_id",
+            "session-id",
+            "thread-id",
+            "x-client-request-id",
+          ] as const;
           seedPaidFallbackKey(keyId);
           let surplusAttempts = 0;
           let meteredAttempts = 0;
+          const codexRequestHeaders: Headers[] = [];
+          const paidRequests: Array<Readonly<{ body: Record<string, unknown>; headers: Headers }>> = [];
           await withFetchMock(
-            (url) => {
+            (url, bodyText, init) => {
+              const headers = new Headers(init?.headers);
               if (url === "https://api.surplusintelligence.ai/v1/responses") {
                 surplusAttempts += 1;
+                paidRequests.push({
+                  body: JSON.parse(bodyText ?? "{}") as Record<string, unknown>,
+                  headers,
+                });
                 throw new TypeError("network connection reset before response headers");
               }
               if (url === "https://api.openlux.ai/v1/responses") {
                 meteredAttempts += 1;
                 return sseResponse(baseSseChunks());
               }
+              codexRequestHeaders.push(headers);
               return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
                 status: 429,
                 headers: { "Content-Type": "application/json" },
@@ -5909,6 +6006,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                       model: DEFAULT_TEST_MODEL,
                       input: "ping",
                       stream: routeCase.stream,
+                      prompt_cache_key: promptCacheKey,
+                      prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                      prompt_cache_retention: "24h",
                     }),
                   }),
                   { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
@@ -5921,6 +6021,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                       model: DEFAULT_TEST_MODEL,
                       messages: [{ role: "user", content: "ping" }],
                       stream: routeCase.stream,
+                      prompt_cache_key: promptCacheKey,
+                      prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                      prompt_cache_retention: "24h",
                     }),
                   }),
                   { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() },
@@ -5929,6 +6032,22 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               assert.equal(response.headers.get("x-uos-upstream"), "surplus", suffix);
               assert.equal(surplusAttempts, 1, suffix);
               assert.equal(meteredAttempts, 0, suffix);
+              assert.ok(codexRequestHeaders.length > 0, suffix);
+              for (const headers of codexRequestHeaders) {
+                const sessionIdentity = headers.get("conversation_id");
+                assert.ok(sessionIdentity, suffix);
+                for (const header of codexSessionHeaders) {
+                  assert.equal(headers.get(header), sessionIdentity, `${suffix}:${header}`);
+                }
+              }
+              assert.equal(paidRequests.length, 1, suffix);
+              const paidRequest = paidRequests[0]!;
+              assert.equal(paidRequest.body.prompt_cache_key, promptCacheKey, suffix);
+              assert.deepEqual(paidRequest.body.prompt_cache_options, { mode: "explicit", ttl: "30m" }, suffix);
+              assert.equal(paidRequest.body.prompt_cache_retention, "24h", suffix);
+              for (const header of codexSessionHeaders) {
+                assert.equal(paidRequest.headers.has(header), false, `${suffix}:${header}`);
+              }
               assert.deepEqual(await response.json(), {
                 error: {
                   message:
@@ -9520,6 +9639,31 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
   await t.step("keyed Codex warnings retain cache usage through persisted analytics", async () => {
     const analyticsKv = new CountingKv();
     const analyticsNow = 1_800_000_000_000;
+    const authKey = keyToString(["ubq_ai", "codex_auth"]);
+    const routingKey = keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY);
+    const previousAuth = kvStore.get(authKey);
+    const previousRouting = kvStore.get(routingKey);
+    const affinityKeys: string[] = [];
+    const now = Date.now();
+    const accessToken = (label: string): string =>
+      `${encodeJsonBase64Url({ alg: "none" })}.${
+        encodeJsonBase64Url({ exp: Math.floor((now + 60 * 60_000) / 1_000) })
+      }.${label}`;
+    const accountOne = {
+      access_token: accessToken("affinity-account-one"),
+      refresh_token: "affinity-refresh-one",
+      account_id: "affinity-account-one",
+      updated_at_ms: now,
+    };
+    const accountTwo = {
+      access_token: accessToken("affinity-account-two"),
+      refresh_token: "affinity-refresh-two",
+      account_id: "affinity-account-two",
+      updated_at_ms: now,
+    };
+    const preferredAccountHash = await sha256Hex(
+      `uos_ai\u0000codex_routing_account\u0000${accountOne.account_id}`,
+    );
     const analyticsUsage = {
       input_tokens: 2048,
       input_tokens_details: { cached_tokens: 1024, cache_write_tokens: 512 },
@@ -9559,6 +9703,10 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
         }),
         handle: handleChatCompletions,
         expectsCacheOptionsWarning: true,
+        expectedAffinityOutcome: "preferred",
+        expectedAccountId: accountOne.account_id,
+        expectedPromptCacheMode: "implicit",
+        accounts: [accountTwo, accountOne],
       },
       {
         route: "responses",
@@ -9573,51 +9721,112 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
         }),
         handle: handleResponses,
         expectsCacheOptionsWarning: false,
+        expectedAffinityOutcome: "remapped",
+        expectedAccountId: accountTwo.account_id,
+        expectedPromptCacheMode: "unspecified",
+        accounts: [accountTwo],
       },
     ] as const;
 
-    for (const [index, fixture] of requests.entries()) {
-      const forwarded: { body: Record<string, unknown> | null } = { body: null };
-      const response = await withFetchMock(
-        (_url, bodyText) => {
-          forwarded.body = JSON.parse(bodyText ?? "{}") as Record<string, unknown>;
-          return analyticsCompleted();
-        },
-        () => fixture.handle(fixture.request),
-      );
-      assert.equal(response.status, 200);
-      assert.equal(forwarded.body?.prompt_cache_key, "stable-analytics-key");
-      assert.equal(Object.prototype.hasOwnProperty.call(forwarded.body, "prompt_cache_options"), false);
-      if (fixture.expectsCacheOptionsWarning) {
-        assert.match(response.headers.get("x-uos-warning") ?? "", /prompt_cache_options_ignored/);
-      } else {
-        assert.doesNotMatch(response.headers.get("x-uos-warning") ?? "", /prompt_cache_options_ignored/);
-      }
-      assert.equal(getResponseTelemetry(response)?.promptCacheKeyPresent, true);
-      assert.equal(getResponseTelemetry(response)?.cachedInputTokens, 1024);
-      assert.equal(getResponseTelemetry(response)?.cacheWriteInputTokens, 512);
+    try {
+      for (const [index, fixture] of requests.entries()) {
+        const keyId = `affinity-analytics-${index}`;
+        const principal = `api-key:${keyId}`;
+        const identity = await deriveCodexAccountAffinityIdentity(principal, "stable-analytics-key");
+        assert.ok(identity);
+        affinityKeys.push(keyToString(identity.kvKey));
+        kvStore.set(authKey, { accounts: fixture.accounts, updated_at_ms: now } satisfies CodexAuthPoolState);
+        kvStore.delete(routingKey);
+        resetCodexAuthCacheForTest();
+        resetCodexAccountRoutingForTest();
+        await recordCodexAccountAffinity(identity, preferredAccountHash, now);
 
-      const logged = await withTerminalRequestLog(response, {
-        route: fixture.route,
-        startedAtMonotonicMs: performance.now(),
-        requestId: `cache-analytics-${index}`,
-        recordCacheAnalytics: (event) =>
-          recordPromptCacheAnalytics(event, {
-            kv: analyticsKv as unknown as Deno.Kv,
-            release: "0123456789abcdef0123456789abcdef01234567",
-            now: () => analyticsNow,
-          }),
-        recordTelemetry: () =>
-          Promise.resolve({
-            status: "ignored" as const,
-            reason: "unknown_release" as const,
-            release: null,
-            provider: null,
-            route: null,
-            model_hash: null,
-          }),
-      });
-      await logged.body?.cancel();
+        const forwarded: { body: Record<string, unknown> | null; accountId: string | null } = {
+          body: null,
+          accountId: null,
+        };
+        const response = await withFetchMock(
+          (_url, bodyText, init) => {
+            forwarded.body = JSON.parse(bodyText ?? "{}") as Record<string, unknown>;
+            forwarded.accountId = new Headers(init?.headers).get("ChatGPT-Account-ID");
+            return analyticsCompleted();
+          },
+          () =>
+            fixture.handle(fixture.request, {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              idempotencyPrincipal: principal,
+            }),
+        );
+        assert.equal(response.status, 200);
+        assert.equal(forwarded.accountId, fixture.expectedAccountId);
+        assert.equal(forwarded.body?.prompt_cache_key, "stable-analytics-key");
+        assert.equal(Object.prototype.hasOwnProperty.call(forwarded.body, "prompt_cache_options"), false);
+        if (fixture.expectsCacheOptionsWarning) {
+          assert.match(response.headers.get("x-uos-warning") ?? "", /prompt_cache_options_ignored/);
+        } else {
+          assert.doesNotMatch(response.headers.get("x-uos-warning") ?? "", /prompt_cache_options_ignored/);
+        }
+        assert.equal(getResponseTelemetry(response)?.affinityOutcome, fixture.expectedAffinityOutcome);
+        assert.equal(getResponseTelemetry(response)?.promptCacheKeyPresent, true);
+        assert.equal(getResponseTelemetry(response)?.cachedInputTokens, 1024);
+        assert.equal(getResponseTelemetry(response)?.cacheWriteInputTokens, 512);
+
+        const recordedAnalyticsEvents: Parameters<typeof recordPromptCacheAnalytics>[0][] = [];
+        const logged = await withTerminalRequestLog(response, {
+          route: fixture.route,
+          startedAtMonotonicMs: performance.now(),
+          requestId: `cache-analytics-${index}`,
+          recordCacheAnalytics: (event) => {
+            recordedAnalyticsEvents.push(event);
+            return recordPromptCacheAnalytics(event, {
+              kv: analyticsKv as unknown as Deno.Kv,
+              release: "0123456789abcdef0123456789abcdef01234567",
+              now: () => analyticsNow,
+            });
+          },
+          recordTelemetry: () =>
+            Promise.resolve({
+              status: "ignored" as const,
+              reason: "unknown_release" as const,
+              release: null,
+              provider: null,
+              route: null,
+              model_hash: null,
+            }),
+        });
+        const recordedAnalyticsEvent = recordedAnalyticsEvents[0];
+        assert.ok(recordedAnalyticsEvent);
+        assert.deepEqual(
+          {
+            provider: recordedAnalyticsEvent.provider,
+            model: recordedAnalyticsEvent.model,
+            route: recordedAnalyticsEvent.route,
+            promptCacheKeyPresent: recordedAnalyticsEvent.promptCacheKeyPresent,
+            promptCacheMode: recordedAnalyticsEvent.promptCacheMode,
+            fallbackReason: recordedAnalyticsEvent.fallbackReason,
+          },
+          {
+            provider: "chatgpt_codex",
+            model: DEFAULT_TEST_MODEL,
+            route: fixture.route,
+            promptCacheKeyPresent: true,
+            promptCacheMode: fixture.expectedPromptCacheMode,
+            fallbackReason: null,
+          },
+        );
+        assert.equal("affinityOutcome" in recordedAnalyticsEvent, false);
+        await logged.body?.cancel();
+      }
+    } finally {
+      for (const affinityKey of affinityKeys) kvStore.delete(affinityKey);
+      if (previousAuth === undefined) kvStore.delete(authKey);
+      else kvStore.set(authKey, previousAuth);
+      if (previousRouting === undefined) kvStore.delete(routingKey);
+      else kvStore.set(routingKey, previousRouting);
+      resetCodexAuthCacheForTest();
+      resetCodexAccountRoutingForTest();
     }
 
     const analytics = await readPromptCacheAnalytics({

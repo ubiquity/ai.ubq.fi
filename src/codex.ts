@@ -43,6 +43,12 @@ import {
   mergeCodexModelPromptCacheCapabilities,
   parseCodexClientVersion,
 } from "./codex_models.ts";
+import {
+  type CodexAccountAffinityIdentity,
+  deriveCodexAccountAffinityIdentity,
+  readCodexAccountAffinity,
+  recordCodexAccountAffinity,
+} from "./codex_account_affinity.ts";
 import { getKv } from "./kv.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
@@ -281,6 +287,15 @@ type CodexAuthAccountEntry = CodexAuthPoolEntry & {
   routing?: RoutingAccount;
 };
 
+export type CodexAccountAffinityOutcome = "none" | "preferred" | "preferred_unavailable" | "remapped";
+
+type CodexAccountAffinityDispatch = Readonly<{
+  identity: CodexAccountAffinityIdentity;
+  accountCohortHash: string;
+  priorAccountCohortHash: string | null;
+  preferredUnavailable: boolean;
+}>;
+
 type CodexRefreshLease = Readonly<{
   owner: string;
   lease_until_ms: number;
@@ -294,6 +309,8 @@ const refreshesInFlight = new Map<string, Promise<CodexAuthState>>();
 const codexProbeByResponse = new WeakMap<Response, RoutingAccount>();
 const codexSlotByResponse = new WeakMap<Response, number>();
 const codexAccountIdByResponse = new WeakMap<Response, string>();
+const codexAccountAffinityDispatchByResponse = new WeakMap<Response, CodexAccountAffinityDispatch>();
+const codexAccountAffinityOutcomeByResponse = new WeakMap<Response, CodexAccountAffinityOutcome>();
 const codexTerminalOutcomeByResponse = new WeakSet<Response>();
 const codexProbeTransitionsInFlight = new Set<Promise<void>>();
 
@@ -304,6 +321,21 @@ const setCodexResponseAccountTelemetry = (
 ): void => {
   codexSlotByResponse.set(response, slot);
   codexAccountIdByResponse.set(response, accountId);
+};
+
+const setCodexResponseAffinityDispatch = (
+  response: Response,
+  identity: CodexAccountAffinityIdentity | null,
+  routing: RoutingAccount,
+  affinity: Readonly<{ priorAccountCohortHash: string | null; preferredUnavailable: boolean }>,
+): void => {
+  if (identity === null) return;
+  codexAccountAffinityDispatchByResponse.set(response, {
+    identity,
+    accountCohortHash: routing.accountIdHash,
+    priorAccountCohortHash: affinity.priorAccountCohortHash,
+    preferredUnavailable: affinity.preferredUnavailable,
+  });
 };
 
 const withCodexWarnings = (response: Response, warnings: readonly string[]): Response => {
@@ -327,6 +359,10 @@ const withCodexWarnings = (response: Response, warnings: readonly string[]): Res
   if (slot !== undefined) codexSlotByResponse.set(decorated, slot);
   const accountId = codexAccountIdByResponse.get(response);
   if (accountId !== undefined) codexAccountIdByResponse.set(decorated, accountId);
+  const affinityDispatch = codexAccountAffinityDispatchByResponse.get(response);
+  if (affinityDispatch) codexAccountAffinityDispatchByResponse.set(decorated, affinityDispatch);
+  const affinityOutcome = codexAccountAffinityOutcomeByResponse.get(response);
+  if (affinityOutcome) codexAccountAffinityOutcomeByResponse.set(decorated, affinityOutcome);
   const authWarning = codexAuthWarnings.get(response);
   if (authWarning !== undefined) codexAuthWarnings.set(decorated, authWarning);
   if (codexTerminalOutcomeByResponse.has(response)) codexTerminalOutcomeByResponse.add(decorated);
@@ -352,6 +388,29 @@ export const getCodexResponseAccountCohortId = async (response: Response): Promi
   return accountId === undefined ? null : await sha256Hex(`uos-prompt-cache-account-cohort-v1\u0000${accountId}`);
 };
 
+/** Isolate-local bounded result for terminal telemetry; it is never a response header. */
+export const getCodexResponseAffinityOutcome = (response: Response): CodexAccountAffinityOutcome =>
+  codexAccountAffinityOutcomeByResponse.get(response) ?? "none";
+
+const finalizeCodexResponseAffinity = (response: Response): Response => {
+  const dispatch = codexAccountAffinityDispatchByResponse.get(response);
+  if (!dispatch) return response;
+
+  let outcome: CodexAccountAffinityOutcome = "none";
+  if (dispatch.priorAccountCohortHash !== null) {
+    if (response.ok) {
+      outcome = dispatch.priorAccountCohortHash === dispatch.accountCohortHash ? "preferred" : "remapped";
+    } else if (dispatch.preferredUnavailable || response.status === 401 || response.status === 429) {
+      outcome = "preferred_unavailable";
+    } else if (dispatch.priorAccountCohortHash === dispatch.accountCohortHash) {
+      // A transient or 5xx response does not change the durable preference.
+      outcome = "preferred";
+    }
+  }
+  codexAccountAffinityOutcomeByResponse.set(response, outcome);
+  return response;
+};
+
 const takeCodexResponseProbe = (response: Response): RoutingAccount | null => {
   const probe = codexProbeByResponse.get(response);
   if (probe) codexProbeByResponse.delete(response);
@@ -360,11 +419,18 @@ const takeCodexResponseProbe = (response: Response): RoutingAccount | null => {
 
 const beginCodexResponseTerminalOutcome = (
   response: Response,
-): Readonly<{ accountId: string | null; probe: RoutingAccount | null }> | null => {
+):
+  | Readonly<{
+    accountId: string | null;
+    affinityDispatch: CodexAccountAffinityDispatch | null;
+    probe: RoutingAccount | null;
+  }>
+  | null => {
   if (codexTerminalOutcomeByResponse.has(response)) return null;
   codexTerminalOutcomeByResponse.add(response);
   return {
     accountId: codexAccountIdByResponse.get(response) ?? null,
+    affinityDispatch: codexAccountAffinityDispatchByResponse.get(response) ?? null,
     probe: takeCodexResponseProbe(response),
   };
 };
@@ -399,6 +465,15 @@ export const releaseCodexResponseProbe = async (response: Response): Promise<voi
 export const markCodexResponseCompleted = async (response: Response): Promise<void> => {
   const terminal = beginCodexResponseTerminalOutcome(response);
   if (!terminal) return;
+  if (terminal.probe) {
+    await completeCodexProbeTransition(markCodexSuccess(terminal.probe));
+  }
+  if (response.ok && terminal.affinityDispatch) {
+    await recordCodexAccountAffinity(
+      terminal.affinityDispatch.identity,
+      terminal.affinityDispatch.accountCohortHash,
+    );
+  }
   if (terminal.accountId !== null) {
     void recordCodexProviderHealth(
       terminal.accountId,
@@ -408,8 +483,6 @@ export const markCodexResponseCompleted = async (response: Response): Promise<vo
       codexProviderRequestId(response),
     ).catch(() => {});
   }
-  if (!terminal.probe) return;
-  await completeCodexProbeTransition(markCodexSuccess(terminal.probe));
 };
 
 /** A trustworthy failure after 2xx headers degrades health without treating cancellation or incompletion as failure. */
@@ -1591,6 +1664,7 @@ type FetchCodexResponsesOptions = Readonly<{
 }>;
 
 type PreparedCodexSubscriptionRequest = Readonly<{
+  affinityIdentity: CodexAccountAffinityIdentity | null;
   body: unknown;
   serializedBody: string;
   conversationIdentity: string;
@@ -1680,7 +1754,9 @@ const prepareCodexSubscriptionRequest = async (
   const nativeSessionIdentity = promptCacheKey === null || cacheScope === null || cacheScope.length === 0
     ? null
     : await deterministicCodexSessionIdentity(cacheScope, promptCacheKey);
+  const affinityIdentity = await deriveCodexAccountAffinityIdentity(cacheScope, promptCacheKey);
   return {
+    affinityIdentity,
     body: preparedBody,
     serializedBody: JSON.stringify(preparedBody),
     conversationIdentity: nativeSessionIdentity ?? crypto.randomUUID(),
@@ -1824,6 +1900,29 @@ const fetchPreparedCodexResponses = async (
     );
   }
   if (selected.kind === "upstream_blocked") return upstreamTimeoutCircuitResponse(selected.retryAtMs);
+  const affinity = {
+    priorAccountCohortHash: null as string | null,
+    preferredUnavailable: false,
+  };
+  if (prepared.affinityIdentity !== null && selected.kind === "eligible") {
+    affinity.priorAccountCohortHash = await readCodexAccountAffinity(prepared.affinityIdentity);
+  }
+  const orderAffinedRoutingAccounts = (accounts: readonly RoutingAccount[]): readonly RoutingAccount[] => {
+    const preferredAccountCohortHash = affinity.priorAccountCohortHash;
+    if (preferredAccountCohortHash === null) return accounts;
+    const preferredIndex = accounts.findIndex((account) =>
+      account.accountIdHash === preferredAccountCohortHash && !account.probeRequired
+    );
+    if (preferredIndex < 0) {
+      affinity.preferredUnavailable = true;
+      return accounts;
+    }
+    const preferred = accounts[preferredIndex]!;
+    return [preferred, ...accounts.slice(0, preferredIndex), ...accounts.slice(preferredIndex + 1)];
+  };
+  if (selected.kind === "eligible") {
+    selected = { ...selected, accounts: orderAffinedRoutingAccounts(selected.accounts) };
+  }
   let accountEntries = selected.kind === "eligible"
     ? selected.accounts.map((routing) => ({ ...poolEntry, auth: routing.auth, routing }))
     : [];
@@ -2277,6 +2376,7 @@ const fetchPreparedCodexResponses = async (
         },
       );
       setCodexResponseAccountTelemetry(response, routing.slot + 1, auth.account_id);
+      setCodexResponseAffinityDispatch(response, prepared.affinityIdentity, routing, affinity);
       reportCodexResponseTiming(options.timing?.onHeaders);
       void recordCodexResponseHealth(auth.account_id, response, auth);
       logCodexRouting("codex_attempt", {
@@ -2503,6 +2603,7 @@ const fetchPreparedCodexResponses = async (
       // This is the one permitted post-reset inference attempt. Preserve a
       // replayable normal 429 and never feed it back into reset selection.
       retried = (await markCodexRecoveryProbeQuotaBlocked(retryCandidate.routing, retried)).response;
+      setCodexResponseAffinityDispatch(retried, prepared.affinityIdentity, retryCandidate.routing, affinity);
     } else if (!retried.ok) {
       await releaseCodexRoutingProbe(retryCandidate.routing);
     }
@@ -2611,7 +2712,9 @@ const fetchPreparedCodexResponses = async (
         selected.retryAtMs,
       );
     }
-    const refreshedFallbacks = selected.accounts.filter((account) => fallbackAccountIds.has(account.auth.account_id));
+    const refreshedFallbacks = orderAffinedRoutingAccounts(
+      selected.accounts.filter((account) => fallbackAccountIds.has(account.auth.account_id)),
+    );
     if (!refreshedFallbacks.length) {
       if (definitiveCanaryFailure) return definitiveCanaryFailure;
       throw new CodexError(
@@ -2681,6 +2784,7 @@ const fetchPreparedCodexResponses = async (
       if (response.status === 429) {
         response = await classify429(accountEntry, routing, auth, response);
         setCodexResponseAccountTelemetry(response, routing.slot + 1, auth.account_id);
+        setCodexResponseAffinityDispatch(response, prepared.affinityIdentity, routing, affinity);
       } else if (!response.ok) {
         await releaseCodexRoutingProbe(routing);
       }
@@ -2866,6 +2970,7 @@ const fetchPreparedCodexResponses = async (
         bankedResetCandidates.clear();
       }
       setCodexResponseAccountTelemetry(response, retryRouting.slot + 1, retryAuth.account_id);
+      setCodexResponseAffinityDispatch(response, prepared.affinityIdentity, retryRouting, affinity);
     } else if (!response.ok) {
       // A 401/403 says this retrying account cannot serve, but does not erase
       // a separately verified quota-exhaustion candidate from another slot.
@@ -2901,7 +3006,7 @@ export const fetchCodexResponses = async (
 ): Promise<Response> => {
   const prepared = await prepareCodexSubscriptionRequest(body, options.cacheScope ?? null);
   const response = await fetchPreparedCodexResponses(prepared, options);
-  return withCodexWarnings(response, prepared.warnings);
+  return finalizeCodexResponseAffinity(withCodexWarnings(response, prepared.warnings));
 };
 
 export const fetchCodexModels = async (
