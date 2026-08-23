@@ -279,6 +279,7 @@ const logTerminalRequest = async (
     delivery_outcome: input.deliveryOutcome,
     model: telemetry?.model ?? null,
     reasoning: telemetry?.reasoning ?? null,
+    output_token_allowance: telemetry?.outputTokenAllowance ?? null,
     provider_request_id: telemetry?.providerRequestId ?? null,
     input_tokens: telemetry?.inputTokens ?? null,
     cached_input_tokens: telemetry?.cachedInputTokens ?? null,
@@ -294,6 +295,8 @@ const logTerminalRequest = async (
     account_cohort_id: accountCohortId,
     affinity_outcome: telemetry?.affinityOutcome ?? "none",
     fallback_reason: telemetry?.fallbackReason ?? null,
+    semantic_output_observed: telemetry?.semanticOutputObserved ?? null,
+    upstream_event_kinds: telemetry?.upstreamEventKinds ?? [],
     stream: input.streamReadFailure ? telemetry?.stream ?? true : telemetry?.stream ?? null,
     stream_terminal_type: input.streamReadFailure
       ? telemetry?.streamTerminalType ?? "error"

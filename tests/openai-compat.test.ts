@@ -3780,6 +3780,71 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
       assert.equal(health.provider_request_id, "free-glm-failed-provider");
     });
 
+    await t.step("contentless Surplus Chat completion marks provider health as failed", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-empty-chat-key";
+      const requestId = "free-glm-empty-chat-request";
+      const response = await withFetchMock(
+        (url) => {
+          assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
+          return new Response(
+            sseResponse([
+              `data: ${
+                JSON.stringify({
+                  type: "response.completed",
+                  response: {
+                    id: "free-glm-empty-response",
+                    status: "completed",
+                    model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                    output: [],
+                    usage: { input_tokens: 1642, output_tokens: 2048, total_tokens: 3690 },
+                  },
+                })
+              }\n\n`,
+            ]).body,
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/event-stream",
+                "X-Oneapi-Request-Id": "free-glm-empty-provider",
+              },
+            },
+          );
+        },
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                max_completion_tokens: 2048,
+                messages: [{ role: "user", content: "contentless GLM response" }],
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      const payload = await response.json() as { error?: { code?: unknown } };
+      assert.equal(payload.error?.code, "empty_upstream_completion");
+      assert.equal(getResponseTelemetry(response)?.completed, false);
+      assert.equal(getResponseTelemetry(response)?.failureKind, "empty_upstream_completion");
+      assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, false);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("upstream_error");
+      assert.equal(health.status, null);
+      assert.equal(health.provider_request_id, "free-glm-empty-provider");
+    });
+
     await t.step("client cancellation after headers does not mark Surplus degraded", async () => {
       clearSurplusHealth();
       const keyId = "free-glm-cancel-key";
@@ -4678,7 +4743,13 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 id: `resp_${suffix}`,
                 status: terminalCase.terminalState,
                 model: DEFAULT_TEST_MODEL,
-                output: [],
+                output: terminalCase.eventType === "response.completed"
+                  ? [{
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "terminal output" }],
+                  }]
+                  : [],
                 usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
               },
             };
@@ -5649,7 +5720,13 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                             id: `resp_${suffix}`,
                             status: terminalState,
                             model: DEFAULT_TEST_MODEL,
-                            output: [],
+                            output: terminalType === "response.completed"
+                              ? [{
+                                type: "message",
+                                role: "assistant",
+                                content: [{ type: "output_text", text: "terminal output" }],
+                              }]
+                              : [],
                             usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
                           },
                         })
@@ -5783,7 +5860,13 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                           id: `resp_terminal_probe_${suffix}`,
                           status: terminalState,
                           model: DEFAULT_TEST_MODEL,
-                          output: [],
+                          output: terminalType === "response.completed"
+                            ? [{
+                              type: "message",
+                              role: "assistant",
+                              content: [{ type: "output_text", text: "terminal output" }],
+                            }]
+                            : [],
                           usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
                         },
                       })
@@ -6027,7 +6110,13 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                       id: `resp-buffered-chat-${terminalType}`,
                       status: terminalType === "response.completed" ? "completed" : "incomplete",
                       model: DEFAULT_TEST_MODEL,
-                      output: [],
+                      output: terminalType === "response.completed"
+                        ? [{
+                          type: "message",
+                          role: "assistant",
+                          content: [{ type: "output_text", text: "terminal output" }],
+                        }]
+                        : [],
                       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
                     },
                   })
@@ -7027,6 +7116,36 @@ Deno.test("openai: Chat assistant refusal content replays as output text", async
   }]);
 });
 
+Deno.test("openai: Chat assistant top-level refusal replays as output text", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{ role: "assistant", content: null, refusal: "Cannot help." }],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  const requestBody = recordedBody as Record<string, unknown>;
+  assert.deepEqual(requestBody.input, [{
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "Cannot help." }],
+  }]);
+});
+
 Deno.test("openai: malformed Chat tool calls are rejected before provider dispatch", async () => {
   let upstreamCalls = 0;
   const response = await withFetchMock(
@@ -7263,7 +7382,7 @@ Deno.test("openai: malformed preflight terminal emits a Chat stream error", asyn
   const text = await response.text();
   assert.match(text, /upstream_stream_error/);
   assert.doesNotMatch(text, /data: \[DONE\]/);
-  assert.deepEqual(observedTerminalUsages, [{ completed: true, inputTokens: 1 }]);
+  assert.deepEqual(observedTerminalUsages, [{ completed: false, inputTokens: 1 }]);
 });
 
 Deno.test("openai: terminal function calls without arguments fail for buffered and streamed Chat", async (t) => {
@@ -7535,6 +7654,346 @@ Deno.test("openai: buffered Chat preserves final text from response.output", asy
   assert.equal(payload.choices?.[0]?.message?.content, "Text supplied by response.output.");
 });
 
+Deno.test("openai: contentless response.completed fails Chat without success framing", async (t) => {
+  const usage = { input_tokens: 1642, output_tokens: 2048, total_tokens: 3690 };
+  const completed = `data: ${
+    JSON.stringify({
+      type: "response.completed",
+      response: { id: "resp_empty", model: DEFAULT_TEST_MODEL, output: [], usage },
+    })
+  }\n\n`;
+
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const observedTerminalUsages: Array<{ completed: boolean; inputTokens: number | null }> = [];
+      const response = await withFetchMock(
+        () => sseResponse([completed]),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                reasoning_effort: "low",
+                max_completion_tokens: 2048,
+                messages: [{ role: "user", content: "contentless completion" }],
+              }),
+            }),
+            {
+              keyId: null,
+              kernelRepo: null,
+              kernelOrg: null,
+              onTerminalUsage: (terminalUsage, terminalCompleted) => {
+                observedTerminalUsages.push({
+                  completed: terminalCompleted,
+                  inputTokens: terminalUsage?.inputTokens ?? null,
+                });
+              },
+            },
+          ),
+      );
+
+      if (stream) {
+        assert.equal(response.status, 200);
+        const serialized = await response.text();
+        assert.deepEqual(parseResponsesSseValues(serialized), [{
+          error: {
+            message: "Upstream response completed with no translated semantic output.",
+            type: "server_error",
+            code: "empty_upstream_completion",
+            param: null,
+          },
+        }]);
+        assert.doesNotMatch(serialized, /"choices"|"finish_reason"|"role":"assistant"|data: \[DONE\]/);
+      } else {
+        assert.equal(response.status, 502);
+        assert.deepEqual(await response.json(), {
+          error: {
+            message: "Upstream response completed with no translated semantic output.",
+            type: "server_error",
+            code: "empty_upstream_completion",
+            param: null,
+          },
+        });
+      }
+
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.completed, false);
+      assert.equal(telemetry?.semanticOutputObserved, false);
+      assert.equal(telemetry?.outputTokenAllowance, 2048);
+      assert.deepEqual(telemetry?.upstreamEventKinds, ["response.completed"]);
+      assert.equal(telemetry?.streamTerminalType, "error");
+      assert.equal(telemetry?.failureKind, "empty_upstream_completion");
+      assert.equal(telemetry?.inputTokens, 1642);
+      assert.equal(telemetry?.outputTokens, 2048);
+      assert.equal(telemetry?.totalTokens, 3690);
+      assert.deepEqual(observedTerminalUsages, [{ completed: false, inputTokens: 1642 }]);
+    });
+  }
+});
+
+Deno.test("openai: partial Chat output followed by failure is not an empty completion", async (t) => {
+  const events = [
+    `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "partial output" })}\n\n`,
+    `data: ${
+      JSON.stringify({
+        type: "response.failed",
+        response: {
+          status: "failed",
+          output: [],
+          usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+        },
+      })
+    }\n\n`,
+  ];
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        () => sseResponse(events),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                messages: [{ role: "user", content: "partial then fail" }],
+              }),
+            }),
+          ),
+      );
+      const serialized = await response.text();
+      assert.match(serialized, /upstream_stream_error/);
+      assert.doesNotMatch(serialized, /empty_upstream_completion|data: \[DONE\]/);
+      assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
+      assert.equal(getResponseTelemetry(response)?.completed, false);
+    });
+  }
+});
+
+Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free", async () => {
+  const secretPrompt = "private prompt that must not enter diagnostics";
+  const secretEventPayload = "private provider output that must not enter diagnostics";
+  const unknownEventType = "response.future_private_output";
+  const originalInfo = console.info;
+  const logs: unknown[][] = [];
+  console.info = (...args: unknown[]) => logs.push(args);
+  try {
+    const response = await withFetchMock(
+      () =>
+        new Response(
+          sseResponse([
+            `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_empty_log" } })}\n\n`,
+            `data: ${JSON.stringify({ type: unknownEventType, output: secretEventPayload })}\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: {
+                  id: "resp_empty_log",
+                  model: DEFAULT_TEST_MODEL,
+                  output: [],
+                  usage: { input_tokens: 10, output_tokens: 2048, total_tokens: 2058 },
+                },
+              })
+            }\n\n`,
+          ]).body,
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "text/event-stream",
+              "X-Request-Id": "provider-empty-log",
+            },
+          },
+        ),
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              reasoning_effort: "low",
+              max_completion_tokens: 2048,
+              messages: [{ role: "user", content: secretPrompt }],
+            }),
+          }),
+        ),
+    );
+    const loggedResponse = await withTerminalRequestLog(response, {
+      route: "chat.completions",
+      telemetryResponse: response,
+      startedAtMonotonicMs: performance.now(),
+      requestId: "empty-chat-terminal-log",
+    });
+    assert.equal(loggedResponse.status, 502);
+    await loggedResponse.json();
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (logs.some((entry) => entry[0] === "[ai.ubq.fi] request_terminal")) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    const terminalLogs = logs
+      .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+      .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>);
+    assert.equal(terminalLogs.length, 1);
+    const terminal = terminalLogs[0]!;
+    assert.equal(terminal.provider_request_id, "provider-empty-log");
+    assert.equal(terminal.output_token_allowance, 2048);
+    assert.equal(terminal.semantic_output_observed, false);
+    assert.deepEqual(terminal.upstream_event_kinds, ["response.created", "unrecognized", "response.completed"]);
+    assert.equal(terminal.stream_terminal_type, "error");
+    assert.equal(terminal.failure_kind, "empty_upstream_completion");
+    assert.equal(terminal.input_tokens, 10);
+    assert.equal(terminal.output_tokens, 2048);
+    const serializedTerminal = JSON.stringify(terminal);
+    assert.equal(serializedTerminal.includes(secretPrompt), false);
+    assert.equal(serializedTerminal.includes(secretEventPayload), false);
+    assert.equal(serializedTerminal.includes(unknownEventType), false);
+  } finally {
+    console.info = originalInfo;
+  }
+});
+
+Deno.test("openai: Chat refusal output remains semantic in buffered and streamed modes", async (t) => {
+  const refusalText = "I cannot help with that request.";
+  const refusalItem = {
+    id: "msg_refusal",
+    type: "message",
+    role: "assistant",
+    content: [{ type: "refusal", refusal: refusalText }],
+  };
+  const cases = [
+    {
+      name: "refusal delta and done",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.refusal.delta",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            delta: "I cannot ",
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.refusal.done",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            refusal: refusalText,
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "final response output refusal",
+      events: [
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [refusalItem] } })}\n\n`,
+      ],
+    },
+    {
+      name: "output-item-done refusal",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: refusalItem })}\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "content-part-done refusal",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            part: { type: "refusal", refusal: refusalText },
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "response.output plus repeated output-item-done refusal",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output", output: [refusalItem] })}\n\n`,
+        `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: refusalItem })}\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "response.output plus repeated content-part-done refusal",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output", output: [refusalItem] })}\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            part: refusalItem.content[0],
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+  ];
+
+  for (const testCase of cases) {
+    for (const stream of [false, true]) {
+      await t.step(`${testCase.name} (${stream ? "streamed" : "buffered"})`, async () => {
+        const response = await withFetchMock(
+          () => sseResponse(testCase.events),
+          () =>
+            handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  stream,
+                  messages: [{ role: "user", content: "refuse" }],
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 200);
+        if (!stream) {
+          const payload = await response.json() as {
+            choices?: Array<{ message?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }>;
+          };
+          assert.equal(payload.choices?.[0]?.message?.content, null);
+          assert.equal(payload.choices?.[0]?.message?.refusal, refusalText);
+          assert.equal(payload.choices?.[0]?.finish_reason, "stop");
+        } else {
+          const serialized = await response.text();
+          const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
+            .map((match) => match[1]!)
+            .filter((value) => value !== "[DONE]")
+            .map((value) =>
+              JSON.parse(value) as {
+                choices?: Array<{ delta?: { refusal?: unknown }; finish_reason?: unknown }>;
+              }
+            );
+          const refusal = chunks.map((chunk) => chunk.choices?.[0]?.delta?.refusal)
+            .filter((value): value is string => typeof value === "string")
+            .join("");
+          assert.equal(refusal, refusalText);
+          assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
+          assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+        }
+        assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
+        assert.equal(getResponseTelemetry(response)?.completed, true);
+      });
+    }
+  }
+});
+
 Deno.test("openai: streamed Chat preserves final-only text alongside function calls", async () => {
   const call = {
     id: "fc_stream_final_text",
@@ -7608,6 +8067,34 @@ Deno.test("openai: Chat recovers completed output text without duplicating strea
       ],
     },
     {
+      name: "output-item-done text with empty terminal output",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.output_item.done",
+            output_index: 0,
+            item: finalOutput[0],
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "content-part-done text with empty terminal output",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            part: { type: "output_text", text: completedText, annotations: [] },
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
       name: "delta prefix plus repeated done and terminal text",
       events: [
         `data: ${
@@ -7629,6 +8116,36 @@ Deno.test("openai: Chat recovers completed output text without duplicating strea
           })
         }\n\n`,
         `data: ${JSON.stringify({ type: "response.completed", response: { output: finalOutput } })}\n\n`,
+      ],
+    },
+    {
+      name: "response.output plus repeated output-item-done text",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output", output: finalOutput })}\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.output_item.done",
+            output_index: 0,
+            item: finalOutput[0],
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "response.output plus repeated content-part-done text",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output", output: finalOutput })}\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            part: finalOutput[0].content[0],
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
       ],
     },
   ];
@@ -7675,6 +8192,72 @@ Deno.test("openai: Chat recovers completed output text without duplicating strea
         assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
       });
     }
+  }
+});
+
+Deno.test("openai: Chat concatenates multiple finalized message items", async (t) => {
+  const items = [
+    {
+      id: "msg_first",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "First. " }],
+    },
+    {
+      id: "msg_second",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "Second." }],
+    },
+  ];
+  const events = [
+    ...items.map((item, outputIndex) =>
+      `data: ${JSON.stringify({ type: "response.output_item.done", output_index: outputIndex, item })}\n\n`
+    ),
+    `data: ${JSON.stringify({ type: "response.completed", response: { output: items } })}\n\n`,
+  ];
+
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        () => sseResponse(events),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                messages: [{ role: "user", content: "two messages" }],
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 200);
+      if (!stream) {
+        const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+        assert.equal(payload.choices?.[0]?.message?.content, "First. Second.");
+      } else {
+        const serialized = await response.text();
+        const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
+          .map((match) => match[1]!)
+          .filter((value) => value !== "[DONE]")
+          .map((value) =>
+            JSON.parse(value) as {
+              choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }>;
+            }
+          );
+        const content = chunks.map((chunk) => chunk.choices?.[0]?.delta?.content)
+          .filter((value): value is string => typeof value === "string")
+          .join("");
+        assert.equal(content, "First. Second.");
+        assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
+        assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+      }
+      assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
+      assert.equal(getResponseTelemetry(response)?.completed, true);
+    });
   }
 });
 
@@ -7820,7 +8403,18 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
     sseResponse([
       `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_cache", created_at: 1 } })}\n\n`,
       `data: ${
-        JSON.stringify({ type: "response.completed", response: { model: DEFAULT_TEST_MODEL, output: [], usage } })
+        JSON.stringify({
+          type: "response.completed",
+          response: {
+            model: DEFAULT_TEST_MODEL,
+            output: [{
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "cache telemetry output" }],
+            }],
+            usage,
+          },
+        })
       }\n\n`,
     ]);
 
@@ -7859,7 +8453,15 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
         `data: ${
           JSON.stringify({
             type: "response.completed",
-            response: { model: DEFAULT_TEST_MODEL, output: [], usage: analyticsUsage },
+            response: {
+              model: DEFAULT_TEST_MODEL,
+              output: [{
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "cache analytics output" }],
+              }],
+              usage: analyticsUsage,
+            },
           })
         }\n\n`,
       ]);
@@ -7980,6 +8582,7 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       fallbackReason: null,
       model: DEFAULT_TEST_MODEL,
       reasoning: "low",
+      outputTokenAllowance: null,
       inputTokens: 2006,
       cachedInputTokens: 1920,
       cacheWriteInputTokens: 0,
@@ -7994,9 +8597,11 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       affinityOutcome: "none",
       quotaUsedPercent: undefined,
       completed: true,
+      semanticOutputObserved: true,
+      upstreamEventKinds: ["response.created", "response.completed"],
       streamTerminalType: "response.completed",
       failureKind: null,
-      responseCreatedObserved: false,
+      responseCreatedObserved: true,
       syntheticTerminalType: null,
       stream: false,
       providerRequestId: null,
@@ -8138,7 +8743,11 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
                 type: "response.completed",
                 response: {
                   model: DEFAULT_TEST_MODEL,
-                  output: [],
+                  output: [{
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "partial usage output" }],
+                  }],
                   usage: { input_tokens: 11, input_tokens_details: { cached_tokens: 10 } },
                 },
               })

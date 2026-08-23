@@ -217,6 +217,7 @@ export type ResponseTelemetry = Readonly<{
   fallbackReason: InferenceFallbackReason | null;
   model: string | null;
   reasoning: string | null;
+  outputTokenAllowance: number | null;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -231,6 +232,8 @@ export type ResponseTelemetry = Readonly<{
   affinityOutcome: AffinityOutcome;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
+  semanticOutputObserved: boolean | null;
+  upstreamEventKinds: readonly string[];
   streamTerminalType: ResponseStreamTerminalType | null;
   failureKind: string | null;
   responseCreatedObserved: boolean;
@@ -267,6 +270,7 @@ type ResponseTelemetryState = {
   fallbackReason: InferenceFallbackReason | null;
   model: string | null;
   reasoning: string | null;
+  outputTokenAllowance: number | null;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -282,6 +286,8 @@ type ResponseTelemetryState = {
   affinityOutcome: AffinityOutcome;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
+  semanticOutputObserved: boolean | null;
+  upstreamEventKinds: string[];
   streamTerminalType: ResponseStreamTerminalType | null;
   failureKind: string | null;
   responseCreatedObserved: boolean;
@@ -311,6 +317,7 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   fallbackReason: null,
   model: null,
   reasoning: null,
+  outputTokenAllowance: null,
   inputTokens: null,
   cachedInputTokens: null,
   cacheWriteInputTokens: null,
@@ -326,6 +333,8 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   affinityOutcome: "none",
   quotaUsedPercent: undefined,
   completed: false,
+  semanticOutputObserved: null,
+  upstreamEventKinds: [],
   streamTerminalType: null,
   failureKind: null,
   responseCreatedObserved: false,
@@ -407,6 +416,7 @@ const aggregateResponseTelemetry = (
   aggregate.fallbackReason = commonTelemetryValue(states.map((state) => state.fallbackReason));
   aggregate.model = commonTelemetryValue(states.map((state) => state.model));
   aggregate.reasoning = commonTelemetryValue(states.map((state) => state.reasoning));
+  aggregate.outputTokenAllowance = commonTelemetryValue(states.map((state) => state.outputTokenAllowance));
   aggregate.inputTokens = sumTelemetryCounts(states, "inputTokens", sources.length);
   aggregate.cachedInputTokens = sumTelemetryCounts(states, "cachedInputTokens", sources.length);
   aggregate.cacheWriteInputTokens = sumTelemetryCounts(states, "cacheWriteInputTokens", sources.length);
@@ -437,6 +447,12 @@ const aggregateResponseTelemetry = (
     ? null
     : undefined;
   aggregate.completed = states.length === sources.length && states.every((state) => state.completed);
+  aggregate.semanticOutputObserved = states.some((state) => state.semanticOutputObserved === true)
+    ? true
+    : states.every((state) => state.semanticOutputObserved === false)
+    ? false
+    : null;
+  aggregate.upstreamEventKinds = [...new Set(states.flatMap((state) => state.upstreamEventKinds))];
   aggregate.streamTerminalType = aggregate.completed
     ? "response.completed"
     : commonTelemetryValue(states.map((state) => state.streamTerminalType));
@@ -500,6 +516,7 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     fallbackReason: state.fallbackReason,
     model: state.model,
     reasoning: state.reasoning,
+    outputTokenAllowance: state.outputTokenAllowance,
     inputTokens: state.inputTokens,
     cachedInputTokens: state.cachedInputTokens,
     cacheWriteInputTokens: state.cacheWriteInputTokens,
@@ -514,6 +531,8 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     affinityOutcome: state.affinityOutcome,
     quotaUsedPercent: state.quotaUsedPercent,
     completed: state.completed,
+    semanticOutputObserved: state.semanticOutputObserved,
+    upstreamEventKinds: [...state.upstreamEventKinds],
     streamTerminalType: state.streamTerminalType,
     failureKind: state.failureKind,
     responseCreatedObserved: state.responseCreatedObserved,
@@ -636,12 +655,34 @@ const recordStreamTerminal = (context: UsageContext | undefined): void => {
   recordResponseTiming(context, "streamTerminalMs");
 };
 
+const CHAT_RESPONSE_EVENT_KINDS = new Set([
+  "response.created",
+  "response.output_text.delta",
+  "response.output_text.done",
+  "response.refusal.delta",
+  "response.refusal.done",
+  "response.content_part.done",
+  "response.output_item.added",
+  "response.output_item.done",
+  "response.function_call_arguments.delta",
+  "response.function_call_arguments.done",
+  "response.output",
+  "response.completed",
+  "response.failed",
+  "response.incomplete",
+  "error",
+]);
+
+const boundedResponseEventKind = (type: string): string => CHAT_RESPONSE_EVENT_KINDS.has(type) ? type : "unrecognized";
+
 const recordResponsesEventTelemetry = (
   context: UsageContext | undefined,
   event: ResponsesStreamEvent,
 ): void => {
   const telemetry = context?.responseTelemetry;
   if (!telemetry) return;
+  const eventKind = boundedResponseEventKind(event.type);
+  if (!telemetry.upstreamEventKinds.includes(eventKind)) telemetry.upstreamEventKinds.push(eventKind);
   if (event.type === "response.created") telemetry.responseCreatedObserved = true;
   if (event.type === "response.incomplete") {
     const response = isRecord(event.value.response) ? event.value.response : null;
@@ -5598,6 +5639,10 @@ const normalizeChatMessage = (
   }
   if (roleRaw === "assistant") {
     const hasToolCalls = Object.prototype.hasOwnProperty.call(value, "tool_calls");
+    const refusal = value.refusal === undefined || value.refusal === null ? null : getString(value.refusal);
+    if (refusal === null && value.refusal !== undefined && value.refusal !== null) {
+      return invalidNormalizedField(`${param}.refusal`, `${param}.refusal must be a string or null`);
+    }
     // Chat permits an omitted assistant content field when the message is
     // solely a function-call turn. Normalize it as the same empty content as
     // the explicit null form, but keep missing content invalid otherwise.
@@ -5608,7 +5653,10 @@ const normalizeChatMessage = (
     const input: ResponseInputItem[] = [];
     // A Chat assistant's natural-language output must precede its function
     // calls so a multi-turn tool conversation retains the original order.
-    if (content.value.length) input.push({ type: "message", role, content: content.value });
+    const messageContent = refusal === null
+      ? content.value
+      : [...content.value, { type: "output_text" as const, text: refusal }];
+    if (messageContent.length) input.push({ type: "message", role, content: messageContent });
     if (hasToolCalls) {
       if (!Array.isArray(value.tool_calls)) {
         return invalidNormalizedField(`${param}.tool_calls`, `${param}.tool_calls must be an array`);
@@ -5620,7 +5668,7 @@ const normalizeChatMessage = (
       }
     }
     if (!input.length) {
-      return invalidNormalizedField(`${param}.content`, "assistant messages require content or tool_calls");
+      return invalidNormalizedField(`${param}.content`, "assistant messages require content, refusal, or tool_calls");
     }
     return { ok: true, value: { instruction: null, instructionContent: null, input } };
   }
@@ -5681,42 +5729,111 @@ const responseHasRefusal = (output: unknown, startIndex = 0): boolean => {
   );
 };
 
-/**
- * Buffered and streamed Responses transports normally emit output_text.delta
- * events.  Some compatible upstreams only provide the completed output item,
- * however, so recover that text without turning a mixed text/tool result into
- * a tool-call-only Chat completion.
- */
-const responseOutputText = (output: unknown): string => {
-  if (!Array.isArray(output)) return "";
-  let text = "";
-  for (const item of output) {
-    if (!isRecord(item) || !Array.isArray(item.content)) continue;
-    for (const contentItem of item.content) {
-      if (!isRecord(contentItem)) continue;
-      const type = getString(contentItem.type);
-      if (type !== "output_text" && type !== "text") continue;
-      const value = getString(contentItem.text);
-      if (value !== null) text += value;
-    }
-  }
-  return text;
-};
-
 const reconcileCompletedOutputText = (emittedText: string, completedText: string): string => {
   if (!completedText || completedText === emittedText || emittedText.startsWith(completedText)) return "";
   if (completedText.startsWith(emittedText)) return completedText.slice(emittedText.length);
   return malformedFunctionCallStream("Upstream response output text conflicts with prior text deltas.");
 };
 
-const reconcileResponseOutputText = (emittedText: string, output: unknown): string => {
-  return reconcileCompletedOutputText(emittedText, responseOutputText(output));
+const reconcileCompletedRefusal = (emittedRefusal: string, completedRefusal: string): string => {
+  if (!completedRefusal || completedRefusal === emittedRefusal || emittedRefusal.startsWith(completedRefusal)) {
+    return "";
+  }
+  if (completedRefusal.startsWith(emittedRefusal)) return completedRefusal.slice(emittedRefusal.length);
+  return malformedFunctionCallStream("Upstream response refusal conflicts with prior refusal deltas.");
 };
 
 const chatOutputTextPartKey = (event: Record<string, unknown>): string => {
   const itemId = getString(event.item_id)?.trim();
   if (itemId) return `item:${itemId}:${String(event.content_index ?? 0)}`;
   return `output:${String(event.output_index ?? 0)}:${String(event.content_index ?? 0)}`;
+};
+
+type ReconciledChatContent = Readonly<{ outputText: string; refusal: string }>;
+
+const reconcileChatContentPart = (
+  outputTextParts: Map<string, string>,
+  refusalParts: Map<string, string>,
+  event: Record<string, unknown>,
+  part: unknown,
+): ReconciledChatContent => {
+  if (!isRecord(part) || Array.isArray(part)) {
+    return malformedFunctionCallStream("Upstream completed content part is missing its part object.");
+  }
+  const type = getString(part.type);
+  const key = chatOutputTextPartKey(event);
+  if (type === "output_text" || type === "text") {
+    const completedText = getString(part.text);
+    if (completedText === null) {
+      return malformedFunctionCallStream("Upstream completed content part is missing string output text.");
+    }
+    const emittedText = outputTextParts.get(key) ?? "";
+    const suffix = reconcileCompletedOutputText(emittedText, completedText);
+    outputTextParts.set(key, `${emittedText}${suffix}`);
+    return { outputText: suffix, refusal: "" };
+  }
+  if (type === "refusal") {
+    const completedRefusal = getString(part.refusal);
+    if (completedRefusal === null) {
+      return malformedFunctionCallStream("Upstream completed content part is missing string refusal text.");
+    }
+    const emittedRefusal = refusalParts.get(key) ?? "";
+    const suffix = reconcileCompletedRefusal(emittedRefusal, completedRefusal);
+    refusalParts.set(key, `${emittedRefusal}${suffix}`);
+    return { outputText: "", refusal: suffix };
+  }
+  return { outputText: "", refusal: "" };
+};
+
+const reconcileChatOutputItemContent = (
+  outputTextParts: Map<string, string>,
+  refusalParts: Map<string, string>,
+  event: Record<string, unknown>,
+  item: unknown,
+): ReconciledChatContent => {
+  if (!isRecord(item) || Array.isArray(item) || !Array.isArray(item.content)) {
+    return { outputText: "", refusal: "" };
+  }
+  let outputText = "";
+  let refusal = "";
+  for (const [contentIndex, part] of item.content.entries()) {
+    const partEvent: Record<string, unknown> = {
+      ...event,
+      item_id: getString(item.id) ?? event.item_id,
+      content_index: contentIndex,
+    };
+    const reconciled = reconcileChatContentPart(outputTextParts, refusalParts, partEvent, part);
+    outputText += reconciled.outputText;
+    refusal += reconciled.refusal;
+  }
+  return { outputText, refusal };
+};
+
+/**
+ * Some compatible upstreams provide complete message content in response.output
+ * before repeating it in the normal final-item events. Reconcile every part
+ * through the same per-item maps so either ordering emits each value once.
+ */
+const reconcileChatResponseOutputContent = (
+  outputTextParts: Map<string, string>,
+  refusalParts: Map<string, string>,
+  event: Record<string, unknown>,
+  output: unknown,
+): ReconciledChatContent => {
+  if (!Array.isArray(output)) return { outputText: "", refusal: "" };
+  let outputText = "";
+  let refusal = "";
+  for (const [outputIndex, item] of output.entries()) {
+    const reconciled = reconcileChatOutputItemContent(
+      outputTextParts,
+      refusalParts,
+      { ...event, output_index: outputIndex },
+      item,
+    );
+    outputText += reconciled.outputText;
+    refusal += reconciled.refusal;
+  }
+  return { outputText, refusal };
 };
 
 const withAccumulatedResponseText = (
@@ -5976,6 +6093,63 @@ const chatToolCallDelta = (
   return value;
 };
 
+const EMPTY_UPSTREAM_COMPLETION_MESSAGE = "Upstream response completed with no translated semantic output.";
+
+const emptyUpstreamCompletionError = (): Record<string, unknown> => ({
+  error: {
+    message: EMPTY_UPSTREAM_COMPLETION_MESSAGE,
+    type: "server_error",
+    code: "empty_upstream_completion",
+    param: null,
+  },
+});
+
+const markChatSemanticOutput = (context: UsageContext | undefined): void => {
+  if (context?.responseTelemetry) context.responseTelemetry.semanticOutputObserved = true;
+};
+
+const markFinalizedChatToolOutput = (
+  context: UsageContext | undefined,
+  functionCalls: ChatFunctionCallAccumulator,
+): void => {
+  if (functionCalls.calls.some((call) => call.argumentsDone)) markChatSemanticOutput(context);
+};
+
+const translatedChatOutputObserved = (
+  outputText: string,
+  refusal: string,
+  functionCalls: ChatFunctionCallAccumulator,
+): boolean => outputText.length > 0 || refusal.length > 0 || functionCalls.hasCalls;
+
+const recordSuccessfulChatCompletion = async (
+  context: UsageContext | undefined,
+  lifecycle: MeteredTransportLifecycle,
+  usage: UsageTokens | null,
+  onResponseTerminal?: (terminalType: ResponseStreamTerminalType) => void,
+): Promise<void> => {
+  markChatSemanticOutput(context);
+  onResponseTerminal?.("response.completed");
+  lifecycle.terminal("response.completed", usage);
+  recordStreamTerminalType(context, "response.completed");
+  await recordCompletionUsage(context, usage);
+};
+
+const recordEmptyUpstreamCompletion = (
+  context: UsageContext | undefined,
+  lifecycle: MeteredTransportLifecycle,
+  usage: UsageTokens | null,
+  onResponseTerminal?: (terminalType: ResponseStreamTerminalType) => void,
+): void => {
+  if (context?.responseTelemetry) {
+    context.responseTelemetry.failureKind = "empty_upstream_completion";
+    context.responseTelemetry.semanticOutputObserved = false;
+  }
+  onResponseTerminal?.("error");
+  lifecycle.terminal("response.failed", usage);
+  recordStreamTerminalType(context, "error");
+  recordTerminalUsage(context, usage, false);
+};
+
 const streamChatCompletions = (
   source: PreflightedResponsesStream,
   model: string,
@@ -5989,17 +6163,22 @@ const streamChatCompletions = (
 ): Response => {
   const encoder = new TextEncoder();
   const iterator = source.iterator;
-  const initialTerminalAlreadyValidated = source.first.terminal;
   let pending: ResponsesStreamEvent | undefined = source.first;
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
   let sentRole = false;
   let closed = false;
+  let terminalSettled = false;
+  let observedCompletedUsage: UsageTokens | null | undefined;
   let outputText = "";
+  let refusal = "";
   const outputTextParts = new Map<string, string>();
+  const refusalParts = new Map<string, string>();
   const functionCalls = new ChatFunctionCallAccumulator();
+  const observedEvents = new WeakSet<object>();
   const queuedDeltas: Array<
     | Readonly<{ kind: "content"; content: string }>
+    | Readonly<{ kind: "refusal"; refusal: string }>
     | Readonly<{
       kind: "tool";
       call: ChatFunctionCall;
@@ -6007,6 +6186,59 @@ const streamChatCompletions = (
       argumentsDelta: string;
     }>
   > = [];
+  const settleInitialTerminalOnCancel = async (): Promise<void> => {
+    const event = source.first;
+    if (terminalSettled || !event.terminal) return;
+    recordResponsesEventTelemetry(usageContext, event);
+    const ev = event.value;
+    const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
+    if (event.type === "response.completed") {
+      if (!isRecord(ev.response) || Array.isArray(ev.response)) {
+        const error = new ResponsesStreamError(
+          "Upstream response.completed event is missing its response object.",
+          { kind: "malformed_event" },
+        );
+        recordResponsesFailureTelemetry(usageContext, error);
+        onResponseTerminal?.("error");
+        lifecycle.ambiguous();
+        recordStreamTerminalType(usageContext, "error");
+        terminalSettled = true;
+        return;
+      }
+      try {
+        const completed = reconcileChatResponseOutputContent(
+          outputTextParts,
+          refusalParts,
+          ev,
+          ev.response.output,
+        );
+        outputText += completed.outputText;
+        refusal += completed.refusal;
+        functionCalls.reconcileOutput(ev, ev.response.output);
+        functionCalls.assertFinalized();
+      } catch (error) {
+        recordResponsesFailureTelemetry(usageContext, error);
+        onResponseTerminal?.("error");
+        lifecycle.terminal("response.failed", usageTokens);
+        recordStreamTerminalType(usageContext, "error");
+        recordTerminalUsage(usageContext, usageTokens, false);
+        terminalSettled = true;
+        return;
+      }
+      terminalSettled = true;
+      if (translatedChatOutputObserved(outputText, refusal, functionCalls)) {
+        await recordSuccessfulChatCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
+      } else {
+        recordEmptyUpstreamCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
+      }
+      return;
+    }
+    onResponseTerminal?.(event.type as ResponseStreamTerminalType);
+    lifecycle.terminal(event.type, usageTokens);
+    recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
+    recordTerminalUsage(usageContext, usageTokens, false);
+    terminalSettled = true;
+  };
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (closed) return;
@@ -6026,6 +6258,20 @@ const streamChatCompletions = (
             ],
           };
           sentRole = true;
+          if (content.length > 0) markChatSemanticOutput(usageContext);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        };
+        const emitRefusal = (value: string): void => {
+          const delta = sentRole ? { refusal: value } : { role: "assistant", refusal: value };
+          const chunk: Record<string, unknown> = {
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [{ index: 0, delta, finish_reason: null }],
+          };
+          sentRole = true;
+          if (value.length > 0) markChatSemanticOutput(usageContext);
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
         };
         const emitToolCall = (
@@ -6048,13 +6294,18 @@ const streamChatCompletions = (
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
         };
         const queueFinalOutput = (event: Record<string, unknown>, output: unknown): void => {
-          const textSuffix = reconcileResponseOutputText(outputText, output);
-          if (textSuffix) {
-            outputText += textSuffix;
-            queuedDeltas.push({ kind: "content", content: textSuffix });
+          const completed = reconcileChatResponseOutputContent(outputTextParts, refusalParts, event, output);
+          if (completed.outputText) {
+            outputText += completed.outputText;
+            queuedDeltas.push({ kind: "content", content: completed.outputText });
+          }
+          if (completed.refusal) {
+            refusal += completed.refusal;
+            queuedDeltas.push({ kind: "refusal", refusal: completed.refusal });
           }
           const beforeCount = functionCalls.calls.length;
           const reconciled = functionCalls.reconcileOutput(event, output);
+          if (reconciled.length > 0) markFinalizedChatToolOutput(usageContext, functionCalls);
           for (const result of reconciled) {
             const includeIdentity = result.call.index >= beforeCount;
             if (includeIdentity || result.suffix) {
@@ -6070,6 +6321,7 @@ const streamChatCompletions = (
         const queued = queuedDeltas.shift();
         if (queued) {
           if (queued.kind === "content") emitContent(queued.content);
+          else if (queued.kind === "refusal") emitRefusal(queued.refusal);
           else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
           return;
         }
@@ -6082,6 +6334,10 @@ const streamChatCompletions = (
             });
           }
           const event = next.value;
+          if (!observedEvents.has(event)) {
+            observedEvents.add(event);
+            recordResponsesEventTelemetry(usageContext, event);
+          }
           const ev = event.value;
           const type = event.type;
           if (type === "response.created" && isRecord(ev.response)) {
@@ -6121,6 +6377,48 @@ const streamChatCompletions = (
             continue;
           }
 
+          if (type === "response.refusal.delta") {
+            const delta = getString(ev.delta);
+            if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
+            const key = chatOutputTextPartKey(ev);
+            refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
+            refusal += delta;
+            emitRefusal(delta);
+            return;
+          }
+
+          if (type === "response.refusal.done") {
+            const completedRefusal = getString(ev.refusal);
+            if (completedRefusal === null) {
+              return malformedFunctionCallStream("Upstream completed refusal is not a string.");
+            }
+            const key = chatOutputTextPartKey(ev);
+            const partRefusal = refusalParts.get(key) ?? "";
+            const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
+            refusalParts.set(key, `${partRefusal}${suffix}`);
+            if (suffix) {
+              refusal += suffix;
+              emitRefusal(suffix);
+              return;
+            }
+            continue;
+          }
+
+          if (type === "response.content_part.done") {
+            const reconciled = reconcileChatContentPart(outputTextParts, refusalParts, ev, ev.part);
+            if (reconciled.outputText) {
+              outputText += reconciled.outputText;
+              emitContent(reconciled.outputText);
+              return;
+            }
+            if (reconciled.refusal) {
+              refusal += reconciled.refusal;
+              emitRefusal(reconciled.refusal);
+              return;
+            }
+            continue;
+          }
+
           if (type === "response.output_item.added") {
             const added = functionCalls.add(ev, ev.item);
             if (added && (added.includeIdentity || added.suffix)) {
@@ -6138,6 +6436,7 @@ const streamChatCompletions = (
 
           if (type === "response.function_call_arguments.done") {
             const { call, suffix } = functionCalls.done(ev);
+            markFinalizedChatToolOutput(usageContext, functionCalls);
             if (suffix) {
               emitToolCall(call, false, suffix);
               return;
@@ -6149,17 +6448,22 @@ const streamChatCompletions = (
             const wasKnown = isRecord(ev.item) && !Array.isArray(ev.item) && functionCalls.has(ev, ev.item);
             const reconciled = functionCalls.reconcileItem(ev, ev.item);
             if (reconciled) {
+              markFinalizedChatToolOutput(usageContext, functionCalls);
               if (!wasKnown || reconciled.suffix) {
                 emitToolCall(reconciled.call, !wasKnown, reconciled.suffix);
                 return;
               }
             } else {
-              const textSuffix = reconcileResponseOutputText(outputText, [ev.item]);
-              if (textSuffix) {
-                outputText += textSuffix;
-                emitContent(textSuffix);
-                return;
-              }
+              const completed = reconcileChatOutputItemContent(outputTextParts, refusalParts, ev, ev.item);
+              outputText += completed.outputText;
+              refusal += completed.refusal;
+              if (completed.outputText) queuedDeltas.push({ kind: "content", content: completed.outputText });
+              if (completed.refusal) queuedDeltas.push({ kind: "refusal", refusal: completed.refusal });
+              const queued = queuedDeltas.shift();
+              if (queued?.kind === "content") emitContent(queued.content);
+              else if (queued?.kind === "refusal") emitRefusal(queued.refusal);
+              else if (queued) emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
+              if (queued) return;
             }
             continue;
           }
@@ -6171,6 +6475,7 @@ const streamChatCompletions = (
               pending = event;
               const queued = queuedDeltas.shift()!;
               if (queued.kind === "content") emitContent(queued.content);
+              else if (queued.kind === "refusal") emitRefusal(queued.refusal);
               else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
               return;
             }
@@ -6181,22 +6486,30 @@ const streamChatCompletions = (
             if (!isRecord(ev.response) || Array.isArray(ev.response)) {
               return malformedFunctionCallStream("Upstream response.completed event is missing its response object.");
             }
+            observedCompletedUsage = extractUsageTokens(ev.response.usage);
             const output = ev.response.output;
             queueFinalOutput(ev, output);
             functionCalls.assertFinalized();
+            const usageTokens = observedCompletedUsage;
+            if (!terminalSettled) {
+              terminalSettled = true;
+              if (!translatedChatOutputObserved(outputText, refusal, functionCalls)) {
+                recordEmptyUpstreamCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(emptyUpstreamCompletionError())}\n\n`));
+                closed = true;
+                controller.close();
+                void iterator.return("Empty Responses completion translated").catch(() => {});
+                return;
+              }
+              await recordSuccessfulChatCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
+            }
             if (queuedDeltas.length) {
               pending = event;
               const queued = queuedDeltas.shift()!;
               if (queued.kind === "content") emitContent(queued.content);
+              else if (queued.kind === "refusal") emitRefusal(queued.refusal);
               else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
               return;
-            }
-            const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-            if (!initialTerminalAlreadyValidated) {
-              onResponseTerminal?.("response.completed");
-              lifecycle.terminal(type, usageTokens);
-              recordStreamTerminalType(usageContext, "response.completed");
-              void recordCompletionUsage(usageContext, usageTokens);
             }
             const chunk: Record<string, unknown> = {
               id,
@@ -6230,12 +6543,11 @@ const streamChatCompletions = (
           }
           if (event.terminal) {
             const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-            if (!initialTerminalAlreadyValidated) {
-              onResponseTerminal?.(type as ResponseStreamTerminalType);
-              lifecycle.terminal(type, usageTokens);
-              recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
-              recordTerminalUsage(usageContext, usageTokens, false);
-            }
+            onResponseTerminal?.(type as ResponseStreamTerminalType);
+            lifecycle.terminal(type, usageTokens);
+            recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
+            recordTerminalUsage(usageContext, usageTokens, false);
+            terminalSettled = true;
             const errorValue = {
               error: {
                 message: `Upstream terminated with ${type}.`,
@@ -6252,13 +6564,22 @@ const streamChatCompletions = (
         }
       } catch (error) {
         if (closed) return;
-        if (!initialTerminalAlreadyValidated) {
-          const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
-          onResponseTerminal?.(terminalType);
-          recordStreamTerminalType(usageContext, terminalType);
-          if (terminalType === "cancelled") lifecycle.cancelled();
-          else lifecycle.ambiguous();
-          void recordErrorUsage(usageContext);
+        if (!terminalSettled) {
+          recordResponsesFailureTelemetry(usageContext, error);
+          if (observedCompletedUsage !== undefined) {
+            onResponseTerminal?.("error");
+            lifecycle.terminal("response.failed", observedCompletedUsage);
+            recordStreamTerminalType(usageContext, "error");
+            recordTerminalUsage(usageContext, observedCompletedUsage, false);
+            terminalSettled = true;
+          } else {
+            const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
+            onResponseTerminal?.(terminalType);
+            recordStreamTerminalType(usageContext, terminalType);
+            if (terminalType === "cancelled") lifecycle.cancelled();
+            else lifecycle.ambiguous();
+            void recordErrorUsage(usageContext);
+          }
         }
         const errorValue = {
           error: {
@@ -6277,7 +6598,8 @@ const streamChatCompletions = (
     async cancel(reason) {
       if (closed) return;
       closed = true;
-      if (!initialTerminalAlreadyValidated) {
+      await settleInitialTerminalOnCancel();
+      if (!terminalSettled) {
         onResponseTerminal?.("cancelled");
         recordStreamTerminalType(usageContext, "cancelled");
         lifecycle.cancelled();
@@ -6311,13 +6633,15 @@ const completeChatCompletions = async (
   let id = `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
   let created = Math.floor(Date.now() / 1000);
   let content = "";
+  let refusal = "";
   const outputTextParts = new Map<string, string>();
+  const refusalParts = new Map<string, string>();
   let usage: Record<string, unknown> | null = null;
   const functionCalls = new ChatFunctionCallAccumulator();
 
   let completed = false;
   let terminalType: ResponseStreamTerminalType | null = null;
-  const initialTerminalAlreadyValidated = source.first.terminal;
+  let observedCompletedUsage: UsageTokens | null | undefined;
   try {
     let pending: ResponsesStreamEvent | undefined = source.first;
     for (;;) {
@@ -6325,19 +6649,16 @@ const completeChatCompletions = async (
       pending = undefined;
       if (next.done) break;
       const event = next.value;
+      recordResponsesEventTelemetry(usageContext, event);
       const ev = event.value;
       const type = event.type;
-      if (event.terminal) {
+      if (event.terminal && type !== "response.completed") {
         terminalType = type as ResponseStreamTerminalType;
         const terminalUsage = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-        if (!initialTerminalAlreadyValidated) {
-          if (type !== "response.completed") onResponseTerminal?.(type as ResponseStreamTerminalType);
-          lifecycle.terminal(type, terminalUsage);
-          recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
-          if (type !== "response.completed") {
-            recordTerminalUsage(usageContext, terminalUsage, false);
-          }
-        }
+        onResponseTerminal?.(type as ResponseStreamTerminalType);
+        lifecycle.terminal(type, terminalUsage);
+        recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
+        recordTerminalUsage(usageContext, terminalUsage, false);
       }
       if (type === "response.created" && isRecord(ev.response)) {
         const upstreamId = getString(ev.response.id);
@@ -6354,6 +6675,7 @@ const completeChatCompletions = async (
         const key = chatOutputTextPartKey(ev);
         outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
         content += delta;
+        if (delta.length > 0) markChatSemanticOutput(usageContext);
         continue;
       }
       if (type === "response.output_text.done") {
@@ -6366,6 +6688,38 @@ const completeChatCompletions = async (
         const suffix = reconcileCompletedOutputText(partText, completedText);
         outputTextParts.set(key, `${partText}${suffix}`);
         content += suffix;
+        if (suffix.length > 0) markChatSemanticOutput(usageContext);
+        continue;
+      }
+      if (type === "response.refusal.delta") {
+        const delta = getString(ev.delta);
+        if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
+        const key = chatOutputTextPartKey(ev);
+        refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
+        refusal += delta;
+        if (delta.length > 0) markChatSemanticOutput(usageContext);
+        continue;
+      }
+      if (type === "response.refusal.done") {
+        const completedRefusal = getString(ev.refusal);
+        if (completedRefusal === null) {
+          return malformedFunctionCallStream("Upstream completed refusal is not a string.");
+        }
+        const key = chatOutputTextPartKey(ev);
+        const partRefusal = refusalParts.get(key) ?? "";
+        const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
+        refusalParts.set(key, `${partRefusal}${suffix}`);
+        refusal += suffix;
+        if (suffix.length > 0) markChatSemanticOutput(usageContext);
+        continue;
+      }
+      if (type === "response.content_part.done") {
+        const reconciled = reconcileChatContentPart(outputTextParts, refusalParts, ev, ev.part);
+        content += reconciled.outputText;
+        refusal += reconciled.refusal;
+        if (reconciled.outputText.length > 0 || reconciled.refusal.length > 0) {
+          markChatSemanticOutput(usageContext);
+        }
         continue;
       }
       if (type === "response.output_item.added") {
@@ -6378,39 +6732,80 @@ const completeChatCompletions = async (
       }
       if (type === "response.function_call_arguments.done") {
         functionCalls.done(ev);
+        markFinalizedChatToolOutput(usageContext, functionCalls);
         continue;
       }
       if (type === "response.output_item.done") {
-        functionCalls.reconcileItem(ev, ev.item);
+        const functionCall = functionCalls.reconcileItem(ev, ev.item);
+        if (functionCall) {
+          markFinalizedChatToolOutput(usageContext, functionCalls);
+        } else {
+          const completed = reconcileChatOutputItemContent(outputTextParts, refusalParts, ev, ev.item);
+          content += completed.outputText;
+          refusal += completed.refusal;
+          if (completed.outputText.length > 0 || completed.refusal.length > 0) {
+            markChatSemanticOutput(usageContext);
+          }
+        }
         continue;
       }
       if (type === "response.output") {
         const output = ev.output ?? (isRecord(ev.response) ? ev.response.output : undefined);
-        content += reconcileResponseOutputText(content, output);
-        functionCalls.reconcileOutput(ev, output);
+        const completed = reconcileChatResponseOutputContent(outputTextParts, refusalParts, ev, output);
+        content += completed.outputText;
+        refusal += completed.refusal;
+        const reconciled = functionCalls.reconcileOutput(ev, output);
+        if (completed.outputText.length > 0 || completed.refusal.length > 0) markChatSemanticOutput(usageContext);
+        if (reconciled.length > 0) markFinalizedChatToolOutput(usageContext, functionCalls);
         continue;
       }
       if (type === "response.completed" && isRecord(ev.response) && !Array.isArray(ev.response)) {
-        content += reconcileResponseOutputText(content, ev.response.output);
+        observedCompletedUsage = extractUsageTokens(ev.response.usage);
+        const completedOutput = reconcileChatResponseOutputContent(
+          outputTextParts,
+          refusalParts,
+          ev,
+          ev.response.output,
+        );
+        content += completedOutput.outputText;
+        refusal += completedOutput.refusal;
         functionCalls.reconcileOutput(ev, ev.response.output);
         functionCalls.assertFinalized();
-        const usageTokens = extractUsageTokens(ev.response.usage);
+        const usageTokens = observedCompletedUsage;
         usage = toChatUsage(usageTokens);
-        completed = true;
-        if (!initialTerminalAlreadyValidated) {
-          onResponseTerminal?.("response.completed");
-          await recordCompletionUsage(usageContext, usageTokens);
+        if (!translatedChatOutputObserved(content, refusal, functionCalls)) {
+          recordEmptyUpstreamCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
+          return streamErrorResponse(
+            502,
+            EMPTY_UPSTREAM_COMPLETION_MESSAGE,
+            "empty_upstream_completion",
+            provider,
+            warnings,
+            "server_error",
+            null,
+          );
         }
+        completed = true;
+        await recordSuccessfulChatCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
         break;
       }
       if (event.terminal) break;
     }
   } catch (error) {
-    terminalType = classifyStreamFailure(error, signal, downstreamSignal);
-    onResponseTerminal?.(terminalType);
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType === "cancelled") lifecycle.cancelled();
-    else lifecycle.ambiguous();
+    recordResponsesFailureTelemetry(usageContext, error);
+    if (observedCompletedUsage !== undefined) {
+      terminalType = "error";
+      onResponseTerminal?.("error");
+      lifecycle.terminal("response.failed", observedCompletedUsage);
+      recordStreamTerminalType(usageContext, "error");
+      recordTerminalUsage(usageContext, observedCompletedUsage, false);
+    } else {
+      terminalType = classifyStreamFailure(error, signal, downstreamSignal);
+      onResponseTerminal?.(terminalType);
+      recordStreamTerminalType(usageContext, terminalType);
+      if (terminalType === "cancelled") lifecycle.cancelled();
+      else lifecycle.ambiguous();
+    }
     completed = false;
   } finally {
     // This path consumes the generator manually (rather than through
@@ -6454,8 +6849,9 @@ const completeChatCompletions = async (
 
   const message: Record<string, unknown> = {
     role: "assistant",
-    content: content || !functionCalls.hasCalls ? content : null,
+    content: content || (!functionCalls.hasCalls && !refusal) ? content : null,
   };
+  if (refusal) message.refusal = refusal;
   if (functionCalls.hasCalls) {
     message.tool_calls = functionCalls.calls.map((call) => ({
       id: call.callId,
@@ -8043,7 +8439,11 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
 
   const stream = parsedStream.value;
   const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.reasoning = reasoningLabel;
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.reasoning = reasoningLabel;
+    usageContext.responseTelemetry.outputTokenAllowance = maxCompletionTokens.value ?? null;
+    usageContext.responseTelemetry.semanticOutputObserved = false;
+  }
   await recordRequestUsage(usageContext, {
     model: modelRaw,
     route: "chat.completions",
@@ -8154,17 +8554,6 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     return streamPreflightFailureResponse(terminalType, routed.provider, [...warnings, ...providerWarnings]);
   }
   recordFirstSseEvent(usageContext);
-  if (preflight.first.terminal) {
-    const terminalType = preflight.first.type as ResponseStreamTerminalType;
-    const terminalUsage = isRecord(preflight.first.value.response)
-      ? extractUsageTokens(preflight.first.value.response.usage)
-      : null;
-    resolveCodexProbe(terminalType);
-    lifecycle.terminal(terminalType, terminalUsage);
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType === "response.completed") void recordCompletionUsage(usageContext, terminalUsage);
-    else recordTerminalUsage(usageContext, terminalUsage, false);
-  }
   const response = stream
     ? streamChatCompletions(
       preflight,

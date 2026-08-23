@@ -884,7 +884,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       const firstSuccessId = `${route}-success-1`;
       globalThis.fetch = () =>
         Promise.resolve(
-          new Response(completedSseEvent(), {
+          new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
             status: 200,
             headers: { "Content-Type": "text/event-stream", "X-Request-Id": firstSuccessId },
           }),
@@ -919,7 +919,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       const recoveredId = `${route}-success-2`;
       globalThis.fetch = () =>
         Promise.resolve(
-          new Response(completedSseEvent(), {
+          new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
             status: 200,
             headers: { "Content-Type": "text/event-stream", "X-Request-Id": recoveredId },
           }),
@@ -954,7 +954,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       const finalRecoveryId = `${route}-success-3`;
       globalThis.fetch = () =>
         Promise.resolve(
-          new Response(completedSseEvent(), {
+          new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
             status: 200,
             headers: { "Content-Type": "text/event-stream", "X-Request-Id": finalRecoveryId },
           }),
@@ -987,7 +987,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
         lastHealthyId = `${malformedId}-recovered`;
         globalThis.fetch = () =>
           Promise.resolve(
-            new Response(completedSseEvent(), {
+            new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
               status: 200,
               headers: { "Content-Type": "text/event-stream", "X-Request-Id": lastHealthyId },
             }),
@@ -1290,6 +1290,7 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       delivery_outcome: "unobserved",
       model: MODEL,
       reasoning: "medium",
+      output_token_allowance: null,
       input_tokens: 1,
       cached_input_tokens: 0,
       cache_write_input_tokens: 1,
@@ -1305,6 +1306,8 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       affinity_outcome: "none",
       provider_request_id: null,
       fallback_reason: null,
+      semantic_output_observed: null,
+      upstream_event_kinds: ["response.completed"],
       attempted_providers: ["chatgpt_codex"],
       removed_provider_trigger_class: null,
       removed_provider_circuit_transition: null,
@@ -1693,7 +1696,13 @@ Deno.test("Chat streaming terminal telemetry reports ordered timings once", asyn
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const logs: unknown[][] = [];
-  globalThis.fetch = () => Promise.resolve(sse());
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(`${semanticSseEvent()}${completedSseEvent()}`, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const response = await handler(streamingRequest(token, "chat"));
