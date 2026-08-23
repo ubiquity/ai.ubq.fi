@@ -118,15 +118,11 @@ type SentinelBackgroundRuntime = Readonly<{
 
 const sentinelBackgroundTaskRegistrar = (): SentinelBackgroundTaskRegistrar | null => {
   const globals = globalThis as unknown as Readonly<{
-    Deno?: SentinelBackgroundRuntime;
     EdgeRuntime?: SentinelBackgroundRuntime;
-    waitUntil?: SentinelBackgroundTaskRegistrar;
   }>;
-  if (typeof globals.Deno?.waitUntil === "function") return globals.Deno.waitUntil.bind(globals.Deno);
   if (typeof globals.EdgeRuntime?.waitUntil === "function") {
     return globals.EdgeRuntime.waitUntil.bind(globals.EdgeRuntime);
   }
-  if (typeof globals.waitUntil === "function") return globals.waitUntil.bind(globals);
   return null;
 };
 
