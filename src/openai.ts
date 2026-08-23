@@ -9072,6 +9072,14 @@ const IMAGE_MODERATION_LEVELS = new Set(["low", "auto"]);
 const IMAGE_INPUT_FIDELITIES = new Set(["low", "high"]);
 const IMAGE_TEXT_ENCODER = new TextEncoder();
 
+// Internal test seam for image translation tests. It avoids requiring the
+// test runner to grant environment access for a deployment-only override.
+let imageBaseModelForTest: string | null = null;
+
+export const setImageBaseModelForTest = (model: string | null): void => {
+  imageBaseModelForTest = model;
+};
+
 const IMAGE_SHARED_REQUEST_KEYS = [
   "model",
   "prompt",
@@ -9120,6 +9128,7 @@ type ImageHandlerOptions = Readonly<{
 
 /** Resolve the text model that hosts the image tool. */
 export const resolveImageBaseModel = async (): Promise<string | null> => {
+  if (imageBaseModelForTest !== null) return imageBaseModelForTest;
   let configured: string | null = null;
   try {
     const raw = Deno.env.get(IMAGE_BASE_MODEL_ENV)?.trim();

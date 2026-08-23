@@ -11,17 +11,16 @@ import {
   createImageFanoutDispatchCoordinator,
   extractImagesFromResponses,
   handleImages,
+  setImageBaseModelForTest,
 } from "../src/openai.ts";
 
 /** Pin the tool host so the suite never depends on ambient deployment config. */
 const withBaseModel = async (model: string, run: () => Promise<void>): Promise<void> => {
-  const previous = Deno.env.get("IMAGE_BASE_MODEL");
-  Deno.env.set("IMAGE_BASE_MODEL", model);
+  setImageBaseModelForTest(model);
   try {
     await run();
   } finally {
-    if (previous === undefined) Deno.env.delete("IMAGE_BASE_MODEL");
-    else Deno.env.set("IMAGE_BASE_MODEL", previous);
+    setImageBaseModelForTest(null);
   }
 };
 
