@@ -6078,6 +6078,21 @@ const streamChatCompletions = (
               recordStreamTerminalType(usageContext, "response.completed");
               void recordCompletionUsage(usageContext, usageTokens);
             }
+            const hasRefusal = responseHasRefusal(output);
+            if (!outputText && !functionCalls.hasCalls && !hasRefusal) {
+              const errorValue = {
+                error: {
+                  message: "Upstream response completed with no translated semantic output.",
+                  type: "server_error",
+                  code: "empty_upstream_completion",
+                },
+              };
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorValue)}\n\n`));
+              closed = true;
+              controller.close();
+              void iterator.return("Responses terminal event translated").catch(() => {});
+              return;
+            }
             const chunk: Record<string, unknown> = {
               id,
               object: "chat.completion.chunk",
@@ -6280,6 +6295,17 @@ const completeChatCompletions = async (
         if (!initialTerminalAlreadyValidated) {
           onResponseTerminal?.("response.completed");
           await recordCompletionUsage(usageContext, usageTokens);
+        }
+        const hasRefusal = responseHasRefusal(ev.response.output);
+        if (!content && !functionCalls.hasCalls && !hasRefusal) {
+          return streamErrorResponse(
+            502,
+            "Upstream response completed with no translated semantic output.",
+            "empty_upstream_completion",
+            provider,
+            warnings,
+            "server_error",
+          );
         }
         break;
       }

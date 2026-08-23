@@ -4619,7 +4619,12 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 id: `resp_${suffix}`,
                 status: terminalCase.terminalState,
                 model: DEFAULT_TEST_MODEL,
-                output: [],
+                output: [{
+                  id: `msg_${suffix}`,
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "term content" }],
+                }],
                 usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
               },
             };
@@ -5968,7 +5973,12 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                       id: `resp-buffered-chat-${terminalType}`,
                       status: terminalType === "response.completed" ? "completed" : "incomplete",
                       model: DEFAULT_TEST_MODEL,
-                      output: [],
+                      output: [{
+                        id: "msg_preflight",
+                        type: "message",
+                        role: "assistant",
+                        content: [{ type: "output_text", text: "preflight content" }],
+                      }],
                       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
                     },
                   })
@@ -7524,6 +7534,53 @@ Deno.test("openai: streamed Chat preserves final-only text alongside function ca
   assert.match(text, /data: \[DONE\]/);
 });
 
+Deno.test("openai: contentless completed stream returns explicit empty_upstream_completion error", async () => {
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ]),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            stream: true,
+            messages: [{ role: "user", content: "hello" }],
+          }),
+        }),
+      ),
+  );
+  const text = await response.text();
+  assert.match(text, /"empty_upstream_completion"/);
+  assert.doesNotMatch(text, /data: \[DONE\]/);
+});
+
+Deno.test("openai: contentless completed buffered chat returns explicit 502 empty_upstream_completion", async () => {
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ]),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{ role: "user", content: "hello" }],
+          }),
+        }),
+      ),
+  );
+  assert.equal(response.status, 502);
+  const payload = await response.json() as { error?: { code?: string } };
+  assert.equal(payload.error?.code, "empty_upstream_completion");
+});
+
 Deno.test("openai: Chat recovers completed output text without duplicating streamed deltas", async (t) => {
   const completedText = '{"subjects":[{"title":"Recovered"}]}';
   const finalOutput = [{
@@ -7761,7 +7818,14 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
     sseResponse([
       `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_cache", created_at: 1 } })}\n\n`,
       `data: ${
-        JSON.stringify({ type: "response.completed", response: { model: DEFAULT_TEST_MODEL, output: [], usage } })
+        JSON.stringify({
+          type: "response.completed",
+          response: {
+            model: DEFAULT_TEST_MODEL,
+            output: [{ id: "msg_cache", type: "message", role: "assistant", content: [{ type: "output_text", text: "cached content" }] }],
+            usage,
+          },
+        })
       }\n\n`,
     ]);
 
@@ -7800,7 +7864,11 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
         `data: ${
           JSON.stringify({
             type: "response.completed",
-            response: { model: DEFAULT_TEST_MODEL, output: [], usage: analyticsUsage },
+            response: {
+              model: DEFAULT_TEST_MODEL,
+              output: [{ id: "msg_cache2", type: "message", role: "assistant", content: [{ type: "output_text", text: "analytics content" }] }],
+              usage: analyticsUsage,
+            },
           })
         }\n\n`,
       ]);
