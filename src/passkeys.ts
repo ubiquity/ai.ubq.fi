@@ -184,6 +184,7 @@ const readPasskeyJson = async (
   if (options.allowEmpty && !req.body) return {};
   const result = await readJsonBodyWithLimit(req, PASSKEY_MAX_REQUEST_BODY_BYTES);
   if (!result.ok) {
+    if (options.allowEmpty && result.kind === "empty") return {};
     return result.kind === "too_large"
       ? openaiError(413, "Passkey request body is too large", "invalid_request_error")
       : openaiError(400, "Invalid JSON body", "invalid_request_error");

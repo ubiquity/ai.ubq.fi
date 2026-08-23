@@ -3338,6 +3338,234 @@ Deno.test("openai: reasoning progress releases streaming headers before semantic
   }
 });
 
+Deno.test("openai: paid-provider reasoning progress releases only streaming requests", async (t) => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const deadlineMs = 150;
+
+  try {
+    setStreamFirstEventDeadlineMsForTest(deadlineMs);
+    for (const provider of ["surplus", "metered"] as const) {
+      resetMeteredModelsCacheForTest();
+      resetSurplusModelsCacheForTest();
+      if (provider === "surplus") {
+        Deno.env.delete("METERED_API_KEY");
+        Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+        await fetchSurplusModels({
+          apiKey: "surplus-test-key",
+          force: true,
+          fetcher: () =>
+            Promise.resolve(Response.json({
+              data: [{
+                id: DEFAULT_TEST_MODEL,
+                pricing: { prompt: 0.000001, completion: 0.000003 },
+              }],
+            })),
+        });
+      } else {
+        Deno.env.set("METERED_API_KEY", "metered-test-key");
+        Deno.env.delete("SURPLUS_API_KEY");
+        await fetchMeteredModels({
+          force: true,
+          fetcher: () =>
+            Promise.resolve(Response.json({
+              data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai", "openai-response"] }],
+            })),
+        });
+      }
+
+      for (const route of ["responses", "chat"] as const) {
+        for (const stream of [true, false]) {
+          const delivery = stream ? "streaming" : "buffered";
+          await t.step(`${provider} ${route} ${delivery}`, async () => {
+            const keyId = `reasoning-progress-${provider}-${route}-${delivery}`;
+            const requestId = `request-${keyId}`;
+            seedPaidFallbackKey(keyId);
+            const reasoningObserved = Promise.withResolvers<void>();
+            const semanticGate = Promise.withResolvers<void>();
+            let stopped = false;
+            let semanticEmitted = false;
+            let upstreamCancellations = 0;
+            const originalTimeout = AbortSignal.timeout;
+            const bufferedDeadline = stream ? null : new AbortController();
+            if (bufferedDeadline) {
+              (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = () =>
+                bufferedDeadline.signal;
+            }
+
+            const upstreamResponse = (): Response =>
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    const enqueue = (value: Record<string, unknown>): void => {
+                      if (!stopped) {
+                        controller.enqueue(TEXT_ENCODER.encode(`data: ${JSON.stringify(value)}\n\n`));
+                      }
+                    };
+                    const responseId = `resp_${provider}_${route}_${delivery}`;
+                    enqueue({
+                      type: "response.created",
+                      response: { id: responseId, object: "response", status: "in_progress", output: [] },
+                    });
+                    enqueue({
+                      type: "response.reasoning_summary_text.delta",
+                      response_id: responseId,
+                      item_id: `reasoning_${responseId}`,
+                      output_index: 0,
+                      summary_index: 0,
+                      delta: "recognized hidden reasoning progress",
+                    });
+                    reasoningObserved.resolve();
+
+                    void semanticGate.promise.then(() => {
+                      if (stopped) return;
+                      semanticEmitted = true;
+                      enqueue({
+                        type: "response.output_text.delta",
+                        response_id: responseId,
+                        item_id: `message_${responseId}`,
+                        output_index: 0,
+                        content_index: 0,
+                        delta: "paid progress complete",
+                      });
+                      enqueue({
+                        type: "response.completed",
+                        response: {
+                          id: responseId,
+                          object: "response",
+                          status: "completed",
+                          model: DEFAULT_TEST_MODEL,
+                          output: [{
+                            id: `message_${responseId}`,
+                            type: "message",
+                            status: "completed",
+                            role: "assistant",
+                            content: [{ type: "output_text", text: "paid progress complete", annotations: [] }],
+                          }],
+                          usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+                        },
+                      });
+                      stopped = true;
+                      controller.close();
+                    });
+                  },
+                  cancel() {
+                    upstreamCancellations += 1;
+                    stopped = true;
+                    semanticGate.resolve();
+                  },
+                }),
+                {
+                  status: 200,
+                  headers: {
+                    "Content-Type": "text/event-stream",
+                    "X-Api-Request-Id": `provider-${requestId}`,
+                    "X-Oneapi-Request-Id": `provider-${requestId}`,
+                  },
+                },
+              );
+
+            try {
+              await withFetchMock(
+                (url) => {
+                  if (url === "https://chatgpt.com/backend-api/codex/responses") {
+                    return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+                      status: 429,
+                      headers: { "Content-Type": "application/json", "Retry-After": "60" },
+                    });
+                  }
+                  if (
+                    url ===
+                      (provider === "surplus"
+                        ? "https://api.surplusintelligence.ai/v1/responses"
+                        : "https://api.openlux.ai/v1/responses")
+                  ) {
+                    return upstreamResponse();
+                  }
+                  if (url.startsWith("https://api.openlux.ai/api/log/token?")) {
+                    return Response.json({ success: true, data: { items: [] } });
+                  }
+                  throw new Error(`Unexpected ${provider} reasoning-progress request: ${url}`);
+                },
+                async () => {
+                  const usageContext = {
+                    keyId,
+                    kernelRepo: null,
+                    kernelOrg: null,
+                    paidFallbackEnabled: true,
+                    requestId,
+                    startedAtMs: Date.now(),
+                  };
+                  const pending = route === "responses"
+                    ? handleResponses(responsesRequest({ stream }), usageContext)
+                    : handleChatCompletions(
+                      new Request("https://ai.ubq.fi/v1/chat/completions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          model: DEFAULT_TEST_MODEL,
+                          stream,
+                          messages: [{ role: "user", content: "reason before answering" }],
+                        }),
+                      }),
+                      usageContext,
+                    );
+
+                  await reasoningObserved.promise;
+                  assert.equal(semanticEmitted, false);
+                  bufferedDeadline?.abort(new DOMException("buffered inference timed out", "TimeoutError"));
+                  const response = await pending;
+                  assert.equal(response.headers.get("x-uos-upstream"), provider);
+                  assert.notEqual(getResponseTelemetry(response)?.semanticOutputObserved, true);
+
+                  if (stream) {
+                    assert.equal(response.status, 200);
+                    await new Promise((resolve) => setTimeout(resolve, deadlineMs + 50));
+                    assert.equal(semanticEmitted, false);
+                    semanticGate.resolve();
+                    const serialized = await response.text();
+                    assert.match(serialized, /paid progress complete/);
+                    assert.equal(upstreamCancellations, 0);
+                    await waitForPaidFallbackTerminal(keyId, requestId, "completed");
+                  } else {
+                    assert.equal(response.status, 504);
+                    const payload = await response.json() as { error?: { code?: unknown } };
+                    assert.equal(payload.error?.code, "gateway_timeout");
+                    assert.equal(semanticEmitted, false);
+                    await waitForPaidFallbackTerminal(keyId, requestId, "ambiguous");
+                    // Resolve the fixture gate even when a provider wrapper has
+                    // already detached from the timed-out response body.
+                    semanticGate.resolve();
+                  }
+                },
+              );
+            } finally {
+              (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = originalTimeout;
+            }
+
+            for (const encodedKey of [...kvStore.keys()]) {
+              const key = JSON.parse(encodedKey) as unknown[];
+              if (key.includes(keyId)) kvStore.delete(encodedKey);
+            }
+            resetProviderHealthThrottleForTest();
+          });
+        }
+      }
+    }
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    kvStore.delete(keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY));
+    resetCodexAccountRoutingForTest();
+    resetProviderHealthThrottleForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
 Deno.test("openai: cancelling a reasoning-released Codex stream stays cancelled and unpaid", async (t) => {
   const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");

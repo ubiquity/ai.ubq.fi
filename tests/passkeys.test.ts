@@ -904,6 +904,47 @@ Deno.test("passkey login start without username remains discoverable", async () 
   assert.equal(body.publicKey.userVerification, "preferred");
 });
 
+Deno.test("passkey login start accepts an explicit zero-byte body only on the allow-empty route", async () => {
+  kvStore.clear();
+  const emptyBody = (): ReadableStream<Uint8Array> =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    });
+
+  const loginStart = await handlePasskeyLoginStart(
+    new Request("https://ai.ubq.fi/api/auth/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: emptyBody(),
+    }),
+  );
+  assert.equal(loginStart.status, 200);
+  const loginBody = await loginStart.json();
+  assert.equal(loginBody.publicKey.allowCredentials, undefined);
+  assert.equal(loginBody.publicKey.userVerification, "preferred");
+
+  for (
+    const [name, url, handler] of [
+      ["register start", "https://ai.ubq.fi/api/auth/register/start", handlePasskeyRegisterStart],
+      ["register finish", "https://ai.ubq.fi/api/auth/register/finish", handlePasskeyRegisterFinish],
+      ["login finish", "https://ai.ubq.fi/api/auth/login/finish", handlePasskeyLoginFinish],
+    ] as const
+  ) {
+    const response = await handler(
+      new Request(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: emptyBody(),
+      }),
+    );
+    assert.equal(response.status, 400, name);
+    const payload = await response.json() as { error?: { message?: unknown } };
+    assert.equal(payload.error?.message, "Invalid JSON body", name);
+  }
+});
+
 Deno.test("passkey login finish does not log raw user handles on assertion failure", async () => {
   kvStore.clear();
   const now = Date.now();

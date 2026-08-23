@@ -205,6 +205,8 @@ type UsageContext = Readonly<{
 }>;
 
 type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
+const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
+  provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
 export type InferenceFallbackReason =
   | "primary_429"
   | "primary_quota_blocked";
@@ -1475,7 +1477,7 @@ const fetchAndPreparePrimaryResponses = async (
       {
         usageContext: options.usageContext,
         rejectPresemanticFailureTerminal: options.rejectPresemanticFailureTerminal,
-        releaseOnProgress: options.releaseOnProgress === true && routed.provider === "chatgpt_codex",
+        releaseOnProgress: options.releaseOnProgress === true && supportsReasoningProgressRelease(routed.provider),
       },
     );
   } catch (error) {
@@ -8739,7 +8741,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       }
     })();
     const prepared = await prepareResponsesStreamForCommit(replay, {
-      releaseOnProgress: stream && routed.provider === "chatgpt_codex",
+      releaseOnProgress: stream && supportsReasoningProgressRelease(routed.provider),
     });
     clearStreamFirstEventDeadline();
     const completedTerminalUsage = prepared.terminal?.type === "response.completed" &&

@@ -255,6 +255,30 @@ Deno.test("KV migration validates Kernel quota reservation aggregates", async ()
   assert.doesNotMatch(valid.errors.join("\n"), /kernel quota V2/);
 
   const windowWithAggregate = store.get(keyToString(windowKey)) as Record<string, unknown>;
+  const reservedReservation = store.get(keyToString(reservationKey)) as Record<string, unknown>;
+  store.delete(keyToString(windowKey));
+  const activeReservationWithoutWindow = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(activeReservationWithoutWindow.errors.join("\n"), /kernel quota V2 active reservation has no window/);
+
+  store.set(keyToString(reservationKey), {
+    ...reservedReservation,
+    state: "committed",
+    committed_at_ms: now + 1,
+  });
+  const retainedCommittedReservation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.doesNotMatch(retainedCommittedReservation.errors.join("\n"), /active reservation has no window/);
+
+  store.set(keyToString(reservationKey), {
+    ...reservedReservation,
+    state: "released",
+    released_at_ms: now + 1,
+    release_reason: "request_cancelled",
+  });
+  const retainedReleasedReservation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.doesNotMatch(retainedReleasedReservation.errors.join("\n"), /active reservation has no window/);
+
+  store.set(keyToString(windowKey), windowWithAggregate);
+  store.set(keyToString(reservationKey), reservedReservation);
   const { reserved_requests: _legacyMissingField, ...legacyWindow } = windowWithAggregate;
   store.set(keyToString(windowKey), legacyWindow);
   const compatibleLegacyWindow = await validateKvMigrationTarget(makeKvStub(store));
