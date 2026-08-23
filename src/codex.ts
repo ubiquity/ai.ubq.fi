@@ -2713,6 +2713,13 @@ const fetchPreparedCodexResponses = async (
         noteCodexAuthFailure(error);
         continue;
       }
+      if (
+        error instanceof CodexError &&
+        (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable")
+      ) {
+        await releaseCodexRoutingProbe(routing);
+        continue;
+      }
       if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
         await releaseCodexRoutingProbe(routing);
       }
