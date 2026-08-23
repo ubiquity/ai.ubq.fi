@@ -36,7 +36,7 @@ import {
 } from "../src/sentinel_incident_outbox.ts";
 import { handleAdminSentinelReplayCaptures } from "../src/sentinel_replay_admin.ts";
 import { shouldSignalSentinelProviderDegradation, withTerminalRequestLog } from "../src/handler.ts";
-import { MAX_ACCEPTED_JSON_BODY_BYTES, readJsonBody } from "../src/request.ts";
+import { captureRawBodyOnce, MAX_ACCEPTED_JSON_BODY_BYTES, observeRawBodyOnce, readJsonBody } from "../src/request.ts";
 import { base64UrlDecode, base64UrlEncode } from "../src/utils.ts";
 import {
   fetchEncryptedReplayCaptures,
@@ -170,6 +170,19 @@ Deno.test("request reader and replay capture share the 32 MiB accepted-body limi
   discardSentinelReplayCaptureCandidate(acceptedCandidate);
   assert.equal(acceptedCandidate.body, null);
   assert.deepEqual(new Set(retainedBytes), new Set([0]));
+});
+
+Deno.test("raw body replay capture rejects over-cap input and remains one-shot", () => {
+  const request = new Request("https://ai.ubq.fi/v1/images/edits");
+  let observations = 0;
+  observeRawBodyOnce(request, () => {
+    observations += 1;
+  });
+  const oversized = new Uint8Array(MAX_ACCEPTED_JSON_BODY_BYTES + 1);
+  assert.equal(captureRawBodyOnce(request, oversized), false);
+  assert.equal(captureRawBodyOnce(request, new Uint8Array([1])), false);
+  assert.equal(observations, 0);
+  oversized.fill(0);
 });
 
 Deno.test("sentinel compatibility headers normalize only the replay allowlist", () => {

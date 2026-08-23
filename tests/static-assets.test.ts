@@ -129,6 +129,8 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
       ["/v1/models", "get"],
       ["/v1/chat/completions", "post"],
       ["/v1/responses", "post"],
+      ["/v1/images/generations", "post"],
+      ["/v1/images/edits", "post"],
       ["/uos/models/capabilities", "get"],
     ]
   ) {
@@ -167,6 +169,113 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.ok(document.components.headers.RateLimitPolicy);
   assert.ok(document.components.responses.RateLimited.headers["Retry-After"]);
   assert.ok(document.components.responses.RateLimited.headers.RateLimit);
+
+  const generation = document.paths["/v1/images/generations"].post;
+  const edit = document.paths["/v1/images/edits"].post;
+  assert.equal(generation.operationId, "createImage");
+  assert.equal(edit.operationId, "createImageEdit");
+  assert.deepEqual(Object.keys(generation.requestBody.content), ["application/json"]);
+  assert.deepEqual(
+    Object.keys(edit.requestBody.content).sort(),
+    ["application/json", "multipart/form-data"],
+  );
+  assert.equal(
+    generation.requestBody.content["application/json"].schema.$ref,
+    "#/components/schemas/ImageGenerationRequest",
+  );
+  assert.equal(
+    edit.requestBody.content["application/json"].schema.$ref,
+    "#/components/schemas/ImageEditJsonRequest",
+  );
+  assert.equal(
+    edit.requestBody.content["multipart/form-data"].schema.$ref,
+    "#/components/schemas/ImageEditMultipartRequest",
+  );
+  assert.deepEqual(document.components.schemas.ImageGenerationRequest.required, ["prompt"]);
+  assert.deepEqual(document.components.schemas.ImageEditJsonRequest.required, ["images", "prompt"]);
+  assert.deepEqual(document.components.schemas.ImageEditMultipartRequest.required, ["prompt"]);
+  assert.deepEqual(document.components.schemas.ImageEditMultipartRequest.anyOf, [
+    { required: ["image"] },
+    { required: ["image[]"] },
+  ]);
+  assert.deepEqual(
+    document.components.schemas.ImageEditMultipartRequest.properties["image[]"].oneOf,
+    document.components.schemas.ImageEditMultipartRequest.properties.image.oneOf,
+  );
+  assert.equal(
+    document.components.schemas.ImageEditJsonRequest.properties.images.items.$ref,
+    "#/components/schemas/ImageRef",
+  );
+  assert.equal(
+    document.components.schemas.ImageEditJsonRequest.properties.mask.$ref,
+    "#/components/schemas/ImageMaskRef",
+  );
+  const imageRef = document.components.schemas.ImageRef;
+  assert.deepEqual(imageRef.required, ["image_url"]);
+  assert.equal(imageRef.anyOf, undefined);
+  assert.equal(imageRef.not, undefined);
+  assert.equal(imageRef.additionalProperties, false);
+  assert.equal(imageRef.properties.image_url.format, "uri");
+  assert.equal(imageRef.properties.image_url.minLength, 1);
+  assert.equal(imageRef.properties.image_url.maxLength, 20_971_520);
+  assert.equal(
+    imageRef.properties.image_url.pattern,
+    "^(?:[hH][tT][tT][pP][sS]?://|[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/(?:[pP][nN][gG]|[xX]-[pP][nN][gG]|[jJ][pP](?:[eE][gG]|[gG])|[wW][eE][bB][pP]);[bB][aA][sS][eE]64,)",
+  );
+  assert.equal(imageRef.properties.file_id, undefined);
+  const imageMaskRef = document.components.schemas.ImageMaskRef;
+  assert.deepEqual(imageMaskRef.required, ["image_url"]);
+  assert.equal(imageMaskRef.anyOf, undefined);
+  assert.equal(imageMaskRef.not, undefined);
+  assert.equal(imageMaskRef.additionalProperties, false);
+  assert.equal(imageMaskRef.properties.image_url.maxLength, 20_971_520);
+  assert.equal(
+    imageMaskRef.properties.image_url.pattern,
+    "^[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/[pP][nN][gG];[bB][aA][sS][eE]64,",
+  );
+  assert.equal(imageMaskRef.properties.file_id, undefined);
+  const generationSchema = document.components.schemas.ImageGenerationRequest;
+  const editJsonSchema = document.components.schemas.ImageEditJsonRequest;
+  const editMultipartSchema = document.components.schemas.ImageEditMultipartRequest;
+  assert.deepEqual(generationSchema.properties.n.type, ["integer", "null"]);
+  assert.equal(generationSchema.properties.model.default, "gpt-image-1");
+  assert.equal(editJsonSchema.properties.model.default, "gpt-image-1.5");
+  assert.equal(editMultipartSchema.properties.model.default, "gpt-image-1.5");
+  assert.match(editMultipartSchema.description, /together they must total no more than 50 MiB/);
+  assert.deepEqual(editJsonSchema.properties.input_fidelity.type, [
+    "string",
+    "null",
+  ]);
+  for (const schema of [generationSchema, editJsonSchema, editMultipartSchema]) {
+    assert.equal(schema.additionalProperties, false);
+    assert.equal(schema.properties.prompt.maxLength, 32_000);
+    assert.equal(schema.properties.user.type, "string");
+    assert.match(schema.properties.user.description, /x-uos-warning: user_ignored/);
+    assert.deepEqual(schema.properties.stream.enum, [false, null]);
+    assert.deepEqual(schema.properties.output_compression.type, ["integer", "null"]);
+  }
+  assert.deepEqual(generationSchema.properties.response_format.enum, ["b64_json", null]);
+  assert.equal(generationSchema.properties.style, undefined);
+  assert.deepEqual(
+    generationSchema.properties.quality.enum,
+    ["low", "medium", "high", "auto", null],
+  );
+  assert.deepEqual(editJsonSchema.properties.size.type, ["string", "null"]);
+  assert.equal(editJsonSchema.properties.size.minLength, 1);
+  assert.equal(editJsonSchema.properties.size.enum, undefined);
+  assert.deepEqual(editJsonSchema.properties.quality.enum, ["low", "medium", "high", "auto", null]);
+  assert.deepEqual(
+    editMultipartSchema.properties.quality.enum,
+    ["low", "medium", "high", "auto", null],
+  );
+  assert.equal(editMultipartSchema.properties.moderation, undefined);
+  assert.deepEqual(editMultipartSchema.properties.response_format.enum, ["b64_json", null]);
+  assert.equal(
+    document.components.schemas.ImagesResponse.properties.data.items.$ref,
+    "#/components/schemas/Image",
+  );
+  assert.ok(document.components.schemas.ImagesResponse.properties.output_format);
+  assert.equal(document.components.schemas.Image.properties.output_format, undefined);
 });
 
 Deno.test("agent discovery documents are served with useful media types", async () => {

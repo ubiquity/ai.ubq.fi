@@ -241,6 +241,8 @@ const {
   resetRuntimeConfigCacheForTest,
 } = await import("../src/runtime_config.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../src/metered.ts");
+const { resetSurplusModelsCacheForTest } = await import("../src/surplus.ts");
 const {
   getCodexProviderHealth,
   resetProviderHealthThrottleForTest,
@@ -1138,6 +1140,52 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(usageWindow(policy).committed_requests, 1);
     const kernelWindow = kv.values.get(encodeKey(orgWindowKey)) as { usage_requests?: number } | undefined;
     assert.equal(kernelWindow?.usage_requests, 1);
+
+    let imageFetches = 0;
+    globalThis.fetch = () => {
+      imageFetches += 1;
+      return Promise.resolve(
+        new Response(
+          `data: ${
+            JSON.stringify({
+              type: "response.completed",
+              response: {
+                model: MODEL,
+                created_at: 1787431659,
+                output: [{
+                  type: "image_generation_call",
+                  status: "completed",
+                  result: "SU1BR0U=",
+                }],
+                usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+              },
+            })
+          }\n\n`,
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    };
+    const imageResponse = await handler(
+      new Request("https://ai.ubq.fi/v1/images/generations", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-Ubiquity-Kernel-Token": kernelToken,
+        },
+        body: JSON.stringify({ prompt: "two telemetry regression images", n: 2, user: "kernel-image-user" }),
+      }),
+    );
+    assert.equal(imageResponse.status, 200);
+    assert.deepEqual((await imageResponse.json()).data, [
+      { b64_json: "SU1BR0U=" },
+      { b64_json: "SU1BR0U=" },
+    ]);
+    assert.equal(imageResponse.headers.get("x-uos-warning"), "user_ignored");
+    assert.equal(imageFetches, 2);
+    assert.equal(usageWindow(policy).committed_requests, 2);
+    const kernelWindowAfterImage = kv.values.get(encodeKey(orgWindowKey)) as { usage_requests?: number } | undefined;
+    assert.equal(kernelWindowAfterImage?.usage_requests, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1723,6 +1771,85 @@ Deno.test("first bounded paid fallback response exposes settled spend and consum
     globalThis.fetch = originalFetch;
     if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
     else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+  }
+});
+
+Deno.test("Images preserve Codex quota responses without hidden-model paid fallback", async () => {
+  kv.values.clear();
+  resetProviderHealthThrottleForTest();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
+  const token = `u_${"d".repeat(64)}`;
+  const keyId = "images-no-paid-fallback";
+  await seedPaidFallbackKey(token, keyId);
+
+  const originalFetch = globalThis.fetch;
+  const originalImageBaseModel = Deno.env.get("IMAGE_BASE_MODEL");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  let codexCalls = 0;
+  let meteredCalls = 0;
+  Deno.env.set("IMAGE_BASE_MODEL", MODEL);
+  Deno.env.set("METERED_API_KEY", "metered-image-gate-test-key");
+  Deno.env.delete("SURPLUS_API_KEY");
+  await fetchMeteredModels({
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }],
+      })),
+  });
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    if (request.url === "https://api.openlux.ai/v1/responses") {
+      meteredCalls += 1;
+      return Promise.reject(new Error("Images must not use the hidden text model for paid fallback"));
+    }
+    codexCalls += 1;
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          error: { message: "Primary image capacity exhausted", type: "rate_limit_error" },
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "29" },
+        },
+      ),
+    );
+  };
+  try {
+    const response = await handler(
+      new Request("https://ai.ubq.fi/v1/images/generations", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "a blue square" }),
+      }),
+    );
+    assert.equal(response.status, 429);
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    assert.equal(response.headers.get("Retry-After"), "29");
+    assert.equal((await response.json()).error?.message, "Primary image capacity exhausted");
+    assert.ok(codexCalls > 0);
+    assert.equal(meteredCalls, 0);
+    const requestId = response.headers.get("x-uos-request-id");
+    assert.ok(requestId);
+    assert.equal(kv.values.get(encodeKey(paidFallbackRequestV3Key(keyId, requestId))), undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalImageBaseModel === undefined) Deno.env.delete("IMAGE_BASE_MODEL");
+    else Deno.env.set("IMAGE_BASE_MODEL", originalImageBaseModel);
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
   }
 });
 

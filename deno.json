@@ -29,7 +29,7 @@
     "kv:validate": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net --allow-read=.kv-migration --allow-write=.kv-migration scripts/kv-migrate.ts validate",
     "kv:incident-v2": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net scripts/kv-migrate.ts incident-v2",
     "kv:validate-http": "deno run --allow-env=DENO_DEPLOY_TOKEN,UOS_AI_TOKEN --allow-net scripts/kv-migrate.ts validate-http",
-    "test": "deno test --env --allow-net=127.0.0.1 --allow-env=CEREBRAS_API_KEY,VOYAGEAI_API_KEY,METERED_API_KEY,SURPLUS_API_KEY,GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID --ignore=lib/codex --ignore=tests/failover-stress-http.test.ts --ignore=tests/usage-optimization-measurement.test.ts && deno task test:measurement",
+    "test": "deno test --env --allow-net=127.0.0.1 --allow-env=CEREBRAS_API_KEY,VOYAGEAI_API_KEY,METERED_API_KEY,SURPLUS_API_KEY,IMAGE_BASE_MODEL,GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID --ignore=lib/codex --ignore=tests/failover-stress-http.test.ts --ignore=tests/usage-optimization-measurement.test.ts && deno task test:measurement",
     "test:measurement": "deno test --env --allow-net=127.0.0.1 --allow-env=UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/usage-optimization-measurement.test.ts",
     "test:stress": "deno test --env --unstable-kv --allow-net=127.0.0.1 --allow-env=METERED_API_KEY,SURPLUS_API_KEY tests/failover-stress-http.test.ts",
     "test:e2e": "deno test --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
