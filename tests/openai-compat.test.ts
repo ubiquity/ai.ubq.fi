@@ -3240,6 +3240,8 @@ Deno.test("openai: gateway first-event deadlines return 504 on both streaming ro
 Deno.test("openai: reasoning progress releases streaming headers before semantic output", async (t) => {
   const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const debugKey = keyToString(DEBUG_ROUTING_KEY);
+  const previousDebugRouting = kvStore.get(debugKey);
   const deadlineMs = 300;
   const routeCases = [
     { route: "responses", keyId: "reasoning-progress-responses" },
@@ -3405,11 +3407,82 @@ Deno.test("openai: reasoning progress releases streaming headers before semantic
         assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
       });
     }
+
+    kvStore.set(debugKey, {
+      scenario: "codex_429",
+      expires_at_ms: null,
+      updated_at_ms: Date.now(),
+    });
+    resetDebugRoutingCacheForTest();
+    for (const routeCase of routeCases) {
+      await t.step(`${routeCase.route} keeps Metered alive through hidden reasoning`, async () => {
+        const keyId = `paid-${routeCase.keyId}`;
+        const requestId = `request-${keyId}`;
+        seedPaidFallbackKey(keyId);
+        const observation = { reasoningEmitted: false, semanticEmitted: false };
+        let releaseSemantic: (() => void) | null = null;
+        const response = await withFetchMock(
+          (url) => {
+            if (url !== "https://api.openlux.ai/v1/responses") {
+              throw new Error(`Unexpected provider during Metered reasoning progress: ${url}`);
+            }
+            const upstream = progressingReasoningResponse(`resp_${routeCase.route}_metered_reasoning`, observation);
+            releaseSemantic = upstream.releaseSemantic;
+            return upstream.response;
+          },
+          () => {
+            const usageContext = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: true,
+              requestId,
+              startedAtMs: Date.now(),
+            };
+            return routeCase.route === "responses"
+              ? handleResponses(responsesRequest({ stream: true }), usageContext)
+              : handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    stream: true,
+                    messages: [{ role: "user", content: "work through this carefully" }],
+                  }),
+                }),
+                usageContext,
+              );
+          },
+        );
+
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("x-uos-upstream"), "metered");
+        assert.equal(observation.reasoningEmitted, true);
+        assert.equal(observation.semanticEmitted, false);
+        await new Promise((resolve) => setTimeout(resolve, deadlineMs + 50));
+        assert.equal(observation.semanticEmitted, false);
+        assert.notEqual(releaseSemantic, null);
+        releaseSemantic!();
+        const serialized = await response.text();
+        assert.equal(observation.semanticEmitted, true);
+        assert.match(serialized, /progress complete/);
+        const stored = await waitForPaidFallbackTerminal(keyId, requestId, "completed");
+        assert.equal(stored.provider, "metered");
+        kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+        kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+      });
+    }
   } finally {
     setStreamFirstEventDeadlineMsForTest(null);
+    if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+    else kvStore.set(debugKey, previousDebugRouting);
+    resetDebugRoutingCacheForTest();
     for (const { keyId } of routeCases) {
       kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
       kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", `paid-${keyId}`]));
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-paid-${keyId}`]));
     }
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();

@@ -70,6 +70,9 @@
         "responses": {
           "200": {
             "description": "The OpenAI-compatible list, or the documented Codex-native catalog when client_version is supplied.",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -82,7 +85,10 @@
             }
           },
           "304": {
-            "description": "For a matching If-None-Match request on the Codex-native client_version catalog: no response body; reuse the cached catalog."
+            "description": "For a matching If-None-Match request on the Codex-native client_version catalog: no response body; reuse the cached catalog.",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" }
+            }
           },
           "400": { "$ref": "#/components/responses/InvalidRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -276,6 +282,10 @@
       }
     },
     "headers": {
+      "ETag": {
+        "description": "The entity tag for this model catalog representation. Send it in If-None-Match to revalidate a cached catalog.",
+        "schema": { "type": "string" }
+      },
       "RetryAfter": {
         "description": "When present, seconds to wait before retrying a 429 response.",
         "schema": { "type": "integer", "minimum": 1 }

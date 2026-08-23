@@ -282,8 +282,12 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
 Deno.test("published agent contracts distinguish bodyless catalog revalidation and conditional rate limits", () => {
   const document = JSON.parse(openApiText);
   const developerText = developersHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const modelsOk = document.paths["/v1/models"].get.responses["200"];
   const notModified = document.paths["/v1/models"].get.responses["304"];
 
+  assert.equal(modelsOk.headers.ETag.$ref, "#/components/headers/ETag");
+  assert.equal(notModified.headers.ETag.$ref, "#/components/headers/ETag");
+  assert.match(document.components.headers.ETag.description, /If-None-Match/i);
   assert.equal(notModified.content, undefined);
   assert.match(notModified.description, /no response body; reuse the cached catalog/i);
   assert.match(

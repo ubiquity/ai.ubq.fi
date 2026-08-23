@@ -260,6 +260,10 @@ Deno.test("KV migration validates Kernel quota reservation aggregates", async ()
   const compatibleLegacyWindow = await validateKvMigrationTarget(makeKvStub(store));
   assert.doesNotMatch(compatibleLegacyWindow.errors.join("\n"), /kernel quota V2/);
 
+  store.delete(keyToString(windowKey));
+  const orphanedActiveReservation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(orphanedActiveReservation.errors.join("\n"), /kernel quota V2 active reservation has no window/);
+
   store.set(keyToString(windowKey), windowWithAggregate);
   store.delete(keyToString(reservationKey));
   const missingReservation = await validateKvMigrationTarget(makeKvStub(store));

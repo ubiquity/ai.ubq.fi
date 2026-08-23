@@ -1505,7 +1505,7 @@ const fetchAndPreparePrimaryResponses = async (
       {
         usageContext: options.usageContext,
         rejectPresemanticFailureTerminal: options.rejectPresemanticFailureTerminal,
-        releaseOnProgress: options.releaseOnProgress === true && routed.provider === "chatgpt_codex",
+        releaseOnProgress: options.releaseOnProgress === true,
       },
     );
   } catch (error) {
@@ -8799,7 +8799,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       }
     })();
     const prepared = await prepareResponsesStreamForCommit(replay, {
-      releaseOnProgress: stream && routed.provider === "chatgpt_codex",
+      releaseOnProgress: stream,
     });
     clearStreamFirstEventDeadline();
     const completedTerminalUsage = prepared.terminal?.type === "response.completed" &&

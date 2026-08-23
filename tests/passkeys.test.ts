@@ -904,6 +904,41 @@ Deno.test("passkey login start without username remains discoverable", async () 
   assert.equal(body.publicKey.userVerification, "preferred");
 });
 
+Deno.test("passkey login start accepts a zero-byte body stream but login finish rejects it", async () => {
+  const zeroByteBody = () =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    });
+
+  kvStore.clear();
+  const startResponse = await handlePasskeyLoginStart(
+    new Request("https://ai.ubq.fi/api/auth/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: zeroByteBody(),
+    }),
+  );
+
+  assert.equal(startResponse.status, 200);
+  const startBody = await startResponse.json();
+  assert.equal(startBody.publicKey.allowCredentials, undefined);
+  assert.equal(startBody.publicKey.userVerification, "preferred");
+
+  const finishResponse = await handlePasskeyLoginFinish(
+    new Request("https://ai.ubq.fi/api/auth/login/finish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: zeroByteBody(),
+    }),
+  );
+
+  assert.equal(finishResponse.status, 400);
+  const finishBody = await finishResponse.json();
+  assert.equal(finishBody.error.message, "Invalid JSON body");
+});
+
 Deno.test("passkey login finish does not log raw user handles on assertion failure", async () => {
   kvStore.clear();
   const now = Date.now();
