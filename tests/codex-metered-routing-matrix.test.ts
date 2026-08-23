@@ -182,8 +182,6 @@ const encoder = new TextEncoder();
 const isFallbackOutcome = (outcome: Outcome): boolean =>
   outcome.kind === "http" && ACCOUNT_FALLBACK_STATUSES.has(outcome.status);
 
-const isTransportOutcome = (outcome: Outcome): boolean => outcome.kind === "timeout" || outcome.kind === "network";
-
 const is401 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 401;
 const is429 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 429;
 
@@ -424,17 +422,13 @@ const runCase = async (
       },
     );
 
-    const reachesSecond = isFallbackOutcome(first) || isTransportOutcome(first);
-    // Codex may try its sibling account after 401/403/429 or a transient
-    // transport failure. Paid fallback still requires an authoritative 429
-    // from the whole attempted cohort. Any transport ambiguity wins over
-    // otherwise fallback-eligible responses and must fail closed.
-    const terminalCodexOutcome = isTransportOutcome(first) && isFallbackOutcome(second)
-      ? first
-      : reachesSecond
-      ? second
-      : first;
-    const selectsMetered = isFallbackOutcome(first) && isFallbackOutcome(second) &&
+    const reachesSecond = isFallbackOutcome(first);
+    // Codex may try its sibling account only after authoritative 401/403/429
+    // responses. A transport failure is an ambiguous POST and must never be
+    // replayed. Paid fallback still requires an authoritative 429 from the
+    // reached account cohort.
+    const terminalCodexOutcome = reachesSecond ? second : first;
+    const selectsMetered = reachesSecond && isFallbackOutcome(second) &&
       (is429(first) || is429(second));
     const expectedStatus = selectsMetered
       ? 200

@@ -3785,7 +3785,7 @@ Deno.test("openai: transient Codex stalls never advance to paid fallback", async
     });
     setStreamFirstEventDeadlineMsForTest(160);
 
-    await t.step("no response headers returns Codex timeout and the next request retries Codex", async () => {
+    await t.step("no response headers fences only the ambiguous caller while other agents continue", async () => {
       const keyId = keyIds[0]!;
       const firstRequestId = `request-${keyId}`;
       seedPaidFallbackKey(keyId);
@@ -3835,9 +3835,25 @@ Deno.test("openai: transient Codex stalls never advance to paid fallback", async
             requestId: `${firstRequestId}-next`,
             startedAtMs: Date.now(),
           });
-          assert.equal(second.status, 200);
-          assert.equal(second.headers.get("x-uos-upstream"), "chatgpt_codex");
-          await second.text();
+          assert.equal(second.status, 503);
+          assert.equal(second.headers.get("Retry-After"), "1");
+          assert.equal(
+            (await second.json() as { error?: { code?: unknown } }).error?.code,
+            CODEX_ADMISSION_BUSY_ERROR_CODE,
+          );
+
+          const otherAgent = await handleResponses(responsesRequest(), {
+            keyId,
+            idempotencyPrincipal: "other-agent-after-ambiguous-timeout",
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId: `${firstRequestId}-other-agent`,
+            startedAtMs: Date.now(),
+          });
+          assert.equal(otherAgent.status, 200);
+          assert.equal(otherAgent.headers.get("x-uos-upstream"), "chatgpt_codex");
+          await otherAgent.text();
         },
       );
       assert.equal(codexCalls, 2);
