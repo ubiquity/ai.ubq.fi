@@ -80,7 +80,7 @@ Deno.test("EdgeRuntime replay registration returns failure responses before defe
     assert.equal(response.status, 502);
     await persistenceStarted.promise;
     assert.equal(registeredTasks.length, 1);
-    const snapshot = persistedSnapshot;
+    const snapshot = persistedSnapshot as ReplayInput | null;
     if (snapshot === null) throw new Error("replay persistence did not receive a snapshot");
     assert.notEqual(snapshot.body, capture.body);
     assert.deepEqual([...snapshot.body], originalBytes);
