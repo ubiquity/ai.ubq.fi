@@ -207,8 +207,7 @@ type UsageContext = Readonly<{
 type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
 export type InferenceFallbackReason =
   | "primary_429"
-  | "primary_quota_blocked"
-  | "primary_model_unsupported";
+  | "primary_quota_blocked";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 export type AffinityOutcome = "none" | "preferred" | "failover" | "shadow_only";
@@ -711,6 +710,7 @@ const recordResponsesFailureTelemetry = (
   telemetry.failureKind = details?.failureKind ?? failureKindFromError(error);
   if (details) {
     telemetry.responseCreatedObserved = details.responseCreatedObserved;
+    telemetry.semanticOutputObserved = details.semanticCommitmentObserved;
     telemetry.syntheticTerminalType = details.syntheticTerminalType;
   }
 };
@@ -1171,6 +1171,7 @@ const prepareResponsesAttempt = async (
     requireEligibleModel?: boolean;
     rejectFailedTerminal?: boolean;
     rejectPresemanticFailureTerminal?: boolean;
+    releaseOnProgress?: boolean;
   }> = {},
 ): Promise<ResponsesAttemptResult> => {
   const fail = (
@@ -1208,6 +1209,7 @@ const prepareResponsesAttempt = async (
   try {
     const prepared = await prepareResponsesStreamForCommit(iterator, {
       onEvent: (event) => recordResponsesEventTelemetry(options.usageContext, event),
+      releaseOnProgress: options.releaseOnProgress,
     });
     preparedStream = prepared;
     if (prepared.terminal?.type === "response.completed" && prepared.semantic === null) {
@@ -1378,6 +1380,7 @@ const fetchAndPreparePrimaryResponses = async (
     fallbackSignal?: AbortSignal;
     createFallbackDeadline?: () => StreamDeadline;
     rejectPresemanticFailureTerminal?: boolean;
+    releaseOnProgress?: boolean;
   }>,
 ): Promise<{ kind: "ready"; value: ResponsesRouteAttempt } | { kind: "failed"; value: ResponsesRouteFailure }> => {
   const deadline = options.attemptDeadline;
@@ -1472,6 +1475,7 @@ const fetchAndPreparePrimaryResponses = async (
       {
         usageContext: options.usageContext,
         rejectPresemanticFailureTerminal: options.rejectPresemanticFailureTerminal,
+        releaseOnProgress: options.releaseOnProgress === true && routed.provider === "chatgpt_codex",
       },
     );
   } catch (error) {
@@ -1545,7 +1549,11 @@ const fetchAndPrepareRemovedProviderResponses = async (
     deadline,
     options.requestSignal,
     [],
-    { usageContext: options.usageContext, requireEligibleModel: true, rejectFailedTerminal: true },
+    {
+      usageContext: options.usageContext,
+      requireEligibleModel: true,
+      rejectFailedTerminal: true,
+    },
   );
 };
 
@@ -2179,32 +2187,6 @@ const canAttemptPaidFallback = (context: UsageContext | undefined): boolean =>
   Boolean(context?.keyId && context.requestId && context.startedAtMs !== undefined) &&
   (Boolean(readSurplusApiKey()) || Boolean(readMeteredApiKey()));
 
-const isCodexModelUnsupportedResponse = async (response: Response, signal?: AbortSignal): Promise<boolean> => {
-  if (response.status !== 400) return false;
-  let clone: Response;
-  try {
-    clone = response.clone();
-  } catch {
-    return false;
-  }
-  const { bytes, complete } = await readBoundedResponseBody(clone, {
-    signal,
-    cancellationReason: "Codex model-support error body captured",
-  });
-  if (!complete) return false;
-  let payload: unknown;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-  } catch {
-    return false;
-  }
-  if (!isRecord(payload)) return false;
-  const error = isRecord(payload.error) ? payload.error : payload;
-  const message = getString(error.message)?.trim().toLowerCase() ?? "";
-  return message.includes("model") && message.includes("not supported") && message.includes("codex") &&
-    message.includes("chatgpt account");
-};
-
 const bestEffortPaidFallbackBookkeeping = async (
   operation: string,
   run: () => Promise<unknown>,
@@ -2613,21 +2595,11 @@ const fetchResponsesWithPaidFallback = async (
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  // Authentication and authorization failures are not capacity evidence.
-  // Fail closed instead of converting bad Codex credentials into paid spend.
-  const modelUnsupported = await isCodexModelUnsupportedResponse(primary, options.signal);
-  const fallbackReason: InferenceFallbackReason | null = modelUnsupported
-    ? "primary_model_unsupported"
-    : primaryStatus === 429
+  // Only Codex 429 quota or capacity responses can admit paid fallback.
+  // Compatibility, authentication, and authorization failures fail closed.
+  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 429
     ? routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ? "primary_quota_blocked" : "primary_429"
     : null;
-  const toolCallingUnavailableResponse = (): Response =>
-    openaiError(
-      400,
-      `Model '${options.model}' does not support tool calling through the configured providers.`,
-      "model_tool_calling_unsupported",
-      { headers: { "x-uos-upstream": "chatgpt_codex" } },
-    );
   if (telemetry) telemetry.fallbackReason = fallbackReason;
   if (
     !fallbackReason ||
@@ -2636,16 +2608,6 @@ const fetchResponsesWithPaidFallback = async (
     !requestId ||
     createdAtMs === undefined
   ) {
-    if (modelUnsupported && requestUsesTools) {
-      cancelResponseBody(primary);
-      return {
-        response: toolCallingUnavailableResponse(),
-        provider: "chatgpt_codex",
-        paidFallback: null,
-        gatewayResponse: true,
-        fallbackReason,
-      };
-    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2677,16 +2639,6 @@ const fetchResponsesWithPaidFallback = async (
   }
   if (paidProviders.length) refreshStalePaidCatalogsInBackground();
   if (!paidProviders.length) {
-    if (modelUnsupported && requestUsesTools) {
-      cancelResponseBody(primary);
-      return {
-        response: toolCallingUnavailableResponse(),
-        provider: "chatgpt_codex",
-        paidFallback: null,
-        gatewayResponse: true,
-        fallbackReason,
-      };
-    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -8786,7 +8738,9 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
         await firstEvent.iterator.return("Chat semantic preflight closed").catch(() => {});
       }
     })();
-    const prepared = await prepareResponsesStreamForCommit(replay);
+    const prepared = await prepareResponsesStreamForCommit(replay, {
+      releaseOnProgress: stream && routed.provider === "chatgpt_codex",
+    });
     clearStreamFirstEventDeadline();
     const completedTerminalUsage = prepared.terminal?.type === "response.completed" &&
         isRecord(prepared.terminal.value.response)
@@ -9216,6 +9170,7 @@ const handleResponsesInternal = async (
               )
             : undefined,
           rejectPresemanticFailureTerminal: apiKey !== null,
+          releaseOnProgress: clientWantsStream,
         });
         if (result.kind === "ready") {
           primaryResult = result.value;
@@ -9247,6 +9202,9 @@ const handleResponsesInternal = async (
           const failureKind = failureKindForResponsesAttemptTrigger(failed.trigger);
           if (failureKind && usageContext?.responseTelemetry) {
             usageContext.responseTelemetry.failureKind = failureKind;
+            if (failureKind === "empty_upstream_completion") {
+              usageContext.responseTelemetry.semanticOutputObserved = false;
+            }
           }
           if (failed.trigger === "empty_upstream_completion") {
             const terminalUsage = failed.terminal && isRecord(failed.terminal.value.response)
@@ -9325,6 +9283,7 @@ const handleResponsesInternal = async (
         if (removedProvider.attempt.trigger === "empty_upstream_completion") {
           if (usageContext?.responseTelemetry) {
             usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+            usageContext.responseTelemetry.semanticOutputObserved = false;
           }
           const terminalUsage = removedProvider.attempt.terminal &&
               isRecord(removedProvider.attempt.terminal.value.response)
@@ -9370,6 +9329,7 @@ const handleResponsesInternal = async (
               Math.ceil(preHeaderDeadline.remainingMs()),
             ),
             rejectPresemanticFailureTerminal: true,
+            releaseOnProgress: clientWantsStream,
           });
         } catch (error) {
           const transition = recoveryProbe ? await releaseGlobalRemovedProviderProbe(recoveryProbe) : "none";
@@ -9391,6 +9351,7 @@ const handleResponsesInternal = async (
           if (recovery.value.failed.trigger === "empty_upstream_completion") {
             if (usageContext?.responseTelemetry) {
               usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+              usageContext.responseTelemetry.semanticOutputObserved = false;
             }
             const terminalUsage = recovery.value.failed.terminal &&
                 isRecord(recovery.value.failed.terminal.value.response)
@@ -9659,6 +9620,12 @@ const handleResponsesInternal = async (
       else if (usageContext?.responseTelemetry) {
         usageContext.responseTelemetry.responseCreatedObserved = details?.responseCreatedObserved ??
           usageContext.responseTelemetry.responseCreatedObserved;
+      }
+      if (details?.failureKind === "empty_upstream_completion") {
+        const terminalUsage = details.upstreamTerminal && isRecord(details.upstreamTerminal.value.response)
+          ? extractUsageTokens(details.upstreamTerminal.value.response.usage)
+          : null;
+        recordTerminalUsage(usageContext, terminalUsage, false);
       }
       reconcileCommittedFailure(terminalType);
     },
