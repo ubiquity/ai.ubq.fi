@@ -2898,7 +2898,12 @@ export const fetchCodexResponses = async (
 };
 
 export const fetchCodexModels = async (
-  options: Readonly<{ clientVersion?: string | null; ifNoneMatch?: string | null; signal?: AbortSignal }> = {},
+  options: Readonly<{
+    clientVersion?: string | null;
+    ifNoneMatch?: string | null;
+    signal?: AbortSignal;
+    onProviderTransportFailure?: () => void;
+  }> = {},
 ): Promise<Response> => {
   const poolEntry = await getAuthPoolEntry();
   const accountEntries = randomizedAuthEntries(poolEntry);
@@ -2929,6 +2934,16 @@ export const fetchCodexModels = async (
           await recordCodexResponseHealth(auth.account_id, res, auth, "reachable");
         }
       } catch (error) {
+        if (
+          error instanceof CodexError &&
+          (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable")
+        ) {
+          try {
+            options.onProviderTransportFailure?.();
+          } catch (callbackError) {
+            console.error("[ai.ubq.fi] Codex models transport failure callback failed:", callbackError);
+          }
+        }
         await recordCodexThrownHealth(accountEntry.auth.account_id, error);
         if (hasFallbackAccount) continue;
         throw error;

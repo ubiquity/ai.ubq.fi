@@ -81,6 +81,7 @@ const {
   resetCodexCatalogMemoForTest,
   storeCodexCatalog,
 } = await import("../src/codex_catalog.ts");
+const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const { handleModels } = await import("../src/openai.ts");
 const {
   fetchMeteredModels,
@@ -107,6 +108,7 @@ const CATALOG_KEY = (version: string): Deno.KvKey => ["ubq_ai", "codex_catalog",
 const seedBaseState = (snapshotVersion = "0.200.0"): void => {
   kvStore.clear();
   beforeAtomicCommit = null;
+  resetCodexAuthCacheForTest();
   resetCodexCatalogMemoForTest();
   resetRuntimeConfigCacheForTest();
   kvStore.set(keyToString(CODEX_CATALOG_AUTH_GENERATION_KEY), {
@@ -239,25 +241,146 @@ Deno.test("codex catalog: malformed versions are rejected before upstream access
 Deno.test("codex catalog: stale catalogs survive refresh failures but expired catalogs do not", async () => {
   seedBaseState();
   const version = "0.150.0";
+  const observedAtMs = Date.now();
   await storeCodexCatalog(kvStub, {
     clientVersion: version,
     authGeneration: AUTH_GENERATION,
     body: catalogBody(version),
     etag: '"stale"',
-    fetchedAtMs: Date.now() - CODEX_CATALOG_FRESH_MS - 1,
+    fetchedAtMs: observedAtMs - CODEX_CATALOG_FRESH_MS - 1,
   });
   const originalFetch = globalThis.fetch;
+  const degradationSignals: number[] = [];
+  const dependencies = {
+    now: () => observedAtMs,
+    recordSentinelDegradation: (timestamp: number) => {
+      degradationSignals.push(timestamp);
+      return Promise.reject(new Error("sentinel unavailable"));
+    },
+  };
   globalThis.fetch = () => Promise.resolve(new Response("temporary failure", { status: 503 }));
   try {
-    const stale = await handleCodexCatalogModels(request(version), version);
+    const stale = await handleCodexCatalogModels(request(version), version, dependencies);
     assert.equal(stale.status, 200);
     assert.equal(stale.headers.get("x-uos-cache"), "stale");
     assert.equal((await stale.json() as { models: Array<{ slug: string }> }).models[0].slug, `gpt-${version}`);
+    assert.deepEqual(degradationSignals, [observedAtMs]);
 
     const metadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as { fetched_at_ms: number };
-    metadata.fetched_at_ms = Date.now() - CODEX_CATALOG_RETENTION_MS - 1;
-    const expired = await handleCodexCatalogModels(request(version), version);
+    metadata.fetched_at_ms = observedAtMs - CODEX_CATALOG_RETENTION_MS - 1;
+    const expired = await handleCodexCatalogModels(request(version), version, dependencies);
     assert.equal(expired.status, 502);
+    assert.deepEqual(degradationSignals, [observedAtMs, observedAtMs]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("codex catalog: stale catalogs signal masked upstream transport failures", async () => {
+  seedBaseState();
+  const version = "0.150.2";
+  const observedAtMs = Date.now();
+  await storeCodexCatalog(kvStub, {
+    clientVersion: version,
+    authGeneration: AUTH_GENERATION,
+    body: catalogBody(version),
+    fetchedAtMs: observedAtMs - CODEX_CATALOG_FRESH_MS - 1,
+  });
+  const originalFetch = globalThis.fetch;
+  const degradationSignals: number[] = [];
+  globalThis.fetch = () => {
+    throw new Error("connection reset");
+  };
+  try {
+    const response = await handleCodexCatalogModels(request(version), version, {
+      now: () => observedAtMs,
+      recordSentinelDegradation: (timestamp: number) => {
+        degradationSignals.push(timestamp);
+        return Promise.resolve(true);
+      },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-cache"), "stale");
+    assert.deepEqual(degradationSignals, [observedAtMs]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("codex catalog: account fallback signals the masked transport failure once", async () => {
+  seedBaseState();
+  const version = "0.150.3";
+  const observedAtMs = Date.now();
+  const authPool = kvStore.get(keyToString(AUTH_KEY))?.value as {
+    accounts: Array<Record<string, unknown>>;
+  };
+  authPool.accounts.push({
+    access_token: "fallback-access",
+    refresh_token: "fallback-refresh",
+    account_id: "fallback-account",
+    updated_at_ms: observedAtMs,
+  });
+  const originalFetch = globalThis.fetch;
+  let upstreamCalls = 0;
+  const degradationSignals: number[] = [];
+  globalThis.fetch = () => {
+    upstreamCalls += 1;
+    if (upstreamCalls === 1) throw new Error("first account connection reset");
+    return Promise.resolve(
+      new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }),
+    );
+  };
+  try {
+    const response = await handleCodexCatalogModels(request(version), version, {
+      now: () => observedAtMs,
+      recordSentinelDegradation: (timestamp: number) => {
+        degradationSignals.push(timestamp);
+        return Promise.resolve(true);
+      },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-cache"), "miss");
+    assert.equal(upstreamCalls, 2);
+    assert.deepEqual(degradationSignals, [observedAtMs]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("codex catalog: stale catalogs signal response body transport failures", async () => {
+  seedBaseState();
+  const version = "0.150.4";
+  const observedAtMs = Date.now();
+  await storeCodexCatalog(kvStub, {
+    clientVersion: version,
+    authGeneration: AUTH_GENERATION,
+    body: catalogBody(version),
+    fetchedAtMs: observedAtMs - CODEX_CATALOG_FRESH_MS - 1,
+  });
+  const originalFetch = globalThis.fetch;
+  const degradationSignals: number[] = [];
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error("body socket reset"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  try {
+    const response = await handleCodexCatalogModels(request(version), version, {
+      now: () => observedAtMs,
+      recordSentinelDegradation: (timestamp: number) => {
+        degradationSignals.push(timestamp);
+        return Promise.resolve(true);
+      },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-cache"), "stale");
+    assert.deepEqual(degradationSignals, [observedAtMs]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -307,15 +430,22 @@ Deno.test("codex catalog: refresh leases suppress duplicate upstream requests", 
   });
   const originalFetch = globalThis.fetch;
   let calls = 0;
+  let degradationSignals = 0;
   globalThis.fetch = () => {
     calls += 1;
     return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
   };
   try {
-    const response = await handleCodexCatalogModels(request(version), version);
+    const response = await handleCodexCatalogModels(request(version), version, {
+      recordSentinelDegradation: () => {
+        degradationSignals += 1;
+        return Promise.resolve(true);
+      },
+    });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-cache"), "stale");
     assert.equal(calls, 0);
+    assert.equal(degradationSignals, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

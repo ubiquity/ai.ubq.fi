@@ -17,9 +17,11 @@ The `Provider Sentinel` Actions workflow has three modes:
   directly to implementation without a triage-model call. Otherwise it returns before Codex authentication, replay
   decryption, or any agent call. Automatic LLM triage is incident-only.
 - `incident`: an accepted gateway or provider failure writes a durable Deno KV incident before dispatching this workflow
-  through the dedicated Ubiquity Sentinel GitHub App. One repair is active at a time; failures during it coalesce into
-  one pending successor. A production-only Deno cron retries pending delivery and creates no runs while the outbox is
-  empty. Each batch includes at least the preceding 20 minutes and expands back to its first failure.
+  through the dedicated Ubiquity Sentinel GitHub App. A Codex catalog upstream 5xx or transport failure also writes an
+  incident, including when a cached, rotated, or paid catalog masks the failure from the client. One repair is active at
+  a time; failures during it coalesce into one pending successor. A production-only Deno cron retries pending delivery
+  and creates no runs while the outbox is empty. Each batch includes at least the preceding 20 minutes and expands back
+  to its first failure.
 
 The orchestrator also has an observation mode for a supervised soak period. `--mode observe` inspects the previous 125
 minutes, which supports a two-hour schedule with five minutes of overlap. It captures complete production logs, runs
