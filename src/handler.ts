@@ -431,6 +431,7 @@ export const withTerminalRequestLog = (
     const backgroundReplayInput = originalReplayInput
       ? { ...originalReplayInput, body: new Uint8Array(originalReplayInput.body) }
       : null;
+    zeroSentinelReplayInput(originalReplayInput);
     // The request-owned body may be cleared as soon as terminal logging has
     // finished. Give the background task its own snapshot before any await so
     // delayed KV or crypto work cannot race request cleanup.
@@ -475,7 +476,6 @@ export const withTerminalRequestLog = (
         shouldPersistSentinelReplay(observation, fallbackClientObservation)
       ) {
         const replayWrite = startReplayPersistence(fallbackClientObservation);
-        zeroSentinelReplayInput(originalReplayInput);
         await replayWrite;
         return;
       }
@@ -486,7 +486,6 @@ export const withTerminalRequestLog = (
       // Capture persistence is best effort and must not replace the response.
     }).finally(() => {
       zeroSentinelReplayInput(backgroundReplayInput);
-      zeroSentinelReplayInput(originalReplayInput);
     });
     return replayFinalization;
   };
