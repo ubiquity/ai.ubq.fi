@@ -1138,6 +1138,52 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(usageWindow(policy).committed_requests, 1);
     const kernelWindow = kv.values.get(encodeKey(orgWindowKey)) as { usage_requests?: number } | undefined;
     assert.equal(kernelWindow?.usage_requests, 1);
+
+    let imageFetches = 0;
+    globalThis.fetch = () => {
+      imageFetches += 1;
+      return Promise.resolve(
+        new Response(
+          `data: ${
+            JSON.stringify({
+              type: "response.completed",
+              response: {
+                model: MODEL,
+                created_at: 1787431659,
+                output: [{
+                  type: "image_generation_call",
+                  status: "completed",
+                  result: "SU1BR0U=",
+                }],
+                usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+              },
+            })
+          }\n\n`,
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    };
+    const imageResponse = await handler(
+      new Request("https://ai.ubq.fi/v1/images/generations", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-Ubiquity-Kernel-Token": kernelToken,
+        },
+        body: JSON.stringify({ prompt: "two telemetry regression images", n: 2, user: "kernel-image-user" }),
+      }),
+    );
+    assert.equal(imageResponse.status, 200);
+    assert.deepEqual((await imageResponse.json()).data, [
+      { b64_json: "SU1BR0U=" },
+      { b64_json: "SU1BR0U=" },
+    ]);
+    assert.equal(imageResponse.headers.get("x-uos-warning"), "user_ignored");
+    assert.equal(imageFetches, 2);
+    assert.equal(usageWindow(policy).committed_requests, 2);
+    const kernelWindowAfterImage = kv.values.get(encodeKey(orgWindowKey)) as { usage_requests?: number } | undefined;
+    assert.equal(kernelWindowAfterImage?.usage_requests, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }

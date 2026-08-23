@@ -1,6 +1,6 @@
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { getKv } from "./kv.ts";
-import { MAX_ACCEPTED_JSON_BODY_BYTES, observeRawJsonBodyOnce } from "./request.ts";
+import { MAX_ACCEPTED_JSON_BODY_BYTES, observeRawBodyOnce } from "./request.ts";
 import {
   completeSentinelIncidentFailureEvent,
   createSentinelIncidentFailureEventFromEnvironment,
@@ -201,7 +201,7 @@ export const captureAcceptedSentinelReplayInput = (
     git_sha: runtimeGitSha(),
     deno_revision: runtimeDeploymentId(),
   };
-  observeRawJsonBodyOnce(req, (bytes) => {
+  observeRawBodyOnce(req, (bytes) => {
     candidate.body = bytes;
   });
   return candidate;

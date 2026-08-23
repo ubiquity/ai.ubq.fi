@@ -159,6 +159,77 @@
         }
       }
     },
+    "/v1/images/generations": {
+      "post": {
+        "tags": ["OpenAI compatibility"],
+        "operationId": "createImage",
+        "summary": "Create an image",
+        "description": "Creates one or more images from a text prompt and returns the buffered OpenAI Images JSON response. This gateway does not currently expose streaming image events.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ImageGenerationRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A buffered OpenAI Images response containing the requested generated images.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ImagesResponse" }
+              }
+            },
+            "headers": {
+              "RateLimit-Policy": { "$ref": "#/components/headers/RateLimitPolicy" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "502": { "$ref": "#/components/responses/UpstreamFailure" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/v1/images/edits": {
+      "post": {
+        "tags": ["OpenAI compatibility"],
+        "operationId": "createImageEdit",
+        "summary": "Create an image edit",
+        "description": "Creates one or more edited images from a prompt and source images. Use binary image and mask parts with multipart form data, or images and mask references with JSON.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ImageEditJsonRequest" }
+            },
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/ImageEditMultipartRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A buffered OpenAI Images response containing the requested edited images.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ImagesResponse" }
+              }
+            },
+            "headers": {
+              "RateLimit-Policy": { "$ref": "#/components/headers/RateLimitPolicy" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "502": { "$ref": "#/components/responses/UpstreamFailure" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/uos/models/capabilities": {
       "get": {
         "tags": ["UbiquityOS extensions"],
@@ -442,6 +513,211 @@
           "output": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
         },
         "additionalProperties": true
+      },
+      "ImageRef": {
+        "type": "object",
+        "description": "One source image referenced by a non-empty image URL. File identifiers are unsupported because this gateway does not bind Files API identifiers to the selected upstream account.",
+        "properties": {
+          "image_url": {
+            "type": "string",
+            "format": "uri",
+            "minLength": 1,
+            "maxLength": 20971520,
+            "description": "A fully qualified HTTP(S) URL or supported base64 image data URL."
+          }
+        },
+        "required": ["image_url"],
+        "additionalProperties": false
+      },
+      "ImageMaskRef": {
+        "type": "object",
+        "description": "One edit mask supplied as a base64 PNG data URL. Remote mask URLs are unsupported because the Responses image tool requires inline mask data and the gateway does not fetch caller-controlled URLs; file identifiers are unsupported because the gateway does not bind Files API identifiers to the selected upstream account.",
+        "properties": {
+          "image_url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20971520,
+            "pattern": "^[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/[pP][nN][gG];[bB][aA][sS][eE]64,",
+            "description": "A base64-encoded PNG data URL within the Images JSON reference limit."
+          }
+        },
+        "required": ["image_url"],
+        "additionalProperties": false
+      },
+      "ImageGenerationRequest": {
+        "type": "object",
+        "description": "An OpenAI Images generation request. The gateway returns buffered JSON and does not accept stream, partial_images, or the DALL-E-only style option.",
+        "required": ["prompt"],
+        "properties": {
+          "model": { "type": ["string", "null"], "minLength": 1 },
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 32000 },
+          "n": { "type": ["integer", "null"], "minimum": 1, "maximum": 10, "default": 1 },
+          "size": { "type": ["string", "null"], "minLength": 1 },
+          "quality": {
+            "type": ["string", "null"],
+            "enum": ["low", "medium", "high", "auto", null]
+          },
+          "background": { "type": ["string", "null"], "enum": ["transparent", "opaque", "auto", null] },
+          "output_format": { "type": ["string", "null"], "enum": ["png", "jpeg", "webp", null] },
+          "output_compression": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+          "moderation": { "type": ["string", "null"], "enum": ["low", "auto", null] },
+          "response_format": {
+            "type": ["string", "null"],
+            "enum": ["b64_json", null],
+            "description": "This buffered gateway returns base64 image data and therefore accepts only b64_json."
+          },
+          "stream": {
+            "type": ["boolean", "null"],
+            "enum": [false, null],
+            "description": "Streaming image responses are not supported; omit this field or send false."
+          },
+          "partial_images": {
+            "type": "null",
+            "description": "Partial image streaming is not supported; this field may only be omitted or null."
+          },
+          "user": {
+            "type": "string",
+            "description": "An end-user identifier. The Codex-hosted primary transport cannot apply this field; when it is ignored, the response includes x-uos-warning: user_ignored."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImageEditJsonRequest": {
+        "type": "object",
+        "description": "An OpenAI Images edit request using source image URLs instead of binary multipart uploads. File identifiers are unsupported by this gateway.",
+        "required": ["images", "prompt"],
+        "properties": {
+          "model": { "type": ["string", "null"], "minLength": 1 },
+          "images": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": { "$ref": "#/components/schemas/ImageRef" }
+          },
+          "mask": { "$ref": "#/components/schemas/ImageMaskRef" },
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 32000 },
+          "n": { "type": ["integer", "null"], "minimum": 1, "maximum": 10, "default": 1 },
+          "size": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "An image size accepted by the requested GPT Image model, including flexible gpt-image-2 resolutions."
+          },
+          "quality": { "type": ["string", "null"], "enum": ["low", "medium", "high", "auto", null] },
+          "background": { "type": ["string", "null"], "enum": ["transparent", "opaque", "auto", null] },
+          "output_format": { "type": ["string", "null"], "enum": ["png", "jpeg", "webp", null] },
+          "output_compression": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+          "input_fidelity": { "type": ["string", "null"], "enum": ["low", "high", null] },
+          "moderation": { "type": ["string", "null"], "enum": ["low", "auto", null] },
+          "stream": {
+            "type": ["boolean", "null"],
+            "enum": [false, null],
+            "description": "Streaming image responses are not supported; omit this field or send false."
+          },
+          "partial_images": {
+            "type": "null",
+            "description": "Partial image streaming is not supported; this field may only be omitted or null."
+          },
+          "user": {
+            "type": "string",
+            "description": "An end-user identifier. The Codex-hosted primary transport cannot apply this field; when it is ignored, the response includes x-uos-warning: user_ignored."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImageEditMultipartRequest": {
+        "type": "object",
+        "description": "An OpenAI Images edit request using up to sixteen binary uploads under image, image[], or both field names.",
+        "required": ["prompt"],
+        "properties": {
+          "model": { "type": ["string", "null"], "minLength": 1 },
+          "image": {
+            "description": "One or more PNG, JPEG, or WebP source files, each smaller than 50 MiB.",
+            "oneOf": [
+              { "type": "string", "format": "binary" },
+              {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": { "type": "string", "format": "binary" }
+              }
+            ]
+          },
+          "image[]": {
+            "description": "One or more PNG, JPEG, or WebP source files, each smaller than 50 MiB.",
+            "oneOf": [
+              { "type": "string", "format": "binary" },
+              {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": { "type": "string", "format": "binary" }
+              }
+            ]
+          },
+          "mask": {
+            "type": "string",
+            "format": "binary",
+            "description": "A non-empty PNG mask smaller than 50 MiB."
+          },
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 32000 },
+          "n": { "type": ["integer", "null"], "minimum": 1, "maximum": 10, "default": 1 },
+          "size": { "type": ["string", "null"], "minLength": 1 },
+          "quality": {
+            "type": ["string", "null"],
+            "enum": ["low", "medium", "high", "auto", null]
+          },
+          "background": { "type": ["string", "null"], "enum": ["transparent", "opaque", "auto", null] },
+          "output_format": { "type": ["string", "null"], "enum": ["png", "jpeg", "webp", null] },
+          "output_compression": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+          "input_fidelity": { "type": ["string", "null"], "enum": ["low", "high", null] },
+          "response_format": { "type": ["string", "null"], "enum": ["b64_json", null] },
+          "stream": {
+            "type": ["boolean", "null"],
+            "enum": [false, null],
+            "description": "Streaming image responses are not supported; omit this field or send false."
+          },
+          "partial_images": {
+            "type": "null",
+            "description": "Partial image streaming is not supported; this field may only be omitted or null."
+          },
+          "user": {
+            "type": "string",
+            "description": "An end-user identifier. The Codex-hosted primary transport cannot apply this field; when it is ignored, the response includes x-uos-warning: user_ignored."
+          }
+        },
+        "anyOf": [
+          { "required": ["image"] },
+          { "required": ["image[]"] }
+        ],
+        "additionalProperties": false
+      },
+      "Image": {
+        "type": "object",
+        "description": "One generated image item in an OpenAI Images response.",
+        "properties": {
+          "b64_json": { "type": "string" },
+          "url": { "type": "string", "format": "uri" },
+          "revised_prompt": { "type": "string" }
+        },
+        "additionalProperties": false
+      },
+      "ImagesResponse": {
+        "type": "object",
+        "description": "The buffered OpenAI Images response returned for generation and edit requests.",
+        "required": ["created", "data"],
+        "properties": {
+          "created": { "type": "integer", "description": "Unix timestamp in seconds." },
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Image" }
+          },
+          "background": { "type": "string" },
+          "output_format": { "type": "string", "enum": ["png", "jpeg", "webp"] },
+          "quality": { "type": "string" },
+          "size": { "type": "string" },
+          "usage": { "type": "object", "additionalProperties": true }
+        },
+        "additionalProperties": false
       },
       "ModelCapabilitiesResponse": {
         "type": "object",

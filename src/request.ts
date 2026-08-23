@@ -1,11 +1,24 @@
-type RawJsonBodyObserver = (bytes: Uint8Array<ArrayBuffer>) => void;
+type RawBodyObserver = (bytes: Uint8Array<ArrayBuffer>) => void;
 
-const rawJsonBodyObservers = new WeakMap<Request, RawJsonBodyObserver>();
+const rawBodyObservers = new WeakMap<Request, RawBodyObserver>();
 
 export const MAX_ACCEPTED_JSON_BODY_BYTES = 32 * 1_024 * 1_024;
 
-export const observeRawJsonBodyOnce = (req: Request, observer: RawJsonBodyObserver): void => {
-  rawJsonBodyObservers.set(req, observer);
+export const observeRawBodyOnce = (req: Request, observer: RawBodyObserver): void => {
+  rawBodyObservers.set(req, observer);
+};
+
+/** Transfer one accepted raw body to its observer under the fixed replay cap. */
+export const captureRawBodyOnce = (req: Request, bytes: Uint8Array<ArrayBuffer>): boolean => {
+  const observer = rawBodyObservers.get(req);
+  rawBodyObservers.delete(req);
+  if (!observer || bytes.byteLength > MAX_ACCEPTED_JSON_BODY_BYTES) return false;
+  observer(bytes);
+  return true;
+};
+
+export const discardRawBodyObserverOnce = (req: Request): void => {
+  rawBodyObservers.delete(req);
 };
 
 const declaredContentLength = (req: Request): number | null => {
@@ -17,9 +30,12 @@ const declaredContentLength = (req: Request): number | null => {
   return parsed;
 };
 
-const readBoundedRequestBody = async (req: Request): Promise<Uint8Array<ArrayBuffer>> => {
+const readBoundedRequestBody = async (
+  req: Request,
+  maxBytes: number,
+): Promise<Uint8Array<ArrayBuffer>> => {
   const declared = declaredContentLength(req);
-  if (declared !== null && declared > MAX_ACCEPTED_JSON_BODY_BYTES) {
+  if (declared !== null && declared > maxBytes) {
     await req.body?.cancel().catch(() => {});
     throw new Error("Request body is too large");
   }
@@ -31,7 +47,7 @@ const readBoundedRequestBody = async (req: Request): Promise<Uint8Array<ArrayBuf
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value.byteLength > MAX_ACCEPTED_JSON_BODY_BYTES - total) {
+      if (value.byteLength > maxBytes - total) {
         await reader.cancel().catch(() => {});
         throw new Error("Request body is too large");
       }
@@ -55,22 +71,23 @@ const readBoundedRequestBody = async (req: Request): Promise<Uint8Array<ArrayBuf
   }
 };
 
-export const readJsonBody = async (req: Request): Promise<unknown> => {
-  const observer = rawJsonBodyObservers.get(req);
-  rawJsonBodyObservers.delete(req);
+export const readJsonBody = async (
+  req: Request,
+  maxBytes = MAX_ACCEPTED_JSON_BODY_BYTES,
+): Promise<unknown> => {
   let bytes: Uint8Array<ArrayBuffer> | null = null;
   let captured = false;
   try {
-    bytes = await readBoundedRequestBody(req);
+    bytes = await readBoundedRequestBody(req, maxBytes);
     const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
-    if (observer) {
-      observer(bytes);
-      captured = true;
-    }
+    // Replay capture has its own fixed 32 MiB storage contract even when a
+    // route permits a larger JSON body for protocol-specific payloads.
+    captured = captureRawBodyOnce(req, bytes);
     return parsed;
   } catch {
     return null;
   } finally {
+    discardRawBodyObserverOnce(req);
     if (bytes && !captured) bytes.fill(0);
   }
 };
