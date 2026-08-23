@@ -119,9 +119,13 @@ type SentinelBackgroundRuntime = Readonly<{
 const sentinelBackgroundTaskRegistrar = (): SentinelBackgroundTaskRegistrar | null => {
   const globals = globalThis as unknown as Readonly<{
     Deno?: SentinelBackgroundRuntime;
+    EdgeRuntime?: SentinelBackgroundRuntime;
     waitUntil?: SentinelBackgroundTaskRegistrar;
   }>;
   if (typeof globals.Deno?.waitUntil === "function") return globals.Deno.waitUntil.bind(globals.Deno);
+  if (typeof globals.EdgeRuntime?.waitUntil === "function") {
+    return globals.EdgeRuntime.waitUntil.bind(globals.EdgeRuntime);
+  }
   if (typeof globals.waitUntil === "function") return globals.waitUntil.bind(globals);
   return null;
 };
@@ -431,9 +435,10 @@ export const withTerminalRequestLog = (
     const backgroundReplayInput = originalReplayInput
       ? { ...originalReplayInput, body: new Uint8Array(originalReplayInput.body) }
       : null;
-    // The request-owned body may be cleared as soon as terminal logging has
-    // finished. Give the background task its own snapshot before any await so
-    // delayed KV or crypto work cannot race request cleanup.
+    // The background task owns the independent snapshot. Release the
+    // request-owned bytes before any inspection or persistence await so a
+    // stalled clone, crypto operation, or KV write cannot retain both copies.
+    zeroSentinelReplayInput(originalReplayInput);
     replayFinalization = (async () => {
       if (!backgroundReplayInput) return;
       const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
