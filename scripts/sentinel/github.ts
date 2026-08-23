@@ -57,8 +57,8 @@ const DEFAULT_WORKFLOW_TIMEOUT_MS = 45 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 // Ninety days of one evidence artifact and one optional replay bundle at the
-// 15-minute schedule needs up to 175 pages before deployment artifacts.
-const MAX_ARTIFACT_METADATA_PAGES = 300;
+// five-minute schedule needs up to 521 pages before deployment artifacts.
+export const MAX_ARTIFACT_METADATA_PAGES = 600;
 const DEFAULT_ARTIFACT_DOWNLOAD_LIMIT_BYTES = 256 * 1024 * 1024;
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
 
@@ -288,7 +288,14 @@ export class GitHubActionsClient {
         throw new Error(`Workflow run ${run.id} has the wrong head SHA`);
       }
       if (options.displayTitle !== undefined && run.displayTitle !== options.displayTitle) {
-        throw new Error(`Workflow run ${run.id} has the wrong dispatch correlation`);
+        // GitHub can expose the exact dispatched run before its run-name input
+        // has reached the workflow-run API. Keep following only that run ID and
+        // head SHA, but never accept a completed run with a stale correlation.
+        if (run.status === "completed" || this.#now() >= deadline) {
+          throw new Error(`Workflow run ${run.id} has the wrong dispatch correlation`);
+        }
+        await this.#sleep(Math.min(pollIntervalMs, Math.max(0, deadline - this.#now())));
+        continue;
       }
       if (run.status === "completed") {
         if (run.conclusion !== "success") {

@@ -5,13 +5,18 @@ import {
   normalizeRevisionStatus,
   type SentinelFetch,
 } from "../scripts/sentinel/deploy.ts";
-import { GitHubActionsClient, type GitHubFetch } from "../scripts/sentinel/github.ts";
+import { GitHubActionsClient, type GitHubFetch, MAX_ARTIFACT_METADATA_PAGES } from "../scripts/sentinel/github.ts";
 
 const OLD_SHA = "1".repeat(40);
 const NEW_SHA = "2".repeat(40);
 const WRONG_SHA = "3".repeat(40);
 const DENO_TOKEN = "deno-test-token";
 const GITHUB_TOKEN = "github-test-token";
+
+Deno.test("GitHub artifact pagination covers ninety days of five-minute Sentinel runs", () => {
+  assert.ok(MAX_ARTIFACT_METADATA_PAGES >= 521);
+  assert.ok(MAX_ARTIFACT_METADATA_PAGES <= 600);
+});
 
 interface SeenRequest {
   readonly url: URL;
@@ -122,6 +127,93 @@ Deno.test("Deno revision listing follows same-endpoint Link pagination and retai
     ["second-revision", "pending"],
   ]);
   fake.assertDrained();
+});
+
+Deno.test("Deno revision listing re-homes the exact console pagination alias before authorizing it", async () => {
+  const fake = queuedFetch([
+    (request) => {
+      assert.equal(request.url.origin, "https://api.deno.com");
+      assert.equal(request.url.pathname, "/v2/apps/p-ai-ubq-fi/revisions");
+      assert.equal(request.url.searchParams.get("cursor"), null);
+      assert.equal(request.headers.get("Authorization"), `Bearer ${DENO_TOKEN}`);
+      return json(
+        [{ id: "first-revision", status: "succeeded" }],
+        200,
+        {
+          Link: '<https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100>; rel="next"',
+        },
+      );
+    },
+    (request) => {
+      assert.equal(request.url.origin, "https://api.deno.com");
+      assert.equal(request.url.pathname, "/v2/apps/p-ai-ubq-fi/revisions");
+      assert.equal(request.url.searchParams.get("cursor"), "next-page");
+      assert.equal(request.url.searchParams.get("limit"), "100");
+      assert.equal(request.headers.get("Authorization"), `Bearer ${DENO_TOKEN}`);
+      return json([{ id: "second-revision", status: "building" }]);
+    },
+  ]);
+  const client = new DenoDeployClient({
+    token: DENO_TOKEN,
+    apiBaseUrl: "https://api.deno.com/v2/",
+    fetcher: fake.fetcher,
+  });
+
+  const revisions = await client.listRevisions("p-ai-ubq-fi");
+
+  assert.deepEqual(revisions.map((revision) => revision.id), ["first-revision", "second-revision"]);
+  assert.ok(fake.seen.every((request) => request.url.origin === "https://api.deno.com"));
+  fake.assertDrained();
+});
+
+Deno.test("Deno revision listing preserves opaque cursors when the documented Link omits limit", async () => {
+  const fake = queuedFetch([
+    () =>
+      json([{ id: "first-revision", status: "succeeded" }], 200, {
+        Link: '</v2/apps/ai-ubq-fi/revisions?cursor=%20opaque%20>; rel="next"',
+      }),
+    (request) => {
+      assertDenoApiRequest(request, "/v2/apps/ai-ubq-fi/revisions");
+      assert.equal(request.url.searchParams.get("cursor"), " opaque ");
+      assert.equal(request.url.searchParams.get("limit"), "100");
+      return json([{ id: "second-revision", status: "succeeded" }]);
+    },
+  ]);
+
+  const revisions = await denoClient(fake.fetcher).listRevisions("ai-ubq-fi");
+
+  assert.deepEqual(revisions.map((revision) => revision.id), ["first-revision", "second-revision"]);
+  fake.assertDrained();
+});
+
+Deno.test("Deno revision listing rejects unsafe console pagination variants", async () => {
+  const links = [
+    "https://console.deno.com/api/v2/apps/other-app/revisions?cursor=next-page&limit=100",
+    "https://console.deno.com.evil.example/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100",
+    "https://user@console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=one&cursor=two&limit=100",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=&limit=100",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=99",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100&status=succeeded",
+    "https://console.deno.com/api/v2/apps/p-ai-ubq-fi/revisions?cursor=next-page&limit=100#fragment",
+  ];
+  for (const link of links) {
+    const fake = queuedFetch([
+      () =>
+        json([{ id: "first-revision", status: "succeeded" }], 200, {
+          Link: `<${link}>; rel="next"`,
+        }),
+    ]);
+    const client = new DenoDeployClient({
+      token: DENO_TOKEN,
+      apiBaseUrl: "https://api.deno.com/v2/",
+      fetcher: fake.fetcher,
+    });
+
+    await assert.rejects(() => client.listRevisions("p-ai-ubq-fi"), /unsafe next-page link/);
+    assert.equal(fake.seen.length, 1);
+    fake.assertDrained();
+  }
 });
 
 Deno.test("Deno requests install a bounded timeout signal and fail closed on timeout", async () => {
@@ -614,6 +706,51 @@ Deno.test("GitHub workflow polling rejects a failed exact-SHA run", async () => 
       }),
     /completed with failure/,
   );
+});
+
+Deno.test("GitHub workflow polling tolerates a transient dispatch-title delay", async () => {
+  let now = Date.parse("2026-08-21T12:00:00Z");
+  const displayTitle = "Deno Deploy sentinel-test-correlation";
+  const fake = queuedFetch([
+    () => json(workflowRun(53, NEW_SHA, "in_progress", null, undefined, "Deno Deploy")),
+    () => json(workflowRun(53, NEW_SHA, "completed", "success", undefined, displayTitle)),
+  ]);
+  const run = await githubClient(fake.fetcher, {
+    now: () => now,
+    sleep: (milliseconds) => {
+      now += milliseconds;
+      return Promise.resolve();
+    },
+  }).waitForWorkflow({
+    runId: 53,
+    headSha: NEW_SHA,
+    displayTitle,
+    timeoutMs: 2_000,
+    pollIntervalMs: 1_000,
+  });
+
+  assert.equal(run.id, 53);
+  assert.equal(run.displayTitle, displayTitle);
+  assert.equal(now, Date.parse("2026-08-21T12:00:01Z"));
+  fake.assertDrained();
+});
+
+Deno.test("GitHub workflow polling rejects a completed run with the wrong dispatch title", async () => {
+  const now = Date.parse("2026-08-21T12:00:00Z");
+  const fake = queuedFetch([
+    () => json(workflowRun(54, NEW_SHA, "completed", "success", undefined, "Deno Deploy other-dispatch")),
+  ]);
+  await assert.rejects(
+    () =>
+      githubClient(fake.fetcher, { now: () => now }).waitForWorkflow({
+        runId: 54,
+        headSha: NEW_SHA,
+        displayTitle: "Deno Deploy sentinel-test-correlation",
+        timeoutMs: 1_000,
+      }),
+    /wrong dispatch correlation/,
+  );
+  fake.assertDrained();
 });
 
 Deno.test("GitHub workflow polling reconciles transient API failures before returning", async () => {

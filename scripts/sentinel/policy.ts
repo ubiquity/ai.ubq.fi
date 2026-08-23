@@ -16,8 +16,11 @@ const PROTECTED_IMPLEMENTATION_PATHS = Object.freeze([
   "scripts/sentinel/types.ts",
   "scripts/sentinel/validation.ts",
   "scripts/sentinel/windows.ts",
+  "src/sentinel_incident_admin.ts",
+  "src/sentinel_incident_outbox.ts",
   "src/sentinel_replay_admin.ts",
   "src/sentinel_replay_capture.ts",
+  "src/serve_handler.ts",
   "tests/sentinel-deploy.test.ts",
   "tests/sentinel-orchestrator.test.ts",
   "tests/sentinel-quota-codex.test.ts",
@@ -54,6 +57,7 @@ export const SENTINEL_POLICY = Object.freeze({
   productionLatestStartMs: 90 * 60 * 1_000,
   monitorDurationMs: 30 * 60 * 1_000,
   monitorPollMs: 30 * 1_000,
+  monitorCheckpointMs: 5 * 60 * 1_000,
   triage: Object.freeze({ model: "gpt-5.6-sol", reasoning: "medium" as const }),
   implementation: Object.freeze({ model: "gpt-5.6-luna", reasoning: "max" as const }),
   monitoring: Object.freeze({ model: "gpt-5.6-sol", reasoning: "medium" as const }),
@@ -82,6 +86,6 @@ export const SENTINEL_POLICY = Object.freeze({
   protectedImplementationPaths: PROTECTED_IMPLEMENTATION_PATHS,
 });
 
-export type SentinelMode = "daily" | "incident" | "observe" | "preview";
+export type SentinelMode = "hourly" | "incident" | "observe" | "preview";
 
-export const isAutonomousMode = (mode: SentinelMode): boolean => mode === "daily" || mode === "incident";
+export const isAutonomousMode = (mode: SentinelMode): boolean => mode === "hourly" || mode === "incident";

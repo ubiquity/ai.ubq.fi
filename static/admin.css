@@ -429,6 +429,13 @@ body[data-page="admin"] [data-capacity-legend-swatch] {
   border-top: 2px solid #ffffff;
 }
 
+body[data-page="admin"] [data-capacity-legend-item="cached-input"] [data-capacity-legend-swatch] {
+  height: 10px;
+  border: 0;
+  border-radius: 2px;
+  background: rgba(10, 132, 255, 0.32);
+}
+
 body[data-page="admin"] [data-capacity-legend-item="metered-refill"] [data-capacity-legend-swatch] {
   border-top-color: rgba(133, 216, 201, 0.92);
   border-top-style: dashed;
@@ -572,6 +579,18 @@ body[data-page="admin"] [data-capacity-series="metered-refill"] {
   stroke: rgba(133, 216, 201, 0.92);
   stroke-dasharray: 6 4;
   stroke-width: 1.5;
+}
+
+body[data-page="admin"] [data-capacity-cache-bucket] {
+  cursor: help;
+}
+
+body[data-page="admin"] [data-capacity-cache-traffic] {
+  fill: rgba(255, 255, 255, 0.035);
+}
+
+body[data-page="admin"] [data-capacity-cache-fill] {
+  fill: rgba(10, 132, 255, 0.3);
 }
 
 body[data-page="admin"] [data-capacity-downtime="openai"] {

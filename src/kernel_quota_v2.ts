@@ -73,7 +73,7 @@ export type KernelQuotaWindowV2 = Readonly<{
   updated_at_ms: number;
 }>;
 
-type KernelQuotaReservationRowV2 = Readonly<{
+export type KernelQuotaReservationRowV2 = Readonly<{
   v: 2;
   scope: KernelQuotaScope;
   owner: string;
@@ -503,11 +503,17 @@ const setPolicy = async (
           created_at_ms: current.policy?.created_at_ms ?? nowMs,
           updated_at_ms: nowMs,
         };
-        const currentWindow = normalizeKernelQuotaWindowV2(windowEntry.value, scope, owner, repo);
+        const currentWindow = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
         if (windowEntry.value !== null && !currentWindow) return null;
         if (scope === "repo" && policyEntry.value === null && orgPolicyEntry && orgWindowEntry) {
           policyFor(orgPolicyEntry, "org", owner, undefined, defaults);
-          const inheritedOrgWindow = normalizeKernelQuotaWindowV2(orgWindowEntry.value, "org", owner, undefined);
+          const inheritedOrgWindow = await reconcileKernelQuotaWindowReservations(
+            kv,
+            orgWindowEntry,
+            "org",
+            owner,
+            undefined,
+          );
           if (orgWindowEntry.value !== null && !inheritedOrgWindow) return null;
           if (
             inheritedOrgWindow && inheritedOrgWindow.usage_reset_at_ms > nowMs &&
@@ -614,7 +620,7 @@ const deletePolicy = async (
         if (policyEntry.value === null) return false;
         if (defaultCutoverEntry.value !== null) return "conflict";
         const current = policyFor(policyEntry, scope, owner, repo, defaults);
-        const oldWindow = normalizeKernelQuotaWindowV2(windowEntry.value, scope, owner, repo);
+        const oldWindow = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
         if (windowEntry.value !== null && !oldWindow) return null;
         if (oldWindow && oldWindow.usage_reset_at_ms > nowMs && oldWindow.reserved_requests > 0) {
           const reclaimed = await reclaimExpiredKernelReservationUnlocked(
@@ -738,7 +744,7 @@ const kernelReservationWindowPrefix = (
     ? [...KERNEL_REPO_RESERVATION_V2_PREFIX, owner, repo!, windowCreatedAtMs]
     : [...KERNEL_ORG_RESERVATION_V2_PREFIX, owner, windowCreatedAtMs];
 
-const normalizeKernelQuotaReservationRowV2 = (
+export const normalizeKernelQuotaReservationRowV2 = (
   value: unknown,
   scope: KernelQuotaScope,
   owner: string,
@@ -767,6 +773,35 @@ const normalizeKernelQuotaReservationRowV2 = (
         terminalIntent === "committed"))
   ) return null;
   return { ...value, terminal_intent: terminalIntent } as KernelQuotaReservationRowV2;
+};
+
+/**
+ * Repair the reservation aggregate after a pre-reservation writer rewrites a
+ * window without the new field. The window CAS at every mutating caller makes
+ * the row count stable for admission: reservation cardinality changes always
+ * update the same window atomically, while lease-only row updates do not.
+ */
+export const reconcileKernelQuotaWindowReservations = async (
+  kv: Deno.Kv,
+  entry: Deno.KvEntryMaybe<KernelQuotaWindowV2>,
+  scope: KernelQuotaScope,
+  owner: string,
+  repo: string | undefined,
+): Promise<KernelQuotaWindowV2 | null> => {
+  const window = normalizeKernelQuotaWindowV2(entry.value, scope, owner, repo);
+  if (!window || isRecord(entry.value) && Object.hasOwn(entry.value, "reserved_requests")) return window;
+  let reservedRequests = 0;
+  const prefix = kernelReservationWindowPrefix(scope, owner, repo, window.created_at_ms);
+  for await (const reservationEntry of kv.list<KernelQuotaReservationRowV2>({ prefix }, { consistency: "strong" })) {
+    const reservation = normalizeKernelQuotaReservationRowV2(reservationEntry.value, scope, owner, repo);
+    const requestId = reservationEntry.key.at(-1);
+    if (
+      !reservation || typeof requestId !== "string" || requestId !== reservation.request_id ||
+      reservation.window_created_at_ms !== window.created_at_ms
+    ) throw new Error("Kernel quota reservation is malformed");
+    if (reservation.state === "reserved") reservedRequests += 1;
+  }
+  return { ...window, reserved_requests: reservedRequests };
 };
 
 const kernelQuotaLocks = new Map<string, Promise<void>>();
@@ -910,7 +945,7 @@ const settleKernelReservationUnlocked = async (
     return "terminal_mismatch";
   }
 
-  const normalizedWindow = normalizeKernelQuotaWindowV2(windowEntry.value, scope, owner, repo);
+  const normalizedWindow = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
   if (windowEntry.value !== null && !normalizedWindow) return "invalid";
   const retentionMs = kernelReservationRetentionMs(reservation.window_reset_at_ms, nowMs);
   if (!normalizedWindow || normalizedWindow.created_at_ms !== reservation.window_created_at_ms) {
@@ -1274,7 +1309,7 @@ const hasLiveDefaultBackedKernelReservations = async (kv: Deno.Kv): Promise<bool
         for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
           const nowMs = Date.now();
           const windowEntry = await kv.get<KernelQuotaWindowV2>(windowKey, { consistency: "strong" });
-          const window = normalizeKernelQuotaWindowV2(windowEntry.value, scope, owner, repo);
+          const window = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
           if (windowEntry.value !== null && !window) throw new Error("Kernel quota window is malformed");
           if (!window || window.usage_reset_at_ms <= nowMs || window.reserved_requests === 0) return false;
           if (!await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, window, nowMs)) return true;
@@ -1418,7 +1453,7 @@ const reserveLimit = async (
         if (effective.limit === 0) {
           return kernelLimitBlocked("Kernel auth usage limit is 0; update it via /admin/kernel-usage.");
         }
-        const existingWindow = normalizeKernelQuotaWindowV2(windowEntry.value, scope, owner, repo);
+        const existingWindow = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
         if (windowEntry.value !== null && !existingWindow) {
           return kernelQuotaUnavailable("Kernel quota aggregate is malformed");
         }

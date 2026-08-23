@@ -127,6 +127,8 @@ export const encryptAndScrubGeneratedEvidence = async (
     }
     await removeIfPresent(`${sentinelRoot}/raw-logs`);
     await removeIfPresent(`${sentinelRoot}/reports`);
+    await removeIfPresent(`${sentinelRoot}/candidate-worktree`);
+    await removeIfPresent(`${sentinelRoot}/private`);
     return { fileCount: files.length, outputPath };
   } catch (error) {
     if (createdOutput) await removeIfPresent(outputPath).catch(() => {});

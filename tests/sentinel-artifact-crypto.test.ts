@@ -133,14 +133,21 @@ Deno.test({
     try {
       await Deno.mkdir(`${root}/raw-logs`, { recursive: true });
       await Deno.mkdir(`${root}/reports`, { recursive: true });
+      await Deno.mkdir(`${root}/reports/failed-implementation-candidate/files`, { recursive: true });
+      await Deno.mkdir(`${root}/candidate-worktree`, { recursive: true });
+      await Deno.mkdir(`${root}/private`, { recursive: true });
       const raw = new TextEncoder().encode("raw provider log fixture");
       const report = new TextEncoder().encode('{"status":"observed"}');
+      const candidatePayload = new Uint8Array([0, 1, 254, 255]);
       await Deno.writeFile(`${root}/raw-logs/deno.jsonl`, raw);
       await Deno.writeFile(`${root}/reports/triage.json`, report);
+      await Deno.writeFile(`${root}/reports/failed-implementation-candidate/files/0000.bin`, candidatePayload);
       const result = await encryptAndScrubGeneratedEvidence(root, key);
-      assert(result.fileCount === 2, "Unexpected encrypted file count");
+      assert(result.fileCount === 3, "Unexpected encrypted file count");
       await assertRejects(() => Deno.stat(`${root}/raw-logs`));
       await assertRejects(() => Deno.stat(`${root}/reports`));
+      await assertRejects(() => Deno.stat(`${root}/candidate-worktree`));
+      await assertRejects(() => Deno.stat(`${root}/private`));
       const encrypted = await Deno.readFile(result.outputPath);
       const decrypted = await decryptSentinelArtifact(encrypted, key);
       assert(
@@ -149,14 +156,20 @@ Deno.test({
       );
       assert(equalBytes(decrypted[0]!.bytes, raw), "Raw-log bytes differ");
       assert(
-        decrypted[1]!.path === "reports/triage.json",
+        decrypted[1]!.path === "reports/failed-implementation-candidate/files/0000.bin",
+        "Failed candidate payload path missing",
+      );
+      assert(equalBytes(decrypted[1]!.bytes, candidatePayload), "Failed candidate payload bytes differ");
+      assert(
+        decrypted[2]!.path === "reports/triage.json",
         "Report path missing",
       );
-      assert(equalBytes(decrypted[1]!.bytes, report), "Report bytes differ");
+      assert(equalBytes(decrypted[2]!.bytes, report), "Report bytes differ");
       for (const file of decrypted) file.bytes.fill(0);
       encrypted.fill(0);
       raw.fill(0);
       report.fill(0);
+      candidatePayload.fill(0);
     } finally {
       key.fill(0);
       await Deno.remove(root, { recursive: true });
@@ -194,21 +207,128 @@ Deno.test({
 });
 
 Deno.test({
-  name: "Sentinel workflows use only supported concurrency keys",
+  name: "Sentinel repair workflow retains queued incident signals",
   ignore: fileSystemTestsUnavailable,
   async fn() {
+    const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
+    assert(/^\s+queue: max$/mu.test(workflow), "Sentinel must retain concurrent incident signals");
     for (
       const path of [
         ".github/workflows/deno-deploy.yml",
-        ".github/workflows/provider-sentinel.yml",
         ".github/workflows/sentinel-revision-control.yml",
       ]
     ) {
       const workflow = await Deno.readTextFile(path);
-      assert(
-        !/^\s+queue:/mu.test(workflow),
-        `${path} contains the unsupported concurrency queue key`,
-      );
+      assert(!/^\s+queue:/mu.test(workflow), `${path} must keep its existing deployment concurrency policy`);
     }
+  },
+});
+
+Deno.test({
+  name: "Sentinel uses failure events with durable retry and no resident watchdog",
+  ignore: fileSystemTestsUnavailable,
+  async fn() {
+    let watchdogExists = true;
+    try {
+      await Deno.stat(".github/workflows/provider-sentinel-watchdog.yml");
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+      watchdogExists = false;
+    }
+    assert(!watchdogExists, "The resident watchdog workflow must be removed");
+    const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
+    const orchestrator = await Deno.readTextFile("scripts/sentinel/main.ts");
+    const server = await Deno.readTextFile("serve.ts");
+    const deploy = await Deno.readTextFile(".github/workflows/deno-deploy.yml");
+    for (
+      const input of [
+        "sentinel_mode:",
+        "incident_id:",
+        "incident_attempt:",
+        "incident_start_ms:",
+        "incident_ack_nonce:",
+      ]
+    ) {
+      assert(workflow.includes(input), `Sentinel workflow is missing ${input}`);
+    }
+    assert(workflow.includes("github.actor_id == '319834869'"), "Incident mode must require the Sentinel App actor");
+    assert(workflow.includes('- cron: "0 * * * *"'), "Sentinel archival must run hourly");
+    assert(workflow.includes("mode=hourly"), "Scheduled runs must use hourly mode");
+    assert(workflow.includes("inputs.sentinel_mode == 'hourly'"), "Maintainers must be able to start an hourly run");
+    assert(workflow.includes("preview|hourly)"), "Manual hourly runs must select the hourly orchestrator mode");
+    assert(workflow.includes("selectNextReviewBacklogEntry"), "Hourly runs must preflight eligible backlog work");
+    assert(
+      workflow.includes("git show origin/development:docs/sentinel-review-backlog.md"),
+      "Hourly agent setup must inspect the current development backlog",
+    );
+    assert(
+      workflow.includes('echo "SENTINEL_BACKLOG_HINT_SHA=$hint_sha" >> "$GITHUB_ENV"'),
+      "Hourly work must bind the orchestrator to the prerequisite hint revision",
+    );
+    assert(
+      workflow.includes("installing agent prerequisites conservatively"),
+      "Backlog hint failures must fail toward installing the agent",
+    );
+    const manualStart = orchestrator.indexOf('if (selectedBacklogState.disposition === "manual_required")');
+    const manualEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", manualStart);
+    assert(
+      manualStart >= 0 && manualEnd > manualStart,
+      "Manual backlog completion must have a bounded early-return lane",
+    );
+    const manualLane = orchestrator.slice(manualStart, manualEnd);
+    assert(
+      manualLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}"),
+      "Manual backlog completion must persist its trusted documentation change",
+    );
+    for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
+      assert(!manualLane.includes(forbidden), `Manual backlog completion must not call ${forbidden}`);
+    }
+    assert(
+      orchestrator.includes("const gitEnvironment = gitNetworkEnvironment(githubToken)"),
+      "Manual backlog pushes must use the non-recursive workflow GITHUB_TOKEN",
+    );
+    assert(
+      orchestrator.includes("error instanceof CandidateValidationError") &&
+        orchestrator.includes("implementation_validation_fix_"),
+      "Candidate validation failures must consume an existing implementation-review round",
+    );
+    assert(
+      orchestrator.match(/runImplementationStageWithContinuation\(\{/gu)?.length === 4,
+      "Every implementation, review-fix, validation-fix, and replay-evaluation stage must share continuation policy",
+    );
+    assert(
+      /- name: Install isolated-agent prerequisites\n\s+if: steps\.agent-work\.outputs\.needs_agent == 'true'/.test(
+        workflow,
+      ),
+      "Quiet hourly archival must not install Codex",
+    );
+    assert(
+      /- name: Validate pinned Codex CLI argument contract\n\s+if: steps\.agent-work\.outputs\.needs_agent == 'true'/
+        .test(
+          workflow,
+        ),
+      "Quiet hourly archival must not run Codex CLI validation",
+    );
+    assert(workflow.includes("github.run_attempt == 1"), "Incident mode must reject human-triggered workflow re-runs");
+    assert(workflow.includes("SENTINEL_AUTONOMY_ENABLED == 'true'"), "Incident mode must require autonomy");
+    assert(workflow.includes("Acknowledge completed incident"), "Successful incident runs must ACK the durable outbox");
+    assert(workflow.includes("Claim incident workflow run"), "Incident runs must claim one durable workflow identity");
+    assert(
+      workflow.indexOf("Claim incident workflow run") < workflow.indexOf("Check out full repository history"),
+      "Duplicate incident runs must stop before checkout or repair work",
+    );
+    assert(
+      server.includes('Deno.cron("deliver pending Provider Sentinel incidents", "* * * * *"'),
+      "Deno cron must retry only durable pending incidents",
+    );
+    assert(
+      deploy.includes('method: "PATCH"') && deploy.includes('contexts: ["production"]') &&
+        deploy.includes("secret: true"),
+      "The GitHub App key must use one production-only secret patch",
+    );
+    assert(
+      !/lines\.push\(`SENTINEL_GITHUB_APP_PRIVATE_KEY=/u.test(deploy),
+      "The GitHub App key must never enter the general deploy environment file",
+    );
   },
 });

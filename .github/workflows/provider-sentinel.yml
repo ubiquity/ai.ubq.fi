@@ -3,19 +3,46 @@ run-name: Provider Sentinel ${{ github.event_name }} ${{ github.run_id }}
 
 on:
   schedule:
-    # Daily repair cycle for the preceding 24 hours.
-    - cron: "0 6 * * *"
-    # Overlapping incident scan for the preceding 20 minutes.
-    - cron: "*/15 * * * *"
+    # Hourly encrypted evidence archival and one eligible backlog repair. Incidents trigger separately.
+    - cron: "0 * * * *"
   workflow_dispatch:
-  repository_dispatch:
-    types:
-      - provider_incident
+    inputs:
+      sentinel_mode:
+        description: Run an hourly backlog cycle, supervised preview, or App-authenticated production incident
+        required: true
+        type: choice
+        default: preview
+        options:
+          - hourly
+          - preview
+          - incident
+      incident_id:
+        description: Opaque durable incident identifier
+        required: false
+        type: string
+        default: ""
+      incident_attempt:
+        description: Durable incident delivery attempt
+        required: false
+        type: string
+        default: ""
+      incident_start_ms:
+        description: First failed-request timestamp in milliseconds
+        required: false
+        type: string
+        default: ""
+      incident_ack_nonce:
+        description: Opaque acknowledgement nonce for this delivery attempt
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   # One repair cycle may operate on the repository or shared preview app at a time.
   group: provider-sentinel-${{ github.repository }}
   cancel-in-progress: false
+  # Retain incident signals that arrive while a repair or deployment is active.
+  queue: max
 
 permissions:
   actions: write
@@ -26,10 +53,23 @@ jobs:
     if: >-
       (
         github.event_name == 'workflow_dispatch' &&
-        github.ref == 'refs/heads/development'
+        github.ref == 'refs/heads/development' &&
+        (
+          inputs.sentinel_mode == 'preview' ||
+          (
+            inputs.sentinel_mode == 'hourly' &&
+            vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+          ) ||
+          (
+            inputs.sentinel_mode == 'incident' &&
+            github.actor_id == '319834869' &&
+            github.run_attempt == 1 &&
+            vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+          )
+        )
       ) ||
       (
-        (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') &&
+        github.event_name == 'schedule' &&
         vars.SENTINEL_AUTONOMY_ENABLED == 'true'
       )
     runs-on: ubuntu-22.04
@@ -64,21 +104,68 @@ jobs:
 
       - name: Select immutable run mode
         shell: bash
+        env:
+          REQUESTED_MODE: ${{ inputs.sentinel_mode }}
+          REQUESTED_INCIDENT_ID: ${{ inputs.incident_id }}
+          REQUESTED_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          REQUESTED_INCIDENT_START_MS: ${{ inputs.incident_start_ms }}
+          REQUESTED_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+          EXPECTED_SENTINEL_ACTOR_ID: "319834869"
+          EVENT_ACTOR_ID: ${{ github.actor_id }}
+          EVENT_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           case "$GITHUB_EVENT_NAME" in
             workflow_dispatch)
-              mode=preview
+              case "$REQUESTED_MODE" in
+                preview|hourly)
+                  mode="$REQUESTED_MODE"
+                  ;;
+                incident)
+                  if [ "$EVENT_ACTOR_ID" != "$EXPECTED_SENTINEL_ACTOR_ID" ]; then
+                    echo "::error::Incident dispatch did not come from the Ubiquity Sentinel GitHub App."
+                    exit 1
+                  fi
+                  if [ "$EVENT_RUN_ATTEMPT" != "1" ]; then
+                    echo "::error::Incident workflow re-runs are forbidden."
+                    exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ID" =~ ^provider-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+                    echo "::error::Incident ID is invalid."
+                    exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ATTEMPT" =~ ^[1-3]$ ]]; then
+                    echo "::error::Incident attempt is invalid."
+                    exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_START_MS" =~ ^[1-9][0-9]{12}$ ]]; then
+                    echo "::error::Incident start is invalid."
+                    exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ACK_NONCE" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+                    echo "::error::Incident acknowledgement nonce is invalid."
+                    exit 1
+                  fi
+                  mode=incident
+                  echo "SENTINEL_INCIDENT_ID=$REQUESTED_INCIDENT_ID" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_ATTEMPT=$REQUESTED_INCIDENT_ATTEMPT" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_START_MS=$REQUESTED_INCIDENT_START_MS" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_ACK_NONCE=$REQUESTED_INCIDENT_ACK_NONCE" >> "$GITHUB_ENV"
+                  echo "SENTINEL_SIGNAL_ID=${REQUESTED_INCIDENT_ID}-a${REQUESTED_INCIDENT_ATTEMPT}" >> "$GITHUB_ENV"
+                  ;;
+                *)
+                  echo "::error::Unsupported Provider Sentinel workflow mode."
+                  exit 1
+                  ;;
+              esac
               ;;
             schedule)
-              if [ "${{ github.event.schedule }}" = "0 6 * * *" ]; then
-                mode=daily
+              if [ "${{ github.event.schedule }}" = "0 * * * *" ]; then
+                mode=hourly
               else
-                mode=incident
+                echo "::error::Unsupported Provider Sentinel schedule."
+                exit 1
               fi
-              ;;
-            repository_dispatch)
-              mode=incident
               ;;
             *)
               echo "::error::Unsupported Provider Sentinel event."
@@ -87,6 +174,43 @@ jobs:
           esac
           echo "SENTINEL_MODE=$mode" >> "$GITHUB_ENV"
           echo "Sentinel mode: $mode" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Claim incident workflow run
+        if: github.event_name == 'workflow_dispatch' && inputs.sentinel_mode == 'incident'
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          SENTINEL_INCIDENT_ID: ${{ inputs.incident_id }}
+          SENTINEL_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          SENTINEL_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+        run: |
+          set -euo pipefail
+          response_file="$RUNNER_TEMP/sentinel-claim-response"
+          request_body="$(
+            jq -cn \
+              --arg incident_id "$SENTINEL_INCIDENT_ID" \
+              --arg attempt "$SENTINEL_INCIDENT_ATTEMPT" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --arg ack_nonce "$SENTINEL_INCIDENT_ACK_NONCE" \
+              '{incident_id: $incident_id, attempt: ($attempt | tonumber), workflow_run_id: ($workflow_run_id | tonumber), ack_nonce: $ack_nonce}'
+          )"
+          status="$(
+            curl \
+              --silent \
+              --show-error \
+              --max-time 20 \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data "$request_body" \
+              https://ai-ubq-fi.ubiquity-dao.deno.net/admin/sentinel/incidents/claim
+          )"
+          if [ "$status" != "204" ]; then
+            echo "::error::Incident workflow claim failed with HTTP $status."
+            exit 1
+          fi
 
       - name: Configure private Deno cache
         shell: bash
@@ -108,7 +232,74 @@ jobs:
         with:
           deno-version: 2.9.5
 
+      - name: Select agent work
+        id: agent-work
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          needs_agent=true
+          if [ "$SENTINEL_MODE" = "hourly" ]; then
+            hint_path="$RUNNER_TEMP/sentinel-review-backlog.md"
+            hint_sha=""
+            basic_token="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+            unset GITHUB_TOKEN
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic_token"
+            export GIT_TERMINAL_PROMPT=0
+            hint_ready=false
+            if git fetch --no-tags origin development; then
+              candidate_hint_sha="$(git rev-parse origin/development)"
+              backlog_blob_size="$(git cat-file -s origin/development:docs/sentinel-review-backlog.md 2>/dev/null || true)"
+              if [[ "$candidate_hint_sha" =~ ^[0-9a-f]{40}$ ]] && \
+                [[ "$backlog_blob_size" =~ ^[0-9]+$ ]] && \
+                [ "$backlog_blob_size" -le 262144 ] && \
+                git show origin/development:docs/sentinel-review-backlog.md > "$hint_path"
+              then
+                hint_sha="$candidate_hint_sha"
+                hint_ready=true
+              fi
+            fi
+            unset basic_token GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+            if [ "$hint_ready" = "true" ]; then
+              if ! needs_agent="$(
+                SENTINEL_BACKLOG_HINT_PATH="$hint_path" deno eval \
+                  --no-remote \
+                  --no-npm \
+                  --frozen \
+                  --lock=deno.lock \
+                  '
+                    import { selectNextReviewBacklogEntry } from "./scripts/sentinel/review.ts";
+                    const path = Deno.env.get("SENTINEL_BACKLOG_HINT_PATH");
+                    if (!path) throw new Error("Sentinel backlog hint path is missing");
+                    const markdown = await Deno.readTextFile(path);
+                    console.log(selectNextReviewBacklogEntry(markdown) === null ? "false" : "true");
+                  '
+              )"; then
+                needs_agent=true
+                echo "::warning::Sentinel backlog hint could not be parsed; installing agent prerequisites conservatively."
+              fi
+            else
+              echo "::warning::Current development backlog could not be read; installing agent prerequisites conservatively."
+            fi
+            if [ -n "$hint_sha" ]; then
+              echo "SENTINEL_BACKLOG_HINT_SHA=$hint_sha" >> "$GITHUB_ENV"
+            fi
+          fi
+          case "$needs_agent" in
+            true|false) ;;
+            *)
+              echo "::error::Sentinel agent work selector returned an invalid result."
+              exit 1
+              ;;
+          esac
+          echo "needs_agent=$needs_agent" >> "$GITHUB_OUTPUT"
+          echo "Sentinel agent work required: $needs_agent" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install isolated-agent prerequisites
+        if: steps.agent-work.outputs.needs_agent == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -135,6 +326,7 @@ jobs:
             tests/*.ts
 
       - name: Validate pinned Codex CLI argument contract
+        if: steps.agent-work.outputs.needs_agent == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -152,7 +344,6 @@ jobs:
           SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 || secrets.CODEX_AUTH_JSON_B64 }}
           SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
           SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
-          SENTINEL_SIGNAL_ID: ${{ github.event.client_payload.signal_id }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -254,6 +445,18 @@ jobs:
                   ", P3=" + ([.findings[] | select(.severity == "P3")] | length | tostring)
               ' .sentinel/reports/triage.json
             fi
+            if [ -f .sentinel/reports/failure.json ]; then
+              jq -r '
+                "- Failure: " + (.codex_failure // .error_class // "unavailable"),
+                "- Codex duration: " + (if .codex_duration_ms == null then "unavailable" else ((.codex_duration_ms / 1000 | floor | tostring) + " seconds") end),
+                "- Codex output retained: metadata only; stdout and stderr remain private"
+              ' .sentinel/reports/failure.json
+            fi
+            for preservation in .sentinel/reports/failed-*-preservation.json; do
+              if [ -f "$preservation" ]; then
+                jq -r '"- Failed candidate preserved in encrypted evidence: " + (.candidate.preserved | tostring)' "$preservation"
+              fi
+            done
             echo "- Evidence artifact: encrypted AES-256-GCM ciphertext only"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -272,6 +475,8 @@ jobs:
             scripts/sentinel/encrypt-artifacts.ts
           test ! -e .sentinel/raw-logs
           test ! -e .sentinel/reports
+          test ! -e .sentinel/candidate-worktree
+          test ! -e .sentinel/private
           test -f .sentinel/encrypted/sentinel-evidence-v1.json
           echo "SENTINEL_ARTIFACTS_SAFE=true" >> "$GITHUB_ENV"
 
@@ -301,3 +506,46 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 90
+
+      - name: Acknowledge completed incident
+        if: success() && env.SENTINEL_MODE == 'incident'
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          deno eval \
+            '
+              const incidentId = Deno.env.get("SENTINEL_INCIDENT_ID");
+              const attempt = Number(Deno.env.get("SENTINEL_INCIDENT_ATTEMPT"));
+              const workflowRunId = Number(Deno.env.get("GITHUB_RUN_ID"));
+              const ackNonce = Deno.env.get("SENTINEL_INCIDENT_ACK_NONCE");
+              const token = Deno.env.get("DENO_DEPLOY_TOKEN");
+              if (
+                !incidentId || !Number.isSafeInteger(attempt) || !Number.isSafeInteger(workflowRunId) ||
+                !ackNonce || !/^[A-Za-z0-9_-]{43}$/.test(ackNonce) || !token
+              ) {
+                throw new Error("Incident acknowledgement environment is invalid");
+              }
+              const response = await fetch(
+                "https://ai-ubq-fi.ubiquity-dao.deno.net/admin/sentinel/incidents/ack",
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    incident_id: incidentId,
+                    attempt,
+                    workflow_run_id: workflowRunId,
+                    ack_nonce: ackNonce,
+                  }),
+                  signal: AbortSignal.timeout(20_000),
+                },
+              );
+              if (response.status !== 204) {
+                await response.body?.cancel().catch(() => {});
+                throw new Error(`Incident acknowledgement failed with HTTP ${response.status}`);
+              }
+            '

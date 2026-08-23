@@ -7,10 +7,19 @@ import { setStreamFirstEventDeadlineMsForTest } from "../src/inference_deadline.
 import { RELEASE_GIT_SHA } from "../src/release.ts";
 import { MAX_RESPONSES_SSE_EVENT_BYTES } from "../src/responses_stream.ts";
 import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
+import { readPromptCacheAnalytics, recordPromptCacheAnalytics } from "../src/prompt_cache_analytics.ts";
+import { CountingKv } from "./helpers/counting_kv.ts";
+
+if (typeof Deno.KvU64 !== "function") {
+  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
+    constructor(readonly value: bigint) {}
+  } as typeof Deno.KvU64;
+}
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 const DEFAULT_TEST_MODEL = "gpt-5-fixture-default";
 const TERRA_TEST_MODEL = "gpt-5.6-terra";
+const TEMPORARY_FREE_SURPLUS_TEST_MODEL = "glm-5.2";
 const TEST_CODEX_MODELS_KEY = ["ubq_ai", "codex_models"] as const;
 
 const kvStore = new Map<string, unknown>();
@@ -127,7 +136,7 @@ const {
 } = await import("../src/surplus.ts");
 const { ApiKeyQuotaDispatchError } = await import("../src/api_key_policy.ts");
 const { withCors } = await import("../src/http.ts");
-const { default: gatewayHandler } = await import("../src/handler.ts");
+const { default: gatewayHandler, withTerminalRequestLog } = await import("../src/handler.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 const { DEBUG_ROUTING_KEY, resetDebugRoutingCacheForTest } = await import("../src/debug_routing.ts");
 const {
@@ -1098,6 +1107,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(warnings.includes("moderation_ignored"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
@@ -1105,7 +1115,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
     assert.equal("moderation" in recorded, false);
-    assert.deepEqual(recorded["prompt_cache_options"], { mode: "implicit", ttl: "30m" });
+    assert.equal("prompt_cache_options" in recorded, false);
   });
 
   await t.step("chat preserves none reasoning effort upstream", async () => {
@@ -1194,6 +1204,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.ok(warnings.includes("temperature_ignored"));
     assert.ok(warnings.includes("max_output_tokens_ignored"));
     assert.ok(warnings.includes("moderation_ignored"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal(recorded["model"], DEFAULT_TEST_MODEL);
@@ -1201,7 +1212,7 @@ Deno.test("openai: defaults + ignore temperature", async (t) => {
     assert.equal("temperature" in recorded, false);
     assert.equal("max_output_tokens" in recorded, false);
     assert.equal("moderation" in recorded, false);
-    assert.deepEqual(recorded["prompt_cache_options"], { mode: "implicit", ttl: "30m" });
+    assert.equal("prompt_cache_options" in recorded, false);
   });
 
   await t.step("responses accepts and strips Codex CLI client metadata", async () => {
@@ -1605,7 +1616,7 @@ Deno.test("openai: an expired access token makes a quota-shaped 403 actionable",
   }
 });
 
-Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly ignores temperature", async () => {
+Deno.test("openai: Terra Chat Completions accepts but omits the unsupported Codex completion cap", async () => {
   let recordedBody: Record<string, unknown> | null = null;
 
   const response = await withFetchMock(
@@ -1631,13 +1642,63 @@ Deno.test("openai: Terra Chat Completions maps the completion cap and explicitly
   assert.equal(response.status, 200);
   const warnings = parseWarnings(response.headers.get("x-uos-warning"));
   assert.ok(warnings.includes("temperature_ignored"));
-  assert.equal(warnings.includes("max_output_tokens_ignored"), false);
+  assert.ok(warnings.includes("max_output_tokens_ignored"));
   assert.ok(recordedBody);
   const recorded = recordedBody as Record<string, unknown>;
   assert.equal(recorded.model, TERRA_TEST_MODEL);
-  assert.equal(recorded.max_output_tokens, 2048);
+  assert.equal("max_output_tokens" in recorded, false);
   assert.equal("max_completion_tokens" in recorded, false);
   assert.equal("temperature" in recorded, false);
+});
+
+Deno.test("openai: prompt-cache sessions are stable within and isolated across authenticated principals", async () => {
+  const identities: Array<Record<string, string | null>> = [];
+  const responseStatuses = await withFetchMock(
+    (_url, _bodyText, init) => {
+      const headers = new Headers(init?.headers);
+      identities.push({
+        conversation: headers.get("conversation_id"),
+        session: headers.get("session-id"),
+        thread: headers.get("thread-id"),
+        clientRequest: headers.get("x-client-request-id"),
+      });
+      return sseResponse(baseSseChunks());
+    },
+    async () => {
+      const invoke = async (principal: string): Promise<number> => {
+        const response = await handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              input: "stable prefix",
+              prompt_cache_key: "shared-client-key",
+            }),
+          }),
+          {
+            keyId: null,
+            kernelRepo: null,
+            kernelOrg: null,
+            idempotencyPrincipal: principal,
+          },
+        );
+        return response.status;
+      };
+      return [await invoke("api-key:one"), await invoke("api-key:one"), await invoke("api-key:two")];
+    },
+  );
+
+  assert.deepEqual(responseStatuses, [200, 200, 200]);
+  assert.equal(identities.length, 3);
+  assert.deepEqual(identities[1], identities[0]);
+  assert.notEqual(identities[2]?.conversation, identities[0]?.conversation);
+  for (const identity of identities) {
+    assert.match(identity.conversation ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.equal(identity.session, identity.conversation);
+    assert.equal(identity.thread, identity.conversation);
+    assert.equal(identity.clientRequest, identity.conversation);
+  }
 });
 
 Deno.test("openai: default model requires configured model or stored snapshot", async () => {
@@ -1928,6 +1989,65 @@ Deno.test("openai: models returns stored Codex snapshot without upstream fetch",
   assert.equal(typeof model.created, "number");
   assert.equal(Object.prototype.hasOwnProperty.call(model, "supported_reasoning_levels"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(model, "display_name"), false);
+});
+
+Deno.test("openai: models omits provider models without OpenAI inference endpoints", async () => {
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  Deno.env.set("METERED_API_KEY", "metered-model-filter-test-key");
+  Deno.env.delete("SURPLUS_API_KEY");
+  try {
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [
+            {
+              id: "openlux-responses-model",
+              owned_by: "openlux",
+              supported_endpoint_types: ["openai-response"],
+            },
+            {
+              id: "openlux-chat-model",
+              owned_by: "openlux",
+              supported_endpoint_types: ["openai"],
+            },
+            {
+              id: "gpt-image-2",
+              model_type: "图像",
+              owned_by: "openlux",
+              supported_endpoint_types: ["image-generation"],
+            },
+          ],
+        })),
+    });
+
+    const response = await handleModels();
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      object?: unknown;
+      data?: Array<Record<string, unknown> & { id?: string }>;
+    };
+    assert.deepEqual(Object.keys(payload).sort(), ["data", "object"]);
+    assert.equal(payload.object, "list");
+    assert.ok(Array.isArray(payload.data));
+    const modelIds = new Set(payload.data.map((model) => model.id));
+    assert.equal(modelIds.has("openlux-responses-model"), true);
+    assert.equal(modelIds.has("openlux-chat-model"), true);
+    assert.equal(modelIds.has("gpt-image-2"), false);
+    for (const model of payload.data) {
+      assert.deepEqual(Object.keys(model).sort(), ["created", "id", "object", "owned_by"]);
+    }
+  } finally {
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
 });
 
 Deno.test("openai: public catalog hides OpenLux-only models", async () => {
@@ -3504,6 +3624,521 @@ Deno.test("openai: an all-blocked Codex response continues through paid Metered 
   }
 });
 
+Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallback", async (t) => {
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const debugKey = keyToString(DEBUG_ROUTING_KEY);
+  const previousDebugRouting = kvStore.get(debugKey);
+  const healthPrefix = ["uos_ai", "provider_health", "v1", "surplus", "default"] as const;
+  const healthKey = keyToString([...healthPrefix, "current"]);
+  let removedProviderCalls = 0;
+
+  const clearSurplusHealth = (): void => {
+    for (const encodedKey of [...kvStore.keys()]) {
+      const key = JSON.parse(encodedKey) as unknown[];
+      if (healthPrefix.every((part, index) => key[index] === part)) kvStore.delete(encodedKey);
+    }
+    resetProviderHealthThrottleForTest();
+  };
+  const waitForSurplusHealth = async (event: string): Promise<Record<string, unknown>> => {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const current = kvStore.get(healthKey) as Record<string, unknown> | undefined;
+      if (current?.event === event) return current;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    const current = kvStore.get(healthKey) as Record<string, unknown> | undefined;
+    assert.fail(`Expected Surplus health event ${event}, received ${String(current?.event ?? "missing")}`);
+  };
+
+  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+  Deno.env.set("METERED_API_KEY", "metered-must-not-run");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  setRemovedProviderApiKeyForTest("removed-provider-must-not-run");
+  setRemovedProviderTestAdapterForTest({
+    fetchResponses: () => {
+      removedProviderCalls += 1;
+      throw new Error("RemovedProvider must not run for the temporary GLM cut");
+    },
+    modelFromEvent: () => null,
+    isEligibleModel: () => true,
+  });
+  kvStore.set(debugKey, {
+    scenario: "removed_provider_first",
+    expires_at_ms: Date.now() + 60_000,
+    updated_at_ms: Date.now(),
+  });
+  resetDebugRoutingCacheForTest();
+
+  try {
+    for (
+      const routeCase of [
+        { route: "responses", requestId: "free-glm-responses", reasoningEffort: "low" },
+        { route: "chat", requestId: "free-glm-chat", reasoningEffort: "medium" },
+      ] as const
+    ) {
+      await t.step(
+        `${routeCase.route} bypasses catalogs, Codex, RemovedProvider, Metered, and the ledger`,
+        async () => {
+          clearSurplusHealth();
+          const upstreamUrls: string[] = [];
+          const dispatchedProviders: string[] = [];
+          let upstreamModel: unknown = null;
+          let upstreamReasoningEffort: unknown = null;
+          let upstreamTextFormat: unknown = null;
+          const response = await withFetchMock(
+            (url, bodyText, init) => {
+              upstreamUrls.push(url);
+              assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
+              assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer surplus-test-key");
+              const upstreamRequest = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+              upstreamModel = upstreamRequest?.model ?? null;
+              upstreamReasoningEffort = (upstreamRequest?.reasoning as Record<string, unknown> | undefined)?.effort ??
+                null;
+              upstreamTextFormat = (upstreamRequest?.text as Record<string, unknown> | undefined)?.format ?? null;
+              return new Response(sseResponse(baseSseChunks()).body, {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/event-stream",
+                  "X-Oneapi-Request-Id": routeCase.requestId + "-provider",
+                },
+              });
+            },
+            () => {
+              const context = {
+                keyId: "key-" + routeCase.requestId,
+                kernelRepo: null,
+                kernelOrg: null,
+                paidFallbackEnabled: false,
+                requestId: routeCase.requestId,
+                startedAtMs: Date.now(),
+                startedAtMonotonicMs: performance.now(),
+                beforeProviderDispatch: (provider: string) => {
+                  dispatchedProviders.push(provider);
+                  return Promise.resolve();
+                },
+              };
+              return routeCase.route === "responses"
+                ? handleResponses(
+                  new Request("https://ai.ubq.fi/v1/responses", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                      input: "ping",
+                      reasoning: { effort: routeCase.reasoningEffort },
+                    }),
+                  }),
+                  context,
+                )
+                : handleChatCompletions(
+                  new Request("https://ai.ubq.fi/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                      messages: [{ role: "user", content: "ping" }],
+                      reasoning_effort: routeCase.reasoningEffort,
+                      response_format: { type: "json_object" },
+                    }),
+                  }),
+                  context,
+                );
+            },
+          );
+
+          assert.equal(response.status, 200);
+          assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+          await response.text();
+          assert.deepEqual(upstreamUrls, ["https://api.surplusintelligence.ai/v1/responses"]);
+          assert.deepEqual(dispatchedProviders, ["surplus"]);
+          assert.equal(upstreamModel, TEMPORARY_FREE_SURPLUS_TEST_MODEL);
+          assert.equal(upstreamReasoningEffort, routeCase.reasoningEffort);
+          assert.deepEqual(upstreamTextFormat, routeCase.route === "chat" ? { type: "json_object" } : null);
+          assert.ok(!parseWarnings(response.headers.get("x-uos-warning")).includes("response_format_ignored"));
+          const telemetry = getResponseTelemetry(response);
+          assert.equal(telemetry?.provider, "surplus");
+          assert.equal(telemetry?.fallbackReason, null);
+          assert.equal(telemetry?.reasoning, routeCase.reasoningEffort);
+          assert.equal(telemetry?.providerRequestId, routeCase.requestId + "-provider");
+          assert.deepEqual(telemetry?.attemptedProviders, ["surplus"]);
+          assert.equal(telemetry?.firstCodexDispatchMs, null);
+          assert.equal(telemetry?.firstCodexHeadersMs, null);
+          assert.equal(typeof telemetry?.firstProviderDispatchMs, "number");
+          assert.equal(typeof telemetry?.firstProviderHeadersMs, "number");
+          assert.equal(
+            getStoredPaidFallbackRequest("key-" + routeCase.requestId, routeCase.requestId),
+            null,
+          );
+          const health = await waitForSurplusHealth("success");
+          assert.equal(health.status, 200);
+          assert.equal(health.provider_request_id, routeCase.requestId + "-provider");
+        },
+      );
+    }
+
+    await t.step("ordinary API-key quota rejection happens before Surplus transport", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-quota-key";
+      const requestId = "free-glm-quota-request";
+      let fetchCalls = 0;
+      const response = await withFetchMock(
+        () => {
+          fetchCalls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                messages: [{ role: "user", content: "ping" }],
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+              beforeProviderDispatch: () =>
+                Promise.reject(new ApiKeyQuotaDispatchError("API key quota reservation is unavailable")),
+            },
+          ),
+      );
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      assert.equal(fetchCalls, 0);
+      assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["surplus"]);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      assert.equal(kvStore.has(healthKey), false);
+    });
+
+    await t.step("tool-bearing requests fail before every provider and paid ledger", async () => {
+      clearSurplusHealth();
+      for (const route of ["responses", "chat"] as const) {
+        const keyId = `free-glm-tools-${route}-key`;
+        const requestId = `free-glm-tools-${route}-request`;
+        const dispatchedProviders: string[] = [];
+        let fetchCalls = 0;
+        const response = await withFetchMock(
+          () => {
+            fetchCalls += 1;
+            throw new Error("tool-bearing GLM requests must not reach a provider");
+          },
+          () => {
+            const context = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+              beforeProviderDispatch: (provider: string) => {
+                dispatchedProviders.push(provider);
+                return Promise.resolve();
+              },
+            };
+            const tool = {
+              type: "function",
+              name: "inspect_workspace",
+              description: "Inspect the workspace.",
+              parameters: { type: "object", properties: {}, additionalProperties: false },
+            };
+            return route === "responses"
+              ? handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                    input: "inspect the workspace",
+                    tools: [tool],
+                  }),
+                }),
+                context,
+              )
+              : handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                    messages: [{ role: "user", content: "inspect the workspace" }],
+                    tools: [{ type: "function", function: tool }],
+                  }),
+                }),
+                context,
+              );
+          },
+        );
+
+        assert.equal(response.status, 400, route);
+        const payload = await response.json() as {
+          error?: { code?: string; param?: string };
+        };
+        assert.equal(payload.error?.code, "unsupported_model_capability", route);
+        assert.equal(payload.error?.param, "tools", route);
+        assert.equal(fetchCalls, 0, route);
+        assert.deepEqual(dispatchedProviders, [], route);
+        assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, [], route);
+        assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null, route);
+        assert.equal(kvStore.has(healthKey), false, route);
+      }
+    });
+
+    await t.step("Surplus 429 remains quota health and never falls through", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-provider-quota-key";
+      const requestId = "free-glm-provider-quota-request";
+      const upstreamUrls: string[] = [];
+      const response = await withFetchMock(
+        (url) => {
+          upstreamUrls.push(url);
+          return new Response(
+            JSON.stringify({
+              error: { message: "temporary provider quota", type: "rate_limit_error", code: "provider_quota" },
+            }),
+            {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Oneapi-Request-Id": "free-glm-provider-429",
+              },
+            },
+          );
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: TEMPORARY_FREE_SURPLUS_TEST_MODEL, input: "ping" }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 429);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      await response.text();
+      assert.deepEqual(upstreamUrls, ["https://api.surplusintelligence.ai/v1/responses"]);
+      assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["surplus"]);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("quota_exhausted");
+      assert.equal(health.status, 429);
+      assert.equal(health.provider_request_id, "free-glm-provider-429");
+    });
+
+    await t.step("failed Surplus terminal marks provider health without a paid ledger row", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-terminal-key";
+      const requestId = "free-glm-terminal-request";
+      const response = await withFetchMock(
+        (url) => {
+          assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
+          return new Response(
+            sseResponse([
+              "data: " + JSON.stringify({
+                type: "response.failed",
+                response: {
+                  id: "free-glm-failed-response",
+                  status: "failed",
+                  model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                  output: [],
+                  error: { type: "server_error", code: "provider_error", message: "provider failed" },
+                },
+              }) + "\n\n",
+            ]).body,
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/event-stream",
+                "X-Oneapi-Request-Id": "free-glm-failed-provider",
+              },
+            },
+          );
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: TEMPORARY_FREE_SURPLUS_TEST_MODEL, input: "ping" }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      await response.text();
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("upstream_error");
+      assert.equal(health.status, null);
+      assert.equal(health.provider_request_id, "free-glm-failed-provider");
+    });
+
+    await t.step("contentless Surplus Chat completion marks provider health as failed", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-empty-chat-key";
+      const requestId = "free-glm-empty-chat-request";
+      const response = await withFetchMock(
+        (url) => {
+          assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
+          return new Response(
+            sseResponse([
+              `data: ${
+                JSON.stringify({
+                  type: "response.completed",
+                  response: {
+                    id: "free-glm-empty-response",
+                    status: "completed",
+                    model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                    output: [],
+                    usage: { input_tokens: 1642, output_tokens: 2048, total_tokens: 3690 },
+                  },
+                })
+              }\n\n`,
+            ]).body,
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/event-stream",
+                "X-Oneapi-Request-Id": "free-glm-empty-provider",
+              },
+            },
+          );
+        },
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                max_completion_tokens: 2048,
+                messages: [{ role: "user", content: "contentless GLM response" }],
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      const payload = await response.json() as { error?: { code?: unknown } };
+      assert.equal(payload.error?.code, "empty_upstream_completion");
+      assert.equal(getResponseTelemetry(response)?.completed, false);
+      assert.equal(getResponseTelemetry(response)?.failureKind, "empty_upstream_completion");
+      assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, false);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("upstream_error");
+      assert.equal(health.status, null);
+      assert.equal(health.provider_request_id, "free-glm-empty-provider");
+    });
+
+    await t.step("client cancellation after headers does not mark Surplus degraded", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-cancel-key";
+      const requestId = "free-glm-cancel-request";
+      let upstreamCancelled = 0;
+      const response = await withFetchMock(
+        (url) => {
+          assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(TEXT_ENCODER.encode(
+                "data: " + JSON.stringify({
+                  type: "response.created",
+                  response: { id: "free-glm-cancel-response", model: TEMPORARY_FREE_SURPLUS_TEST_MODEL },
+                }) + "\n\n",
+              ));
+              controller.enqueue(TEXT_ENCODER.encode(
+                "data: " + JSON.stringify({ type: "response.output_text.delta", delta: "started" }) + "\n\n",
+              ));
+            },
+            cancel() {
+              upstreamCancelled += 1;
+            },
+          });
+          return new Response(body, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/event-stream",
+              "X-Oneapi-Request-Id": "free-glm-cancel-provider",
+            },
+          });
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                input: "ping",
+                stream: true,
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId,
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      await response.body?.cancel("client stopped");
+      assert.equal(upstreamCancelled, 1);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("reachable");
+      assert.equal(health.status, 200);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal((kvStore.get(healthKey) as Record<string, unknown>).event, "reachable");
+    });
+
+    assert.equal(removedProviderCalls, 0);
+  } finally {
+    clearSurplusHealth();
+    setRemovedProviderTestAdapterForTest(null);
+    setRemovedProviderApiKeyForTest(undefined);
+    if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+    else kvStore.set(debugKey, previousDebugRouting);
+    resetDebugRoutingCacheForTest();
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+  }
+});
+
 Deno.test("openai: tool-bearing paid fallback skips Surplus without capability evidence", async () => {
   const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
@@ -4252,7 +4887,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       assert.equal(window, undefined);
     });
 
-    await t.step("Responses sends the same canonical payload to Metered exactly once", async () => {
+    await t.step("Responses strips only Codex-incompatible controls before Metered fallback", async () => {
       const keyId = "fallback-responses-success";
       seedPaidFallbackKey(keyId);
       const bodies: Record<string, unknown>[] = [];
@@ -4291,7 +4926,19 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 model: DEFAULT_TEST_MODEL,
-                input: "ping",
+                input: [{
+                  type: "message",
+                  role: "user",
+                  content: [{
+                    type: "input_text",
+                    text: "stable fallback prefix",
+                    prompt_cache_breakpoint: { mode: "explicit" },
+                  }],
+                }],
+                max_output_tokens: 64,
+                prompt_cache_key: "fallback-cache-key",
+                prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                prompt_cache_retention: "24h",
                 reasoning: { effort: "ultra" },
               }),
             }),
@@ -4316,7 +4963,19 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       ]);
       assert.equal(bodies.length, 3);
       assert.deepEqual(bodies[1], bodies[0]);
-      assert.deepEqual(bodies[2], bodies[0]);
+      assert.equal(bodies[0].prompt_cache_key, "fallback-cache-key");
+      assert.equal("max_output_tokens" in bodies[0], false);
+      assert.equal("prompt_cache_options" in bodies[0], false);
+      assert.equal("prompt_cache_retention" in bodies[0], false);
+      const codexInput = bodies[0].input as Array<Record<string, unknown>>;
+      const codexContent = codexInput[0]?.content as Array<Record<string, unknown>>;
+      assert.equal("prompt_cache_breakpoint" in codexContent[0]!, false);
+      assert.equal(bodies[2].max_output_tokens, 64);
+      assert.deepEqual(bodies[2].prompt_cache_options, { mode: "explicit", ttl: "30m" });
+      assert.equal(bodies[2].prompt_cache_retention, "24h");
+      const meteredInput = bodies[2].input as Array<Record<string, unknown>>;
+      const meteredContent = meteredInput[0]?.content as Array<Record<string, unknown>>;
+      assert.deepEqual(meteredContent[0]?.prompt_cache_breakpoint, { mode: "explicit" });
       assert.deepEqual(bodies[2].reasoning, { effort: "max" });
     });
 
@@ -4476,10 +5135,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 model: DEFAULT_TEST_MODEL,
                 output: terminalCase.eventType === "response.completed"
                   ? [{
-                    id: `msg_${suffix}`,
                     type: "message",
                     role: "assistant",
-                    content: [{ type: "output_text", text: "done" }],
+                    content: [{ type: "output_text", text: "terminal output" }],
                   }]
                   : [],
                 usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
@@ -4866,9 +5524,11 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       const previousDebugRouting = kvStore.get(debugKey);
       const originalInfo = console.info;
       const logs: unknown[][] = [];
+      let removedProviderBody: Record<string, unknown> | null = null;
       setRemovedProviderApiKeyForTest("removed-provider-test-key");
       setRemovedProviderTestAdapterForTest({
-        fetchResponses: async (_body, options) => {
+        fetchResponses: async (body, options) => {
+          removedProviderBody = structuredClone(body);
           await options.beforeDispatch?.();
           options.timing?.onDispatch?.();
           options.timing?.onHeaders?.();
@@ -4926,13 +5586,32 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               new Request("http://localhost/v1/responses", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "recover through RemovedProvider" }),
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  prompt_cache_key: "removed-provider-cache-key",
+                  prompt_cache_options: { mode: "explicit", ttl: "30m" },
+                  prompt_cache_retention: "24h",
+                  input: [{
+                    type: "input_text",
+                    text: "recover through RemovedProvider",
+                    prompt_cache_breakpoint: { mode: "explicit" },
+                  }],
+                }),
               }),
             ),
         );
         assert.equal(response.status, 200);
         assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
         assert.equal(response.headers.get("x-uos-provider-request-id"), null);
+        assert.equal(response.headers.get("x-uos-warning"), null);
+        assert.ok(removedProviderBody);
+        const forwardedBody = removedProviderBody as Record<string, unknown>;
+        assert.equal(forwardedBody.prompt_cache_key, "removed-provider-cache-key");
+        assert.deepEqual(forwardedBody.prompt_cache_options, { mode: "explicit", ttl: "30m" });
+        assert.equal(forwardedBody.prompt_cache_retention, "24h");
+        const forwardedInput = forwardedBody.input as Array<Record<string, unknown>>;
+        const forwardedContent = forwardedInput[0]?.content as Array<Record<string, unknown>>;
+        assert.deepEqual(forwardedContent[0]?.prompt_cache_breakpoint, { mode: "explicit" });
         await response.text();
         for (let attempt = 0; attempt < 100 && logs.length === 0; attempt += 1) {
           await new Promise<void>((resolve) => setTimeout(resolve, 1));
@@ -5433,10 +6112,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                             model: DEFAULT_TEST_MODEL,
                             output: terminalType === "response.completed"
                               ? [{
-                                id: `msg_${suffix}`,
                                 type: "message",
                                 role: "assistant",
-                                content: [{ type: "output_text", text: "done" }],
+                                content: [{ type: "output_text", text: "terminal output" }],
                               }]
                               : [],
                             usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
@@ -5574,10 +6252,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                           model: DEFAULT_TEST_MODEL,
                           output: terminalType === "response.completed"
                             ? [{
-                              id: `msg_terminal_probe_${suffix}`,
                               type: "message",
                               role: "assistant",
-                              content: [{ type: "output_text", text: "done" }],
+                              content: [{ type: "output_text", text: "terminal output" }],
                             }]
                             : [],
                           usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
@@ -5830,10 +6507,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                       model: DEFAULT_TEST_MODEL,
                       output: terminalType === "response.completed"
                         ? [{
-                          id: "msg_buffered_chat_terminal",
                           type: "message",
                           role: "assistant",
-                          content: [{ type: "output_text", text: "done" }],
+                          content: [{ type: "output_text", text: "terminal output" }],
                         }]
                         : [],
                       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
@@ -6835,6 +7511,36 @@ Deno.test("openai: Chat assistant refusal content replays as output text", async
   }]);
 });
 
+Deno.test("openai: Chat assistant top-level refusal replays as output text", async () => {
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (_url, bodyText) => {
+      recordedBody = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
+      return sseResponse(baseSseChunks());
+    },
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{ role: "assistant", content: null, refusal: "Cannot help." }],
+          }),
+        }),
+      ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(recordedBody);
+  const requestBody = recordedBody as Record<string, unknown>;
+  assert.deepEqual(requestBody.input, [{
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "Cannot help." }],
+  }]);
+});
+
 Deno.test("openai: malformed Chat tool calls are rejected before provider dispatch", async () => {
   let upstreamCalls = 0;
   const response = await withFetchMock(
@@ -7343,6 +8049,333 @@ Deno.test("openai: buffered Chat preserves final text from response.output", asy
   assert.equal(payload.choices?.[0]?.message?.content, "Text supplied by response.output.");
 });
 
+Deno.test("openai: contentless response.completed fails Chat without success framing", async (t) => {
+  const usage = { input_tokens: 1642, output_tokens: 2048, total_tokens: 3690 };
+  const completed = `data: ${
+    JSON.stringify({
+      type: "response.completed",
+      response: { id: "resp_empty", model: DEFAULT_TEST_MODEL, output: [], usage },
+    })
+  }\n\n`;
+
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const observedTerminalUsages: Array<{ completed: boolean; inputTokens: number | null }> = [];
+      const response = await withFetchMock(
+        () => sseResponse([completed]),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                reasoning_effort: "low",
+                max_completion_tokens: 2048,
+                messages: [{ role: "user", content: "contentless completion" }],
+              }),
+            }),
+            {
+              keyId: null,
+              kernelRepo: null,
+              kernelOrg: null,
+              onTerminalUsage: (terminalUsage, terminalCompleted) => {
+                observedTerminalUsages.push({
+                  completed: terminalCompleted,
+                  inputTokens: terminalUsage?.inputTokens ?? null,
+                });
+              },
+            },
+          ),
+      );
+
+      assert.equal(response.status, 502);
+      assert.doesNotMatch(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
+      assert.deepEqual(await response.json(), {
+        error: {
+          message: "Upstream response completed with no translated semantic output.",
+          type: "server_error",
+          code: "empty_upstream_completion",
+          param: null,
+        },
+      });
+
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.completed, false);
+      assert.equal(telemetry?.semanticOutputObserved, false);
+      assert.equal(telemetry?.outputTokenAllowance, 2048);
+      assert.deepEqual(telemetry?.upstreamEventKinds, ["response.completed"]);
+      assert.equal(telemetry?.streamTerminalType, "error");
+      assert.equal(telemetry?.failureKind, "empty_upstream_completion");
+      assert.equal(telemetry?.inputTokens, 1642);
+      assert.equal(telemetry?.outputTokens, 2048);
+      assert.equal(telemetry?.totalTokens, 3690);
+      assert.deepEqual(observedTerminalUsages, [{ completed: false, inputTokens: 1642 }]);
+    });
+  }
+});
+
+Deno.test("openai: partial Chat output followed by failure is not an empty completion", async (t) => {
+  const events = [
+    `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "partial output" })}\n\n`,
+    `data: ${
+      JSON.stringify({
+        type: "response.failed",
+        response: {
+          status: "failed",
+          output: [],
+          usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+        },
+      })
+    }\n\n`,
+  ];
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        () => sseResponse(events),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                messages: [{ role: "user", content: "partial then fail" }],
+              }),
+            }),
+          ),
+      );
+      const serialized = await response.text();
+      assert.match(serialized, /upstream_stream_error/);
+      assert.doesNotMatch(serialized, /empty_upstream_completion|data: \[DONE\]/);
+      assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
+      assert.equal(getResponseTelemetry(response)?.completed, false);
+    });
+  }
+});
+
+Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free", async () => {
+  const secretPrompt = "private prompt that must not enter diagnostics";
+  const secretEventPayload = "private provider output that must not enter diagnostics";
+  const unknownEventType = "response.future_private_output";
+  const originalInfo = console.info;
+  const logs: unknown[][] = [];
+  console.info = (...args: unknown[]) => logs.push(args);
+  try {
+    const response = await withFetchMock(
+      () =>
+        new Response(
+          sseResponse([
+            `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_empty_log" } })}\n\n`,
+            `data: ${JSON.stringify({ type: unknownEventType, output: secretEventPayload })}\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: {
+                  id: "resp_empty_log",
+                  model: DEFAULT_TEST_MODEL,
+                  output: [],
+                  usage: { input_tokens: 10, output_tokens: 2048, total_tokens: 2058 },
+                },
+              })
+            }\n\n`,
+          ]).body,
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "text/event-stream",
+              "X-Request-Id": "provider-empty-log",
+            },
+          },
+        ),
+      () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: DEFAULT_TEST_MODEL,
+              reasoning_effort: "low",
+              max_completion_tokens: 2048,
+              messages: [{ role: "user", content: secretPrompt }],
+            }),
+          }),
+        ),
+    );
+    const loggedResponse = await withTerminalRequestLog(response, {
+      route: "chat.completions",
+      telemetryResponse: response,
+      startedAtMonotonicMs: performance.now(),
+      requestId: "empty-chat-terminal-log",
+    });
+    assert.equal(loggedResponse.status, 502);
+    await loggedResponse.json();
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (logs.some((entry) => entry[0] === "[ai.ubq.fi] request_terminal")) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    const terminalLogs = logs
+      .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+      .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>);
+    assert.equal(terminalLogs.length, 1);
+    const terminal = terminalLogs[0]!;
+    assert.equal(terminal.provider_request_id, "provider-empty-log");
+    assert.equal(terminal.output_token_allowance, 2048);
+    assert.equal(terminal.semantic_output_observed, false);
+    assert.deepEqual(terminal.upstream_event_kinds, ["response.created", "unrecognized", "response.completed"]);
+    assert.equal(terminal.stream_terminal_type, "error");
+    assert.equal(terminal.failure_kind, "empty_upstream_completion");
+    assert.equal(terminal.input_tokens, 10);
+    assert.equal(terminal.output_tokens, 2048);
+    const serializedTerminal = JSON.stringify(terminal);
+    assert.equal(serializedTerminal.includes(secretPrompt), false);
+    assert.equal(serializedTerminal.includes(secretEventPayload), false);
+    assert.equal(serializedTerminal.includes(unknownEventType), false);
+  } finally {
+    console.info = originalInfo;
+  }
+});
+
+Deno.test("openai: Chat refusal output remains semantic in buffered and streamed modes", async (t) => {
+  const refusalText = "I cannot help with that request.";
+  const refusalItem = {
+    id: "msg_refusal",
+    type: "message",
+    role: "assistant",
+    content: [{ type: "refusal", refusal: refusalText }],
+  };
+  const cases = [
+    {
+      name: "refusal delta and done",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.refusal.delta",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            delta: "I cannot ",
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.refusal.done",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            refusal: refusalText,
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "final response output refusal",
+      events: [
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [refusalItem] } })}\n\n`,
+      ],
+    },
+    {
+      name: "output-item-done refusal",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: refusalItem })}\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "content-part-done refusal",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            part: { type: "refusal", refusal: refusalText },
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "response.output plus repeated output-item-done refusal",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output", output: [refusalItem] })}\n\n`,
+        `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: refusalItem })}\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "response.output plus repeated content-part-done refusal",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output", output: [refusalItem] })}\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            part: refusalItem.content[0],
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+  ];
+
+  for (const testCase of cases) {
+    for (const stream of [false, true]) {
+      await t.step(`${testCase.name} (${stream ? "streamed" : "buffered"})`, async () => {
+        const response = await withFetchMock(
+          () => sseResponse(testCase.events),
+          () =>
+            handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  stream,
+                  messages: [{ role: "user", content: "refuse" }],
+                }),
+              }),
+            ),
+        );
+        assert.equal(response.status, 200);
+        if (!stream) {
+          const payload = await response.json() as {
+            choices?: Array<{ message?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }>;
+          };
+          assert.equal(payload.choices?.[0]?.message?.content, null);
+          assert.equal(payload.choices?.[0]?.message?.refusal, refusalText);
+          assert.equal(payload.choices?.[0]?.finish_reason, "stop");
+        } else {
+          const serialized = await response.text();
+          const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
+            .map((match) => match[1]!)
+            .filter((value) => value !== "[DONE]")
+            .map((value) =>
+              JSON.parse(value) as {
+                choices?: Array<{ delta?: { refusal?: unknown }; finish_reason?: unknown }>;
+              }
+            );
+          const refusal = chunks.map((chunk) => chunk.choices?.[0]?.delta?.refusal)
+            .filter((value): value is string => typeof value === "string")
+            .join("");
+          assert.equal(refusal, refusalText);
+          assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
+          assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+        }
+        assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
+        assert.equal(getResponseTelemetry(response)?.completed, true);
+      });
+    }
+  }
+});
+
 Deno.test("openai: streamed Chat preserves final-only text alongside function calls", async () => {
   const call = {
     id: "fc_stream_final_text",
@@ -7391,54 +8424,179 @@ Deno.test("openai: streamed Chat preserves final-only text alongside function ca
   assert.match(text, /data: \[DONE\]/);
 });
 
-Deno.test("openai: Chat preserves output-text done without terminal output", async (t) => {
-  for (const stream of [false, true]) {
-    await t.step(stream ? "streamed" : "buffered", async () => {
-      const response = await withFetchMock(
-        () =>
-          sseResponse([
-            `data: ${JSON.stringify({ type: "response.output_text.done", text: "Done-only text." })}\n\n`,
-            `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-          ]),
-        () =>
-          handleChatCompletions(
-            new Request("https://ai.ubq.fi/v1/chat/completions", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                model: DEFAULT_TEST_MODEL,
-                stream,
-                messages: [{ role: "user", content: "text" }],
+Deno.test("openai: Chat recovers completed output text without duplicating streamed deltas", async (t) => {
+  const completedText = '{"subjects":[{"title":"Recovered"}]}';
+  const finalOutput = [{
+    id: "msg_done_text",
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: completedText }],
+  }];
+  const cases = [
+    {
+      name: "done-only text with empty terminal output",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.output_text.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            text: completedText,
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "output-item-done text with empty terminal output",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.output_item.done",
+            output_index: 0,
+            item: finalOutput[0],
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "content-part-done text with empty terminal output",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            part: { type: "output_text", text: completedText, annotations: [] },
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "delta prefix plus repeated done and terminal text",
+      events: [
+        `data: ${
+          JSON.stringify({
+            type: "response.output_text.delta",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            delta: completedText.slice(0, 12),
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.output_text.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            text: completedText,
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: finalOutput } })}\n\n`,
+      ],
+    },
+    {
+      name: "response.output plus repeated output-item-done text",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output", output: finalOutput })}\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.output_item.done",
+            output_index: 0,
+            item: finalOutput[0],
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+    {
+      name: "response.output plus repeated content-part-done text",
+      events: [
+        `data: ${JSON.stringify({ type: "response.output", output: finalOutput })}\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            part: finalOutput[0].content[0],
+          })
+        }\n\n`,
+        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+      ],
+    },
+  ];
+
+  for (const testCase of cases) {
+    for (const stream of [false, true]) {
+      await t.step(`${testCase.name} (${stream ? "streamed" : "buffered"})`, async () => {
+        const response = await withFetchMock(
+          () => sseResponse(testCase.events),
+          () =>
+            handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  stream,
+                  messages: [{ role: "user", content: "subjects" }],
+                }),
               }),
-            }),
-          ),
-      );
-      assert.equal(response.status, 200);
-      if (stream) {
-        const text = await response.text();
-        assert.match(text, /Done-only text\./);
-        assert.match(text, /data: \[DONE\]/);
-      } else {
-        const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
-        assert.equal(payload.choices?.[0]?.message?.content, "Done-only text.");
-      }
-    });
+            ),
+        );
+        assert.equal(response.status, 200);
+        if (!stream) {
+          const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+          assert.equal(payload.choices?.[0]?.message?.content, completedText);
+          return;
+        }
+
+        const serialized = await response.text();
+        const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
+          .map((match) => match[1]!)
+          .filter((value) => value !== "[DONE]")
+          .map((value) =>
+            JSON.parse(value) as {
+              choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }>;
+            }
+          );
+        const content = chunks.map((chunk) => chunk.choices?.[0]?.delta?.content)
+          .filter((value): value is string => typeof value === "string")
+          .join("");
+        assert.equal(content, completedText);
+        assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
+        assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+      });
+    }
   }
 });
 
-Deno.test("openai: empty and reasoning-only completions fail before Chat or Responses success", async (t) => {
-  for (const variant of ["empty", "reasoning_only"] as const) {
-    for (const surface of ["chat", "responses"] as const) {
+Deno.test("openai: contentless native Responses and reasoning-only completions fail before success", async (t) => {
+  const cases = [
+    { variant: "empty", surfaces: ["responses"] as const },
+    { variant: "reasoning_only", surfaces: ["chat", "responses"] as const },
+  ] as const;
+
+  for (const testCase of cases) {
+    for (const surface of testCase.surfaces) {
       for (const stream of [false, true]) {
-        await t.step(`${variant} ${surface} ${stream ? "streamed" : "buffered"}`, async () => {
+        await t.step(`${testCase.variant} ${surface} ${stream ? "streamed" : "buffered"}`, async () => {
           const observations: boolean[] = [];
           let fetches = 0;
           const response = await withFetchMock(
             () => {
               fetches += 1;
               return sseResponse([
-                `data: ${JSON.stringify({ type: "response.created", response: { id: `resp_${variant}` } })}\n\n`,
-                ...(variant === "reasoning_only"
+                `data: ${
+                  JSON.stringify({ type: "response.created", response: { id: `resp_${testCase.variant}` } })
+                }\n\n`,
+                ...(testCase.variant === "reasoning_only"
                   ? [
                     `data: ${
                       JSON.stringify({ type: "response.reasoning_summary_text.delta", delta: "hidden reasoning" })
@@ -7449,9 +8607,9 @@ Deno.test("openai: empty and reasoning-only completions fail before Chat or Resp
                   JSON.stringify({
                     type: "response.completed",
                     response: {
-                      id: `resp_${variant}`,
+                      id: `resp_${testCase.variant}`,
                       status: "completed",
-                      output: variant === "reasoning_only"
+                      output: testCase.variant === "reasoning_only"
                         ? [{ type: "reasoning", summary: [{ type: "summary_text", text: "hidden reasoning" }] }]
                         : [],
                       usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
@@ -7500,96 +8658,6 @@ Deno.test("openai: empty and reasoning-only completions fail before Chat or Resp
   }
 });
 
-Deno.test("openai: Chat preserves refusal-only output from every supported final form", async (t) => {
-  const refusal = "I cannot help with that.";
-  const refusalItem = {
-    id: "msg_refusal",
-    type: "message",
-    role: "assistant",
-    status: "completed",
-    content: [{ type: "refusal", refusal }],
-  };
-  const variants: Array<Readonly<{ name: string; events: string[] }>> = [
-    {
-      name: "delta and done",
-      events: [
-        `data: ${JSON.stringify({ type: "response.refusal.delta", delta: "I cannot " })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.refusal.done", refusal })}\n\n`,
-      ],
-    },
-    {
-      name: "content part done",
-      events: [
-        `data: ${JSON.stringify({ type: "response.content_part.done", part: { type: "refusal", refusal } })}\n\n`,
-      ],
-    },
-    {
-      name: "output item done",
-      events: [
-        `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: refusalItem })}\n\n`,
-      ],
-    },
-    {
-      name: "response output",
-      events: [`data: ${JSON.stringify({ type: "response.output", output: [refusalItem] })}\n\n`],
-    },
-    { name: "terminal output", events: [] },
-  ];
-  for (const variant of variants) {
-    for (const stream of [false, true]) {
-      await t.step(`${variant.name} ${stream ? "streamed" : "buffered"}`, async () => {
-        const response = await withFetchMock(
-          () =>
-            sseResponse([
-              ...variant.events,
-              `data: ${
-                JSON.stringify({
-                  type: "response.completed",
-                  response: { output: variant.name === "terminal output" ? [refusalItem] : [] },
-                })
-              }\n\n`,
-            ]),
-          () =>
-            handleChatCompletions(
-              new Request("https://ai.ubq.fi/v1/chat/completions", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  model: DEFAULT_TEST_MODEL,
-                  stream,
-                  messages: [{ role: "user", content: "request" }],
-                }),
-              }),
-            ),
-        );
-        assert.equal(response.status, 200);
-        if (stream) {
-          const text = await response.text();
-          const streamedRefusal = text
-            .split("\n\n")
-            .filter((frame) => frame.startsWith("data: {") && frame.includes('"refusal"'))
-            .flatMap((frame) => {
-              const payload = JSON.parse(frame.slice("data: ".length)) as {
-                choices?: Array<{ delta?: { refusal?: string } }>;
-              };
-              return payload.choices?.map((choice) => choice.delta?.refusal ?? "") ?? [];
-            })
-            .join("");
-          assert.equal(streamedRefusal, refusal);
-          assert.match(text, /data: \[DONE\]/);
-        } else {
-          const payload = await response.json() as {
-            choices?: Array<{ message?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }>;
-          };
-          assert.equal(payload.choices?.[0]?.message?.content, null);
-          assert.equal(payload.choices?.[0]?.message?.refusal, refusal);
-          assert.equal(payload.choices?.[0]?.finish_reason, "stop");
-        }
-      });
-    }
-  }
-});
-
 Deno.test("openai: native Responses preserves a refusal-only terminal", async (t) => {
   const refusalItem = {
     id: "msg_native_refusal",
@@ -7623,7 +8691,73 @@ Deno.test("openai: native Responses preserves a refusal-only terminal", async (t
   }
 });
 
-Deno.test("openai: native Responses preserve files, explicit nulls, and prompt-cache fields", async () => {
+Deno.test("openai: Chat concatenates multiple finalized message items", async (t) => {
+  const items = [
+    {
+      id: "msg_first",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "First. " }],
+    },
+    {
+      id: "msg_second",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "Second." }],
+    },
+  ];
+  const events = [
+    ...items.map((item, outputIndex) =>
+      `data: ${JSON.stringify({ type: "response.output_item.done", output_index: outputIndex, item })}\n\n`
+    ),
+    `data: ${JSON.stringify({ type: "response.completed", response: { output: items } })}\n\n`,
+  ];
+
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        () => sseResponse(events),
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: DEFAULT_TEST_MODEL,
+                stream,
+                messages: [{ role: "user", content: "two messages" }],
+              }),
+            }),
+          ),
+      );
+      assert.equal(response.status, 200);
+      if (!stream) {
+        const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+        assert.equal(payload.choices?.[0]?.message?.content, "First. Second.");
+      } else {
+        const serialized = await response.text();
+        const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
+          .map((match) => match[1]!)
+          .filter((value) => value !== "[DONE]")
+          .map((value) =>
+            JSON.parse(value) as {
+              choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }>;
+            }
+          );
+        const content = chunks.map((chunk) => chunk.choices?.[0]?.delta?.content)
+          .filter((value): value is string => typeof value === "string")
+          .join("");
+        assert.equal(content, "First. Second.");
+        assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
+        assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+      }
+      assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
+      assert.equal(getResponseTelemetry(response)?.completed, true);
+    });
+  }
+});
+
+Deno.test("openai: native Responses preserve files and key while omitting unsupported cache controls", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -7660,11 +8794,15 @@ Deno.test("openai: native Responses preserve files, explicit nulls, and prompt-c
       ),
   );
   assert.equal(response.status, 200);
+  const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+  assert.ok(warnings.includes("prompt_cache_options_ignored"));
+  assert.ok(warnings.includes("prompt_cache_retention_ignored"));
   assert.ok(recordedBody);
   const recorded = recordedBody as Record<string, unknown>;
   assert.equal("instructions" in recorded, false);
-  assert.deepEqual(recorded.prompt_cache_options, { mode: "implicit" });
-  assert.equal(recorded.prompt_cache_retention, "24h");
+  assert.equal(recorded.prompt_cache_key, "cache-key");
+  assert.equal("prompt_cache_options" in recorded, false);
+  assert.equal("prompt_cache_retention" in recorded, false);
   const content = ((recorded.input as Array<Record<string, unknown>>)[0]?.content ?? []) as Array<
     Record<string, unknown>
   >;
@@ -7766,10 +8904,9 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
           response: {
             model: DEFAULT_TEST_MODEL,
             output: [{
-              id: "msg_cache",
               type: "message",
               role: "assistant",
-              content: [{ type: "output_text", text: "done" }],
+              content: [{ type: "output_text", text: "cache telemetry output" }],
             }],
             usage,
           },
@@ -7797,6 +8934,125 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
     assert.equal(getResponseTelemetry(response)?.promptCacheMode, "implicit");
   });
 
+  await t.step("keyed Codex warnings retain cache usage through persisted analytics", async () => {
+    const analyticsKv = new CountingKv();
+    const analyticsNow = 1_800_000_000_000;
+    const analyticsUsage = {
+      input_tokens: 2048,
+      input_tokens_details: { cached_tokens: 1024, cache_write_tokens: 512 },
+      output_tokens: 16,
+      total_tokens: 2064,
+    };
+    const analyticsCompleted = () =>
+      sseResponse([
+        `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_cache_analytics" } })}\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.completed",
+            response: {
+              model: DEFAULT_TEST_MODEL,
+              output: [{
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "cache analytics output" }],
+              }],
+              usage: analyticsUsage,
+            },
+          })
+        }\n\n`,
+      ]);
+    const requests = [
+      {
+        route: "chat.completions",
+        request: new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            prompt_cache_key: "stable-analytics-key",
+            prompt_cache_options: { ttl: "30m" },
+            messages: [{ role: "user", content: "stable cache analytics prefix" }],
+          }),
+        }),
+        handle: handleChatCompletions,
+        expectsCacheOptionsWarning: true,
+      },
+      {
+        route: "responses",
+        request: new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            prompt_cache_key: "stable-analytics-key",
+            input: "stable cache analytics prefix",
+          }),
+        }),
+        handle: handleResponses,
+        expectsCacheOptionsWarning: false,
+      },
+    ] as const;
+
+    for (const [index, fixture] of requests.entries()) {
+      const forwarded: { body: Record<string, unknown> | null } = { body: null };
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          forwarded.body = JSON.parse(bodyText ?? "{}") as Record<string, unknown>;
+          return analyticsCompleted();
+        },
+        () => fixture.handle(fixture.request),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(forwarded.body?.prompt_cache_key, "stable-analytics-key");
+      assert.equal(Object.prototype.hasOwnProperty.call(forwarded.body, "prompt_cache_options"), false);
+      if (fixture.expectsCacheOptionsWarning) {
+        assert.match(response.headers.get("x-uos-warning") ?? "", /prompt_cache_options_ignored/);
+      } else {
+        assert.doesNotMatch(response.headers.get("x-uos-warning") ?? "", /prompt_cache_options_ignored/);
+      }
+      assert.equal(getResponseTelemetry(response)?.promptCacheKeyPresent, true);
+      assert.equal(getResponseTelemetry(response)?.cachedInputTokens, 1024);
+      assert.equal(getResponseTelemetry(response)?.cacheWriteInputTokens, 512);
+
+      const logged = await withTerminalRequestLog(response, {
+        route: fixture.route,
+        startedAtMonotonicMs: performance.now(),
+        requestId: `cache-analytics-${index}`,
+        recordCacheAnalytics: (event) =>
+          recordPromptCacheAnalytics(event, {
+            kv: analyticsKv as unknown as Deno.Kv,
+            release: "0123456789abcdef0123456789abcdef01234567",
+            now: () => analyticsNow,
+          }),
+        recordTelemetry: () =>
+          Promise.resolve({
+            status: "ignored" as const,
+            reason: "unknown_release" as const,
+            release: null,
+            provider: null,
+            route: null,
+            model_hash: null,
+          }),
+      });
+      await logged.body?.cancel();
+    }
+
+    const analytics = await readPromptCacheAnalytics({
+      kv: analyticsKv as unknown as Deno.Kv,
+      now: () => analyticsNow,
+    });
+    assert.deepEqual(analytics.buckets[0], {
+      bucket_start_at_ms: analyticsNow,
+      bucket_end_at_ms: analyticsNow + 15 * 60_000,
+      input_tokens: 4096,
+      cached_input_tokens: 2048,
+      cache_write_input_tokens: 1024,
+      cache_write_reported_sample_count: 2,
+      cached_percentage: 50,
+      sample_count: 2,
+    });
+  });
+
   await t.step("buffered Chat maps standard usage details", async () => {
     const response = await withFetchMock(
       () => completed(),
@@ -7822,6 +9078,7 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       fallbackReason: null,
       model: DEFAULT_TEST_MODEL,
       reasoning: "low",
+      outputTokenAllowance: null,
       inputTokens: 2006,
       cachedInputTokens: 1920,
       cacheWriteInputTokens: 0,
@@ -7836,9 +9093,11 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       affinityOutcome: "none",
       quotaUsedPercent: undefined,
       completed: true,
+      semanticOutputObserved: true,
+      upstreamEventKinds: ["response.created", "response.completed"],
       streamTerminalType: "response.completed",
       failureKind: null,
-      responseCreatedObserved: false,
+      responseCreatedObserved: true,
       syntheticTerminalType: null,
       stream: false,
       providerRequestId: null,
@@ -7981,10 +9240,9 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
                 response: {
                   model: DEFAULT_TEST_MODEL,
                   output: [{
-                    id: "msg_partial_usage",
                     type: "message",
                     role: "assistant",
-                    content: [{ type: "output_text", text: "done" }],
+                    content: [{ type: "output_text", text: "partial usage output" }],
                   }],
                   usage: { input_tokens: 11, input_tokens_details: { cached_tokens: 10 } },
                 },
@@ -8253,8 +9511,8 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
   );
 });
 
-Deno.test("openai: preserves standard explicit cache breakpoints without aliases", async (t) => {
-  await t.step("Responses preserves each supported input content block", async () => {
+Deno.test("openai: accepts standard cache breakpoints but omits them from the Codex wire", async (t) => {
+  await t.step("Responses preserves content while omitting breakpoints", async () => {
     let recordedBody: Record<string, unknown> | null = null;
     const response = await withFetchMock(
       (_url, bodyText) => {
@@ -8292,6 +9550,9 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
         ),
     );
     assert.equal(response.status, 200);
+    const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
+    assert.ok(warnings.includes("prompt_cache_breakpoint_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as unknown as Record<string, unknown>;
     const content = ((recorded.input as Array<Record<string, unknown>>)[0]?.content ?? []) as Array<
@@ -8299,17 +9560,16 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
     >;
     assert.deepEqual(
       content.map((item) => item.prompt_cache_breakpoint),
-      [{ mode: "explicit" }, { mode: "explicit" }, { mode: "explicit" }],
+      [undefined, undefined, undefined],
     );
     assert.deepEqual(content[2], {
       type: "input_file",
       file_id: "file_stable",
       detail: "high",
-      prompt_cache_breakpoint: { mode: "explicit" },
     });
   });
 
-  await t.step("Responses preserves function-call output content breakpoints and file detail", async () => {
+  await t.step("Responses preserves function-call output content and file detail", async () => {
     let recordedBody: Record<string, unknown> | null = null;
     const response = await withFetchMock(
       (_url, bodyText) => {
@@ -8347,27 +9607,28 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
         ),
     );
     assert.equal(response.status, 200);
+    const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
+    assert.ok(warnings.includes("prompt_cache_breakpoint_ignored"));
     assert.ok(recordedBody);
     const input = (recordedBody as unknown as Record<string, unknown>).input as Array<Record<string, unknown>>;
     assert.deepEqual(input[0]?.output, [
-      { type: "input_text", text: "stable tool result", prompt_cache_breakpoint: { mode: "explicit" } },
+      { type: "input_text", text: "stable tool result" },
       {
         type: "input_image",
         image_url: "https://example.test/tool-result.png",
-        prompt_cache_breakpoint: { mode: "explicit" },
       },
       {
         type: "input_file",
         file_id: "file_tool_result",
         detail: "low",
-        prompt_cache_breakpoint: { mode: "explicit" },
       },
     ]);
     assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 3);
   });
 
   await t.step(
-    "Chat preserves text/image and moves breakpoint-bearing instructions into ordered developer input",
+    "Chat preserves text/image and ordered developer input while omitting breakpoints",
     async () => {
       let recordedBody: Record<string, unknown> | null = null;
       const response = await withFetchMock(
@@ -8407,6 +9668,9 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
           ),
       );
       assert.equal(response.status, 200);
+      const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+      assert.ok(warnings.includes("prompt_cache_options_ignored"));
+      assert.ok(warnings.includes("prompt_cache_breakpoint_ignored"));
       assert.ok(recordedBody);
       const recorded = recordedBody as unknown as Record<string, unknown>;
       assert.equal("instructions" in recorded, false);
@@ -8414,8 +9678,8 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
       assert.deepEqual(input.map((item) => item.role), ["developer", "developer", "user"]);
       const first = input[0]?.content as Array<Record<string, unknown>>;
       const last = input[2]?.content as Array<Record<string, unknown>>;
-      assert.deepEqual(first[0]?.prompt_cache_breakpoint, { mode: "explicit" });
-      assert.deepEqual(last.map((item) => item.prompt_cache_breakpoint), [{ mode: "explicit" }, { mode: "explicit" }]);
+      assert.equal(first[0]?.prompt_cache_breakpoint, undefined);
+      assert.deepEqual(last.map((item) => item.prompt_cache_breakpoint), [undefined, undefined]);
       assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 3);
       assert.equal(getResponseTelemetry(response)?.promptCacheKeyPresent, true);
       assert.equal(getResponseTelemetry(response)?.promptCacheMode, "explicit");
@@ -8444,7 +9708,7 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
     assert.equal(body.error?.param, "messages[0].content[0].prompt_cache_breakpoint");
   });
 
-  await t.step("Chat preserves a tool-output breakpoint through function_call_output", async () => {
+  await t.step("Chat preserves tool output while omitting its breakpoint", async () => {
     let dispatches = 0;
     let recordedBody: Record<string, unknown> | null = null;
     const response = await withFetchMock(
@@ -8474,11 +9738,12 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
         ),
     );
     assert.equal(response.status, 200);
+    assert.ok(parseWarnings(response.headers.get("x-uos-warning")).includes("prompt_cache_breakpoint_ignored"));
     assert.equal(dispatches, 1);
     assert.ok(recordedBody);
     const input = (recordedBody as unknown as Record<string, unknown>).input as Array<Record<string, unknown>>;
     assert.deepEqual(input[0]?.output, [
-      { type: "input_text", text: "stable tool result", prompt_cache_breakpoint: { mode: "explicit" } },
+      { type: "input_text", text: "stable tool result" },
     ]);
     assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 1);
   });
@@ -8527,28 +9792,29 @@ Deno.test("openai: preserves standard explicit cache breakpoints without aliases
         ),
     );
     assert.equal(response.status, 200);
+    const warnings = parseWarnings(response.headers.get("x-uos-warning"));
+    assert.ok(warnings.includes("prompt_cache_options_ignored"));
+    assert.ok(warnings.includes("prompt_cache_breakpoint_ignored"));
     assert.ok(recordedBody);
     const recorded = recordedBody as Record<string, unknown>;
     assert.equal("instructions" in recorded, false);
     const input = recorded.input as Array<Record<string, unknown>>;
     assert.deepEqual(input.map((item) => item.role), ["developer", "user", "developer", "user"]);
     assert.deepEqual(input[0]?.content, [
-      { type: "input_text", text: "stable system", prompt_cache_breakpoint: { mode: "explicit" } },
+      { type: "input_text", text: "stable system" },
     ]);
     assert.deepEqual(input[2]?.content, [{ type: "input_text", text: "stable developer" }]);
     assert.deepEqual(input[3]?.content, [
-      { type: "input_text", text: "Read these files", prompt_cache_breakpoint: { mode: "explicit" } },
+      { type: "input_text", text: "Read these files" },
       {
         type: "input_file",
         file_id: "file_stable",
         filename: "stable.txt",
-        prompt_cache_breakpoint: { mode: "explicit" },
       },
       {
         type: "input_file",
         file_data: "data:text/plain;base64,c3RhYmxl",
         filename: "inline.txt",
-        prompt_cache_breakpoint: { mode: "explicit" },
       },
     ]);
     assert.equal(getResponseTelemetry(response)?.explicitBreakpointCount, 4);

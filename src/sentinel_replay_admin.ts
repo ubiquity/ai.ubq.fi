@@ -1,6 +1,11 @@
 import { json, openaiError } from "./http.ts";
 import { getKv } from "./kv.ts";
-import { listEncryptedSentinelReplays, SENTINEL_REPLAY_EXPORT_PAGE_LIMIT } from "./sentinel_replay_capture.ts";
+import { isSentinelIncidentId } from "./sentinel_incident_outbox.ts";
+import {
+  listEncryptedSentinelIncidentReplays,
+  listEncryptedSentinelReplays,
+  SENTINEL_REPLAY_EXPORT_PAGE_LIMIT,
+} from "./sentinel_replay_capture.ts";
 
 const nonNegativeInteger = (value: string | null, fallback: number): number | null => {
   if (value === null || value === "") return fallback;
@@ -9,11 +14,12 @@ const nonNegativeInteger = (value: string | null, fallback: number): number | nu
 };
 
 const validCursor = (value: string | null): boolean =>
-  value === null || value === "" || (value.length <= 2_048 && /^[A-Za-z0-9_-]+$/.test(value));
+  value === null || value === "" || (value.length <= 2_048 && /^[A-Za-z0-9_-]+={0,2}$/.test(value));
 
 type SentinelReplayAdminDependencies = Readonly<{
   getKv?: typeof getKv;
   listEncryptedSentinelReplays?: typeof listEncryptedSentinelReplays;
+  listEncryptedSentinelIncidentReplays?: typeof listEncryptedSentinelIncidentReplays;
 }>;
 
 export const handleAdminSentinelReplayCaptures = async (
@@ -25,9 +31,11 @@ export const handleAdminSentinelReplayCaptures = async (
   const beforeMs = nonNegativeInteger(url.searchParams.get("before_ms"), -1);
   const limit = nonNegativeInteger(url.searchParams.get("limit"), SENTINEL_REPLAY_EXPORT_PAGE_LIMIT);
   const cursor = url.searchParams.get("cursor");
+  const incidentId = url.searchParams.get("incident_id")?.trim() || null;
   if (
     afterMs === null || beforeMs === null || beforeMs < afterMs ||
-    limit !== SENTINEL_REPLAY_EXPORT_PAGE_LIMIT || !validCursor(cursor)
+    limit !== SENTINEL_REPLAY_EXPORT_PAGE_LIMIT || !validCursor(cursor) ||
+    (incidentId !== null && !isSentinelIncidentId(incidentId))
   ) {
     return openaiError(
       400,
@@ -40,12 +48,18 @@ export const handleAdminSentinelReplayCaptures = async (
     if (!kv) {
       return openaiError(503, "Sentinel replay storage is unavailable", "sentinel_replay_storage_unavailable");
     }
-    const page = await (dependencies.listEncryptedSentinelReplays ?? listEncryptedSentinelReplays)(kv, {
-      afterMs,
-      beforeMs,
-      limit,
-      cursor: cursor || undefined,
-    });
+    const page = incidentId
+      ? await (dependencies.listEncryptedSentinelIncidentReplays ?? listEncryptedSentinelIncidentReplays)(kv, {
+        incidentId,
+        limit,
+        cursor: cursor || undefined,
+      })
+      : await (dependencies.listEncryptedSentinelReplays ?? listEncryptedSentinelReplays)(kv, {
+        afterMs,
+        beforeMs,
+        limit,
+        cursor: cursor || undefined,
+      });
     return json(200, {
       data: page.captures,
       cursor: page.cursor || null,

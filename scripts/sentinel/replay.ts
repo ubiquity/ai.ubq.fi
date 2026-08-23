@@ -7,6 +7,7 @@ import {
   isExportedSentinelReplayCapture,
   sentinelFailureSignature,
 } from "../../src/sentinel_replay_capture.ts";
+import { isSentinelIncidentId } from "../../src/sentinel_incident_outbox.ts";
 import type { ReplayCase, ReplayResult } from "./types.ts";
 
 type Fetch = typeof fetch;
@@ -109,6 +110,7 @@ export const fetchEncryptedReplayCaptures = async (
     adminToken: string;
     afterMs: number;
     beforeMs: number;
+    incidentId?: string;
     fetchImpl?: Fetch;
   }>,
 ): Promise<ExportedSentinelReplayCapture[]> => {
@@ -117,18 +119,23 @@ export const fetchEncryptedReplayCaptures = async (
   if (!Number.isSafeInteger(input.beforeMs) || input.beforeMs < input.afterMs) {
     throw new Error("Replay export end is invalid");
   }
+  if (input.incidentId !== undefined && !isSentinelIncidentId(input.incidentId)) {
+    throw new Error("Replay export incident ID is invalid");
+  }
   const fetchImpl = input.fetchImpl ?? fetch;
   const base = new URL(input.baseUrl);
   const captures: ExportedSentinelReplayCapture[] = [];
   let cursor: string | null = null;
   let totalBytes = 0;
   let previousManifestKey: readonly [number, string, string] | null = null;
+  const observedFingerprints = new Set<string>();
   const observedCursors = new Set<string>();
   for (let pageNumber = 0; pageNumber < SENTINEL_MAX_REPLAY_EXPORT_PAGES; pageNumber++) {
     const url = new URL("/admin/sentinel/replay-captures", base);
     url.searchParams.set("after_ms", String(input.afterMs));
     url.searchParams.set("before_ms", String(input.beforeMs));
     url.searchParams.set("limit", "1");
+    if (input.incidentId) url.searchParams.set("incident_id", input.incidentId);
     if (cursor) url.searchParams.set("cursor", cursor);
     const response = await fetchImpl(url, {
       method: "GET",
@@ -156,7 +163,7 @@ export const fetchEncryptedReplayCaptures = async (
       parsed.data.length > 1 ||
       !(parsed.cursor === null ||
         (typeof parsed.cursor === "string" && parsed.cursor.length <= 2_048 &&
-          /^[A-Za-z0-9_-]+$/.test(parsed.cursor))) ||
+          /^[A-Za-z0-9_-]+={0,2}$/.test(parsed.cursor))) ||
       !parsed.data.every(isExportedSentinelReplayCapture)
     ) {
       throw new Error("Sentinel replay export returned an invalid encrypted page");
@@ -166,8 +173,8 @@ export const fetchEncryptedReplayCaptures = async (
     }
     for (const capture of parsed.data) {
       if (
-        capture.manifest.captured_at_ms < input.afterMs ||
-        capture.manifest.captured_at_ms > input.beforeMs
+        !input.incidentId &&
+        (capture.manifest.captured_at_ms < input.afterMs || capture.manifest.captured_at_ms > input.beforeMs)
       ) {
         throw new Error("Sentinel replay export returned an out-of-range manifest");
       }
@@ -177,6 +184,7 @@ export const fetchEncryptedReplayCaptures = async (
         capture.manifest.capture_id,
       ] as const;
       if (
+        !input.incidentId &&
         previousManifestKey &&
         (currentKey[0] < previousManifestKey[0] ||
           (currentKey[0] === previousManifestKey[0] && currentKey[1] < previousManifestKey[1]) ||
@@ -185,6 +193,10 @@ export const fetchEncryptedReplayCaptures = async (
       ) {
         throw new Error("Sentinel replay export manifests are not strictly ordered");
       }
+      if (observedFingerprints.has(capture.manifest.fingerprint)) {
+        throw new Error("Sentinel replay export repeated a capture fingerprint");
+      }
+      observedFingerprints.add(capture.manifest.fingerprint);
       previousManifestKey = currentKey;
     }
     captures.push(...parsed.data);

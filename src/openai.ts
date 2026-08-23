@@ -36,7 +36,7 @@ import {
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
-import { json, openaiError } from "./http.ts";
+import { json, openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import {
   BUFFERED_INFERENCE_DEADLINE_MS,
   createInferenceSignal,
@@ -48,7 +48,7 @@ import {
 import { getKv } from "./kv.ts";
 import { loadRuntimeConfig } from "./runtime_config.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
-import { readJsonBody } from "./request.ts";
+import { captureRawBodyOnce, discardRawBodyObserverOnce, readJsonBody } from "./request.ts";
 import {
   type PreflightedResponsesStream,
   preflightResponsesStream,
@@ -129,6 +129,26 @@ import {
 } from "./surplus.ts";
 import { loadDebugRoutingConfig } from "./debug_routing.ts";
 
+// Temporary hard cut while this exact gateway model has free Surplus inference.
+// Remove the cut when the free-inference window ends; do not generalize it to
+// other catalog models or paid-fallback routing.
+const TEMPORARY_FREE_SURPLUS_MODEL = "glm-5.2";
+
+const isTemporaryFreeSurplusModel = (model: string): boolean => model === TEMPORARY_FREE_SURPLUS_MODEL;
+
+const temporaryFreeSurplusCapabilityError = (
+  model: string,
+  body: Record<string, unknown>,
+): Response | null =>
+  isTemporaryFreeSurplusModel(model) && Array.isArray(body.tools) && body.tools.length > 0
+    ? openaiError(
+      400,
+      `The model '${model}' does not support tools through this gateway.`,
+      "unsupported_model_capability",
+      { param: "tools" },
+    )
+    : null;
+
 const getDefaultModel = async (): Promise<string | null> => {
   const runtime = await loadRuntimeConfig();
   return runtime?.default_model ?? getCodexModelsSnapshotDefaultModel(runtime?.codex_models ?? null);
@@ -198,6 +218,7 @@ export type ResponseTelemetry = Readonly<{
   fallbackReason: InferenceFallbackReason | null;
   model: string | null;
   reasoning: string | null;
+  outputTokenAllowance: number | null;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -212,6 +233,8 @@ export type ResponseTelemetry = Readonly<{
   affinityOutcome: AffinityOutcome;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
+  semanticOutputObserved: boolean | null;
+  upstreamEventKinds: readonly string[];
   streamTerminalType: ResponseStreamTerminalType | null;
   failureKind: string | null;
   responseCreatedObserved: boolean;
@@ -248,6 +271,7 @@ type ResponseTelemetryState = {
   fallbackReason: InferenceFallbackReason | null;
   model: string | null;
   reasoning: string | null;
+  outputTokenAllowance: number | null;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -263,6 +287,8 @@ type ResponseTelemetryState = {
   affinityOutcome: AffinityOutcome;
   quotaUsedPercent: number | null | undefined;
   completed: boolean;
+  semanticOutputObserved: boolean | null;
+  upstreamEventKinds: string[];
   streamTerminalType: ResponseStreamTerminalType | null;
   failureKind: string | null;
   responseCreatedObserved: boolean;
@@ -292,6 +318,7 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   fallbackReason: null,
   model: null,
   reasoning: null,
+  outputTokenAllowance: null,
   inputTokens: null,
   cachedInputTokens: null,
   cacheWriteInputTokens: null,
@@ -307,6 +334,8 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   affinityOutcome: "none",
   quotaUsedPercent: undefined,
   completed: false,
+  semanticOutputObserved: null,
+  upstreamEventKinds: [],
   streamTerminalType: null,
   failureKind: null,
   responseCreatedObserved: false,
@@ -353,6 +382,133 @@ const attachResponseTelemetry = (response: Response, state: ResponseTelemetrySta
   return response;
 };
 
+const sumTelemetryCounts = (
+  states: readonly ResponseTelemetryState[],
+  key: "inputTokens" | "cachedInputTokens" | "cacheWriteInputTokens" | "outputTokens" | "totalTokens",
+  expectedCount: number,
+): number | null => {
+  if (states.length !== expectedCount || states.some((state) => state[key] === null)) return null;
+  return states.reduce((total, state) => total + (state[key] as number), 0);
+};
+
+const commonTelemetryValue = <T>(values: readonly T[]): T | null => {
+  if (values.length === 0) return null;
+  const first = values[0] as T;
+  return values.every((value) => Object.is(value, first)) ? first : null;
+};
+
+const aggregateResponseTelemetry = (
+  sources: readonly Response[],
+  target: Response,
+): Response => {
+  const states = sources.flatMap((source) => {
+    const state = responseTelemetry.get(source);
+    return state ? [state] : [];
+  });
+  if (states.length === 0) return target;
+  if (states.length === 1 && sources.length === 1) {
+    responseTelemetry.set(target, states[0]);
+    return target;
+  }
+
+  const aggregate = createResponseTelemetryState();
+  const providers = [...new Set(states.map((state) => state.provider).filter((value): value is string => !!value))];
+  aggregate.provider = providers.length === 1 ? providers[0] : providers.length > 1 ? "mixed" : null;
+  aggregate.fallbackReason = commonTelemetryValue(states.map((state) => state.fallbackReason));
+  aggregate.model = commonTelemetryValue(states.map((state) => state.model));
+  aggregate.reasoning = commonTelemetryValue(states.map((state) => state.reasoning));
+  aggregate.outputTokenAllowance = commonTelemetryValue(states.map((state) => state.outputTokenAllowance));
+  aggregate.inputTokens = sumTelemetryCounts(states, "inputTokens", sources.length);
+  aggregate.cachedInputTokens = sumTelemetryCounts(states, "cachedInputTokens", sources.length);
+  aggregate.cacheWriteInputTokens = sumTelemetryCounts(states, "cacheWriteInputTokens", sources.length);
+  aggregate.outputTokens = sumTelemetryCounts(states, "outputTokens", sources.length);
+  aggregate.totalTokens = sumTelemetryCounts(states, "totalTokens", sources.length);
+  aggregate.usageObserved = states.some((state) => state.usageObserved);
+  aggregate.usageTelemetryStatus = states.some((state) => state.usageTelemetryStatus === "invalid")
+    ? "invalid"
+    : states.length !== sources.length
+    ? aggregate.usageObserved ? "partial" : "missing"
+    : states.every((state) => state.usageTelemetryStatus === "reported")
+    ? "reported"
+    : aggregate.usageObserved
+    ? "partial"
+    : "missing";
+  aggregate.promptCacheKeyPresent = states.some((state) => state.promptCacheKeyPresent);
+  aggregate.promptCacheMode = commonTelemetryValue(states.map((state) => state.promptCacheMode)) ?? "unspecified";
+  aggregate.explicitBreakpointCount = Math.max(0, ...states.map((state) => state.explicitBreakpointCount));
+  aggregate.accountSlot = commonTelemetryValue(states.map((state) => state.accountSlot));
+  aggregate.accountCohortId = commonTelemetryValue(states.map((state) => state.accountCohortId));
+  aggregate.affinityOutcome = commonTelemetryValue(states.map((state) => state.affinityOutcome)) ?? "failover";
+  const usedPercents = states.map((state) => state.quotaUsedPercent).filter((value): value is number =>
+    typeof value === "number"
+  );
+  aggregate.quotaUsedPercent = usedPercents.length > 0
+    ? Math.max(...usedPercents)
+    : states.some((state) => state.quotaUsedPercent === null)
+    ? null
+    : undefined;
+  aggregate.completed = states.length === sources.length && states.every((state) => state.completed);
+  aggregate.semanticOutputObserved = states.some((state) => state.semanticOutputObserved === true)
+    ? true
+    : states.every((state) => state.semanticOutputObserved === false)
+    ? false
+    : null;
+  aggregate.upstreamEventKinds = [...new Set(states.flatMap((state) => state.upstreamEventKinds))];
+  aggregate.streamTerminalType = aggregate.completed
+    ? "response.completed"
+    : commonTelemetryValue(states.map((state) => state.streamTerminalType));
+  aggregate.failureKind = commonTelemetryValue(states.map((state) => state.failureKind));
+  aggregate.responseCreatedObserved = states.length === sources.length &&
+    states.every((state) => state.responseCreatedObserved);
+  aggregate.syntheticTerminalType = commonTelemetryValue(states.map((state) => state.syntheticTerminalType));
+  aggregate.stream = false;
+  aggregate.providerRequestId = states.length === 1 ? states[0].providerRequestId : null;
+  const earliestTiming = (
+    key:
+      | "firstProviderDispatchMs"
+      | "firstProviderHeadersMs"
+      | "firstCodexDispatchMs"
+      | "firstCodexHeadersMs"
+      | "firstSseEventMs",
+  ): number | null => {
+    const values = states.map((state) => state[key]).filter((value): value is number => value !== null);
+    return values.length > 0 ? Math.min(...values) : null;
+  };
+  aggregate.firstProviderDispatchMs = earliestTiming("firstProviderDispatchMs");
+  aggregate.firstProviderHeadersMs = earliestTiming("firstProviderHeadersMs");
+  aggregate.firstCodexDispatchMs = earliestTiming("firstCodexDispatchMs");
+  aggregate.firstCodexHeadersMs = earliestTiming("firstCodexHeadersMs");
+  aggregate.firstSseEventMs = earliestTiming("firstSseEventMs");
+  const terminalTimes = states.map((state) => state.streamTerminalMs).filter((value): value is number =>
+    value !== null
+  );
+  aggregate.streamTerminalMs = terminalTimes.length > 0 ? Math.max(...terminalTimes) : null;
+  aggregate.attemptedProviders = [...new Set(states.flatMap((state) => state.attemptedProviders))];
+  aggregate.removedProviderTriggerClass = commonTelemetryValue(
+    states.map((state) => state.removedProviderTriggerClass),
+  );
+  aggregate.removedProviderCircuitTransition = commonTelemetryValue(
+    states.map((state) => state.removedProviderCircuitTransition),
+  );
+  aggregate.removedProviderSelectedModel = commonTelemetryValue(
+    states.map((state) => state.removedProviderSelectedModel),
+  );
+  aggregate.removedProviderTaskType = commonTelemetryValue(states.map((state) => state.removedProviderTaskType));
+  aggregate.removedProviderSemanticCommitment = commonTelemetryValue(
+    states.map((state) => state.removedProviderSemanticCommitment),
+  );
+  const removedProviderLatencies = states.map((state) => state.removedProviderLatencyMs).filter((
+    value,
+  ): value is number => value !== null);
+  aggregate.removedProviderLatencyMs = removedProviderLatencies.length > 0
+    ? Math.max(...removedProviderLatencies)
+    : null;
+  aggregate.removedProviderTerminalStatus = commonTelemetryValue(
+    states.map((state) => state.removedProviderTerminalStatus),
+  );
+  return attachResponseTelemetry(target, aggregate);
+};
+
 export const getResponseTelemetry = (response: Response): ResponseTelemetry | null => {
   const state = responseTelemetry.get(response);
   if (!state) return null;
@@ -361,6 +517,7 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     fallbackReason: state.fallbackReason,
     model: state.model,
     reasoning: state.reasoning,
+    outputTokenAllowance: state.outputTokenAllowance,
     inputTokens: state.inputTokens,
     cachedInputTokens: state.cachedInputTokens,
     cacheWriteInputTokens: state.cacheWriteInputTokens,
@@ -375,6 +532,8 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     affinityOutcome: state.affinityOutcome,
     quotaUsedPercent: state.quotaUsedPercent,
     completed: state.completed,
+    semanticOutputObserved: state.semanticOutputObserved,
+    upstreamEventKinds: [...state.upstreamEventKinds],
     streamTerminalType: state.streamTerminalType,
     failureKind: state.failureKind,
     responseCreatedObserved: state.responseCreatedObserved,
@@ -497,12 +656,34 @@ const recordStreamTerminal = (context: UsageContext | undefined): void => {
   recordResponseTiming(context, "streamTerminalMs");
 };
 
+const CHAT_RESPONSE_EVENT_KINDS = new Set([
+  "response.created",
+  "response.output_text.delta",
+  "response.output_text.done",
+  "response.refusal.delta",
+  "response.refusal.done",
+  "response.content_part.done",
+  "response.output_item.added",
+  "response.output_item.done",
+  "response.function_call_arguments.delta",
+  "response.function_call_arguments.done",
+  "response.output",
+  "response.completed",
+  "response.failed",
+  "response.incomplete",
+  "error",
+]);
+
+const boundedResponseEventKind = (type: string): string => CHAT_RESPONSE_EVENT_KINDS.has(type) ? type : "unrecognized";
+
 const recordResponsesEventTelemetry = (
   context: UsageContext | undefined,
   event: ResponsesStreamEvent,
 ): void => {
   const telemetry = context?.responseTelemetry;
   if (!telemetry) return;
+  const eventKind = boundedResponseEventKind(event.type);
+  if (!telemetry.upstreamEventKinds.includes(eventKind)) telemetry.upstreamEventKinds.push(eventKind);
   if (event.type === "response.created") telemetry.responseCreatedObserved = true;
   if (event.type === "response.incomplete") {
     const response = isRecord(event.value.response) ? event.value.response : null;
@@ -552,6 +733,8 @@ type RoutedResponsesUpstream = Readonly<{
   paidFallbackProviderRequestId?: string | null;
   gatewayResponse: boolean;
   fallbackReason: InferenceFallbackReason | null;
+  /** Record stream health even though this free route has no paid reservation. */
+  providerHealthOnly?: boolean;
 }>;
 
 export type UsageTokens = Readonly<{
@@ -1254,6 +1437,7 @@ const fetchAndPreparePrimaryResponses = async (
     routed.paidFallbackProviderRequestId ?? null,
     routed.paidFallbackBilling ?? null,
     options.model,
+    routed.providerHealthOnly === true,
   );
   if (routed.gatewayResponse) {
     preparationDeadline.clear();
@@ -2032,6 +2216,27 @@ const bestEffortPaidFallbackBookkeeping = async (
   }
 };
 
+const paidProviderErrorStatus = (error: unknown): number | null =>
+  error instanceof MeteredError || error instanceof SurplusError ? error.status : null;
+
+const recordPaidProviderResponseHealth = async (
+  provider: "metered" | "surplus",
+  status: number | null,
+  providerRequestId: string | null = null,
+): Promise<void> => {
+  try {
+    const record = provider === "surplus" ? recordSurplusProviderHealth : recordMeteredProviderHealth;
+    if (status === 401 || status === 403) await record("auth_invalid", status, Date.now, providerRequestId);
+    else if (status === 402 || status === 429) {
+      await record("quota_exhausted", status, Date.now, providerRequestId);
+    } else if (status === null || status >= 500) {
+      await record("upstream_error", status, Date.now, providerRequestId);
+    } else if (status >= 100) await record("reachable", status, Date.now, providerRequestId);
+  } catch {
+    // Provider-health persistence must not change routing or response delivery.
+  }
+};
+
 type MeteredTransportLifecycle = Readonly<{
   terminal: (eventType: string, usage?: UsageTokens | null) => void;
   ambiguous: () => void;
@@ -2044,6 +2249,7 @@ const createMeteredTransportLifecycle = (
   providerRequestId: string | null = null,
   surplusBilling: SurplusBillingPricing | null = null,
   model: string | null = null,
+  providerHealthOnly = false,
 ): MeteredTransportLifecycle => {
   let recorded = false;
   const schedule = (
@@ -2053,6 +2259,21 @@ const createMeteredTransportLifecycle = (
     if (!reservation || recorded) return;
     recorded = true;
     void bestEffortPaidFallbackBookkeeping(operation, () => run(reservation));
+  };
+  const scheduleProviderHealthOnly = (
+    event: "success" | "upstream_error",
+    status: number | null,
+  ): void => {
+    if (reservation || !providerHealthOnly || recorded) return;
+    if (provider !== "metered" && provider !== "surplus") return;
+    recorded = true;
+    void bestEffortPaidFallbackBookkeeping(
+      "unreserved provider health recording",
+      () =>
+        provider === "surplus"
+          ? recordSurplusProviderHealth(event, status, Date.now, providerRequestId)
+          : recordMeteredProviderHealth(event, status, Date.now, providerRequestId),
+    );
   };
   return {
     terminal: (eventType, usage = null) => {
@@ -2064,6 +2285,13 @@ const createMeteredTransportLifecycle = (
         ? "incomplete"
         : null;
       if (!terminalState) return;
+      if (!reservation) {
+        scheduleProviderHealthOnly(
+          terminalState === "completed" ? "success" : "upstream_error",
+          terminalState === "completed" ? 200 : null,
+        );
+        return;
+      }
       schedule(
         "terminal reconciliation",
         async (activeReservation) => {
@@ -2109,6 +2337,10 @@ const createMeteredTransportLifecycle = (
       );
     },
     ambiguous: () => {
+      if (!reservation) {
+        scheduleProviderHealthOnly("upstream_error", null);
+        return;
+      }
       schedule(
         "ambiguous failure recording",
         async (activeReservation) => {
@@ -2125,7 +2357,13 @@ const createMeteredTransportLifecycle = (
         },
       );
     },
-    cancelled: () =>
+    cancelled: () => {
+      if (!reservation && providerHealthOnly) {
+        // A client cancellation is not provider degradation. Finalize this
+        // lifecycle so a later stream race cannot replace the header result.
+        recorded = true;
+        return;
+      }
       schedule(
         "dispatched cancellation recording",
         (activeReservation) =>
@@ -2134,7 +2372,8 @@ const createMeteredTransportLifecycle = (
             "cancelled",
             provider === "surplus" ? "surplus" : "metered",
           ),
-      ),
+      );
+    },
   };
 };
 
@@ -2153,6 +2392,73 @@ const fetchResponsesWithPaidFallback = async (
 ): Promise<RoutedResponsesUpstream> => {
   const fallbackSignal = options.fallbackSignal ?? options.signal;
   const telemetry = options.usageContext?.responseTelemetry;
+  if (isTemporaryFreeSurplusModel(options.model)) {
+    if (telemetry) {
+      telemetry.provider = "surplus";
+      telemetry.fallbackReason = null;
+      telemetry.accountSlot = null;
+      telemetry.accountCohortId = null;
+      telemetry.providerRequestId = null;
+      telemetry.quotaUsedPercent = null;
+    }
+    recordAttemptedProvider(options.usageContext, "surplus");
+    let transportStarted = false;
+    try {
+      const result = await fetchSurplusResponses(body, {
+        signal: options.signal,
+        beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("surplus") ?? Promise.resolve(),
+        onDispatch: () => {
+          transportStarted = true;
+          recordFirstProviderDispatch(options.usageContext);
+        },
+      });
+      recordFirstProviderHeaders(options.usageContext);
+      const providerRequestId = normalizeProviderRequestId(result.request_id);
+      if (telemetry) telemetry.providerRequestId = providerRequestId;
+      await recordPaidProviderResponseHealth("surplus", result.response.status, providerRequestId);
+      return {
+        response: result.response,
+        provider: "surplus",
+        paidFallback: null,
+        paidFallbackProviderRequestId: providerRequestId,
+        gatewayResponse: false,
+        fallbackReason: null,
+        providerHealthOnly: result.response.ok,
+      };
+    } catch (error) {
+      if (error instanceof ApiKeyQuotaDispatchError) throw error;
+      const timedOut = isTimeoutFailure(error, options.signal?.reason);
+      if (options.signal?.aborted && !timedOut) throw error;
+      const status = paidProviderErrorStatus(error);
+      if (transportStarted) await recordPaidProviderResponseHealth("surplus", status);
+      if (options.signal?.aborted) throw error;
+      const response = timedOut
+        ? openaiError(
+          504,
+          "Surplus upstream exceeded the gateway deadline before response headers were received.",
+          "gateway_timeout",
+          { type: "server_error", headers: { "x-uos-upstream": "surplus" } },
+        )
+        : error instanceof SurplusError
+        ? openaiError(error.status, error.message, error.code, {
+          type: "server_error",
+          headers: { "x-uos-upstream": "surplus" },
+        })
+        : openaiError(
+          502,
+          "Surplus upstream request failed before response headers were received.",
+          "upstream_error",
+          { type: "server_error", headers: { "x-uos-upstream": "surplus" } },
+        );
+      return {
+        response,
+        provider: "surplus",
+        paidFallback: null,
+        gatewayResponse: true,
+        fallbackReason: null,
+      };
+    }
+  }
   const codexCatalog = await loadCodexModelsSnapshot();
   const codexModelKnown = codexCatalog?.models.some((model) => {
     const record = model as Record<string, unknown>;
@@ -2269,6 +2575,7 @@ const fetchResponsesWithPaidFallback = async (
     try {
       primary = await fetchCodexResponses(body, {
         clientVersion: options.clientVersion,
+        cacheScope: options.usageContext?.idempotencyPrincipal || options.usageContext?.keyId,
         signal: options.signal,
         requestId: options.usageContext?.requestId,
         // Keep terminal telemetry bounded: only the first real Codex transport
@@ -2461,26 +2768,7 @@ const fetchResponsesWithPaidFallback = async (
     telemetry.quotaUsedPercent = decision.reservation.quota_used_percent;
   }
   logPaidProviderSelected(requestId, fallbackReason, paidProviders[0]);
-  const providerStatus = (error: unknown): number | null =>
-    error instanceof MeteredError || error instanceof SurplusError ? error.status : null;
   const isAuthoritativeCapacityStatus = (status: number | null): boolean => status === 402 || status === 429;
-  const recordProviderHealth = async (
-    provider: "metered" | "surplus",
-    status: number | null,
-    providerRequestId: string | null = null,
-  ): Promise<void> => {
-    try {
-      const record = provider === "surplus" ? recordSurplusProviderHealth : recordMeteredProviderHealth;
-      if (status === 401 || status === 403) await record("auth_invalid", status, Date.now, providerRequestId);
-      else if (status === 402 || status === 429) {
-        await record("quota_exhausted", status, Date.now, providerRequestId);
-      } else if (status === null || status >= 500) {
-        await record("upstream_error", status, Date.now, providerRequestId);
-      } else if (status >= 100) await record("reachable", status, Date.now, providerRequestId);
-    } catch {
-      // Provider-health persistence must not change failover or response delivery.
-    }
-  };
   let result:
     | Awaited<ReturnType<typeof fetchMeteredResponses>>
     | Awaited<ReturnType<typeof fetchSurplusResponses>>
@@ -2540,7 +2828,7 @@ const fetchResponsesWithPaidFallback = async (
             transportStarted = true;
           },
         });
-      await recordProviderHealth(provider, candidate.response.status, candidate.request_id);
+      await recordPaidProviderResponseHealth(provider, candidate.response.status, candidate.request_id);
       if (
         providerIndex < paidProviders.length - 1 &&
         isAuthoritativeCapacityStatus(candidate.response.status)
@@ -2602,8 +2890,8 @@ const fetchResponsesWithPaidFallback = async (
           : new DOMException("The request was aborted.", "AbortError");
       }
       providerError = error;
-      const status = providerStatus(error);
-      await recordProviderHealth(provider, status);
+      const status = paidProviderErrorStatus(error);
+      await recordPaidProviderResponseHealth(provider, status);
       if (transportStarted) {
         await bestEffortPaidFallbackBookkeeping(
           "transport failure ambiguity recording",
@@ -2770,6 +3058,18 @@ const getCodexModelMetadata = async (
   model: string,
   route: "chat.completions" | "responses",
 ): Promise<CodexModelMetadata> => {
+  if (isTemporaryFreeSurplusModel(model)) {
+    // This non-Codex routing record deliberately omits reasoning capability
+    // claims. GLM preserves each caller-selected effort; no Surplus catalog
+    // metadata currently authorizes the gateway to advertise a fixed list.
+    const record = { slug: TEMPORARY_FREE_SURPLUS_MODEL };
+    return {
+      snapshot: null,
+      record,
+      reasoning: getCodexModelReasoning(record),
+      supportedEndpoints: ["openai", "openai-response"],
+    };
+  }
   const snapshot = await loadCodexModelsSnapshot();
   const record = findSnapshotModelRecord(snapshot, model);
   if (record) return { snapshot, record, reasoning: getCodexModelReasoning(record), supportedEndpoints: null };
@@ -5439,6 +5739,10 @@ const normalizeChatMessage = (
   }
   if (roleRaw === "assistant") {
     const hasToolCalls = Object.prototype.hasOwnProperty.call(value, "tool_calls");
+    const refusal = value.refusal === undefined || value.refusal === null ? null : getString(value.refusal);
+    if (refusal === null && value.refusal !== undefined && value.refusal !== null) {
+      return invalidNormalizedField(`${param}.refusal`, `${param}.refusal must be a string or null`);
+    }
     // Chat permits an omitted assistant content field when the message is
     // solely a function-call turn. Normalize it as the same empty content as
     // the explicit null form, but keep missing content invalid otherwise.
@@ -5449,7 +5753,10 @@ const normalizeChatMessage = (
     const input: ResponseInputItem[] = [];
     // A Chat assistant's natural-language output must precede its function
     // calls so a multi-turn tool conversation retains the original order.
-    if (content.value.length) input.push({ type: "message", role, content: content.value });
+    const messageContent = refusal === null
+      ? content.value
+      : [...content.value, { type: "output_text" as const, text: refusal }];
+    if (messageContent.length) input.push({ type: "message", role, content: messageContent });
     if (hasToolCalls) {
       if (!Array.isArray(value.tool_calls)) {
         return invalidNormalizedField(`${param}.tool_calls`, `${param}.tool_calls must be an array`);
@@ -5461,7 +5768,7 @@ const normalizeChatMessage = (
       }
     }
     if (!input.length) {
-      return invalidNormalizedField(`${param}.content`, "assistant messages require content or tool_calls");
+      return invalidNormalizedField(`${param}.content`, "assistant messages require content, refusal, or tool_calls");
     }
     return { ok: true, value: { instruction: null, instructionContent: null, input } };
   }
@@ -5522,54 +5829,111 @@ const responseHasRefusal = (output: unknown, startIndex = 0): boolean => {
   );
 };
 
-/**
- * Buffered and streamed Responses transports normally emit output_text.delta
- * events.  Some compatible upstreams only provide the completed output item,
- * however, so recover that text without turning a mixed text/tool result into
- * a tool-call-only Chat completion.
- */
-const responseOutputText = (output: unknown): string => {
-  if (!Array.isArray(output)) return "";
-  let text = "";
-  for (const item of output) {
-    if (!isRecord(item) || !Array.isArray(item.content)) continue;
-    for (const contentItem of item.content) {
-      if (!isRecord(contentItem)) continue;
-      const type = getString(contentItem.type);
-      if (type !== "output_text" && type !== "text") continue;
-      const value = getString(contentItem.text);
-      if (value !== null) text += value;
-    }
-  }
-  return text;
-};
-
-const responseOutputRefusal = (output: unknown): string => {
-  if (!Array.isArray(output)) return "";
-  let refusal = "";
-  for (const item of output) {
-    if (!isRecord(item) || !Array.isArray(item.content)) continue;
-    for (const contentItem of item.content) {
-      if (!isRecord(contentItem) || getString(contentItem.type) !== "refusal") continue;
-      const value = getString(contentItem.refusal);
-      if (value !== null) refusal += value;
-    }
-  }
-  return refusal;
-};
-
-const reconcileResponseOutputText = (emittedText: string, output: unknown): string => {
-  const finalText = responseOutputText(output);
-  if (!finalText || finalText === emittedText || emittedText.startsWith(finalText)) return "";
-  if (finalText.startsWith(emittedText)) return finalText.slice(emittedText.length);
+const reconcileCompletedOutputText = (emittedText: string, completedText: string): string => {
+  if (!completedText || completedText === emittedText || emittedText.startsWith(completedText)) return "";
+  if (completedText.startsWith(emittedText)) return completedText.slice(emittedText.length);
   return malformedFunctionCallStream("Upstream response output text conflicts with prior text deltas.");
 };
 
-const reconcileResponseOutputRefusal = (emittedRefusal: string, output: unknown): string => {
-  const finalRefusal = responseOutputRefusal(output);
-  if (!finalRefusal || finalRefusal === emittedRefusal || emittedRefusal.startsWith(finalRefusal)) return "";
-  if (finalRefusal.startsWith(emittedRefusal)) return finalRefusal.slice(emittedRefusal.length);
+const reconcileCompletedRefusal = (emittedRefusal: string, completedRefusal: string): string => {
+  if (!completedRefusal || completedRefusal === emittedRefusal || emittedRefusal.startsWith(completedRefusal)) {
+    return "";
+  }
+  if (completedRefusal.startsWith(emittedRefusal)) return completedRefusal.slice(emittedRefusal.length);
   return malformedFunctionCallStream("Upstream response refusal conflicts with prior refusal deltas.");
+};
+
+const chatOutputTextPartKey = (event: Record<string, unknown>): string => {
+  const itemId = getString(event.item_id)?.trim();
+  if (itemId) return `item:${itemId}:${String(event.content_index ?? 0)}`;
+  return `output:${String(event.output_index ?? 0)}:${String(event.content_index ?? 0)}`;
+};
+
+type ReconciledChatContent = Readonly<{ outputText: string; refusal: string }>;
+
+const reconcileChatContentPart = (
+  outputTextParts: Map<string, string>,
+  refusalParts: Map<string, string>,
+  event: Record<string, unknown>,
+  part: unknown,
+): ReconciledChatContent => {
+  if (!isRecord(part) || Array.isArray(part)) {
+    return malformedFunctionCallStream("Upstream completed content part is missing its part object.");
+  }
+  const type = getString(part.type);
+  const key = chatOutputTextPartKey(event);
+  if (type === "output_text" || type === "text") {
+    const completedText = getString(part.text);
+    if (completedText === null) {
+      return malformedFunctionCallStream("Upstream completed content part is missing string output text.");
+    }
+    const emittedText = outputTextParts.get(key) ?? "";
+    const suffix = reconcileCompletedOutputText(emittedText, completedText);
+    outputTextParts.set(key, `${emittedText}${suffix}`);
+    return { outputText: suffix, refusal: "" };
+  }
+  if (type === "refusal") {
+    const completedRefusal = getString(part.refusal);
+    if (completedRefusal === null) {
+      return malformedFunctionCallStream("Upstream completed content part is missing string refusal text.");
+    }
+    const emittedRefusal = refusalParts.get(key) ?? "";
+    const suffix = reconcileCompletedRefusal(emittedRefusal, completedRefusal);
+    refusalParts.set(key, `${emittedRefusal}${suffix}`);
+    return { outputText: "", refusal: suffix };
+  }
+  return { outputText: "", refusal: "" };
+};
+
+const reconcileChatOutputItemContent = (
+  outputTextParts: Map<string, string>,
+  refusalParts: Map<string, string>,
+  event: Record<string, unknown>,
+  item: unknown,
+): ReconciledChatContent => {
+  if (!isRecord(item) || Array.isArray(item) || !Array.isArray(item.content)) {
+    return { outputText: "", refusal: "" };
+  }
+  let outputText = "";
+  let refusal = "";
+  for (const [contentIndex, part] of item.content.entries()) {
+    const partEvent: Record<string, unknown> = {
+      ...event,
+      item_id: getString(item.id) ?? event.item_id,
+      content_index: contentIndex,
+    };
+    const reconciled = reconcileChatContentPart(outputTextParts, refusalParts, partEvent, part);
+    outputText += reconciled.outputText;
+    refusal += reconciled.refusal;
+  }
+  return { outputText, refusal };
+};
+
+/**
+ * Some compatible upstreams provide complete message content in response.output
+ * before repeating it in the normal final-item events. Reconcile every part
+ * through the same per-item maps so either ordering emits each value once.
+ */
+const reconcileChatResponseOutputContent = (
+  outputTextParts: Map<string, string>,
+  refusalParts: Map<string, string>,
+  event: Record<string, unknown>,
+  output: unknown,
+): ReconciledChatContent => {
+  if (!Array.isArray(output)) return { outputText: "", refusal: "" };
+  let outputText = "";
+  let refusal = "";
+  for (const [outputIndex, item] of output.entries()) {
+    const reconciled = reconcileChatOutputItemContent(
+      outputTextParts,
+      refusalParts,
+      { ...event, output_index: outputIndex },
+      item,
+    );
+    outputText += reconciled.outputText;
+    refusal += reconciled.refusal;
+  }
+  return { outputText, refusal };
 };
 
 const withAccumulatedResponseText = (
@@ -5815,8 +6179,10 @@ class ChatFunctionCallAccumulator {
 }
 
 const preparedChatCompletionIsEmpty = (prepared: PreparedResponsesStream): boolean => {
-  let content = "";
+  let outputText = "";
   let refusal = "";
+  const outputTextParts = new Map<string, string>();
+  const refusalParts = new Map<string, string>();
   const functionCalls = new ChatFunctionCallAccumulator();
   let completed = false;
 
@@ -5826,34 +6192,47 @@ const preparedChatCompletionIsEmpty = (prepared: PreparedResponsesStream): boole
       case "response.output_text.delta": {
         const delta = getString(ev.delta);
         if (delta === null) return malformedFunctionCallStream("Upstream output-text delta is not a string.");
-        content += delta;
+        const key = chatOutputTextPartKey(ev);
+        outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
+        outputText += delta;
         break;
       }
       case "response.output_text.done": {
-        const text = getString(ev.text);
-        if (text === null) return malformedFunctionCallStream("Upstream output-text completion is not a string.");
-        content += reconcileResponseOutputText(content, [{ content: [{ type: "output_text", text }] }]);
+        const completedText = getString(ev.text);
+        if (completedText === null) {
+          return malformedFunctionCallStream("Upstream completed output text is not a string.");
+        }
+        const key = chatOutputTextPartKey(ev);
+        const partText = outputTextParts.get(key) ?? "";
+        const suffix = reconcileCompletedOutputText(partText, completedText);
+        outputTextParts.set(key, `${partText}${suffix}`);
+        outputText += suffix;
         break;
       }
       case "response.refusal.delta": {
         const delta = getString(ev.delta);
         if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
+        const key = chatOutputTextPartKey(ev);
+        refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
         refusal += delta;
         break;
       }
       case "response.refusal.done": {
-        const finalRefusal = getString(ev.refusal);
-        if (finalRefusal === null) {
-          return malformedFunctionCallStream("Upstream refusal completion is not a string.");
+        const completedRefusal = getString(ev.refusal);
+        if (completedRefusal === null) {
+          return malformedFunctionCallStream("Upstream completed refusal is not a string.");
         }
-        refusal += reconcileResponseOutputRefusal(refusal, [{ content: [{ type: "refusal", refusal: finalRefusal }] }]);
+        const key = chatOutputTextPartKey(ev);
+        const partRefusal = refusalParts.get(key) ?? "";
+        const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
+        refusalParts.set(key, `${partRefusal}${suffix}`);
+        refusal += suffix;
         break;
       }
       case "response.content_part.done": {
-        if (isRecord(ev.part)) {
-          content += reconcileResponseOutputText(content, [{ content: [ev.part] }]);
-          refusal += reconcileResponseOutputRefusal(refusal, [{ content: [ev.part] }]);
-        }
+        const reconciled = reconcileChatContentPart(outputTextParts, refusalParts, ev, ev.part);
+        outputText += reconciled.outputText;
+        refusal += reconciled.refusal;
         break;
       }
       case "response.output_item.added":
@@ -5865,15 +6244,20 @@ const preparedChatCompletionIsEmpty = (prepared: PreparedResponsesStream): boole
       case "response.function_call_arguments.done":
         functionCalls.done(ev);
         break;
-      case "response.output_item.done":
-        functionCalls.reconcileItem(ev, ev.item);
-        content += reconcileResponseOutputText(content, [ev.item]);
-        refusal += reconcileResponseOutputRefusal(refusal, [ev.item]);
+      case "response.output_item.done": {
+        const functionCall = functionCalls.reconcileItem(ev, ev.item);
+        if (!functionCall) {
+          const reconciled = reconcileChatOutputItemContent(outputTextParts, refusalParts, ev, ev.item);
+          outputText += reconciled.outputText;
+          refusal += reconciled.refusal;
+        }
         break;
+      }
       case "response.output": {
         const output = ev.output ?? (isRecord(ev.response) ? ev.response.output : undefined);
-        content += reconcileResponseOutputText(content, output);
-        refusal += reconcileResponseOutputRefusal(refusal, output);
+        const reconciled = reconcileChatResponseOutputContent(outputTextParts, refusalParts, ev, output);
+        outputText += reconciled.outputText;
+        refusal += reconciled.refusal;
         functionCalls.reconcileOutput(ev, output);
         break;
       }
@@ -5881,8 +6265,14 @@ const preparedChatCompletionIsEmpty = (prepared: PreparedResponsesStream): boole
         if (!isRecord(ev.response) || Array.isArray(ev.response)) {
           return malformedFunctionCallStream("Upstream response.completed event is missing its response object.");
         }
-        content += reconcileResponseOutputText(content, ev.response.output);
-        refusal += reconcileResponseOutputRefusal(refusal, ev.response.output);
+        const reconciled = reconcileChatResponseOutputContent(
+          outputTextParts,
+          refusalParts,
+          ev,
+          ev.response.output,
+        );
+        outputText += reconciled.outputText;
+        refusal += reconciled.refusal;
         functionCalls.reconcileOutput(ev, ev.response.output);
         functionCalls.assertFinalized();
         completed = true;
@@ -5894,7 +6284,7 @@ const preparedChatCompletionIsEmpty = (prepared: PreparedResponsesStream): boole
   if (!completed) {
     return malformedFunctionCallStream("Chat semantic preflight did not retain a completed terminal.");
   }
-  return !content && !refusal && !functionCalls.hasCalls;
+  return !outputText && !refusal && !functionCalls.hasCalls;
 };
 
 const chatToolCallDelta = (
@@ -5937,6 +6327,63 @@ const chatSourceFromPrepared = (
   };
 };
 
+const EMPTY_UPSTREAM_COMPLETION_MESSAGE = "Upstream response completed with no translated semantic output.";
+
+const emptyUpstreamCompletionError = (): Record<string, unknown> => ({
+  error: {
+    message: EMPTY_UPSTREAM_COMPLETION_MESSAGE,
+    type: "server_error",
+    code: "empty_upstream_completion",
+    param: null,
+  },
+});
+
+const markChatSemanticOutput = (context: UsageContext | undefined): void => {
+  if (context?.responseTelemetry) context.responseTelemetry.semanticOutputObserved = true;
+};
+
+const markFinalizedChatToolOutput = (
+  context: UsageContext | undefined,
+  functionCalls: ChatFunctionCallAccumulator,
+): void => {
+  if (functionCalls.calls.some((call) => call.argumentsDone)) markChatSemanticOutput(context);
+};
+
+const translatedChatOutputObserved = (
+  outputText: string,
+  refusal: string,
+  functionCalls: ChatFunctionCallAccumulator,
+): boolean => outputText.length > 0 || refusal.length > 0 || functionCalls.hasCalls;
+
+const recordSuccessfulChatCompletion = async (
+  context: UsageContext | undefined,
+  lifecycle: MeteredTransportLifecycle,
+  usage: UsageTokens | null,
+  onResponseTerminal?: (terminalType: ResponseStreamTerminalType) => void,
+): Promise<void> => {
+  markChatSemanticOutput(context);
+  onResponseTerminal?.("response.completed");
+  lifecycle.terminal("response.completed", usage);
+  recordStreamTerminalType(context, "response.completed");
+  await recordCompletionUsage(context, usage);
+};
+
+const recordEmptyUpstreamCompletion = (
+  context: UsageContext | undefined,
+  lifecycle: MeteredTransportLifecycle,
+  usage: UsageTokens | null,
+  onResponseTerminal?: (terminalType: ResponseStreamTerminalType) => void,
+): void => {
+  if (context?.responseTelemetry) {
+    context.responseTelemetry.failureKind = "empty_upstream_completion";
+    context.responseTelemetry.semanticOutputObserved = false;
+  }
+  onResponseTerminal?.("error");
+  lifecycle.terminal("response.failed", usage);
+  recordStreamTerminalType(context, "error");
+  recordTerminalUsage(context, usage, false);
+};
+
 const streamChatCompletions = (
   source: PreflightedResponsesStream,
   model: string,
@@ -5955,9 +6402,14 @@ const streamChatCompletions = (
   let created = Math.floor(Date.now() / 1000);
   let sentRole = false;
   let closed = false;
+  let terminalSettled = false;
+  let observedCompletedUsage: UsageTokens | null | undefined;
   let outputText = "";
-  let refusalText = "";
+  let refusal = "";
+  const outputTextParts = new Map<string, string>();
+  const refusalParts = new Map<string, string>();
   const functionCalls = new ChatFunctionCallAccumulator();
+  const observedEvents = new WeakSet<object>();
   const queuedDeltas: Array<
     | Readonly<{ kind: "content"; content: string }>
     | Readonly<{ kind: "refusal"; refusal: string }>
@@ -5968,6 +6420,59 @@ const streamChatCompletions = (
       argumentsDelta: string;
     }>
   > = [];
+  const settleInitialTerminalOnCancel = async (): Promise<void> => {
+    const event = source.first;
+    if (terminalSettled || !event.terminal) return;
+    recordResponsesEventTelemetry(usageContext, event);
+    const ev = event.value;
+    const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
+    if (event.type === "response.completed") {
+      if (!isRecord(ev.response) || Array.isArray(ev.response)) {
+        const error = new ResponsesStreamError(
+          "Upstream response.completed event is missing its response object.",
+          { kind: "malformed_event" },
+        );
+        recordResponsesFailureTelemetry(usageContext, error);
+        onResponseTerminal?.("error");
+        lifecycle.ambiguous();
+        recordStreamTerminalType(usageContext, "error");
+        terminalSettled = true;
+        return;
+      }
+      try {
+        const completed = reconcileChatResponseOutputContent(
+          outputTextParts,
+          refusalParts,
+          ev,
+          ev.response.output,
+        );
+        outputText += completed.outputText;
+        refusal += completed.refusal;
+        functionCalls.reconcileOutput(ev, ev.response.output);
+        functionCalls.assertFinalized();
+      } catch (error) {
+        recordResponsesFailureTelemetry(usageContext, error);
+        onResponseTerminal?.("error");
+        lifecycle.terminal("response.failed", usageTokens);
+        recordStreamTerminalType(usageContext, "error");
+        recordTerminalUsage(usageContext, usageTokens, false);
+        terminalSettled = true;
+        return;
+      }
+      terminalSettled = true;
+      if (translatedChatOutputObserved(outputText, refusal, functionCalls)) {
+        await recordSuccessfulChatCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
+      } else {
+        recordEmptyUpstreamCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
+      }
+      return;
+    }
+    onResponseTerminal?.(event.type as ResponseStreamTerminalType);
+    lifecycle.terminal(event.type, usageTokens);
+    recordStreamTerminalType(usageContext, event.type as ResponseStreamTerminalType);
+    recordTerminalUsage(usageContext, usageTokens, false);
+    terminalSettled = true;
+  };
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (closed) return;
@@ -5987,23 +6492,20 @@ const streamChatCompletions = (
             ],
           };
           sentRole = true;
+          if (content.length > 0) markChatSemanticOutput(usageContext);
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
         };
-        const emitRefusal = (refusal: string): void => {
+        const emitRefusal = (value: string): void => {
+          const delta = sentRole ? { refusal: value } : { role: "assistant", refusal: value };
           const chunk: Record<string, unknown> = {
             id,
             object: "chat.completion.chunk",
             created,
             model,
-            choices: [
-              {
-                index: 0,
-                delta: sentRole ? { refusal } : { role: "assistant", refusal },
-                finish_reason: null,
-              },
-            ],
+            choices: [{ index: 0, delta, finish_reason: null }],
           };
           sentRole = true;
+          if (value.length > 0) markChatSemanticOutput(usageContext);
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
         };
         const emitToolCall = (
@@ -6026,18 +6528,18 @@ const streamChatCompletions = (
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
         };
         const queueFinalOutput = (event: Record<string, unknown>, output: unknown): void => {
-          const textSuffix = reconcileResponseOutputText(outputText, output);
-          if (textSuffix) {
-            outputText += textSuffix;
-            queuedDeltas.push({ kind: "content", content: textSuffix });
+          const completed = reconcileChatResponseOutputContent(outputTextParts, refusalParts, event, output);
+          if (completed.outputText) {
+            outputText += completed.outputText;
+            queuedDeltas.push({ kind: "content", content: completed.outputText });
           }
-          const refusalSuffix = reconcileResponseOutputRefusal(refusalText, output);
-          if (refusalSuffix) {
-            refusalText += refusalSuffix;
-            queuedDeltas.push({ kind: "refusal", refusal: refusalSuffix });
+          if (completed.refusal) {
+            refusal += completed.refusal;
+            queuedDeltas.push({ kind: "refusal", refusal: completed.refusal });
           }
           const beforeCount = functionCalls.calls.length;
           const reconciled = functionCalls.reconcileOutput(event, output);
+          if (reconciled.length > 0) markFinalizedChatToolOutput(usageContext, functionCalls);
           for (const result of reconciled) {
             const includeIdentity = result.call.index >= beforeCount;
             if (includeIdentity || result.suffix) {
@@ -6066,6 +6568,10 @@ const streamChatCompletions = (
             });
           }
           const event = next.value;
+          if (!observedEvents.has(event)) {
+            observedEvents.add(event);
+            recordResponsesEventTelemetry(usageContext, event);
+          }
           const ev = event.value;
           const type = event.type;
           if (type === "response.created" && isRecord(ev.response)) {
@@ -6081,17 +6587,22 @@ const streamChatCompletions = (
             if (delta === null) {
               return malformedFunctionCallStream("Upstream output-text delta is not a string.");
             }
+            const key = chatOutputTextPartKey(ev);
+            outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
             outputText += delta;
             emitContent(delta);
             return;
           }
 
           if (type === "response.output_text.done") {
-            const text = getString(ev.text);
-            if (text === null) {
-              return malformedFunctionCallStream("Upstream output-text completion is not a string.");
+            const completedText = getString(ev.text);
+            if (completedText === null) {
+              return malformedFunctionCallStream("Upstream completed output text is not a string.");
             }
-            const suffix = reconcileResponseOutputText(outputText, [{ content: [{ type: "output_text", text }] }]);
+            const key = chatOutputTextPartKey(ev);
+            const partText = outputTextParts.get(key) ?? "";
+            const suffix = reconcileCompletedOutputText(partText, completedText);
+            outputTextParts.set(key, `${partText}${suffix}`);
             if (suffix) {
               outputText += suffix;
               emitContent(suffix);
@@ -6103,34 +6614,40 @@ const streamChatCompletions = (
           if (type === "response.refusal.delta") {
             const delta = getString(ev.delta);
             if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
-            refusalText += delta;
+            const key = chatOutputTextPartKey(ev);
+            refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
+            refusal += delta;
             emitRefusal(delta);
             return;
           }
 
           if (type === "response.refusal.done") {
-            const refusal = getString(ev.refusal);
-            if (refusal === null) return malformedFunctionCallStream("Upstream refusal completion is not a string.");
-            const suffix = reconcileResponseOutputRefusal(refusalText, [{ content: [{ type: "refusal", refusal }] }]);
+            const completedRefusal = getString(ev.refusal);
+            if (completedRefusal === null) {
+              return malformedFunctionCallStream("Upstream completed refusal is not a string.");
+            }
+            const key = chatOutputTextPartKey(ev);
+            const partRefusal = refusalParts.get(key) ?? "";
+            const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
+            refusalParts.set(key, `${partRefusal}${suffix}`);
             if (suffix) {
-              refusalText += suffix;
+              refusal += suffix;
               emitRefusal(suffix);
               return;
             }
             continue;
           }
 
-          if (type === "response.content_part.done" && isRecord(ev.part)) {
-            const textSuffix = reconcileResponseOutputText(outputText, [{ content: [ev.part] }]);
-            if (textSuffix) {
-              outputText += textSuffix;
-              emitContent(textSuffix);
+          if (type === "response.content_part.done") {
+            const reconciled = reconcileChatContentPart(outputTextParts, refusalParts, ev, ev.part);
+            if (reconciled.outputText) {
+              outputText += reconciled.outputText;
+              emitContent(reconciled.outputText);
               return;
             }
-            const refusalSuffix = reconcileResponseOutputRefusal(refusalText, [{ content: [ev.part] }]);
-            if (refusalSuffix) {
-              refusalText += refusalSuffix;
-              emitRefusal(refusalSuffix);
+            if (reconciled.refusal) {
+              refusal += reconciled.refusal;
+              emitRefusal(reconciled.refusal);
               return;
             }
             continue;
@@ -6153,6 +6670,7 @@ const streamChatCompletions = (
 
           if (type === "response.function_call_arguments.done") {
             const { call, suffix } = functionCalls.done(ev);
+            markFinalizedChatToolOutput(usageContext, functionCalls);
             if (suffix) {
               emitToolCall(call, false, suffix);
               return;
@@ -6164,23 +6682,22 @@ const streamChatCompletions = (
             const wasKnown = isRecord(ev.item) && !Array.isArray(ev.item) && functionCalls.has(ev, ev.item);
             const reconciled = functionCalls.reconcileItem(ev, ev.item);
             if (reconciled) {
+              markFinalizedChatToolOutput(usageContext, functionCalls);
               if (!wasKnown || reconciled.suffix) {
                 emitToolCall(reconciled.call, !wasKnown, reconciled.suffix);
                 return;
               }
             } else {
-              const textSuffix = reconcileResponseOutputText(outputText, [ev.item]);
-              if (textSuffix) {
-                outputText += textSuffix;
-                emitContent(textSuffix);
-                return;
-              }
-              const refusalSuffix = reconcileResponseOutputRefusal(refusalText, [ev.item]);
-              if (refusalSuffix) {
-                refusalText += refusalSuffix;
-                emitRefusal(refusalSuffix);
-                return;
-              }
+              const completed = reconcileChatOutputItemContent(outputTextParts, refusalParts, ev, ev.item);
+              outputText += completed.outputText;
+              refusal += completed.refusal;
+              if (completed.outputText) queuedDeltas.push({ kind: "content", content: completed.outputText });
+              if (completed.refusal) queuedDeltas.push({ kind: "refusal", refusal: completed.refusal });
+              const queued = queuedDeltas.shift();
+              if (queued?.kind === "content") emitContent(queued.content);
+              else if (queued?.kind === "refusal") emitRefusal(queued.refusal);
+              else if (queued) emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
+              if (queued) return;
             }
             continue;
           }
@@ -6203,9 +6720,23 @@ const streamChatCompletions = (
             if (!isRecord(ev.response) || Array.isArray(ev.response)) {
               return malformedFunctionCallStream("Upstream response.completed event is missing its response object.");
             }
+            observedCompletedUsage = extractUsageTokens(ev.response.usage);
             const output = ev.response.output;
             queueFinalOutput(ev, output);
             functionCalls.assertFinalized();
+            const usageTokens = observedCompletedUsage;
+            if (!terminalSettled) {
+              terminalSettled = true;
+              if (!translatedChatOutputObserved(outputText, refusal, functionCalls)) {
+                recordEmptyUpstreamCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(emptyUpstreamCompletionError())}\n\n`));
+                closed = true;
+                controller.close();
+                void iterator.return("Empty Responses completion translated").catch(() => {});
+                return;
+              }
+              await recordSuccessfulChatCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
+            }
             if (queuedDeltas.length) {
               pending = event;
               const queued = queuedDeltas.shift()!;
@@ -6214,33 +6745,6 @@ const streamChatCompletions = (
               else emitToolCall(queued.call, queued.includeIdentity, queued.argumentsDelta);
               return;
             }
-            const usageTokens = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-            if (!outputText && !refusalText && !functionCalls.hasCalls) {
-              onResponseTerminal?.("response.failed");
-              lifecycle.terminal("response.failed", usageTokens);
-              recordStreamTerminalType(usageContext, "response.failed");
-              recordTerminalUsage(usageContext, usageTokens, false);
-              if (usageContext?.responseTelemetry) {
-                usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
-              }
-              const errorValue = {
-                error: {
-                  message: "The upstream completed without visible output.",
-                  type: "server_error",
-                  code: "empty_upstream_completion",
-                  param: null,
-                },
-              };
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorValue)}\n\n`));
-              closed = true;
-              controller.close();
-              void iterator.return("Empty Responses terminal translated").catch(() => {});
-              return;
-            }
-            onResponseTerminal?.("response.completed");
-            lifecycle.terminal(type, usageTokens);
-            recordStreamTerminalType(usageContext, "response.completed");
-            void recordCompletionUsage(usageContext, usageTokens);
             const chunk: Record<string, unknown> = {
               id,
               object: "chat.completion.chunk",
@@ -6277,6 +6781,7 @@ const streamChatCompletions = (
             lifecycle.terminal(type, usageTokens);
             recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
             recordTerminalUsage(usageContext, usageTokens, false);
+            terminalSettled = true;
             const errorValue = {
               error: {
                 message: `Upstream terminated with ${type}.`,
@@ -6294,12 +6799,23 @@ const streamChatCompletions = (
       } catch (error) {
         if (closed) return;
         await iterator.return(error).catch(() => {});
-        const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
-        onResponseTerminal?.(terminalType);
-        recordStreamTerminalType(usageContext, terminalType);
-        if (terminalType === "cancelled") lifecycle.cancelled();
-        else lifecycle.ambiguous();
-        void recordErrorUsage(usageContext);
+        if (!terminalSettled) {
+          recordResponsesFailureTelemetry(usageContext, error);
+          if (observedCompletedUsage !== undefined) {
+            onResponseTerminal?.("error");
+            lifecycle.terminal("response.failed", observedCompletedUsage);
+            recordStreamTerminalType(usageContext, "error");
+            recordTerminalUsage(usageContext, observedCompletedUsage, false);
+            terminalSettled = true;
+          } else {
+            const terminalType = classifyStreamFailure(error, signal, downstreamSignal);
+            onResponseTerminal?.(terminalType);
+            recordStreamTerminalType(usageContext, terminalType);
+            if (terminalType === "cancelled") lifecycle.cancelled();
+            else lifecycle.ambiguous();
+            void recordErrorUsage(usageContext);
+          }
+        }
         const errorValue = {
           error: {
             message: "The upstream stream ended unexpectedly.",
@@ -6317,10 +6833,13 @@ const streamChatCompletions = (
     async cancel(reason) {
       if (closed) return;
       closed = true;
-      onResponseTerminal?.("cancelled");
-      recordStreamTerminalType(usageContext, "cancelled");
-      lifecycle.cancelled();
-      void recordErrorUsage(usageContext);
+      await settleInitialTerminalOnCancel();
+      if (!terminalSettled) {
+        onResponseTerminal?.("cancelled");
+        recordStreamTerminalType(usageContext, "cancelled");
+        lifecycle.cancelled();
+        void recordErrorUsage(usageContext);
+      }
       await source.cancel(reason);
     },
   });
@@ -6350,11 +6869,14 @@ const completeChatCompletions = async (
   let created = Math.floor(Date.now() / 1000);
   let content = "";
   let refusal = "";
+  const outputTextParts = new Map<string, string>();
+  const refusalParts = new Map<string, string>();
   let usage: Record<string, unknown> | null = null;
   const functionCalls = new ChatFunctionCallAccumulator();
 
   let completed = false;
   let terminalType: ResponseStreamTerminalType | null = null;
+  let observedCompletedUsage: UsageTokens | null | undefined;
   try {
     let pending: ResponsesStreamEvent | undefined = source.first;
     for (;;) {
@@ -6362,17 +6884,16 @@ const completeChatCompletions = async (
       pending = undefined;
       if (next.done) break;
       const event = next.value;
+      recordResponsesEventTelemetry(usageContext, event);
       const ev = event.value;
       const type = event.type;
-      if (event.terminal) {
+      if (event.terminal && type !== "response.completed") {
         terminalType = type as ResponseStreamTerminalType;
         const terminalUsage = isRecord(ev.response) ? extractUsageTokens(ev.response.usage) : null;
-        if (type !== "response.completed") {
-          onResponseTerminal?.(type as ResponseStreamTerminalType);
-          lifecycle.terminal(type, terminalUsage);
-          recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
-          recordTerminalUsage(usageContext, terminalUsage, false);
-        }
+        onResponseTerminal?.(type as ResponseStreamTerminalType);
+        lifecycle.terminal(type, terminalUsage);
+        recordStreamTerminalType(usageContext, type as ResponseStreamTerminalType);
+        recordTerminalUsage(usageContext, terminalUsage, false);
       }
       if (type === "response.created" && isRecord(ev.response)) {
         const upstreamId = getString(ev.response.id);
@@ -6386,30 +6907,54 @@ const completeChatCompletions = async (
         if (delta === null) {
           return malformedFunctionCallStream("Upstream output-text delta is not a string.");
         }
+        const key = chatOutputTextPartKey(ev);
+        outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
         content += delta;
+        if (delta.length > 0) markChatSemanticOutput(usageContext);
         continue;
       }
       if (type === "response.output_text.done") {
-        const text = getString(ev.text);
-        if (text === null) return malformedFunctionCallStream("Upstream output-text completion is not a string.");
-        content += reconcileResponseOutputText(content, [{ content: [{ type: "output_text", text }] }]);
+        const completedText = getString(ev.text);
+        if (completedText === null) {
+          return malformedFunctionCallStream("Upstream completed output text is not a string.");
+        }
+        const key = chatOutputTextPartKey(ev);
+        const partText = outputTextParts.get(key) ?? "";
+        const suffix = reconcileCompletedOutputText(partText, completedText);
+        outputTextParts.set(key, `${partText}${suffix}`);
+        content += suffix;
+        if (suffix.length > 0) markChatSemanticOutput(usageContext);
         continue;
       }
       if (type === "response.refusal.delta") {
         const delta = getString(ev.delta);
         if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
+        const key = chatOutputTextPartKey(ev);
+        refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
         refusal += delta;
+        if (delta.length > 0) markChatSemanticOutput(usageContext);
         continue;
       }
       if (type === "response.refusal.done") {
-        const finalRefusal = getString(ev.refusal);
-        if (finalRefusal === null) return malformedFunctionCallStream("Upstream refusal completion is not a string.");
-        refusal += reconcileResponseOutputRefusal(refusal, [{ content: [{ type: "refusal", refusal: finalRefusal }] }]);
+        const completedRefusal = getString(ev.refusal);
+        if (completedRefusal === null) {
+          return malformedFunctionCallStream("Upstream completed refusal is not a string.");
+        }
+        const key = chatOutputTextPartKey(ev);
+        const partRefusal = refusalParts.get(key) ?? "";
+        const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
+        refusalParts.set(key, `${partRefusal}${suffix}`);
+        refusal += suffix;
+        if (suffix.length > 0) markChatSemanticOutput(usageContext);
         continue;
       }
-      if (type === "response.content_part.done" && isRecord(ev.part)) {
-        content += reconcileResponseOutputText(content, [{ content: [ev.part] }]);
-        refusal += reconcileResponseOutputRefusal(refusal, [{ content: [ev.part] }]);
+      if (type === "response.content_part.done") {
+        const reconciled = reconcileChatContentPart(outputTextParts, refusalParts, ev, ev.part);
+        content += reconciled.outputText;
+        refusal += reconciled.refusal;
+        if (reconciled.outputText.length > 0 || reconciled.refusal.length > 0) {
+          markChatSemanticOutput(usageContext);
+        }
         continue;
       }
       if (type === "response.output_item.added") {
@@ -6422,40 +6967,52 @@ const completeChatCompletions = async (
       }
       if (type === "response.function_call_arguments.done") {
         functionCalls.done(ev);
+        markFinalizedChatToolOutput(usageContext, functionCalls);
         continue;
       }
       if (type === "response.output_item.done") {
-        functionCalls.reconcileItem(ev, ev.item);
-        content += reconcileResponseOutputText(content, [ev.item]);
-        refusal += reconcileResponseOutputRefusal(refusal, [ev.item]);
+        const functionCall = functionCalls.reconcileItem(ev, ev.item);
+        if (functionCall) {
+          markFinalizedChatToolOutput(usageContext, functionCalls);
+        } else {
+          const completed = reconcileChatOutputItemContent(outputTextParts, refusalParts, ev, ev.item);
+          content += completed.outputText;
+          refusal += completed.refusal;
+          if (completed.outputText.length > 0 || completed.refusal.length > 0) {
+            markChatSemanticOutput(usageContext);
+          }
+        }
         continue;
       }
       if (type === "response.output") {
         const output = ev.output ?? (isRecord(ev.response) ? ev.response.output : undefined);
-        content += reconcileResponseOutputText(content, output);
-        refusal += reconcileResponseOutputRefusal(refusal, output);
-        functionCalls.reconcileOutput(ev, output);
+        const completed = reconcileChatResponseOutputContent(outputTextParts, refusalParts, ev, output);
+        content += completed.outputText;
+        refusal += completed.refusal;
+        const reconciled = functionCalls.reconcileOutput(ev, output);
+        if (completed.outputText.length > 0 || completed.refusal.length > 0) markChatSemanticOutput(usageContext);
+        if (reconciled.length > 0) markFinalizedChatToolOutput(usageContext, functionCalls);
         continue;
       }
       if (type === "response.completed" && isRecord(ev.response) && !Array.isArray(ev.response)) {
-        content += reconcileResponseOutputText(content, ev.response.output);
-        refusal += reconcileResponseOutputRefusal(refusal, ev.response.output);
+        observedCompletedUsage = extractUsageTokens(ev.response.usage);
+        const completedOutput = reconcileChatResponseOutputContent(
+          outputTextParts,
+          refusalParts,
+          ev,
+          ev.response.output,
+        );
+        content += completedOutput.outputText;
+        refusal += completedOutput.refusal;
         functionCalls.reconcileOutput(ev, ev.response.output);
         functionCalls.assertFinalized();
-        const usageTokens = extractUsageTokens(ev.response.usage);
+        const usageTokens = observedCompletedUsage;
         usage = toChatUsage(usageTokens);
-        if (!content && !refusal && !functionCalls.hasCalls) {
-          terminalType = "response.failed";
-          onResponseTerminal?.("response.failed");
-          lifecycle.terminal("response.failed", usageTokens);
-          recordStreamTerminalType(usageContext, "response.failed");
-          recordTerminalUsage(usageContext, usageTokens, false);
-          if (usageContext?.responseTelemetry) {
-            usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
-          }
+        if (!translatedChatOutputObserved(content, refusal, functionCalls)) {
+          recordEmptyUpstreamCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
           return streamErrorResponse(
             502,
-            "The upstream completed without visible output.",
+            EMPTY_UPSTREAM_COMPLETION_MESSAGE,
             "empty_upstream_completion",
             provider,
             warnings,
@@ -6464,20 +7021,26 @@ const completeChatCompletions = async (
           );
         }
         completed = true;
-        onResponseTerminal?.("response.completed");
-        lifecycle.terminal("response.completed", usageTokens);
-        recordStreamTerminalType(usageContext, "response.completed");
-        await recordCompletionUsage(usageContext, usageTokens);
+        await recordSuccessfulChatCompletion(usageContext, lifecycle, usageTokens, onResponseTerminal);
         break;
       }
       if (event.terminal) break;
     }
   } catch (error) {
-    terminalType = classifyStreamFailure(error, signal, downstreamSignal);
-    onResponseTerminal?.(terminalType);
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType === "cancelled") lifecycle.cancelled();
-    else lifecycle.ambiguous();
+    recordResponsesFailureTelemetry(usageContext, error);
+    if (observedCompletedUsage !== undefined) {
+      terminalType = "error";
+      onResponseTerminal?.("error");
+      lifecycle.terminal("response.failed", observedCompletedUsage);
+      recordStreamTerminalType(usageContext, "error");
+      recordTerminalUsage(usageContext, observedCompletedUsage, false);
+    } else {
+      terminalType = classifyStreamFailure(error, signal, downstreamSignal);
+      onResponseTerminal?.(terminalType);
+      recordStreamTerminalType(usageContext, terminalType);
+      if (terminalType === "cancelled") lifecycle.cancelled();
+      else lifecycle.ambiguous();
+    }
     completed = false;
   } finally {
     // This path consumes the generator manually (rather than through
@@ -6564,6 +7127,7 @@ export const handleModels = async (req?: Request): Promise<Response> => {
   ]);
   const merged = [...data];
   for (const model of [...(metered?.models ?? []), ...(surplus?.models ?? [])]) {
+    if (!model.supported_endpoint_types.some((type) => type === "openai" || type === "openai-response")) continue;
     if (merged.some((candidate) => candidate.id === model.id)) continue;
     merged.push({
       id: model.id,
@@ -7966,22 +8530,28 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   if (!promptCacheControls.ok) {
     return openaiError(400, promptCacheControls.message, "invalid_request_error", { param: promptCacheControls.param });
   }
+  const jsonObjectTextFormat = isRecord(rawRecord.response_format) &&
+      Object.keys(rawRecord.response_format).length === 1 && rawRecord.response_format.type === "json_object"
+    ? { type: "json_object" as const }
+    : null;
+  const handledKeys = new Set([
+    "messages",
+    "model",
+    "stream",
+    "reasoning_effort",
+    "max_completion_tokens",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "prompt_cache_key",
+    "prompt_cache_options",
+    "prompt_cache_retention",
+    "stream_options",
+  ]);
+  if (jsonObjectTextFormat) handledKeys.add("response_format");
   const warnings = buildIgnoredWarnings(
     rawRecord,
-    new Set([
-      "messages",
-      "model",
-      "stream",
-      "reasoning_effort",
-      "max_completion_tokens",
-      "tools",
-      "tool_choice",
-      "parallel_tool_calls",
-      "prompt_cache_key",
-      "prompt_cache_options",
-      "prompt_cache_retention",
-      "stream_options",
-    ]),
+    handledKeys,
   );
 
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
@@ -8008,6 +8578,8 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   const modelMetadata = await getCodexModelMetadata(model, "chat.completions");
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "chat.completions", modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
+  const modelCapabilityError = temporaryFreeSurplusCapabilityError(model, rawRecord);
+  if (modelCapabilityError) return modelCapabilityError;
   const messagesRaw = body.messages;
   if (!Array.isArray(messagesRaw)) return openaiError(400, "messages must be an array", "invalid_request_error");
   if (messagesRaw.length === 0) return openaiError(400, "messages must be a non-empty array", "invalid_request_error");
@@ -8087,6 +8659,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     reasoning: reasoningValue,
     instructions,
   });
+  if (jsonObjectTextFormat) codexBody.text = { format: jsonObjectTextFormat };
   if (maxCompletionTokens.value !== undefined) codexBody.max_output_tokens = maxCompletionTokens.value;
   const passthroughKeys: PassthroughToolSchemaKey[] = [
     "tools",
@@ -8101,7 +8674,11 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
 
   const stream = parsedStream.value;
   const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.reasoning = reasoningLabel;
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.reasoning = reasoningLabel;
+    usageContext.responseTelemetry.outputTokenAllowance = maxCompletionTokens.value ?? null;
+    usageContext.responseTelemetry.semanticOutputObserved = false;
+  }
   await recordRequestUsage(usageContext, {
     model: modelRaw,
     route: "chat.completions",
@@ -8148,6 +8725,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     routed.paidFallbackProviderRequestId ?? null,
     routed.paidFallbackBilling ?? null,
     model,
+    routed.providerHealthOnly === true,
   );
   let codexTerminalResolved = false;
   const resolveCodexProbe = (terminalType: ResponseStreamTerminalType): void => {
@@ -8224,17 +8802,12 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       }
     }
     if (emptyCompletion) {
-      resolveCodexProbe("response.failed");
-      lifecycle.terminal("response.failed", completedTerminalUsage);
-      recordStreamTerminalType(usageContext, "response.failed");
-      recordTerminalUsage(usageContext, completedTerminalUsage, false);
-      if (usageContext?.responseTelemetry) {
-        usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
-      }
+      for (const event of prepared.buffered) recordResponsesEventTelemetry(usageContext, event);
+      recordEmptyUpstreamCompletion(usageContext, lifecycle, completedTerminalUsage, resolveCodexProbe);
       await prepared.iterator.return("Empty Chat completion rejected").catch(() => {});
       return streamErrorResponse(
         502,
-        "The upstream completed without visible output.",
+        EMPTY_UPSTREAM_COMPLETION_MESSAGE,
         "empty_upstream_completion",
         routed.provider,
         [...warnings, ...providerWarnings],
@@ -8286,8 +8859,12 @@ export const handleChatCompletions = async (req: Request, usageContext?: UsageCo
     (context) => handleChatCompletionsInternal(req, context),
   );
 
-const handleResponsesInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
-  const rawBody = (await readJsonBody(req)) as ResponsesRequest | null;
+const handleResponsesInternal = async (
+  req: Request,
+  usageContext?: UsageContext,
+  parsedBody?: unknown,
+): Promise<Response> => {
+  const rawBody = (parsedBody === undefined ? await readJsonBody(req) : parsedBody) as ResponsesRequest | null;
   if (!rawBody || !isRecord(rawBody)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
   const rawRecord = rawBody as Record<string, unknown>;
@@ -8349,6 +8926,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       "tools",
       "tool_choice",
       "parallel_tool_calls",
+      "max_output_tokens",
       "prompt_cache_key",
       "prompt_cache_options",
       "prompt_cache_retention",
@@ -8390,6 +8968,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const modelMetadata = await getCodexModelMetadata(model, "responses");
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
+  const modelCapabilityError = temporaryFreeSurplusCapabilityError(model, rawRecord);
+  if (modelCapabilityError) return modelCapabilityError;
 
   const inputRaw = rawBody.input;
   let input: ResponseInputItem[];
@@ -8531,6 +9111,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   }
 
   const codexBody = await buildCodexRequest(model, input, { reasoning: reasoningValue, instructions });
+  if (Object.prototype.hasOwnProperty.call(rawRecord, "max_output_tokens")) {
+    codexBody.max_output_tokens = rawRecord.max_output_tokens;
+  }
   const passthroughKeys: PassthroughToolSchemaKey[] = [
     "tools",
     "tool_choice",
@@ -8578,7 +9161,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestInferenceSignal = clientWantsStream ? downstreamSignal : inferenceSignal(req, usageContext);
   const preHeaderDeadline = createStreamFirstEventDeadline(requestInferenceSignal);
-  const apiKey = readRemovedProviderApiKey();
+  const apiKey = isTemporaryFreeSurplusModel(model) ? null : readRemovedProviderApiKey();
   const paidFallbackAvailable = canAttemptPaidFallback(usageContext);
   const debugRoutingScenario = (await loadDebugRoutingConfig()).scenario;
   const circuit = apiKey ? await selectRemovedProviderCircuitRoute() : null;
@@ -8889,6 +9472,8 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     "max_output_tokens",
     "max_tool_calls",
     "metadata",
+    "prompt_cache_options",
+    "prompt_cache_retention",
     "safety_identifier",
     "service_tier",
     "temperature",
@@ -8902,6 +9487,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     ...responseWarnings(ready.response),
   ].filter((warning) => {
     if (!removedProviderAttempt) return true;
+    if (warning === "prompt_cache_breakpoint_ignored" && countExplicitPromptCacheBreakpoints(input) > 0) {
+      return false;
+    }
     return ![...forwardedRemovedProviderControls].some((key) =>
       Object.prototype.hasOwnProperty.call(rawRecord, key) &&
       warning === (WARNING_KEY_MAP.get(key) ?? `${key}_ignored`)
@@ -9086,12 +9674,16 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   return withUosWarning(new Response(withSseKeepalive(body), { status: 200, headers }), clientWarnings);
 };
 
-export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
+const runResponsesHandler = async (
+  req: Request,
+  usageContext?: UsageContext,
+  parsedBody?: unknown,
+): Promise<Response> =>
   await runWithResponseTelemetry(
     usageContext,
     async (context) => {
       try {
-        return await handleResponsesInternal(req, context);
+        return await handleResponsesInternal(req, context, parsedBody);
       } catch (error) {
         const downstreamSignal = downstreamSignalFor(req, context);
         const terminalType = isTimeoutFailure(error, downstreamSignal.reason)
@@ -9110,3 +9702,921 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
       }
     },
   );
+
+export const handleResponses = async (req: Request, usageContext?: UsageContext): Promise<Response> =>
+  await runResponsesHandler(req, usageContext);
+
+/**
+ * OpenAI-compatible image endpoints.
+ *
+ * ChatGPT/Codex has no native image endpoint. It exposes image generation as
+ * an `image_generation` tool on the Responses API, so an images request is
+ * rewritten into a tool-bearing Responses call. A live Codex subscription is
+ * the only enabled transport until paid providers have image-specific model
+ * authorization, pricing, and settlement.
+ */
+
+const IMAGE_BASE_MODEL_ENV = "IMAGE_BASE_MODEL";
+const IMAGE_TOOL_TYPE = "image_generation";
+const IMAGE_EDIT_DEFAULT_MODEL = "gpt-image-1.5";
+const IMAGE_MAX_COUNT = 10;
+const IMAGE_MAX_EDIT_INPUTS = 16;
+const IMAGE_MAX_PROMPT_CHARS = 32_000;
+const IMAGE_MAX_REFERENCE_URL_CHARS = 20_971_520;
+const IMAGE_MAX_FILE_BYTES = 50 * 1_024 * 1_024;
+const IMAGE_MAX_MASK_FILE_BYTES = IMAGE_MAX_FILE_BYTES;
+const IMAGE_MAX_MULTIPART_INPUT_BYTES = 50 * 1_024 * 1_024;
+const IMAGE_MAX_MULTIPART_BODY_BYTES = 64 * 1_024 * 1_024;
+const IMAGE_MAX_FANOUT_INPUT_BYTES = 50 * 1_024 * 1_024;
+const IMAGE_MAX_JSON_BODY_BYTES = Math.ceil(IMAGE_MAX_FANOUT_INPUT_BYTES / 3) * 4 + 1_024 * 1_024;
+const IMAGE_MEDIA_TYPE_BY_EXTENSION = new Map([
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".png", "image/png"],
+  [".webp", "image/webp"],
+]);
+const IMAGE_MEDIA_TYPE_ALIASES = new Map([
+  ["image/jpeg", "image/jpeg"],
+  ["image/jpg", "image/jpeg"],
+  ["image/png", "image/png"],
+  ["image/webp", "image/webp"],
+  ["image/x-png", "image/png"],
+]);
+const IMAGE_NULLABLE_OPTION_KEYS = [
+  "model",
+  "n",
+  "size",
+  "quality",
+  "background",
+  "output_format",
+  "output_compression",
+  "input_fidelity",
+  "moderation",
+  "response_format",
+  "stream",
+  "partial_images",
+  "style",
+] as const;
+const IMAGE_GENERATION_QUALITIES = new Set(["low", "medium", "high", "auto"]);
+const IMAGE_EDIT_JSON_QUALITIES = new Set(["low", "medium", "high", "auto"]);
+const IMAGE_EDIT_MULTIPART_QUALITIES = new Set(["low", "medium", "high", "auto"]);
+const IMAGE_BACKGROUNDS = new Set(["transparent", "opaque", "auto"]);
+const IMAGE_OUTPUT_FORMATS = new Set(["png", "jpeg", "webp"]);
+const IMAGE_MODERATION_LEVELS = new Set(["low", "auto"]);
+const IMAGE_INPUT_FIDELITIES = new Set(["low", "high"]);
+const IMAGE_TEXT_ENCODER = new TextEncoder();
+
+const IMAGE_SHARED_REQUEST_KEYS = [
+  "model",
+  "prompt",
+  "n",
+  "size",
+  "quality",
+  "background",
+  "output_format",
+  "output_compression",
+  "stream",
+  "partial_images",
+  "user",
+] as const;
+const IMAGE_GENERATION_REQUEST_KEYS = new Set<string>([
+  ...IMAGE_SHARED_REQUEST_KEYS,
+  "moderation",
+  "response_format",
+  "style",
+]);
+const IMAGE_EDIT_JSON_REQUEST_KEYS = new Set<string>([
+  ...IMAGE_SHARED_REQUEST_KEYS,
+  "images",
+  "mask",
+  "input_fidelity",
+  "moderation",
+]);
+const IMAGE_EDIT_MULTIPART_REQUEST_KEYS = new Set<string>([
+  ...IMAGE_SHARED_REQUEST_KEYS,
+  "image",
+  "image[]",
+  "mask",
+  "input_fidelity",
+  "response_format",
+]);
+
+export type ImageRouteKind = "generations" | "edits";
+
+type ImageRequestFailure = Readonly<{ ok: false; response: Response }>;
+type ParsedImageRequest =
+  | Readonly<{ ok: true; body: Record<string, unknown>; count: number; inputBytes: number }>
+  | ImageRequestFailure;
+
+type ImageHandlerOptions = Readonly<{
+  dispatch?: (request: Request) => Promise<Response>;
+}>;
+
+/** Resolve the text model that hosts the image tool. */
+export const resolveImageBaseModel = async (): Promise<string | null> => {
+  let configured: string | null = null;
+  try {
+    const raw = Deno.env.get(IMAGE_BASE_MODEL_ENV)?.trim();
+    configured = raw && raw.length > 0 ? raw : null;
+  } catch {
+    configured = null;
+  }
+  return configured ?? await getDefaultModel();
+};
+
+/**
+ * Rewrite an OpenAI Images request as a Responses request carrying the
+ * image_generation tool. Its optional model field selects the requested image
+ * model, while the outer Responses model remains the text model that hosts the
+ * tool.
+ */
+export const buildImageResponsesRequest = (
+  body: Record<string, unknown>,
+  baseModel: string,
+  kind: ImageRouteKind,
+): Record<string, unknown> => {
+  const prompt = typeof body.prompt === "string" ? body.prompt : "";
+  const user = typeof body.user === "string" ? { user: body.user } : {};
+  const tool: Record<string, unknown> = {
+    type: IMAGE_TOOL_TYPE,
+    action: kind === "edits" ? "edit" : "generate",
+  };
+  const requestedModel = typeof body.model === "string" ? body.model.trim() : "";
+  if (requestedModel) tool.model = requestedModel;
+  else if (kind === "edits") tool.model = IMAGE_EDIT_DEFAULT_MODEL;
+  for (
+    const key of [
+      "size",
+      "quality",
+      "background",
+      "output_format",
+      "output_compression",
+      "moderation",
+    ]
+  ) {
+    if (body[key] !== undefined) tool[key] = body[key];
+  }
+  if (kind === "edits") {
+    // Edits supply source images; the Responses input carries them alongside
+    // the instruction so the tool can operate on the provided pixels.
+    const images = Array.isArray(body.images) ? body.images : [];
+    if (body.input_fidelity !== undefined) tool.input_fidelity = body.input_fidelity;
+    if (isPlainRecord(body.mask)) tool.input_image_mask = body.mask;
+    return {
+      model: baseModel,
+      ...user,
+      input: [{
+        role: "user",
+        content: [
+          { type: "input_text", text: prompt },
+          ...images.flatMap((entry): Array<Record<string, unknown>> => {
+            if (!isPlainRecord(entry)) return [];
+            if (typeof entry.image_url === "string") {
+              return [{ type: "input_image", image_url: entry.image_url }];
+            }
+            return [];
+          }),
+        ],
+      }],
+      tools: [tool],
+      tool_choice: { type: IMAGE_TOOL_TYPE },
+    };
+  }
+  return {
+    model: baseModel,
+    ...user,
+    input: prompt,
+    tools: [tool],
+    tool_choice: { type: IMAGE_TOOL_TYPE },
+  };
+};
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const imageRequestError = (message: string, param: string | null = null): ImageRequestFailure => ({
+  ok: false,
+  response: openaiError(400, message, "invalid_request_error", { param }),
+});
+
+const normalizeImageReference = (value: unknown): Record<string, string> | null => {
+  if (!isPlainRecord(value)) return null;
+  if (Object.keys(value).some((key) => key !== "image_url")) return null;
+  if (
+    !Object.prototype.hasOwnProperty.call(value, "image_url") ||
+    typeof value.image_url !== "string" ||
+    value.image_url.length > IMAGE_MAX_REFERENCE_URL_CHARS
+  ) {
+    return null;
+  }
+  const imageUrl = typeof value.image_url === "string" ? value.image_url.trim() : "";
+  if (!imageUrl) return null;
+  if (!/^data:/iu.test(imageUrl)) {
+    if (!/^https?:\/\//iu.test(imageUrl)) return null;
+    try {
+      const remoteUrl = new URL(imageUrl);
+      return remoteUrl.protocol === "http:" || remoteUrl.protocol === "https:" ? { image_url: imageUrl } : null;
+    } catch {
+      return null;
+    }
+  }
+  const inlineData = normalizeImageDataUrl(imageUrl);
+  return inlineData ? { image_url: inlineData.url } : null;
+};
+
+const normalizeImageMaskReference = (value: unknown): Record<string, string> | null => {
+  const reference = normalizeImageReference(value);
+  if (!reference) return null;
+  const inlineData = normalizeImageDataUrl(reference.image_url);
+  return inlineData?.mediaType === "image/png" && inlineData.bytes < IMAGE_MAX_MASK_FILE_BYTES
+    ? { image_url: inlineData.url }
+    : null;
+};
+
+const normalizeImageMediaType = (value: string): string | null => {
+  const mediaType = value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return IMAGE_MEDIA_TYPE_ALIASES.get(mediaType) ?? null;
+};
+
+const normalizeImageDataUrl = (
+  value: string,
+): Readonly<{ url: string; bytes: number; mediaType: string }> | null => {
+  const match = /^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$/iu.exec(value);
+  if (!match) return null;
+  const mediaType = normalizeImageMediaType(match[1]);
+  const encoded = match[2];
+  if (!mediaType || encoded.length === 0 || encoded.length % 4 !== 0) return null;
+  const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
+  const bytes = encoded.length / 4 * 3 - padding;
+  if (bytes <= 0 || bytes >= IMAGE_MAX_FILE_BYTES) return null;
+  return { url: `data:${mediaType};base64,${encoded}`, bytes, mediaType };
+};
+
+const imageReferenceInputBytes = (body: Record<string, unknown>): number => {
+  const references = [
+    ...(Array.isArray(body.images) ? body.images : []),
+    ...(isPlainRecord(body.mask) ? [body.mask] : []),
+  ];
+  let total = 0;
+  for (const reference of references) {
+    if (!isPlainRecord(reference)) continue;
+    if (typeof reference.image_url === "string") {
+      const inlineData = normalizeImageDataUrl(reference.image_url);
+      total += inlineData?.bytes ?? IMAGE_TEXT_ENCODER.encode(reference.image_url).byteLength;
+    }
+  }
+  return total;
+};
+
+const imageFileMediaType = (file: File): string | null => {
+  const declared = file.type.trim().toLowerCase();
+  if (declared && declared !== "application/octet-stream") return normalizeImageMediaType(declared);
+  const normalizedName = file.name.trim().toLowerCase();
+  for (const [extension, mediaType] of IMAGE_MEDIA_TYPE_BY_EXTENSION) {
+    if (normalizedName.endsWith(extension)) return mediaType;
+  }
+  return null;
+};
+
+const fileDataUrl = async (file: File, mediaType: string): Promise<string> => {
+  const encoded = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+  return `data:${mediaType};base64,${encoded}`;
+};
+
+const parseMultipartInteger = (value: FormDataEntryValue | null): unknown => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim();
+  return /^(?:0|[1-9][0-9]*)$/u.test(normalized) ? Number(normalized) : value;
+};
+
+const parseMultipartNumber = (value: FormDataEntryValue | null): unknown => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim();
+  if (!/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u.test(normalized)) return value;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : value;
+};
+
+const exceedsUnicodeCodePointLimit = (value: string, limit: number): boolean => {
+  let count = 0;
+  for (const _character of value) {
+    count += 1;
+    if (count > limit) return true;
+  }
+  return false;
+};
+
+const parseMultipartBoolean = (value: FormDataEntryValue | null): unknown => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim();
+  return normalized === "true" ? true : normalized === "false" ? false : value;
+};
+
+type ImageScalarValidationResult =
+  | Readonly<{ ok: true; count: number }>
+  | ImageRequestFailure;
+
+const validateImageScalarOptions = (
+  raw: Record<string, unknown>,
+  kind: ImageRouteKind,
+  multipart = false,
+): ImageScalarValidationResult => {
+  for (const key of IMAGE_NULLABLE_OPTION_KEYS) {
+    if (raw[key] === null) delete raw[key];
+  }
+  if (Object.prototype.hasOwnProperty.call(raw, "style")) {
+    return imageRequestError(
+      "style is not supported because this gateway uses the Responses image-generation tool.",
+      "style",
+    );
+  }
+  if (typeof raw.prompt !== "string" || raw.prompt.trim().length === 0) {
+    return imageRequestError("Image requests must include a prompt.", "prompt");
+  }
+  if (exceedsUnicodeCodePointLimit(raw.prompt, IMAGE_MAX_PROMPT_CHARS)) {
+    return imageRequestError(
+      `prompt must contain no more than ${IMAGE_MAX_PROMPT_CHARS} characters.`,
+      "prompt",
+    );
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(raw, "model") &&
+    (typeof raw.model !== "string" || raw.model.trim().length === 0)
+  ) {
+    return imageRequestError("model must be a non-empty string.", "model");
+  }
+  if (raw.user !== undefined && typeof raw.user !== "string") {
+    return imageRequestError("user must be a string.", "user");
+  }
+  const count = raw.n === undefined ? 1 : raw.n;
+  if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > IMAGE_MAX_COUNT) {
+    return imageRequestError(`n must be an integer from 1 to ${IMAGE_MAX_COUNT}.`, "n");
+  }
+  if (
+    raw.output_compression !== undefined &&
+    (!Number.isInteger(raw.output_compression) ||
+      (raw.output_compression as number) < 0 ||
+      (raw.output_compression as number) > 100)
+  ) {
+    return imageRequestError("output_compression must be an integer from 0 to 100.", "output_compression");
+  }
+  if (raw.size !== undefined && (typeof raw.size !== "string" || raw.size.trim().length === 0)) {
+    return imageRequestError("size must be a non-empty string.", "size");
+  }
+  const qualities = kind === "generations"
+    ? IMAGE_GENERATION_QUALITIES
+    : multipart
+    ? IMAGE_EDIT_MULTIPART_QUALITIES
+    : IMAGE_EDIT_JSON_QUALITIES;
+  if (raw.quality !== undefined && (typeof raw.quality !== "string" || !qualities.has(raw.quality))) {
+    return imageRequestError(
+      `quality must be low, medium, high, or auto${kind === "edits" ? " for image edits" : ""}.`,
+      "quality",
+    );
+  }
+  if (
+    raw.background !== undefined &&
+    (typeof raw.background !== "string" || !IMAGE_BACKGROUNDS.has(raw.background))
+  ) {
+    return imageRequestError("background must be transparent, opaque, or auto.", "background");
+  }
+  if (
+    raw.output_format !== undefined &&
+    (typeof raw.output_format !== "string" || !IMAGE_OUTPUT_FORMATS.has(raw.output_format))
+  ) {
+    return imageRequestError("output_format must be png, jpeg, or webp.", "output_format");
+  }
+  if (
+    raw.moderation !== undefined &&
+    (typeof raw.moderation !== "string" || !IMAGE_MODERATION_LEVELS.has(raw.moderation))
+  ) {
+    return imageRequestError("moderation must be low or auto.", "moderation");
+  }
+  if (
+    raw.input_fidelity !== undefined &&
+    (typeof raw.input_fidelity !== "string" || !IMAGE_INPUT_FIDELITIES.has(raw.input_fidelity))
+  ) {
+    return imageRequestError("input_fidelity must be low or high.", "input_fidelity");
+  }
+  if (raw.stream !== undefined && typeof raw.stream !== "boolean") {
+    return imageRequestError("stream must be a boolean.", "stream");
+  }
+  if (raw.stream === true || raw.partial_images !== undefined) {
+    return imageRequestError(
+      "Streaming image responses are not supported by this gateway.",
+      raw.stream === true ? "stream" : "partial_images",
+    );
+  }
+  if (raw.response_format !== undefined && raw.response_format !== "b64_json") {
+    return imageRequestError("response_format must be b64_json.", "response_format");
+  }
+  return { ok: true, count: count as number };
+};
+
+type MultipartImageEditResult =
+  | Readonly<{ ok: true; body: Record<string, unknown>; inputBytes: number }>
+  | ImageRequestFailure;
+
+const parseMultipartImageEdit = async (req: Request): Promise<MultipartImageEditResult> => {
+  const declaredLength = req.headers.get("content-length");
+  if (declaredLength !== null) {
+    const normalizedLength = declaredLength.trim();
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(normalizedLength)) {
+      discardRawBodyObserverOnce(req);
+      return imageRequestError("Multipart Content-Length is invalid.");
+    }
+    const parsedLength = Number(normalizedLength);
+    if (!Number.isSafeInteger(parsedLength) || parsedLength > IMAGE_MAX_MULTIPART_BODY_BYTES) {
+      discardRawBodyObserverOnce(req);
+      await req.body?.cancel().catch(() => {});
+      return imageRequestError("Multipart image edits must be no larger than 64 MiB.", "image");
+    }
+  }
+  let bytes: Uint8Array<ArrayBuffer> | null = null;
+  let captured = false;
+  try {
+    const bounded = await readBoundedResponseBody(new Response(req.body), {
+      maxBytes: IMAGE_MAX_MULTIPART_BODY_BYTES + 1,
+      timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
+      signal: req.signal,
+      cancellationReason: "Multipart image request exceeded its read limit",
+    });
+    bytes = bounded.bytes;
+    if (!bounded.complete || bytes.byteLength > IMAGE_MAX_MULTIPART_BODY_BYTES) {
+      return imageRequestError("Multipart image edits must be no larger than 64 MiB.", "image");
+    }
+
+    let form: FormData;
+    try {
+      form = await new Request(req.url, {
+        method: req.method,
+        headers: req.headers,
+        body: bytes,
+      }).formData();
+    } catch {
+      return imageRequestError("Image edits must include valid multipart form data.");
+    }
+    captured = captureRawBodyOnce(req, bytes);
+
+    const unsupportedField = [...form.keys()].find((key) => !IMAGE_EDIT_MULTIPART_REQUEST_KEYS.has(key));
+    if (unsupportedField) {
+      return imageRequestError(`Unsupported image edit field: ${unsupportedField}.`, unsupportedField);
+    }
+    const body: Record<string, unknown> = {};
+    for (
+      const key of [
+        "model",
+        "prompt",
+        "size",
+        "quality",
+        "background",
+        "output_format",
+        "input_fidelity",
+        "response_format",
+        "user",
+      ]
+    ) {
+      const value = form.get(key);
+      if (value !== null && typeof value !== "string") {
+        return imageRequestError(`${key} must be a string.`, key);
+      }
+      if (typeof value === "string") body[key] = value;
+    }
+    const stream = form.get("stream");
+    if (stream !== null) body.stream = parseMultipartBoolean(stream);
+    for (const key of ["n", "partial_images"]) {
+      const value = form.get(key);
+      if (value !== null) body[key] = parseMultipartInteger(value);
+    }
+    const outputCompression = form.get("output_compression");
+    if (outputCompression !== null) body.output_compression = parseMultipartNumber(outputCompression);
+    const scalarValidation = validateImageScalarOptions(body, "edits", true);
+    if (!scalarValidation.ok) return scalarValidation;
+    // GPT Image responses are always base64. The validated multipart
+    // compatibility field has no Responses-tool equivalent.
+    delete body.response_format;
+    const imageEntries = [...form.entries()].flatMap(([name, entry]) =>
+      name === "image" || name === "image[]" ? [entry] : []
+    );
+    const masks = form.getAll("mask");
+    if (imageEntries.length === 0 || imageEntries.length > IMAGE_MAX_EDIT_INPUTS) {
+      return imageRequestError(`image must contain from 1 to ${IMAGE_MAX_EDIT_INPUTS} files.`, "image");
+    }
+    if (imageEntries.some((entry) => !(entry instanceof File))) {
+      return imageRequestError("Each multipart image entry must be a file.", "image");
+    }
+    if (masks.length > 1 || (masks.length === 1 && !(masks[0] instanceof File))) {
+      return imageRequestError("mask must be one image file.", "mask");
+    }
+    const imageFiles = imageEntries as File[];
+    const maskFile = masks[0] instanceof File ? masks[0] : null;
+    if (imageFiles.some((file) => file.size === 0 || file.size >= IMAGE_MAX_FILE_BYTES)) {
+      return imageRequestError("Each multipart image file must be non-empty and smaller than 50 MiB.", "image");
+    }
+    const imageMediaTypes = imageFiles.map(imageFileMediaType);
+    if (imageMediaTypes.some((mediaType) => mediaType === null)) {
+      return imageRequestError("Each multipart image must be a PNG, JPEG, or WebP file.", "image");
+    }
+    let maskMediaType: string | null = null;
+    if (maskFile) {
+      maskMediaType = imageFileMediaType(maskFile);
+      if (
+        maskFile.size === 0 ||
+        maskFile.size >= IMAGE_MAX_MASK_FILE_BYTES ||
+        maskMediaType !== "image/png"
+      ) {
+        return imageRequestError("The multipart mask must be a non-empty PNG file smaller than 50 MiB.", "mask");
+      }
+    }
+    const files = maskFile ? [...imageFiles, maskFile] : imageFiles;
+    const totalInputBytes = files.reduce((total, file) => total + file.size, 0);
+    if (totalInputBytes > IMAGE_MAX_MULTIPART_INPUT_BYTES) {
+      return imageRequestError("Multipart image files must total no more than 50 MiB.", "image");
+    }
+    if (totalInputBytes > Math.floor(IMAGE_MAX_FANOUT_INPUT_BYTES / scalarValidation.count)) {
+      return imageRequestError("n and multipart image inputs exceed the 50 MiB request work limit.", "n");
+    }
+    const images: Array<Record<string, string>> = [];
+    for (let index = 0; index < imageFiles.length; index += 1) {
+      images.push({ image_url: await fileDataUrl(imageFiles[index], imageMediaTypes[index] as string) });
+    }
+    body.images = images;
+    if (maskFile) {
+      body.mask = {
+        image_url: await fileDataUrl(maskFile, maskMediaType as string),
+      };
+    }
+    return { ok: true, body, inputBytes: totalInputBytes };
+  } finally {
+    discardRawBodyObserverOnce(req);
+    if (bytes && !captured) bytes.fill(0);
+  }
+};
+
+const parseImageRequest = async (
+  req: Request,
+  kind: ImageRouteKind,
+): Promise<ParsedImageRequest> => {
+  const mediaType = req.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  let raw: unknown;
+  let multipartInputBytes = 0;
+  let isMultipart = false;
+  if (kind === "edits" && mediaType === "multipart/form-data") {
+    const multipart = await parseMultipartImageEdit(req);
+    if (!multipart.ok) return multipart;
+    raw = multipart.body;
+    multipartInputBytes = multipart.inputBytes;
+    isMultipart = true;
+  } else {
+    raw = await readJsonBody(req, kind === "edits" ? IMAGE_MAX_JSON_BODY_BYTES : undefined);
+    if (raw === null) {
+      return imageRequestError(
+        kind === "edits"
+          ? "Image edits must use a JSON object or multipart form-data body."
+          : "Image generation requests must use a JSON object body.",
+      );
+    }
+  }
+  if (!isPlainRecord(raw)) return imageRequestError("Image requests must use an object body.");
+  const allowedKeys = kind === "edits" ? IMAGE_EDIT_JSON_REQUEST_KEYS : IMAGE_GENERATION_REQUEST_KEYS;
+  const unsupportedField = findUnknownKey(raw, allowedKeys);
+  if (unsupportedField) {
+    return imageRequestError(`Unsupported image ${kind} field: ${unsupportedField}.`, unsupportedField);
+  }
+  const scalarValidation = validateImageScalarOptions(raw, kind, isMultipart);
+  if (!scalarValidation.ok) return scalarValidation;
+  const { count } = scalarValidation;
+  if (kind === "edits") {
+    if (!Array.isArray(raw.images) || raw.images.length === 0 || raw.images.length > IMAGE_MAX_EDIT_INPUTS) {
+      return imageRequestError(`images must contain from 1 to ${IMAGE_MAX_EDIT_INPUTS} image references.`, "images");
+    }
+    if (!isMultipart) {
+      const images = raw.images.map(normalizeImageReference);
+      if (images.some((image) => image === null)) {
+        return imageRequestError(
+          "Each image must contain one image_url with a fully qualified HTTP(S) URL or supported base64 data URL; file_id is unsupported by this gateway.",
+          "images",
+        );
+      }
+      raw.images = images;
+      if (Object.prototype.hasOwnProperty.call(raw, "mask")) {
+        const mask = normalizeImageMaskReference(raw.mask);
+        if (!mask) {
+          return imageRequestError(
+            "mask.image_url must be a supported base64 PNG data URL; remote URLs and file_id are unsupported by this gateway.",
+            "mask",
+          );
+        }
+        raw.mask = mask;
+      }
+    }
+  }
+  const inputBytes = Math.max(multipartInputBytes, imageReferenceInputBytes(raw));
+  if (inputBytes > Math.floor(IMAGE_MAX_FANOUT_INPUT_BYTES / (count as number))) {
+    return imageRequestError("n and inline image inputs exceed the 50 MiB request work limit.", "n");
+  }
+  return { ok: true, body: raw, count: count as number, inputBytes };
+};
+
+const imageResponseHeaders = (responses: readonly Response[]): Record<string, string> => {
+  const headers: Record<string, string> = {};
+  const warnings = Array.from(new Set(responses.flatMap(responseWarnings)));
+  if (warnings.length > 0) headers[UOS_WARNING_HEADER] = warnings.join(", ");
+  for (const name of ["x-uos-upstream", "Retry-After", ...STANDARD_RATE_LIMIT_HEADERS]) {
+    const values = responses.map((response) => response.headers.get(name));
+    if (values.length > 0 && values.every((value) => value !== null && value === values[0])) {
+      headers[name] = values[0] as string;
+    }
+  }
+  return headers;
+};
+
+type ImageFanoutDispatchCoordinator = Readonly<{
+  beforeProviderDispatchFor: (callIndex: number) => NonNullable<UsageContext["beforeProviderDispatch"]>;
+  cancelBeforeTransport: () => Promise<void>;
+  settled: (callIndex: number) => void;
+}>;
+
+/**
+ * One Images request can launch several Responses calls, while API-key
+ * admission intentionally reserves one logical request. Keep that reservation
+ * committed when any sibling reaches transport; otherwise a cancelled leader
+ * could refund it after a follower has already started its upstream fetch.
+ */
+export const createImageFanoutDispatchCoordinator = (
+  callCount: number,
+  beforeProviderDispatch: NonNullable<UsageContext["beforeProviderDispatch"]>,
+): ImageFanoutDispatchCoordinator => {
+  const settledCalls = new Set<number>();
+  let transportStarted = false;
+  let providerDispatch: ApiKeyProviderDispatch | null = null;
+  let cancellation: Promise<void> | null = null;
+  let resolveAllCallsSettled!: () => void;
+  const allCallsSettled = new Promise<void>((resolve) => {
+    resolveAllCallsSettled = resolve;
+  });
+
+  const settled = (callIndex: number): void => {
+    if (settledCalls.has(callIndex)) return;
+    settledCalls.add(callIndex);
+    if (settledCalls.size === callCount) resolveAllCallsSettled();
+  };
+  const cancelBeforeTransport = async (): Promise<void> => {
+    await allCallsSettled;
+    if (transportStarted || !providerDispatch) return;
+    cancellation ??= providerDispatch.cancelBeforeTransport();
+    await cancellation;
+  };
+
+  return {
+    beforeProviderDispatchFor: (callIndex) => async (provider) => {
+      const dispatch = await beforeProviderDispatch(provider);
+      if (dispatch && !providerDispatch) {
+        providerDispatch = dispatch;
+        if (transportStarted) providerDispatch.markTransportStarted();
+      }
+      return {
+        markTransportStarted: () => {
+          transportStarted = true;
+          settled(callIndex);
+          providerDispatch?.markTransportStarted();
+        },
+        cancelBeforeTransport: async () => {
+          settled(callIndex);
+          await cancelBeforeTransport();
+        },
+      };
+    },
+    cancelBeforeTransport,
+    settled,
+  };
+};
+
+const imageCallUsageContext = (
+  context: UsageContext | undefined,
+  index: number,
+  kind: ImageRouteKind,
+): UsageContext | undefined => {
+  if (!context) return undefined;
+  const requestId = index === 0 || !context.requestId
+    ? context.requestId
+    : `${context.requestId}:image:${kind}:${index + 1}`;
+  // The translated request targets a hidden text host model. Reusing its paid
+  // roster would authorize and settle the requested image under the wrong
+  // model, so image calls remain Codex-only until image billing is explicit.
+  return { ...context, requestId, paidFallbackEnabled: false, onTerminalUsage: undefined };
+};
+
+const usageTokensFromTelemetry = (state: ResponseTelemetryState): UsageTokens | null =>
+  state.usageObserved
+    ? {
+      inputTokens: state.inputTokens,
+      cachedInputTokens: state.cachedInputTokens,
+      cacheWriteInputTokens: state.cacheWriteInputTokens,
+      outputTokens: state.outputTokens,
+      totalTokens: state.totalTokens,
+      status: state.usageTelemetryStatus,
+    }
+    : null;
+
+const finalizeImageResponse = (
+  sources: readonly Response[],
+  target: Response,
+  context: UsageContext | undefined,
+): Response => {
+  const response = aggregateResponseTelemetry(sources, target);
+  const aggregate = responseTelemetry.get(response);
+  if (aggregate && context?.responseTelemetry && context.responseTelemetry !== aggregate) {
+    Object.assign(context.responseTelemetry, aggregate);
+    responseTelemetry.set(response, context.responseTelemetry);
+  }
+  if (aggregate && context?.onTerminalUsage) {
+    try {
+      context.onTerminalUsage(usageTokensFromTelemetry(aggregate), aggregate.completed);
+    } catch {
+      // Observability callbacks cannot alter the translated response.
+    }
+  }
+  return response;
+};
+
+/**
+ * Collect generated images from a Responses payload. The tool reports each
+ * image as an `image_generation_call` output item whose `result` is base64.
+ */
+export const extractImagesFromResponses = (
+  payload: unknown,
+): Array<Record<string, unknown>> => {
+  if (!isPlainRecord(payload) || !Array.isArray(payload.output)) return [];
+  const images: Array<Record<string, unknown>> = [];
+  for (const item of payload.output) {
+    if (!isPlainRecord(item) || item.type !== "image_generation_call") continue;
+    const result = typeof item.result === "string" ? item.result : "";
+    if (!result) continue;
+    const image: Record<string, unknown> = { b64_json: result };
+    if (typeof item.revised_prompt === "string") image.revised_prompt = item.revised_prompt;
+    images.push(image);
+  }
+  return images;
+};
+
+const extractImageOutputFormatFromResponses = (payload: unknown): string | null => {
+  if (!isPlainRecord(payload) || !Array.isArray(payload.output)) return null;
+  for (const item of payload.output) {
+    if (
+      !isPlainRecord(item) || item.type !== "image_generation_call" ||
+      typeof item.result !== "string" || item.result.length === 0
+    ) continue;
+    return typeof item.output_format === "string" && IMAGE_OUTPUT_FORMATS.has(item.output_format)
+      ? item.output_format
+      : null;
+  }
+  return null;
+};
+
+export const handleImages = async (
+  req: Request,
+  kind: ImageRouteKind,
+  usageContext?: UsageContext,
+  options: ImageHandlerOptions = {},
+): Promise<Response> => {
+  const parsed = await parseImageRequest(req, kind);
+  if (!parsed.ok) return parsed.response;
+  const { body, count } = parsed;
+
+  const baseModel = await resolveImageBaseModel();
+  if (!baseModel) {
+    return openaiError(
+      503,
+      "No base model is available to host image generation.",
+      "model_unavailable",
+    );
+  }
+
+  const responsesBody = buildImageResponsesRequest(body, baseModel, kind);
+  const encodedResponsesBody = JSON.stringify(responsesBody);
+  if (
+    count > 1 &&
+    IMAGE_TEXT_ENCODER.encode(encodedResponsesBody).byteLength > Math.floor(IMAGE_MAX_JSON_BODY_BYTES / count)
+  ) {
+    return imageRequestError("n and the translated image request exceed the fan-out work limit.", "n").response;
+  }
+  const serializedResponsesBody = options.dispatch ? encodedResponsesBody : null;
+  const fanoutDispatch = count > 1 && !options.dispatch && usageContext?.beforeProviderDispatch
+    ? createImageFanoutDispatchCoordinator(count, usageContext.beforeProviderDispatch)
+    : null;
+  const fanoutAbort = count > 1 ? new AbortController() : null;
+  const childSignal = fanoutAbort
+    ? AbortSignal.any([
+      req.signal,
+      ...(usageContext?.downstreamSignal ? [usageContext.downstreamSignal] : []),
+      fanoutAbort.signal,
+    ])
+    : req.signal;
+  type ImageFanoutFailure =
+    | Readonly<{ kind: "response"; response: Response }>
+    | Readonly<{ kind: "throw"; error: unknown }>;
+  let firstFailure: ImageFanoutFailure | undefined;
+  const recordFirstFailure = (failure: ImageFanoutFailure): void => {
+    if (firstFailure !== undefined) return;
+    // Abort listeners run synchronously, so preserve the temporal leader first.
+    firstFailure = failure;
+    fanoutAbort?.abort(new DOMException("A sibling image generation call failed.", "AbortError"));
+  };
+  const childPromises = Array.from({ length: count }, async (_, index) => {
+    // This is an internal JSON rewrite, not a proxy hop. In particular, an
+    // outer Images Idempotency-Key cannot identify several independent child
+    // generations, and client forwarding/authentication headers do not
+    // describe the newly serialized request body.
+    const headers = new Headers({ "content-type": "application/json" });
+    const childContext = imageCallUsageContext(usageContext, index, kind);
+    const coordinatedChildContext = childContext && (fanoutDispatch || fanoutAbort)
+      ? {
+        ...childContext,
+        ...(fanoutAbort ? { downstreamSignal: childSignal } : {}),
+        ...(fanoutDispatch ? { beforeProviderDispatch: fanoutDispatch.beforeProviderDispatchFor(index) } : {}),
+      }
+      : childContext;
+    const request = new Request(new URL("/v1/responses", req.url), {
+      method: "POST",
+      headers,
+      ...(serializedResponsesBody === null ? {} : { body: serializedResponsesBody }),
+      signal: childSignal,
+    });
+    try {
+      const upstream = options.dispatch
+        ? await options.dispatch(request)
+        : await runResponsesHandler(request, coordinatedChildContext, responsesBody);
+      if (!upstream.ok) recordFirstFailure({ kind: "response", response: upstream });
+      return upstream;
+    } catch (error) {
+      recordFirstFailure({ kind: "throw", error });
+      throw error;
+    } finally {
+      fanoutDispatch?.settled(index);
+    }
+  });
+  const settledUpstreams = await Promise.allSettled(childPromises);
+  const failure = firstFailure;
+  if (failure !== undefined) {
+    await fanoutDispatch?.cancelBeforeTransport().catch(() => {});
+    if (failure.kind === "throw") throw failure.error;
+  }
+  const upstreams = failure?.kind === "response"
+    ? settledUpstreams.flatMap((result) => result.status === "fulfilled" ? [result.value] : [])
+    : settledUpstreams.map((result) => {
+      if (result.status === "rejected") throw result.reason;
+      return result.value;
+    });
+  if (failure?.kind === "response") {
+    const leaderIndex = upstreams.indexOf(failure.response);
+    if (leaderIndex > 0) upstreams.unshift(upstreams.splice(leaderIndex, 1)[0] as Response);
+  }
+  const images: Array<Record<string, unknown>> = [];
+  let created: number | null = null;
+  let outputFormat: string | null = null;
+  let outputFormatConsistent = true;
+  for (const upstream of upstreams) {
+    const text = await upstream.text();
+    let payload: unknown = null;
+    try {
+      if (text.length > 0) payload = JSON.parse(text) as unknown;
+    } catch {
+      const response = openaiError(502, "Image upstream returned a non-JSON response.", "upstream_invalid", {
+        headers: imageResponseHeaders([upstream]),
+      });
+      return finalizeImageResponse(upstreams, response, usageContext);
+    }
+    // A failed Responses call already carries an OpenAI-shaped error body;
+    // pass it through unchanged so quota and roster errors stay actionable.
+    if (!upstream.ok) {
+      const response = json(upstream.status, payload, imageResponseHeaders([upstream]));
+      return finalizeImageResponse(upstreams, response, usageContext);
+    }
+    const callImages = extractImagesFromResponses(payload);
+    if (callImages.length === 0) {
+      const response = openaiError(
+        502,
+        "The model did not return an image for this request.",
+        "image_generation_failed",
+        { headers: imageResponseHeaders(upstreams) },
+      );
+      return finalizeImageResponse(upstreams, response, usageContext);
+    }
+    images.push(callImages[0]);
+    const callOutputFormat = extractImageOutputFormatFromResponses(payload);
+    if (callOutputFormat === null) outputFormatConsistent = false;
+    else if (outputFormat === null) outputFormat = callOutputFormat;
+    else if (outputFormat !== callOutputFormat) outputFormatConsistent = false;
+    if (created === null && isPlainRecord(payload) && typeof payload.created_at === "number") {
+      created = payload.created_at;
+    }
+  }
+  created ??= Math.floor(Date.now() / 1000);
+  const response = json(200, {
+    created,
+    data: images,
+    ...(outputFormatConsistent && outputFormat ? { output_format: outputFormat } : {}),
+  }, imageResponseHeaders(upstreams));
+  return finalizeImageResponse(upstreams, response, usageContext);
+};

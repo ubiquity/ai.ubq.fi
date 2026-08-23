@@ -196,6 +196,7 @@ jobs:
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
           METERED_SYSTEM_TOKEN: ${{ secrets.METERED_SYSTEM_TOKEN }}
           SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
+          SENTINEL_GITHUB_APP_PRIVATE_KEY: ${{ github.ref == 'refs/heads/development' && secrets.SENTINEL_GITHUB_APP_PRIVATE_KEY || '' }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_REF" = "refs/heads/development" ]; then
@@ -207,6 +208,9 @@ jobs:
           [ -n "$DENO_DEPLOY_TOKEN" ]
           [ -n "$UOS_AI_TOKEN" ]
           [ -n "$METERED_API_KEY" ] || [ -n "$OPENLUX_API_KEY" ] || [ -n "$SURPLUS_API_KEY" ]
+          if [ "$TARGET_PROJECT" = "ai-ubq-fi" ]; then
+            [ -n "$SENTINEL_GITHUB_APP_PRIVATE_KEY" ]
+          fi
           echo "::add-mask::$DENO_DEPLOY_TOKEN"
           echo "::add-mask::$UOS_AI_TOKEN"
           unset PRODUCTION_UOS_AI_TOKEN PREVIEW_UOS_AI_TOKEN
@@ -267,6 +271,36 @@ jobs:
             --token "$DENO_DEPLOY_TOKEN" \
             .uos-deploy-secrets.env |
             jq '{added, updated, skipped}'
+
+          if [ "$TARGET_PROJECT" = "ai-ubq-fi" ]; then
+            deno eval \
+              '
+                const token = Deno.env.get("DENO_DEPLOY_TOKEN");
+                const privateKey = Deno.env.get("SENTINEL_GITHUB_APP_PRIVATE_KEY");
+                if (!token || !privateKey) throw new Error("Production Sentinel App credential is required");
+                const response = await fetch("https://api.deno.com/v2/apps/ai-ubq-fi", {
+                  method: "PATCH",
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    env_vars: [{
+                      key: "SENTINEL_GITHUB_APP_PRIVATE_KEY",
+                      value: privateKey,
+                      secret: true,
+                      contexts: ["production"],
+                    }],
+                  }),
+                  signal: AbortSignal.timeout(20_000),
+                });
+                if (response.status !== 200) {
+                  await response.body?.cancel().catch(() => {});
+                  throw new Error(`Production Sentinel App credential update failed with HTTP ${response.status}`);
+                }
+                await response.body?.cancel().catch(() => {});
+              '
+          fi
 
   capture-deployment-baseline:
     needs:

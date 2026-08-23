@@ -1,15 +1,36 @@
 import type { SentinelMode } from "./policy.ts";
 import type { SentinelInterval } from "./types.ts";
 
-export const DAILY_WINDOW_MS = 24 * 60 * 60 * 1_000;
+export const HOURLY_OVERLAP_MS = 20 * 60 * 1_000;
+export const HOURLY_WINDOW_MS = 60 * 60 * 1_000 + HOURLY_OVERLAP_MS;
 export const INCIDENT_WINDOW_MS = 20 * 60 * 1_000;
+export const INCIDENT_MAX_LOOKBACK_MS = 48 * 60 * 60 * 1_000;
 // The private observation workflow runs every two hours. Five minutes of
 // overlap avoids gaps when GitHub starts a scheduled job late.
 export const OBSERVE_WINDOW_MS = 125 * 60 * 1_000;
 
-export const computeSentinelInterval = (mode: SentinelMode, nowMs: number): SentinelInterval => {
+export const computeSentinelInterval = (
+  mode: SentinelMode,
+  nowMs: number,
+  incidentStartMs?: number,
+): SentinelInterval => {
   if (!Number.isSafeInteger(nowMs) || nowMs <= 0) throw new Error("Sentinel clock must be a positive integer");
-  const durationMs = mode === "daily" ? DAILY_WINDOW_MS : mode === "observe" ? OBSERVE_WINDOW_MS : INCIDENT_WINDOW_MS;
+  if (mode !== "incident" && incidentStartMs !== undefined) {
+    throw new Error("Only incident mode accepts an incident start");
+  }
+  if (mode === "incident" && incidentStartMs !== undefined) {
+    if (
+      !Number.isSafeInteger(incidentStartMs) || incidentStartMs <= 0 || incidentStartMs > nowMs + 5 * 60_000 ||
+      incidentStartMs < nowMs - INCIDENT_MAX_LOOKBACK_MS
+    ) throw new Error("Sentinel incident start is outside the retained interval");
+    const startMs = Math.min(nowMs - INCIDENT_WINDOW_MS, incidentStartMs, nowMs);
+    return {
+      start: new Date(startMs).toISOString(),
+      end: new Date(nowMs).toISOString(),
+      duration_ms: nowMs - startMs,
+    };
+  }
+  const durationMs = mode === "hourly" ? HOURLY_WINDOW_MS : mode === "observe" ? OBSERVE_WINDOW_MS : INCIDENT_WINDOW_MS;
   return {
     start: new Date(nowMs - durationMs).toISOString(),
     end: new Date(nowMs).toISOString(),

@@ -306,10 +306,13 @@ const setCodexResponseAccountTelemetry = (
   codexAccountIdByResponse.set(response, accountId);
 };
 
-const withCodexAuthWarning = (response: Response, warning: string): Response => {
+const withCodexWarnings = (response: Response, warnings: readonly string[]): Response => {
   const headers = new Headers(response.headers);
   const existing = headers.get("x-uos-warning")?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
-  if (!existing.includes(warning)) existing.push(warning);
+  for (const warning of warnings) {
+    if (!existing.includes(warning)) existing.push(warning);
+  }
+  if (!existing.length) return response;
   headers.set("x-uos-warning", existing.join(", "));
   const decorated = new Response(response.body, {
     status: response.status,
@@ -324,6 +327,14 @@ const withCodexAuthWarning = (response: Response, warning: string): Response => 
   if (slot !== undefined) codexSlotByResponse.set(decorated, slot);
   const accountId = codexAccountIdByResponse.get(response);
   if (accountId !== undefined) codexAccountIdByResponse.set(decorated, accountId);
+  const authWarning = codexAuthWarnings.get(response);
+  if (authWarning !== undefined) codexAuthWarnings.set(decorated, authWarning);
+  if (codexTerminalOutcomeByResponse.has(response)) codexTerminalOutcomeByResponse.add(decorated);
+  return decorated;
+};
+
+const withCodexAuthWarning = (response: Response, warning: string): Response => {
+  const decorated = withCodexWarnings(response, [warning]);
   codexAuthWarnings.set(decorated, warning);
   return decorated;
 };
@@ -1568,6 +1579,116 @@ type CodexResponseTimingHooks = Readonly<{
   onHeaders?: () => void;
 }>;
 
+type FetchCodexResponsesOptions = Readonly<{
+  clientVersion?: string | null;
+  cacheScope?: string | null;
+  signal?: AbortSignal;
+  requestId?: string | null;
+  timing?: CodexResponseTimingHooks;
+  retrySleep?: (milliseconds: number) => Promise<void>;
+  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
+  bankedReset?: CodexBankedResetOptions;
+}>;
+
+type PreparedCodexSubscriptionRequest = Readonly<{
+  body: unknown;
+  serializedBody: string;
+  conversationIdentity: string;
+  nativeSessionIdentity: string | null;
+  warnings: readonly string[];
+}>;
+
+const CODEX_PROMPT_CACHE_OPTIONS_IGNORED_WARNING = "prompt_cache_options_ignored";
+const CODEX_PROMPT_CACHE_RETENTION_IGNORED_WARNING = "prompt_cache_retention_ignored";
+const CODEX_PROMPT_CACHE_BREAKPOINT_IGNORED_WARNING = "prompt_cache_breakpoint_ignored";
+const CODEX_MAX_OUTPUT_TOKENS_IGNORED_WARNING = "max_output_tokens_ignored";
+
+const deterministicCodexSessionIdentity = async (
+  cacheScope: string,
+  promptCacheKey: string,
+): Promise<string> => {
+  const digest = await sha256Hex(`uos-codex-prompt-cache-session-v2\u0000${cacheScope}\u0000${promptCacheKey}`);
+  const variant = ((Number.parseInt(digest[16]!, 16) & 0b0011) | 0b1000).toString(16);
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-${variant}${digest.slice(17, 20)}-${
+    digest.slice(20, 32)
+  }`;
+};
+
+const stripCodexPromptCacheBreakpoints = (value: unknown): Readonly<{ value: unknown; removed: boolean }> => {
+  if (Array.isArray(value)) {
+    let removed = false;
+    const next = value.map((item) => {
+      const stripped = stripCodexPromptCacheBreakpoints(item);
+      removed ||= stripped.removed;
+      return stripped.value;
+    });
+    return removed ? { value: next, removed: true } : { value, removed: false };
+  }
+  if (!isRecord(value)) return { value, removed: false };
+
+  let removed = false;
+  let next: Record<string, unknown> | null = null;
+  if (Object.prototype.hasOwnProperty.call(value, "prompt_cache_breakpoint")) {
+    next = { ...value };
+    delete next.prompt_cache_breakpoint;
+    removed = true;
+  }
+  for (const key of ["content", "output"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    const stripped = stripCodexPromptCacheBreakpoints(value[key]);
+    if (!stripped.removed) continue;
+    next ??= { ...value };
+    next[key] = stripped.value;
+    removed = true;
+  }
+  return removed ? { value: next!, removed: true } : { value, removed: false };
+};
+
+const prepareCodexSubscriptionRequest = async (
+  body: unknown,
+  cacheScope: string | null,
+): Promise<PreparedCodexSubscriptionRequest> => {
+  const warnings: string[] = [];
+  let preparedBody = body;
+  let promptCacheKey: string | null = null;
+
+  if (isRecord(body)) {
+    const prepared: Record<string, unknown> = { ...body };
+    promptCacheKey = typeof body.prompt_cache_key === "string" && body.prompt_cache_key.trim().length > 0
+      ? body.prompt_cache_key
+      : null;
+    for (
+      const [field, warning] of [
+        ["prompt_cache_options", CODEX_PROMPT_CACHE_OPTIONS_IGNORED_WARNING],
+        ["prompt_cache_retention", CODEX_PROMPT_CACHE_RETENTION_IGNORED_WARNING],
+        ["max_output_tokens", CODEX_MAX_OUTPUT_TOKENS_IGNORED_WARNING],
+        ["max_completion_tokens", CODEX_MAX_OUTPUT_TOKENS_IGNORED_WARNING],
+      ] as const
+    ) {
+      if (!Object.prototype.hasOwnProperty.call(prepared, field)) continue;
+      delete prepared[field];
+      if (!warnings.includes(warning)) warnings.push(warning);
+    }
+    if (Object.prototype.hasOwnProperty.call(prepared, "input")) {
+      const stripped = stripCodexPromptCacheBreakpoints(prepared.input);
+      prepared.input = stripped.value;
+      if (stripped.removed) warnings.push(CODEX_PROMPT_CACHE_BREAKPOINT_IGNORED_WARNING);
+    }
+    preparedBody = prepared;
+  }
+
+  const nativeSessionIdentity = promptCacheKey === null || cacheScope === null || cacheScope.length === 0
+    ? null
+    : await deterministicCodexSessionIdentity(cacheScope, promptCacheKey);
+  return {
+    body: preparedBody,
+    serializedBody: JSON.stringify(preparedBody),
+    conversationIdentity: nativeSessionIdentity ?? crypto.randomUUID(),
+    nativeSessionIdentity,
+    warnings,
+  };
+};
+
 type CodexAttemptPhase = "initial" | "post_refresh" | "two_second_retry" | "post_retry_refresh" | "post_banked_reset";
 
 type CodexBankedResetOptions = Readonly<{
@@ -1676,21 +1797,14 @@ const waitForCodexRetry = async (
   }
 };
 
-export const fetchCodexResponses = async (
-  body: unknown,
-  options: Readonly<{
-    clientVersion?: string | null;
-    signal?: AbortSignal;
-    requestId?: string | null;
-    timing?: CodexResponseTimingHooks;
-    retrySleep?: (milliseconds: number) => Promise<void>;
-    beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
-    bankedReset?: CodexBankedResetOptions;
-  }> = {},
+const fetchPreparedCodexResponses = async (
+  prepared: PreparedCodexSubscriptionRequest,
+  options: FetchCodexResponsesOptions,
 ): Promise<Response> => {
   if (codexProbeTransitionsInFlight.size) {
     await Promise.allSettled([...codexProbeTransitionsInFlight]);
   }
+  const body = prepared.body;
   const requestedModel = isRecord(body) ? getString(body.model) : null;
   let poolEntry = await getAuthPoolEntry();
   let selected = await selectCodexRoutingAccounts(
@@ -1714,14 +1828,19 @@ export const fetchCodexResponses = async (
     ? selected.accounts.map((routing) => ({ ...poolEntry, auth: routing.auth, routing }))
     : [];
   const url = `${config.codexBaseUrl}/responses`;
-  const serializedBody = JSON.stringify(body);
+  const serializedBody = prepared.serializedBody;
   const baseHeaders = new Headers({
     "originator": CODEX_ORIGINATOR,
     "user-agent": codexUserAgent(options.clientVersion),
     "Content-Type": "application/json",
     "Accept": "text/event-stream",
-    "conversation_id": crypto.randomUUID(),
+    "conversation_id": prepared.conversationIdentity,
   });
+  if (prepared.nativeSessionIdentity !== null) {
+    baseHeaders.set("session-id", prepared.nativeSessionIdentity);
+    baseHeaders.set("thread-id", prepared.nativeSessionIdentity);
+    baseHeaders.set("x-client-request-id", prepared.nativeSessionIdentity);
+  }
   const configuredBankedReset = options.bankedReset;
   const bankedResetDependencies: CodexBankedResetDependencies = {
     config: configuredBankedReset?.config ?? loadCodexBankedResetConfig(),
@@ -2776,8 +2895,22 @@ export const fetchCodexResponses = async (
   throw lastError ?? new CodexError("Codex auth pool is empty.", "codex_auth_missing", 503);
 };
 
+export const fetchCodexResponses = async (
+  body: unknown,
+  options: FetchCodexResponsesOptions = {},
+): Promise<Response> => {
+  const prepared = await prepareCodexSubscriptionRequest(body, options.cacheScope ?? null);
+  const response = await fetchPreparedCodexResponses(prepared, options);
+  return withCodexWarnings(response, prepared.warnings);
+};
+
 export const fetchCodexModels = async (
-  options: Readonly<{ clientVersion?: string | null; ifNoneMatch?: string | null; signal?: AbortSignal }> = {},
+  options: Readonly<{
+    clientVersion?: string | null;
+    ifNoneMatch?: string | null;
+    signal?: AbortSignal;
+    onProviderTransportFailure?: () => void;
+  }> = {},
 ): Promise<Response> => {
   const poolEntry = await getAuthPoolEntry();
   const accountEntries = randomizedAuthEntries(poolEntry);
@@ -2808,6 +2941,16 @@ export const fetchCodexModels = async (
           await recordCodexResponseHealth(auth.account_id, res, auth, "reachable");
         }
       } catch (error) {
+        if (
+          error instanceof CodexError &&
+          (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable")
+        ) {
+          try {
+            options.onProviderTransportFailure?.();
+          } catch (callbackError) {
+            console.error("[ai.ubq.fi] Codex models transport failure callback failed:", callbackError);
+          }
+        }
         await recordCodexThrownHealth(accountEntry.auth.account_id, error);
         if (hasFallbackAccount) continue;
         throw error;

@@ -9,6 +9,7 @@ import {
   inspectSentinelBufferedResponse,
   inspectSentinelBufferedResponseBody,
   isExportedSentinelReplayCapture,
+  listEncryptedSentinelIncidentReplays,
   listEncryptedSentinelReplays,
   materializeSentinelReplayInput,
   normalizeSentinelCompatibilityHeaders,
@@ -25,11 +26,17 @@ import {
   type SentinelFailureObservation,
   sentinelFailureSignature,
   shouldPersistSentinelReplay,
+  shouldSignalSentinelIncident,
   zeroSentinelReplayInput,
 } from "../src/sentinel_replay_capture.ts";
+import {
+  coalesceSentinelIncidentFailureEvents,
+  createSentinelIncidentFailureEvent,
+  type SentinelIncidentFailureEvent,
+} from "../src/sentinel_incident_outbox.ts";
 import { handleAdminSentinelReplayCaptures } from "../src/sentinel_replay_admin.ts";
-import { withTerminalRequestLog } from "../src/handler.ts";
-import { MAX_ACCEPTED_JSON_BODY_BYTES, readJsonBody } from "../src/request.ts";
+import { shouldSignalSentinelProviderDegradation, withTerminalRequestLog } from "../src/handler.ts";
+import { captureRawBodyOnce, MAX_ACCEPTED_JSON_BODY_BYTES, observeRawBodyOnce, readJsonBody } from "../src/request.ts";
 import { base64UrlDecode, base64UrlEncode } from "../src/utils.ts";
 import {
   fetchEncryptedReplayCaptures,
@@ -165,6 +172,19 @@ Deno.test("request reader and replay capture share the 32 MiB accepted-body limi
   assert.deepEqual(new Set(retainedBytes), new Set([0]));
 });
 
+Deno.test("raw body replay capture rejects over-cap input and remains one-shot", () => {
+  const request = new Request("https://ai.ubq.fi/v1/images/edits");
+  let observations = 0;
+  observeRawBodyOnce(request, () => {
+    observations += 1;
+  });
+  const oversized = new Uint8Array(MAX_ACCEPTED_JSON_BODY_BYTES + 1);
+  assert.equal(captureRawBodyOnce(request, oversized), false);
+  assert.equal(captureRawBodyOnce(request, new Uint8Array([1])), false);
+  assert.equal(observations, 0);
+  oversized.fill(0);
+});
+
 Deno.test("sentinel compatibility headers normalize only the replay allowlist", () => {
   const normalized = normalizeSentinelCompatibilityHeaders(
     new Headers({
@@ -212,6 +232,37 @@ Deno.test("sentinel failure classifier excludes success and client cancellation"
       terminal_type: "response.incomplete",
       failure_kind: null,
     })),
+    false,
+  );
+  const cancelled = failedObservation({
+    status: 499,
+    stream: true,
+    terminal_type: "cancelled",
+    failure_kind: "request_cancelled",
+  });
+  assert.equal(
+    shouldPersistSentinelReplay(
+      cancelled,
+      failedClientObservation({
+        status: 499,
+        stream: false,
+        terminal_type: "http.error",
+        failure_kind: "request_cancelled",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldPersistSentinelReplay(
+      cancelled,
+      failedClientObservation({
+        status: 499,
+        stream: true,
+        terminal_type: null,
+        failure_kind: "missing_sse_terminal",
+        framing_valid: false,
+      }),
+    ),
     false,
   );
   assert.equal(
@@ -293,6 +344,191 @@ Deno.test("sentinel failure classifier excludes success and client cancellation"
     })),
     false,
   );
+});
+
+Deno.test("sentinel incident signals require trusted provider or gateway evidence", () => {
+  for (const status of [400, 401, 404, 429]) {
+    const internal = failedObservation({
+      status,
+      stream: false,
+      terminal_type: "http.error",
+      failure_kind: null,
+    });
+    assert.equal(
+      shouldSignalSentinelIncident(
+        internal,
+        failedClientObservation({
+          status,
+          stream: false,
+          terminal_type: "http.error",
+          failure_kind: null,
+        }),
+      ),
+      false,
+    );
+    assert.equal(shouldPersistSentinelReplay(internal), true);
+  }
+
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 200, stream: true, terminal_type: "response.failed", failure_kind: null }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        terminal_type: "response.failed",
+        failure_kind: null,
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 200, stream: true, terminal_type: "response.failed", failure_kind: null }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        terminal_type: "response.failed",
+        failure_kind: "server_error",
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 400, stream: false, terminal_type: "http.error", failure_kind: null }),
+      failedClientObservation({
+        status: 400,
+        stream: false,
+        terminal_type: "http.error",
+        failure_kind: "invalid_request_error",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 500, terminal_type: "http.error", failure_kind: null }),
+      failedClientObservation({ status: 500, terminal_type: "http.error", failure_kind: null }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 200, stream: true, terminal_type: "error", failure_kind: "read_error" }),
+      failedClientObservation({ status: 200, stream: true, terminal_type: "error", failure_kind: "read_error" }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({
+        status: 200,
+        stream: true,
+        completed: true,
+        terminal_type: "response.completed",
+        failure_kind: null,
+      }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        completed: true,
+        terminal_type: "response.completed",
+        failure_kind: null,
+        framing_valid: false,
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({
+        status: 200,
+        stream: true,
+        completed: false,
+        terminal_type: "response.incomplete",
+        failure_kind: "max_output_tokens",
+      }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        completed: false,
+        terminal_type: "response.incomplete",
+        failure_kind: "max_output_tokens",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({
+        status: 200,
+        stream: true,
+        completed: false,
+        terminal_type: "response.incomplete",
+        failure_kind: "response_incomplete:provider_internal_deadline",
+      }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        completed: false,
+        terminal_type: "response.incomplete",
+        failure_kind: "response_incomplete:provider_internal_deadline",
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({
+        status: 200,
+        stream: true,
+        completed: true,
+        terminal_type: "response.completed",
+        failure_kind: "stale_primary_failure",
+      }),
+      failedClientObservation({
+        status: 200,
+        stream: true,
+        completed: true,
+        terminal_type: "response.completed",
+        failure_kind: "stale_primary_failure",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSignalSentinelIncident(
+      failedObservation({ status: 499, stream: true, terminal_type: "cancelled", failure_kind: "request_cancelled" }),
+      failedClientObservation({
+        status: 499,
+        stream: true,
+        terminal_type: "cancelled",
+        failure_kind: "request_cancelled",
+        framing_valid: false,
+      }),
+    ),
+    false,
+  );
+});
+
+Deno.test("masked provider degradation signals an incident without capturing a successful request", () => {
+  assert.equal(
+    shouldSignalSentinelProviderDegradation({
+      status: 200,
+      completed: true,
+      removedProviderTriggerClass: "read_error",
+    }),
+    true,
+  );
+  for (
+    const input of [
+      { status: 502, completed: false, removedProviderTriggerClass: "read_error" },
+      { status: 200, completed: false, removedProviderTriggerClass: "read_error" },
+      { status: 200, completed: true, removedProviderTriggerClass: null },
+    ]
+  ) {
+    assert.equal(shouldSignalSentinelProviderDegradation(input), false);
+  }
 });
 
 Deno.test("sentinel encrypted persistence rejects a cancelled request even with stale failure state", async () => {
@@ -485,6 +721,72 @@ Deno.test("sentinel replay encrypts, chunks, exports, decrypts, and deduplicates
   );
 });
 
+Deno.test("durable incidents retain references to exact encrypted replay captures", async () => {
+  const kv = new CountingKv();
+  const now = 1_777_000_000_000;
+  const incidentEvent = await createSentinelIncidentFailureEvent(kv as unknown as Deno.Kv, now, {
+    randomUuid: () => "00000000-0000-4000-8000-000000000001",
+  });
+  const persisted = await persistEncryptedSentinelReplay(acceptedInput(), failedObservation(), {
+    kv: kv as unknown as Deno.Kv,
+    keyBytes,
+    now: () => now,
+    randomUuid: () => "incident-capture",
+    incidentEvent,
+  });
+  assert.equal(persisted.status, "stored");
+  if (persisted.status !== "stored" || !persisted.manifest_key) throw new Error("capture fixture failed");
+  const readyEvent = (await kv.get<SentinelIncidentFailureEvent>(incidentEvent.key)).value;
+  assert.equal(readyEvent?.state, "ready");
+  assert.equal(readyEvent?.manifest_key?.join("/"), persisted.manifest_key.join("/"));
+  assert.equal(
+    await coalesceSentinelIncidentFailureEvents(kv as unknown as Deno.Kv, now + 1, {
+      randomAckNonce: () => "A".repeat(43),
+    }),
+    1,
+  );
+  const page = await listEncryptedSentinelIncidentReplays(kv as unknown as Deno.Kv, {
+    incidentId: incidentEvent.value.incident_id,
+  });
+  assert.equal(page.captures.length, 1);
+  const plaintext = await decryptExportedSentinelReplay(page.captures[0]!, keyBytes);
+  assert.deepEqual(plaintext.body, acceptedInput().body);
+  plaintext.body.fill(0);
+});
+
+Deno.test("sentinel replay snapshots exact bytes before concurrent request cleanup", async () => {
+  const input = acceptedInput(new TextEncoder().encode('{"prompt":"retain exact bytes"}'));
+  const expectedBody = new Uint8Array(input.body);
+  class CleanupRaceKv extends CountingKv {
+    override get<T = unknown>(
+      key: Deno.KvKey,
+      options?: Readonly<{ consistency?: "strong" | "eventual" }>,
+    ): Promise<Deno.KvEntryMaybe<T>> {
+      input.body.fill(0);
+      return super.get<T>(key, options);
+    }
+  }
+  const kv = new CleanupRaceKv();
+  const persisted = await persistEncryptedSentinelReplay(input, failedObservation(), {
+    kv: kv as unknown as Deno.Kv,
+    keyBytes,
+    now: () => 1_777_000_000_000,
+    randomUuid: () => "capture-cleanup-race",
+    randomBytes: () => new Uint8Array(12).fill(8),
+  });
+  assert.equal(persisted.status, "stored");
+  assert.deepEqual(new Set(input.body), new Set([0]));
+  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs: 0,
+    beforeMs: Number.MAX_SAFE_INTEGER - 1,
+  });
+  assert.equal(page.captures.length, 1);
+  const decrypted = await decryptExportedSentinelReplay(page.captures[0]!, keyBytes);
+  assert.deepEqual(decrypted.body, expectedBody);
+  decrypted.body.fill(0);
+  expectedBody.fill(0);
+});
+
 Deno.test("sentinel manifest export seeks to the requested timestamp and returns one ordered item", async () => {
   const backing = new CountingKv();
   await persistEncryptedSentinelReplay(acceptedInput(), failedObservation(), {
@@ -516,7 +818,7 @@ Deno.test("sentinel manifest export seeks to the requested timestamp and returns
           versionstamp: "0000000000000001",
         };
       })() as unknown as Deno.KvListIterator<typeof fixture.manifest>;
-      Object.defineProperty(iterator, "cursor", { get: () => "next_cursor" });
+      Object.defineProperty(iterator, "cursor", { get: () => "next_cursor==" });
       return iterator;
     },
     getMany(keys: readonly Deno.KvKey[]) {
@@ -532,16 +834,23 @@ Deno.test("sentinel manifest export seeks to the requested timestamp and returns
   };
   const afterMs = fixture.manifest.captured_at_ms;
   const beforeMs = afterMs + 10;
-  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, { afterMs, beforeMs, limit: 1 });
+  const page = await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs,
+    beforeMs,
+    limit: 1,
+    cursor: "prior_cursor==",
+  });
   assert.equal(page.captures.length, 1);
-  assert.equal(page.cursor, "next_cursor");
+  assert.equal(page.cursor, "next_cursor==");
   const selector = observedSelector as unknown as Deno.KvListSelector;
+  assert.ok("prefix" in selector);
+  if (!("prefix" in selector)) throw new Error("fixture selector missing prefix");
+  assert.deepEqual(selector.prefix, SENTINEL_REPLAY_MANIFEST_PREFIX);
   assert.ok("start" in selector);
   if (!("start" in selector)) throw new Error("fixture selector missing start");
   assert.deepEqual(selector.start, [...SENTINEL_REPLAY_MANIFEST_PREFIX, afterMs]);
-  assert.ok("end" in selector);
-  if (!("end" in selector)) throw new Error("fixture selector missing end");
-  assert.deepEqual(selector.end, [...SENTINEL_REPLAY_MANIFEST_PREFIX, beforeMs + 1]);
+  assert.equal("end" in selector, false);
+  assert.equal(observedOptions?.cursor, "prior_cursor==");
   assert.equal(observedOptions?.limit, 1);
 });
 
@@ -941,6 +1250,57 @@ Deno.test("stream capture distinguishes gateway read failure from downstream can
   assert.equal(observations.length, 1);
 });
 
+Deno.test("stream cancellation while a provider read resolves done never persists replay", async () => {
+  const capture = acceptedInput();
+  const providerPullStarted = Promise.withResolvers<void>();
+  const providerCancelled = Promise.withResolvers<void>();
+  let pullStarted = false;
+  let persisted = 0;
+  const pendingBody = new ReadableStream<Uint8Array>({
+    pull() {
+      if (!pullStarted) {
+        pullStarted = true;
+        providerPullStarted.resolve();
+      }
+      return new Promise<void>(() => {});
+    },
+    cancel() {
+      providerCancelled.resolve();
+    },
+  });
+  const response = await withTerminalRequestLog(
+    new Response(pendingBody, { headers: { "Content-Type": "text/event-stream" } }),
+    {
+      route: "responses",
+      startedAtMonotonicMs: performance.now(),
+      requestId: "stream-cancelled-pending-read",
+      sentinelReplayInput: capture,
+      persistSentinelReplay: () => {
+        persisted += 1;
+        return Promise.resolve({ status: "duplicate", fingerprint: "fixture" });
+      },
+      recordTelemetry: () =>
+        Promise.resolve({
+          status: "ignored" as const,
+          reason: "unknown_release" as const,
+          release: null,
+          provider: null,
+          route: null,
+          model_hash: null,
+        }),
+    },
+  );
+  const reader = response.body!.getReader();
+  const read = reader.read();
+  await providerPullStarted.promise;
+  await reader.cancel("client disconnected");
+  await providerCancelled.promise;
+  await read;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(persisted, 0);
+  assert.ok(capture.body.every((byte) => byte === 0));
+});
+
 Deno.test("SSE provider read failure persists and clears request bytes before delivery settles", async () => {
   const capture = acceptedInput();
   const originalBytes = [...capture.body];
@@ -1015,7 +1375,7 @@ Deno.test("sentinel replay admin separates invalid input from storage failure", 
   assert.equal(SENTINEL_REPLAY_EXPORT_PAGE_LIMIT, 1);
 
   const unavailable = await handleAdminSentinelReplayCaptures(
-    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?before_ms=2000000000000&cursor=valid_cursor"),
+    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?before_ms=2000000000000&cursor=valid_cursor%3D%3D"),
     {
       getKv: () => Promise.resolve({} as Deno.Kv),
       listEncryptedSentinelReplays: () => Promise.reject(new Error("KV unavailable")),
@@ -1031,19 +1391,38 @@ Deno.test("sentinel replay admin separates invalid input from storage failure", 
 });
 
 Deno.test("sentinel replay admin forwards the closed capture interval", async () => {
-  let observed: { afterMs: number; beforeMs: number } | null = null;
+  let observed: { afterMs: number; beforeMs: number; cursor?: string } | null = null;
   const response = await handleAdminSentinelReplayCaptures(
-    new Request("https://ai.ubq.fi/admin/sentinel/replay-captures?after_ms=100&before_ms=200&limit=1"),
+    new Request(
+      "https://ai.ubq.fi/admin/sentinel/replay-captures?after_ms=100&before_ms=200&limit=1&cursor=opaque%3D",
+    ),
     {
       getKv: () => Promise.resolve({} as Deno.Kv),
       listEncryptedSentinelReplays: (_kv, options) => {
-        observed = { afterMs: options.afterMs, beforeMs: options.beforeMs };
+        observed = { afterMs: options.afterMs, beforeMs: options.beforeMs, cursor: options.cursor };
         return Promise.resolve({ captures: [], cursor: "" });
       },
     },
   );
   assert.equal(response.status, 200);
-  assert.deepEqual(observed, { afterMs: 100, beforeMs: 200 });
+  assert.deepEqual(observed, { afterMs: 100, beforeMs: 200, cursor: "opaque=" });
+
+  const incidentId = "provider-00000000-0000-4000-8000-000000000001";
+  let observedIncident: { incidentId: string; cursor?: string } | null = null;
+  const incidentResponse = await handleAdminSentinelReplayCaptures(
+    new Request(
+      `https://ai.ubq.fi/admin/sentinel/replay-captures?after_ms=100&before_ms=200&limit=1&incident_id=${incidentId}`,
+    ),
+    {
+      getKv: () => Promise.resolve({} as Deno.Kv),
+      listEncryptedSentinelIncidentReplays: (_kv, options) => {
+        observedIncident = { incidentId: options.incidentId, cursor: options.cursor };
+        return Promise.resolve({ captures: [], cursor: "" });
+      },
+    },
+  );
+  assert.equal(incidentResponse.status, 200);
+  assert.deepEqual(observedIncident, { incidentId, cursor: undefined });
 });
 
 Deno.test("replay export and preview reads enforce declared and streamed byte limits", async () => {
@@ -1217,10 +1596,12 @@ Deno.test("replay export pagination rejects repeated cursors and stops at the fi
         adminToken: "admin-fixture",
         afterMs: 0,
         beforeMs: 2_000_000_000_000,
-        fetchImpl: (() => {
+        fetchImpl: ((input: URL | Request | string) => {
           const index = repeatedCalls++;
+          const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
+          assert.equal(url.searchParams.get("cursor"), index === 0 ? null : "repeated_cursor==");
           return Promise.resolve(
-            Response.json({ data: [pageCapture(index)], cursor: "repeated_cursor" }),
+            Response.json({ data: [pageCapture(index)], cursor: "repeated_cursor==" }),
           );
         }) as typeof fetch,
       }),

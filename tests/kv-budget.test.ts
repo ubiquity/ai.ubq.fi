@@ -257,7 +257,7 @@ const kv = new CountingKv();
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
 
 const { default: handler } = await import("../src/handler.ts");
-const { createRequestDeliveryLifecycle } = await import("../serve.ts");
+const { createRequestDeliveryLifecycle } = await import("../src/serve_handler.ts");
 const { handleResponses } = await import("../src/openai.ts");
 const {
   API_KEY_USAGE_V3_REQUEST_PREFIX,
@@ -296,6 +296,8 @@ const {
   resetRuntimeConfigCacheForTest,
 } = await import("../src/runtime_config.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../src/metered.ts");
+const { resetSurplusModelsCacheForTest } = await import("../src/surplus.ts");
 const {
   getCodexProviderHealth,
   resetProviderHealthThrottleForTest,
@@ -1014,7 +1016,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       const firstSuccessId = `${route}-success-1`;
       globalThis.fetch = () =>
         Promise.resolve(
-          new Response(completedSseEvent(), {
+          new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
             status: 200,
             headers: { "Content-Type": "text/event-stream", "X-Request-Id": firstSuccessId },
           }),
@@ -1049,7 +1051,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       const recoveredId = `${route}-success-2`;
       globalThis.fetch = () =>
         Promise.resolve(
-          new Response(completedSseEvent(), {
+          new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
             status: 200,
             headers: { "Content-Type": "text/event-stream", "X-Request-Id": recoveredId },
           }),
@@ -1084,7 +1086,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       const finalRecoveryId = `${route}-success-3`;
       globalThis.fetch = () =>
         Promise.resolve(
-          new Response(completedSseEvent(), {
+          new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
             status: 200,
             headers: { "Content-Type": "text/event-stream", "X-Request-Id": finalRecoveryId },
           }),
@@ -1117,7 +1119,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
         lastHealthyId = `${malformedId}-recovered`;
         globalThis.fetch = () =>
           Promise.resolve(
-            new Response(completedSseEvent(), {
+            new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
               status: 200,
               headers: { "Content-Type": "text/event-stream", "X-Request-Id": lastHealthyId },
             }),
@@ -1279,6 +1281,56 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     } | undefined;
     assert.equal(kernelWindow?.usage_requests, 1);
     assert.equal(kernelWindow?.reserved_requests, 0);
+
+    let imageFetches = 0;
+    globalThis.fetch = () => {
+      imageFetches += 1;
+      return Promise.resolve(
+        new Response(
+          `data: ${
+            JSON.stringify({
+              type: "response.completed",
+              response: {
+                model: MODEL,
+                created_at: 1787431659,
+                output: [{
+                  type: "image_generation_call",
+                  status: "completed",
+                  result: "SU1BR0U=",
+                }],
+                usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+              },
+            })
+          }\n\n`,
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    };
+    const imageResponse = await handler(
+      new Request("https://ai.ubq.fi/v1/images/generations", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-Ubiquity-Kernel-Token": kernelToken,
+        },
+        body: JSON.stringify({ prompt: "two telemetry regression images", n: 2, user: "kernel-image-user" }),
+      }),
+    );
+    assert.equal(imageResponse.status, 200);
+    assert.deepEqual((await imageResponse.json()).data, [
+      { b64_json: "SU1BR0U=" },
+      { b64_json: "SU1BR0U=" },
+    ]);
+    assert.equal(imageResponse.headers.get("x-uos-warning"), "user_ignored");
+    assert.equal(imageFetches, 2);
+    assert.equal(usageWindow(policy).committed_requests, 2);
+    const kernelWindowAfterImage = kv.values.get(encodeKey(orgWindowKey)) as {
+      usage_requests?: number;
+      reserved_requests?: number;
+    } | undefined;
+    assert.equal(kernelWindowAfterImage?.usage_requests, 2);
+    assert.equal(kernelWindowAfterImage?.reserved_requests, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1349,6 +1401,42 @@ Deno.test("Kernel quota reserves one concurrent limit-one request and commits on
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("Kernel quota reconstructs reservations after an older writer erases the aggregate field", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  seedKernelDefaultLimit(2);
+  const owner = "kernel-mixed-revision-org";
+  const first = await reserveKernelOrgUsageLimit(owner, "mixed-revision-first", "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  const windowKey = kernelOrgWindowKey(owner);
+  const reservedWindow = kv.values.get(encodeKey(windowKey)) as Record<string, unknown>;
+  assert.equal(reservedWindow.reserved_requests, 1);
+
+  const { reserved_requests: _erased, ...olderWriterWindow } = reservedWindow;
+  kv.values.set(encodeKey(windowKey), {
+    ...olderWriterWindow,
+    usage_requests: 1,
+    updated_at_ms: Date.now(),
+  });
+
+  const blocked = await reserveKernelOrgUsageLimit(owner, "mixed-revision-second", "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
+  assert.equal(blocked.ok, false);
+  if (!blocked.ok) assert.equal(blocked.response.status, 429);
+
+  await first.reservation.release("mixed_revision_test_complete");
+  const repairedWindow = kv.values.get(encodeKey(windowKey)) as {
+    usage_requests?: number;
+    reserved_requests?: number;
+  };
+  assert.equal(repairedWindow.usage_requests, 1);
+  assert.equal(repairedWindow.reserved_requests, 0);
 });
 
 Deno.test("Kernel quota releases a cancelled stream before admitting its replacement", async () => {
@@ -1918,6 +2006,7 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       delivery_outcome: "unobserved",
       model: MODEL,
       reasoning: "medium",
+      output_token_allowance: null,
       input_tokens: 1,
       cached_input_tokens: 0,
       cache_write_input_tokens: 1,
@@ -1933,6 +2022,8 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       affinity_outcome: "none",
       provider_request_id: null,
       fallback_reason: null,
+      semantic_output_observed: null,
+      upstream_event_kinds: ["response.completed"],
       attempted_providers: ["chatgpt_codex"],
       removed_provider_trigger_class: null,
       removed_provider_circuit_transition: null,
@@ -2321,7 +2412,13 @@ Deno.test("Chat streaming terminal telemetry reports ordered timings once", asyn
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const logs: unknown[][] = [];
-  globalThis.fetch = () => Promise.resolve(sse());
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response(`${semanticSseEvent()}${completedSseEvent()}`, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const response = await handler(streamingRequest(token, "chat"));
@@ -2399,6 +2496,85 @@ Deno.test("first bounded paid fallback response exposes settled spend and consum
     globalThis.fetch = originalFetch;
     if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
     else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+  }
+});
+
+Deno.test("Images preserve Codex quota responses without hidden-model paid fallback", async () => {
+  kv.values.clear();
+  resetProviderHealthThrottleForTest();
+  resetApiKeyPolicyCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  resetCodexAuthCacheForTest();
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
+  const token = `u_${"d".repeat(64)}`;
+  const keyId = "images-no-paid-fallback";
+  await seedPaidFallbackKey(token, keyId);
+
+  const originalFetch = globalThis.fetch;
+  const originalImageBaseModel = Deno.env.get("IMAGE_BASE_MODEL");
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  let codexCalls = 0;
+  let meteredCalls = 0;
+  Deno.env.set("IMAGE_BASE_MODEL", MODEL);
+  Deno.env.set("METERED_API_KEY", "metered-image-gate-test-key");
+  Deno.env.delete("SURPLUS_API_KEY");
+  await fetchMeteredModels({
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }],
+      })),
+  });
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    if (request.url === "https://api.openlux.ai/v1/responses") {
+      meteredCalls += 1;
+      return Promise.reject(new Error("Images must not use the hidden text model for paid fallback"));
+    }
+    codexCalls += 1;
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          error: { message: "Primary image capacity exhausted", type: "rate_limit_error" },
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "29" },
+        },
+      ),
+    );
+  };
+  try {
+    const response = await handler(
+      new Request("https://ai.ubq.fi/v1/images/generations", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "a blue square" }),
+      }),
+    );
+    assert.equal(response.status, 429);
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    assert.equal(response.headers.get("Retry-After"), "29");
+    assert.equal((await response.json()).error?.message, "Primary image capacity exhausted");
+    assert.ok(codexCalls > 0);
+    assert.equal(meteredCalls, 0);
+    const requestId = response.headers.get("x-uos-request-id");
+    assert.ok(requestId);
+    assert.equal(kv.values.get(encodeKey(paidFallbackRequestV3Key(keyId, requestId))), undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalImageBaseModel === undefined) Deno.env.delete("IMAGE_BASE_MODEL");
+    else Deno.env.set("IMAGE_BASE_MODEL", originalImageBaseModel);
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
   }
 });
 

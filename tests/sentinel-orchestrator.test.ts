@@ -9,23 +9,41 @@ import {
   assertRetainedReplayArtifactBudget,
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
+  evaluateReviewBacklogImplementation,
   evaluateRollbackPreflight,
+  evaluateSentinelTriageGate,
+  IMPLEMENTATION_CONTINUATION_MS,
+  IMPLEMENTATION_INITIAL_MS,
+  implementationPrompt,
   isObserveOnlyMode,
   MAX_MATCHING_REPLAY_ARCHIVE_BYTES,
   MAX_MATCHING_REPLAY_ARTIFACTS,
+  MONITOR_AGENT_MS,
+  parseIncidentStartMs,
   parseMode,
   parseMonitorDecision,
   parseSentinelDeploymentAttestation,
   previewCompletionForDecision,
   replayIndexArtifactMayMatch,
   replayIndexArtifactName,
+  requiresReplayEvaluation,
   resolveCycleAnchorMs,
+  reviewBacklogEntriesMatch,
   runObserveCycle,
+  runWithSingleTimeoutContinuation,
+  selectSentinelWork,
   sentinelDeploymentInputs,
   sentinelEvidenceArtifactName,
   sentinelRevisionControlInputs,
+  shouldDeferHourlyBacklogWork,
+  TRIAGE_INCIDENT_MS,
+  triageExpectedMaximumRuntimeMs,
+  triagePrompt,
+  validationRepairPrompt,
+  withStageHeartbeat,
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
+import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
 import {
   inspectSse,
   isInferenceOnlyReplayEndpoint,
@@ -33,11 +51,17 @@ import {
   selectCurrentAndMatchingRegressionCases,
 } from "../scripts/sentinel/replay.ts";
 import {
+  applyReviewBacklogImplementationDisposition,
   blockingReviewFindings,
   canStartReviewRound,
   mergeReviewBacklog,
   nativeReviewParseInput,
   parseNativeReview,
+  parseReviewBacklog,
+  parseStructuredNativeReview,
+  renderReviewBacklog,
+  type ReviewBacklogEntry,
+  selectNextReviewBacklogEntry,
 } from "../scripts/sentinel/review.ts";
 import {
   assertActionableFindingsResolved,
@@ -47,17 +71,20 @@ import {
   isTriageReport,
   MONITOR_OUTPUT_SCHEMA,
   type ReplayCase,
+  type ReplayResult,
   TRIAGE_OUTPUT_SCHEMA,
   type TriageReport,
 } from "../scripts/sentinel/types.ts";
 import {
   computeSentinelInterval,
-  DAILY_WINDOW_MS,
   deduplicateEvents,
   eventDedupeKey,
+  HOURLY_OVERLAP_MS,
+  HOURLY_WINDOW_MS,
   INCIDENT_WINDOW_MS,
   OBSERVE_WINDOW_MS,
 } from "../scripts/sentinel/windows.ts";
+import { CANDIDATE_DENO_CHECK_ARGS, type CandidateValidationFailure } from "../scripts/sentinel/validation.ts";
 import type { ExportedSentinelReplayCapture } from "../src/sentinel_replay_capture.ts";
 
 const now = Date.parse("2026-08-21T06:00:00.000Z");
@@ -68,6 +95,53 @@ Deno.test("triage reads the repository root while monitoring reads the accepted 
   assert.equal(agentCheckoutPath("triage", root, candidate), root);
   assert.equal(agentCheckoutPath("implementation", root, candidate), candidate);
   assert.equal(agentCheckoutPath("monitoring", root, candidate), candidate);
+});
+
+Deno.test("incident triage is bounded and unauthenticated model probes are classified by ownership", () => {
+  assert.equal(TRIAGE_INCIDENT_MS, 6 * 60_000);
+  assert.equal(triageExpectedMaximumRuntimeMs("incident"), TRIAGE_INCIDENT_MS);
+  assert.equal(triageExpectedMaximumRuntimeMs("preview"), TRIAGE_INCIDENT_MS);
+  assert.equal(triageExpectedMaximumRuntimeMs("hourly"), undefined);
+  assert.equal(triageExpectedMaximumRuntimeMs("observe"), undefined);
+
+  const prompt = triagePrompt(
+    computeSentinelInterval("incident", now),
+    { path: "/tmp/raw-logs.jsonl", byte_count: 123, sha256: "a".repeat(64) },
+    [],
+  );
+  assert.match(prompt, /Expected client rejections are not gateway defects/);
+  assert.match(prompt, /Report a repeated evidence-backed external caller misconfiguration as actionable false/);
+  assert.match(prompt, /GET \/v1\/models response with 401 invalid_api_key is expected gateway behavior/);
+  assert.match(prompt, /not repository-actionable without evidence of a repository-owned caller/);
+  assert.match(prompt, /public model catalog is GET \/uos\/models\/catalog/);
+});
+
+Deno.test("automatic Codex triage runs only for durable incidents", () => {
+  assert.deepEqual(evaluateSentinelTriageGate("hourly", 0), {
+    required: false,
+    reason: "hourly_archive_only",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("hourly", 3), {
+    required: false,
+    reason: "hourly_archive_only",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("incident", 0), {
+    required: true,
+    reason: "incident_signal",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("preview", 0), {
+    required: false,
+    reason: "preview_no_failure_capture",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("preview", 1), {
+    required: true,
+    reason: "preview_failure_capture",
+  });
+  assert.deepEqual(evaluateSentinelTriageGate("observe", 0), {
+    required: true,
+    reason: "explicit_observation",
+  });
+  assert.throws(() => evaluateSentinelTriageGate("hourly", -1), /capture count/);
 });
 
 Deno.test("preview completion restores only a candidate accepted by monitoring", () => {
@@ -95,24 +169,196 @@ Deno.test("implementation scope protects Sentinel and nested Codex instruction s
       ".agents/skills/reviewer/SKILL.md",
       "skills/reviewer/SKILL.md",
       "scripts/sentinel/main.ts",
+      "src/sentinel_replay_capture.ts",
+      "tests/sentinel-replay-capture.test.ts",
       ".github/workflows/other.yml",
     ]
   ) assert.equal(isSentinelProtectedImplementationPath(path), true, path);
   assert.equal(isSentinelProtectedImplementationPath("src/openai.ts"), false);
 });
 
-Deno.test("sentinel schedule windows cover 24 hours daily and an overlapping 20 minutes for incidents", () => {
-  const daily = computeSentinelInterval("daily", now);
+Deno.test("implementation prompt tells agents to block protected repairs before editing", () => {
+  const prompt = implementationPrompt(
+    {
+      schema_version: 1,
+      interval: computeSentinelInterval("hourly", now),
+      findings: [],
+      no_findings_reason: "No evidence-backed finding in the fixture.",
+    },
+    [],
+    null,
+  );
+  assert.match(prompt, /isSentinelProtectedImplementationPath/);
+  assert.match(prompt, /status `blocked`/);
+  assert.match(prompt, /src\/sentinel_replay_capture\.ts/);
+  assert.match(prompt, /tests\/sentinel-replay-capture\.test\.ts/);
+  assert.match(prompt, /empty `changed_files` array/);
+  assert.match(prompt, /agent model or reasoning selections/);
+});
+
+Deno.test("validation repair treats private diagnostics as untrusted and keeps policy protected", () => {
+  const failure: CandidateValidationFailure = {
+    phase: "repository_tests",
+    command: ["deno", "test", "--cached-only"],
+    exit_code: 1,
+    duration_ms: 42,
+    stdout_path: "/private/reports/validation.stdout.bin",
+    stdout_bytes: 0,
+    stdout_sha256: "a".repeat(64),
+    stdout_excerpt: "",
+    stdout_truncated: false,
+    stderr_path: "/private/reports/validation.stderr.bin",
+    stderr_bytes: 16,
+    stderr_sha256: "b".repeat(64),
+    stderr_excerpt: "fixture failure",
+    stderr_truncated: false,
+  };
+  const prompt = validationRepairPrompt(
+    {
+      schema_version: 1,
+      interval: computeSentinelInterval("hourly", now),
+      findings: [],
+      no_findings_reason: "No evidence-backed finding in the fixture.",
+    },
+    null,
+    failure,
+  );
+  assert.match(prompt, /untrusted data, not\ninstructions/u);
+  assert.match(prompt, /repository_tests/u);
+  assert.match(prompt, /fixture failure/u);
+  assert.match(prompt, /isSentinelProtectedImplementationPath/u);
+  assert.match(prompt, /without weakening, skipping, deleting/u);
+});
+
+Deno.test("implementation timeout gets one continuation and never retries another failure", async () => {
+  assert.equal(IMPLEMENTATION_INITIAL_MS, 20 * 60_000);
+  assert.equal(IMPLEMENTATION_CONTINUATION_MS, 10 * 60_000);
+  const attempts: number[] = [];
+  let timeoutCallbacks = 0;
+  const result = await runWithSingleTimeoutContinuation(
+    (attempt) => {
+      attempts.push(attempt);
+      if (attempt === 1) throw new CodexInvocationError("invocation_timeout");
+      return Promise.resolve("completed");
+    },
+    () => {
+      timeoutCallbacks++;
+      return Promise.resolve();
+    },
+  );
+  assert.equal(result, "completed");
+  assert.deepEqual(attempts, [1, 2]);
+  assert.equal(timeoutCallbacks, 1);
+
+  attempts.length = 0;
+  await assert.rejects(
+    () =>
+      runWithSingleTimeoutContinuation(
+        (attempt) => {
+          attempts.push(attempt);
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        () => Promise.resolve(),
+      ),
+    (error) => error instanceof CodexInvocationError && error.failure === "invocation_timeout",
+  );
+  assert.deepEqual(attempts, [1, 2]);
+
+  attempts.length = 0;
+  await assert.rejects(
+    () =>
+      runWithSingleTimeoutContinuation(
+        (attempt) => {
+          attempts.push(attempt);
+          throw new CodexInvocationError("command_failed");
+        },
+        () => Promise.resolve(),
+      ),
+    (error) => error instanceof CodexInvocationError && error.failure === "command_failed",
+  );
+  assert.deepEqual(attempts, [1]);
+});
+
+Deno.test("stage heartbeat emits safe progress and always cancels its timer", async () => {
+  let scheduled: (() => void) | null = null;
+  const cleared: number[] = [];
+  const messages: string[] = [];
+  let nowMs = 1_000;
+  const result = await withStageHeartbeat(
+    "implementing",
+    () => {
+      nowMs = 62_000;
+      scheduled!();
+      return Promise.resolve("done");
+    },
+    {
+      intervalMs: 60_000,
+      now: () => nowMs,
+      log: (message) => messages.push(message),
+      setInterval: (callback, intervalMs) => {
+        assert.equal(intervalMs, 60_000);
+        scheduled = callback;
+        return 17;
+      },
+      clearInterval: (timer) => {
+        assert.equal(typeof timer, "number");
+        cleared.push(timer as number);
+      },
+    },
+  );
+  assert.equal(result, "done");
+  assert.deepEqual(messages, ["[sentinel] stage=implementing status=running elapsed_seconds=61"]);
+  assert.deepEqual(cleared, [17]);
+
+  await assert.rejects(() =>
+    withStageHeartbeat("triage", () => Promise.reject(new Error("failed")), {
+      setInterval: () => 23,
+      clearInterval: (timer) => {
+        assert.equal(typeof timer, "number");
+        cleared.push(timer as number);
+      },
+    })
+  );
+  assert.deepEqual(cleared, [17, 23]);
+});
+
+Deno.test("sentinel schedule windows overlap hourly and incident runs", () => {
+  const hourly = computeSentinelInterval("hourly", now);
+  const delayedHourly = computeSentinelInterval("hourly", now + 70 * 60_000);
   const incident = computeSentinelInterval("incident", now);
+  const nextIncident = computeSentinelInterval("incident", now + 5 * 60_000);
   const observe = computeSentinelInterval("observe", now);
   const preview = computeSentinelInterval("preview", now);
-  assert.equal(daily.duration_ms, DAILY_WINDOW_MS);
-  assert.equal(daily.start, "2026-08-20T06:00:00.000Z");
+  assert.equal(HOURLY_OVERLAP_MS, 20 * 60_000);
+  assert.equal(hourly.duration_ms, HOURLY_WINDOW_MS);
+  assert.equal(hourly.start, "2026-08-21T04:40:00.000Z");
+  assert.ok(Date.parse(delayedHourly.start) <= Date.parse(hourly.end));
   assert.equal(incident.duration_ms, INCIDENT_WINDOW_MS);
   assert.equal(incident.start, "2026-08-21T05:40:00.000Z");
+  assert.equal(Date.parse(incident.end) - Date.parse(nextIncident.start), 15 * 60_000);
   assert.equal(observe.duration_ms, OBSERVE_WINDOW_MS);
   assert.equal(observe.start, "2026-08-21T03:55:00.000Z");
   assert.deepEqual(preview, incident);
+});
+
+Deno.test("durable incident windows include the first failure within replay retention", () => {
+  const firstFailure = now - 2 * 60 * 60_000;
+  const interval = computeSentinelInterval("incident", now, firstFailure);
+  assert.equal(interval.start, new Date(firstFailure).toISOString());
+  assert.equal(interval.duration_ms, 2 * 60 * 60_000);
+  assert.equal(parseIncidentStartMs("incident", String(firstFailure)), firstFailure);
+  assert.throws(() => parseIncidentStartMs("incident", undefined), /positive integer/);
+  assert.throws(() => parseIncidentStartMs("hourly", String(firstFailure)), /Only incident mode/);
+  assert.throws(() => computeSentinelInterval("incident", now, now - 49 * 60 * 60_000), /retained interval/);
+  assert.throws(() => computeSentinelInterval("hourly", now, firstFailure), /Only incident mode/);
+});
+
+Deno.test("deployment monitoring keeps 30-second identity probes and reports every five minutes", () => {
+  assert.equal(SENTINEL_POLICY.monitorPollMs, 30_000);
+  assert.equal(SENTINEL_POLICY.monitorCheckpointMs, 5 * 60_000);
+  assert.equal(SENTINEL_POLICY.monitorCheckpointMs % SENTINEL_POLICY.monitorPollMs, 0);
+  assert.equal(SENTINEL_POLICY.monitorDurationMs % SENTINEL_POLICY.monitorCheckpointMs, 0);
+  assert.equal(MONITOR_AGENT_MS, 5 * 60_000);
 });
 
 Deno.test("observe mode is triage-only and never enables autonomous repair", () => {
@@ -120,7 +366,7 @@ Deno.test("observe mode is triage-only and never enables autonomous repair", () 
   assert.equal(isObserveOnlyMode("observe"), true);
   assert.equal(isObserveOnlyMode("incident"), false);
   assert.equal(isAutonomousMode("observe"), false);
-  assert.throws(() => parseMode(["--mode", "unknown"]), /daily\|incident\|observe\|preview/);
+  assert.throws(() => parseMode(["--mode", "unknown"]), /hourly\|incident\|observe\|preview/);
 });
 
 Deno.test("every structured-output property declares an explicit JSON Schema type", () => {
@@ -207,6 +453,7 @@ Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion
           stdout: "",
           stderr: "",
           lastMessage: null,
+          nativeReviewOutput: null,
         },
       });
     },
@@ -449,6 +696,7 @@ Deno.test("retained replay loading fails closed on aggregate budgets and dedupli
 
 Deno.test("sentinel event fingerprints are deterministic and duplicate events collapse", async () => {
   const interval = computeSentinelInterval("incident", now);
+  const nextScheduledInterval = computeSentinelInterval("incident", now + 5 * 60_000);
   const first = await eventDedupeKey({ repository: "ubiquity/ai.ubq.fi", event: "incident", interval, signalId: "a" });
   const again = await eventDedupeKey({ repository: "ubiquity/ai.ubq.fi", event: "incident", interval, signalId: "a" });
   const delayedWindow = await eventDedupeKey({
@@ -463,9 +711,16 @@ Deno.test("sentinel event fingerprints are deterministic and duplicate events co
     interval,
     signalId: "b",
   });
+  const scheduled = await eventDedupeKey({ repository: "ubiquity/ai.ubq.fi", event: "incident", interval });
+  const nextScheduled = await eventDedupeKey({
+    repository: "ubiquity/ai.ubq.fi",
+    event: "incident",
+    interval: nextScheduledInterval,
+  });
   assert.equal(first, again);
   assert.equal(first, delayedWindow);
   assert.notEqual(first, different);
+  assert.notEqual(scheduled, nextScheduled);
   assert.equal(sentinelEvidenceArtifactName(first), `sentinel-evidence-v1-${first}`);
   assert.deepEqual(deduplicateEvents([{ id: first }, { id: first }, { id: different }], (item) => item.id), [
     { id: first },
@@ -473,7 +728,7 @@ Deno.test("sentinel event fingerprints are deterministic and duplicate events co
   ]);
 });
 
-Deno.test("native review parser blocks P0/P1, backlogs P2/P3, and fails closed on unknown output", async () => {
+Deno.test("native review parser blocks P0/P1, backlogs P2/P3, and fails closed on missing output", async () => {
   const parsed = await parseNativeReview(
     `Review findings:\n- [P1] Preserve terminal SSE failure — src/openai.ts:100\n  The stream can close early.\n- [P2] Bound a retry loop — scripts/job.ts:20\n  This can waste one request.`,
     1,
@@ -482,9 +737,10 @@ Deno.test("native review parser blocks P0/P1, backlogs P2/P3, and fails closed o
   assert.equal(parsed.findings.length, 2);
   assert.deepEqual(blockingReviewFindings(parsed).map((finding) => finding.severity), ["P1"]);
   assert.equal((await parseNativeReview("No findings.", 1)).parse_status, "no_findings");
-  const unknown = await parseNativeReview("Looks reasonable to me.", 1);
-  assert.equal(unknown.parse_status, "unparseable");
-  assert.throws(() => blockingReviewFindings(unknown), /not parseable/);
+  assert.equal((await parseNativeReview("Looks reasonable to me.", 1)).parse_status, "unparseable");
+  const missing = await parseNativeReview("", 1);
+  assert.equal(missing.parse_status, "unparseable");
+  assert.throws(() => blockingReviewFindings(missing), /not parseable/);
 });
 
 Deno.test("native review parsing uses the final stdout and normalizes ephemeral checkout paths", async () => {
@@ -492,6 +748,7 @@ Deno.test("native review parsing uses the final stdout and normalizes ephemeral 
     "- [P2] Avoid blocking persistence — /tmp/uos-final/checkout/src/handler.ts:439\n  Return the response first.";
   const stderr = `${stdout}\nCodex progress that must not enter the finding body.`;
   assert.equal(nativeReviewParseInput(stdout, stderr), stdout);
+  assert.equal(nativeReviewParseInput("", "Codex progress without a final review."), "");
 
   const absolute = await parseNativeReview(stdout, 1);
   const relative = await parseNativeReview(
@@ -504,14 +761,175 @@ Deno.test("native review parsing uses the final stdout and normalizes ephemeral 
   assert.equal(absolute.findings[0]?.fingerprint, relative.findings[0]?.fingerprint);
 });
 
+Deno.test("rendered native review parser accepts only explicit clean verdicts and rejects malformed output", async () => {
+  assert.equal(
+    (await parseNativeReview(
+      "No actionable defects were found in the changes. Focused Sentinel tests pass.",
+      1,
+    )).parse_status,
+    "no_findings",
+  );
+  assert.equal(
+    (await parseNativeReview("I did not find any actionable defects.", 1)).parse_status,
+    "no_findings",
+  );
+  assert.equal(
+    (await parseNativeReview(
+      "Review comment:\n\nThe workflow can lose a repair signal under load.",
+      1,
+    )).parse_status,
+    "unparseable",
+  );
+  assert.equal(
+    (await parseNativeReview(
+      "Full review comments:\n\n- Preserve the repair signal under load.",
+      1,
+    )).parse_status,
+    "unparseable",
+  );
+  assert.equal((await parseNativeReview("The patch looks correct.", 1)).parse_status, "unparseable");
+  assert.equal((await parseNativeReview("[P1]", 1)).parse_status, "unparseable");
+  assert.equal(
+    (await parseNativeReview(
+      "Review comment:\n\n- [P1] Valid finding — src/review.ts:12\n  This finding is complete.\n- [P2]",
+      1,
+    )).parse_status,
+    "unparseable",
+  );
+  assert.equal(
+    (await parseNativeReview("Reviewer failed to output a response.", 1)).parse_status,
+    "unparseable",
+  );
+  const rendered = await parseNativeReview(
+    "Review comment:\n\n- [P2] Preserve the capture snapshot — /tmp/uos/candidate-worktree/src/handler.ts:439-444\n  Concurrent cleanup can zero the body.",
+    1,
+  );
+  assert.equal(rendered.parse_status, "findings");
+  assert.equal(rendered.findings[0]?.location, "src/handler.ts:439-444");
+  assert.match(rendered.findings[0]?.title ?? "", /src\/handler\.ts:439-444/u);
+});
+
+Deno.test("structured native review parser uses protocol fields and rejects Codex prose fallback", async () => {
+  const checkout = "/tmp/uos/candidate-worktree";
+  const structured = await parseStructuredNativeReview(
+    {
+      findings: [{
+        title: "[P1] Preserve the capture snapshot",
+        body: "Concurrent cleanup can zero the body.",
+        confidence_score: 0.98,
+        priority: 1,
+        code_location: {
+          absolute_file_path: `${checkout}/src/handler.ts`,
+          line_range: { start: 439, end: 444 },
+        },
+      }, {
+        title: "Bound retries",
+        body: "The loop needs a fixed maximum.",
+        confidence_score: 0.8,
+        priority: 2,
+        code_location: {
+          absolute_file_path: `${checkout}/scripts/job.ts`,
+          line_range: { start: 20, end: 20 },
+        },
+      }],
+      overall_correctness: "patch is incorrect",
+      overall_explanation: "Two defects remain.",
+      overall_confidence_score: 0.96,
+    },
+    1,
+    checkout,
+  );
+  assert.equal(structured.parse_status, "findings");
+  assert.deepEqual(structured.findings.map((finding) => finding.severity), ["P1", "P2"]);
+  assert.equal(structured.findings[0]?.location, "src/handler.ts:439-444");
+  assert.equal(structured.findings[0]?.title, "Preserve the capture snapshot — src/handler.ts:439-444");
+  assert.deepEqual(blockingReviewFindings(structured).map((finding) => finding.severity), ["P1"]);
+
+  const clean = await parseStructuredNativeReview(
+    {
+      findings: [],
+      overall_correctness: "patch is correct",
+      overall_explanation: "The patch is correct.",
+      overall_confidence_score: 0.9,
+    },
+    1,
+    checkout,
+  );
+  assert.equal(clean.parse_status, "no_findings");
+
+  for (
+    const malformed of [
+      {
+        findings: [],
+        overall_correctness: "",
+        overall_explanation: "There is a blocking race in src/handler.ts.",
+        overall_confidence_score: 0,
+      },
+      {
+        findings: [],
+        overall_correctness: "patch is incorrect",
+        overall_explanation: "A defect remains.",
+        overall_confidence_score: 0.9,
+      },
+      {
+        findings: [{
+          title: "[P2] Contradictory finding",
+          body: "A clean verdict cannot include a defect.",
+          confidence_score: 0.9,
+          priority: 2,
+          code_location: {
+            absolute_file_path: `${checkout}/src/handler.ts`,
+            line_range: { start: 1, end: 2 },
+          },
+        }],
+        overall_correctness: "patch is correct",
+        overall_explanation: "The patch is correct.",
+        overall_confidence_score: 0.9,
+      },
+      {
+        findings: [{
+          title: "[P2] Mismatched priority",
+          body: "The title disagrees with the protocol field.",
+          confidence_score: 0.9,
+          priority: 1,
+          code_location: {
+            absolute_file_path: `${checkout}/src/handler.ts`,
+            line_range: { start: 1, end: 2 },
+          },
+        }],
+        overall_correctness: "patch is incorrect",
+        overall_explanation: "A defect remains.",
+        overall_confidence_score: 0.9,
+      },
+      {
+        findings: [{
+          title: "Relative location",
+          body: "The protocol location must be absolute and inside the checkout.",
+          confidence_score: 0.9,
+          priority: 1,
+          code_location: {
+            absolute_file_path: "src/handler.ts",
+            line_range: { start: 1, end: 2 },
+          },
+        }],
+        overall_correctness: "patch is incorrect",
+        overall_explanation: "A defect remains.",
+        overall_confidence_score: 0.9,
+      },
+    ]
+  ) {
+    assert.equal((await parseStructuredNativeReview(malformed, 1, checkout)).parse_status, "unparseable");
+  }
+});
+
 Deno.test("review backlog deduplicates fingerprints while retaining first observation and disposition", async () => {
   const report = await parseNativeReview("- [P2] Bound retries — src/retry.ts:9\n  Add a fixed maximum.", 1);
   const finding = report.findings[0]!;
   const firstAt = new Date("2026-08-20T00:00:00.000Z");
   const latestAt = new Date("2026-08-21T00:00:00.000Z");
-  const initial = mergeReviewBacklog("", [finding], "a".repeat(40), firstAt).replace(
-    /open\s+\|/u,
-    "accepted_risk |",
+  const initialOpen = mergeReviewBacklog(renderReviewBacklog([]), [finding], "a".repeat(40), firstAt);
+  const initial = renderReviewBacklog(
+    parseReviewBacklog(initialOpen).map((entry) => ({ ...entry, disposition: "accepted_risk" as const })),
   );
   const latest = mergeReviewBacklog(initial, [finding], "b".repeat(40), latestAt);
   assert.equal(latest.match(new RegExp(finding.fingerprint, "g"))?.length, 1);
@@ -527,10 +945,10 @@ Deno.test("review backlog output is deterministic and uses canonical Deno Markdo
     1,
   );
   const observedAt = new Date("2026-08-21T00:00:00.000Z");
-  const first = mergeReviewBacklog("", report.findings, "a".repeat(40), observedAt);
-  const again = mergeReviewBacklog("", report.findings, "a".repeat(40), observedAt);
+  const first = mergeReviewBacklog(renderReviewBacklog([]), report.findings, "a".repeat(40), observedAt);
+  const again = mergeReviewBacklog(renderReviewBacklog([]), report.findings, "a".repeat(40), observedAt);
   assert.equal(first, again);
-  assert.match(first, /never enter\nthis backlog\./u);
+  assert.match(first, /never enter this\nbacklog\./u);
   assert.ok([...first].every((character) => character.charCodeAt(0) <= 0x7f));
   assert.match(first, /&#96;Markdown&#96; &#124; safely &#x2014;/u);
 
@@ -540,6 +958,215 @@ Deno.test("review backlog output is deterministic and uses canonical Deno Markdo
   for (const line of tableLines) {
     assert.deepEqual([...line.matchAll(/\|/gu)].map((match) => match.index), separators);
   }
+});
+
+const reviewBacklogEntry = (overrides: Partial<ReviewBacklogEntry> = {}): ReviewBacklogEntry => ({
+  fingerprint: "a".repeat(64),
+  severity: "P2",
+  first: "2026-08-20T00:00:00.000Z",
+  latest: "2026-08-20T00:00:00.000Z",
+  sha: "b".repeat(40),
+  location: "src/handler.ts:439",
+  finding: "Keep `Markdown` | text — exact.",
+  disposition: "open",
+  ...overrides,
+});
+
+Deno.test("review backlog parsing is strict and round-trips renderer escapes", () => {
+  const entry = reviewBacklogEntry();
+  const markdown = renderReviewBacklog([entry]);
+  assert.deepEqual(parseReviewBacklog(markdown), [entry]);
+
+  const duplicate = renderReviewBacklog([entry, entry]);
+  assert.throws(() => parseReviewBacklog(duplicate), /duplicate fingerprint/);
+  assert.throws(() => parseReviewBacklog(""), /canonical complete form/);
+  assert.throws(() => parseReviewBacklog("# Sentinel Review Backlog\n"), /canonical complete form/);
+  assert.throws(
+    () => parseReviewBacklog(markdown.replace(/^\| `/mu, "  `")),
+    /canonical complete form/,
+  );
+  assert.throws(
+    () => parseReviewBacklog(markdown.replace(/open\s+\|/u, "unknown |")),
+    /row is invalid|canonical complete form/,
+  );
+  assert.throws(
+    () => parseReviewBacklog(renderReviewBacklog([{ ...entry, first: "not-a-timestamp" }])),
+    /row is invalid/,
+  );
+  const unknownLocation = renderReviewBacklog([{ ...entry, location: "unknown" }]);
+  assert.equal(parseReviewBacklog(unknownLocation)[0]?.location, "unknown");
+  assert.equal(selectNextReviewBacklogEntry(unknownLocation), null);
+  assert.throws(
+    () => renderReviewBacklog([{ ...entry, finding: "—".repeat(800) }]),
+    /row exceeds its length limit/,
+  );
+  assert.throws(
+    () =>
+      renderReviewBacklog(
+        Array.from({ length: 256 }, (_, index) => ({
+          ...entry,
+          fingerprint: index.toString(16).padStart(64, "0"),
+          finding: "x".repeat(800),
+        })),
+      ),
+    /byte limit/,
+  );
+});
+
+Deno.test("backlog implementation decisions reject no-code resolution and report mismatches", () => {
+  assert.deepEqual(
+    evaluateReviewBacklogImplementation(
+      "implemented",
+      ["src/handler.ts"],
+      ["src/handler.ts"],
+      "src/handler.ts",
+    ),
+    { disposition: "resolved", continueToRuntimeValidation: true },
+  );
+  for (const status of ["implemented", "already_fixed", "blocked", "not_actionable"] as const) {
+    assert.deepEqual(evaluateReviewBacklogImplementation(status, [], []), {
+      disposition: "manual_required",
+      continueToRuntimeValidation: false,
+    });
+  }
+  assert.throws(
+    () => evaluateReviewBacklogImplementation("implemented", ["src/handler.ts"], []),
+    /does not match/,
+  );
+  assert.throws(
+    () => evaluateReviewBacklogImplementation("blocked", ["src/handler.ts"], ["src/handler.ts"]),
+    /cannot retain/,
+  );
+  assert.throws(
+    () => evaluateReviewBacklogImplementation("implemented", ["README.md"], ["README.md"], "src/handler.ts"),
+    /affected path/,
+  );
+
+  const entry = reviewBacklogEntry();
+  assert.equal(reviewBacklogEntriesMatch(entry, { ...entry }), true);
+  assert.equal(reviewBacklogEntriesMatch(entry, { ...entry, latest: "2026-08-21T00:00:00.000Z" }), false);
+  assert.equal(reviewBacklogEntriesMatch(entry, null), false);
+
+  const sha = "a".repeat(40);
+  assert.equal(shouldDeferHourlyBacklogWork(undefined, sha), false);
+  assert.equal(shouldDeferHourlyBacklogWork(sha, sha), false);
+  assert.equal(shouldDeferHourlyBacklogWork("b".repeat(40), sha), true);
+  assert.throws(() => shouldDeferHourlyBacklogWork("invalid", sha), /hint SHA is invalid/);
+});
+
+Deno.test("quiet backlog work selects one eligible P2 before P3 and skips protected paths", () => {
+  const entries: ReviewBacklogEntry[] = [
+    reviewBacklogEntry({
+      fingerprint: "1".repeat(64),
+      first: "2026-08-18T00:00:00.000Z",
+      latest: "2026-08-18T00:00:00.000Z",
+      location: "scripts/sentinel/main.ts:10",
+    }),
+    reviewBacklogEntry({
+      fingerprint: "2".repeat(64),
+      severity: "P3",
+      first: "2026-08-17T00:00:00.000Z",
+      latest: "2026-08-17T00:00:00.000Z",
+      location: "src/handler.ts:20",
+    }),
+    reviewBacklogEntry({
+      fingerprint: "3".repeat(64),
+      first: "2026-08-19T00:00:00.000Z",
+      latest: "2026-08-19T00:00:00.000Z",
+      location: "src/handler.ts:30",
+    }),
+    reviewBacklogEntry({
+      fingerprint: "4".repeat(64),
+      first: "2026-08-19T00:00:00.000Z",
+      latest: "2026-08-19T00:00:00.000Z",
+      location: "src/handler.ts:40",
+    }),
+    reviewBacklogEntry({
+      fingerprint: "0".repeat(64),
+      first: "2026-08-16T00:00:00.000Z",
+      latest: "2026-08-16T00:00:00.000Z",
+      disposition: "resolved",
+    }),
+  ];
+  const markdown = renderReviewBacklog(entries);
+  assert.equal(selectNextReviewBacklogEntry(markdown)?.fingerprint, "3".repeat(64));
+
+  const interval = computeSentinelInterval("hourly", now);
+  const selection = selectSentinelWork("hourly", 0, interval, markdown);
+  assert.equal(selection.source, "review_backlog");
+  assert.equal(selection.reason, "hourly_review_backlog");
+  assert.equal(selection.backlogEntry?.fingerprint, "3".repeat(64));
+  assert.ok(selection.triage && isTriageReport(selection.triage));
+  assert.equal(selection.triage?.findings[0]?.id, `review-backlog:${"3".repeat(64)}`);
+  assert.equal(selectSentinelWork("incident", 0, interval, markdown).source, "triage");
+  assert.equal(selectSentinelWork("preview", 0, interval, markdown).source, null);
+  assert.equal(
+    selectSentinelWork("hourly", 0, interval, renderReviewBacklog([entries[0]!])).source,
+    null,
+  );
+});
+
+Deno.test("backlog implementation dispositions stop retries and recurrence reopens resolved work", async () => {
+  const report = await parseNativeReview(
+    "- [P2] Avoid blocking persistence — src/handler.ts:439\n  Return the response first.",
+    1,
+  );
+  const finding = report.findings[0]!;
+  const observedAt = new Date("2026-08-20T00:00:00.000Z");
+  const open = mergeReviewBacklog(renderReviewBacklog([]), [finding], "a".repeat(40), observedAt);
+  const resolved = applyReviewBacklogImplementationDisposition(
+    open,
+    finding.fingerprint,
+    "resolved",
+  );
+  assert.equal(resolved.disposition, "resolved");
+  assert.equal(parseReviewBacklog(resolved.markdown)[0]?.disposition, "resolved");
+  assert.equal(parseReviewBacklog(resolved.markdown)[0]?.latest, observedAt.toISOString());
+  assert.equal(selectNextReviewBacklogEntry(resolved.markdown), null);
+  assert.throws(
+    () =>
+      applyReviewBacklogImplementationDisposition(
+        resolved.markdown,
+        finding.fingerprint,
+        "resolved",
+      ),
+    /selected open/,
+  );
+
+  const manual = applyReviewBacklogImplementationDisposition(
+    open,
+    finding.fingerprint,
+    "manual_required",
+  );
+  assert.equal(manual.disposition, "manual_required");
+  assert.equal(selectNextReviewBacklogEntry(manual.markdown), null);
+
+  const recurrence = mergeReviewBacklog(
+    resolved.markdown,
+    [finding],
+    "b".repeat(40),
+    new Date("2026-08-22T00:00:00.000Z"),
+  );
+  assert.equal(parseReviewBacklog(recurrence)[0]?.disposition, "open");
+  const retainedManual = mergeReviewBacklog(
+    manual.markdown,
+    [finding],
+    "b".repeat(40),
+    new Date("2026-08-22T00:00:00.000Z"),
+  );
+  assert.equal(parseReviewBacklog(retainedManual)[0]?.disposition, "manual_required");
+});
+
+Deno.test("targeted backlog recurrence blocks review and empty replay skips another model call", async () => {
+  const report = await parseNativeReview(
+    "- [P2] Avoid blocking persistence — src/handler.ts:439\n  Return the response first.",
+    1,
+  );
+  const fingerprint = report.findings[0]!.fingerprint;
+  assert.equal(blockingReviewFindings(report).length, 0);
+  assert.deepEqual(blockingReviewFindings(report, fingerprint), report.findings);
+  assert.equal(requiresReplayEvaluation([]), false);
+  assert.equal(requiresReplayEvaluation([{ capture_fingerprint: "a".repeat(64) } as ReplayResult]), true);
 });
 
 Deno.test("review finding identity does not change when only severity changes", async () => {
@@ -554,6 +1181,13 @@ Deno.test("review policy permits exactly three implementation-review rounds", ()
   assert.equal(canStartReviewRound(2), true);
   assert.equal(canStartReviewRound(3), false);
   assert.equal(canStartReviewRound(4), false);
+});
+
+Deno.test("candidate type checking uses the populated cache without remote access", () => {
+  const argumentsSet = new Set<string>(CANDIDATE_DENO_CHECK_ARGS);
+  assert.deepEqual(CANDIDATE_DENO_CHECK_ARGS.slice(0, 2), ["check", "--frozen"]);
+  assert.equal(argumentsSet.has("--no-remote"), false);
+  assert.equal(argumentsSet.has("--cached-only"), false);
 });
 
 const replayCase = (overrides: Partial<ReplayCase> = {}): ReplayCase => ({
@@ -699,7 +1333,7 @@ Deno.test("SSE inspection recognizes failure terminals and retained replay selec
 Deno.test("implementation contract requires a disposition for every triage finding", () => {
   const triage: TriageReport = {
     schema_version: 1,
-    interval: computeSentinelInterval("daily", now),
+    interval: computeSentinelInterval("hourly", now),
     findings: [{
       id: "one",
       fingerprint: "1".repeat(64),
@@ -734,18 +1368,16 @@ Deno.test("implementation contract requires a disposition for every triage findi
       }),
     /every triage finding/,
   );
-  assert.throws(
-    () =>
-      assertActionableFindingsResolved(triage, {
-        ...valid,
-        dispositions: [{ ...valid.dispositions[0]!, status: "blocked" }],
-      }),
-    /remain unresolved/,
-  );
+  const blocked = {
+    ...valid,
+    dispositions: [{ ...valid.dispositions[0]!, status: "blocked" as const }],
+  };
+  assert.doesNotThrow(() => assertCompleteFindingDispositions(triage, blocked));
+  assert.throws(() => assertActionableFindingsResolved(triage, blocked), /remain unresolved/);
 });
 
 Deno.test("triage requires a concrete reason only when it has no findings", () => {
-  const interval = computeSentinelInterval("daily", now);
+  const interval = computeSentinelInterval("hourly", now);
   assert.equal(isTriageReport({ schema_version: 1, interval, findings: [], no_findings_reason: "" }), false);
   assert.equal(
     isTriageReport({ schema_version: 1, interval, findings: [], no_findings_reason: "No failures in the interval." }),

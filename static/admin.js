@@ -1772,6 +1772,51 @@ const capacityChartRateLimitResetMarkers = (events, history, displayWindow, down
 const capacityChartMarkerX = (observedAtMs, chartWindow, plot) =>
   plot.left + ((observedAtMs - chartWindow.startAtMs) / chartWindow.durationMs) * plot.width;
 
+const capacityChartPromptCacheBuckets = (snapshot, chartWindow) => {
+  const bucketMs = snapshot?.prompt_cache?.bucket_ms;
+  if (
+    snapshot?.prompt_cache?.status !== "ready" ||
+    bucketMs !== CAPACITY_CHART_BUCKET_MS ||
+    !Array.isArray(snapshot?.prompt_cache?.buckets)
+  ) return [];
+  const buckets = [];
+  for (const bucket of snapshot.prompt_cache.buckets) {
+    const bucketStartAtMs = bucket?.bucket_start_at_ms;
+    const inputTokens = bucket?.input_tokens;
+    const cachedInputTokens = bucket?.cached_input_tokens;
+    const cacheWriteFieldsMissing = bucket?.cache_write_input_tokens === undefined &&
+      bucket?.cache_write_reported_sample_count === undefined;
+    const cacheWriteInputTokens = cacheWriteFieldsMissing ? null : bucket?.cache_write_input_tokens;
+    const cacheWriteReportedSampleCount = cacheWriteFieldsMissing ? 0 : bucket?.cache_write_reported_sample_count;
+    const sampleCount = bucket?.sample_count;
+    if (
+      typeof bucketStartAtMs !== "number" || !Number.isFinite(bucketStartAtMs) ||
+      bucketStartAtMs < chartWindow.startAtMs || bucketStartAtMs > chartWindow.resetAtMs ||
+      typeof inputTokens !== "number" || !Number.isSafeInteger(inputTokens) || inputTokens <= 0 ||
+      typeof cachedInputTokens !== "number" || !Number.isSafeInteger(cachedInputTokens) ||
+      cachedInputTokens < 0 || cachedInputTokens > inputTokens ||
+      (cacheWriteInputTokens !== null &&
+        (typeof cacheWriteInputTokens !== "number" || !Number.isSafeInteger(cacheWriteInputTokens) ||
+          cacheWriteInputTokens < 0)) ||
+      typeof cacheWriteReportedSampleCount !== "number" || !Number.isSafeInteger(cacheWriteReportedSampleCount) ||
+      cacheWriteReportedSampleCount < 0 || cacheWriteReportedSampleCount > sampleCount ||
+      (cacheWriteInputTokens === null) !== (cacheWriteReportedSampleCount === 0) ||
+      typeof sampleCount !== "number" || !Number.isSafeInteger(sampleCount) || sampleCount <= 0
+    ) continue;
+    buckets.push({
+      bucketStartAtMs,
+      bucketEndAtMs: bucketStartAtMs + bucketMs,
+      inputTokens,
+      cachedInputTokens,
+      cacheWriteInputTokens,
+      cacheWriteReportedSampleCount,
+      sampleCount,
+      cachedPercent: clampCapacityChartPercent((cachedInputTokens / inputTokens) * 100),
+    });
+  }
+  return buckets.sort((left, right) => left.bucketStartAtMs - right.bucketStartAtMs);
+};
+
 const capacityChartScrollBehavior = () =>
   globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth";
 
@@ -1871,11 +1916,12 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const height = plot.top + plot.height + CAPACITY_CHART_PLOT_BOTTOM;
   const chartTicks = capacityChartTickConfig(chartWindow, plot.width);
   const chartSectionMs = chartWindow.durationMs / chartTicks.count;
+  const promptCacheBuckets = capacityChartPromptCacheBuckets(snapshot, chartWindow);
   const figure = document.createElement("figure");
   figure.dataset.capacityChartFigure = "";
   figure.style.setProperty("--capacity-chart-height-px", `${height}px`);
   const title = document.createElement("h3");
-  title.textContent = "Available capacity history";
+  title.textContent = "Capacity and prompt cache history";
   figure.appendChild(title);
 
   const legend = document.createElement("div");
@@ -1883,6 +1929,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   legend.setAttribute("role", "list");
   for (
     const series of [
+      { key: "cached-input", label: "Cached input share" },
       ...CAPACITY_CHART_SERIES,
       { key: "rate-limit-reset", label: "OpenAI rate-limit reset" },
       { key: "openai-downtime", label: "OpenAI downtime" },
@@ -1906,7 +1953,8 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     viewBox: `0 0 ${width} ${height}`,
     preserveAspectRatio: "none",
     role: "img",
-    "aria-label": "Codex and Metered 2 available capacity over the trailing seven days, including rate-limit resets",
+    "aria-label":
+      "Codex and Metered 2 provider capacity lines and cached input percentage bars over the trailing seven days, including rate-limit resets",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
@@ -1957,6 +2005,48 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   resetPattern.appendChild(resetStripe);
   defs.append(downtimePattern, resetPattern);
   svg.appendChild(defs);
+
+  for (const bucket of promptCacheBuckets) {
+    const visibleStartAtMs = Math.max(bucket.bucketStartAtMs, chartWindow.startAtMs);
+    const visibleEndAtMs = Math.min(bucket.bucketEndAtMs, chartWindow.resetAtMs);
+    if (visibleEndAtMs <= visibleStartAtMs) continue;
+    const startX = capacityChartMarkerX(visibleStartAtMs, chartWindow, plot);
+    const endX = capacityChartMarkerX(visibleEndAtMs, chartWindow, plot);
+    const barWidth = Math.max(0.75, endX - startX - 0.45);
+    const barHeight = (bucket.cachedPercent / 100) * plot.height;
+    const group = capacityChartSvgElement("g");
+    group.dataset.capacityCacheBucket = String(bucket.bucketStartAtMs);
+    const traffic = capacityChartSvgElement("rect", {
+      x: startX,
+      y: plot.top,
+      width: barWidth,
+      height: plot.height,
+    });
+    traffic.dataset.capacityCacheTraffic = "";
+    const cached = capacityChartSvgElement("rect", {
+      x: startX,
+      y: plot.top + plot.height - barHeight,
+      width: barWidth,
+      height: barHeight,
+    });
+    cached.dataset.capacityCacheFill = "";
+    const tooltip = capacityChartSvgElement("title");
+    const cacheWriteText = bucket.cacheWriteInputTokens === null
+      ? "cache writes unavailable"
+      : `${formatNumber(bucket.cacheWriteInputTokens)} written to cache across ${
+        formatNumber(bucket.cacheWriteReportedSampleCount)
+      } response${bucket.cacheWriteReportedSampleCount === 1 ? "" : "s"}`;
+    tooltip.textContent = `${formatCapacityTimestamp(bucket.bucketStartAtMs)} · ${
+      quotaPercentFormatter.format(bucket.cachedPercent)
+    }% cached · ${formatNumber(bucket.cachedInputTokens)} of ${
+      formatNumber(bucket.inputTokens)
+    } input tokens · ${cacheWriteText} · ${formatNumber(bucket.sampleCount)} response${
+      bucket.sampleCount === 1 ? "" : "s"
+    }`;
+    group.setAttribute("aria-label", tooltip.textContent);
+    group.append(tooltip, traffic, cached);
+    svg.appendChild(group);
+  }
 
   for (const bridge of aggregateDowntimeBridges) {
     const band = capacityChartDowntimeBandCoordinates(bridge, plot);
@@ -2064,7 +2154,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     y: height - 8,
     "text-anchor": "middle",
   });
-  xAxisTitle.textContent = "Trailing 7-day capacity history";
+  xAxisTitle.textContent = "Trailing 7-day provider analytics";
   xAxisTitle.dataset.capacityChartAxisTitle = "x";
   svg.appendChild(xAxisTitle);
   const yAxisTitle = capacityChartSvgElement("text", {
@@ -2073,7 +2163,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
     transform: `rotate(-90 12 ${plot.top + plot.height / 2})`,
     "text-anchor": "middle",
   });
-  yAxisTitle.textContent = "Available capacity remaining";
+  yAxisTitle.textContent = "Percent";
   yAxisTitle.dataset.capacityChartAxisTitle = "y";
   svg.appendChild(yAxisTitle);
 
@@ -2165,7 +2255,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   chartScroll.dataset.capacityChartScroll = "";
   chartScroll.tabIndex = 0;
   chartScroll.setAttribute("role", "region");
-  chartScroll.setAttribute("aria-label", "Scrollable seven-day provider capacity history");
+  chartScroll.setAttribute("aria-label", "Scrollable seven-day provider analytics history");
   chartScroll.appendChild(svg);
 
   const chartScrollControls = document.createElement("div");
@@ -2174,11 +2264,11 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const olderButton = document.createElement("button");
   olderButton.type = "button";
   olderButton.textContent = "← Older";
-  olderButton.setAttribute("aria-label", "Scroll to older capacity history");
+  olderButton.setAttribute("aria-label", "Scroll to older provider analytics");
   const newerButton = document.createElement("button");
   newerButton.type = "button";
   newerButton.textContent = "Newer →";
-  newerButton.setAttribute("aria-label", "Scroll to newer capacity history");
+  newerButton.setAttribute("aria-label", "Scroll to newer provider analytics");
   chartScrollControls.append(olderButton, newerButton);
 
   const syncCapacityChartScroll = () => {
@@ -2270,13 +2360,26 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const downtimeSuffix = downtimeBridgeCount
     ? ` · ${downtimeBridgeCount} OpenAI downtime bridge${downtimeBridgeCount === 1 ? "" : "s"}`
     : "";
+  const latestCacheBucket = promptCacheBuckets.at(-1);
+  const latestCacheWrite = latestCacheBucket?.cacheWriteInputTokens === null
+    ? "cache writes unavailable"
+    : latestCacheBucket
+    ? `${formatNumber(latestCacheBucket.cacheWriteInputTokens)} written to cache`
+    : null;
+  const cacheSuffix = snapshot?.prompt_cache?.status !== "ready"
+    ? " · cache analytics unavailable"
+    : latestCacheBucket
+    ? ` · ${promptCacheBuckets.length} cache bucket${promptCacheBuckets.length === 1 ? "" : "s"} · latest ${
+      quotaPercentFormatter.format(latestCacheBucket.cachedPercent)
+    }% cached · ${latestCacheWrite} at ${formatCapacityTimestamp(latestCacheBucket.bucketStartAtMs)}`
+    : " · no cache-token history yet";
   caption.textContent = samples.length
     ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
       formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
     } · ${samples.length} sample${
       samples.length === 1 ? "" : "s"
-    }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${staleSuffix}`
-    : `No retained samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${staleSuffix}`;
+    }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${cacheSuffix}${staleSuffix}`
+    : `No retained capacity samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${cacheSuffix}${staleSuffix}`;
   figure.appendChild(caption);
   providerCapacityChart.replaceChildren(figure);
   restoreCapacityChartScroll(chartScroll, chartWindow, plot);
@@ -2299,12 +2402,15 @@ const renderProviderCapacity = (snapshot) => {
 
   const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
   const staleCount = sources.filter((source) => source.state === "stale").length;
+  const cacheAnalyticsUnavailable = snapshot?.prompt_cache?.status !== "ready";
   if (unavailableCount === sources.length) {
     setBadge(providerCapacityBadge, "unknown", "Quota unavailable");
   } else if (unavailableCount > 0) {
     setBadge(providerCapacityBadge, "unknown", `Partial quota · ${unavailableCount} unavailable`);
   } else if (staleCount > 0) {
     setBadge(providerCapacityBadge, "unknown", `Quota stale · ${staleCount} source${staleCount === 1 ? "" : "s"}`);
+  } else if (cacheAnalyticsUnavailable) {
+    setBadge(providerCapacityBadge, "unknown", "Cache analytics unavailable");
   } else {
     setBadge(providerCapacityBadge, "ok", "Snapshot ready");
   }

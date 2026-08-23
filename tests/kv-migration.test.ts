@@ -188,8 +188,82 @@ Deno.test("KV migration classifies v2 incident state and skips the transient cir
     classifyKvMigrationKey(["uos_ai", "paid_fallback", "v3", "deletion_guard", "id"], options).group,
     "paid_fallback_v3_deletion_guards",
   );
+  assert.equal(
+    classifyKvMigrationKey(
+      ["uos_ai", "kernel_quota", "v2", "repo_reservation", "owner", "repo", 123, "request"],
+      options,
+    ).group,
+    "kernel_quota_v2_repo_reservation",
+  );
+  assert.equal(
+    classifyKvMigrationKey(
+      ["uos_ai", "kernel_quota", "v2", "org_reservation", "owner", 123, "request"],
+      options,
+    ).group,
+    "kernel_quota_v2_org_reservation",
+  );
   assert.equal(classifyKvMigrationKey(["uos_ai", "runtime_config", "v2"], options).action, "import");
   assert.equal(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options).group, "unknown");
+});
+
+Deno.test("KV migration validates Kernel quota reservation aggregates", async () => {
+  const store = new Map<string, unknown>();
+  const now = Date.now();
+  const owner = "migration-reservation-org";
+  const requestId = "migration-reservation-request";
+  const windowKey = ["uos_ai", "kernel_quota", "v2", "org_window", owner] as const;
+  const reservationKey = [
+    "uos_ai",
+    "kernel_quota",
+    "v2",
+    "org_reservation",
+    owner,
+    now,
+    requestId,
+  ] as const;
+  store.set(keyToString(windowKey), {
+    v: 2,
+    scope: "org",
+    owner,
+    usage_requests: 0,
+    reserved_requests: 1,
+    usage_reset_at_ms: now + 60_000,
+    applied_window_ms: 60_000,
+    created_at_ms: now,
+    updated_at_ms: now,
+  });
+  store.set(keyToString(reservationKey), {
+    v: 2,
+    scope: "org",
+    owner,
+    request_id: requestId,
+    route: "responses",
+    window_created_at_ms: now,
+    window_reset_at_ms: now + 60_000,
+    state: "reserved",
+    terminal_intent: null,
+    reserved_at_ms: now,
+    lease_expires_at_ms: now + 30_000,
+    committed_at_ms: null,
+    released_at_ms: null,
+    release_reason: null,
+  });
+
+  const valid = await validateKvMigrationTarget(makeKvStub(store));
+  assert.equal(valid.counts.kernel_v2_org_windows, 1);
+  assert.equal(valid.counts.kernel_v2_org_reservations, 1);
+  assert.doesNotMatch(valid.errors.join("\n"), /kernel quota V2/);
+
+  const windowWithAggregate = store.get(keyToString(windowKey)) as Record<string, unknown>;
+  const { reserved_requests: _legacyMissingField, ...legacyWindow } = windowWithAggregate;
+  store.set(keyToString(windowKey), legacyWindow);
+  const compatibleLegacyWindow = await validateKvMigrationTarget(makeKvStub(store));
+  assert.doesNotMatch(compatibleLegacyWindow.errors.join("\n"), /kernel quota V2/);
+
+  store.set(keyToString(windowKey), windowWithAggregate);
+  store.delete(keyToString(reservationKey));
+  const missingReservation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(missingReservation.errors.join("\n"), /kernel quota V2 reserved aggregate is inconsistent/);
 });
 
 Deno.test("prod KV migration imports only modern durable rows by default", async () => {

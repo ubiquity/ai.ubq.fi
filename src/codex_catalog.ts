@@ -28,6 +28,7 @@ import {
 } from "./runtime_config.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS } from "./metered.ts";
+import { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
 import { fetchSurplusModels, SURPLUS_MODELS_CACHE_TTL_MS } from "./surplus.ts";
 
 export const CODEX_CATALOG_FRESH_MS = 5 * 60_000;
@@ -701,7 +702,29 @@ const meteredCatalogResponse = async (): Promise<Response | null> => {
   );
 };
 
-export const handleCodexCatalogModels = async (req: Request, rawVersion: string): Promise<Response> => {
+type CodexCatalogDependencies = Readonly<{
+  now?: () => number;
+  recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
+}>;
+
+const recordCatalogDegradation = async (
+  version: string,
+  dependencies: CodexCatalogDependencies,
+): Promise<void> => {
+  try {
+    await (dependencies.recordSentinelDegradation ?? recordSentinelProviderDegradationFromEnvironment)(
+      dependencies.now?.() ?? Date.now(),
+    );
+  } catch (error) {
+    console.error(`[ai.ubq.fi] Sentinel catalog degradation record failed for ${version}:`, error);
+  }
+};
+
+export const handleCodexCatalogModels = async (
+  req: Request,
+  rawVersion: string,
+  dependencies: CodexCatalogDependencies = {},
+): Promise<Response> => {
   const version = rawVersion.trim();
   if (!parseCodexClientVersion(version)) {
     return openaiError(400, "client_version must be an exact X.Y.Z version", "invalid_client_version", {
@@ -748,11 +771,23 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
   }
 
   const leaseHeartbeat = startRefreshLeaseHeartbeat(kv, version, leaseOwner);
+  let providerDegradationObserved = false;
+  let providerDegradationRecorded = false;
+  const recordObservedProviderDegradation = async (): Promise<void> => {
+    if (!providerDegradationObserved || providerDegradationRecorded) return;
+    providerDegradationRecorded = true;
+    await recordCatalogDegradation(version, dependencies);
+  };
   try {
     const upstream = await fetchCodexModels({
       clientVersion: version,
       ifNoneMatch: cached?.metadata.etag ?? null,
+      onProviderTransportFailure: () => providerDegradationObserved = true,
     });
+    if (upstream.status >= 500 && upstream.status <= 599) {
+      providerDegradationObserved = true;
+    }
+    await recordObservedProviderDegradation();
     if (upstream.status === 304 && cached) {
       if (leaseHeartbeat.lost() || !await authGenerationIsCurrent(kv, authGeneration)) {
         const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
@@ -779,18 +814,30 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
     }
 
     const contentType = upstream.headers.get("Content-Type");
-    const body = await upstream.text().catch(() => "");
+    let bodyReadFailed = false;
+    const body = await upstream.text().catch((error) => {
+      bodyReadFailed = true;
+      console.error(`[ai.ubq.fi] Codex catalog response read failed for ${version}:`, error);
+      return "";
+    });
+    if (bodyReadFailed) {
+      providerDegradationObserved = true;
+      await recordObservedProviderDegradation();
+    }
     const parsed = contentType?.toLowerCase().includes("application/json") ? parseCatalogBody(body) : null;
     if (!upstream.ok || !parsed) {
       console.error(
         `[ai.ubq.fi] Codex catalog refresh failed for ${version}: upstream ${upstream.status} ${body.slice(0, 240)}`,
       );
+      let recovery: Response;
       if (cached && await authGenerationIsCurrent(kv, authGeneration)) {
-        return catalogResponse(cached, req, "stale");
+        recovery = await catalogResponse(cached, req, "stale");
+      } else {
+        const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
+        recovery = replacement ? await catalogResponse(replacement, req, "rotated") : await meteredCatalogResponse() ??
+          openaiError(502, "Codex upstream did not return a valid model catalog", "codex_catalog_unavailable");
       }
-      const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-      return replacement ? catalogResponse(replacement, req, "rotated") : await meteredCatalogResponse() ??
-        openaiError(502, "Codex upstream did not return a valid model catalog", "codex_catalog_unavailable");
+      return recovery;
     }
 
     if (leaseHeartbeat.lost() || !await authGenerationIsCurrent(kv, authGeneration)) {
@@ -830,14 +877,16 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string)
       openaiError(502, "Codex model catalog could not be read after caching", "codex_catalog_unavailable");
   } catch (error) {
     console.error(`[ai.ubq.fi] Codex catalog refresh failed for ${version}:`, error);
+    await recordObservedProviderDegradation();
     const generationCurrent = await authGenerationIsCurrent(kv, authGeneration).catch(() => false);
     const recovered = generationCurrent
       ? cached ?? await loadCatalog(kv, version, authGeneration, Date.now()).catch(() => null)
       : await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-    return recovered
+    const recovery = recovered
       ? catalogResponse(recovered, req, generationCurrent ? (cached ? "stale" : "miss") : "rotated")
       : await meteredCatalogResponse() ??
         openaiError(502, "Codex upstream model catalog is unavailable", "codex_catalog_unavailable");
+    return recovery;
   } finally {
     await leaseHeartbeat.stop();
     await releaseRefreshLease(kv, version, leaseOwner);
