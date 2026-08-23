@@ -98,6 +98,7 @@ Deno.test("JSON edits preserve image URL references and user", () => {
   assert.deepEqual(built.tools, [{
     type: "image_generation",
     action: "edit",
+    model: "gpt-image-1.5",
     input_image_mask: { image_url: "data:image/png;base64,BA==" },
   }]);
   assert.deepEqual(built.tool_choice, { type: "image_generation" });
@@ -1015,7 +1016,7 @@ Deno.test("fan-out dispatch coordination can refund after all calls settle witho
   assert.equal(cancellations, 1);
 });
 
-Deno.test("nullable Images options are treated as omitted", async () => {
+Deno.test("nullable generation options use hosted tool defaults", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const seen: Array<Record<string, unknown>> = [];
     const response = await handleImages(

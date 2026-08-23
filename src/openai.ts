@@ -6496,6 +6496,7 @@ export const handleModels = async (req?: Request): Promise<Response> => {
   ]);
   const merged = [...data];
   for (const model of [...(metered?.models ?? []), ...(surplus?.models ?? [])]) {
+    if (!model.supported_endpoint_types.some((type) => type === "openai" || type === "openai-response")) continue;
     if (merged.some((candidate) => candidate.id === model.id)) continue;
     merged.push({
       id: model.id,
@@ -8999,12 +9000,13 @@ export const handleResponses = async (req: Request, usageContext?: UsageContext)
  * ChatGPT/Codex has no native image endpoint. It exposes image generation as
  * an `image_generation` tool on the Responses API, so an images request is
  * rewritten into a tool-bearing Responses call. A live Codex subscription is
- * tried first; later providers remain subject to their existing hosted-tool
- * capability and billing gates.
+ * the only enabled transport until paid providers have image-specific model
+ * authorization, pricing, and settlement.
  */
 
 const IMAGE_BASE_MODEL_ENV = "IMAGE_BASE_MODEL";
 const IMAGE_TOOL_TYPE = "image_generation";
+const IMAGE_EDIT_DEFAULT_MODEL = "gpt-image-1.5";
 const IMAGE_MAX_COUNT = 10;
 const IMAGE_MAX_EDIT_INPUTS = 16;
 const IMAGE_MAX_PROMPT_CHARS = 32_000;
@@ -9129,6 +9131,7 @@ export const buildImageResponsesRequest = (
   };
   const requestedModel = typeof body.model === "string" ? body.model.trim() : "";
   if (requestedModel) tool.model = requestedModel;
+  else if (kind === "edits") tool.model = IMAGE_EDIT_DEFAULT_MODEL;
   for (
     const key of [
       "size",
@@ -9686,7 +9689,10 @@ const imageCallUsageContext = (
   const requestId = index === 0 || !context.requestId
     ? context.requestId
     : `${context.requestId}:image:${kind}:${index + 1}`;
-  return { ...context, requestId, onTerminalUsage: undefined };
+  // The translated request targets a hidden text host model. Reusing its paid
+  // roster would authorize and settle the requested image under the wrong
+  // model, so image calls remain Codex-only until image billing is explicit.
+  return { ...context, requestId, paidFallbackEnabled: false, onTerminalUsage: undefined };
 };
 
 const usageTokensFromTelemetry = (state: ResponseTelemetryState): UsageTokens | null =>

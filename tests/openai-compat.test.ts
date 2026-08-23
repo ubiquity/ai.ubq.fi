@@ -1995,6 +1995,65 @@ Deno.test("openai: models returns stored Codex snapshot without upstream fetch",
   assert.equal(Object.prototype.hasOwnProperty.call(model, "display_name"), false);
 });
 
+Deno.test("openai: models omits provider models without OpenAI inference endpoints", async () => {
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  Deno.env.set("METERED_API_KEY", "metered-model-filter-test-key");
+  Deno.env.delete("SURPLUS_API_KEY");
+  try {
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [
+            {
+              id: "openlux-responses-model",
+              owned_by: "openlux",
+              supported_endpoint_types: ["openai-response"],
+            },
+            {
+              id: "openlux-chat-model",
+              owned_by: "openlux",
+              supported_endpoint_types: ["openai"],
+            },
+            {
+              id: "gpt-image-2",
+              model_type: "图像",
+              owned_by: "openlux",
+              supported_endpoint_types: ["image-generation"],
+            },
+          ],
+        })),
+    });
+
+    const response = await handleModels();
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      object?: unknown;
+      data?: Array<Record<string, unknown> & { id?: string }>;
+    };
+    assert.deepEqual(Object.keys(payload).sort(), ["data", "object"]);
+    assert.equal(payload.object, "list");
+    assert.ok(Array.isArray(payload.data));
+    const modelIds = new Set(payload.data.map((model) => model.id));
+    assert.equal(modelIds.has("openlux-responses-model"), true);
+    assert.equal(modelIds.has("openlux-chat-model"), true);
+    assert.equal(modelIds.has("gpt-image-2"), false);
+    for (const model of payload.data) {
+      assert.deepEqual(Object.keys(model).sort(), ["created", "id", "object", "owned_by"]);
+    }
+  } finally {
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
 Deno.test("openai: public catalog hides OpenLux-only models", async () => {
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();

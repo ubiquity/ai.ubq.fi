@@ -234,6 +234,9 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   const editJsonSchema = document.components.schemas.ImageEditJsonRequest;
   const editMultipartSchema = document.components.schemas.ImageEditMultipartRequest;
   assert.deepEqual(generationSchema.properties.n.type, ["integer", "null"]);
+  assert.equal(generationSchema.properties.model.default, "gpt-image-1");
+  assert.equal(editJsonSchema.properties.model.default, "gpt-image-1.5");
+  assert.equal(editMultipartSchema.properties.model.default, "gpt-image-1.5");
   assert.deepEqual(editJsonSchema.properties.input_fidelity.type, [
     "string",
     "null",
