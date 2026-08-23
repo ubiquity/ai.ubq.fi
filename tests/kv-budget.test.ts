@@ -448,7 +448,8 @@ const assertOrderedTerminalTimings = (
   const ordered = [
     "first_codex_dispatch_ms",
     "first_codex_headers_ms",
-    "first_sse_event_ms",
+    "first_upstream_sse_event_ms",
+    "first_semantic_commitment_ms",
     "stream_terminal_ms",
     "latency_ms",
   ].map((field) => requiredTerminalTiming(terminal, field));
@@ -1284,7 +1285,8 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       first_provider_headers_ms: terminalPayload.first_provider_headers_ms,
       first_codex_dispatch_ms: terminalPayload.first_codex_dispatch_ms,
       first_codex_headers_ms: terminalPayload.first_codex_headers_ms,
-      first_sse_event_ms: terminalPayload.first_sse_event_ms,
+      first_upstream_sse_event_ms: terminalPayload.first_upstream_sse_event_ms,
+      first_semantic_commitment_ms: terminalPayload.first_semantic_commitment_ms,
       stream_terminal_ms: terminalPayload.stream_terminal_ms,
       downstream_drain_ms: null,
       delivery_outcome: "unobserved",
@@ -1500,13 +1502,23 @@ Deno.test("streaming timeout after dispatch emits one delivered terminal and kee
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const logs: unknown[][] = [];
+  const encoder = new TextEncoder();
   setStreamFirstEventDeadlineMsForTest(250);
   globalThis.fetch = () =>
     Promise.resolve(
-      new Response(new ReadableStream<Uint8Array>(), {
-        status: 200,
-        headers: { "Content-Type": "text/event-stream" },
-      }),
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(
+              "data: " + JSON.stringify({ type: "response.created", response: { id: "presemantic-timeout" } }) + "\n\n",
+            ));
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        },
+      ),
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
@@ -1531,6 +1543,8 @@ Deno.test("streaming timeout after dispatch emits one delivered terminal and kee
     assert.equal(terminal.status, 504);
     assert.equal(terminal.stream_terminal_type, "deadline");
     assert.equal(terminal.delivery_outcome, "delivered");
+    assert.equal(typeof terminal.first_upstream_sse_event_ms, "number");
+    assert.equal(terminal.first_semantic_commitment_ms, null);
     assert.equal(delivery.signal.aborted, false);
     assert.deepEqual(usageWindow(policy), {
       committed_requests: 1,
@@ -2041,10 +2055,11 @@ Deno.test("paid fallback terminal telemetry records Metered lifecycle", async ()
     assert.equal(terminal.stream_terminal_type, "response.completed");
     assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
     const firstCodexHeadersMs = requiredTerminalTiming(terminal, "first_codex_headers_ms");
-    const firstSseEventMs = requiredTerminalTiming(terminal, "first_sse_event_ms");
+    const firstUpstreamSseEventMs = requiredTerminalTiming(terminal, "first_upstream_sse_event_ms");
+    requiredTerminalTiming(terminal, "first_semantic_commitment_ms");
     assert.ok(
-      firstSseEventMs >= firstCodexHeadersMs + 10,
-      "Metered response time must remain outside first Codex timing",
+      firstUpstreamSseEventMs >= firstCodexHeadersMs + 10,
+      "Metered upstream SSE time must remain outside first Codex timing",
     );
     assert.equal(Object.prototype.hasOwnProperty.call(terminal, "upstream_headers_ms"), false);
   } finally {
