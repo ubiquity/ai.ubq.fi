@@ -802,10 +802,12 @@ Deno.test("openai: an unknown banked reset returns an ordinary error with no suc
   }
 });
 
-Deno.test("openai: timeout-circuit short circuits remain gateway-generated", async () => {
+Deno.test("openai: legacy timeout-circuit state does not short circuit Codex", async () => {
+  let codexCalls = 0;
   const response = await withFetchMock(
     () => {
-      throw new Error("a timeout circuit response must not dispatch to Codex");
+      codexCalls += 1;
+      return sseResponse(baseSseChunks());
     },
     async () => {
       const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
@@ -823,16 +825,10 @@ Deno.test("openai: timeout-circuit short circuits remain gateway-generated", asy
     },
   );
 
-  assert.equal(response.status, 503);
-  assert.equal(response.headers.get("x-uos-upstream"), null);
-  assert.deepEqual(await response.json(), {
-    error: {
-      message: "Codex upstream is temporarily unavailable after response-header timeouts; retry later.",
-      type: "server_error",
-      code: "codex_upstream_degraded",
-      param: null,
-    },
-  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+  assert.equal(codexCalls, 1);
+  await response.text();
 });
 
 Deno.test("openai: a post-reset 429 is returned once without a successful stream", async (t) => {
@@ -3145,6 +3141,223 @@ Deno.test("openai: Codex pre-header gateway deadlines use server_error on both s
   }
 });
 
+Deno.test("openai: Codex stalls use wire-only failover for the current pre-semantic Responses request", async (t) => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const keyIds = [
+    "fallback-codex-no-headers",
+    "fallback-codex-no-semantic-event",
+    "fallback-codex-post-semantic-eof",
+  ];
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-test-key");
+    Deno.env.delete("SURPLUS_API_KEY");
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response"] }],
+        })),
+    });
+    setStreamFirstEventDeadlineMsForTest(160);
+
+    await t.step("no response headers uses Metered and the next request retries Codex", async () => {
+      const keyId = keyIds[0]!;
+      const firstRequestId = `request-${keyId}`;
+      seedPaidFallbackKey(keyId);
+      let codexCalls = 0;
+      let meteredCalls = 0;
+      await withFetchMock(
+        (url, _bodyText, init) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            return sseResponse(baseSseChunks());
+          }
+          codexCalls += 1;
+          if (codexCalls === 1) {
+            return new Promise<Response>((_resolve, reject) => {
+              const signal = init?.signal;
+              if (!signal) return reject(new Error("Codex timeout fixture did not receive a signal"));
+              const rejectWithReason = () => reject(signal.reason);
+              if (signal.aborted) rejectWithReason();
+              else signal.addEventListener("abort", rejectWithReason, { once: true });
+            });
+          }
+          return sseResponse(baseSseChunks());
+        },
+        async () => {
+          const first = await handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId: firstRequestId,
+            startedAtMs: Date.now(),
+          });
+          assert.equal(first.status, 200);
+          assert.equal(first.headers.get("x-uos-upstream"), "metered");
+          assert.equal(getResponseTelemetry(first)?.fallbackReason, "primary_upstream_timeout");
+          await first.text();
+
+          const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+          const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+          assert.equal(selection.kind, "eligible");
+
+          const second = await handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId: `${firstRequestId}-next`,
+            startedAtMs: Date.now(),
+          });
+          assert.equal(second.status, 200);
+          assert.equal(second.headers.get("x-uos-upstream"), "chatgpt_codex");
+          await second.text();
+        },
+      );
+      assert.equal(codexCalls, 2);
+      assert.equal(meteredCalls, 1);
+    });
+
+    await t.step("buffered setup events never leak when a pre-semantic stall uses Metered", async () => {
+      const keyId = keyIds[1]!;
+      const requestId = `request-${keyId}`;
+      seedPaidFallbackKey(keyId);
+      let codexCalls = 0;
+      let meteredCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            return sseResponse(baseSseChunks());
+          }
+          codexCalls += 1;
+          if (codexCalls > 1) return sseResponse(baseSseChunks());
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(TEXT_ENCODER.encode(
+                  `data: ${
+                    JSON.stringify({
+                      type: "response.created",
+                      response: { id: "resp_codex_stalled", created_at: 0 },
+                    })
+                  }\n\n`,
+                ));
+              },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream" },
+            },
+          );
+        },
+        () =>
+          handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId,
+            startedAtMs: Date.now(),
+          }),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
+      assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_upstream_timeout");
+      const body = await response.text();
+      assert.equal(body.includes("resp_test"), true);
+      assert.equal(body.includes("resp_codex_stalled"), false);
+
+      const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+      const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+      assert.equal(selection.kind, "eligible");
+
+      const next = await withFetchMock(
+        (url) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            return sseResponse(baseSseChunks());
+          }
+          codexCalls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId: `${requestId}-next`,
+            startedAtMs: Date.now(),
+          }),
+      );
+      assert.equal(next.status, 200);
+      assert.equal(next.headers.get("x-uos-upstream"), "chatgpt_codex");
+      await next.text();
+      assert.equal(codexCalls, 2);
+      assert.equal(meteredCalls, 1);
+    });
+
+    await t.step("a stream failure after semantic output never switches providers", async () => {
+      const keyId = keyIds[2]!;
+      seedPaidFallbackKey(keyId);
+      let meteredCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            throw new Error("a committed Codex stream must not switch providers");
+          }
+          return sseResponse([
+            `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_codex_committed" } })}\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.output_text.delta",
+                response_id: "resp_codex_committed",
+                item_id: "msg_codex_committed",
+                output_index: 0,
+                content_index: 0,
+                delta: "partial",
+              })
+            }\n\n`,
+          ]);
+        },
+        () =>
+          handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId: `request-${keyId}`,
+            startedAtMs: Date.now(),
+          }),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+      const events = parseResponsesSseValues(await response.text());
+      assert.equal(events.filter((event) => event.type === "response.created").length, 1);
+      assert.equal(events.filter((event) => event.type === "response.failed").length, 1);
+      assert.equal(meteredCalls, 0);
+    });
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+    for (const keyId of keyIds) {
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    }
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
 Deno.test("openai: upstream fetch logs redact provider error payloads", async () => {
   const secret = "prompt-or-credential-must-not-reach-server-logs";
   const logs: unknown[][] = [];
@@ -3757,15 +3970,20 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("Codex timeout circuit returns 503 without spending paid quota", async () => {
+    await t.step("legacy Codex timeout state is ignored without spending paid quota", async () => {
       const keyId = "fallback-upstream-degraded";
       const requestId = "request-fallback-upstream-degraded";
       seedPaidFallbackKey(keyId);
+      let codexCalls = 0;
       let meteredCalls = 0;
       const response = await withFetchMock(
-        () => {
-          meteredCalls += 1;
-          throw new Error("a timeout circuit must not dispatch to a paid provider");
+        (url) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            throw new Error("legacy timeout state must not dispatch to a paid provider");
+          }
+          codexCalls += 1;
+          return sseResponse(baseSseChunks());
         },
         async () => {
           const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
@@ -3790,10 +4008,12 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
         },
       );
 
-      assert.equal(response.status, 503);
-      assert.equal(response.headers.get("x-uos-upstream"), null);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
       assert.equal(getResponseTelemetry(response)?.fallbackReason, null);
+      assert.equal(codexCalls, 1);
       assert.equal(meteredCalls, 0);
+      await response.text();
     });
 
     await t.step("cancellation before fallback admission creates no paid exposure", async () => {

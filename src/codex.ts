@@ -11,7 +11,6 @@ import {
   markCodexQuotaBlocked,
   markCodexRecoveryProbeQuotaBlocked,
   markCodexSuccess,
-  markCodexUpstreamTimeout,
   parseCodexAccountRoutingState,
   reconcileCodexQuotaAfterStaleVerifiedReset,
   reconcileCodexQuotaAfterVerifiedReset,
@@ -829,7 +828,6 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
   }
 
   let response: Response | null = null;
-  let transportStarted = false;
   const headers = new Headers({
     originator: CODEX_ORIGINATOR,
     "user-agent": codexUserAgent(options.clientVersion),
@@ -854,9 +852,7 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
         headers,
         options.signal,
         undefined,
-        () => {
-          transportStarted = true;
-        },
+        undefined,
       );
     } catch (error) {
       void recordCodexThrownHealth(routing.auth.account_id, error);
@@ -900,11 +896,7 @@ export const fetchCodexResponsesForCacheScopeExperiment = async (
     }
   } catch (error) {
     if (response) cancelResponseBody(response);
-    if (transportStarted && error instanceof CodexError && error.code === "gateway_timeout") {
-      await markCodexUpstreamTimeout(routing);
-    } else {
-      await releaseCodexRoutingProbe(routing);
-    }
+    await releaseCodexRoutingProbe(routing);
     throw error;
   }
   return response!;
@@ -2140,7 +2132,6 @@ export const fetchCodexResponses = async (
     beforeTransport?: () => Promise<void>,
   ): Promise<Response> => {
     attemptNumber += 1;
-    let transportStarted = false;
     try {
       const response = await fetchCodexResponseWithAuth(
         auth,
@@ -2161,7 +2152,6 @@ export const fetchCodexResponses = async (
           }
           : options.beforeDispatch,
         () => {
-          transportStarted = true;
           reportCodexResponseTiming(options.timing?.onDispatch);
         },
       );
@@ -2188,11 +2178,10 @@ export const fetchCodexResponses = async (
       ) {
         void recordCodexThrownHealth(accountEntry.auth.account_id, error);
       }
-      if (transportStarted && error instanceof CodexError && error.code === "gateway_timeout") {
-        // The transport may already have reached Codex. Fence only future
-        // requests; every inference attempt, including bounded and reset
-        // retries, must preserve the no-replay circuit.
-        await markCodexUpstreamTimeout(routing);
+      if (error instanceof CodexError && error.code === "gateway_timeout") {
+        // The timeout is request-local. Release any quota-recovery lease so a
+        // later request starts with Codex instead of inheriting this stall.
+        await releaseCodexRoutingProbe(routing);
       }
       logCodexRouting("codex_attempt", {
         request_id: options.requestId ?? null,
@@ -2594,11 +2583,8 @@ export const fetchCodexResponses = async (
         noteCodexAuthFailure(error);
         continue;
       }
-      if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
-        await releaseCodexRoutingProbe(routing);
-      }
-      // Other transport failures, aborts, and deadlines remain account-independent;
-      // only the explicit upstream response-header timeout opens this circuit.
+      await releaseCodexRoutingProbe(routing);
+      // Transport failures, aborts, and deadlines remain request-local.
       if (lastResponse) cancelResponseBody(lastResponse);
       throw error;
     }
@@ -2693,9 +2679,7 @@ export const fetchCodexResponses = async (
         "two_second_retry",
       );
     } catch (error) {
-      if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
-        await releaseCodexRoutingProbe(retryRouting);
-      }
+      await releaseCodexRoutingProbe(retryRouting);
       throw error;
     }
     if (responseIsCodexAuthFailure(retryAuth, response)) {
@@ -2718,9 +2702,7 @@ export const fetchCodexResponses = async (
             noteCodexAuthFailure(error);
             return authFailureResponse(error);
           }
-          if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
-            await releaseCodexRoutingProbe(retryRouting);
-          }
+          await releaseCodexRoutingProbe(retryRouting);
           throw error;
         }
         if (responseIsCodexAuthFailure(retryAuth, response)) {

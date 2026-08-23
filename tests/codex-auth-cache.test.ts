@@ -995,7 +995,7 @@ Deno.test("a malformed successful refresh is transient and does not quarantine t
   }
 });
 
-Deno.test("direct half-open probes release quota leases and timeouts open a bounded circuit", async (t) => {
+Deno.test("direct half-open probes release quota leases after every failure", async (t) => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1061,14 +1061,8 @@ Deno.test("direct half-open probes release quota leases and timeouts open a boun
         }
 
         const second = await fetchCodexResponses({ input: `${testCase.name}-second` });
-        if (testCase.timeout) {
-          assert.equal(second.status, 503);
-          assert.equal(second.headers.get("Retry-After"), "60");
-          assert.equal(codexCalls, 1);
-        } else {
-          assert.equal(second.status, 200);
-          assert.equal(codexCalls, 2);
-        }
+        assert.equal(second.status, 200);
+        assert.equal(codexCalls, 2);
       });
     }
   } finally {
@@ -1079,7 +1073,7 @@ Deno.test("direct half-open probes release quota leases and timeouts open a boun
   }
 });
 
-Deno.test("cache-scope dispatch timeouts open the upstream timeout circuit", async () => {
+Deno.test("cache-scope dispatch timeouts remain request-local", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1114,10 +1108,7 @@ Deno.test("cache-scope dispatch timeouts open the upstream timeout circuit", asy
     );
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]!], fixedStartMs);
-    assert.equal(selected.kind, "upstream_blocked");
-    if (selected.kind === "upstream_blocked") {
-      assert.equal(selected.retryAtMs, fixedStartMs + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS);
-    }
+    assert.equal(selected.kind, "eligible");
     assert.equal(inferenceCalls, 1);
   } finally {
     resetCodexAuthCacheForTest();
@@ -1128,7 +1119,7 @@ Deno.test("cache-scope dispatch timeouts open the upstream timeout circuit", asy
   }
 });
 
-Deno.test("a losing timeout-probe claim keeps the response upstream-blocked", async () => {
+Deno.test("a losing legacy timeout-probe claim does not block transport", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1149,14 +1140,14 @@ Deno.test("a losing timeout-probe claim keeps the response upstream-blocked", as
   kv.routingCommitFailures = 3;
   globalThis.fetch = () => {
     inferenceCalls += 1;
-    return Promise.resolve(new Response("transport should not start", { status: 200 }));
+    return Promise.resolve(new Response("transport proceeds", { status: 200 }));
   };
 
   try {
     const response = await fetchCodexResponses({ input: "timeout-probe-race" });
-    assert.equal(response.status, 503);
-    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "codex_upstream_degraded");
-    assert.equal(inferenceCalls, 0);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), "transport proceeds");
+    assert.equal(inferenceCalls, 1);
   } finally {
     kv.routingCommitFailures = 0;
     resetCodexAuthCacheForTest();
@@ -1221,7 +1212,7 @@ Deno.test("a timeout probe that returns quota retags its bounded retry as quota"
   }
 });
 
-Deno.test("a timeout during bounded retry refresh keeps the timeout circuit held", async () => {
+Deno.test("a timeout during bounded retry refresh releases the routing lease", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1270,10 +1261,7 @@ Deno.test("a timeout during bounded retry refresh keeps the timeout circuit held
     );
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
-    assert.equal(selected.kind, "upstream_blocked");
-    if (selected.kind === "upstream_blocked") {
-      assert.equal(selected.retryAtMs, fixedStartMs + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS);
-    }
+    assert.equal(selected.kind, "eligible");
     assert.equal(inferenceCalls, 3);
     assert.equal(refreshCalls, 1);
   } finally {
@@ -2579,7 +2567,7 @@ Deno.test("a sibling blocked during partial preflight is not dispatched from the
   }
 });
 
-Deno.test("a sibling timeout during partial preflight invalidates the reset cohort", async () => {
+Deno.test("a legacy sibling timeout fence during partial preflight is ignored", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -2637,12 +2625,12 @@ Deno.test("a sibling timeout during partial preflight invalidates the reset coho
         },
       },
     );
-    assert.equal(response.status, 503);
-    assert.equal((await response.json()).error.code, "codex_upstream_degraded");
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).id, "stale-timeout-fallback");
     assert.deepEqual(reset.inventoryAccountIds, ["account-one"]);
     assert.deepEqual(reset.redeemAccountIds, []);
     assert.deepEqual(reset.calls, ["inventory"]);
-    assert.deepEqual(accountIds, []);
+    assert.deepEqual(accountIds, ["account-two"]);
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();

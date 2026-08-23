@@ -187,7 +187,8 @@ type UsageContext = Readonly<{
 type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
 export type InferenceFallbackReason =
   | "primary_429"
-  | "primary_quota_blocked";
+  | "primary_quota_blocked"
+  | "primary_upstream_timeout";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 export type AffinityOutcome = "none" | "preferred" | "failover" | "shadow_only";
@@ -1167,6 +1168,10 @@ const fetchAndPreparePrimaryResponses = async (
     downstreamSignal: AbortSignal;
     warnings: readonly string[];
     attemptDeadline: StreamDeadline;
+    fallbackSignal?: AbortSignal;
+    createFallbackDeadline?: () => StreamDeadline;
+    primaryResponse?: Response;
+    primaryFailureReason?: InferenceFallbackReason;
     rejectPresemanticFailureTerminal?: boolean;
   }>,
 ): Promise<{ kind: "ready"; value: ResponsesRouteAttempt } | { kind: "failed"; value: ResponsesRouteFailure }> => {
@@ -1181,6 +1186,9 @@ const fetchAndPreparePrimaryResponses = async (
       usageContext: options.usageContext,
       clientVersion: options.clientVersion,
       signal: deadline.signal,
+      fallbackSignal: options.fallbackSignal,
+      primaryResponse: options.primaryResponse,
+      primaryFailureReason: options.primaryFailureReason,
     });
   } catch (error) {
     deadline.clear();
@@ -1215,6 +1223,11 @@ const fetchAndPreparePrimaryResponses = async (
     }
     throw error;
   }
+  let preparationDeadline = deadline;
+  if (routed.provider !== "chatgpt_codex" && options.createFallbackDeadline) {
+    deadline.clear();
+    preparationDeadline = options.createFallbackDeadline();
+  }
   const lifecycle = createMeteredTransportLifecycle(
     routed.paidFallback,
     routed.provider,
@@ -1223,7 +1236,7 @@ const fetchAndPreparePrimaryResponses = async (
     options.model,
   );
   if (routed.gatewayResponse) {
-    deadline.clear();
+    preparationDeadline.clear();
     const trigger: ResponsesAttemptTrigger = routed.response.status === 504
       ? "semantic_timeout"
       : routed.response.status >= 500
@@ -1238,8 +1251,8 @@ const fetchAndPreparePrimaryResponses = async (
           provider: routed.provider,
           response: routed.response,
           trigger,
-          signal: deadline.signal,
-          clearDeadline: deadline.clear,
+          signal: preparationDeadline.signal,
+          clearDeadline: preparationDeadline.clear,
         },
       },
     };
@@ -1249,7 +1262,7 @@ const fetchAndPreparePrimaryResponses = async (
     prepared = await prepareResponsesAttempt(
       routed.response,
       routed.provider,
-      deadline,
+      preparationDeadline,
       options.requestSignal,
       [...options.warnings, ...responseWarnings(routed.response)],
       {
@@ -1259,7 +1272,7 @@ const fetchAndPreparePrimaryResponses = async (
     );
   } catch (error) {
     if (options.requestSignal.aborted) {
-      finalizeAbandonedPrimaryAttempt(routed, lifecycle, {
+      await finalizeAbandonedPrimaryAttempt(routed, lifecycle, {
         cancelled: classifyPreHeaderFailure(
           error,
           options.requestSignal,
@@ -1269,9 +1282,29 @@ const fetchAndPreparePrimaryResponses = async (
     }
     throw error;
   }
-  return prepared.kind === "ready"
-    ? { kind: "ready", value: { routed, prepared: prepared.attempt, lifecycle } }
-    : { kind: "failed", value: { routed, failed: prepared.attempt, lifecycle } };
+  if (prepared.kind === "ready") {
+    return { kind: "ready", value: { routed, prepared: prepared.attempt, lifecycle } };
+  }
+  if (
+    routed.provider === "chatgpt_codex" &&
+    routed.fallbackReason === null &&
+    prepared.attempt.trigger === "semantic_timeout" &&
+    options.fallbackSignal?.aborted !== true &&
+    options.createFallbackDeadline
+  ) {
+    // No downstream bytes have been committed, so the paid attempt can still
+    // produce one coherent response. Codex transport may already have started;
+    // this is an intentional at-least-once replay for availability.
+    await finalizeAbandonedPrimaryAttempt(routed, lifecycle, { failureTrigger: prepared.attempt.trigger });
+    return await fetchAndPreparePrimaryResponses(body, {
+      ...options,
+      attemptDeadline: options.createFallbackDeadline(),
+      createFallbackDeadline: undefined,
+      primaryResponse: prepared.attempt.response,
+      primaryFailureReason: "primary_upstream_timeout",
+    });
+  }
+  return { kind: "failed", value: { routed, failed: prepared.attempt, lifecycle } };
 };
 
 const fetchAndPrepareRemovedProviderResponses = async (
@@ -1331,19 +1364,19 @@ const fetchAndPrepareRemovedProviderResponses = async (
   );
 };
 
-const finalizeAbandonedPrimaryAttempt = (
+const finalizeAbandonedPrimaryAttempt = async (
   routed: RoutedResponsesUpstream,
   lifecycle: MeteredTransportLifecycle,
   options: Readonly<{
     cancelled?: boolean;
     failureTrigger?: ResponsesAttemptTrigger;
   }> = {},
-): void => {
+): Promise<void> => {
   if (routed.provider === "chatgpt_codex") {
     const transition = routed.response.ok && !options.cancelled
       ? markCodexResponseUpstreamError(routed.response)
       : releaseCodexResponseProbe(routed.response);
-    void transition.catch(() => {});
+    await transition.catch(() => {});
   } else if ((routed.provider === "metered" || routed.provider === "surplus") && !routed.gatewayResponse) {
     if (options.cancelled) lifecycle.cancelled();
     else if (options.failureTrigger === "http_5xx" || options.failureTrigger === "terminal_failure") {
@@ -1953,6 +1986,11 @@ const logPaidProviderSelected = (
   }
 };
 
+const canAttemptPaidFallback = (context: UsageContext | undefined): boolean =>
+  context?.paidFallbackEnabled === true &&
+  Boolean(context?.keyId && context.requestId && context.startedAtMs !== undefined) &&
+  (Boolean(readSurplusApiKey()) || Boolean(readMeteredApiKey()));
+
 const bestEffortPaidFallbackBookkeeping = async (
   operation: string,
   run: () => Promise<unknown>,
@@ -2080,8 +2118,12 @@ const fetchResponsesWithPaidFallback = async (
     usageContext?: UsageContext;
     clientVersion?: string | null;
     signal?: AbortSignal;
+    fallbackSignal?: AbortSignal;
+    primaryResponse?: Response;
+    primaryFailureReason?: InferenceFallbackReason;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
+  const fallbackSignal = options.fallbackSignal ?? options.signal;
   const telemetry = options.usageContext?.responseTelemetry;
   const codexCatalog = await loadCodexModelsSnapshot();
   const codexModelKnown = codexCatalog?.models.some((model) => {
@@ -2176,8 +2218,9 @@ const fetchResponsesWithPaidFallback = async (
     )
     : null;
   if (telemetry) telemetry.provider = "chatgpt_codex";
-  recordAttemptedProvider(options.usageContext, "chatgpt_codex");
+  if (!options.primaryResponse) recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
+  let primaryFailureReason = options.primaryFailureReason ?? null;
   const debugScenario = (await loadDebugRoutingConfig()).scenario;
   const forcedStatus = debugScenario === "metered_first" || debugScenario === "codex_429"
     ? 429
@@ -2186,7 +2229,9 @@ const fetchResponsesWithPaidFallback = async (
     : debugScenario === "codex_401"
     ? 401
     : null;
-  if (meteredOnlyPrimary) {
+  if (options.primaryResponse) {
+    primary = options.primaryResponse;
+  } else if (meteredOnlyPrimary) {
     primary = meteredOnlyPrimary;
   } else if (forcedStatus !== null) {
     primary = openaiError(
@@ -2211,8 +2256,19 @@ const fetchResponsesWithPaidFallback = async (
         bankedReset: codexBankedResetOptionsForTest ?? undefined,
       });
     } catch (error) {
-      if (!(error instanceof CodexError) || error.status !== 401) throw error;
-      primary = openaiError(error.status, error.message, error.code);
+      if (
+        error instanceof CodexError && error.code === "gateway_timeout" &&
+        fallbackSignal?.aborted !== true
+      ) {
+        // The request is still uncommitted downstream. Treat the ambiguous
+        // Codex attempt as a wire-only failover, not an at-most-once retry.
+        logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
+        primary = toCodexErrorResponse(error, "chatgpt_codex");
+        primaryFailureReason = "primary_upstream_timeout";
+      } else {
+        if (!(error instanceof CodexError) || error.status !== 401) throw error;
+        primary = openaiError(error.status, error.message, error.code);
+      }
     }
   }
   const primaryStatus = primary.status;
@@ -2225,7 +2281,8 @@ const fetchResponsesWithPaidFallback = async (
   }
   const routingError = getCodexRoutingError(primary);
   const gatewayResponse = routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
-    routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
+    routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE ||
+    primaryFailureReason === "primary_upstream_timeout";
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {
       status: 503,
@@ -2238,7 +2295,9 @@ const fetchResponsesWithPaidFallback = async (
   const createdAtMs = options.usageContext?.startedAtMs;
   // Authentication and authorization failures are not capacity evidence.
   // Fail closed instead of converting bad Codex credentials into paid spend.
-  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 429
+  const fallbackReason: InferenceFallbackReason | null = primaryFailureReason
+    ? primaryFailureReason
+    : primaryStatus === 429
     ? routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ? "primary_quota_blocked" : "primary_429"
     : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
@@ -2257,10 +2316,10 @@ const fetchResponsesWithPaidFallback = async (
       fallbackReason,
     };
   }
-  if (options.signal?.aborted) {
+  if (fallbackSignal?.aborted) {
     if (primary) cancelResponseBody(primary);
-    throw options.signal.reason instanceof Error
-      ? options.signal.reason
+    throw fallbackSignal.reason instanceof Error
+      ? fallbackSignal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
   // A stale snapshot remains usable when it already selects a paid provider.
@@ -2273,8 +2332,8 @@ const fetchResponsesWithPaidFallback = async (
     (!paidProviders.length && (meteredCatalogNeedsRefresh() || surplusCatalogNeedsRefresh()))
   ) {
     [meteredCatalog, surplusCatalog] = await Promise.all([
-      meteredCatalogNeedsRefresh() ? fetchMeteredModels({ signal: options.signal }) : Promise.resolve(meteredCatalog),
-      surplusCatalogNeedsRefresh() ? fetchSurplusModels({ signal: options.signal }) : Promise.resolve(surplusCatalog),
+      meteredCatalogNeedsRefresh() ? fetchMeteredModels({ signal: fallbackSignal }) : Promise.resolve(meteredCatalog),
+      surplusCatalogNeedsRefresh() ? fetchSurplusModels({ signal: fallbackSignal }) : Promise.resolve(surplusCatalog),
     ]);
     ({ surplusBilling, paidProviders, meteredOnly } = routingState());
   }
@@ -2333,24 +2392,24 @@ const fetchResponsesWithPaidFallback = async (
     };
   }
 
-  if (options.signal?.aborted) {
+  if (fallbackSignal?.aborted) {
     cancelResponseBody(primary);
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
       () => recordMeteredPrefetchCancellation(decision.reservation),
     );
-    throw options.signal.reason instanceof Error
-      ? options.signal.reason
+    throw fallbackSignal.reason instanceof Error
+      ? fallbackSignal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
   cancelResponseBody(primary);
-  if (options.signal?.aborted) {
+  if (fallbackSignal?.aborted) {
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
       () => recordMeteredPrefetchCancellation(decision.reservation),
     );
-    throw options.signal.reason instanceof Error
-      ? options.signal.reason
+    throw fallbackSignal.reason instanceof Error
+      ? fallbackSignal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
   if (telemetry) {
@@ -2398,7 +2457,7 @@ const fetchResponsesWithPaidFallback = async (
     telemetry.providerRequestId = providerRequestId;
   };
   for (const [providerIndex, provider] of paidProviders.entries()) {
-    if (options.signal?.aborted) {
+    if (fallbackSignal?.aborted) {
       retainRespondingProviderTelemetry(previousRespondingProvider, previousProviderRequestId);
       await bestEffortPaidFallbackBookkeeping(
         previousRespondingProvider === null
@@ -2413,8 +2472,8 @@ const fetchResponsesWithPaidFallback = async (
               previousProviderRequestId,
             ),
       );
-      throw options.signal.reason instanceof Error
-        ? options.signal.reason
+      throw fallbackSignal.reason instanceof Error
+        ? fallbackSignal.reason
         : new DOMException("The request was aborted.", "AbortError");
     }
     selectedProvider = provider;
@@ -2427,14 +2486,14 @@ const fetchResponsesWithPaidFallback = async (
     try {
       const candidate = provider === "surplus"
         ? await fetchSurplusResponses(body, {
-          signal: options.signal,
+          signal: fallbackSignal,
           beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("surplus") ?? Promise.resolve(),
           onDispatch: () => {
             transportStarted = true;
           },
         })
         : await fetchMeteredResponses(body, {
-          signal: options.signal,
+          signal: fallbackSignal,
           beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
           onDispatch: () => {
             transportStarted = true;
@@ -2479,7 +2538,7 @@ const fetchResponsesWithPaidFallback = async (
         );
         throw error;
       }
-      if (options.signal?.aborted) {
+      if (fallbackSignal?.aborted) {
         // The explicit dispatch callback distinguishes cancellation before
         // this transport from an abort that may have reached the provider.
         // Keep any contacted provider for reconciliation and never retry.
@@ -2497,8 +2556,8 @@ const fetchResponsesWithPaidFallback = async (
                 ambiguousProviderRequestId,
               ),
         );
-        throw options.signal.reason instanceof Error
-          ? options.signal.reason
+        throw fallbackSignal.reason instanceof Error
+          ? fallbackSignal.reason
           : new DOMException("The request was aborted.", "AbortError");
       }
       providerError = error;
@@ -2532,9 +2591,9 @@ const fetchResponsesWithPaidFallback = async (
             previousProviderRequestId,
           ),
     );
-    const abortReason = options.signal?.reason;
+    const abortReason = fallbackSignal?.reason;
     if (
-      (options.signal?.aborted && abortReason instanceof Error && abortReason.name === "TimeoutError") ||
+      (fallbackSignal?.aborted && abortReason instanceof Error && abortReason.name === "TimeoutError") ||
       (error instanceof Error && error.name === "TimeoutError")
     ) {
       return {
@@ -8176,6 +8235,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const requestInferenceSignal = clientWantsStream ? downstreamSignal : inferenceSignal(req, usageContext);
   const preHeaderDeadline = createStreamFirstEventDeadline(requestInferenceSignal);
   const apiKey = readRemovedProviderApiKey();
+  const paidFallbackAvailable = canAttemptPaidFallback(usageContext);
   const debugRoutingScenario = (await loadDebugRoutingConfig()).scenario;
   const circuit = apiKey ? await selectRemovedProviderCircuitRoute() : null;
   if (circuit && circuit.transition !== "none") {
@@ -8207,7 +8267,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
       try {
         const remainingMs = preHeaderDeadline.remainingMs();
         const failoverReserveMs = Math.min(STREAM_FAILOVER_RESERVE_MS, remainingMs / 2);
-        const primaryBudgetMs = apiKey ? Math.max(0, remainingMs - failoverReserveMs) : remainingMs;
+        const primaryBudgetMs = apiKey || paidFallbackAvailable
+          ? Math.max(0, remainingMs - failoverReserveMs)
+          : remainingMs;
         const result = await fetchAndPreparePrimaryResponses(codexBody, {
           model,
           reasoning: reasoningLabel,
@@ -8218,6 +8280,14 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
           downstreamSignal,
           warnings,
           attemptDeadline: createStreamSemanticDeadline(preHeaderDeadline.signal, Math.ceil(primaryBudgetMs)),
+          fallbackSignal: paidFallbackAvailable ? preHeaderDeadline.signal : undefined,
+          createFallbackDeadline: paidFallbackAvailable
+            ? () =>
+              createStreamSemanticDeadline(
+                preHeaderDeadline.signal,
+                Math.ceil(preHeaderDeadline.remainingMs()),
+              )
+            : undefined,
           rejectPresemanticFailureTerminal: apiKey !== null,
         });
         if (result.kind === "ready") {
@@ -8261,7 +8331,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
             return failed.response;
           }
           if (!routed.gatewayResponse) {
-            finalizeAbandonedPrimaryAttempt(routed, lifecycle, {
+            await finalizeAbandonedPrimaryAttempt(routed, lifecycle, {
               cancelled: terminalType === "cancelled",
               failureTrigger: failed.trigger,
             });
@@ -8366,7 +8436,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
             recovery.value.failed.signal,
             downstreamSignal,
           );
-          finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle, {
+          await finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle, {
             cancelled: terminalType === "cancelled",
             failureTrigger: recovery.value.failed.trigger,
           });
@@ -8478,7 +8548,9 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
     if (usageContext?.responseTelemetry?.streamTerminalType === null) {
       recordStreamTerminalType(usageContext, terminalType);
     }
-    if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
+    if (routed) {
+      void finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
+    }
     if (globalProbe && (routed?.provider === "metered" || routed?.provider === "surplus")) {
       void releaseGlobalRemovedProviderProbe(globalProbe).then((value) => {
         if (value !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: value });
