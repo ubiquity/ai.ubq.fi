@@ -112,6 +112,35 @@ type RequestDeliveryInfo = Readonly<{
 type DeliveryOutcome = "delivered" | "interrupted" | "unobserved";
 type BodyOutcome = "drained" | "interrupted" | "failed";
 
+type SentinelBackgroundTaskRegistrar = (task: Promise<unknown>) => void;
+type SentinelBackgroundRuntime = Readonly<{
+  waitUntil?: SentinelBackgroundTaskRegistrar;
+}>;
+
+const sentinelBackgroundTaskRegistrar = (): SentinelBackgroundTaskRegistrar | null => {
+  const globals = globalThis as unknown as Readonly<{
+    EdgeRuntime?: SentinelBackgroundRuntime;
+  }>;
+  if (typeof globals.EdgeRuntime?.waitUntil === "function") {
+    return globals.EdgeRuntime.waitUntil.bind(globals.EdgeRuntime);
+  }
+  return null;
+};
+
+const scheduleSentinelBackgroundTask = (
+  task: Promise<void>,
+  registrar: SentinelBackgroundTaskRegistrar | undefined,
+): boolean => {
+  const waitUntil = registrar ?? sentinelBackgroundTaskRegistrar();
+  if (!waitUntil) return false;
+  try {
+    waitUntil(task);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const shouldSignalSentinelProviderDegradation = (
   input: Readonly<{ status: number; completed: boolean; removedProviderTriggerClass: string | null }>,
 ): boolean =>
@@ -379,6 +408,7 @@ export const withTerminalRequestLog = (
     sentinelReplayInput?: AcceptedSentinelReplayInput | null;
     persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
+    waitUntil?: SentinelBackgroundTaskRegistrar;
   }>,
 ): Promise<Response> => {
   const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
@@ -398,9 +428,16 @@ export const withTerminalRequestLog = (
   let replayFinalization: Promise<void> | null = null;
   const persistReplayAtApplicationTerminal = (streamReadFailure = false): Promise<void> => {
     if (replayFinalization) return replayFinalization;
-    const sentinelReplayInput = input.sentinelReplayInput;
+    const originalReplayInput = input.sentinelReplayInput;
+    const backgroundReplayInput = originalReplayInput
+      ? { ...originalReplayInput, body: new Uint8Array(originalReplayInput.body) }
+      : null;
+    // The background task owns the independent snapshot. Release the
+    // request-owned bytes before any inspection or persistence await so a
+    // stalled clone, crypto operation, or KV write cannot retain both copies.
+    zeroSentinelReplayInput(originalReplayInput);
     replayFinalization = (async () => {
-      if (!sentinelReplayInput) return;
+      if (!backgroundReplayInput) return;
       const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
       const observation: SentinelFailureObservation = {
         status: response.status,
@@ -415,18 +452,44 @@ export const withTerminalRequestLog = (
         synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
         provider_route: telemetry?.provider ?? response.headers.get("x-uos-upstream") ?? "gateway",
       };
+      const startReplayPersistence = (
+        clientObservation: ReturnType<typeof resolveSentinelClientFailureObservation>,
+      ): Promise<void> => {
+        if (!shouldPersistSentinelReplay(observation, clientObservation)) return Promise.resolve();
+        try {
+          return Promise.resolve(
+            (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
+              backgroundReplayInput,
+              observation,
+              clientObservation,
+            ),
+          ).then(() => undefined);
+        } catch {
+          return Promise.resolve();
+        }
+      };
+      const fallbackClientObservation = resolveSentinelClientFailureObservation(observation);
+      // An HTTP failure is already sufficient to decide that the capture is
+      // persistable. Start the best-effort write before waiting for the body
+      // clone so a stalled inspection or delivery cannot delay its handoff.
+      if (
+        input.deliveryCompleted !== undefined && !isSse &&
+        shouldPersistSentinelReplay(observation, fallbackClientObservation)
+      ) {
+        const replayWrite = startReplayPersistence(fallbackClientObservation);
+        zeroSentinelReplayInput(originalReplayInput);
+        await replayWrite;
+        return;
+      }
       const bodyObservation = clientBodyObservation ?? await bufferedObservation;
       const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
-      if (shouldPersistSentinelReplay(observation, clientObservation)) {
-        await (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
-          sentinelReplayInput,
-          observation,
-          clientObservation,
-        );
-      }
+      await startReplayPersistence(clientObservation);
     })().catch(() => {
       // Capture persistence is best effort and must not replace the response.
-    }).finally(() => zeroSentinelReplayInput(sentinelReplayInput));
+    }).finally(() => {
+      zeroSentinelReplayInput(backgroundReplayInput);
+      zeroSentinelReplayInput(originalReplayInput);
+    });
     return replayFinalization;
   };
   let terminalLog: Promise<void> | null = null;
@@ -440,6 +503,9 @@ export const withTerminalRequestLog = (
     if (terminalLog) return terminalLog;
     terminalLog = logTerminalRequest({
       ...input,
+      // Replay persistence owns cleanup after it has taken its snapshot. Do
+      // not let terminal logging clear the original body first.
+      sentinelReplayInput: replayFinalization === null ? input.sentinelReplayInput : null,
       response,
       downstreamDrainedAtMonotonicMs,
       deliveryOutcome,
@@ -476,7 +542,12 @@ export const withTerminalRequestLog = (
     return (async () => {
       try {
         await finalizeCompletion();
-        await persistReplayAtApplicationTerminal();
+        // Deno can return the already-computed response while this best-effort
+        // capture continues in the background. In particular, buffered replay
+        // inspection, compression, encryption, and KV writes must not extend
+        // client-visible gateway error latency.
+        const replayTask = persistReplayAtApplicationTerminal();
+        if (!scheduleSentinelBackgroundTask(replayTask, input.waitUntil)) await replayTask;
         return response;
       } finally {
         if (deliveryOutcome) {
