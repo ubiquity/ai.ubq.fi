@@ -23,7 +23,11 @@ const completedSse = (label: string): string =>
       response: {
         id: `resp-${label}`,
         model: MODEL,
-        output: [],
+        output: [{
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: `measurement ${label}` }],
+        }],
         usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
       },
     })

@@ -20,7 +20,8 @@ export type ResponsesStreamFailureKind =
   | "premature_eof"
   | "read_error"
   | "inactivity_timeout"
-  | "event_too_large";
+  | "event_too_large"
+  | "empty_upstream_completion";
 
 export const MAX_RESPONSES_SSE_EVENT_BYTES = 16 * 1024 * 1024;
 

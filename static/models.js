@@ -7,7 +7,7 @@ if (!summary || !list || !count || !(search instanceof HTMLInputElement)) {
   throw new Error("Models page markup is incomplete");
 }
 
-const providerNames = { codex: "Codex", openlux: "OpenLux", surplus: "Surplus Intelligence" };
+const providerNames = { codex: "Codex", openlux: "Metered 2", surplus: "Metered 1" };
 let catalog = [];
 
 const render = () => {

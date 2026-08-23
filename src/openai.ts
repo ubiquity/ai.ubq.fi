@@ -727,6 +727,7 @@ const recordResponsesFailureTelemetry = (
   telemetry.failureKind = details?.failureKind ?? failureKindFromError(error);
   if (details) {
     telemetry.responseCreatedObserved = details.responseCreatedObserved;
+    telemetry.semanticOutputObserved = details.semanticCommitmentObserved;
     telemetry.syntheticTerminalType = details.syntheticTerminalType;
   }
 };
@@ -1064,6 +1065,7 @@ type ResponsesAttemptTrigger =
   | "premature_eof"
   | "semantic_timeout"
   | "terminal_failure"
+  | "empty_upstream_completion"
   | "read_error"
   | "invalid_model";
 
@@ -1083,6 +1085,7 @@ type FailedResponsesAttempt = Readonly<{
   provider: UpstreamProvider;
   response: Response;
   trigger: ResponsesAttemptTrigger;
+  terminal?: ResponsesStreamEvent | null;
   signal: AbortSignal;
   clearDeadline: () => void;
 }>;
@@ -1118,6 +1121,8 @@ const failureKindForResponsesAttemptTrigger = (
       return "event_too_large";
     case "semantic_timeout":
       return "inactivity_timeout";
+    case "empty_upstream_completion":
+      return "empty_upstream_completion";
     case "read_error":
     case "missing_body":
       return "read_error";
@@ -1133,6 +1138,17 @@ const safeFailedAttemptResponse = (
   warnings: readonly string[],
 ): Response => {
   if (!response.ok) return response;
+  if (trigger === "empty_upstream_completion") {
+    return streamErrorResponse(
+      502,
+      "The upstream completed without visible output.",
+      "empty_upstream_completion",
+      provider,
+      warnings,
+      "server_error",
+      null,
+    );
+  }
   if (trigger === "semantic_timeout") {
     return streamErrorResponse(
       504,
@@ -1172,9 +1188,14 @@ const prepareResponsesAttempt = async (
     requireEligibleModel?: boolean;
     rejectFailedTerminal?: boolean;
     rejectPresemanticFailureTerminal?: boolean;
+    releaseOnProgress?: boolean;
   }> = {},
 ): Promise<ResponsesAttemptResult> => {
-  const fail = (trigger: ResponsesAttemptTrigger, failedResponse = response): ResponsesAttemptResult => {
+  const fail = (
+    trigger: ResponsesAttemptTrigger,
+    failedResponse = response,
+    terminal: ResponsesStreamEvent | null = null,
+  ): ResponsesAttemptResult => {
     deadline.clear();
     return {
       kind: "failed",
@@ -1182,6 +1203,7 @@ const prepareResponsesAttempt = async (
         provider,
         response: safeFailedAttemptResponse(failedResponse, provider, trigger, warnings),
         trigger,
+        terminal,
         signal: deadline.signal,
         clearDeadline: deadline.clear,
       },
@@ -1214,8 +1236,13 @@ const prepareResponsesAttempt = async (
   try {
     const prepared = await prepareResponsesStreamForCommit(iterator, {
       onEvent: (event) => recordResponsesEventTelemetry(options.usageContext, event),
+      releaseOnProgress: options.releaseOnProgress,
     });
     preparedStream = prepared;
+    if (prepared.terminal?.type === "response.completed" && prepared.semantic === null) {
+      await iterator.return("empty upstream completion").catch(() => {});
+      return fail("empty_upstream_completion", response, prepared.terminal);
+    }
     if (
       prepared.terminal &&
       ((options.rejectFailedTerminal &&
@@ -1362,7 +1389,7 @@ const responseFailureTerminalType = (
   if (downstreamSignal.aborted) return "cancelled";
   if (signal.aborted) return "deadline";
   if (trigger === "premature_eof") return "eof";
-  if (trigger === "terminal_failure") return "response.failed";
+  if (trigger === "terminal_failure" || trigger === "empty_upstream_completion") return "response.failed";
   return "error";
 };
 
@@ -1379,7 +1406,10 @@ const fetchAndPreparePrimaryResponses = async (
     downstreamSignal: AbortSignal;
     warnings: readonly string[];
     attemptDeadline: StreamDeadline;
+    fallbackSignal?: AbortSignal;
+    createFallbackDeadline?: () => StreamDeadline;
     rejectPresemanticFailureTerminal?: boolean;
+    releaseOnProgress?: boolean;
   }>,
 ): Promise<{ kind: "ready"; value: ResponsesRouteAttempt } | { kind: "failed"; value: ResponsesRouteFailure }> => {
   const deadline = options.attemptDeadline;
@@ -1394,6 +1424,7 @@ const fetchAndPreparePrimaryResponses = async (
       clientVersion: options.clientVersion,
       codexAdmissionCallerLaneHash: options.codexAdmissionCallerLaneHash,
       signal: deadline.signal,
+      fallbackSignal: options.fallbackSignal,
     });
   } catch (error) {
     deadline.clear();
@@ -1428,6 +1459,11 @@ const fetchAndPreparePrimaryResponses = async (
     }
     throw error;
   }
+  let preparationDeadline = deadline;
+  if (routed.provider !== "chatgpt_codex" && options.createFallbackDeadline) {
+    deadline.clear();
+    preparationDeadline = options.createFallbackDeadline();
+  }
   const lifecycle = createMeteredTransportLifecycle(
     routed.paidFallback,
     routed.provider,
@@ -1437,7 +1473,7 @@ const fetchAndPreparePrimaryResponses = async (
     routed.providerHealthOnly === true,
   );
   if (routed.gatewayResponse) {
-    deadline.clear();
+    preparationDeadline.clear();
     const trigger: ResponsesAttemptTrigger = routed.response.status === 504
       ? "semantic_timeout"
       : routed.response.status >= 500
@@ -1452,8 +1488,8 @@ const fetchAndPreparePrimaryResponses = async (
           provider: routed.provider,
           response: routed.response,
           trigger,
-          signal: deadline.signal,
-          clearDeadline: deadline.clear,
+          signal: preparationDeadline.signal,
+          clearDeadline: preparationDeadline.clear,
         },
       },
     };
@@ -1463,17 +1499,18 @@ const fetchAndPreparePrimaryResponses = async (
     prepared = await prepareResponsesAttempt(
       routed.response,
       routed.provider,
-      deadline,
+      preparationDeadline,
       options.requestSignal,
       [...options.warnings, ...responseWarnings(routed.response)],
       {
         usageContext: options.usageContext,
         rejectPresemanticFailureTerminal: options.rejectPresemanticFailureTerminal,
+        releaseOnProgress: options.releaseOnProgress === true && routed.provider === "chatgpt_codex",
       },
     );
   } catch (error) {
     if (options.requestSignal.aborted) {
-      finalizeAbandonedPrimaryAttempt(routed, lifecycle, {
+      await finalizeAbandonedPrimaryAttempt(routed, lifecycle, {
         cancelled: classifyPreHeaderFailure(
           error,
           options.requestSignal,
@@ -1483,9 +1520,10 @@ const fetchAndPreparePrimaryResponses = async (
     }
     throw error;
   }
-  return prepared.kind === "ready"
-    ? { kind: "ready", value: { routed, prepared: prepared.attempt, lifecycle } }
-    : { kind: "failed", value: { routed, failed: prepared.attempt, lifecycle } };
+  if (prepared.kind === "ready") {
+    return { kind: "ready", value: { routed, prepared: prepared.attempt, lifecycle } };
+  }
+  return { kind: "failed", value: { routed, failed: prepared.attempt, lifecycle } };
 };
 
 const fetchAndPrepareRemovedProviderResponses = async (
@@ -1541,26 +1579,33 @@ const fetchAndPrepareRemovedProviderResponses = async (
     deadline,
     options.requestSignal,
     [],
-    { usageContext: options.usageContext, requireEligibleModel: true, rejectFailedTerminal: true },
+    {
+      usageContext: options.usageContext,
+      requireEligibleModel: true,
+      rejectFailedTerminal: true,
+    },
   );
 };
 
-const finalizeAbandonedPrimaryAttempt = (
+const finalizeAbandonedPrimaryAttempt = async (
   routed: RoutedResponsesUpstream,
   lifecycle: MeteredTransportLifecycle,
   options: Readonly<{
     cancelled?: boolean;
     failureTrigger?: ResponsesAttemptTrigger;
   }> = {},
-): void => {
+): Promise<void> => {
   if (routed.provider === "chatgpt_codex") {
     const transition = routed.response.ok && !options.cancelled
       ? markCodexResponseUpstreamError(routed.response)
       : releaseCodexResponseProbe(routed.response);
-    void transition.catch(() => {});
+    await transition.catch(() => {});
   } else if ((routed.provider === "metered" || routed.provider === "surplus") && !routed.gatewayResponse) {
     if (options.cancelled) lifecycle.cancelled();
-    else if (options.failureTrigger === "http_5xx" || options.failureTrigger === "terminal_failure") {
+    else if (
+      options.failureTrigger === "http_5xx" || options.failureTrigger === "terminal_failure" ||
+      options.failureTrigger === "empty_upstream_completion"
+    ) {
       lifecycle.terminal("response.failed");
     } else lifecycle.ambiguous();
   }
@@ -2173,6 +2218,11 @@ const logPaidProviderSelected = (
   }
 };
 
+const canAttemptPaidFallback = (context: UsageContext | undefined): boolean =>
+  context?.paidFallbackEnabled === true &&
+  Boolean(context?.keyId && context.requestId && context.startedAtMs !== undefined) &&
+  (Boolean(readSurplusApiKey()) || Boolean(readMeteredApiKey()));
+
 const bestEffortPaidFallbackBookkeeping = async (
   operation: string,
   run: () => Promise<unknown>,
@@ -2356,8 +2406,10 @@ const fetchResponsesWithPaidFallback = async (
     clientVersion?: string | null;
     signal?: AbortSignal;
     codexAdmissionCallerLaneHash?: string | null;
+    fallbackSignal?: AbortSignal;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
+  const fallbackSignal = options.fallbackSignal ?? options.signal;
   const telemetry = options.usageContext?.responseTelemetry;
   if (isTemporaryFreeSurplusModel(options.model)) {
     if (telemetry) {
@@ -2582,8 +2634,8 @@ const fetchResponsesWithPaidFallback = async (
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  // Authentication and authorization failures are not capacity evidence.
-  // Fail closed instead of converting bad Codex credentials into paid spend.
+  // Only Codex 429 quota or capacity responses can admit paid fallback.
+  // Compatibility, authentication, and authorization failures fail closed.
   const fallbackReason: InferenceFallbackReason | null = primaryStatus === 429
     ? routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ? "primary_quota_blocked" : "primary_429"
     : null;
@@ -2603,10 +2655,10 @@ const fetchResponsesWithPaidFallback = async (
       fallbackReason,
     };
   }
-  if (options.signal?.aborted) {
+  if (fallbackSignal?.aborted) {
     if (primary) cancelResponseBody(primary);
-    throw options.signal.reason instanceof Error
-      ? options.signal.reason
+    throw fallbackSignal.reason instanceof Error
+      ? fallbackSignal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
   // A stale snapshot remains usable when it already selects a paid provider.
@@ -2619,8 +2671,8 @@ const fetchResponsesWithPaidFallback = async (
     (!paidProviders.length && (meteredCatalogNeedsRefresh() || surplusCatalogNeedsRefresh()))
   ) {
     [meteredCatalog, surplusCatalog] = await Promise.all([
-      meteredCatalogNeedsRefresh() ? fetchMeteredModels({ signal: options.signal }) : Promise.resolve(meteredCatalog),
-      surplusCatalogNeedsRefresh() ? fetchSurplusModels({ signal: options.signal }) : Promise.resolve(surplusCatalog),
+      meteredCatalogNeedsRefresh() ? fetchMeteredModels({ signal: fallbackSignal }) : Promise.resolve(meteredCatalog),
+      surplusCatalogNeedsRefresh() ? fetchSurplusModels({ signal: fallbackSignal }) : Promise.resolve(surplusCatalog),
     ]);
     ({ surplusBilling, paidProviders, meteredOnly } = routingState());
   }
@@ -2679,24 +2731,24 @@ const fetchResponsesWithPaidFallback = async (
     };
   }
 
-  if (options.signal?.aborted) {
+  if (fallbackSignal?.aborted) {
     cancelResponseBody(primary);
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
       () => recordMeteredPrefetchCancellation(decision.reservation),
     );
-    throw options.signal.reason instanceof Error
-      ? options.signal.reason
+    throw fallbackSignal.reason instanceof Error
+      ? fallbackSignal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
   cancelResponseBody(primary);
-  if (options.signal?.aborted) {
+  if (fallbackSignal?.aborted) {
     await bestEffortPaidFallbackBookkeeping(
       "prefetch cancellation recording",
       () => recordMeteredPrefetchCancellation(decision.reservation),
     );
-    throw options.signal.reason instanceof Error
-      ? options.signal.reason
+    throw fallbackSignal.reason instanceof Error
+      ? fallbackSignal.reason
       : new DOMException("The request was aborted.", "AbortError");
   }
   if (telemetry) {
@@ -2725,7 +2777,7 @@ const fetchResponsesWithPaidFallback = async (
     telemetry.providerRequestId = providerRequestId;
   };
   for (const [providerIndex, provider] of paidProviders.entries()) {
-    if (options.signal?.aborted) {
+    if (fallbackSignal?.aborted) {
       retainRespondingProviderTelemetry(previousRespondingProvider, previousProviderRequestId);
       await bestEffortPaidFallbackBookkeeping(
         previousRespondingProvider === null
@@ -2740,8 +2792,8 @@ const fetchResponsesWithPaidFallback = async (
               previousProviderRequestId,
             ),
       );
-      throw options.signal.reason instanceof Error
-        ? options.signal.reason
+      throw fallbackSignal.reason instanceof Error
+        ? fallbackSignal.reason
         : new DOMException("The request was aborted.", "AbortError");
     }
     selectedProvider = provider;
@@ -2754,14 +2806,14 @@ const fetchResponsesWithPaidFallback = async (
     try {
       const candidate = provider === "surplus"
         ? await fetchSurplusResponses(body, {
-          signal: options.signal,
+          signal: fallbackSignal,
           beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("surplus") ?? Promise.resolve(),
           onDispatch: () => {
             transportStarted = true;
           },
         })
         : await fetchMeteredResponses(body, {
-          signal: options.signal,
+          signal: fallbackSignal,
           beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
           onDispatch: () => {
             transportStarted = true;
@@ -2806,7 +2858,7 @@ const fetchResponsesWithPaidFallback = async (
         );
         throw error;
       }
-      if (options.signal?.aborted) {
+      if (fallbackSignal?.aborted) {
         // The explicit dispatch callback distinguishes cancellation before
         // this transport from an abort that may have reached the provider.
         // Keep any contacted provider for reconciliation and never retry.
@@ -2824,8 +2876,8 @@ const fetchResponsesWithPaidFallback = async (
                 ambiguousProviderRequestId,
               ),
         );
-        throw options.signal.reason instanceof Error
-          ? options.signal.reason
+        throw fallbackSignal.reason instanceof Error
+          ? fallbackSignal.reason
           : new DOMException("The request was aborted.", "AbortError");
       }
       providerError = error;
@@ -2859,9 +2911,9 @@ const fetchResponsesWithPaidFallback = async (
             previousProviderRequestId,
           ),
     );
-    const abortReason = options.signal?.reason;
+    const abortReason = fallbackSignal?.reason;
     if (
-      (options.signal?.aborted && abortReason instanceof Error && abortReason.name === "TimeoutError") ||
+      (fallbackSignal?.aborted && abortReason instanceof Error && abortReason.name === "TimeoutError") ||
       (error instanceof Error && error.name === "TimeoutError")
     ) {
       return {
@@ -6117,6 +6169,115 @@ class ChatFunctionCallAccumulator {
   }
 }
 
+const preparedChatCompletionIsEmpty = (prepared: PreparedResponsesStream): boolean => {
+  let outputText = "";
+  let refusal = "";
+  const outputTextParts = new Map<string, string>();
+  const refusalParts = new Map<string, string>();
+  const functionCalls = new ChatFunctionCallAccumulator();
+  let completed = false;
+
+  for (const event of prepared.buffered) {
+    const ev = event.value;
+    switch (event.type) {
+      case "response.output_text.delta": {
+        const delta = getString(ev.delta);
+        if (delta === null) return malformedFunctionCallStream("Upstream output-text delta is not a string.");
+        const key = chatOutputTextPartKey(ev);
+        outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
+        outputText += delta;
+        break;
+      }
+      case "response.output_text.done": {
+        const completedText = getString(ev.text);
+        if (completedText === null) {
+          return malformedFunctionCallStream("Upstream completed output text is not a string.");
+        }
+        const key = chatOutputTextPartKey(ev);
+        const partText = outputTextParts.get(key) ?? "";
+        const suffix = reconcileCompletedOutputText(partText, completedText);
+        outputTextParts.set(key, `${partText}${suffix}`);
+        outputText += suffix;
+        break;
+      }
+      case "response.refusal.delta": {
+        const delta = getString(ev.delta);
+        if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
+        const key = chatOutputTextPartKey(ev);
+        refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
+        refusal += delta;
+        break;
+      }
+      case "response.refusal.done": {
+        const completedRefusal = getString(ev.refusal);
+        if (completedRefusal === null) {
+          return malformedFunctionCallStream("Upstream completed refusal is not a string.");
+        }
+        const key = chatOutputTextPartKey(ev);
+        const partRefusal = refusalParts.get(key) ?? "";
+        const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
+        refusalParts.set(key, `${partRefusal}${suffix}`);
+        refusal += suffix;
+        break;
+      }
+      case "response.content_part.done": {
+        const reconciled = reconcileChatContentPart(outputTextParts, refusalParts, ev, ev.part);
+        outputText += reconciled.outputText;
+        refusal += reconciled.refusal;
+        break;
+      }
+      case "response.output_item.added":
+        functionCalls.add(ev, ev.item);
+        break;
+      case "response.function_call_arguments.delta":
+        functionCalls.delta(ev);
+        break;
+      case "response.function_call_arguments.done":
+        functionCalls.done(ev);
+        break;
+      case "response.output_item.done": {
+        const functionCall = functionCalls.reconcileItem(ev, ev.item);
+        if (!functionCall) {
+          const reconciled = reconcileChatOutputItemContent(outputTextParts, refusalParts, ev, ev.item);
+          outputText += reconciled.outputText;
+          refusal += reconciled.refusal;
+        }
+        break;
+      }
+      case "response.output": {
+        const output = ev.output ?? (isRecord(ev.response) ? ev.response.output : undefined);
+        const reconciled = reconcileChatResponseOutputContent(outputTextParts, refusalParts, ev, output);
+        outputText += reconciled.outputText;
+        refusal += reconciled.refusal;
+        functionCalls.reconcileOutput(ev, output);
+        break;
+      }
+      case "response.completed": {
+        if (!isRecord(ev.response) || Array.isArray(ev.response)) {
+          return malformedFunctionCallStream("Upstream response.completed event is missing its response object.");
+        }
+        const reconciled = reconcileChatResponseOutputContent(
+          outputTextParts,
+          refusalParts,
+          ev,
+          ev.response.output,
+        );
+        outputText += reconciled.outputText;
+        refusal += reconciled.refusal;
+        functionCalls.reconcileOutput(ev, ev.response.output);
+        functionCalls.assertFinalized();
+        completed = true;
+        break;
+      }
+    }
+  }
+
+  if (!completed) {
+    return malformedFunctionCallStream("Chat semantic preflight did not retain a completed terminal.");
+  }
+  return !outputText && !refusal && !functionCalls.hasCalls;
+};
+
 const chatToolCallDelta = (
   call: ChatFunctionCall,
   options: Readonly<{ includeIdentity: boolean; argumentsDelta?: string }> = { includeIdentity: false },
@@ -6130,6 +6291,31 @@ const chatToolCallDelta = (
     value.type = "function";
   }
   return value;
+};
+
+const chatSourceFromPrepared = (
+  source: PreflightedResponsesStream,
+  prepared: PreparedResponsesStream,
+): PreflightedResponsesStream => {
+  const first = prepared.buffered[0];
+  if (!first) throw new ResponsesStreamError("Chat preflight did not retain its first event.", { kind: "read_error" });
+  const iterator = (async function* (): ResponsesStreamIterator {
+    try {
+      for (const event of prepared.buffered.slice(1)) yield event;
+      for await (const event of prepared.iterator) yield event;
+      return undefined;
+    } finally {
+      await prepared.iterator.return("Chat prepared stream closed").catch(() => {});
+    }
+  })();
+  return {
+    first,
+    iterator,
+    cancel: async (reason?: unknown): Promise<void> => {
+      await source.cancel(reason);
+      await iterator.return(reason).catch(() => {});
+    },
+  };
 };
 
 const EMPTY_UPSTREAM_COMPLETION_MESSAGE = "Upstream response completed with no translated semantic output.";
@@ -6603,6 +6789,7 @@ const streamChatCompletions = (
         }
       } catch (error) {
         if (closed) return;
+        await iterator.return(error).catch(() => {});
         if (!terminalSettled) {
           recordResponsesFailureTelemetry(usageContext, error);
           if (observedCompletedUsage !== undefined) {
@@ -8589,7 +8776,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     ? AbortSignal.any([requestInferenceSignal, admissionSignal])
     : requestInferenceSignal;
   try {
-    preflight = await preflightResponsesStream(
+    const firstEvent = await preflightResponsesStream(
       upstream.body,
       upstreamSignal,
       admissionSignal
@@ -8601,7 +8788,48 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
         }
         : {},
     );
+    recordFirstSseEvent(usageContext);
+    const replay = (async function* (): ResponsesStreamIterator {
+      try {
+        yield firstEvent.first;
+        for await (const event of firstEvent.iterator) yield event;
+        return undefined;
+      } finally {
+        await firstEvent.iterator.return("Chat semantic preflight closed").catch(() => {});
+      }
+    })();
+    const prepared = await prepareResponsesStreamForCommit(replay, {
+      releaseOnProgress: stream && routed.provider === "chatgpt_codex",
+    });
     clearStreamFirstEventDeadline();
+    const completedTerminalUsage = prepared.terminal?.type === "response.completed" &&
+        isRecord(prepared.terminal.value.response)
+      ? extractUsageTokens(prepared.terminal.value.response.usage)
+      : null;
+    let emptyCompletion = false;
+    if (prepared.terminal?.type === "response.completed" && prepared.semantic === null) {
+      try {
+        emptyCompletion = preparedChatCompletionIsEmpty(prepared);
+      } catch (error) {
+        recordTerminalUsage(usageContext, completedTerminalUsage, false);
+        throw error;
+      }
+    }
+    if (emptyCompletion) {
+      for (const event of prepared.buffered) recordResponsesEventTelemetry(usageContext, event);
+      recordEmptyUpstreamCompletion(usageContext, lifecycle, completedTerminalUsage, resolveCodexProbe);
+      await prepared.iterator.return("Empty Chat completion rejected").catch(() => {});
+      return streamErrorResponse(
+        502,
+        EMPTY_UPSTREAM_COMPLETION_MESSAGE,
+        "empty_upstream_completion",
+        routed.provider,
+        [...warnings, ...providerWarnings],
+        "server_error",
+        null,
+      );
+    }
+    preflight = chatSourceFromPrepared(firstEvent, prepared);
   } catch (error) {
     clearStreamFirstEventDeadline();
     const terminalType = classifyStreamFailure(error, requestInferenceSignal, downstreamSignal);
@@ -8613,7 +8841,6 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     await recordErrorUsage(usageContext);
     return streamPreflightFailureResponse(terminalType, routed.provider, [...warnings, ...providerWarnings]);
   }
-  recordFirstSseEvent(usageContext);
   const response = stream
     ? streamChatCompletions(
       preflight,
@@ -8954,6 +9181,7 @@ const handleResponsesInternal = async (
   const requestInferenceSignal = clientWantsStream ? downstreamSignal : inferenceSignal(req, usageContext);
   const preHeaderDeadline = createStreamFirstEventDeadline(requestInferenceSignal);
   const apiKey = isTemporaryFreeSurplusModel(model) ? null : readRemovedProviderApiKey();
+  const paidFallbackAvailable = canAttemptPaidFallback(usageContext);
   const debugRoutingScenario = (await loadDebugRoutingConfig()).scenario;
   const circuit = apiKey ? await selectRemovedProviderCircuitRoute() : null;
   if (circuit && circuit.transition !== "none") {
@@ -8985,7 +9213,9 @@ const handleResponsesInternal = async (
       try {
         const remainingMs = preHeaderDeadline.remainingMs();
         const failoverReserveMs = Math.min(STREAM_FAILOVER_RESERVE_MS, remainingMs / 2);
-        const primaryBudgetMs = apiKey ? Math.max(0, remainingMs - failoverReserveMs) : remainingMs;
+        const primaryBudgetMs = apiKey || paidFallbackAvailable
+          ? Math.max(0, remainingMs - failoverReserveMs)
+          : remainingMs;
         const result = await fetchAndPreparePrimaryResponses(codexBody, {
           model,
           reasoning: reasoningLabel,
@@ -8997,7 +9227,16 @@ const handleResponsesInternal = async (
           downstreamSignal,
           warnings,
           attemptDeadline: createStreamSemanticDeadline(preHeaderDeadline.signal, Math.ceil(primaryBudgetMs)),
+          fallbackSignal: paidFallbackAvailable ? preHeaderDeadline.signal : undefined,
+          createFallbackDeadline: paidFallbackAvailable
+            ? () =>
+              createStreamSemanticDeadline(
+                preHeaderDeadline.signal,
+                Math.ceil(preHeaderDeadline.remainingMs()),
+              )
+            : undefined,
           rejectPresemanticFailureTerminal: apiKey !== null,
+          releaseOnProgress: clientWantsStream,
         });
         if (result.kind === "ready") {
           primaryResult = result.value;
@@ -9029,6 +9268,18 @@ const handleResponsesInternal = async (
           const failureKind = failureKindForResponsesAttemptTrigger(failed.trigger);
           if (failureKind && usageContext?.responseTelemetry) {
             usageContext.responseTelemetry.failureKind = failureKind;
+            if (failureKind === "empty_upstream_completion") {
+              usageContext.responseTelemetry.semanticOutputObserved = false;
+            }
+          }
+          if (failed.trigger === "empty_upstream_completion") {
+            const terminalUsage = failed.terminal && isRecord(failed.terminal.value.response)
+              ? extractUsageTokens(failed.terminal.value.response.usage)
+              : null;
+            recordTerminalUsage(usageContext, terminalUsage, false);
+            await finalizeAbandonedPrimaryAttempt(routed, lifecycle, { failureTrigger: failed.trigger });
+            if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
+            return failed.response;
           }
           if (routed.gatewayResponse && !isEligibleResponsesAttemptStatus(failed.response)) {
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
@@ -9044,7 +9295,7 @@ const handleResponsesInternal = async (
             return failed.response;
           }
           if (!routed.gatewayResponse) {
-            finalizeAbandonedPrimaryAttempt(routed, lifecycle, {
+            await finalizeAbandonedPrimaryAttempt(routed, lifecycle, {
               cancelled: terminalType === "cancelled",
               failureTrigger: failed.trigger,
             });
@@ -9099,6 +9350,19 @@ const handleResponsesInternal = async (
         });
       } else {
         void persistFailedRemovedProviderAttempt(usageContext, fallbackStartedAt, removedProvider.attempt.trigger);
+        if (removedProvider.attempt.trigger === "empty_upstream_completion") {
+          if (usageContext?.responseTelemetry) {
+            usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+            usageContext.responseTelemetry.semanticOutputObserved = false;
+          }
+          const terminalUsage = removedProvider.attempt.terminal &&
+              isRecord(removedProvider.attempt.terminal.value.response)
+            ? extractUsageTokens(removedProvider.attempt.terminal.value.response.usage)
+            : null;
+          recordTerminalUsage(usageContext, terminalUsage, false);
+          recordStreamTerminalType(usageContext, "response.failed");
+          return removedProvider.attempt.response;
+        }
         if (primaryFailureResponse || removedProvider.attempt.trigger === "terminal_failure") {
           if (primaryFailureResponse && usageContext?.responseTelemetry) {
             const telemetry = usageContext.responseTelemetry;
@@ -9136,6 +9400,7 @@ const handleResponsesInternal = async (
               Math.ceil(preHeaderDeadline.remainingMs()),
             ),
             rejectPresemanticFailureTerminal: true,
+            releaseOnProgress: clientWantsStream,
           });
         } catch (error) {
           const transition = recoveryProbe ? await releaseGlobalRemovedProviderProbe(recoveryProbe) : "none";
@@ -9150,10 +9415,27 @@ const handleResponsesInternal = async (
             recovery.value.failed.signal,
             downstreamSignal,
           );
-          finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle, {
+          await finalizeAbandonedPrimaryAttempt(recovery.value.routed, recovery.value.lifecycle, {
             cancelled: terminalType === "cancelled",
             failureTrigger: recovery.value.failed.trigger,
           });
+          if (recovery.value.failed.trigger === "empty_upstream_completion") {
+            if (usageContext?.responseTelemetry) {
+              usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+              usageContext.responseTelemetry.semanticOutputObserved = false;
+            }
+            const terminalUsage = recovery.value.failed.terminal &&
+                isRecord(recovery.value.failed.terminal.value.response)
+              ? extractUsageTokens(recovery.value.failed.terminal.value.response.usage)
+              : null;
+            recordTerminalUsage(usageContext, terminalUsage, false);
+            recordStreamTerminalType(usageContext, "response.failed");
+            const transition = recoveryProbe ? await releaseGlobalRemovedProviderProbe(recoveryProbe) : "none";
+            if (transition !== "none") {
+              recordRemovedProviderFields(usageContext, { circuitTransition: transition });
+            }
+            return recovery.value.failed.response;
+          }
           if (terminalType === "cancelled") {
             const transition = recoveryProbe ? await releaseGlobalRemovedProviderProbe(recoveryProbe) : "none";
             if (transition !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: transition });
@@ -9267,7 +9549,9 @@ const handleResponsesInternal = async (
     if (usageContext?.responseTelemetry?.streamTerminalType === null) {
       recordStreamTerminalType(usageContext, terminalType);
     }
-    if (routed) finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
+    if (routed) {
+      void finalizeAbandonedPrimaryAttempt(routed, lifecycle, { cancelled: terminalType === "cancelled" });
+    }
     if (globalProbe && (routed?.provider === "metered" || routed?.provider === "surplus")) {
       void releaseGlobalRemovedProviderProbe(globalProbe).then((value) => {
         if (value !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: value });
@@ -9410,6 +9694,12 @@ const handleResponsesInternal = async (
       else if (usageContext?.responseTelemetry) {
         usageContext.responseTelemetry.responseCreatedObserved = details?.responseCreatedObserved ??
           usageContext.responseTelemetry.responseCreatedObserved;
+      }
+      if (details?.failureKind === "empty_upstream_completion") {
+        const terminalUsage = details.upstreamTerminal && isRecord(details.upstreamTerminal.value.response)
+          ? extractUsageTokens(details.upstreamTerminal.value.response.usage)
+          : null;
+        recordTerminalUsage(usageContext, terminalUsage, false);
       }
       reconcileCommittedFailure(terminalType);
     },

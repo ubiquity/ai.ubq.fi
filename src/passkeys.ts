@@ -7,6 +7,7 @@ import {
 } from "@simplewebauthn/server";
 import { getBearerToken, json, openaiError } from "./http.ts";
 import { getKv } from "./kv.ts";
+import { readJsonBodyWithLimit } from "./request.ts";
 import { base64UrlDecode, base64UrlEncode, getString, isRecord, sha256Hex } from "./utils.ts";
 
 export type PasskeyUserRecord = {
@@ -54,6 +55,7 @@ export type PasskeySession = {
 
 export const PASSKEY_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export const PASSKEY_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const PASSKEY_MAX_REQUEST_BODY_BYTES = 64 * 1024;
 
 const AUTH_PREFIX = ["uos_ai", "auth"] as const;
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
@@ -173,6 +175,20 @@ const getKvOrError = async (): Promise<Deno.Kv | Response> => {
   const kv = await getKv();
   if (!kv) return openaiError(503, "Passkey auth requires Deno KV", "server_error");
   return kv;
+};
+
+const readPasskeyJson = async (
+  req: Request,
+  options: Readonly<{ allowEmpty?: boolean }> = {},
+): Promise<Record<string, unknown> | Response> => {
+  if (options.allowEmpty && !req.body) return {};
+  const result = await readJsonBodyWithLimit(req, PASSKEY_MAX_REQUEST_BODY_BYTES);
+  if (!result.ok) {
+    return result.kind === "too_large"
+      ? openaiError(413, "Passkey request body is too large", "invalid_request_error")
+      : openaiError(400, "Invalid JSON body", "invalid_request_error");
+  }
+  return isRecord(result.value) ? result.value : openaiError(400, "Invalid JSON body", "invalid_request_error");
 };
 
 const getUserByHandle = async (kv: Deno.Kv, handle: string): Promise<PasskeyUserRecord | null> => {
@@ -336,17 +352,11 @@ export const handlePasskeyRegisterStart = async (
   req: Request,
   options: { defaultIsAdmin?: boolean } = {},
 ): Promise<Response> => {
+  const raw = await readPasskeyJson(req);
+  if (raw instanceof Response) return raw;
   const kvOrError = await getKvOrError();
   if (kvOrError instanceof Response) return kvOrError;
   const kv = kvOrError;
-
-  let raw: unknown = null;
-  try {
-    raw = await req.json();
-  } catch {
-    return openaiError(400, "Invalid JSON body", "invalid_request_error");
-  }
-  if (!isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
   const token = getBearerToken(req) ?? "";
   const existingSession = token ? await getPasskeySession(token) : null;
@@ -407,17 +417,11 @@ export const handlePasskeyRegisterStart = async (
 };
 
 export const handlePasskeyRegisterFinish = async (req: Request): Promise<Response> => {
+  const raw = await readPasskeyJson(req);
+  if (raw instanceof Response) return raw;
   const kvOrError = await getKvOrError();
   if (kvOrError instanceof Response) return kvOrError;
   const kv = kvOrError;
-
-  let raw: unknown = null;
-  try {
-    raw = await req.json();
-  } catch {
-    return openaiError(400, "Invalid JSON body", "invalid_request_error");
-  }
-  if (!isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
   const response = raw.response as RegistrationResponseJSON | undefined;
   const clientDataJson = response?.response?.clientDataJSON;
@@ -483,20 +487,11 @@ export const handlePasskeyRegisterFinish = async (req: Request): Promise<Respons
 };
 
 export const handlePasskeyLoginStart = async (req: Request): Promise<Response> => {
+  const raw = await readPasskeyJson(req, { allowEmpty: true });
+  if (raw instanceof Response) return raw;
   const kvOrError = await getKvOrError();
   if (kvOrError instanceof Response) return kvOrError;
   const kv = kvOrError;
-
-  let raw: unknown = {};
-  const contentType = req.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    try {
-      raw = await req.json();
-    } catch {
-      return openaiError(400, "Invalid JSON body", "invalid_request_error");
-    }
-  }
-  if (!isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
   const handle = normalizePasskeyHandle(raw.handle);
 
@@ -523,17 +518,11 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
 };
 
 export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> => {
+  const raw = await readPasskeyJson(req);
+  if (raw instanceof Response) return raw;
   const kvOrError = await getKvOrError();
   if (kvOrError instanceof Response) return kvOrError;
   const kv = kvOrError;
-
-  let raw: unknown = null;
-  try {
-    raw = await req.json();
-  } catch {
-    return openaiError(400, "Invalid JSON body", "invalid_request_error");
-  }
-  if (!isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
   const response = raw.response as AuthenticationResponseJSON | undefined;
   const clientDataJson = response?.response?.clientDataJSON;

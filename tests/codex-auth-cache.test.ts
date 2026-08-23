@@ -587,6 +587,39 @@ Deno.test("Codex responses try the second account after 403", async () => {
   }
 });
 
+Deno.test("Codex responses never replay an ambiguous transport failure on a sibling", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    if (accountIds.length === 1) {
+      return Promise.reject(new DOMException("upstream socket closed", "TimeoutError"));
+    }
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    await assert.rejects(
+      () => fetchCodexResponses({ input: "timeout-no-replay" }),
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+    );
+    assert.deepEqual(accountIds, ["account-one"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
 Deno.test("Codex responses make one bounded final retry after both accounts return 429", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
@@ -1419,12 +1452,13 @@ Deno.test("a legacy timeout probe cannot block provider transport", async () => 
   kv.routingCommitFailures = 3;
   globalThis.fetch = () => {
     inferenceCalls += 1;
-    return Promise.resolve(new Response("transport should not start", { status: 200 }));
+    return Promise.resolve(new Response("transport proceeds", { status: 200 }));
   };
 
   try {
     const response = await fetchCodexResponses({ input: "timeout-probe-race" });
     assert.equal(response.status, 200);
+    assert.equal(await response.text(), "transport proceeds");
     assert.equal(inferenceCalls, 1);
   } finally {
     kv.routingCommitFailures = 0;
@@ -2904,6 +2938,7 @@ Deno.test("a sibling legacy timeout during partial preflight does not gate fallb
       },
     );
     assert.equal(response.status, 200);
+    assert.equal((await response.json()).id, "stale-timeout-fallback");
     assert.deepEqual(reset.inventoryAccountIds, ["account-one"]);
     assert.deepEqual(reset.redeemAccountIds, []);
     assert.deepEqual(reset.calls, ["inventory"]);

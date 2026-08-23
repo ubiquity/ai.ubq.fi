@@ -81,6 +81,9 @@
               }
             }
           },
+          "304": {
+            "description": "For a matching If-None-Match request on the Codex-native client_version catalog: no response body; reuse the cached catalog."
+          },
           "400": { "$ref": "#/components/responses/InvalidRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "502": { "$ref": "#/components/responses/UpstreamFailure" }
@@ -274,15 +277,15 @@
     },
     "headers": {
       "RetryAfter": {
-        "description": "Seconds to wait before retrying a 429 response.",
+        "description": "When present, seconds to wait before retrying a 429 response.",
         "schema": { "type": "integer", "minimum": 1 }
       },
       "RateLimit": {
-        "description": "RFC 9449 structured rate-limit field, emitted only when the gateway has an authoritative API-key request window. Example: limit=100, remaining=0, reset=60.",
+        "description": "Structured field from active IETF draft-ietf-httpapi-ratelimit-headers-11, emitted only when the gateway has an authoritative API-key request window. Example: \"api-key\";r=0;t=60.",
         "schema": { "type": "string" }
       },
       "RateLimitPolicy": {
-        "description": "RFC 9449 rate-limit policy, emitted for bounded gateway API keys. Example: 100;w=3600.",
+        "description": "Policy field from active IETF draft-ietf-httpapi-ratelimit-headers-11, emitted for bounded gateway API keys. Example: \"api-key\";q=100;w=3600.",
         "schema": { "type": "string" }
       },
       "RateLimitLimit": {
@@ -790,7 +793,7 @@
         }
       },
       "RateLimited": {
-        "description": "The authoritative gateway API-key request window is exhausted. Honor Retry-After and RateLimit fields before retrying.",
+        "description": "A JSON rate-limit error. Honor Retry-After when present. RateLimit metadata is included only when the gateway has an authoritative bounded API-key request window.",
         "headers": {
           "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
           "RateLimit": { "$ref": "#/components/headers/RateLimit" },

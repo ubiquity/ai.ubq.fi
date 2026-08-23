@@ -30,6 +30,9 @@ concurrency:
   group: ai-ubq-fi-deploy
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -359,22 +362,13 @@ jobs:
       - capture-deployment-baseline
     if: >-
       always() &&
+      github.event_name != 'pull_request' &&
       needs.validate.result == 'success' &&
       needs.verify-artifact.result == 'success' &&
-      (
-        needs.configure-secrets.result == 'success' ||
-        (github.event_name == 'pull_request' && needs.configure-secrets.result == 'skipped')
-      ) &&
-      (
-        needs.capture-deployment-baseline.result == 'success' ||
-        (github.event_name == 'pull_request' && needs.capture-deployment-baseline.result == 'skipped')
-      ) &&
+      needs.configure-secrets.result == 'success' &&
+      needs.capture-deployment-baseline.result == 'success' &&
       (
         (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
-        (
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        ) ||
         (
           github.ref != 'refs/heads/development' &&
           github.event_name == 'workflow_dispatch' &&
@@ -403,17 +397,12 @@ jobs:
         }}
       # p-ai-ubq-fi is a separate acceptance app. Manual preview dispatches
       # intentionally use its stable timeline so the stable hostname and
-      # Deno.cron exercise the same isolated revision; PRs use unique preview
-      # revision URLs and never target ai-ubq-fi.
-      # A PR ref must never compare equal to the production branch. Manual
-      # preview dispatches retain their existing stable-app acceptance mode.
+      # Deno.cron exercise the same isolated revision.
       prod_branch: >-
         ${{
           github.event_name == 'workflow_dispatch' &&
           github.event.inputs.sentinel_build_only == 'true' &&
           '__sentinel_non_promoting__' ||
-          github.event_name == 'pull_request' &&
-          '__preview__' ||
           github.ref_name
         }}
       deploy_platform: deno2

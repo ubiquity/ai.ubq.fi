@@ -92,6 +92,11 @@ import {
   setKernelOrgUsageLimit,
   setKernelUsageLimit,
 } from "./kernel_usage.ts";
+import {
+  acquireKernelDefaultWindowCutover,
+  type KernelDefaultWindowCutoverGuard,
+  releaseKernelDefaultWindowCutover,
+} from "./kernel_quota_v2.ts";
 import { listKernelPolicyQueue } from "./kernel_policy_queue.ts";
 import {
   defaultIncludeLegacyForProfile,
@@ -731,15 +736,48 @@ export const handleAdminDefaults = async (
         });
       }
 
+      let cutoverGuard: KernelDefaultWindowCutoverGuard | null = null;
+      const currentKernelWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ??
+        DEFAULT_KERNEL_POLICY_WINDOW_MS;
+      if (writesKernelWindow && kernelPolicyWindow !== currentKernelWindow) {
+        const cutover = await acquireKernelDefaultWindowCutover(kv, kernelLimitEntry, kernelWindowEntry);
+        if (!cutover.ok) {
+          if (cutover.reason === "active_reservations") {
+            return openaiError(
+              409,
+              "Active Kernel quota reservations must settle before changing the default window",
+              "invalid_request_error",
+            );
+          }
+          if (cutover.reason === "concurrent_change") continue;
+          return openaiError(503, "Kernel quota ledger is unavailable", "server_error");
+        }
+        cutoverGuard = cutover.guard;
+      }
+
       let atomic = kv.atomic()
         .check(runtimeEntry)
         .check(kernelLimitEntry)
         .check(kernelWindowEntry);
+      if (cutoverGuard) {
+        atomic = atomic
+          .check(cutoverGuard.entry)
+          .delete(cutoverGuard.key);
+      }
       if (nextRuntime) atomic = atomic.set(RUNTIME_CONFIG_V2_KEY, nextRuntime);
       if (writesKernelLimit) atomic = atomic.set(DEFAULT_KERNEL_POLICY_LIMIT_KEY, kernelPolicyLimit);
       if (writesKernelWindow) atomic = atomic.set(DEFAULT_KERNEL_POLICY_WINDOW_KEY, kernelPolicyWindow);
-      const committed = await atomic.commit();
-      if (!committed.ok) continue;
+      let committed: Awaited<ReturnType<Deno.AtomicOperation["commit"]>>;
+      try {
+        committed = await atomic.commit();
+      } catch (error) {
+        if (cutoverGuard) await releaseKernelDefaultWindowCutover(kv, cutoverGuard);
+        throw error;
+      }
+      if (!committed.ok) {
+        if (cutoverGuard) await releaseKernelDefaultWindowCutover(kv, cutoverGuard);
+        continue;
+      }
       if (nextRuntime) cacheRuntimeConfig(nextRuntime);
       return json(200, {
         defaults: {
@@ -2075,6 +2113,9 @@ export const handleAdminKernelUsageDelete = async (req: Request): Promise<Respon
 
   if (scope === "org") {
     const deleted = await deleteKernelOrgUsageLimit(owner);
+    if (deleted === "conflict") {
+      return openaiError(409, "Active Kernel quota reservations must settle before deletion", "invalid_request_error");
+    }
     if (deleted === null) {
       return openaiError(500, "Failed to delete kernel org usage limit", "server_error");
     }
@@ -2085,6 +2126,9 @@ export const handleAdminKernelUsageDelete = async (req: Request): Promise<Respon
   }
 
   const deleted = await deleteKernelUsageLimit(owner, repo!);
+  if (deleted === "conflict") {
+    return openaiError(409, "Active Kernel quota reservations must settle before deletion", "invalid_request_error");
+  }
   if (deleted === null) {
     return openaiError(500, "Failed to delete kernel usage limit", "server_error");
   }

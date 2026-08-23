@@ -8,6 +8,7 @@ import {
   MAX_RESPONSES_PRECOMMIT_EVENTS,
   prepareResponsesStreamForCommit,
   responseEventFromValue,
+  responsesEventReportsProgress,
   responsesEventSemanticKind,
   rewriteResponsesEventForWarning,
 } from "../src/responses_failover_stream.ts";
@@ -26,11 +27,74 @@ Deno.test("Responses semantic detector ignores setup and empty deltas", () => {
   assert.equal(responsesEventSemanticKind(event({ type: "response.reasoning_summary_text.delta", delta: "" })), null);
 });
 
-Deno.test("Responses semantic detector commits on text, reasoning, and completed executable tools", () => {
+Deno.test("Responses progress detector accepts valid reasoning events without making them semantic", () => {
+  const progressEvents = [
+    event({ type: "response.reasoning_summary_text.delta", summary_index: 0, delta: "considering" }),
+    event({ type: "response.reasoning_summary_text.done", summary_index: 0, text: "considered" }),
+    event({ type: "response.reasoning_text.delta", content_index: 0, delta: "private reasoning" }),
+    event({ type: "response.reasoning_text.done", content_index: 0, text: "private reasoning complete" }),
+    event({
+      type: "response.reasoning_summary_part.added",
+      summary_index: 0,
+    }),
+    event({
+      type: "response.reasoning_summary_part.done",
+      summary_index: 0,
+    }),
+    event({
+      type: "response.output_item.added",
+      item: {
+        id: "rs_1",
+        type: "reasoning",
+        summary: [],
+      },
+    }),
+    event({
+      type: "response.output_item.done",
+      item: {
+        id: "rs_1",
+        type: "reasoning",
+        content: [{ type: "reasoning_text", text: "work complete" }],
+      },
+    }),
+  ];
+  for (const progressEvent of progressEvents) {
+    assert.equal(responsesEventReportsProgress(progressEvent), true, progressEvent.type);
+    assert.equal(responsesEventSemanticKind(progressEvent), null, progressEvent.type);
+  }
+
+  const nonProgressEvents = [
+    event({ type: "response.reasoning_summary_text.delta", summary_index: 0, delta: "" }),
+    event({ type: "response.reasoning_summary_text.done", summary_index: -1, text: "invalid index" }),
+    event({ type: "response.reasoning_text.done", content_index: 0, text: null }),
+    event({
+      type: "response.reasoning_summary_part.added",
+      summary_index: -1,
+    }),
+    event({
+      type: "response.reasoning_summary_part.added",
+      part: { type: "summary_text", text: "missing summary index" },
+    }),
+    event({
+      type: "response.output_item.added",
+      item: { id: "", type: "reasoning", summary: [] },
+    }),
+    event({
+      type: "response.output_item.done",
+      item: { id: "rs_1", type: "reasoning" },
+    }),
+    event({ type: "response.output_text.delta", delta: "visible" }),
+  ];
+  for (const nonProgressEvent of nonProgressEvents) {
+    assert.equal(responsesEventReportsProgress(nonProgressEvent), false, nonProgressEvent.type);
+  }
+});
+
+Deno.test("Responses semantic detector commits on visible text, refusal, and completed tools", () => {
   assert.equal(responsesEventSemanticKind(event({ type: "response.output_text.delta", delta: "x" })), "text");
   assert.equal(
     responsesEventSemanticKind(event({ type: "response.reasoning_summary_text.delta", delta: "thinking" })),
-    "reasoning",
+    null,
   );
   assert.equal(
     responsesEventSemanticKind(event({
@@ -56,6 +120,13 @@ Deno.test("Responses semantic detector commits on text, reasoning, and completed
   assert.equal(responsesEventSemanticKind(event({ type: "response.refusal.delta", delta: "blocked" })), "text");
   assert.equal(
     responsesEventSemanticKind(event({ type: "response.refusal.done", refusal: "I cannot help with that." })),
+    "text",
+  );
+  assert.equal(
+    responsesEventSemanticKind(event({
+      type: "response.content_part.done",
+      part: { type: "refusal", refusal: "I cannot help with that." },
+    })),
     "text",
   );
   assert.equal(
@@ -101,6 +172,29 @@ Deno.test("Responses precommit preparation holds setup until semantic output", a
   ]);
   assert.equal(prepared.semantic, semantic);
   assert.equal(prepared.semanticKind, "text");
+});
+
+Deno.test("Responses precommit can release on hidden-reasoning progress without marking semantic output", async () => {
+  const created = event({ type: "response.created", response: { id: "resp_reasoning" } });
+  const reasoning = event({
+    type: "response.reasoning_summary_text.delta",
+    summary_index: 0,
+    delta: "active reasoning",
+  });
+  const visible = event({ type: "response.output_text.delta", delta: "visible" });
+  const source = iterator([created, reasoning, visible]);
+  const progressTypes: string[] = [];
+  const prepared = await prepareResponsesStreamForCommit(source, {
+    releaseOnProgress: true,
+    onProgress: (progressEvent) => progressTypes.push(progressEvent.type),
+  });
+  assert.deepEqual(prepared.buffered, [created, reasoning]);
+  assert.deepEqual(progressTypes, ["response.reasoning_summary_text.delta"]);
+  assert.equal(prepared.semantic, null);
+  assert.equal(prepared.semanticKind, null);
+  assert.equal(prepared.terminal, null);
+  assert.equal((await prepared.iterator.next()).value, visible);
+  await prepared.iterator.return("test complete").catch(() => {});
 });
 
 Deno.test("Responses precommit bounds cover delayed discovery events and characters", () => {
@@ -162,17 +256,165 @@ Deno.test("Failover terminal rewrite prefixes warning output and owns one failed
   assert.equal(failed.terminal, true);
 });
 
-Deno.test("Responses precommit preparation accepts a completed response without output", async () => {
+Deno.test("Responses precommit keeps reasoning-only completion nonsemantic for the empty-output check", async () => {
   const completed = event({
     type: "response.completed",
     response: { id: "resp_empty", object: "response", status: "completed", output: [] },
   });
-  const prepared = await prepareResponsesStreamForCommit(iterator([
-    event({ type: "response.created", response: { id: "resp_empty" } }),
-    completed,
-  ]));
+  const progressTypes: string[] = [];
+  const summaryPart = event({ type: "response.reasoning_summary_part.added", summary_index: 0 });
+  const reasoningItem = event({
+    type: "response.output_item.added",
+    item: { id: "rs_empty", type: "reasoning", summary: [] },
+  });
+  const prepared = await prepareResponsesStreamForCommit(
+    iterator([
+      event({ type: "response.created", response: { id: "resp_empty" } }),
+      summaryPart,
+      summaryPart,
+      reasoningItem,
+      reasoningItem,
+      event({ type: "response.reasoning_summary_text.delta", summary_index: 0, delta: "hidden reasoning" }),
+      event({ type: "response.reasoning_text.done", content_index: 0, text: "hidden reasoning" }),
+      completed,
+    ]),
+    { onProgress: (progressEvent) => progressTypes.push(progressEvent.type) },
+  );
+  assert.deepEqual(progressTypes, [
+    "response.reasoning_summary_part.added",
+    "response.output_item.added",
+    "response.reasoning_summary_text.delta",
+    "response.reasoning_text.done",
+  ]);
   assert.equal(prepared.semantic, null);
   assert.equal(prepared.terminal, completed);
+});
+
+Deno.test("Owned stream rewrites a post-release reasoning-only completion as empty", async () => {
+  let observedFailure: {
+    failureKind: string;
+    semanticCommitmentObserved: boolean;
+    syntheticTerminalType: string | null;
+  } | null = null;
+  let observedUpstreamTerminal: ResponsesStreamEvent | null = null;
+  const completed = event({
+    type: "response.completed",
+    sequence_number: 2,
+    response: {
+      id: "resp_reasoning_empty",
+      status: "completed",
+      output: [{
+        id: "rs_empty",
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "hidden reasoning" }],
+      }],
+    },
+  });
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({ type: "response.created", response: { id: "resp_reasoning_empty" } }),
+      event({ type: "response.reasoning_summary_text.delta", summary_index: 0, delta: "hidden reasoning" }),
+    ],
+    iterator: iterator([completed]),
+    responseId: "resp_reasoning_empty",
+    onFailure: (error, details) => {
+      observedFailure = {
+        failureKind: error instanceof Error && "kind" in error ? String(error.kind) : "unknown",
+        semanticCommitmentObserved: details.semanticCommitmentObserved,
+        syntheticTerminalType: details.syntheticTerminalType,
+      };
+      observedUpstreamTerminal = details.upstreamTerminal;
+    },
+  });
+  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  for (let attempt = 0; attempt < 10 && observedFailure === null; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.deepEqual(values.map((value) => value.type), [
+    "response.created",
+    "response.reasoning_summary_text.delta",
+    "error",
+  ]);
+  assert.equal(values.at(-1)?.code, "empty_upstream_completion");
+  assert.equal(values.some((value) => value.type === "response.completed"), false);
+  assert.deepEqual(observedFailure, {
+    failureKind: "empty_upstream_completion",
+    semanticCommitmentObserved: false,
+    syntheticTerminalType: "error",
+  });
+  assert.equal(observedUpstreamTerminal, completed);
+});
+
+Deno.test("Owned stream forwards a completion whose terminal contains visible output", async () => {
+  let failureCount = 0;
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({ type: "response.created", response: { id: "resp_visible_terminal" } }),
+      event({ type: "response.reasoning_summary_part.added", summary_index: 0 }),
+    ],
+    iterator: iterator([
+      event({
+        type: "response.completed",
+        response: {
+          id: "resp_visible_terminal",
+          status: "completed",
+          output: [{
+            id: "msg_visible_terminal",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Visible answer." }],
+          }],
+        },
+      }),
+    ]),
+    responseId: "resp_visible_terminal",
+    onFailure: () => {
+      failureCount += 1;
+    },
+  });
+  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  assert.equal(values.at(-1)?.type, "response.completed");
+  assert.equal(values.some((value) => value.type === "error"), false);
+  assert.equal(failureCount, 0);
+});
+
+Deno.test("Failover warning output does not hide an empty provider completion", async () => {
+  let semanticCommitmentObserved: boolean | null = null;
+  let observedUpstreamTerminal: ResponsesStreamEvent | null = null;
+  const completed = event({
+    type: "response.completed",
+    sequence_number: 1,
+    response: { id: "resp_warning_empty", status: "completed", output: [] },
+  });
+  const body = createOwnedResponsesStream({
+    initial: [
+      event({
+        type: "response.created",
+        sequence_number: 0,
+        response: { id: "resp_warning_empty", model: "google/gemini" },
+      }),
+    ],
+    iterator: iterator([completed]),
+    responseId: "resp_warning_empty",
+    warning: { model: "google/gemini" },
+    onFailure: (_error, details) => {
+      semanticCommitmentObserved = details.semanticCommitmentObserved;
+      observedUpstreamTerminal = details.upstreamTerminal;
+    },
+  });
+  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)]
+    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  for (let attempt = 0; attempt < 10 && semanticCommitmentObserved === null; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.equal(values.some((value) => value.type === "response.output_text.delta"), true);
+  assert.equal(values.some((value) => value.type === "response.completed"), false);
+  assert.equal(values.at(-1)?.type, "error");
+  assert.equal(values.at(-1)?.code, "empty_upstream_completion");
+  assert.equal(semanticCommitmentObserved, false);
+  assert.equal(observedUpstreamTerminal, completed);
 });
 
 Deno.test("Owned failover stream emits warning first, shifts output, and emits one terminal", async () => {
@@ -392,6 +634,7 @@ Deno.test("Owned stream synthesizes a Codex failure after semantic output withou
     responseCreatedObserved: false,
     semanticCommitmentObserved: true,
     syntheticTerminalType: "response.failed",
+    upstreamTerminal: null,
   });
 });
 

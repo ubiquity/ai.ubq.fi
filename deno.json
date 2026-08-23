@@ -7,10 +7,10 @@
     "@std/yaml": "jsr:@std/yaml@1.0.9"
   },
   "tasks": {
-    "build": "deno check serve.ts scripts/setup-instance.ts scripts/sentinel/main.ts scripts/sentinel/revision-control.ts",
+    "build": "deno check --frozen serve.ts scripts/setup-instance.ts scripts/sentinel/main.ts scripts/sentinel/revision-control.ts",
     "dev": "sh -c 'export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN:-local-dev-admin}\"; exec deno serve --watch --env --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts'",
     "dev:play": "deno task dev:local",
-    "dev:local": "sh -c 'if [ -z \"${CODEX_AUTH_JSON_B64:-}\" ]; then if [ -f \"$HOME/.codex/auth.json\" ]; then export CODEX_AUTH_JSON_B64=\"$(base64 < \"$HOME/.codex/auth.json\" | tr -d \"\\n\")\"; echo \"Loaded CODEX_AUTH_JSON_B64 from ~/.codex/auth.json\"; else echo \"No CODEX_AUTH_JSON_B64 and no ~/.codex/auth.json found. /v1/models will stay empty until a model snapshot is initialized.\"; fi; fi; if [ -f .env ]; then source .env; fi; deno serve --watch --allow-env --allow-net --allow-read --unstable-kv serve.ts'",
+    "dev:local": "sh -c 'if [ -z \"${CODEX_AUTH_JSON_B64:-}\" ]; then if [ -f \"$HOME/.codex/auth.json\" ]; then export CODEX_AUTH_JSON_B64=\"$(base64 < \"$HOME/.codex/auth.json\" | tr -d \"\\n\")\"; echo \"Loaded CODEX_AUTH_JSON_B64 from ~/.codex/auth.json\"; else echo \"No CODEX_AUTH_JSON_B64 and no ~/.codex/auth.json found. /v1/models will stay empty until a model snapshot is initialized.\"; fi; fi; if [ -f .env ]; then set -a; . ./.env; set +a; fi; deno serve --watch --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts'",
     "ubq-ai": "deno run --env --allow-env --allow-net --allow-read scripts/ubq-ai.ts",
     "admin:models": "sh -c 'BASE_URL=${BASE_URL:-http://localhost:8000}; if [ -z \"${DENO_DEPLOY_TOKEN:-}\" ]; then echo \"DENO_DEPLOY_TOKEN is required for admin endpoints.\" >&2; exit 1; fi; curl -sS -H \"Authorization: Bearer ${DENO_DEPLOY_TOKEN}\" ${BASE_URL}/admin/codex/models'",
     "admin:models:spark": "sh -c 'BASE_URL=${BASE_URL:-http://localhost:8000}; if [ -z \"${DENO_DEPLOY_TOKEN:-}\" ]; then echo \"DENO_DEPLOY_TOKEN is required for admin endpoints.\" >&2; exit 1; fi; curl -sS -H \"Authorization: Bearer ${DENO_DEPLOY_TOKEN}\" ${BASE_URL}/admin/codex/models | jq -r \".data.models[]?.slug // empty | select(contains(\\\"-spark\\\"))\"'",
@@ -29,10 +29,10 @@
     "kv:validate": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net --allow-read=.kv-migration --allow-write=.kv-migration scripts/kv-migrate.ts validate",
     "kv:incident-v2": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net scripts/kv-migrate.ts incident-v2",
     "kv:validate-http": "deno run --allow-env=DENO_DEPLOY_TOKEN,UOS_AI_TOKEN --allow-net scripts/kv-migrate.ts validate-http",
-    "test": "deno test --env --allow-net=127.0.0.1 --allow-env=CEREBRAS_API_KEY,VOYAGEAI_API_KEY,METERED_API_KEY,SURPLUS_API_KEY,IMAGE_BASE_MODEL,GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID --ignore=lib/codex --ignore=tests/failover-stress-http.test.ts --ignore=tests/usage-optimization-measurement.test.ts && deno task test:measurement",
-    "test:measurement": "deno test --env --allow-net=127.0.0.1 --allow-env=UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/usage-optimization-measurement.test.ts",
-    "test:stress": "deno test --env --unstable-kv --allow-net=127.0.0.1 --allow-env=METERED_API_KEY,SURPLUS_API_KEY tests/failover-stress-http.test.ts",
-    "test:e2e": "deno test --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
+    "test": "deno test --frozen --env --allow-net=127.0.0.1 --allow-env=CEREBRAS_API_KEY,VOYAGEAI_API_KEY,METERED_API_KEY,SURPLUS_API_KEY,IMAGE_BASE_MODEL,GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID --ignore=lib/codex --ignore=tests/failover-stress-http.test.ts --ignore=tests/usage-optimization-measurement.test.ts tests && deno task test:measurement",
+    "test:measurement": "deno test --frozen --env --allow-net=127.0.0.1 --allow-env=UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/usage-optimization-measurement.test.ts",
+    "test:stress": "deno test --frozen --env --unstable-kv --allow-net=127.0.0.1 --allow-env=METERED_API_KEY,SURPLUS_API_KEY tests/failover-stress-http.test.ts",
+    "test:e2e": "deno test --frozen --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
     "fmt": "deno fmt serve.ts src tests scripts docs",
     "lint": "deno lint serve.ts src tests scripts"
   },

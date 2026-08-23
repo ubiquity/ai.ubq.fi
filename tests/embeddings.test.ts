@@ -2687,8 +2687,8 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
         assert.ok(blocked.headers.get("Retry-After"));
         assert.equal(blocked.headers.get("RateLimit-Limit"), "1");
         assert.equal(blocked.headers.get("RateLimit-Remaining"), "0");
-        assert.match(blocked.headers.get("RateLimit-Policy") ?? "", /^1;w=\d+$/);
-        assert.match(blocked.headers.get("RateLimit") ?? "", /^limit=1, remaining=0, reset=\d+$/);
+        assert.match(blocked.headers.get("RateLimit-Policy") ?? "", /^"api-key";q=1;w=\d+$/);
+        assert.match(blocked.headers.get("RateLimit") ?? "", /^"api-key";r=0;t=\d+$/);
         assert.equal((await blocked.json() as { error?: { type?: unknown } }).error?.type, "rate_limit_error");
       },
     );

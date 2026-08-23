@@ -849,6 +849,8 @@ Deno.test("openai: legacy timeout circuits do not short-circuit later requests",
 
   assert.equal(response.status, 200);
   assert.equal(inferenceCalls, 1);
+  assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+  await response.text();
 });
 
 Deno.test("openai: subscription admission busy never enters a paid provider", async () => {
@@ -3235,6 +3237,353 @@ Deno.test("openai: gateway first-event deadlines return 504 on both streaming ro
   }
 });
 
+Deno.test("openai: reasoning progress releases streaming headers before semantic output", async (t) => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const deadlineMs = 300;
+  const routeCases = [
+    { route: "responses", keyId: "reasoning-progress-responses" },
+    { route: "chat", keyId: "reasoning-progress-chat" },
+  ] as const;
+
+  const progressingReasoningResponse = (
+    responseId: string,
+    observation: { reasoningEmitted: boolean; semanticEmitted: boolean },
+  ): { response: Response; releaseSemantic: () => void } => {
+    let stopped = false;
+    const semanticGate = Promise.withResolvers<void>();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const enqueue = (value: Record<string, unknown>): void => {
+          if (stopped) return;
+          const type = String(value.type ?? "");
+          if (type.startsWith("response.reasoning_")) observation.reasoningEmitted = true;
+          if (type === "response.output_text.delta") observation.semanticEmitted = true;
+          controller.enqueue(TEXT_ENCODER.encode(`data: ${JSON.stringify(value)}\n\n`));
+        };
+
+        enqueue({
+          type: "response.created",
+          response: { id: responseId, object: "response", status: "in_progress", output: [] },
+        });
+        enqueue({
+          type: "response.reasoning_summary_text.delta",
+          response_id: responseId,
+          item_id: `reasoning_${responseId}`,
+          output_index: 0,
+          summary_index: 0,
+          delta: "hidden summary progress",
+        });
+        enqueue({
+          type: "response.reasoning_text.delta",
+          response_id: responseId,
+          item_id: `reasoning_${responseId}`,
+          output_index: 0,
+          content_index: 0,
+          delta: "hidden reasoning progress",
+        });
+
+        await semanticGate.promise;
+        if (stopped) return;
+        enqueue({
+          type: "response.output_text.delta",
+          response_id: responseId,
+          item_id: `message_${responseId}`,
+          output_index: 0,
+          content_index: 0,
+          delta: "progress complete",
+        });
+        enqueue({
+          type: "response.completed",
+          response: {
+            id: responseId,
+            object: "response",
+            status: "completed",
+            model: DEFAULT_TEST_MODEL,
+            output: [{
+              id: `message_${responseId}`,
+              type: "message",
+              status: "completed",
+              role: "assistant",
+              content: [{ type: "output_text", text: "progress complete", annotations: [] }],
+            }],
+            usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+          },
+        });
+        stopped = true;
+        controller.close();
+      },
+      cancel() {
+        stopped = true;
+        semanticGate.resolve();
+      },
+    });
+    return {
+      response: new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      releaseSemantic: semanticGate.resolve,
+    };
+  };
+
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-test-key");
+    Deno.env.delete("SURPLUS_API_KEY");
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai", "openai-response"] }],
+        })),
+    });
+    setStreamFirstEventDeadlineMsForTest(deadlineMs);
+
+    for (const routeCase of routeCases) {
+      await t.step(`${routeCase.route} stays alive through hidden reasoning`, async () => {
+        const { keyId } = routeCase;
+        const requestId = `request-${keyId}`;
+        seedPaidFallbackKey(keyId);
+        let codexCalls = 0;
+        const observation = { reasoningEmitted: false, semanticEmitted: false };
+        let releaseSemantic: (() => void) | null = null;
+        const response = await withFetchMock(
+          (url) => {
+            if (url !== "https://chatgpt.com/backend-api/codex/responses") {
+              throw new Error(`Reasoning progress must not change providers: ${url}`);
+            }
+            codexCalls += 1;
+            const upstream = progressingReasoningResponse(`resp_${routeCase.route}_reasoning_progress`, observation);
+            releaseSemantic = upstream.releaseSemantic;
+            return upstream.response;
+          },
+          () => {
+            const usageContext = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: true,
+              requestId,
+              startedAtMs: Date.now(),
+            };
+            return routeCase.route === "responses"
+              ? handleResponses(responsesRequest({ stream: true }), usageContext)
+              : handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    stream: true,
+                    messages: [{ role: "user", content: "work through this carefully" }],
+                  }),
+                }),
+                usageContext,
+              );
+          },
+        );
+
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+        assert.equal(observation.reasoningEmitted, true);
+        assert.equal(observation.semanticEmitted, false);
+        await new Promise((resolve) => setTimeout(resolve, deadlineMs + 50));
+        assert.equal(observation.semanticEmitted, false);
+        assert.notEqual(releaseSemantic, null);
+        releaseSemantic!();
+        const serialized = await response.text();
+        assert.equal(observation.semanticEmitted, true);
+        assert.match(serialized, /progress complete/);
+        if (routeCase.route === "responses") {
+          const values = parseResponsesSseValues(serialized);
+          assert.equal(values.filter((event) => event.type === "response.completed").length, 1);
+          assert.ok(values.some((event) => event.type === "response.reasoning_summary_text.delta"));
+          assert.ok(values.some((event) => event.type === "response.reasoning_text.delta"));
+        } else {
+          assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+        }
+        assert.equal(codexCalls, 1);
+        assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      });
+    }
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+    for (const { keyId } of routeCases) {
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    }
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
+Deno.test("openai: cancelling a reasoning-released Codex stream stays cancelled and unpaid", async (t) => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const routeCases = [
+    { route: "responses", keyId: "reasoning-cancel-responses" },
+    { route: "chat", keyId: "reasoning-cancel-chat" },
+  ] as const;
+
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-test-key");
+    Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+
+    for (const routeCase of routeCases) {
+      await t.step(`${routeCase.route} cancels after hidden reasoning releases headers`, async () => {
+        const { keyId } = routeCase;
+        const requestId = `request-${keyId}`;
+        seedPaidFallbackKey(keyId);
+        let codexCalls = 0;
+        let surplusCalls = 0;
+        let meteredCalls = 0;
+        let upstreamCancellations = 0;
+        let releaseBlockedPull = (): void => {};
+        const observedTerminalUsages: Array<{ completed: boolean; inputTokens: number | null }> = [];
+
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://chatgpt.com/backend-api/codex/responses") {
+              codexCalls += 1;
+              const responseId = `resp_${routeCase.route}_reasoning_cancel`;
+              return new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(
+                      TEXT_ENCODER.encode(
+                        `data: ${
+                          JSON.stringify({
+                            type: "response.created",
+                            response: { id: responseId, object: "response", status: "in_progress", output: [] },
+                          })
+                        }\n\n` +
+                          `data: ${
+                            JSON.stringify({
+                              type: "response.reasoning_summary_text.delta",
+                              response_id: responseId,
+                              item_id: `reasoning_${responseId}`,
+                              output_index: 0,
+                              summary_index: 0,
+                              delta: "hidden progress before cancellation",
+                            })
+                          }\n\n`,
+                      ),
+                    );
+                  },
+                  pull() {
+                    return new Promise<void>((resolve) => {
+                      releaseBlockedPull = resolve;
+                    });
+                  },
+                  cancel() {
+                    upstreamCancellations += 1;
+                    releaseBlockedPull();
+                  },
+                }),
+                { status: 200, headers: { "Content-Type": "text/event-stream" } },
+              );
+            }
+            if (url === "https://api.surplusintelligence.ai/v1/responses") {
+              surplusCalls += 1;
+              throw new Error("reasoning-progress cancellation must not dispatch to Surplus");
+            }
+            if (url === "https://api.openlux.ai/v1/responses") {
+              meteredCalls += 1;
+              throw new Error("reasoning-progress cancellation must not dispatch to OpenLux");
+            }
+            throw new Error(`Unexpected upstream dispatch during reasoning cancellation: ${url}`);
+          },
+          async () => {
+            const usageContext = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: true,
+              requestId,
+              startedAtMs: Date.now(),
+              onTerminalUsage: (usage: { inputTokens: number | null } | null, completed: boolean) => {
+                observedTerminalUsages.push({ completed, inputTokens: usage?.inputTokens ?? null });
+              },
+            };
+            const routed = routeCase.route === "responses"
+              ? await handleResponses(responsesRequest({ stream: true }), usageContext)
+              : await handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    stream: true,
+                    messages: [{ role: "user", content: "reason until I cancel" }],
+                  }),
+                }),
+                usageContext,
+              );
+
+            assert.equal(routed.status, 200);
+            assert.equal(routed.headers.get("x-uos-upstream"), "chatgpt_codex");
+            assert.ok(routed.body);
+            await routed.body.cancel("client cancelled after reasoning progress");
+
+            const cancellationDeadline = performance.now() + 1_000;
+            while (
+              upstreamCancellations === 0 || getResponseTelemetry(routed)?.streamTerminalType !== "cancelled"
+            ) {
+              if (performance.now() >= cancellationDeadline) {
+                assert.fail(`${routeCase.route} did not finish its cancellation lifecycle`);
+              }
+              await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            return routed;
+          },
+        );
+
+        const telemetry = getResponseTelemetry(response);
+        assert.equal(telemetry?.provider, "chatgpt_codex");
+        assert.equal(telemetry?.fallbackReason, null);
+        assert.equal(telemetry?.streamTerminalType, "cancelled");
+        assert.equal(telemetry?.completed, false);
+        assert.notEqual(telemetry?.semanticOutputObserved, true);
+        assert.deepEqual(observedTerminalUsages, []);
+        assert.equal(upstreamCancellations, 1);
+        assert.equal(codexCalls, 1);
+        assert.equal(surplusCalls, 0);
+        assert.equal(meteredCalls, 0);
+        assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+
+        const keyRecord = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
+          usage_reset_at_ms: number;
+          paid_fallback_spent_microcredits: number;
+          paid_fallback_reserved_microcredits: number;
+          paid_fallback_reservation_request_id: string | null;
+        };
+        assert.equal(keyRecord.paid_fallback_spent_microcredits, 0);
+        assert.equal(keyRecord.paid_fallback_reserved_microcredits, 0);
+        assert.equal(keyRecord.paid_fallback_reservation_request_id, null);
+        assert.equal(
+          kvStore.get(
+            keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, keyRecord.usage_reset_at_ms]),
+          ),
+          undefined,
+        );
+      });
+    }
+  } finally {
+    for (const { keyId } of routeCases) {
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    }
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
 Deno.test("openai: streaming Responses clear their absolute deadline after semantic output", async () => {
   setStreamFirstEventDeadlineMsForTest(30);
   try {
@@ -3338,6 +3687,223 @@ Deno.test("openai: Codex pre-header gateway deadlines use server_error on both s
     }
   } finally {
     setStreamFirstEventDeadlineMsForTest(null);
+  }
+});
+
+Deno.test("openai: transient Codex stalls never advance to paid fallback", async (t) => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const keyIds = [
+    "fallback-codex-no-headers",
+    "fallback-codex-no-semantic-event",
+    "fallback-codex-post-semantic-eof",
+  ];
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-test-key");
+    Deno.env.delete("SURPLUS_API_KEY");
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response"] }],
+        })),
+    });
+    setStreamFirstEventDeadlineMsForTest(160);
+
+    await t.step("no response headers returns Codex timeout and the next request retries Codex", async () => {
+      const keyId = keyIds[0]!;
+      const firstRequestId = `request-${keyId}`;
+      seedPaidFallbackKey(keyId);
+      let codexCalls = 0;
+      let meteredCalls = 0;
+      await withFetchMock(
+        (url, _bodyText, init) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            return sseResponse(baseSseChunks());
+          }
+          codexCalls += 1;
+          if (codexCalls === 1) {
+            return new Promise<Response>((_resolve, reject) => {
+              const signal = init?.signal;
+              if (!signal) return reject(new Error("Codex timeout fixture did not receive a signal"));
+              const rejectWithReason = () => reject(signal.reason);
+              if (signal.aborted) rejectWithReason();
+              else signal.addEventListener("abort", rejectWithReason, { once: true });
+            });
+          }
+          return sseResponse(baseSseChunks());
+        },
+        async () => {
+          const first = await handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId: firstRequestId,
+            startedAtMs: Date.now(),
+          });
+          assert.equal(first.status, 504);
+          assert.equal(first.headers.get("x-uos-upstream"), "chatgpt_codex");
+          assert.equal(getResponseTelemetry(first)?.fallbackReason, null);
+          assert.equal(getStoredPaidFallbackRequest(keyId, firstRequestId), null);
+
+          const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+          const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+          assert.equal(selection.kind, "eligible");
+
+          const second = await handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId: `${firstRequestId}-next`,
+            startedAtMs: Date.now(),
+          });
+          assert.equal(second.status, 200);
+          assert.equal(second.headers.get("x-uos-upstream"), "chatgpt_codex");
+          await second.text();
+        },
+      );
+      assert.equal(codexCalls, 2);
+      assert.equal(meteredCalls, 0);
+    });
+
+    await t.step("buffered setup events never leak when a pre-semantic Codex stream stalls", async () => {
+      const keyId = keyIds[1]!;
+      const requestId = `request-${keyId}`;
+      seedPaidFallbackKey(keyId);
+      let codexCalls = 0;
+      let meteredCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            return sseResponse(baseSseChunks());
+          }
+          codexCalls += 1;
+          if (codexCalls > 1) return sseResponse(baseSseChunks());
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(TEXT_ENCODER.encode(
+                  `data: ${
+                    JSON.stringify({
+                      type: "response.created",
+                      response: { id: "resp_codex_stalled", created_at: 0 },
+                    })
+                  }\n\n`,
+                ));
+              },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream" },
+            },
+          );
+        },
+        () =>
+          handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId,
+            startedAtMs: Date.now(),
+          }),
+      );
+      assert.equal(response.status, 504);
+      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+      assert.equal(getResponseTelemetry(response)?.fallbackReason, null);
+      const body = await response.text();
+      assert.equal(body.includes("resp_codex_stalled"), false);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+
+      const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+      const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
+      assert.equal(selection.kind, "eligible");
+
+      const next = await withFetchMock(
+        (url) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            return sseResponse(baseSseChunks());
+          }
+          codexCalls += 1;
+          return sseResponse(baseSseChunks());
+        },
+        () =>
+          handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId: `${requestId}-next`,
+            startedAtMs: Date.now(),
+          }),
+      );
+      assert.equal(next.status, 200);
+      assert.equal(next.headers.get("x-uos-upstream"), "chatgpt_codex");
+      await next.text();
+      assert.equal(codexCalls, 2);
+      assert.equal(meteredCalls, 0);
+    });
+
+    await t.step("a stream failure after semantic output never switches providers", async () => {
+      const keyId = keyIds[2]!;
+      seedPaidFallbackKey(keyId);
+      let meteredCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            throw new Error("a committed Codex stream must not switch providers");
+          }
+          return sseResponse([
+            `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_codex_committed" } })}\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.output_text.delta",
+                response_id: "resp_codex_committed",
+                item_id: "msg_codex_committed",
+                output_index: 0,
+                content_index: 0,
+                delta: "partial",
+              })
+            }\n\n`,
+          ]);
+        },
+        () =>
+          handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId: `request-${keyId}`,
+            startedAtMs: Date.now(),
+          }),
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+      const events = parseResponsesSseValues(await response.text());
+      assert.equal(events.filter((event) => event.type === "response.created").length, 1);
+      assert.equal(events.filter((event) => event.type === "response.failed").length, 1);
+      assert.equal(meteredCalls, 0);
+    });
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+    for (const keyId of keyIds) {
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    }
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
   }
 });
 
@@ -4096,6 +4662,153 @@ Deno.test("openai: tool-bearing paid fallback skips Surplus without capability e
   }
 });
 
+Deno.test("openai: Codex model-unsupported responses never enter paid fallback", async (t) => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const routeCases = [
+    { route: "responses", keyId: "fallback-codex-model-unsupported-responses" },
+    { route: "chat", keyId: "fallback-codex-model-unsupported-chat" },
+  ] as const;
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-test-key");
+    Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai", "openai-response"] }],
+        })),
+    });
+    await fetchSurplusModels({
+      apiKey: "surplus-test-key",
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: DEFAULT_TEST_MODEL, pricing: { prompt: 0.000001, completion: 0.000003 } }],
+        })),
+    });
+    for (const routeCase of routeCases) {
+      await t.step(`${routeCase.route} returns the primary 400 without paid exposure`, async () => {
+        const { keyId } = routeCase;
+        const requestId = `request-${keyId}`;
+        seedPaidFallbackKey(keyId);
+        let codexCalls = 0;
+        let surplusCalls = 0;
+        let meteredCalls = 0;
+
+        const response = await withFetchMock(
+          (url) => {
+            if (url === "https://chatgpt.com/backend-api/codex/responses") {
+              codexCalls += 1;
+              return new Response(
+                JSON.stringify({
+                  message:
+                    "The 'gpt-5-fixture-default' model is not supported when using Codex with a ChatGPT account.",
+                  type: "invalid_request_error",
+                  code: "upstream_error",
+                }),
+                { status: 400, headers: { "Content-Type": "application/json" } },
+              );
+            }
+            if (url === "https://api.surplusintelligence.ai/v1/responses") {
+              surplusCalls += 1;
+              throw new Error("model-support errors must not dispatch to Surplus");
+            }
+            if (url === "https://api.openlux.ai/v1/responses") {
+              meteredCalls += 1;
+              throw new Error("model-support errors must not dispatch to OpenLux");
+            }
+            throw new Error(`Unexpected upstream dispatch in Codex model unsupported test: ${url}`);
+          },
+          () => {
+            const usageContext = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: true,
+              requestId,
+              startedAtMs: Date.now(),
+            };
+            return routeCase.route === "responses"
+              ? handleResponses(
+                new Request("https://ai.ubq.fi/v1/responses", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    input: "inspect the workspace",
+                    tools: [{
+                      type: "function",
+                      name: "inspect_workspace",
+                      description: "Inspect the workspace before continuing.",
+                      parameters: { type: "object", properties: {}, additionalProperties: false },
+                    }],
+                    tool_choice: "none",
+                  }),
+                }),
+                usageContext,
+              )
+              : handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    messages: [{ role: "user", content: "inspect the workspace" }],
+                  }),
+                }),
+                usageContext,
+              );
+          },
+        );
+
+        assert.equal(response.status, 400);
+        assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+        assert.equal(getResponseTelemetry(response)?.provider, "chatgpt_codex");
+        assert.equal(getResponseTelemetry(response)?.fallbackReason, null);
+        assert.equal(codexCalls, 1);
+        assert.equal(surplusCalls, 0);
+        assert.equal(meteredCalls, 0);
+        const payload = await response.json() as { error?: Record<string, unknown> };
+        assert.equal(payload.error?.code, "upstream_error");
+        assert.equal(
+          payload.error?.message,
+          "The 'gpt-5-fixture-default' model is not supported when using Codex with a ChatGPT account.",
+        );
+        assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+        const keyRecord = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
+          usage_reset_at_ms: number;
+          paid_fallback_spent_microcredits: number;
+          paid_fallback_reserved_microcredits: number;
+          paid_fallback_reservation_request_id: string | null;
+        };
+        assert.equal(keyRecord.paid_fallback_spent_microcredits, 0);
+        assert.equal(keyRecord.paid_fallback_reserved_microcredits, 0);
+        assert.equal(keyRecord.paid_fallback_reservation_request_id, null);
+        assert.equal(
+          kvStore.get(
+            keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, keyRecord.usage_reset_at_ms]),
+          ),
+          undefined,
+        );
+      });
+    }
+  } finally {
+    for (const { keyId } of routeCases) {
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    }
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
 Deno.test("openai: inter-provider abort and quota rejection retain the responding provider request ID", async () => {
   const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
@@ -4523,6 +5236,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       assert.equal(getResponseTelemetry(response)?.fallbackReason, null);
       assert.equal(codexCalls, 1);
       assert.equal(meteredCalls, 0);
+      await response.text();
     });
 
     await t.step("cancellation before fallback admission creates no paid exposure", async () => {
@@ -6138,7 +6852,12 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                       id: "resp_terminal_log_once",
                       status: "completed",
                       model: DEFAULT_TEST_MODEL,
-                      output: [],
+                      output: [{
+                        id: "msg_terminal_log_once",
+                        type: "message",
+                        role: "assistant",
+                        content: [{ type: "output_text", text: "done" }],
+                      }],
                       usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
                     },
                   })
@@ -7789,29 +8508,16 @@ Deno.test("openai: contentless response.completed fails Chat without success fra
           ),
       );
 
-      if (stream) {
-        assert.equal(response.status, 200);
-        const serialized = await response.text();
-        assert.deepEqual(parseResponsesSseValues(serialized), [{
-          error: {
-            message: "Upstream response completed with no translated semantic output.",
-            type: "server_error",
-            code: "empty_upstream_completion",
-            param: null,
-          },
-        }]);
-        assert.doesNotMatch(serialized, /"choices"|"finish_reason"|"role":"assistant"|data: \[DONE\]/);
-      } else {
-        assert.equal(response.status, 502);
-        assert.deepEqual(await response.json(), {
-          error: {
-            message: "Upstream response completed with no translated semantic output.",
-            type: "server_error",
-            code: "empty_upstream_completion",
-            param: null,
-          },
-        });
-      }
+      assert.equal(response.status, 502);
+      assert.doesNotMatch(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
+      assert.deepEqual(await response.json(), {
+        error: {
+          message: "Upstream response completed with no translated semantic output.",
+          type: "server_error",
+          code: "empty_upstream_completion",
+          param: null,
+        },
+      });
 
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.completed, false);
@@ -8286,6 +8992,151 @@ Deno.test("openai: Chat recovers completed output text without duplicating strea
         assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
       });
     }
+  }
+});
+
+Deno.test("openai: contentless native Responses and reasoning-only completions fail before success", async (t) => {
+  const cases = [
+    { variant: "empty", surfaces: ["responses"] as const },
+    { variant: "reasoning_only", surfaces: ["chat", "responses"] as const },
+  ] as const;
+
+  for (const testCase of cases) {
+    for (const surface of testCase.surfaces) {
+      for (const stream of [false, true]) {
+        await t.step(`${testCase.variant} ${surface} ${stream ? "streamed" : "buffered"}`, async () => {
+          const observations: boolean[] = [];
+          const observedInputTokens: Array<number | null> = [];
+          let fetches = 0;
+          const response = await withFetchMock(
+            () => {
+              fetches += 1;
+              return sseResponse([
+                `data: ${
+                  JSON.stringify({ type: "response.created", response: { id: `resp_${testCase.variant}` } })
+                }\n\n`,
+                ...(testCase.variant === "reasoning_only"
+                  ? [
+                    `data: ${
+                      JSON.stringify({
+                        type: "response.reasoning_summary_text.delta",
+                        response_id: `resp_${testCase.variant}`,
+                        item_id: `reasoning_${testCase.variant}`,
+                        output_index: 0,
+                        summary_index: 0,
+                        delta: "hidden reasoning",
+                      })
+                    }\n\n`,
+                  ]
+                  : []),
+                `data: ${
+                  JSON.stringify({
+                    type: "response.completed",
+                    response: {
+                      id: `resp_${testCase.variant}`,
+                      status: "completed",
+                      output: testCase.variant === "reasoning_only"
+                        ? [{ type: "reasoning", summary: [{ type: "summary_text", text: "hidden reasoning" }] }]
+                        : [],
+                      usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+                    },
+                  })
+                }\n\n`,
+              ]);
+            },
+            () =>
+              surface === "chat"
+                ? handleChatCompletions(
+                  new Request("https://ai.ubq.fi/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: DEFAULT_TEST_MODEL,
+                      stream,
+                      messages: [{ role: "user", content: "hello" }],
+                    }),
+                  }),
+                  {
+                    keyId: null,
+                    kernelRepo: null,
+                    kernelOrg: null,
+                    onTerminalUsage: (usage, completed) => {
+                      observations.push(completed);
+                      observedInputTokens.push(usage?.inputTokens ?? null);
+                    },
+                  },
+                )
+                : handleResponses(responsesRequest({ stream }), {
+                  keyId: null,
+                  kernelRepo: null,
+                  kernelOrg: null,
+                  onTerminalUsage: (usage, completed) => {
+                    observations.push(completed);
+                    observedInputTokens.push(usage?.inputTokens ?? null);
+                  },
+                }),
+          );
+          const releasedReasoningStream = testCase.variant === "reasoning_only" && stream;
+          if (releasedReasoningStream) {
+            assert.equal(response.status, 200);
+            assert.match(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
+            const serialized = await response.text();
+            assert.match(serialized, /empty_upstream_completion/);
+            assert.doesNotMatch(serialized, /data: \[DONE\]/);
+          } else {
+            assert.equal(response.status, 502);
+            assert.doesNotMatch(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
+            const payload = await response.json() as { error?: { code?: string; type?: string; param?: unknown } };
+            assert.equal(payload.error?.code, "empty_upstream_completion");
+            assert.equal(payload.error?.type, "server_error");
+            assert.equal(payload.error?.param, null);
+          }
+          const telemetry = getResponseTelemetry(response);
+          assert.equal(telemetry?.completed, false);
+          assert.equal(telemetry?.failureKind, "empty_upstream_completion");
+          assert.equal(telemetry?.semanticOutputObserved, false);
+          assert.equal(telemetry?.inputTokens, 3);
+          assert.equal(telemetry?.outputTokens, 4);
+          assert.equal(telemetry?.totalTokens, 7);
+          assert.deepEqual(observations, [false]);
+          assert.deepEqual(observedInputTokens, [3]);
+          assert.equal(fetches, 1);
+        });
+      }
+    }
+  }
+});
+
+Deno.test("openai: native Responses preserves a refusal-only terminal", async (t) => {
+  const refusalItem = {
+    id: "msg_native_refusal",
+    type: "message",
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "refusal", refusal: "Request declined." }],
+  };
+  for (const stream of [false, true]) {
+    await t.step(stream ? "streamed" : "buffered", async () => {
+      const response = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${
+              JSON.stringify({
+                type: "response.completed",
+                response: { id: "resp_native_refusal", status: "completed", output: [refusalItem] },
+              })
+            }\n\n`,
+          ]),
+        () => handleResponses(responsesRequest({ stream })),
+      );
+      assert.equal(response.status, 200);
+      if (stream) {
+        assert.match(await response.text(), /Request declined\./);
+      } else {
+        const payload = await response.json() as { output?: unknown };
+        assert.deepEqual(payload.output, [refusalItem]);
+      }
+    });
   }
 });
 
@@ -8868,7 +9719,12 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
                 type: "response.completed",
                 response: {
                   model: DEFAULT_TEST_MODEL,
-                  output: [],
+                  output: [{
+                    id: "msg_absent_cached_tokens",
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "done" }],
+                  }],
                   usage: { input_tokens: 11, output_tokens: 0, total_tokens: 11 },
                 },
               })
@@ -8893,7 +9749,15 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
             `data: ${
               JSON.stringify({
                 type: "response.completed",
-                response: { model: DEFAULT_TEST_MODEL, output: [] },
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  output: [{
+                    id: "msg_absent_usage",
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "done" }],
+                  }],
+                },
               })
             }\n\n`,
           ]),
@@ -8918,7 +9782,12 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
                 type: "response.completed",
                 response: {
                   model: DEFAULT_TEST_MODEL,
-                  output: [],
+                  output: [{
+                    id: "msg_cache_read_above_input",
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "done" }],
+                  }],
                   usage: {
                     input_tokens: 10,
                     input_tokens_details: { cached_tokens: 11 },
@@ -8949,7 +9818,12 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
                 type: "response.completed",
                 response: {
                   model: DEFAULT_TEST_MODEL,
-                  output: [],
+                  output: [{
+                    id: "msg_overlapping_cache_accounting",
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "done" }],
+                  }],
                   usage: {
                     input_tokens: 100,
                     input_tokens_details: { cached_tokens: 80, cache_write_tokens: 80 },
@@ -8985,7 +9859,16 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
             `data: ${
               JSON.stringify({
                 type: "response.completed",
-                response: { model: DEFAULT_TEST_MODEL, output: [], usage: inconsistentUsage },
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  output: [{
+                    id: "msg_inconsistent_totals",
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "done" }],
+                  }],
+                  usage: inconsistentUsage,
+                },
               })
             }\n\n`,
           ]),
@@ -9049,7 +9932,16 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
             `data: ${
               JSON.stringify({
                 type: "response.completed",
-                response: { model: DEFAULT_TEST_MODEL, output: [], usage: null },
+                response: {
+                  model: DEFAULT_TEST_MODEL,
+                  output: [{
+                    id: "msg_malformed_usage",
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "done" }],
+                  }],
+                  usage: null,
+                },
               })
             }\n\n`,
           ]),

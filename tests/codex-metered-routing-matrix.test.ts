@@ -182,6 +182,8 @@ const encoder = new TextEncoder();
 const isFallbackOutcome = (outcome: Outcome): boolean =>
   outcome.kind === "http" && ACCOUNT_FALLBACK_STATUSES.has(outcome.status);
 
+const isTransportOutcome = (outcome: Outcome): boolean => outcome.kind === "timeout" || outcome.kind === "network";
+
 const is401 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 401;
 const is429 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 429;
 
@@ -216,7 +218,11 @@ const meteredSuccessResponse = (): Response => {
         response: {
           id: "resp_matrix",
           model: MODEL,
-          output: [],
+          output: [{
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "metered routing matrix" }],
+          }],
           usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
         },
       })
@@ -241,7 +247,6 @@ const meteredSuccessResponse = (): Response => {
 
 type ActiveRun = {
   outcomes: readonly [Outcome, Outcome];
-  controller: AbortController;
   codexCalls: Record<(typeof ACCOUNT_IDS)[number], number>;
   refreshCalls: Record<(typeof ACCOUNT_IDS)[number], number>;
   meteredCalls: number;
@@ -367,8 +372,7 @@ const mockedFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
   const outcome = run.outcomes[accountIndex];
   if (outcome.kind === "network") return Promise.reject(new TypeError("Codex fixture network failure"));
   if (outcome.kind === "timeout") {
-    run.controller.abort(new DOMException("Codex fixture timeout", "TimeoutError"));
-    return Promise.reject(run.controller.signal.reason);
+    return Promise.reject(new DOMException("Codex fixture timeout", "TimeoutError"));
   }
   return Promise.resolve(jsonErrorResponse(outcome.status));
 };
@@ -392,10 +396,8 @@ const runCase = async (
   sequence: number,
 ): Promise<void> => {
   await seedFixture();
-  const controller = new AbortController();
   const run: ActiveRun = {
     outcomes: [first, second],
-    controller,
     codexCalls: { "account-one": 0, "account-two": 0 },
     refreshCalls: { "account-one": 0, "account-two": 0 },
     meteredCalls: 0,
@@ -409,7 +411,6 @@ const runCase = async (
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: MODEL, input: "routing matrix" }),
-        signal: controller.signal,
       }),
       {
         keyId: KEY_ID,
@@ -423,13 +424,17 @@ const runCase = async (
       },
     );
 
-    const reachesSecond = isFallbackOutcome(first);
-    // Codex may try its sibling account after 401/403/429. Paid fallback still
-    // requires an authoritative 429 from at least one account; 401/403 alone
-    // may exhaust the sibling pool but must fail closed. Exhausted 401 refresh
-    // attempts are normalized to the reauthentication 503 contract.
-    const terminalCodexOutcome = reachesSecond ? second : first;
-    const selectsMetered = reachesSecond && isFallbackOutcome(second) &&
+    const reachesSecond = isFallbackOutcome(first) || isTransportOutcome(first);
+    // Codex may try its sibling account after 401/403/429 or a transient
+    // transport failure. Paid fallback still requires an authoritative 429
+    // from the whole attempted cohort. Any transport ambiguity wins over
+    // otherwise fallback-eligible responses and must fail closed.
+    const terminalCodexOutcome = isTransportOutcome(first) && isFallbackOutcome(second)
+      ? first
+      : reachesSecond
+      ? second
+      : first;
+    const selectsMetered = isFallbackOutcome(first) && isFallbackOutcome(second) &&
       (is429(first) || is429(second));
     const expectedStatus = selectsMetered
       ? 200

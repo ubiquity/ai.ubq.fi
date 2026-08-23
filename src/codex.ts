@@ -1681,6 +1681,7 @@ const fetchCodexResponseWithAuth = async (
     if (error instanceof ApiKeyQuotaDispatchError) throw error;
     if (error instanceof CodexBankedResetRetryFenceError) throw error;
     const timedOut = deadline.signal.aborted ||
+      (error instanceof Error && error.name === "TimeoutError") ||
       (signal?.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError");
     if (timedOut) {
       throw new CodexError(

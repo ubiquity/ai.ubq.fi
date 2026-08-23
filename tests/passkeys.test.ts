@@ -96,11 +96,13 @@ const kvStub = {
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
 const {
+  PASSKEY_MAX_REQUEST_BODY_BYTES,
   PASSKEY_SESSION_TTL_MS,
   buildPasskeyHandle,
   getPasskeyRequestMeta,
   handlePasskeyLoginFinish,
   handlePasskeyLoginStart,
+  handlePasskeyRegisterFinish,
   handlePasskeyRegisterStart,
   handlePasskeySession,
   handlePasskeyUsersList,
@@ -682,6 +684,61 @@ Deno.test("passkey registration start can use an existing passkey session", asyn
   assert.equal(body.publicKey.user.id, encodedUserId);
   assert.equal(body.publicKey.user.name, user.handle);
   assert.equal(body.publicKey.authenticatorSelection.userVerification, "required");
+});
+
+Deno.test("passkey JSON handlers reject oversized streamed bodies with 413", async () => {
+  const handlers = [
+    ["register start", "https://ai.ubq.fi/api/auth/register/start", handlePasskeyRegisterStart],
+    ["register finish", "https://ai.ubq.fi/api/auth/register/finish", handlePasskeyRegisterFinish],
+    ["login start", "https://ai.ubq.fi/api/auth/login/start", handlePasskeyLoginStart],
+    ["login finish", "https://ai.ubq.fi/api/auth/login/finish", handlePasskeyLoginFinish],
+  ] as const;
+
+  for (const [name, url, passkeyHandler] of handlers) {
+    let cancelled = false;
+    const request = new Request(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(Math.floor(PASSKEY_MAX_REQUEST_BODY_BYTES / 2) + 1));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    });
+
+    const response = await passkeyHandler(request);
+    assert.equal(response.status, 413, name);
+    const payload = await response.json() as { error?: { code?: string } };
+    assert.equal(payload.error?.code, "invalid_request_error", name);
+    assert.equal(cancelled, true, name);
+  }
+});
+
+Deno.test("passkey JSON handlers reject an oversized declared body before parsing", async () => {
+  let cancelled = false;
+  const response = await handlePasskeyLoginStart(
+    new Request("https://ai.ubq.fi/api/auth/login/start", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(PASSKEY_MAX_REQUEST_BODY_BYTES + 1),
+      },
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode("{}"));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 413);
+  assert.equal(cancelled, true);
 });
 
 Deno.test("passkey registration start rejects session claims for another user handle", async () => {

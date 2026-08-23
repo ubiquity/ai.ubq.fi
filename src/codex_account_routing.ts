@@ -469,6 +469,11 @@ const preservesStableResetIdentity = (slot: CodexRoutingSlot): boolean =>
   slot.banked_reset_generation_ambiguous ||
   (slot.observed_reset_at_ms !== null && slot.observed_reset_at_is_stable);
 
+const withoutLegacyTimeoutCircuits = (state: CodexAccountRoutingState): CodexAccountRoutingState => {
+  const slots = state.slots.map(withoutLegacyTimeoutCircuit);
+  return slots.some((slot, index) => slot !== state.slots[index]) ? { ...state, slots } : state;
+};
+
 /**
  * A token refresh stays in the same provider quota scope. Release ordinary
  * routing for the refreshed credential, but keep any pre-refresh stable reset
@@ -536,6 +541,7 @@ export const normalizeRoutingState = async (
   raw: CodexAccountRoutingState | null,
   pool: CodexAuthPoolState,
   now = Date.now(),
+  discardLegacyTimeoutCircuit = false,
 ): Promise<CodexAccountRoutingState> => {
   const identities = await Promise.all(pool.accounts.map(routingAccountIdentity));
   const priorSlots = raw?.slots ?? [];
@@ -564,6 +570,7 @@ export const normalizeRoutingState = async (
       slot.account_id_hash === null && slot.credential_version === identity.credentialVersion
     );
     if (!prior) return neutralSlot(identity.credentialVersion, identity.accountIdHash);
+    if (discardLegacyTimeoutCircuit) prior = withoutLegacyTimeoutCircuit(prior);
     if (prior.credential_version === identity.credentialVersion) {
       return withoutLegacyTimeoutCircuit(
         prior.account_id_hash === identity.accountIdHash ? prior : attachLegacyAccountIdentity(prior, identity),
@@ -625,7 +632,7 @@ export const loadCodexAccountRouting = async (pool: CodexAuthPoolState): Promise
       return normalized;
     }
     const entry = await kv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" });
-    cachedState = await normalizeRoutingState(parseCodexAccountRoutingState(entry.value), pool);
+    cachedState = await normalizeRoutingState(parseCodexAccountRoutingState(entry.value), pool, Date.now(), true);
     cachedVersionstamp = entry.versionstamp;
     cachedStateLoadedAtMs = Date.now();
     return cachedState;
@@ -649,11 +656,16 @@ const updateRoutingState = async (
 ): Promise<CodexAccountRoutingState | null> => {
   const applyLocally = (): CodexAccountRoutingState | null => {
     if (!cachedState) return null;
-    const next = transform(cachedState);
+    const current = withoutLegacyTimeoutCircuits(cachedState);
+    const next = transform(current);
     if (next) {
       cachedState = next;
       // The local update was not committed, so its old versionstamp can no
       // longer safely authorize a future write.
+      cachedVersionstamp = undefined;
+      cachedStateLoadedAtMs = Date.now();
+    } else if (current !== cachedState) {
+      cachedState = current;
       cachedVersionstamp = undefined;
       cachedStateLoadedAtMs = Date.now();
     }
@@ -673,8 +685,12 @@ const updateRoutingState = async (
   // read on a request that just received a 401/429. A concurrent writer makes
   // this CAS fail, after which the strong-read retry below preserves its work.
   if (cachedState && cachedVersionstamp !== undefined) {
-    const next = transform(cachedState);
-    if (!next) return cachedState;
+    const current = withoutLegacyTimeoutCircuits(cachedState);
+    const next = transform(current);
+    if (!next) {
+      cachedState = current;
+      return current;
+    }
     try {
       const committed = await kv.atomic()
         .check({ key: CODEX_ACCOUNT_ROUTING_KV_KEY, versionstamp: cachedVersionstamp })
@@ -697,7 +713,8 @@ const updateRoutingState = async (
         consistency: "strong",
       });
       const durable = parseCodexAccountRoutingState(entry.value);
-      const base = durable ?? cachedState;
+      const rawBase = durable ?? cachedState;
+      const base = rawBase ? withoutLegacyTimeoutCircuits(rawBase) : null;
       if (!base) return null;
       const next = transform(base);
       if (!next) {
@@ -1803,9 +1820,8 @@ export const markCodexRecoveryProbeQuotaBlocked = async (
 ): Promise<Codex429Classification> => await markCodexQuotaBlockedWithMode(account, response, now, true);
 
 /**
- * Fence an account after a response-header timeout. The request may already
- * have reached the provider, so this transition never retries that request;
- * it only keeps later requests away from the account for a bounded interval.
+ * Legacy transition retained for state-migration tests. Live inference no
+ * longer calls it; normalized durable reads discard the resulting fence.
  */
 export const markCodexUpstreamTimeout = async (
   account: RoutingAccount,
@@ -2482,7 +2498,7 @@ export const selectCodexRoutingAccountsStrong = async (
     });
     const durable = parseCodexAccountRoutingState(entry.value);
     if (!durable) return { kind: "routing_unavailable" };
-    const normalized = await normalizeRoutingState(durable, pool);
+    const normalized = await normalizeRoutingState(durable, pool, now, true);
     cachedState = normalized;
     cachedVersionstamp = entry.versionstamp;
     cachedStateLoadedAtMs = Date.now();

@@ -827,6 +827,7 @@ Deno.test("fetchCodexResponses does not gate the next request after a timeout", 
     updated_at_ms: now,
   };
   const calls: string[] = [];
+  let dispatches = 0;
   const timeoutController = new AbortController();
   setKvForTest(kv as unknown as Deno.Kv);
   resetCodexAuthCacheForTest();
@@ -845,15 +846,81 @@ Deno.test("fetchCodexResponses does not gate the next request after a timeout", 
     };
 
     await assert.rejects(
-      fetchCodexResponses({ model: "gpt-5-routing", input: "timeout" }, { signal: timeoutController.signal }),
+      fetchCodexResponses(
+        { model: "gpt-5-routing", input: "timeout" },
+        {
+          signal: timeoutController.signal,
+          beforeDispatch: () => {
+            dispatches += 1;
+            return Promise.resolve();
+          },
+        },
+      ),
       (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
     );
+    assert.equal(dispatches, 1, "an expired request deadline must not dispatch or record a sibling attempt");
     resetCodexAccountRoutingForTest();
 
     const response = await fetchCodexResponses({ model: "gpt-5-routing", input: "next request" });
     assert.equal(response.status, 200);
     assert.deepEqual(calls, ["one", "one"]);
     await response.arrayBuffer();
+  } finally {
+    globalThis.fetch = originalFetch;
+    setKvForTest(null);
+    resetCodexAuthCacheForTest();
+  }
+});
+
+Deno.test("fetchCodexResponses preserves a JSON 429 without Retry-After when no retry time is known", async () => {
+  const kv = new RoutingKv();
+  const originalFetch = globalThis.fetch;
+  const now = Date.now();
+  const authPool: CodexAuthPoolState = {
+    accounts: [{ ...pool.accounts[0]!, updated_at_ms: now }],
+    updated_at_ms: now,
+  };
+  let calls = 0;
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAuthCacheForTest();
+  await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
+  try {
+    globalThis.fetch = (input): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (!url.endsWith("/responses")) throw new Error(`Unexpected Codex URL: ${url}`);
+      calls += 1;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              message: "Codex is temporarily rate limited.",
+              type: "rate_limit_error",
+              code: "codex_rate_limited",
+              param: null,
+            },
+          }),
+          { status: 429, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    };
+
+    const response = await fetchCodexResponses(
+      { model: "gpt-5-routing", input: "rate-limit" },
+      { retrySleep: async () => {} },
+    );
+
+    assert.equal(calls, 2);
+    assert.equal(response.status, 429);
+    assert.equal(response.headers.get("content-type"), "application/json");
+    assert.equal(response.headers.get("Retry-After"), null);
+    assert.deepEqual(await response.json(), {
+      error: {
+        message: "Codex is temporarily rate limited.",
+        type: "rate_limit_error",
+        code: "codex_rate_limited",
+        param: null,
+      },
+    });
   } finally {
     globalThis.fetch = originalFetch;
     setKvForTest(null);
@@ -2178,9 +2245,15 @@ Deno.test("credential refresh does not transfer a legacy timeout probe", async (
     const reconciled = await reconcileCodexRoutingAccount(eligible.accounts[0]!, rotated);
     assert.equal(reconciled.probeCircuit, null);
     assert.equal(reconciled.probeToken, null);
+    assert.equal(reconciled.probeGeneration, null);
     const transferred = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(transferred?.slots[0]?.upstream_timeout_blocked_until_ms, null);
     assert.equal(transferred?.slots[0]?.probe_lease, null);
+
+    await markCodexSuccess(reconciled);
+    const recovered = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(recovered?.slots[0]?.upstream_timeout_blocked_until_ms, null);
+    assert.equal(recovered?.slots[0]?.probe_lease, null);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
